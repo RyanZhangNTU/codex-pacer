@@ -135,6 +135,12 @@ enum RealtimeProbe {
         if method in ('item/started','item/completed'):
             item=p.get('item') or {}
             if not isinstance(item,dict): return None
+            if progress_item(item):
+                percent=progress_item_value(item) if method=='item/completed' else None
+                if percent is None or not progress_id(p.get('turnId')):return None
+                stamp=p.get('completedAtMs')
+                return dict(e,method='progress/reported',percent=percent,
+                            at=stamp/1000 if type(stamp) in (int,float) and 0<stamp<=now*1000+5000 else now)
             if isinstance(item.get('type'),str): e['itemType']=item['type'][:80]
             if e.get('itemType') in ('agentMessage','reasoning','plan'):
                 e['hasText']=item_has_text(item)
@@ -142,12 +148,15 @@ enum RealtimeProbe {
             if item.get('type') in ('collabAgentToolCall','collabToolCall'):
                 ids=item.get('receiverThreadIds') or []
                 if isinstance(ids,list):e['receiverThreadIds']=[v.lower() for v in ids[:64] if valid_id(v)]
+                if item.get('tool') in ('wait','waitAgent'):e['waitingForAgents']=True
             stamp=p.get('startedAtMs') if method=='item/started' else p.get('completedAtMs')
             if isinstance(stamp,(int,float)) and 0<stamp<=now*1000+5000: e['at']=stamp/1000
         elif method in ('turn/started','turn/completed'):
             turn=p.get('turn') or {}
             if not isinstance(turn,dict) or not isinstance(turn.get('id'),str): return None
             e['turnId']=turn['id'][:256]; e['status']=str(turn.get('status',''))[:32]
+            root=progress_id(turn.get('rootTurnId'))
+            if root:e['rootTurnId']=root
         elif method=='thread/tokenUsage/updated':
             usage=p.get('tokenUsage') or {}; total=usage.get('total') or {}; last=usage.get('last') or {}
             if not isinstance(total.get('outputTokens'),int) or total['outputTokens']<0: return None
@@ -158,6 +167,12 @@ enum RealtimeProbe {
             status=p.get('status') or {}
             e['status']=str(status.get('type',''))[:32]
             e['flags']=[f for f in status.get('activeFlags',[]) if f in ('waitingOnApproval','waitingOnUserInput')]
+        elif method=='thread/goal/updated':
+            goal=goal_fields(p.get('goal'))
+            if not goal:return None
+            e.update(goalStatus=goal['status'],goalCreatedAt=goal['createdAt'],goalUpdatedAt=goal['updatedAt'])
+        elif method=='thread/goal/cleared':
+            pass
         elif method=='thread/settings/updated':
             # Thread settings apply to future turns, not necessarily the active one.
             s=p.get('threadSettings') or {}
@@ -178,7 +193,7 @@ enum RealtimeProbe {
     class Session:
         def __init__(self,ws):
             self.ws=ws; self.ready=False; self.pending={}; self.next_id=1; self.known=OrderedDict(); self.excluded=set(); self.attached=set(); self.attaching=set(); self.evidenced=set(); self.queue=[]; self.buffered={}; self.notices=0; self.last_rpc=time.monotonic(); self.last_list=0
-            self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set();self.first_text=set();self.rollout_paths=OrderedDict();self.origin_paths=OrderedDict();self.origin_excluded=set()
+            self.read_queue=OrderedDict();self.listing=False;self.list_cursor=None;self.list_cursors=set();self.first_text=set();self.rollout_paths=OrderedDict();self.origin_paths=OrderedDict();self.origin_excluded=set();self.goal_holds=set()
             self.request('initialize',{'clientInfo':{'name':'codex-pacer-events','version':'4.3.0'},'capabilities':{'experimentalApi':True}},'initialize')
         def request(self,method,params,kind,tid=None):
             # This allowlist prevents a monitor from sending task input/config changes.
@@ -219,6 +234,11 @@ enum RealtimeProbe {
                     self.request('thread/loaded/list',{'limit':64,'cursor':cursor},'list')
                 else:self.listing=False
         def queue_event(self,e):
+            method=e.get('method');tid=e['threadId']
+            if method=='thread/goal/updated':
+                if e.get('goalStatus')=='complete':self.goal_holds.discard(tid)
+                elif len(self.goal_holds)<64:self.goal_holds.add(tid)
+            elif method=='thread/goal/cleared':self.goal_holds.discard(tid)
             if e is None:return
             for child in e.get('receiverThreadIds',[]):self.queue_thread(child,priority=True)
             if e.get('turnId'):self.evidenced.add(e['threadId'])
@@ -231,11 +251,12 @@ enum RealtimeProbe {
                     e['hasText']=True;e['firstDeltaAt']=previous.get('firstDeltaAt',previous['at'])
                 self.queue[-1]=e
             else: self.queue.append(e)
-            tool_boundary=e['method'] in ('item/started','item/completed') and e.get('itemType') in ('commandExecution','fileChange','mcpToolCall','dynamicToolCall','collabToolCall','collabAgentToolCall','webSearch','imageView')
-            if len(self.queue)>=512 or tool_boundary or first or e['method'] in ('turn/started','turn/completed','thread/status/changed'):flush_events(self)
+            tool_boundary=e['method'] in ('item/started','item/completed') and e.get('itemType') in ('commandExecution','fileChange','mcpToolCall','dynamicToolCall','collabToolCall','collabAgentToolCall','webSearch','imageView','imageGeneration','contextCompaction','sleep')
+            if len(self.queue)>=512 or tool_boundary or first or method in ('turn/started','turn/completed','thread/status/changed','thread/goal/updated','thread/goal/cleared'):flush_events(self)
         def release(self,tid):
             self.queue_event({'method':'stream/released','threadId':tid,'at':time.time()})
             self.attached.discard(tid);self.attaching.discard(tid);self.evidenced.discard(tid)
+            self.goal_holds.discard(tid)
             self.known.pop(tid,None);self.buffered.pop(tid,None);self.read_queue.pop(tid,None);self.first_text.discard(tid)
             if tid in self.rollout_paths:self.rollout_paths[tid]=(self.rollout_paths[tid][0],time.monotonic()+30)
             for rid,value in list(self.pending.items()):
@@ -245,6 +266,7 @@ enum RealtimeProbe {
                 if len(self.known)<=64:break
                 if tid not in self.attached and tid not in self.attaching:self.known.pop(tid,None)
         def exclude_thread(self,tid,origin=False):
+            self.goal_holds.discard(tid)
             if origin:self.origin_excluded.add(tid)
             if len(self.excluded)<1024:self.excluded.add(tid)
             self.rollout_paths.pop(tid,None)
@@ -316,7 +338,7 @@ enum RealtimeProbe {
                         if queued.get('method')=='turn/completed' or queued.get('status')=='notLoaded':ended=True
                         elif queued.get('method')=='turn/started':ended=False
                     # Buffered terminal evidence must free the slot too.
-                    if ended:self.release(tid)
+                    if ended and tid not in self.goal_holds:self.release(tid)
                     self.trim_metadata()
                 return
             method=v.get('method');p=v.get('params') or {}
@@ -338,7 +360,7 @@ enum RealtimeProbe {
                 if e.get('status')!='active' and tid not in self.known:return
             if tid in self.known:
                 self.queue_event(e)
-                if method=='turn/completed' or method=='thread/status/changed' and e.get('status')=='notLoaded':self.release(tid)
+                if method=='turn/completed' and tid not in self.goal_holds or method=='thread/status/changed' and e.get('status')=='notLoaded':self.release(tid)
             else:
                 self.read_thread(tid)
                 if tid not in self.buffered and len(self.buffered)>=64:return

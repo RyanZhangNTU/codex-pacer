@@ -108,8 +108,22 @@ internal static class ProgressRingMotionChecks
             Check(Math.Abs((await Shown("reported", "working", 0.1)).DisplayFraction - 0.1) < 0.0001,
                 "A rebuild after reduced motion cannot resume the old unfinished curve");
             await Discard();
+            id = "codex-ring-check-" + Guid.NewGuid().ToString("N");
+            current = await Loaded();
+            current.Show(id, "reported", "working", 0.41, false, Colors.Turquoise, true, completionPulseOnly: true);
+            current.Show(id, "reported", "working", 1, false, Colors.Turquoise, true, completionPulseOnly: true);
+            Check(!((ScaleTransform)current.RenderTransform).HasAnimatedProperties, "A Codex estimate of 100% must not pulse during work");
+            current.Show(id, "reported", "done", 1, false, Colors.Turquoise, true, completionPulseOnly: true);
+            Check(((ScaleTransform)current.RenderTransform).HasAnimatedProperties, "Codex must pulse on completion even at an unchanged 100%");
+            await Discard();
+            current = await Loaded();
+            current.Show(id, "reported", "done", 1, false, Colors.Turquoise, true, completionPulseOnly: true);
+            Check(!((ScaleTransform)current.RenderTransform).HasAnimatedProperties, "Rebuilding a completed Codex row must not replay its pulse");
+            current.Show(id, "pending", "paused", 0, false, Colors.Turquoise, true, completionPulseOnly: true);
+            Check(!current.HasEndlessClocks, "A paused Codex ring is static");
+            await Discard();
             Check(IconGlyph.Has("zzz"), "A turn waiting for its background work has its own drawn glyph");
-            Console.WriteLine("PASS progress ring: breathing, reduced motion, completion sweeps, continuous downward rebuilds and clock cleanup through real Unloaded events");
+            Console.WriteLine("PASS progress ring: breathing, reduced motion, completion sweeps, Codex completion-only pulses, continuous downward rebuilds and real Unloaded cleanup");
         }
         finally { window.Close(); }
     }

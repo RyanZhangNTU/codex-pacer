@@ -103,6 +103,8 @@ The ⋯ menu in the task header refreshes data or quits Pacer; the gear opens Se
 
 ## Codex
 
+**Task progress.** Turn on **Settings → Codex → Show Codex Task Progress**. Pacer sets up reporting for new local Codex sessions. The ring stays dashed until Codex reports an estimate. [Codex task progress](codex-progress-setup.md)
+
 Pacer finds the Codex app or CLI in the usual places, including Homebrew, npm managers such as nvm, fnm, Volta, asdf, mise and pnpm, and a moved Codex.app. **Settings → Codex → This Mac** shows what it found; hover for the exact path, or pick another CLI or data folder under **Custom locations**. A custom path that stops working is reported rather than silently replaced.
 
 Codex quota comes from your own Codex sign-in through the CLI. API-key or Amazon Bedrock sign-ins do not have ChatGPT subscription limits, and Pacer says so.

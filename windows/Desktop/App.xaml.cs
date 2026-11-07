@@ -288,11 +288,17 @@ public partial class App : Application
         engineExecutable = executable;
         try
         {
-            string? runtimeRoot = null;
+            string? runtimeRoot = null, codexProgressRuntimeRoot = null;
             if (!demo)
-                try { runtimeRoot = Path.Combine(WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory).DataRoot, "ClaudeRuntime"); }
+                try
+                {
+                    var identity = WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory);
+                    runtimeRoot = Path.Combine(identity.DataRoot, "ClaudeRuntime");
+                    codexProgressRuntimeRoot = identity.CodexProgressRuntimeRoot;
+                }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
-            await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture, claudeRuntimeRoot: runtimeRoot);
+            await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture,
+                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             await webConnection.StartAsync();

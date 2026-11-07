@@ -72,7 +72,7 @@ public sealed class TaskProgressRing : Grid
         public string State = "";
         public double From, To, Start, Duration;
         public IEasingFunction? Ease;
-        public bool Stale, Full;
+        public bool Stale, Full, Done;
         /// The ring was breathing: a request waiting for its background work.
         public bool Breathing;
         public Color Color;
@@ -109,17 +109,19 @@ public sealed class TaskProgressRing : Grid
 
     /// Applies one row's ring. Returns how the ring changed for this task, so
     /// the row can shrink or restore its icon in step with it.
-    internal Change Show(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate)
+    internal Change Show(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate,
+                         bool completionPulseOnly = false)
     {
         taskID = id;
         // Making the ring visible raises IsVisibleChanged synchronously. Its
         // looping motion starts once, from the finished state: started midway,
         // it would read stale fields and a later opacity fade would cancel it.
         showing = true;
-        try { StopBreathing(); return Apply(id, state, lifecycle, fraction, stale, color, animate); }
+        try { StopBreathing(); return Apply(id, state, lifecycle, fraction, stale, color, animate, completionPulseOnly); }
         finally { showing = false; UpdateSpin(); }
     }
-    private Change Apply(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate)
+    private Change Apply(string id, string? state, string? lifecycle, double fraction, bool stale, Color color, bool animate,
+                         bool completionPulseOnly)
     {
         motion = animate; mode = lifecycle ?? "working";
         double now = Now;
@@ -161,7 +163,13 @@ public sealed class TaskProgressRing : Grid
         bool dimmed = state == "reported" && stale;
         // Leaving the wait, the element eases from the breath's current opacity.
         bool leftBreath = animate && previous?.Breathing == true && mode != "waiting";
-        var memory = new Memory { State = state, Color = color, Seen = now, Stale = dimmed, Breathing = mode == "waiting" };
+        bool justCompleted = completionPulseOnly && mode == "done" && previous?.Done == false;
+        if (completionPulseOnly && previous?.Done == true && mode != "done")
+        {
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        }
+        var memory = new Memory { State = state, Color = color, Seen = now, Stale = dimmed, Breathing = mode == "waiting", Done = mode == "done" };
         if (state == "pending")
         {
             double shown = previous?.State == "reported" ? previous.Displayed(now) : 0;
@@ -196,6 +204,8 @@ public sealed class TaskProgressRing : Grid
             previous.Seen = now; previous.Color = color;
             Fade(previous.Stale, dimmed, animate);
             if (leftBreath) EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
+            if (animate && justCompleted) Pulse(Math.Max(0, remaining));
+            previous.Done = memory.Done;
             previous.Stale = dimmed; previous.Breathing = mode == "waiting"; Memories[id] = previous;
             return Change.Shown;
         }
@@ -230,18 +240,20 @@ public sealed class TaskProgressRing : Grid
         Fade(previous?.Stale ?? false, dimmed, animate && previous != null);
         if (leftBreath && previous!.State == "reported") EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
         bool full = target >= 0.9995;
-        if (full && animate && previous != null && previous.Full == false && mode is "working" or "done")
-        {
-            // Reaching 100% settles with one small pulse once the sweep ends.
-            var pulse = new DoubleAnimationUsingKeyFrames { BeginTime = TimeSpan.FromSeconds(delay + duration + 0.05) };
-            pulse.KeyFrames.Add(new EasingDoubleKeyFrame(1.06, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.18)), new QuadraticEase { EasingMode = EasingMode.EaseOut }));
-            pulse.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.4)), new QuadraticEase { EasingMode = EasingMode.EaseInOut }));
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, pulse);
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, pulse);
-        }
+        if (full && animate && (justCompleted || !completionPulseOnly && previous?.Full == false && mode is ("working" or "done")))
+            Pulse(delay + duration);
         memory.Full = full || previous?.Full == true && target >= 0.9995;
         Memories[id] = memory;
         return appeared ? Change.Appeared : Change.Shown;
+    }
+
+    private void Pulse(double after)
+    {
+        var pulse = new DoubleAnimationUsingKeyFrames { BeginTime = TimeSpan.FromSeconds(after + 0.05) };
+        pulse.KeyFrames.Add(new EasingDoubleKeyFrame(1.06, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.18)), new QuadraticEase { EasingMode = EasingMode.EaseOut }));
+        pulse.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.4)), new QuadraticEase { EasingMode = EasingMode.EaseInOut }));
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, pulse);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, pulse);
     }
 
     /// Motion follows the island: reduced motion, hidden or occluded panels
@@ -252,6 +264,8 @@ public sealed class TaskProgressRing : Grid
         if (!value)
         {
             SetFraction(targetFraction);
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
             // A rebuilt row inherits the settled value after reduced motion.
             if (taskID != null && Memories.TryGetValue(taskID, out var memory))
             { memory.From = memory.To; memory.Start = Now; memory.Duration = 0; }

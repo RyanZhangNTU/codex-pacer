@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$Archive,
-    [int]$ProtectedProcessId = 0
+    [int]$ProtectedProcessId = 0,
+    [string]$CodexExecutable = ''
 )
 . (Join-Path $PSScriptRoot 'environment.ps1')
 $ErrorActionPreference = 'Stop'
@@ -25,12 +26,22 @@ $taskDemo = $null
 $taskUninstalled = $false
 $taskNotificationApp = $null
 $taskNotificationClass = $null
+$taskCodexReporter = $null
 $taskFailure = $null
+if ($CodexExecutable) { $CodexExecutable = (Resolve-Path -LiteralPath $CodexExecutable -ErrorAction Stop).Path }
 
 function Assert-Pacer([bool]$Value, [string]$Message) {
     if (!$Value) { throw $Message }
 }
 function Record-Pacer([string]$Name) { $taskPasses.Add($Name); Write-Output ('PASS ' + $Name) }
+function Assert-PacerReporter([bool]$Enabled) {
+    Assert-Pacer (!$taskCodexReporter.HasExited) 'The cached Codex reporter process exited unexpectedly.'
+    $taskCodexReporter.StandardInput.WriteLine('{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"report_progress","arguments":{"percent":41}}}')
+    $taskCodexReporter.StandardInput.Flush()
+    $taskReply = $taskCodexReporter.StandardOutput.ReadLineAsync().WaitAsync([TimeSpan]::FromSeconds(10)).GetAwaiter().GetResult() | ConvertFrom-Json
+    Assert-Pacer ($taskReply.id -eq 1 -and $taskReply.result.isError -eq !$Enabled) 'The cached reporter did not honor its enabled state.'
+    if ($Enabled) { Assert-Pacer ($taskReply.result.content[0].text -eq 'pacer-progress:accepted') 'The reporter did not acknowledge an estimate.' }
+}
 function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Expected = @(0), [switch]$Offline, [string]$StdinJson = $null) {
     $taskStart = [Diagnostics.ProcessStartInfo]::new($File)
     $taskStart.UseShellExecute = $false
@@ -155,7 +166,9 @@ try {
     New-Item -ItemType Directory -Path $taskData -Force | Out-Null
     $taskPreferences = Join-Path $taskData 'preferences-v1.json'
     $taskReadState = Join-Path $taskData 'completion-dismissals-v1.json'
-    [IO.File]::WriteAllText($taskPreferences, '{"schemaVersion":1,"language":"zh-Hans","hideProjects":true}', [Text.UTF8Encoding]::new($false))
+    $taskSettingsFixture = @{ schemaVersion=1; language='zh-Hans'; hideProjects=$true }
+    if ($CodexExecutable) { $taskSettingsFixture.codexExecutable = $CodexExecutable }
+    [IO.File]::WriteAllText($taskPreferences, ($taskSettingsFixture | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($taskReadState, ('{"version":1,"digests":["' + ('a' * 64) + '"]}'), [Text.UTF8Encoding]::new($false))
     $taskPreferenceHash = (Get-FileHash -LiteralPath $taskPreferences).Hash
     $taskReadHash = (Get-FileHash -LiteralPath $taskReadState).Hash
@@ -338,6 +351,31 @@ try {
     $taskSpool = [IO.File]::ReadAllText((Join-Path $taskPrimaryHome 'pacer/events.jsonl'))
     Assert-Pacer (($taskSpool -split "`n" | Where-Object { $_ } | ConvertFrom-Json | Where-Object { $_.kind -eq 'prompt' -and $_.sessionId -eq 'fixture-installer' }).Count -eq 1 -and
         !$taskSpool.Contains('SYNTHETIC_PRIVATE_BODY')) 'The installed offline hook must record its synthetic prompt ownership without its body.'
+    if ($CodexExecutable) {
+        $taskPythonExe = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $taskCodexEntry = Invoke-PacerTestProcess $taskPythonExe @('-S',(Join-Path $taskRoot 'scripts/diagnostics/test-codex-progress.py'),
+            '--installer-fixture','--codex',$CodexExecutable,'--engine',(Join-Path $taskApp 'Engine/PacerEngine.exe')) | ConvertFrom-Json
+        $taskReporterStart = [Diagnostics.ProcessStartInfo]::new($taskCodexEntry.command)
+        $taskReporterStart.UseShellExecute = $false; $taskReporterStart.CreateNoWindow = $true
+        $taskReporterStart.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+        $taskReporterStart.RedirectStandardInput = $true; $taskReporterStart.RedirectStandardOutput = $true
+        foreach ($taskArgument in $taskCodexEntry.args) { $taskReporterStart.ArgumentList.Add($taskArgument) }
+        $taskReporterStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
+        $taskCodexReporter = [Diagnostics.Process]::Start($taskReporterStart)
+        Assert-PacerReporter $true
+        $null = Invoke-PacerTestProcess $taskSetup $taskFlags
+        Assert-PacerReporter $true
+        Record-Pacer 'full installer replaces the application while the configured Codex reporter keeps running outside its payload'
+
+        $taskCodexConfig = Join-Path $taskData 'codex/config.toml'
+        $taskValidCodex = [IO.File]::ReadAllBytes($taskCodexConfig)
+        $taskInvalidCodex = [Text.Encoding]::UTF8.GetBytes('[invalid synthetic TOML')
+        [IO.File]::WriteAllBytes($taskCodexConfig, $taskInvalidCodex)
+        $null = Invoke-PacerTestProcess $taskMaintenance @('uninstall',$taskScope,$taskApp) @(24)
+        Assert-Pacer ([IO.File]::ReadAllText($taskCodexConfig) -eq '[invalid synthetic TOML' -and (Test-Path -LiteralPath $taskExe)) 'Codex cleanup preflight changed the invalid file or the installation.'
+        Assert-PacerReporter $true
+        [IO.File]::WriteAllBytes($taskCodexConfig, $taskValidCodex)
+    }
     $null = Invoke-PacerTestProcess $taskUninstaller $taskSilent
     $taskUninstalled = $true
     Assert-Pacer (!(Test-Path -LiteralPath $taskExe) -and !(Test-Path -LiteralPath $taskRuntime)) 'Actual uninstall left its application or owned shared runtime.'
@@ -347,6 +385,15 @@ try {
     }
     Assert-Pacer ((Get-FileHash -LiteralPath $taskPreferences).Hash -eq $taskPreferenceHash -and (Get-FileHash -LiteralPath $taskReadState).Hash -eq $taskReadHash) 'Runtime cleanup changed retained preferences or read state.'
     Record-Pacer 'installed Python works offline without user Python; actual uninstall restores both indexed Claude homes and deletes the single owned runtime'
+    if ($taskCodexReporter) {
+        Assert-PacerReporter $false
+        foreach ($taskCodexHome in @('codex','Codex secondary profile')) {
+            $taskCodexSettings = [IO.File]::ReadAllText((Join-Path $taskData "$taskCodexHome/config.toml"))
+            Assert-Pacer (!$taskCodexSettings.Contains('pacer_progress') -and $taskCodexSettings.Contains('unrelated_fixture') -and
+                !(Test-Path -LiteralPath (Join-Path $taskData "$taskCodexHome/pacer/codex-progress/native/enabled"))) 'Uninstall did not remove only its Codex reporter registration.'
+        }
+        Record-Pacer 'uninstall leaves the cached Codex process alive but disables it and removes its MCP entries from both recorded profiles'
+    }
     $taskReport = @{ schemaVersion=1; syntheticOnly=$true; elevated=$taskElevated; restarted=$false; checks=@($taskPasses);
         nativeNotificationCleanup=if ($taskElevated) { 'not exercised: elevated CI token' } else { 'passed' }; protectedPreviewUntouched=($null -ne $taskProtectedStart) }
     [IO.File]::WriteAllText((Join-Path $taskRoot 'output/windows/installer-tests.json'), ($taskReport|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
@@ -355,6 +402,11 @@ try {
     Write-Host ('FAIL installer lifecycle after: ' + ($taskPasses | Select-Object -Last 1))
     throw
 } finally {
+    if ($taskCodexReporter) {
+        $taskCodexReporter.StandardInput.Close()
+        if (!$taskCodexReporter.WaitForExit(5000)) { $taskCodexReporter.Kill($true); $taskCodexReporter.WaitForExit() }
+        $taskCodexReporter.Dispose()
+    }
     if ($taskDemo) {
         if (!$taskDemo.HasExited -and (Test-Path -LiteralPath (Join-Path $taskApp 'Maintenance/PacerMaintenance.exe'))) {
             $null = Invoke-PacerTestProcess (Join-Path $taskApp 'Maintenance/PacerMaintenance.exe') @('prepare',$taskScope,$taskApp,(Join-Path $taskPackage.payload 'build-info.json'))

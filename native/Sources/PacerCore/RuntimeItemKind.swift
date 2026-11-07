@@ -6,7 +6,7 @@ enum RuntimeItemKind {
         kind == "collabAgentToolCall" ? "collabToolCall" : kind
     }
     static func isTool(_ kind: String) -> Bool {
-        ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabToolCall", "webSearch", "imageView"]
+        ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabToolCall", "webSearch", "imageView", "imageGeneration", "contextCompaction", "sleep"]
             .contains(normalized(kind))
     }
 }

@@ -627,6 +627,19 @@
 "whats_new.claude_next_step_detail" = "When Claude Desktop ends a turn by asking you to choose the next step, the task shows as finished and Pacer reminds you to reply.";
 
 "codex.embedded_sessions" = "Show Codex Sessions from Other Apps";
+"codex.progress_ring" = "Show Codex Task Progress";
+"codex.progress_ring_help" = "Pacer sets up progress reporting for local Codex sessions. A dashed ring means Codex has yet to report an estimate.";
+"codex.progress_setup.settingUp" = "Setting up progress reporting…";
+"codex.progress_setup.ready" = "Progress reporting is ready for new local Codex sessions.";
+"codex.progress_setup.missingCLI" = "Pacer couldn’t find Codex. Check the executable location below.";
+"codex.progress_setup.conflict" = "The Codex MCP configuration already has an entry named pacer_progress.";
+"codex.progress_setup.failed" = "Pacer couldn’t set up progress reporting.";
+"activity.goal_paused" = "Goal paused";
+"activity.goal_blocked" = "Goal blocked";
+"activity.goal_usage_limit" = "Goal waiting for usage to reset";
+"activity.goal_budget_limit" = "Goal budget reached";
+"activity.progress_paused_pending" = "Goal paused; no progress estimate";
+"activity.progress_paused" = "Goal paused at an estimated %ld%%";
 "codex.embedded_sessions_help" = "Sessions in apps that embed Codex, such as a Zotero plugin, show the app’s name and switch to it when clicked. When off, these sessions and their reminders are hidden; Codex app, Terminal and VS Code sessions are unaffected.";
 "activity.codex_host_missing" = "Pacer doesn’t know which app started this Codex task. It can only see the app while the task is running.";
 

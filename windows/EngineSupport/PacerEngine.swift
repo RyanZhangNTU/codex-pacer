@@ -104,6 +104,11 @@ public enum PacerEngine {
                 hookServices = .live(root: URL(fileURLWithPath: path, isDirectory: true))
             }
         }
+        var progressRoot = WindowsCodexProgressPaths.defaultRoot
+        if let index = CommandLine.arguments.firstIndex(of: "--codex-progress-runtime-root") {
+            guard CommandLine.arguments.indices.contains(index + 1), WindowsCodexExecutableDiscovery.absolute(CommandLine.arguments[index + 1]) else { return }
+            progressRoot = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+        }
         let ssh: WindowsSSHServices? = demo || readOnly ? nil : WindowsSSHServices()
         let wsl: WindowsWSLServices? = demo || readOnly ? nil : WindowsWSLServices()
         let runtime = EngineRuntime(demo: demo, now: clock,
@@ -114,7 +119,8 @@ public enum PacerEngine {
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
             wslServices: wsl,
             sshServices: ssh, claudeRemoteServices: .live(ssh: ssh, wsl: wsl),
-            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices, allowsStorageRecovery: !readOnly)
+            allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices,
+            managesCodexProgress: !demo && !readOnly, codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -241,6 +247,19 @@ actor EngineRuntime {
     private var reminderSettings = EngineReminderSettings()
     /// Claude's self-reported progress ring; off until the desktop turns it on.
     private var claudeProgressRing = false
+    private var codexProgressRing = false
+    private let managesCodexProgress: Bool
+    private let codexProgressPaths: WindowsCodexProgressPaths
+    private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
+    private var codexProgressSetup: CodexProgressSetupStatus?
+    private var codexProgressTask: Task<Void, Never>?
+    private var codexProgressRequest: UUID?
+    private var progressRingProviders: Set<AgentProvider> {
+        var providers: Set<AgentProvider> = []
+        if claudeProgressRing { providers.insert(.claude) }
+        if codexProgressRing { providers.insert(.codex) }
+        return providers
+    }
     /// The Claude home where this engine switched the ring on.
     private var claudeProgressSwitchHome: URL?
     private var deepseekNoticePolicy = DeepSeekNoticePolicy()
@@ -398,6 +417,8 @@ actor EngineRuntime {
          allowsLiveClaudeWeb: Bool = false,
          claudeWebReference: Bool = false,
          claudeHookServices: EngineClaudeHookServices? = nil,
+         managesCodexProgress: Bool = false,
+         codexProgressPaths: WindowsCodexProgressPaths = .init(root: WindowsCodexProgressPaths.defaultRoot),
          allowsStorageRecovery: Bool = true,
          sourceSettings: CodexSourceSettingsServices = .live,
          installationDetection: @escaping @Sendable () async -> ProviderInstallationDetection = {
@@ -418,6 +439,7 @@ actor EngineRuntime {
         self.activityHostServices = activityHostServices
         self.claudeWebReference = claudeWebReference && demo
         self.claudeHookServices = claudeHookServices
+        self.managesCodexProgress = managesCodexProgress; self.codexProgressPaths = codexProgressPaths
         self.detectInstallation = installationDetection
         self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
         self.notificationRegistry = .init(store: notificationStore, now: now())
@@ -730,6 +752,10 @@ actor EngineRuntime {
             guard claudeHookServices != nil, enabled.contains(.claude), !demo else { failure(id: command.id, code: "claudeSetupUnavailable"); return true }
             scheduleClaudeHooks(force: true)
             publish(notices: [])
+        case "retryCodexProgressSetup":
+            guard managesCodexProgress, codexProgressRing, enabled.contains(.codex) else { failure(id: command.id, code: "codexProgressSetupUnavailable"); return true }
+            scheduleCodexProgressSetup(force: true)
+            publish(notices: [])
         case "initialize", "configure":
             let plan: ApplicationLifecycleCoordinator.Plan
             do { plan = try await configure(command.params) }
@@ -937,6 +963,7 @@ actor EngineRuntime {
         if let deepseek { deepseekHome = deepseek }
         if let executable = parameters.codexExecutable { codexExecutable = executable }
         if let value = parameters.claudeProgressRing { claudeProgressRing = value }
+        if let value = parameters.codexProgressRing { codexProgressRing = value }
         moduleSettings = updatedSettings; installation = detected
         if parameters.providerModes != nil { moduleConfigurationActive = true }
         else if explicitProviders != nil { moduleConfigurationActive = false }
@@ -980,6 +1007,7 @@ actor EngineRuntime {
             wslNeedsReconcile = true
         }
         applyClaudeProgressSwitch()
+        scheduleCodexProgressSetup()
         bindCodexCompletionSources()
         bindWSLCompletionSources(.claude)
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
@@ -1069,6 +1097,54 @@ actor EngineRuntime {
         // confirms that this engine manages that home.
         applyClaudeProgressSwitch(setupConfirmed: report.state == .ready)
         publish(notices: [])
+    }
+    private func scheduleCodexProgressSetup(force: Bool = false) {
+        guard managesCodexProgress else { return }
+        let home = codexHome, executable = codexExecutable, wanted = codexProgressRing && enabled.contains(.codex)
+        let previous = codexProgressTarget
+        guard force || previous?.home != home || previous?.executable != executable || previous?.enabled != wanted else { return }
+        codexProgressTarget = (home, executable, wanted)
+        let pending = codexProgressTask, request = UUID(), paths = codexProgressPaths
+        codexProgressRequest = request
+        codexProgressSetup = wanted ? .settingUp : nil
+        codexProgressTask = Task { [weak self] in
+            await pending?.value
+            guard !Task.isCancelled else { return }
+            if let previous, previous.home != home {
+                _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, enabled: false, paths: paths)
+            }
+            let status = await Self.configureCodexReporter(home: home, executable: executable, enabled: wanted, paths: paths)
+            await self?.receiveCodexProgressSetup(status, request: request)
+        }
+    }
+
+    private func receiveCodexProgressSetup(_ status: CodexProgressSetupStatus?, request: UUID) {
+        guard codexProgressRequest == request else { return }
+        codexProgressTask = nil; codexProgressSetup = status
+        if initialized { publish(notices: []) }
+    }
+
+    private static func configureCodexReporter(home: URL, executable: String, enabled: Bool,
+                                              paths: WindowsCodexProgressPaths) async -> CodexProgressSetupStatus? {
+        guard enabled || CodexProgressSetup.wasConfigured(in: home) else { return nil }
+        let reporter: CodexProgressCommand?
+        if enabled {
+            let engine = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+            let install = engine.deletingLastPathComponent().deletingLastPathComponent().path.lowercased()
+            let root = paths.root.path.lowercased()
+            guard root != install, !root.hasPrefix(install + "/") else { return .failed }
+            let helper = engine.deletingLastPathComponent().appendingPathComponent("PacerInstallerHooks.exe")
+            guard let data = await WindowsSubprocess.capture(executable: helper,
+                    arguments: ["--prepare-codex-progress", paths.root.path, home.path], timeout: 8, limit: 8192),
+                  let command = try? JSONDecoder().decode(CodexProgressCommand.self, from: data),
+                  paths.owns(command, home: home) else { return .failed }
+            reporter = command
+        } else { reporter = nil }
+        return await CodexProgressSetup.apply(home: home, reporter: reporter, storage: WindowsLocalProfileStorage(), owns: {
+            paths.owns($0, home: home) || $0.isNative(named: "PacerEngine.exe", home: home)
+        }) {
+            CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 3) }
+        }
     }
     /// Only an engine that manages the hooks writes the switch; demo and
     /// read-only diagnostics never touch the Claude home. It removes only a
@@ -1880,7 +1956,7 @@ actor EngineRuntime {
             showsClaudeCloudProjects: showClaudeCloudProjects)
     }
     private func scheduleActivityDisplay(at date: Date) {
-        let deadline = activityState.nextDisplayDeadline(at: date, retention: retention)
+        let deadline = activityState.nextDisplayDeadline(at: date, retention: retention, progressRingProviders: progressRingProviders)
         guard deadline != activityDisplayDeadline else { return }
         activityDisplayTask?.cancel(); activityDisplayTask = nil; activityDisplayDeadline = nil
         guard active, let deadline else { return }
@@ -1944,7 +2020,7 @@ actor EngineRuntime {
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
                 }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
-                progressRingProviders: claudeProgressRing ? [.claude] : []))
+                progressRingProviders: progressRingProviders))
         scheduleActivityDisplay(at: date)
         var failedProviders = Set<AgentProvider>(), refreshingProviders = Set<AgentProvider>(), quotaErrors: [AgentProvider: String] = [:], sourceTexts: [AgentProvider: String] = [:]
         if !demo {
@@ -2028,14 +2104,14 @@ actor EngineRuntime {
                 .init(provider: $0.rawValue, mode: moduleSettings.mode(for: $0).rawValue,
                     installed: installation?.isInstalled($0), enabled: enabled.contains($0))
             } : nil, quotaDashboard: dashboard, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
-            progressRingProviders: claudeProgressRing ? [.claude] : [],
+            progressRingProviders: progressRingProviders,
             compactWarnings: compactWarnings, compactContext: compactContext, taskPresentation: taskPresentation,
             deepseekConnection: balanceState.map { EngineDeepSeekConnection($0, now: date) },
             claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused) },
             claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [],
             notificationProjections: notificationProjections,
             navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup,
-            claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation())
+            claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation(), codexProgressSetup: codexProgressSetup)
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return
         }

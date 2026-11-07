@@ -103,6 +103,8 @@ DeepSeek 没有额度窗口，按余额扣费。**余额**模式（默认）下�
 
 ## Codex
 
+**任务进度。** 打开“设置 → Codex → 显示 Codex 任务进度”。Pacer 会为新开的本地 Codex 会话配置上报工具。在 Codex 给出估计前，任务图标外会显示虚线环。[任务进度说明](codex-progress-setup.md)
+
 Pacer 会在常见位置查找 Codex 应用或 CLI，包括 Homebrew、nvm、fnm、Volta、asdf、mise、pnpm 等 npm 管理工具，以及移动过位置的 Codex.app。“设置 → Codex → 本机”显示找到的结果，悬停可查看具体路径；也可以在“自定义位置”中选择其他 CLI 或数据目录。自定义路径失效时会明确提示，不会悄悄换用别的 CLI。
 
 Codex 额度通过 CLI 使用你自己的 Codex 登录读取。使用 API Key 或 Amazon Bedrock 登录时没有 ChatGPT 订阅额度，Pacer 会说明这一点。

@@ -33,6 +33,36 @@ enum SessionLogProbe {
         try:
             return str(uuid.UUID(raw)) if isinstance(raw,str) and len(raw)==36 else None
         except (ValueError,AttributeError):return None
+    def progress_id(value):
+        return value if isinstance(value,str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,256}',value) else None
+    def progress_arguments(value):
+        if isinstance(value,str) and len(value)<=128:
+            try:value=json.loads(value)
+            except (ValueError,TypeError):return None
+        if not isinstance(value,dict) or set(value)!={'percent'}:return None
+        percent=value['percent']
+        return percent if type(percent) is int and 0<=percent<=100 else None
+    def progress_tool(name,namespace):
+        return name=='mcp__pacer_progress__report_progress' and namespace in (None,'') or name=='report_progress' and namespace in ('mcp__pacer_progress','pacer_progress')
+    def progress_item(item):
+        return isinstance(item,dict) and item.get('type') in ('McpToolCall','mcpToolCall','mcp_tool_call') and item.get('server')=='pacer_progress' and item.get('tool')=='report_progress'
+    def progress_ack(value):
+        if isinstance(value,str):return value=='pacer-progress:accepted'
+        if not isinstance(value,list) or len(value) not in (1,2) or not isinstance(value[-1],dict):return False
+        if len(value)==2:
+            first=value[0];prefix=first.get('text') if isinstance(first,dict) and first.get('type')=='input_text' else None
+            if not isinstance(prefix,str) or len(prefix)>128 or not prefix.startswith('Wall time: ') or not prefix.endswith('\nOutput:'):return False
+        return value[-1].get('type') in ('input_text','text') and value[-1].get('text')=='pacer-progress:accepted'
+    def progress_item_value(item):
+        if not progress_item(item) or item.get('status') not in ('completed','Completed'):return None
+        result=item.get('result')
+        if not isinstance(result,dict) or result.get('isError') is True or result.get('is_error') is True or not progress_ack(result.get('content')):return None
+        return progress_arguments(item.get('arguments'))
+    def goal_fields(goal):
+        if not isinstance(goal,dict) or goal.get('status') not in ('active','paused','blocked','usageLimited','budgetLimited','complete'):return None
+        created=goal.get('createdAt');updated=goal.get('updatedAt')
+        if type(created) not in (int,float) or type(updated) not in (int,float) or not 0<=created<=updated<=10000000000:return None
+        return {'status':goal['status'],'createdAt':created,'updatedAt':updated}
     def sanitize(o):
         outer, p = o.get('type'), o.get('payload', {})
         if not isinstance(p, dict): return None
@@ -55,8 +85,15 @@ enum SessionLogProbe {
             for k in ('turn_id','model'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]
             if 'effort' in p: q['effort'] = p['effort'][:32] if isinstance(p['effort'],str) else None
+            root=progress_id(p.get('root_turn_id'))
+            if root:q['root_turn_id']=root
         elif outer == 'event_msg' and kind == 'item_completed':
             item=p.get('item') or {}
+            if progress_item(item):
+                percent=progress_item_value(item);tid=progress_id(p.get('thread_id'));turn=progress_id(p.get('turn_id'))
+                if percent is None or not tid or not turn:return None
+                return {'timestamp':str(o.get('timestamp',''))[:80], 'type':outer,
+                        'payload':{'type':'pacer_progress','thread_id':tid,'turn_id':turn,'percent':percent}}
             if not isinstance(item,dict) or item.get('type') not in ('AgentMessage','Reasoning','agentMessage','reasoning'):return None
             present=False
             for k in ('text','summary_text','summary','content'):
@@ -73,10 +110,16 @@ enum SessionLogProbe {
         elif outer == 'event_msg' and kind in ('task_started','task_complete','turn_aborted','token_count','thread_settings_applied'):
             q['type'] = kind
             if isinstance(p.get('turn_id'),str): q['turn_id'] = p['turn_id'][:256]
+            if kind == 'task_started':
+                attribution=p.get('turn_attribution');root=progress_id(p.get('root_turn_id'))
+                if not root and isinstance(attribution,dict):root=progress_id(attribution.get('root_turn_id'))
+                if root:q['root_turn_id']=root
             if kind == 'thread_settings_applied':
                 try:q['thread_id']=str(uuid.UUID(p.get('thread_id')))
                 except (ValueError,TypeError,AttributeError):return None
             if kind == 'task_complete':
+                error=p.get('error')
+                if isinstance(error,dict) and isinstance(error.get('message'),str):q['hasTerminalError']=True
                 for k in ('time_to_first_token_ms','duration_ms'):
                     value=p.get(k)
                     if isinstance(value,(int,float)) and not isinstance(value,bool) and 0<=value<=3600000:q[k]=value
@@ -89,6 +132,14 @@ enum SessionLogProbe {
                     if isinstance(last.get('output_tokens'),int):
                         q['info']['last_token_usage']={'output_tokens':last['output_tokens']}
                         if isinstance(last.get('reasoning_output_tokens'),int):q['info']['last_token_usage']['reasoning_output_tokens']=last['reasoning_output_tokens']
+        elif outer == 'event_msg' and kind == 'thread_goal_updated':
+            goal=goal_fields(p.get('goal'));tid=progress_id(p.get('threadId'))
+            if not goal or not tid:return None
+            q={'type':kind,'threadId':tid,'goal':goal}
+            if p.get('turnId') is not None:
+                turn=progress_id(p['turnId'])
+                if not turn:return None
+                q['turnId']=turn
         elif outer == 'token_usage_record':
             usage=p.get('usage') or {}
             if not isinstance(usage,dict) or not isinstance(usage.get('output_tokens'),int) or isinstance(usage.get('output_tokens'),bool) or usage['output_tokens']<0:return None
@@ -100,8 +151,21 @@ enum SessionLogProbe {
         elif outer == 'response_item' and kind in ('function_call','custom_tool_call','function_call_output','custom_tool_call_output','reasoning','message'):
             if kind == 'message' and p.get('role') != 'assistant': return None
             q['type'] = kind
-            for k in ('call_id','name','role','phase'):
+            for k in ('call_id','name','role','phase','namespace'):
                 if isinstance(p.get(k),str): q[k] = p[k][:256]
+            if kind=='function_call' and progress_tool(p.get('name'),p.get('namespace')):
+                percent=progress_arguments(p.get('arguments'))
+                if percent is None:return None
+                q={'type':'pacer_progress_call','call_id':progress_id(p.get('call_id')),'percent':percent}
+            elif kind=='function_call_output' and progress_ack(p.get('output')):
+                q={'type':'pacer_progress_result','call_id':progress_id(p.get('call_id')),'accepted':True}
+            if q['type'] in ('pacer_progress_call','pacer_progress_result'):
+                if not q['call_id']:return None
+                metadata=p.get('internal_chat_message_metadata_passthrough')
+                turn=p.get('turn_id') or (metadata.get('turn_id') if isinstance(metadata,dict) else None)
+                if turn is not None:
+                    if not progress_id(turn):return None
+                    q['turn_id']=turn
         else: return None
         return {'timestamp':str(o.get('timestamp',''))[:80], 'type':outer, 'payload':q}
     def parse(line):
