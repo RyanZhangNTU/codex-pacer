@@ -66,7 +66,10 @@ public sealed class IconGlyph : FrameworkElement
             ["exclamationmark.triangle"] = "M11,3 Q12,1 13,3 L22,19 Q23,21 21,21 H3 Q1,21 2,19 Z M12,8 V14 M12,17.5 V17.7",
             ["cloud"] = "M6,18.5 C-0.5,18.5 0,9.5 6,9 C6.4,2.5 15,1.5 17.3,8.5 C24,7.5 25,18.5 18,18.5 Z",
             // Waiting on background work until it wakes the request: three rising z, large to small.
-            ["zzz"] = "M3,13 H10 L3,21 H10 M11.5,7 H16.5 L11.5,12.5 H16.5 M17.5,2.5 H21 L17.5,6.5 H21",
+            // Waiting on background work: a moon with two z's, as the Mac's moon.zzz.
+            ["moon.zzz"] = "M11.8,6.2 A6.6,6.6 0 1 0 18.7,15.1 A5.2,5.2 0 0 1 11.8,6.2 Z M14.6,3.6 H17.5 L14.6,6.5 H17.5 M18.4,8.4 H20.6 L18.4,10.6 H20.6",
+            // Asking the user: a speech bubble with a question mark.
+            ["questionmark.bubble"] = "M5,3.5 H19 Q21,3.5 21,5.5 V15 Q21,17 19,17 H10 L5,21 V17 Q3,17 3,15 V5.5 Q3,3.5 5,3.5 Z M9.6,8.3 C9.6,5.6 14.4,5.6 14.4,8.3 C14.4,10 12,10.2 12,12 M12,14.4 V14.6",
             ["arrow.triangle.branch"] = "M12,21 V13 M12,13 L4,3 M12,13 L20,3 M3,3 H7 M3,3 V7 M21,3 H17 M21,3 V7",
             ["moon"] = "M18.9,16.5 C10.6,18 6,11 9,3.3 C0,6.2 2,20.7 12,20.7 C15.2,20.7 17.5,19.2 18.9,16.5 Z",
             ["hand.raised"] = "M7.5,13 V6.5 Q7.5,4.5 9,4.5 Q10.5,4.5 10.5,6.5 V11 M10.5,7 V3.5 Q10.5,1.5 12,1.5 Q13.5,1.5 13.5,3.5 V11 M13.5,7 V4.7 Q13.5,2.7 15,2.7 Q16.5,2.7 16.5,4.7 V12 M16.5,8 Q16.5,6 18,6 Q19.5,6 19.5,8 V15 C19.5,23 9,24 6,18 L3,12.5 Q2,10.5 3.5,10 Q5,9.5 7.5,13 Z",

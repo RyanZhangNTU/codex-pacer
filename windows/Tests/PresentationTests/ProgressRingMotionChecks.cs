@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,9 +9,12 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using CodexPacer.Windows;
 
-/// The ring's looping motion starts from its finished state. Task rows are
-/// rebuilt for every snapshot, so a waiting request's new ring must breathe
-/// even though making it visible runs its motion update mid-show.
+/// The task icon's motion, as the Mac draws it. The ring's loops start from its
+/// finished state: task rows are rebuilt for every snapshot, so a waiting
+/// request's new ring must breathe even though making it visible runs its
+/// motion update mid-show. The face plays a new state's arrival once, never on
+/// first sight or a rebuilt row; and the collapsed badge shows a single task's
+/// estimate in place of its orbit.
 internal static class ProgressRingMotionChecks
 {
     internal static async Task Run()
@@ -43,15 +47,17 @@ internal static class ProgressRingMotionChecks
                 await PresentationWait.UntilAsync(() => ring.IsLoaded, "The progress ring must enter the real visual tree");
                 return ring;
             }
-            async Task<TaskProgressRing> Shown(string? state, string mode, double fraction, bool animate = true)
+            async Task<TaskProgressRing> Shown(string? state, string mode, double fraction, bool animate = true, bool stale = false)
             {
                 await Discard();
                 current = await Loaded();
-                current.Show(id, state, mode, fraction, false, Colors.Orange, animate);
+                current.Show(id, state, mode, fraction, stale, Colors.Orange, animate);
                 return current;
             }
             var working = await Shown("reported", "working", 0.4);
-            Check(!working.Breathing && working.HasEndlessClocks, "A working request runs its dot instead of breathing");
+            Check(!working.Breathing && working.Loops == "flow", "A working request runs its light along the arc instead of breathing");
+            Check((await Shown("reported", "longStep", 0.4)).Loops == "step", "A long step stops the light and breathes past the head");
+            Check((await Shown("reported", "working", 0.4, stale: true)).Loops == "", "A stale estimate dims and keeps still");
             Check((await Shown("reported", "waiting", 0.4)).Breathing, "A rebuilt row for the same estimate breathes once its request waits");
             Check((await Shown("reported", "waiting", 0.4)).Breathing, "Every rebuild of a waiting row keeps breathing");
             var still = await Shown("reported", "waiting", 0.4, animate: false);
@@ -62,13 +68,17 @@ internal static class ProgressRingMotionChecks
             paused.SetMotion(true);
             Check(paused.Breathing, "Motion switched back on resumes it");
             await Shown(null, "working", 0);
-            Check((await Shown("pending", "waiting", 0)).Breathing, "A waiting request without an estimate breathes its dashes");
+            var waiting = await Shown("pending", "waiting", 0);
+            Check(waiting.Breathing && waiting.CometStill, "A waiting request without an estimate shows a still circle that breathes");
             Check(!(await Shown("reported", "done", 1)).Breathing, "An ended request keeps still");
-            // A request that never reported (a cloud run) ends from its turning dashes.
+            // A request that never reported (a cloud run) ends from its turning comet.
             await Shown(null, "working", 0);
-            Check((await Shown("pending", "working", 0)).HasEndlessClocks, "Dashes turn while a request without an estimate works");
+            var comet = await Shown("pending", "working", 0);
+            Check(comet.Loops == "spin" && !comet.CometStill && comet.CometGrowing, "A new request's comet turns and grows its tail from a point");
+            Check((await Shown("pending", "longStep", 0)).Loops == "spin", "A long step keeps the comet turning, slower");
+            Check((await Shown("pending", "working", 0, animate: false)).CometStill, "Without motion the comet is a still circle");
             var filled = await Shown("reported", "done", 1);
-            Check(!filled.HasEndlessClocks, "The ending stops the dashes");
+            Check(!filled.HasEndlessClocks, "The ending stops the comet");
             Check(filled.DisplayFraction < 0.01 && filled.HasAnimatedProperties, "The ending sweeps the arc to full instead of jumping there");
             // Downward estimates use a sine curve. Reapplying that curve from
             // zero on each rebuild changes its trajectory; resume its clock.
@@ -122,8 +132,63 @@ internal static class ProgressRingMotionChecks
             current.Show(id, "pending", "paused", 0, false, Colors.Turquoise, true, completionPulseOnly: true);
             Check(!current.HasEndlessClocks, "A paused Codex ring is static");
             await Discard();
-            Check(IconGlyph.Has("zzz"), "A turn waiting for its background work has its own drawn glyph");
-            Console.WriteLine("PASS progress ring: breathing, reduced motion, completion sweeps, Codex completion-only pulses, continuous downward rebuilds and real Unloaded cleanup");
+            Check(IconGlyph.Has("moon.zzz") && TaskGlyphArt.Parts("moon.zzz").Count == 3, "A turn waiting for its background work has its own drawn glyph");
+
+            // The face: arrivals play once, never on first sight or a rebuilt row.
+            TaskStatusIcon? icon = null;
+            EngineTaskRow Row(string task, string symbol, string? state, string mode, double fraction, bool read = false) =>
+                new(task, "claude", "Task", "Status", null, null, null, "running", symbol, null, "Model", null, null, false, null, null, 0, false, false, read, null, false,
+                    ProgressState: state, ProgressFraction: fraction, ProgressStale: false, ProgressMode: mode);
+            async Task<TaskStatusIcon> Face(string task, string symbol, string? state = "reported", string mode = "working", double fraction = 0.4, bool animate = true, bool read = false)
+            {
+                if (icon != null)
+                {
+                    var removed = icon; host.Children.Remove(removed);
+                    await PresentationWait.UntilAsync(() => !removed.IsLoaded, "Removing a loaded icon must deliver Unloaded");
+                    Check(!removed.RhythmsRunning && !removed.Arriving && !removed.Ring.HasEndlessClocks, "Unloaded stops the face's rhythms, arrivals and ring loops");
+                }
+                icon = new TaskStatusIcon(); host.Children.Add(icon);
+                await PresentationWait.UntilAsync(() => icon.IsLoaded, "The status icon must enter the real visual tree");
+                icon.Show(Row(task, symbol, state, mode, fraction, read), Colors.Orange, animate);
+                return icon;
+            }
+            string task = "status-icon-check-" + Guid.NewGuid().ToString("N");
+            var first = await Face(task, "checkmark.circle", "reported", "done", 1);
+            Check(first.Face == "solid:checkmark.circle" && !first.Arriving, "A task seen for the first time draws its state without its arrival");
+            task = "status-icon-check-" + Guid.NewGuid().ToString("N");
+            var thinking = await Face(task, "sparkle");
+            Check(thinking.Face == "working:sparkle" && thinking.RhythmsRunning, "A working stage lights its glyph's parts in turn");
+            thinking.Show(Row(task, "terminal", "reported", "working", 0.4), Colors.Orange, true);
+            Check(thinking.GlyphLayers == 2 && thinking.Face == "working:terminal", "A stage change hands the old glyph over to the new one");
+            await PresentationWait.UntilAsync(() => thinking.GlyphLayers == 1, "The old glyph leaves once the new one has grown in");
+            thinking.Show(Row(task, "checkmark.circle", "reported", "done", 1), Colors.Orange, true);
+            Check(thinking.Arriving && !thinking.RhythmsRunning, "An ending fills its disc and draws its check once");
+            var rebuilt = await Face(task, "checkmark.circle", "reported", "done", 1);
+            Check(!rebuilt.Arriving && rebuilt.Face == "solid:checkmark.circle", "A rebuilt row draws the ending without replaying it");
+            task = "status-icon-check-" + Guid.NewGuid().ToString("N");
+            var asking = await Face(task, "terminal");
+            asking.Show(Row(task, "hand.raised", "reported", "attention", 0.4), Colors.Orange, true);
+            Check(asking.Arriving && asking.Face == "solid:hand.raised", "A request for the user fills, bounces and rings");
+            Check(!(await Face(task + "-still", "sparkle", animate: false)).RhythmsRunning, "Reduced motion leaves the glyph still");
+            await Face(task + "-last", "moon", null);
+            Check(icon!.Face == "plain:moon", "An unknown state shows the moon alone");
+
+            // The collapsed badge: one working estimate replaces the orbit with its arc.
+            if (icon != null) { host.Children.Remove(icon); icon = null; }
+            var badge = new ActivityBadge(); host.Children.Add(badge);
+            await PresentationWait.UntilAsync(() => badge.IsLoaded, "The badge must enter the real visual tree");
+            var header = new EngineHeader(1, "sparkle", new Dictionary<string, int> { ["claude"] = 1 }, null, null, null, false, "1", 0.4, false, false);
+            badge.Update(header, true);
+            Check(badge.ShowsEstimate && badge.EstimateLoops == "flow" && !badge.RotationScheduling.FallbackClock && !badge.RotationScheduling.Composed,
+                "A single working estimate replaces the orbit with its arc and running light");
+            badge.Update(header with { ProgressLongStep = true }, true);
+            Check(badge.EstimateLoops == "step", "A long step breathes past the badge arc's head");
+            badge.Update(header with { ProgressFraction = null, ProgressLongStep = null, ProgressStale = null }, true);
+            Check(!badge.ShowsEstimate && badge.EstimateLoops == "", "Without an estimate the orbit returns");
+            badge.Update(new EngineHeader(0, "checkmark.circle", new Dictionary<string, int>(), null, "checkmark.circle", "claude", true, "0"), true);
+            Check(badge.CoreIsSolid, "When everything has ended the core is a solid disc under a dark mark");
+            host.Children.Remove(badge);
+            Console.WriteLine("PASS progress ring: comet, running light, long-step breath, breathing, reduced motion, completion sweeps, Codex completion-only pulses, continuous downward rebuilds, one-time arrivals, stage changes, badge estimate and real Unloaded cleanup");
         }
         finally { window.Close(); }
     }

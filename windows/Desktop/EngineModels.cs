@@ -100,7 +100,8 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     string? ProgressState = null, double? ProgressFraction = null, bool? ProgressStale = null, string? ProgressText = null,
     string? ProgressMode = null);
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
-    string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null);
+    string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
+    double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null);
 internal sealed record WalletSpan(double Start, double End);
 internal sealed record EngineWallet(string State, double? Balance, string Whole, string Cents, string Subtitle,
     string? Compact, IReadOnlyList<double> Hourly, IReadOnlyList<WalletSpan> Peak, double Angle, bool PeakNow,

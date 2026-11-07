@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -9,7 +10,12 @@ using System.Windows.Shapes;
 
 namespace CodexPacer.Windows;
 
-/// The self-reported progress ring drawn around a task row's status icon.
+/// The self-reported progress ring drawn around a task row's status icon, as
+/// the Mac's TaskStatusIconNSView draws it: a comet circles while a request
+/// works without an estimate, slower with a shorter tail during a long step; a
+/// reported estimate is an arc with a soft glow and a band of light running
+/// along it; during a long step the light stops and the stretch past the head
+/// breathes; a request waiting for its background work breathes as a whole.
 /// Task rows are rebuilt whenever a snapshot changes them, so each ring
 /// resumes from what the previous row for the same task was showing instead
 /// of restarting its motion. Every animation is interruptible: a new value
@@ -25,40 +31,34 @@ public sealed class TaskProgressRing : Grid
     public static readonly DependencyProperty GhostFractionProperty = DependencyProperty.Register(nameof(GhostFraction), typeof(double),
         typeof(TaskProgressRing), new PropertyMetadata(0.0, (owner, _) => ((TaskProgressRing)owner).UpdateGhost()));
     public double GhostFraction { get => (double)GetValue(GhostFractionProperty); set => SetValue(GhostFractionProperty, value); }
-    /// 0...1 along the reported arc; the light dot shows that work moves on.
-    public static readonly DependencyProperty DotPhaseProperty = DependencyProperty.Register(nameof(DotPhase), typeof(double),
-        typeof(TaskProgressRing), new PropertyMetadata(0.0, (owner, _) => ((TaskProgressRing)owner).UpdateDot()));
-    public double DotPhase { get => (double)GetValue(DotPhaseProperty); set => SetValue(DotPhaseProperty, value); }
-
     private static readonly Brush TrackInk = PacerPalette.Ink(255, 255, 255, 20);
-    private static readonly Brush DotInk = PacerPalette.Ink(255, 255, 255, 235);
-    private static readonly Stopwatch Clock = Stopwatch.StartNew();
+    internal static readonly Stopwatch Clock = Stopwatch.StartNew();
     private static readonly Dictionary<string, Memory> Memories = new();
-    private static double Now => Clock.Elapsed.TotalSeconds;
-    private const double RotationPeriod = 6, DotTravel = 1.6, DotPeriod = 2, BreathPeriod = 2.4;
+    internal static double Now => Clock.Elapsed.TotalSeconds;
+    /// The comet's turn: a working request, and a long step.
+    internal const double WorkingPeriod = 2.0, LongStepPeriod = 3.2;
+    /// The comet's tail as a share of the circle; a new request's grows from a point.
+    internal const double WorkingTail = 0.5, LongStepTail = 0.26, LaunchTail = 0.015;
     /// A waiting ring breathes down to this share of its resting opacity.
-    private const double BreathLow = 0.2;
+    private const double BreathPeriod = 4, BreathLow = 0.3;
+    /// The comet's resting opacity; the arc's is 1, or 0.45 once stale.
+    private const double PendingOpacity = 1, StaleOpacity = 0.45;
 
-    private readonly Ellipse pending = new()
-    {
-        StrokeThickness = Stroke, StrokeDashCap = PenLineCap.Round, Opacity = 0,
-        // Dash and gap lengths are multiples of the stroke: 2.2 pt on, 4.6 pt off.
-        StrokeDashArray = new DoubleCollection { 1.1, 2.3 }, RenderTransformOrigin = new Point(0.5, 0.5)
-    };
+    private readonly CometPaint pending = new(Radius, Stroke) { Width = Diameter, Height = Diameter, Opacity = 0, RenderTransformOrigin = new Point(0.5, 0.5) };
     private readonly Ellipse track = new() { StrokeThickness = Stroke, Stroke = TrackInk, Opacity = 0 };
     private readonly Path ghost = new() { StrokeThickness = Stroke, Opacity = 0 };
-    private readonly Path arc = new() { StrokeThickness = Stroke, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round };
-    private readonly Ellipse dot = new() { Width = 3.6, Height = 3.6, Opacity = 0, Fill = DotInk };
-    private readonly TranslateTransform dotShift = new();
+    private readonly EstimatePaint arc = new(EstimatePaint.Layer.Arc, Radius, Stroke, 4.5) { Width = Diameter, Height = Diameter };
+    private readonly EstimatePaint flow = new(EstimatePaint.Layer.Flow, Radius, Stroke, 0) { Width = Diameter, Height = Diameter };
+    private readonly EstimatePaint step = new(EstimatePaint.Layer.Step, Radius, Stroke, 0) { Width = Diameter, Height = Diameter, Opacity = 0 };
     private readonly RotateTransform rotation = new();
     private readonly ScaleTransform scale = new(1, 1);
     private readonly SolidColorBrush ink = new(Colors.Transparent);
     private bool motion, pendingShown, dim, showing;
     /// Endless clocks are leased so stopping one removes it from WPF's clock
     /// manager; a clock only detached from its property ticks until a GC.
-    private AnimationLease? spinLease, dotLease, breathLease;
-    private AnimationLease? sweepLease;
-    private bool dotting => dotLease != null;
+    private AnimationLease? spinLease, flowLease, stepLease, breathLease;
+    private AnimationLease? sweepLease, tailLease;
+    private double? spinningPeriod, flowingTo;
     /// The element whose opacity breathes while the request waits, if any.
     private UIElement? breathingTarget;
     /// The request's lifecycle mode from the engine: working, longStep,
@@ -79,6 +79,10 @@ public sealed class TaskProgressRing : Grid
         public double Seen;
         public WeakReference<AnimationLease>? Sweep;
         public int SweepGeneration;
+        /// The comet's turn: its angle at `SpinEpoch` and its period. A long
+        /// step changes the period from the angle shown at that moment.
+        public double SpinOrigin, SpinEpoch, SpinPeriod = WorkingPeriod;
+        public double SpinAngle(double now) => (SpinOrigin + (now - SpinEpoch) / SpinPeriod * 360) % 360;
         public double Elapsed(double now)
         {
             // A live renderer is authoritative even if its last tick is old.
@@ -101,8 +105,10 @@ public sealed class TaskProgressRing : Grid
     {
         Width = Height = Diameter; IsHitTestVisible = false; Visibility = Visibility.Collapsed;
         RenderTransformOrigin = new Point(0.5, 0.5); RenderTransform = scale;
-        pending.RenderTransform = rotation; pending.Stroke = ink; ghost.Stroke = ink; arc.Stroke = ink; dot.RenderTransform = dotShift;
-        Children.Add(pending); Children.Add(track); Children.Add(ghost); Children.Add(arc); Children.Add(dot);
+        pending.RenderTransform = rotation; ghost.Stroke = ink;
+        // The colour animates through one brush; the drawn layers follow it.
+        ink.Changed += (_, _) => { pending.Ink = arc.Ink = step.Ink = ink.Color; };
+        Children.Add(track); Children.Add(pending); Children.Add(ghost); Children.Add(arc); Children.Add(flow); Children.Add(step);
         IsVisibleChanged += (_, _) => UpdateSpin();
         Unloaded += (_, _) => Halt();
     }
@@ -133,7 +139,7 @@ public sealed class TaskProgressRing : Grid
             if (previous == null) { Visibility = Visibility.Collapsed; return Change.None; }
             // The turn ended without an estimate, or the switch went off.
             ink.Color = previous.Color;
-            if (previous.State == "pending") { pending.Opacity = 0.6; track.Opacity = 0; }
+            if (previous.State == "pending") { pending.Opacity = PendingOpacity; track.Opacity = 0; }
             else { track.Opacity = 1; SetFraction(previous.Displayed(now)); }
             Visibility = Visibility.Visible;
             if (!animate) { Visibility = Visibility.Collapsed; return Change.Disappeared; }
@@ -153,12 +159,11 @@ public sealed class TaskProgressRing : Grid
         else ink.Color = color;
         if (appeared && animate && previous == null && state == "pending")
         {
-            Opacity = 0; scale.ScaleX = scale.ScaleY = 0.85;
-            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-            BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromSeconds(0.25)) { EasingFunction = ease });
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.85, 1, TimeSpan.FromSeconds(0.25)) { EasingFunction = ease });
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.85, 1, TimeSpan.FromSeconds(0.25)) { EasingFunction = ease });
+            // A new request's comet grows its tail from a point, as on the Mac.
+            BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromSeconds(0.25)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            AnimateTail(LaunchTail, WorkingTail, 0.9);
         }
+        else if (previous == null) { tailLease?.Dispose(); tailLease = null; pending.BeginAnimation(CometPaint.TailProperty, null); pending.Tail = Tail(lifecycle); }
         // A working request without a new estimate for a while dims.
         bool dimmed = state == "reported" && stale;
         // Leaving the wait, the element eases from the breath's current opacity.
@@ -170,23 +175,30 @@ public sealed class TaskProgressRing : Grid
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         }
         var memory = new Memory { State = state, Color = color, Seen = now, Stale = dimmed, Breathing = mode == "waiting", Done = mode == "done" };
+        // The comet keeps its turn across rebuilt rows.
+        if (previous != null) { memory.SpinOrigin = previous.SpinOrigin; memory.SpinEpoch = previous.SpinEpoch; memory.SpinPeriod = previous.SpinPeriod; }
+        else { memory.SpinOrigin = 0; memory.SpinEpoch = now; memory.SpinPeriod = WorkingPeriod; }
         if (state == "pending")
         {
             double shown = previous?.State == "reported" ? previous.Displayed(now) : 0;
             pendingShown = true; arc.Opacity = 1; ghost.Opacity = 0; dim = false; targetFraction = 0;
             if (animate && shown > 0.0005)
             {
-                // A new turn replaces an old estimate: retract it, then dash in.
+                // A new turn replaces an old estimate: retract it, then the comet comes in.
                 track.Opacity = 1; pending.Opacity = 0;
                 Sweep(shown, 0, 0.3, new QuadraticEase { EasingMode = EasingMode.EaseIn }, 0);
                 track.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, TimeSpan.FromSeconds(0.2)) { BeginTime = TimeSpan.FromSeconds(0.3) });
-                pending.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 0.6, TimeSpan.FromSeconds(0.2)) { BeginTime = TimeSpan.FromSeconds(0.3) });
+                pending.BeginAnimation(OpacityProperty, new DoubleAnimation(0, PendingOpacity, TimeSpan.FromSeconds(0.2)) { BeginTime = TimeSpan.FromSeconds(0.3) });
             }
             else
             {
-                SetFraction(0); track.Opacity = 0; pending.Opacity = 0.6;
-                if (leftBreath && previous!.State == "pending") EaseOutOfBreath(pending, 0.6, 0.6, now);
+                SetFraction(0); track.Opacity = 0; pending.Opacity = PendingOpacity;
+                if (leftBreath && previous!.State == "pending") EaseOutOfBreath(pending, PendingOpacity, PendingOpacity, now);
             }
+            // A long step slows the comet and shortens its tail from the angle shown.
+            if (previous?.State == "pending" && Tail(previous.Breathing ? "working" : mode) != Tail(lifecycle) && animate && !appeared)
+                AnimateTail(pending.Tail, Tail(lifecycle), 0.4);
+            else if (!(appeared && animate && previous == null)) { tailLease?.Dispose(); tailLease = null; pending.BeginAnimation(CometPaint.TailProperty, null); pending.Tail = Tail(lifecycle); }
             Memories[id] = memory;
             return appeared ? Change.Appeared : Change.Shown;
         }
@@ -203,7 +215,7 @@ public sealed class TaskProgressRing : Grid
             else SetFraction(target);
             previous.Seen = now; previous.Color = color;
             Fade(previous.Stale, dimmed, animate);
-            if (leftBreath) EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
+            if (leftBreath) EaseOutOfBreath(arc, 1, dimmed ? StaleOpacity : 1, now);
             if (animate && justCompleted) Pulse(Math.Max(0, remaining));
             previous.Done = memory.Done;
             previous.Stale = dimmed; previous.Breathing = mode == "waiting"; Memories[id] = previous;
@@ -215,7 +227,7 @@ public sealed class TaskProgressRing : Grid
         {
             // The first estimate, or the ending of a request that never reported
             // (a cloud one): the dashes close into the track, then the arc sweeps.
-            pending.BeginAnimation(OpacityProperty, new DoubleAnimation(previous.Breathing ? BreathOpacity(now, 0.6) : pending.Opacity, 0, TimeSpan.FromSeconds(0.2)));
+            pending.BeginAnimation(OpacityProperty, new DoubleAnimation(previous.Breathing ? BreathOpacity(now, PendingOpacity) : pending.Opacity, 0, TimeSpan.FromSeconds(0.2)));
             track.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromSeconds(0.2)));
             delay = 0.2; duration = 0.3 + 0.3 * target; ease2 = new CubicEase { EasingMode = EasingMode.EaseOut };
         }
@@ -238,7 +250,7 @@ public sealed class TaskProgressRing : Grid
         if (animate && previous != null && Math.Abs(target - from) > 0.0005) Sweep(from, target, duration, ease2, delay, memory: memory);
         else { arc.BeginAnimation(OpacityProperty, null); SetFraction(target); duration = 0; memory.Duration = 0; }
         Fade(previous?.Stale ?? false, dimmed, animate && previous != null);
-        if (leftBreath && previous!.State == "reported") EaseOutOfBreath(arc, 1, dimmed ? 0.45 : 1, now);
+        if (leftBreath && previous!.State == "reported") EaseOutOfBreath(arc, 1, dimmed ? StaleOpacity : 1, now);
         bool full = target >= 0.9995;
         if (full && animate && (justCompleted || !completionPulseOnly && previous?.Full == false && mode is ("working" or "done")))
             Pulse(delay + duration);
@@ -274,15 +286,26 @@ public sealed class TaskProgressRing : Grid
     }
     internal void Halt()
     {
-        sweepLease?.Dispose(); sweepLease = null;
-        spinLease?.Dispose(); spinLease = null; dotLease?.Dispose(); dotLease = null;
-        breathLease?.Dispose(); breathLease = null; breathingTarget = null;
+        sweepLease?.Dispose(); sweepLease = null; tailLease?.Dispose(); tailLease = null;
+        spinLease?.Dispose(); spinLease = null; flowLease?.Dispose(); flowLease = null; stepLease?.Dispose(); stepLease = null;
+        breathLease?.Dispose(); breathLease = null; breathingTarget = null; spinningPeriod = null; flowingTo = null;
         rotation.BeginAnimation(RotateTransform.AngleProperty, null);
-        foreach (var element in new UIElement[] { this, pending, track, ghost, arc, dot }) element.BeginAnimation(OpacityProperty, null);
-        BeginAnimation(DisplayFractionProperty, null); BeginAnimation(GhostFractionProperty, null); BeginAnimation(DotPhaseProperty, null);
-        dot.Opacity = 0;
+        foreach (var element in new UIElement[] { this, pending, track, ghost, arc, flow, step }) element.BeginAnimation(OpacityProperty, null);
+        BeginAnimation(DisplayFractionProperty, null); BeginAnimation(GhostFractionProperty, null);
+        flow.BeginAnimation(EstimatePaint.FrontProperty, null); flow.Flowing = false; pending.BeginAnimation(CometPaint.TailProperty, null);
         scale.BeginAnimation(ScaleTransform.ScaleXProperty, null); scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         ink.BeginAnimation(SolidColorBrush.ColorProperty, null);
+    }
+    /// The comet's tail for a lifecycle mode.
+    private static double Tail(string? lifecycle) => lifecycle == "longStep" ? LongStepTail : WorkingTail;
+    private void AnimateTail(double from, double to, double seconds)
+    {
+        tailLease?.Dispose(); pending.Tail = to;
+        // The Mac's launch curve, cubic-bezier(.22, 1, .36, 1).
+        var grow = new DoubleAnimationUsingKeyFrames();
+        grow.KeyFrames.Add(new DiscreteDoubleKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        grow.KeyFrames.Add(new SplineDoubleKeyFrame(to, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(seconds)), new KeySpline(0.22, 1, 0.36, 1)));
+        tailLease = new AnimationLease(grow, clock => pending.ApplyAnimationClock(CometPaint.TailProperty, clock), () => { tailLease = null; pending.Tail = to; });
     }
 
     private void SetFraction(double value)
@@ -314,66 +337,90 @@ public sealed class TaskProgressRing : Grid
     }
     private void Fade(bool wasStale, bool stale, bool animate)
     {
-        double target = stale ? 0.45 : 1;
+        double target = stale ? StaleOpacity : 1;
+        arc.Stale = stale;
         if (!animate || wasStale == stale) { arc.BeginAnimation(OpacityProperty, null); arc.Opacity = target; return; }
-        arc.BeginAnimation(OpacityProperty, new DoubleAnimation(wasStale ? 0.45 : 1, target, TimeSpan.FromSeconds(stale ? 0.6 : 0.2))
+        arc.BeginAnimation(OpacityProperty, new DoubleAnimation(wasStale ? StaleOpacity : 1, target, TimeSpan.FromSeconds(stale ? 0.6 : 0.2))
             { EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
     }
-    /// Looping motion by lifecycle mode. The dashes turn while the request
-    /// works without an estimate; a light dot runs along a reported arc while
-    /// it works; a waiting request breathes; a long step, a request waiting
-    /// for the user and an ended one keep still. Shared phases keep a rebuilt
-    /// row's motion where the old one was.
+    /// Looping motion by lifecycle mode, on the shared clock so a rebuilt row's
+    /// motion continues where the old one was. The comet turns while the request
+    /// works without an estimate (slower in a long step); light runs along a
+    /// working arc; the stretch past the head breathes in a long step; a waiting
+    /// request breathes. Without motion the comet is a still circle.
     private void UpdateSpin()
     {
         if (showing) return;
         bool live = motion && IsVisible && Visibility == Visibility.Visible;
+        double now = Now;
+        Memories.TryGetValue(taskID ?? "", out var memory);
         bool spin = live && pendingShown && mode is "working" or "longStep";
-        if (spin != (spinLease != null))
+        double? period = spin ? mode == "longStep" ? LongStepPeriod : WorkingPeriod : null;
+        if (period != spinningPeriod)
         {
-            // Stopping keeps the dashes where they are, so closing ones fade in place.
-            if (spinLease != null) rotation.Angle = SpinAngle;
-            spinLease?.Dispose(); spinLease = null;
-            if (spin)
+            // Stopping or changing speed keeps the comet where it is.
+            double angle = memory?.SpinAngle(now) ?? rotation.Angle;
+            spinLease?.Dispose(); spinLease = null; rotation.BeginAnimation(RotateTransform.AngleProperty, null); rotation.Angle = angle;
+            spinningPeriod = period;
+            if (period is double seconds)
             {
-                double phase = SpinAngle;
-                spinLease = new AnimationLease(new DoubleAnimation(phase, phase + 360, TimeSpan.FromSeconds(RotationPeriod))
-                    { RepeatBehavior = RepeatBehavior.Forever }, clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
+                if (memory != null && memory.SpinPeriod != seconds) { memory.SpinOrigin = angle; memory.SpinEpoch = now; memory.SpinPeriod = seconds; }
+                spinLease = new AnimationLease(new DoubleAnimation(angle, angle + 360, TimeSpan.FromSeconds(seconds)) { RepeatBehavior = RepeatBehavior.Forever },
+                    clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
             }
         }
-        bool travel = live && !pendingShown && !dim && mode == "working" && targetFraction is > 0.04 and < 0.9995;
-        if (travel != dotting)
+        pending.Still = pendingShown && !spin;
+        double? travel = live && !pendingShown && !dim && mode == "working" && targetFraction is > 0.04 and < 0.9995 ? targetFraction : null;
+        if (travel != flowingTo)
         {
-            dotLease?.Dispose(); dotLease = null;
-            if (!travel) DotPhase = 0;
-            else
+            flowLease?.Dispose(); flowLease = null; flow.BeginAnimation(EstimatePaint.FrontProperty, null);
+            flowingTo = travel; flow.Flowing = travel != null;
+            if (travel is double fraction)
             {
-                var run = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(DotPeriod), RepeatBehavior = RepeatBehavior.Forever,
-                    BeginTime = TimeSpan.FromSeconds(-(Now % DotPeriod)) };
+                // One run from the arc's start out through its head, then a rest; it never passes the head.
+                double reach = fraction + EstimatePaint.FlowLengths[0];
+                var run = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.FlowPeriod), RepeatBehavior = RepeatBehavior.Forever,
+                    BeginTime = TimeSpan.FromSeconds(-(now % EstimatePaint.FlowPeriod)) };
                 run.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-                run.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(DotTravel)), new SineEase { EasingMode = EasingMode.EaseInOut }));
-                run.KeyFrames.Add(new DiscreteDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(DotPeriod))));
-                dotLease = new AnimationLease(run, clock => ApplyAnimationClock(DotPhaseProperty, clock));
+                run.KeyFrames.Add(new LinearDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowTravel))));
+                run.KeyFrames.Add(new DiscreteDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowPeriod))));
+                flowLease = new AnimationLease(run, clock => flow.ApplyAnimationClock(EstimatePaint.FrontProperty, clock));
             }
-            UpdateDot();
         }
-        // The dashes breathe until the first estimate, the arc after it.
-        UIElement? breath = !live || mode != "waiting" ? null : pendingShown ? pending : (UIElement)arc;
-        if (breath != breathingTarget)
+        flow.Limit = targetFraction;
+        // A long step: the light stops and the stretch past the head breathes.
+        bool stepShown = !pendingShown && mode == "longStep" && targetFraction < 0.9995;
+        bool stepBreath = live && stepShown;
+        if (stepBreath != (stepLease != null))
+        {
+            stepLease?.Dispose(); stepLease = null; step.BeginAnimation(OpacityProperty, null);
+            if (stepBreath)
+            {
+                var breath = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.StepPeriod), RepeatBehavior = RepeatBehavior.Forever,
+                    BeginTime = TimeSpan.FromSeconds(-(now % EstimatePaint.StepPeriod)) };
+                var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+                breath.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+                breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.85, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod / 2)), ease));
+                breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod)), ease));
+                stepLease = new AnimationLease(breath, clock => step.ApplyAnimationClock(OpacityProperty, clock));
+            }
+        }
+        if (!stepBreath) step.Opacity = stepShown ? 0.55 : 0;
+        // The comet breathes until the first estimate, the arc after it.
+        UIElement? breath2 = !live || mode != "waiting" ? null : pendingShown ? pending : (UIElement)arc;
+        if (breath2 != breathingTarget)
         {
             StopBreathing();
-            if (breath is UIElement element)
+            if (breath2 is UIElement element)
             {
-                double high = element == pending ? 0.6 : 1;
+                double high = element == pending ? PendingOpacity : 1;
                 breathLease = new AnimationLease(new DoubleAnimation(high, high * BreathLow, TimeSpan.FromSeconds(BreathPeriod / 2))
                     { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-                      BeginTime = TimeSpan.FromSeconds(-(Now % BreathPeriod)) }, clock => element.ApplyAnimationClock(OpacityProperty, clock));
+                      BeginTime = TimeSpan.FromSeconds(-(now % BreathPeriod)) }, clock => element.ApplyAnimationClock(OpacityProperty, clock));
                 breathingTarget = element;
             }
         }
     }
-    /// The dashes' turn on the shared clock, so every row spins in step.
-    private static double SpinAngle => Now % RotationPeriod / RotationPeriod * 360;
     /// The opacity a breathing element shows at `now`. The breath runs from
     /// `high` to `high * BreathLow` and back on the shared clock, so a rebuilt
     /// row can pick it up exactly where the old one was.
@@ -392,22 +439,25 @@ public sealed class TaskProgressRing : Grid
         if (breathingTarget == null) return;
         breathLease?.Dispose(); breathLease = null;
         breathingTarget.BeginAnimation(OpacityProperty, null);
-        if (breathingTarget == pending) pending.Opacity = pendingShown ? 0.6 : 0; else arc.Opacity = dim ? 0.45 : 1;
+        if (breathingTarget == pending) pending.Opacity = pendingShown ? PendingOpacity : 0; else arc.Opacity = dim ? StaleOpacity : 1;
         breathingTarget = null;
     }
     /// Whether a waiting request's ring is breathing; read by the presentation checks.
     internal bool Breathing => breathLease?.IsActive == true && breathingTarget?.HasAnimatedProperties == true;
     /// Whether any endless clock is still leased; read by the presentation checks.
-    internal bool HasEndlessClocks => spinLease != null || dotLease != null || breathLease != null;
-    private void UpdateDot()
-    {
-        double phase = DotPhase;
-        if (!dotting || phase <= 0 || phase >= 1) { dot.Opacity = 0; return; }
-        double angle = phase * DisplayFraction * 2 * Math.PI;
-        dotShift.X = Radius * Math.Sin(angle); dotShift.Y = -Radius * Math.Cos(angle);
-        dot.Opacity = 0.9 * Math.Sin(Math.PI * phase);
-    }
-    private void UpdateArc() => arc.Data = ArcGeometry(DisplayFraction);
+    internal bool HasEndlessClocks => spinLease != null || flowLease != null || stepLease != null || breathLease != null;
+    /// What the ring loops now, for the presentation checks: spin, flow, step and breath.
+    internal string Loops => string.Join(",", new[] { spinLease != null ? "spin" : null, flowLease != null ? "flow" : null,
+        stepLease != null ? "step" : null, breathLease != null ? "breath" : null }.Where(value => value != null));
+    /// Whether the comet shows as a still circle; read by the presentation checks.
+    internal bool CometStill => pending.Still;
+    internal double CometTail => pending.Tail;
+    /// Whether the comet's tail is still growing or shrinking to its length.
+    internal bool CometGrowing => tailLease != null;
+    /// When a task's arc finishes its sweep, as seconds from now; the icon fills its disc after it.
+    internal static double SweepRemaining(string id) =>
+        Memories.TryGetValue(id, out var memory) && memory.State == "reported" ? Math.Max(0, memory.Duration - memory.Elapsed(Now)) : 0;
+    private void UpdateArc() { arc.Fraction = flow.Fraction = step.Fraction = DisplayFraction; }
     private void UpdateGhost() => ghost.Data = ArcGeometry(GhostFraction);
     private static Geometry? ArcGeometry(double fraction)
     {
