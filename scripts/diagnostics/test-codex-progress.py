@@ -1,4 +1,4 @@
-"""Run a real Codex CLI and Pacer engine against a loopback model fixture."""
+"""Run a real Codex CLI and a Pacer host (Windows engine or Mac app) against a loopback model fixture."""
 
 import argparse
 from contextlib import ExitStack
@@ -6,7 +6,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import plistlib
 import queue
+import re
+import shlex
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -18,6 +22,71 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 REPORTS = [63, 41]
+MAC_QA_ID = "com.codexpacer.app.qa.codex-progress"
+MAC_OWNER = {"PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"}
+MAC_SWITCH = "Show Codex Task Progress"
+MAC_SETUP = {"settingUp": "Setting up progress reporting…",
+             "ready": "Progress reporting is ready for new local Codex sessions.",
+             "conflict": "The Codex MCP configuration already has an entry named pacer_progress."}
+MAC_RING = {"working": "Self-reported progress about %d%%", "done": "Request done", "failed": "Failed at a self-reported %d%%"}
+# Lists a process's windows, prints the accessibility text of its windows one
+# element per line, or presses the control a label names (its own label, or a
+# text beside it in the same row). SwiftUI builds the tree once a client asks.
+MAC_HELPER = r"""
+import AppKit
+import ApplicationServices
+import CoreGraphics
+import Foundation
+
+let mode = CommandLine.arguments[1], pid = Int32(CommandLine.arguments[2])!
+if mode == "windows" {
+    let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+    for window in list where window[kCGWindowOwnerPID as String] as? Int32 == pid {
+        let bounds = window[kCGWindowBounds as String] as? [String: Double] ?? [:]
+        print(window[kCGWindowNumber as String] ?? 0, window[kCGWindowLayer as String] ?? 0,
+              (window[kCGWindowIsOnscreen as String] as? Bool) == true, bounds["Width"] ?? 0, bounds["Height"] ?? 0)
+    }
+    exit(0)
+}
+let app = AXUIElementCreateApplication(pid)
+AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+func value(_ element: AXUIElement, _ name: String) -> AnyObject? {
+    var result: AnyObject?
+    return AXUIElementCopyAttributeValue(element, name as CFString, &result) == .success ? result : nil
+}
+func labels(_ element: AXUIElement) -> [String] {
+    [kAXDescriptionAttribute, kAXTitleAttribute, kAXValueAttribute].compactMap { value(element, $0) as? String }.filter { !$0.isEmpty }
+}
+func pressable(_ element: AXUIElement) -> Bool {
+    var names: CFArray?
+    AXUIElementCopyActionNames(element, &names)
+    return ["AXCheckBox", "AXButton"].contains(value(element, kAXRoleAttribute) as? String ?? "")
+        && ((names as? [String]) ?? []).contains(kAXPressAction)
+}
+var pressed = false
+func walk(_ element: AXUIElement, depth: Int) {
+    guard depth < 40, !pressed else { return }
+    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+    if mode == "press" || mode == "press-and-quit" {
+        // A Settings section is one group: a switch follows its title and help text.
+        let needle = CommandLine.arguments[3]
+        var control = pressable(element) && labels(element).contains(needle) ? element : nil
+        if control == nil, let index = children.firstIndex(where: { labels($0).contains(needle) }), !pressable(children[index]) {
+            control = children[(index + 1)...].first(where: pressable)
+        }
+        if let control { pressed = AXUIElementPerformAction(control, kAXPressAction as CFString) == .success; return }
+    } else {
+        for text in labels(element) { print(text.replacingOccurrences(of: "\n", with: " ")) }
+    }
+    for child in children { walk(child, depth: depth + 1) }
+}
+for window in value(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] { walk(window, depth: 0) }
+if mode == "press-and-quit" {
+    guard pressed else { exit(1) }
+    exit(NSRunningApplication(processIdentifier: pid)?.terminate() == true ? 0 : 2)
+}
+exit(mode == "press" && !pressed ? 1 : 0)
+"""
 
 
 class Lines:
@@ -163,7 +232,7 @@ class Fixture:
                     fixture.guidance_seen = "first useful tool batch" in json.dumps(request.get("tools", []))
                 if 2 <= index <= 3:
                     fixture.received[index - 2].set()
-                    if not fixture.resume[index - 2].wait(20):
+                    if not fixture.resume[index - 2].wait(90):
                         self.send_error(408)
                         return
                 if index == 3 and fixture.terminal == "failed":
@@ -239,6 +308,211 @@ def wait_turn(server, thread):
     raise RuntimeError("Timed out waiting for the Codex turn")
 
 
+class MacHost:
+    """A disposable copy of the built Mac app with its own preferences domain.
+
+    Pacer allows one instance per user, so the copy needs every other Pacer to
+    be quit. Launch arguments point it at the fixture profile with only the
+    Codex module, and its Settings window opens on the Codex pane.
+    """
+
+    def __init__(self, source, workspace, profile, codex, env, shots):
+        self.profile, self.codex, self.env, self.shots = profile, codex, env, shots
+        self.config = profile / "config.toml"
+        self.flag = profile / "pacer/codex-progress/native/enabled"
+        self.app = workspace / "Codex Pacer QA.app"
+        self.process = None
+        others = [row for row in subprocess.run(["ps", "-axo", "args="], capture_output=True, text=True).stdout.splitlines()
+                  if "Contents/MacOS/CodexPacerIsland" in row and "--codex-progress-mcp" not in row]
+        if others:
+            raise RuntimeError("Quit Pacer before the macOS check; it allows one instance per user")
+        shutil.copytree(source, self.app, symlinks=True)
+        info_path = self.app / "Contents/Info.plist"
+        info = plistlib.loads(info_path.read_bytes())
+        info.update(CFBundleIdentifier=MAC_QA_ID, CFBundleName="Codex Pacer QA")
+        info.pop("SUFeedURL", None)
+        info_path.write_bytes(plistlib.dumps(info))
+        subprocess.run(["codesign", "--force", "--sign", "-", str(self.app)], check=True, capture_output=True)
+        self.executable = self.app / "Contents/MacOS/CodexPacerIsland"
+        self.helper = workspace / "pacer-ui"
+        (workspace / "pacer-ui.swift").write_text(MAC_HELPER, encoding="utf-8")
+        subprocess.run(["xcrun", "swiftc", "-O", "-o", str(self.helper), str(workspace / "pacer-ui.swift")],
+                       check=True, capture_output=True)
+        subprocess.run(["defaults", "delete", MAC_QA_ID], capture_output=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.quit()
+        subprocess.run(["defaults", "delete", MAC_QA_ID], capture_output=True)
+
+    def launch(self, executable=None):
+        self.quit()
+        # The switch is never a launch argument, which would mask the preference
+        # the Settings switch writes. Flags follow the defaults pairs so each
+        # `-key value` parses as one setting.
+        argv = [str(self.executable), "-appLanguage", "en", "-settingsPane", "codex",
+                "-codexHome", str(self.profile), "-codexExecutable", executable or self.codex,
+                "-providerModule.codex", "enabled", "-providerModule.claude", "disabled", "-providerModule.deepseek", "disabled",
+                "-monitorSSH", "NO", "-monitorRemoteControl", "NO", "--settings", "--expanded"]
+        self.process = subprocess.Popen(argv, env=self.env, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2)
+        if self.process.poll() is not None:
+            raise RuntimeError("The macOS copy exited at launch")
+
+    def quit(self):
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+        self.process = None
+
+    def labels(self):
+        result = subprocess.run([str(self.helper), "ax", str(self.process.pid)], capture_output=True, text=True, timeout=15)
+        return result.stdout.splitlines()
+
+    def press(self, label, quit_after=False):
+        deadline = time.monotonic() + 20
+        mode = "press-and-quit" if quit_after else "press"
+        while time.monotonic() < deadline:
+            result = subprocess.run([str(self.helper), mode, str(self.process.pid), label], capture_output=True, timeout=15)
+            if result.returncode == 0:
+                return
+            if result.returncode != 1:
+                result.check_returncode()
+            time.sleep(0.25)
+        self.capture("failure")
+        raise RuntimeError("The macOS app has no control named " + repr(label))
+
+    def wait_until(self, condition, failure, timeout=20):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if condition():
+                return
+            time.sleep(0.2)
+        raise RuntimeError(failure)
+
+    def wait_label(self, accept, description, timeout=20, expanded=False):
+        deadline = time.monotonic() + timeout
+        seen, reopened = [], 0.0
+        while time.monotonic() < deadline:
+            seen = self.labels()
+            if any(accept(label) for label in seen):
+                return
+            # A click anywhere else collapses even a pinned island: the bar then
+            # counts a task but shows no rows. Opening Pacer again shows and pins
+            # the running island, as it does for a person.
+            hidden = any(re.match(r"\d+ tasks? · ", label) for label in seen) and not any(
+                label.startswith("Codex, ") for label in seen)
+            if expanded and hidden and time.monotonic() - reopened > 2:
+                reopened = time.monotonic()
+                subprocess.run([str(self.executable)], env=self.env, stdin=subprocess.DEVNULL,
+                               capture_output=True, timeout=15)
+            time.sleep(0.25)
+        self.capture("failure")
+        if self.shots:
+            (self.shots / "failure-labels.txt").write_text("\n".join(seen), encoding="utf-8")
+        rows = [label for label in seen if label.startswith("Codex, ") or "progress" in label.lower()]
+        raise RuntimeError("The macOS app did not show %s; saw %s" % (description, rows))
+
+    def capture(self, name):
+        if not self.shots:
+            return
+        rows = [line.split() for line in subprocess.run([str(self.helper), "windows", str(self.process.pid)],
+                                                         capture_output=True, text=True).stdout.splitlines()]
+        shown = [row for row in rows if len(row) == 5 and row[2] == "true"]
+        for kind, layer in (("island", "25"), ("settings", "0")):
+            match = [row for row in shown if row[1] == layer]
+            if match:
+                window = max(match, key=lambda row: float(row[3]) * float(row[4]))[0]
+                subprocess.run(["screencapture", "-x", "-o", "-l", window, str(self.shots / ("%s-%s.png" % (name, kind)))])
+
+    def entry(self):
+        return tomllib.loads(self.config.read_text(encoding="utf-8")).get("mcp_servers", {}).get("pacer_progress")
+
+    def wait_setup(self, state):
+        self.wait_label(lambda label: label == MAC_SETUP[state], "setup " + state)
+
+    def registered(self):
+        # Pacer standardizes paths, so /private/tmp may come back as /tmp.
+        entry = self.entry() or {}
+        args = entry.get("args") or []
+        return (set(entry) == {"command", "args", "env"} and entry["env"] == MAC_OWNER and len(args) == 2
+                and args[0] == "--codex-progress-mcp" and Path(args[1]).resolve() == self.profile.resolve()
+                and Path(entry["command"]).resolve() == self.executable.resolve())
+
+    def check_setup(self, workspace):
+        """Drives the Settings switch and Retry button themselves."""
+        self.launch()
+        time.sleep(2)
+        if self.entry() is not None or self.flag.exists():
+            raise RuntimeError("Setup ran while the switch was still off")
+        self.press(MAC_SWITCH)
+        self.wait_setup("ready")
+        self.capture("setup-ready")
+        if not self.registered() or self.flag.read_bytes() != b"on\n" or (self.profile / "hooks.json").exists():
+            raise RuntimeError("Unexpected registration from the macOS switch: %s" % self.entry())
+        ready = self.config.read_bytes()
+        self.launch()
+        self.wait_setup("ready")
+        if self.config.read_bytes() != ready:
+            raise RuntimeError("A relaunch rewrote the current registration")
+        self.press(MAC_SWITCH)
+        self.wait_until(lambda: not self.flag.exists() and self.entry() is None, "Turning the switch off left the registration")
+        if tomllib.loads(self.config.read_text(encoding="utf-8"))["mcp_servers"] != {
+                "unrelated_fixture": {"command": "keep-existing-mcp", "enabled": False}}:
+            raise RuntimeError("An unrelated MCP entry changed")
+        clean = self.config.read_bytes()
+        with self.config.open("a", encoding="utf-8") as output:
+            output.write('\n[mcp_servers.pacer_progress]\ncommand = "fixture-owner"\n')
+        conflict = self.config.read_bytes()
+        self.press(MAC_SWITCH)
+        self.wait_setup("conflict")
+        self.capture("setup-conflict")
+        if self.config.read_bytes() != conflict or self.flag.exists():
+            raise RuntimeError("Setup did not preserve a same-name user entry")
+        self.config.write_bytes(clean)
+        self.press("Retry")
+        self.wait_setup("ready")
+        if not self.registered():
+            raise RuntimeError("Retry did not restore the registration")
+        print("PASS macOS switch: Settings switch registers, persists, removes and reports a conflict; Retry recovers", flush=True)
+
+        # A slow Codex keeps setup waiting. Turning the switch off and quitting
+        # at once must still stop every reporter Codex already started.
+        slow = workspace / "slow-codex" / "codex"
+        slow.parent.mkdir()
+        slow.write_text('#!/bin/sh\nsleep 6\nexec %s "$@"\n' % shlex.quote(self.codex), encoding="utf-8")
+        slow.chmod(0o755)
+        self.launch(str(slow))
+        self.wait_setup("settingUp")
+        with Lines([str(self.executable), "--codex-progress-mcp", str(self.profile)], self.profile, self.env) as reporter:
+            reporter.rpc("initialize", {"protocolVersion": "2025-06-18"}, mcp=True)
+            call = {"name": "report_progress", "arguments": {"percent": 41}}
+            if reporter.rpc("tools/call", call, mcp=True)["isError"]:
+                raise RuntimeError("The existing reporter was not enabled before turning the switch off")
+            self.press(MAC_SWITCH, quit_after=True)
+            if self.process.wait(timeout=5) != 0:
+                raise RuntimeError("The macOS copy did not quit normally")
+            if self.flag.exists() or not reporter.rpc("tools/call", call, mcp=True)["isError"]:
+                raise RuntimeError("A connected reporter stayed enabled after turning off and immediately quitting")
+        self.launch()
+        self.wait_until(lambda: self.entry() is None, "The next launch kept the leftover registration")
+        self.press(MAC_SWITCH)
+        self.wait_setup("ready")
+        print("PASS macOS switch: a connected reporter stops after turning off and immediately quitting; the next launch cleans up", flush=True)
+
+    def check_ring(self, mode, fraction):
+        text = MAC_RING[mode] % round(fraction * 100) if "%" in MAC_RING[mode] else MAC_RING[mode]
+        self.wait_label(lambda label: label.startswith("Codex, ") and text in label, repr(text), timeout=75, expanded=True)
+        self.capture("ring-%s-%d" % (mode, round(fraction * 100)))
+
+
 def run(args, workspace):
     profile = workspace / "profile"
     work = workspace / "work"
@@ -274,46 +548,56 @@ request_max_retries = 0
 stream_max_retries = 0
 """ % server.server_port, encoding="utf-8")
         exe = str(args.codex.resolve())
-        executable = args.engine.resolve()
         app = None
         if args.client == "app-server":
             app = processes.enter_context(Lines([exe, "app-server"], work, env))
             app.rpc("initialize", {"clientInfo": {"name": "pacer_progress_fixture", "version": "1"}})
             app.send({"method": "initialized"})
-        configure_from_engine(executable, exe, profile, work, env)
-        with Lines([str(executable), "--read-only-diagnostics"], work, env) as engine:
+        engine = None
+        if args.mac_app:
+            host = processes.enter_context(MacHost(args.mac_app.resolve(), workspace, profile, exe, env, args.screenshots))
+            host.check_setup(workspace)
+            check = host.check_ring
+        else:
+            executable = args.engine.resolve()
+            configure_from_engine(executable, exe, profile, work, env)
+            engine = processes.enter_context(Lines([str(executable), "--read-only-diagnostics"], work, env))
             engine.rpc("initialize", {"enabledProviders": ["codex"], "codexHome": str(profile), "codexProgressRing": True,
                                       "monitorRemoteControl": False, "monitorSSH": False, "monitorWSL": False}, engine=True)
-            codex = None
-            try:
-                prompt = "Run the synthetic progress check."
-                if app:
-                    thread = app.rpc("thread/start", {"cwd": str(work)})["thread"]["id"]
-                    app.rpc("turn/start", {"threadId": thread, "input": [{"type": "text", "text": prompt, "text_elements": []}]})
-                else:
-                    codex = subprocess.Popen([exe, "exec", "--skip-git-repo-check", "--json", prompt], cwd=work, env=env,
-                                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                             creationflags=CREATE_NO_WINDOW)
-                for index, percent in enumerate(REPORTS):
-                    if not fixture.received[index].wait(15):
-                        raise RuntimeError("Codex did not execute the expected reporter call")
-                    check_ring(engine, profile, "working", percent / 100)
-                    print("PASS live report: %d%%" % percent, flush=True)
-                    fixture.resume[index].set()
-                success = wait_turn(app, thread) == "completed" if app else codex.wait(timeout=18) == 0
-                if success != (args.terminal == "done"):
-                    raise RuntimeError("Unexpected Codex terminal outcome")
-                check_ring(engine, profile, args.terminal, 1 if args.terminal == "done" else REPORTS[-1] / 100)
-                if not fixture.guidance_seen or fixture.sent != REPORTS:
-                    raise RuntimeError("The tool metadata did not supply the progress guidance")
-            finally:
-                for event in fixture.resume:
-                    event.set()
-                if codex and codex.poll() is None:
-                    codex.kill()
-                    codex.wait(timeout=5)
+            def check(mode, fraction):
+                check_ring(engine, profile, mode, fraction)
+        codex = None
+        try:
+            prompt = "Run the synthetic progress check."
+            if app:
+                thread = app.rpc("thread/start", {"cwd": str(work)})["thread"]["id"]
+                app.rpc("turn/start", {"threadId": thread, "input": [{"type": "text", "text": prompt, "text_elements": []}]})
+            else:
+                codex = subprocess.Popen([exe, "exec", "--skip-git-repo-check", "--json", prompt], cwd=work, env=env,
+                                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         creationflags=CREATE_NO_WINDOW)
+            for index, percent in enumerate(REPORTS):
+                if not fixture.received[index].wait(15):
+                    raise RuntimeError("Codex did not execute the expected reporter call")
+                check("working", percent / 100)
+                print("PASS live report: %d%%" % percent, flush=True)
+                fixture.resume[index].set()
+            success = wait_turn(app, thread) == "completed" if app else codex.wait(timeout=18) == 0
+            if success != (args.terminal == "done"):
+                raise RuntimeError("Unexpected Codex terminal outcome")
+            check(args.terminal, 1 if args.terminal == "done" else REPORTS[-1] / 100)
+            if not fixture.guidance_seen or fixture.sent != REPORTS:
+                raise RuntimeError("The tool metadata did not supply the progress guidance")
+        finally:
+            for event in fixture.resume:
+                event.set()
+            if codex and codex.poll() is None:
+                codex.kill()
+                codex.wait(timeout=5)
+        if engine:
             engine.rpc("shutdown", engine=True)
-    print("PASS " + args.client + ": automatic MCP setup, model guidance, " + args.terminal + ", cleanup and ownership")
+    print("PASS %s %s: automatic MCP setup, model guidance, %s, cleanup and ownership"
+          % ("macOS app" if args.mac_app else "engine", args.client, args.terminal))
 
 
 def installer_fixture(engine, codex):
@@ -366,14 +650,21 @@ def main():
     parser.add_argument("--engine", type=Path)
     parser.add_argument("--installer-fixture", action="store_true")
     parser.add_argument("--mac-reporter", type=Path)
+    parser.add_argument("--mac-app", type=Path, help="a built Codex Pacer.app; the check runs a disposable copy of it")
+    parser.add_argument("--screenshots", type=Path, help="with --mac-app, save island and Settings captures here")
     parser.add_argument("--terminal", choices=("done", "failed"), default="done")
     parser.add_argument("--client", choices=("cli", "app-server"), default="cli")
     parser.add_argument("--output", type=Path, default=ROOT / "output/codex-progress-tests")
     args = parser.parse_args()
-    if not args.mac_reporter and not (args.codex and args.engine):
-        parser.error("Provide --mac-reporter or both --codex and --engine.")
+    if not args.mac_reporter and not (args.codex and (args.engine or args.mac_app)):
+        parser.error("Provide --mac-reporter, or --codex with --engine or --mac-app.")
+    if args.engine and args.mac_app:
+        parser.error("Choose either the Windows engine or the macOS app.")
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
+        args.screenshots = args.screenshots.resolve()
     if args.installer_fixture:
-        if args.mac_reporter:
+        if args.mac_reporter or args.mac_app:
             parser.error("The installer fixture needs a Windows engine and Codex CLI.")
         installer_fixture(args.engine.resolve(), args.codex.resolve())
         return

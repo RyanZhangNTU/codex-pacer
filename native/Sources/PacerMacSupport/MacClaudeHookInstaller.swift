@@ -17,7 +17,16 @@ public struct MacClaudeHookStorage: ClaudeHookStorage {
     }
     public func isReadable(_ url: URL) -> Bool { FileManager.default.isReadableFile(atPath: url.path) }
     public func read(_ url: URL) throws -> Data {
-        let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+        // The path may change after validation. Open without waiting for a
+        // pipe writer and inspect the open file before reading it.
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == getuid() else {
+            throw ClaudeHookInstaller.Failure.unsafePath
+        }
         return try handle.read(upToCount: 2 * 1024 * 1024 + 1) ?? Data()
     }
     public func createDirectory(_ url: URL, permissions: UInt16) throws {
