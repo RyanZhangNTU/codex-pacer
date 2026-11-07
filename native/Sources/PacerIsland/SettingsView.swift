@@ -48,6 +48,7 @@ struct SettingsView: View {
     @AppStorage(IslandModel.showsClaudeCloudProjectsKey) private var showClaudeCloudProjects = true
     @AppStorage(IslandModel.claudeProgressRingKey) private var claudeProgressRing = false
     @AppStorage(IslandModel.codexProgressRingKey) private var codexProgressRing = false
+    @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekProgressRing = false
     @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
@@ -337,7 +338,8 @@ struct SettingsView: View {
         }
         if moduleEnabled(provider), provider == .deepseek {
             SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
-                showsTurnCost: $showsDeepSeekTurnCost, speedSource: $deepseekSpeedSource, panelStyle: $deepseekPanelStyle,
+                showsTurnCost: $showsDeepSeekTurnCost, showsProgressRing: $deepseekProgressRing,
+                speedSource: $deepseekSpeedSource, panelStyle: $deepseekPanelStyle,
                 alone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek],
                 ringSlot: model.deepseekValueShowsBudget ? QuotaRingSlot(rawValue: model.compactRingProviders.firstIndex(of: .deepseek) ?? 0) : nil,
                 openCollapsedBar: {
@@ -760,7 +762,7 @@ struct SettingsView: View {
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
-            codexProgressRing: codexProgressRing,
+            codexProgressRing: codexProgressRing, deepseekProgressRing: deepseekProgressRing,
             showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
             quotaRings: quotaRings)
     }
@@ -894,6 +896,7 @@ private struct LiveSettings: Equatable {
     var deepseekSource: DeepSeekBalanceSource
     var deepseekLowBalance: Double?
     var codexProgressRing: Bool
+    var deepseekProgressRing: Bool
     var showsDeepSeekTurnCost: Bool
     var deepseekSpeedSource: String
     var deepseekSpikeLimit: Double?

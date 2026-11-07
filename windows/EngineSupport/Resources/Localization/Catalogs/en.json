@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "392e7f9ae8513b5683075f1f66f90c47a4efd9d1b4f884c3ef1735952a34845a",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f0ad4cfcc813fc2ff0ea0175aa16bc5b21cbbe89338ec250afd6c4185d4a6ca8",
     "windows/EngineSupport/Resources/Localization/en.json": "d51c5ab970da692194c0871dbd1d74ff890a71ee301b8bbb8aadb51635edb820"
   },
   "strings": {
@@ -396,6 +396,12 @@
     "deepseek.platform_account": "Platform account",
     "deepseek.price_list": "DeepSeek pricing",
     "deepseek.pricing_note": "Costs are estimated on this Mac from token counts and DeepSeek\u2019s published prices: doubled on Beijing weekdays 09:00\u201312:00 and 14:00\u201318:00, off-peak on weekends and 2026 public holidays (make-up working days count as weekends, so this is an estimate). Web search costs \u00a55 per 1,000 calls from 1 Nov 2026. Only DeepSeek\u2019s own channels are estimated; your platform bill is authoritative.",
+    "deepseek.progress_ring": "Show DeepSeek Task Progress",
+    "deepseek.progress_ring_help": "Adds Pacer\u2019s reporting tool to the selected local Harness profile. The ring shows DeepSeek\u2019s estimate for your request.",
+    "deepseek.progress_setup.conflict": "Pacer found a conflicting Harness patch. Check cordis.patch.yml and retry.",
+    "deepseek.progress_setup.failed": "Couldn\u2019t configure reporting. Check the Harness data folder and retry.",
+    "deepseek.progress_setup.ready": "Reporting tool configured. Start a new Harness session to use it.",
+    "deepseek.progress_setup.settingUp": "Configuring the reporting tool\u2026",
     "deepseek.projection_left": "\u2248%@ left at reset",
     "deepseek.projection_out": "Out at %@ at this pace",
     "deepseek.rate": "%@/min",

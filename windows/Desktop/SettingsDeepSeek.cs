@@ -14,7 +14,10 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? deepseekEnabled, deepseekTurnCost;
+    private CheckBox? deepseekEnabled, deepseekTurnCost, deepseekProgress;
+    private TextBlock? deepseekProgressState;
+    private Button? deepseekProgressRetry;
+    private FrameworkElement? deepseekProgressStatus;
     private Button? deepseekAutomatic, deepseekSignIn, deepseekRingLink;
     private TextBlock? deepseekDetection, deepseekBalance, deepseekRunway, deepseekDailyReference, deepseekWeeklyReference, deepseekBudgetIssue, deepseekLocalState, deepseekRingHint;
     private StackPanel? deepseekSections, deepseekBudgetRows;
@@ -32,7 +35,8 @@ internal sealed partial class SettingsWindow
     private void ClearDeepSeek()
     {
         ClearDeepSeekConnection();
-        deepseekEnabled = deepseekTurnCost = null; deepseekAutomatic = deepseekSignIn = deepseekRingLink = null; deepseekConnection = null;
+        deepseekEnabled = deepseekTurnCost = deepseekProgress = null; deepseekAutomatic = deepseekSignIn = deepseekRingLink = null; deepseekConnection = null;
+        deepseekProgressState = null; deepseekProgressRetry = null; deepseekProgressStatus = null;
         deepseekDetection = deepseekBalance = deepseekRunway = deepseekDailyReference = deepseekWeeklyReference = deepseekBudgetIssue = deepseekLocalState = deepseekRingHint = null;
         deepseekSections = deepseekBudgetRows = null; deepseekPanelSection = deepseekBalanceHelp = deepseekRingRow = null;
         deepseekDaily = deepseekWeekly = null; deepseekBudgetSeparator = deepseekBalanceSeparator = null; deepseekClock = null; deepseekPricing = null;
@@ -90,7 +94,17 @@ internal sealed partial class SettingsWindow
         deepseekSections.Children.Add(SectionHeader("deepseek.speed", 22));
         deepseekSections.Children.Add(Card(Row(Label(ui.Text("deepseek.speed_basis")), DeepSeekSegments("speed", new[] { ("local", "windows.deepseek.speed_source.local"), ("account", "deepseek.speed_source.account") }, value => ChangeDeepSeek(p => p with { DeepSeekSpeedSource = value })), 40), DeepSeekCaption(ui.Text("windows.deepseek.speed_basis_help"))));
         deepseekSections.Children.Add(SectionHeader("deepseek.section.display", 22));
-        var costs = Toggle("deepseek.turn_cost", "deepseek.turn_cost_help", "settings.deepseek.turn_cost", out var cost); deepseekTurnCost = cost; editors.Add(cost); BindToggle(cost, (p, value) => p with { DeepSeekShowsTurnCost = value }); deepseekSections.Children.Add(Card(costs));
+        var costs = Toggle("deepseek.turn_cost", "deepseek.turn_cost_help", "settings.deepseek.turn_cost", out var cost);
+        deepseekTurnCost = cost; editors.Add(cost); BindToggle(cost, (p, value) => p with { DeepSeekShowsTurnCost = value });
+        var progress = Toggle("deepseek.progress_ring", "deepseek.progress_ring_help", "settings.deepseek.progress_ring", out var progressSwitch);
+        deepseekProgress = progressSwitch; editors.Add(progressSwitch); BindToggle(progressSwitch, (p, value) => p with { DeepSeekProgressRing = value });
+        deepseekProgressState = Detail(""); deepseekProgressState.TextWrapping = TextWrapping.Wrap;
+        deepseekProgressRetry = new Button { Content = ui.Text("connections.retry"), Style = (Style)FindResource("SettingsLink") };
+        Identify(deepseekProgressRetry, "settings.deepseek.progress_retry", ui.Text("connections.retry"));
+        deepseekProgressRetry.Click += async (_, _) =>
+        { if (engine != null && !engine.IsConnectionClosed) await engine.SendAsync("retryDeepSeekProgressSetup"); };
+        deepseekProgressStatus = Row(deepseekProgressState, deepseekProgressRetry, 36);
+        deepseekSections.Children.Add(Card(costs, progress, deepseekProgressStatus));
         deepseekSections.Children.Add(SectionHeader("deepseek.section.pricing", 22));
         var pricing = new Button { Content = ui.Text("deepseek.price_list"), Style = (Style)FindResource("SettingsLink"), HorizontalAlignment = HorizontalAlignment.Left, FontSize = 12, Margin = new Thickness(10, 5, 10, 8) };
         Identify(pricing, "settings.deepseek.pricing", ui.Text("deepseek.price_list"));
@@ -194,6 +208,13 @@ internal sealed partial class SettingsWindow
         if (deepseekWeeklyValue != settings.DeepSeekWeeklyBudget) { deepseekWeeklyValue = settings.DeepSeekWeeklyBudget; deepseekWeekly!.Text = DeepSeekBudgetText(deepseekWeeklyValue); }
         deepseekDailyReference!.Text = reading?.DailyReference ?? ""; deepseekWeeklyReference!.Text = reading?.WeeklyReference ?? "";
         deepseekTurnCost!.IsChecked = settings.DeepSeekShowsTurnCost;
+        deepseekProgress!.IsChecked = settings.DeepSeekProgressRing;
+        deepseekProgress.IsEnabled = !busy && !session.RequiresRestart && connected && snapshot != null;
+        var setup = snapshot?.DeepSeekProgressSetup;
+        deepseekProgressStatus!.Visibility = !demo && settings.DeepSeekProgressRing && setup != null ? Visibility.Visible : Visibility.Collapsed;
+        deepseekProgressState!.Text = setup == null ? "" : ui.Text("deepseek.progress_setup." + setup);
+        deepseekProgressRetry!.Visibility = setup is "failed" or "conflict" ? Visibility.Visible : Visibility.Collapsed;
+        deepseekProgressRetry.IsEnabled = deepseekProgress.IsEnabled;
         deepseekDaily!.IsEnabled = deepseekWeekly!.IsEnabled = deepseekTurnCost.IsEnabled = !busy && !session.RequiresRestart && connected && reading != null;
         deepseekAutomatic.IsEnabled = !busy && !session.RequiresRestart && connected && snapshot != null;
         deepseekLocalState!.Text = ui.Text(!connected ? "provider.state.failed" : snapshot?.Sources.Any(value =>

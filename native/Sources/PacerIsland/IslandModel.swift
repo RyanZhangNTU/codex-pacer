@@ -325,6 +325,35 @@ final class IslandModel: ObservableObject {
     }
     static let claudeProgressRingKey = "claudeProgressRing"
     static let codexProgressRingKey = "codexProgressRing"
+    static let deepseekProgressRingKey = "deepseekProgressRing"
+    @Published private(set) var deepseekProgressSetup: DeepSeekProgressSetupStatus?
+    private var deepseekProgressTarget: (home: URL, enabled: Bool)?
+    private var deepseekProgressTask: Task<Void, Never>?
+    private var deepseekProgressRequest: UUID?
+    var showsDeepSeekProgressRing: Bool { defaults.bool(forKey: Self.deepseekProgressRingKey) }
+    func syncDeepSeekProgressSwitch(force: Bool = false) {
+        guard !demo, !stopped, installationOverride == nil else { return }
+        let home = deepseekHome, wanted = showsDeepSeekProgressRing && isModuleEnabled(.deepseek)
+        let previous = deepseekProgressTarget
+        guard force || previous?.home != home || previous?.enabled != wanted else { return }
+        deepseekProgressTarget = (home, wanted)
+        let pending = deepseekProgressTask, request = UUID()
+        deepseekProgressRequest = request
+        deepseekProgressSetup = wanted ? .settingUp : nil
+        deepseekProgressTask = Task { [weak self] in
+            let status = await Task.detached(priority: .utility) {
+                await pending?.value
+                let storage = MacClaudeHookStorage()
+                if let previous, previous.home != home {
+                    _ = DeepSeekProgressSetup.apply(home: previous.home, enabled: false, storage: storage)
+                }
+                return DeepSeekProgressSetup.apply(home: home, enabled: wanted, storage: storage)
+            }.value
+            guard let self, !stopped, deepseekProgressRequest == request else { return }
+            deepseekProgressTask = nil
+            deepseekProgressSetup = status
+        }
+    }
     @Published private(set) var codexProgressSetup: CodexProgressSetupStatus?
     private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
     private var codexProgressSetupTask: Task<Void, Never>?
@@ -366,6 +395,7 @@ final class IslandModel: ObservableObject {
         var providers: Set<AgentProvider> = []
         if showsClaudeProgressRing { providers.insert(.claude) }
         if showsCodexProgressRing { providers.insert(.codex) }
+        if showsDeepSeekProgressRing { providers.insert(.deepseek) }
         return providers
     }
     /// Claude's self-reported progress ring; off until the user turns it on.
@@ -979,6 +1009,7 @@ final class IslandModel: ObservableObject {
         let plan = lifecycle.start()
         guard !plan.actions.isEmpty else { return }
         syncCodexProgressSwitch()
+        syncDeepSeekProgressSwitch()
         performLifecycle(plan)
         let center = NSWorkspace.shared.notificationCenter
         observations.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -1602,6 +1633,7 @@ final class IslandModel: ObservableObject {
         modules = .load(from: defaults)
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         syncCodexProgressSwitch()
+        syncDeepSeekProgressSwitch()
         if !enabledProviders.contains(selectedProvider) { selectedProvider = enabledProviders.first ?? .codex }
         // The header reports its width only when it changes, so the last measurement
         // stays: clearing it would leave the bar at the wider estimate after any setting.

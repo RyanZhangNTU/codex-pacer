@@ -51,6 +51,7 @@ internal sealed record DesktopPreferences
     public string DeepSeekRingPeriod { get; init; } = "day";
     public string DeepSeekSpeedSource { get; init; } = "local";
     public bool DeepSeekShowsTurnCost { get; init; } = true;
+    public bool DeepSeekProgressRing { get; init; }
     public bool SystemNotifications { get; init; }
     public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget"];
     public double? DeepSeekLowBalanceLine { get; init; }
@@ -126,6 +127,7 @@ internal sealed record DesktopPreferences
             showClaudeCloudProjects = ShowClaudeCloudProjects,
             claudeProgressRing = ClaudeProgressRing,
             codexProgressRing = CodexProgressRing,
+            deepseekProgressRing = DeepSeekProgressRing,
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
