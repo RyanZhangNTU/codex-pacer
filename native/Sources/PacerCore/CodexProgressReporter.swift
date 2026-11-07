@@ -118,6 +118,12 @@ public final class CodexProgressSwitchGate: @unchecked Sendable {
 }
 
 public enum CodexProgressSetup {
+    public struct Target: Equatable, Sendable {
+        public let home: URL
+        public let executable: String
+        public let enabled: Bool
+        public init(home: URL, executable: String, enabled: Bool) { self.home = home; self.executable = executable; self.enabled = enabled }
+    }
     static let on = Data("on\n".utf8)
     static func folder(_ home: URL) -> URL { home.appendingPathComponent("pacer/codex-progress", isDirectory: true) }
     private static func native(_ home: URL) -> URL { folder(home).appendingPathComponent("native", isDirectory: true) }

@@ -5,6 +5,7 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 // A synchronous filesystem/provider call cannot hold a shell hook or uninstall
 // helper forever. Hosts also impose their own shorter async request deadlines.
 let codexCleanup = ["--check-uninstall-codex-progress", "--uninstall-codex-progress"].contains(arguments.first ?? "")
+let deepseekCleanup = ["--check-uninstall-deepseek-progress", "--uninstall-deepseek-progress"].contains(arguments.first ?? "")
 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + (codexCleanup ? 20 : 9)) { exit(124) }
 var result: Int32 = 2
 do {
@@ -19,6 +20,10 @@ do {
         let runtime = WindowsCodexProgressRuntime(root: URL(fileURLWithPath: arguments[1], isDirectory: true))
         let homes = arguments.dropFirst(3).map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
         try await runtime.unregister(homes: homes, executable: arguments[2], checkOnly: arguments[0] == "--check-uninstall-codex-progress")
+        result = 0
+    } else if deepseekCleanup, (2...4).contains(arguments.count) {
+        try WindowsDeepSeekProgressCleanup.unregister(homes: arguments.dropFirst().map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL },
+            checkOnly: arguments[0] == "--check-uninstall-deepseek-progress")
         result = 0
     } else if arguments.count == 2, ["--uninstall", "--check-uninstall"].contains(arguments[0]) {
         try WindowsClaudeHookCleanup.uninstall(home: URL(fileURLWithPath: arguments[1], isDirectory: true),
@@ -48,7 +53,7 @@ do {
     }
 } catch {
     // No paths, provider settings, account data or record contents in diagnostics.
-    let provider = codexCleanup || arguments.first == "--prepare-codex-progress" ? "Codex" : "Claude"
+    let provider = deepseekCleanup ? "DeepSeek Harness" : codexCleanup || arguments.first == "--prepare-codex-progress" ? "Codex" : "Claude"
     FileHandle.standardError.write(Data("Pacer could not safely update \(provider) configuration or its owned runtime.\n".utf8))
     result = 1
 }

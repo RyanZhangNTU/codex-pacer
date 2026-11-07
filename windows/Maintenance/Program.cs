@@ -33,6 +33,7 @@ internal static class Program
                     // exception text, configuration contents or provider paths.
                     if (failure.HasFlag(UninstallFailure.ClaudeConfiguration)) Console.Error.WriteLine("Pacer Claude configuration cleanup failed; settings were preserved for manual cleanup.");
                     if (failure.HasFlag(UninstallFailure.CodexConfiguration)) Console.Error.WriteLine("Pacer Codex progress cleanup failed. Check the Codex MCP settings.");
+                    if (failure.HasFlag(UninstallFailure.DeepSeekConfiguration)) Console.Error.WriteLine("Pacer DeepSeek Harness progress cleanup failed. Check cordis.patch.yml in the Harness data folder.");
                     if (failure.HasFlag(UninstallFailure.Registrations)) Console.Error.WriteLine("Pacer Windows registration cleanup failed; retained items need manual cleanup.");
                     if (failure != UninstallFailure.None) WriteCleanupLog(identity, failure);
                     return failure == UninstallFailure.None ? 0 : 20 + (int)failure;
@@ -76,6 +77,7 @@ internal static class Program
                     writer.WriteLine("Pacer uninstall cleanup code " + (20 + (int)failure));
                     if (failure.HasFlag(UninstallFailure.ClaudeConfiguration)) writer.WriteLine("Claude configuration or owned runtime cleanup failed. Check settings.json and pacer/installation.json in the configured Claude homes. Remove only Pacer hook commands; restore previousStatusLine only if statusLine still uses Pacer, and remove only unchanged addedEnvironment values. Retained Pacer commands can cause Claude Code errors after application removal. Shared Python versions are under %LOCALAPPDATA%/CodexPacer/ClaudeRuntime: keep any version still referenced by a hook, and preserve unknown or modified files.");
                     if (failure.HasFlag(UninstallFailure.CodexConfiguration)) writer.WriteLine("Codex progress cleanup failed. In the affected Codex profiles, remove only the pacer_progress MCP entry that launches Pacer's CodexProgressRuntime.");
+                    if (failure.HasFlag(UninstallFailure.DeepSeekConfiguration)) writer.WriteLine("DeepSeek Harness progress cleanup failed. In cordis.patch.yml in the Harness data folder (%USERPROFILE%/.dsh, DSH_HOME or the folder chosen in Pacer), remove only the lines from '# BEGIN Codex Pacer DeepSeek progress' to '# END Codex Pacer DeepSeek progress', including both marker lines. Then delete the pacer/deepseek-progress folder there.");
                     if (failure.HasFlag(UninstallFailure.Registrations)) writer.WriteLine("Windows registration cleanup failed. Check this installation's current-user Run/StartupApproved entry, Start menu and desktop shortcuts, Pacer installation marker and notification activation registration. Remove only entries still owned by this installation.");
                     writer.WriteLine("Silent uninstall stops before application file removal. Interactive uninstall offers Retry, Continue uninstall or Cancel.");
                 }

@@ -325,47 +325,64 @@ final class IslandModel: ObservableObject {
     }
     static let claudeProgressRingKey = "claudeProgressRing"
     static let codexProgressRingKey = "codexProgressRing"
+    static let deepseekProgressRingKey = "deepseekProgressRing"
+    @Published private(set) var deepseekProgressSetup: DeepSeekProgressSetupStatus?
+    private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
+    /// The newest setup, which waits for the earlier ones; shutdown lets it finish.
+    private var deepseekProgressTask: Task<Void, Never>?
+    var showsDeepSeekProgressRing: Bool { defaults.bool(forKey: Self.deepseekProgressRingKey) }
+    /// Also runs when the switch turns off, which removes Pacer's entry.
+    func syncDeepSeekProgressSwitch(force: Bool = false) {
+        guard !demo, !stopped, installationOverride == nil, let ticket = deepseekProgressQueue.request(
+            .init(home: deepseekHome, enabled: showsDeepSeekProgressRing && isModuleEnabled(.deepseek)), force: force) else { return }
+        deepseekProgressSetup = ticket.target.enabled ? .settingUp : nil
+        let task = Task { [weak self] in
+            let status = await Task.detached(priority: .utility) {
+                await ticket.waitForPrevious()
+                return DeepSeekProgressSetup.sync(from: ticket.previous, to: ticket.target, storage: MacClaudeHookStorage())
+            }.value
+            guard let self, !stopped, deepseekProgressQueue.finish(ticket) else { return }
+            deepseekProgressTask = nil
+            deepseekProgressSetup = status
+        }
+        deepseekProgressQueue.track(task)
+        deepseekProgressTask = task
+    }
     @Published private(set) var codexProgressSetup: CodexProgressSetupStatus?
-    private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
-    private var codexProgressSetupTask: Task<Void, Never>?
+    private var codexProgressQueue = ProgressSetupQueue<CodexProgressSetup.Target>()
     private var codexProgressFlagTask: Task<Int, Never>?
-    private var codexProgressSetupRequest: UUID?
     private let codexProgressGate = CodexProgressSwitchGate()
     var showsCodexProgressRing: Bool { defaults.bool(forKey: Self.codexProgressRingKey) }
     func syncCodexProgressSwitch(force: Bool = false) {
-        guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL else { return }
-        let home = home, executable = defaults.string(forKey: "codexExecutable") ?? ""
-        let wanted = showsCodexProgressRing && isModuleEnabled(.codex)
-        let previous = codexProgressTarget
-        guard force || previous?.home != home || previous?.executable != executable || previous?.enabled != wanted else { return }
-        codexProgressTarget = (home, executable, wanted)
+        guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL,
+              let ticket = codexProgressQueue.request(.init(home: home, executable: defaults.string(forKey: "codexExecutable") ?? "",
+                                                            enabled: showsCodexProgressRing && isModuleEnabled(.codex)), force: force) else { return }
+        let target = ticket.target
         // Apply flag changes in order, off the main actor and independently
         // of any earlier setup that is still waiting for Codex.
-        let gate = codexProgressGate
+        let gate = codexProgressGate, previousHome = ticket.previous?.home
         let previousFlagTask = codexProgressFlagTask
         let flagTask = Task.detached(priority: .userInitiated) {
             _ = await previousFlagTask?.value
-            return gate.change(home: home, wanted: wanted, previous: previous?.home, storage: MacClaudeHookStorage())
+            return gate.change(home: target.home, wanted: target.enabled, previous: previousHome, storage: MacClaudeHookStorage())
         }
         codexProgressFlagTask = flagTask
-        let pending = codexProgressSetupTask, request = UUID()
-        codexProgressSetupRequest = request
-        codexProgressSetup = wanted ? .settingUp : nil
-        codexProgressSetupTask = Task { [weak self] in
+        codexProgressSetup = target.enabled ? .settingUp : nil
+        let task = Task { [weak self] in
             let status = await Task.detached(priority: .utility) {
                 let generation = await flagTask.value
-                await pending?.value
-                if let previous, previous.home != home {
+                await ticket.waitForPrevious()
+                if let previous = ticket.previous, previous.home != target.home {
                     _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false)
                 }
-                return await Self.configureCodexReporter(home: home, executable: executable, reporter: reporter, enabled: wanted,
+                return await Self.configureCodexReporter(home: target.home, executable: target.executable, reporter: reporter, enabled: target.enabled,
                                                          gate: gate, request: generation)
             }.value
-            guard let self, !stopped, codexProgressSetupRequest == request else { return }
+            guard let self, !stopped, codexProgressQueue.finish(ticket) else { return }
             codexProgressFlagTask = nil
-            codexProgressSetupTask = nil
             codexProgressSetup = status
         }
+        codexProgressQueue.track(task)
     }
 
     private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool,
@@ -384,6 +401,7 @@ final class IslandModel: ObservableObject {
         var providers: Set<AgentProvider> = []
         if showsClaudeProgressRing { providers.insert(.claude) }
         if showsCodexProgressRing { providers.insert(.codex) }
+        if showsDeepSeekProgressRing { providers.insert(.deepseek) }
         return providers
     }
     /// Claude's self-reported progress ring; off until the user turns it on.
@@ -997,6 +1015,7 @@ final class IslandModel: ObservableObject {
         let plan = lifecycle.start()
         guard !plan.actions.isEmpty else { return }
         syncCodexProgressSwitch()
+        syncDeepSeekProgressSwitch()
         performLifecycle(plan)
         let center = NSWorkspace.shared.notificationCenter
         observations.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -1620,6 +1639,7 @@ final class IslandModel: ObservableObject {
         modules = .load(from: defaults)
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         syncCodexProgressSwitch()
+        syncDeepSeekProgressSwitch()
         if !enabledProviders.contains(selectedProvider) { selectedProvider = enabledProviders.first ?? .codex }
         // The header reports its width only when it changes, so the last measurement
         // stays: clearing it would leave the bar at the wider estimate after any setting.
@@ -1725,7 +1745,8 @@ final class IslandModel: ObservableObject {
     func shutdown() async {
         // A saved opt-out also takes effect if the settings view has not yet
         // applied its pending changes.
-        if codexProgressTarget?.enabled == true, !showsCodexProgressRing { syncCodexProgressSwitch() }
+        if codexProgressQueue.target?.enabled == true, !showsCodexProgressRing { syncCodexProgressSwitch() }
+        if deepseekProgressQueue.target?.enabled == true, !showsDeepSeekProgressRing { syncDeepSeekProgressSwitch() }
         let plan = lifecycle.shutdown()
         guard plan.actions.contains(.stopSources) else { return }
         desktopApplicationScan?.cancel()
@@ -1738,12 +1759,13 @@ final class IslandModel: ObservableObject {
         let deadline = ShutdownDeadline()
         let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
         let claude = claudeMonitor, deepseek = deepseekMonitor, setup = claudeRemoteSetup, realtime = realtimeMonitor
-        let progressFlag = codexProgressFlagTask
+        let progressFlag = codexProgressFlagTask, deepseekProgress = deepseekProgressTask
         let completed = await ApplicationLifecycleCoordinator.cleanup([
             .codexProgressFlag: { _ = await progressFlag?.value },
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
             .cloud: { await cloud?.stop() }, .claudeActivity: { await claude.shutdown(deadline: deadline) },
-            .deepseekActivity: { await deepseek.shutdown() }, .remoteSetup: { await setup.shutdown() },
+            // Removing DeepSeek's reporter entry is local file work that takes milliseconds.
+            .deepseekActivity: { await deepseekProgress?.value; await deepseek.shutdown() }, .remoteSetup: { await setup.shutdown() },
             .realtime: { await realtime.shutdown(deadline: deadline) }, .balance: { await balance?.stop() }
         ], deadline: deadline)
         if !completed { OwnedProcessTermination.terminateAll() }
