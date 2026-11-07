@@ -17,13 +17,13 @@ struct SettingsHelpPane: View {
     }
 
     var body: some View {
-        Section(L10n.text("help.section.services")) {
+        MainCard(title: L10n.text("help.section.services")) {
             row("help.enable", symbol: "switch.2")
             row("help.services") {
                 ForEach(AgentProvider.allCases, id: \.self) { ProviderTile(provider: $0) }
             }
         }
-        Section(L10n.text("help.section.collapsed")) {
+        MainCard(title: L10n.text("help.section.collapsed")) {
             row("help.tasks") {
                 ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [.codex: 1]))
                 ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1, .claude: 1]))
@@ -50,7 +50,7 @@ struct SettingsHelpPane: View {
             row("help.customize", symbol: "slider.horizontal.3")
             row("help.move") { MoveSample() }
         }
-        Section(L10n.text("help.section.expanded")) {
+        MainCard(title: L10n.text("help.section.expanded")) {
             row("help.hover", symbol: "cursorarrow.rays")
             row("help.open", symbol: "arrow.up.forward.app")
             row("help.app_buttons") {
@@ -64,20 +64,16 @@ struct SettingsHelpPane: View {
                 QuotaVerdictChip(verdict: .spare)
             }
         }
-        Section {
-            Picker(L10n.text("help.section.modules"), selection: $module) {
-                ForEach(AgentProvider.allCases, id: \.self) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden()
+        MainCard(title: L10n.text("help.section.modules")) {
+            MainSegmented(options: AgentProvider.allCases.map { ($0, $0.displayName) }, selection: $module,
+                          label: L10n.text("help.section.modules"), expands: true)
             switch module {
             case .codex: codexRows
             case .claude: claudeRows
             case .deepseek: deepseekRows
             }
-        } header: {
-            Text(L10n.text("help.section.modules"))
         }
-        Section(L10n.text("help.section.more")) {
+        MainCard(title: L10n.text("help.section.more")) {
             if let onShowWelcome {
                 Button(action: onShowWelcome) { Label(L10n.text("help.show_welcome"), systemImage: "hand.wave") }
                     .buttonStyle(.link)

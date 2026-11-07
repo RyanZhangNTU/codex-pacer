@@ -18,14 +18,7 @@ struct CompactLayoutEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(L10n.text("layout.arrangement")).font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Button(L10n.text("common.restore_defaults")) { layout = .standard }
-                    .buttonStyle(.link).font(.system(size: 12))
-            }
             laneStrip
-            Text(L10n.text("layout.help")).font(.system(size: 11)).foregroundStyle(.secondary)
             if model.sideDock != nil {
                 Text(L10n.text("layout.strip_help")).font(.system(size: 11)).foregroundStyle(.secondary)
             }
@@ -166,7 +159,7 @@ struct CompactComponentToggle: View {
                 }
             }
         }
-        .toggleStyle(.switch)
+        .toggleStyle(CardSwitchStyle())
     }
     /// Leading space that lines an option up with the row's title text.
     static let optionInset: CGFloat = 36

@@ -108,7 +108,7 @@ private struct IslandExpandedContent: View {
         VStack(alignment: .leading, spacing: 0) {
             taskContent
             Hairline().padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 10)
-            quotaContent
+            IslandQuotaSection(model: model)
         }
         .padding(.top, topInset)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -138,8 +138,14 @@ private struct IslandExpandedContent: View {
                 .padding(.horizontal, IslandMetrics.rowInset).padding(.top, 6)
         }
     }
+}
 
-    private var quotaContent: some View {
+/// The expanded island's quota section, also shown on the main window's
+/// Overview so both read the same way and follow the same style setting.
+struct IslandQuotaSection: View {
+    @ObservedObject var model: IslandModel
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             let single = model.enabledProviders.count == 1 ? model.enabledProviders.first : nil
             let title = single == .deepseek ? (model.deepseekShowsBudgetDial ? "layout.group.budget" : "layout.group.balance")

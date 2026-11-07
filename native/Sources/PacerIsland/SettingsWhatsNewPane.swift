@@ -10,14 +10,13 @@ struct SettingsWhatsNewPane: View {
     var body: some View {
         ForEach(WhatsNew.history(upTo: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String),
                 id: \.version) { release in
-            Section(L10n.text("whats_new.version", release.version)) {
+            MainCard(title: L10n.text("whats_new.version", release.version)) {
                 ForEach(Array(release.items.enumerated()), id: \.offset) { _, item in
-                    WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin).padding(.vertical, 2)
+                    WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin)
                 }
             }
         }
-        Section {
-            Link(destination: Self.releaseNotes) { Label(L10n.text("whats_new.release_notes"), systemImage: "doc.text") }
-        }
+        Link(destination: Self.releaseNotes) { Label(L10n.text("whats_new.release_notes"), systemImage: "doc.text") }
+            .font(.system(size: 12.5)).padding(.leading, 4)
     }
 }

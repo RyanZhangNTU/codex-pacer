@@ -247,9 +247,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         model.makeClaudeCloudMonitor = { PacerMain.makeClaudeCloudMonitor() }
         updater = AppUpdater(enabled: !model.isDemo)
         panel = PanelController(model: model)
-        updater.onPresentationChange = { [weak self] active in
-            self?.panel.setUpdatePresentationActive(active)
-        }
         reopenObserver = DistributedNotificationCenter.default().addObserver(forName: showExistingIsland,
             object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.panel.show() }
@@ -314,6 +311,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         NSApp.mainMenu = mainMenu
         model.start()
         updater.start()
+        updateDockIcon(windowOpen: false)
         if CommandLine.arguments.contains("--settings") { showSettings() }
         let quiet = model.isDemo || CommandLine.arguments.contains("--settings")
         // Once per major line, after the island appears; --welcome forces it for checks.
@@ -335,7 +333,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
 
-    @objc private func checkForUpdates() { updater.checkForUpdates() }
+    /// The result shows on the Help & Updates page, so the check opens it.
+    @objc private func checkForUpdates() {
+        showSettingsPane(.about)
+        updater.checkForUpdates()
+    }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         menuItem.action == #selector(checkForUpdates) ? updater.canCheck : true
     }
@@ -443,15 +445,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         completionHandler()
     }
 
+    /// Pacer's main window (Overview, History and the settings pages). It
+    /// resizes and remembers its frame; the sidebar runs under the controls.
     @objc private func showSettings() {
         model.close()
         if settingsWindow == nil {
-            let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600),
-                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                backing: .buffered, defer: false)
             window.title = L10n.text("menu.settings_title")
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
+            window.contentMinSize = NSSize(width: 860, height: 560)
             window.delegate = self
             window.center()
+            window.setFrameAutosaveName("PacerMainWindow")
             settingsWindow = window
         }
         // The guide's module switches would race Settings' own copy, so
@@ -459,9 +468,28 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         settingsWindow?.contentView = NSHostingView(rootView: SettingsView(model: model, updater: updater,
             notificationPreference: notificationPreference, launchAtLogin: launchAtLogin,
             onClose: { [weak self] in self?.closeSettings() },
-            onShowWelcome: { [weak self] in self?.closeSettings(); self?.showWelcome() }))
+            onShowWelcome: { [weak self] in self?.closeSettings(); self?.showWelcome() },
+            onDockIconChange: { [weak self] _ in self?.updateDockIcon() }))
+        updateDockIcon(windowOpen: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The Dock icon follows the user's choice: while the main window is open,
+    /// always or never. The island alone never needs it.
+    private func updateDockIcon(windowOpen: Bool? = nil) {
+        let open = windowOpen ?? (settingsWindow?.isVisible == true)
+        let policy: NSApplication.ActivationPolicy = DockIconPreference.load().showsIcon(windowOpen: open) ? .regular : .accessory
+        guard NSApp.activationPolicy() != policy else { return }
+        NSApp.setActivationPolicy(policy)
+        // Leaving the Dock deactivates the app; keep the open window in front.
+        if policy == .accessory, open { NSApp.activate(ignoringOtherApps: true) }
+    }
+
+    /// A click on the Dock icon brings the main window back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if settingsWindow?.isVisible != true { showSettings() }
+        return true
     }
 
     private func showSettingsPane(_ pane: SettingsPane) {
@@ -528,6 +556,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private func closeSettings() {
         settingsWindow?.orderOut(nil)
         settingsWindow?.contentView = nil
+        updateDockIcon(windowOpen: false)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -536,6 +565,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if closing === whatsNewWindow, !model.isDemo, let version = Self.version { WhatsNew.markSeen(version) }
         guard closing === settingsWindow || closing === welcomeWindow || closing === whatsNewWindow else { return }
         closing.contentView = nil
+        if closing === settingsWindow { updateDockIcon(windowOpen: false) }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

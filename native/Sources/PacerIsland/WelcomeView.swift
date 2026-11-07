@@ -118,7 +118,7 @@ struct WelcomeView: View {
                     Button(L10n.text("welcome.go")) { onOpenSettings(.collapsedBar) }
                 }
                 Divider().padding(.leading, 50)
-                personalizeRow(.reminders, title: L10n.text("settings.system_notifications"),
+                personalizeRow(.notifications, title: L10n.text("settings.system_notifications"),
                                detail: L10n.text(notificationPreference.denied ? "settings.notification_denied" : "welcome.notifications_detail"),
                                detailTint: notificationPreference.denied ? .orange : .secondary) {
                     Toggle(L10n.text("settings.system_notifications"), isOn: Binding(get: { notificationPreference.enabled },
@@ -257,7 +257,7 @@ struct WelcomeView: View {
     private func personalizeRow<Control: View>(_ pane: SettingsPane, title: String, detail: String, detailTint: Color = .secondary,
                                                @ViewBuilder control: () -> Control) -> some View {
         HStack(spacing: 12) {
-            SettingsIconTile(symbol: pane.symbol, tint: pane.tint, glyph: pane.glyphColor, size: 26)
+            SettingsIconTile(symbol: pane.tileSymbol, tint: pane.tint, glyph: pane.glyphColor, size: 26)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                 Text(detail).font(.system(size: 11)).foregroundStyle(detailTint).fixedSize(horizontal: false, vertical: true)
@@ -280,7 +280,10 @@ struct WelcomeView: View {
             .accessibilityElement().accessibilityLabel(L10n.text("welcome.step_of", step + 1, 2))
             Spacer(minLength: 8)
             if step == 0 {
-                Button(L10n.text("welcome.all_marks")) { onOpenSettings(.help) }
+                Button(L10n.text("welcome.all_marks")) {
+                    UserDefaults.standard.set(AboutTab.help.rawValue, forKey: AboutTab.defaultsKey)
+                    onOpenSettings(.about)
+                }
                 Button(L10n.text("welcome.next")) { step = 1 }
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
             } else {

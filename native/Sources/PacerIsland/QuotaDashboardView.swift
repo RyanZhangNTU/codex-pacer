@@ -23,9 +23,12 @@ enum QuotaDashboardLayout {
 
 struct QuotaDashboardView: View {
     @ObservedObject var model: IslandModel
+    /// Overview shows one service per card; the island shows every enabled one.
+    var providers: [AgentProvider]? = nil
+    private var shown: [AgentProvider] { providers ?? model.enabledProviders }
     private var layout: QuotaDashboardPresentation.Layout {
-        QuotaDashboardPresentation.layout(providers: model.enabledProviders,
-            snapshots: Dictionary(uniqueKeysWithValues: model.enabledProviders.compactMap { provider in
+        QuotaDashboardPresentation.layout(providers: shown,
+            snapshots: Dictionary(uniqueKeysWithValues: shown.compactMap { provider in
                 model.providerQuota(provider).map { (provider, $0) }
             }), style: model.expandedQuotaStyle, now: model.now)
     }
@@ -36,7 +39,7 @@ struct QuotaDashboardView: View {
         case .legacyCodex:
             if let snapshot = model.providerQuota(.codex) { LegacyCodexQuotaView(model: model, snapshot: snapshot) }
         case .deepseekSolo: DeepSeekSoloDashboard(model: model)
-        case .classicRings: ClassicQuotaDashboardView(model: model)
+        case .classicRings: ClassicQuotaDashboardView(model: model, providers: providers)
         case .splitSingle:
             if let provider = layout.slots.first?.provider { single(provider) }
         case .splitRings: rings
