@@ -3,7 +3,8 @@ import PacerCore
 import SwiftUI
 
 /// Thanks, then the ways to help back: a star, a share and a coffee, each a
-/// card with its buttons at the bottom, then feature requests and bug reports.
+/// card with its buttons at the bottom, then feature requests, bug reports
+/// and the QQ group.
 /// This page is the only place Pacer asks; nothing here prompts or reads the network.
 struct SettingsSupportPane: View {
     private let codes = ProjectSupport.codes()
@@ -51,6 +52,7 @@ struct SettingsSupportPane: View {
                            tint: Color(red: 0.98, green: 0.76, blue: 0.2), url: ProjectSupport.featureRequest)
             SupportLinkRow(title: L10n.text("support.star.bug"), symbol: "ladybug.fill",
                            tint: Color(red: 0.94, green: 0.36, blue: 0.33), url: ProjectSupport.bugReport)
+            QQGroupRow()
         }
     }
 
@@ -140,23 +142,62 @@ private struct SupportLinkRow: View {
     }
 }
 
-/// A payment app's QR code, shown on request. It sits on white so it scans in
-/// dark Settings too.
+/// The QQ group in the feedback card: its number, a copy button and its code.
+private struct QQGroupRow: View {
+    private let code = ProjectSupport.qqGroupCode()
+    @State private var copied = false
+    @State private var copyReset: Task<Void, Never>?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            SettingsIconTile(symbol: "person.2.fill", tint: Color(red: 0.07, green: 0.72, blue: 0.96))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(L10n.text("support.qq.title")).font(.system(size: 13))
+                Text(L10n.text("support.qq.number", ProjectSupport.qqGroupNumber)).font(.system(size: 11.5))
+                    .foregroundStyle(.secondary).monospacedDigit().textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 6) {
+                Button(L10n.text(copied ? "support.share.copied" : "support.qq.copy"), action: copyNumber)
+                if let code { SupportCodeButton(code: code, expands: false) }
+            }
+            .buttonStyle(.main)
+        }
+    }
+
+    private func copyNumber() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(ProjectSupport.qqGroupNumber, forType: .string)
+        copied = true
+        copyReset?.cancel()
+        copyReset = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            copied = false
+        }
+    }
+}
+
+/// A QR code, shown on request: a payment app's on white, the QQ group's on
+/// its own dark card, so each scans in dark Settings too.
 private struct SupportCodeButton: View {
     let code: ProjectSupport.Code
+    /// Coffee buttons fill their card; a row's button keeps to its label.
+    var expands = true
     @State private var showing = false
     @State private var escapeMonitor: Any?
 
     var body: some View {
         Button { showing.toggle() } label: {
-            Label(L10n.text(code.titleKey), systemImage: "qrcode").frame(maxWidth: .infinity)
+            Label(L10n.text(code.titleKey), systemImage: "qrcode").frame(maxWidth: expands ? .infinity : nil)
         }
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             VStack(spacing: 8) {
                 if let image = NSImage(contentsOf: code.image) {
                     Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
                         .frame(width: 220, height: 220)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 Text(L10n.text(code.hintKey)).font(.system(size: 12)).foregroundStyle(.secondary)
             }

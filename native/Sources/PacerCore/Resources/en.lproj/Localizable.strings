@@ -513,6 +513,11 @@
 "support.coffee.detail" = "Entirely optional. Nothing in Pacer depends on it.";
 "support.code.wechat" = "WeChat";
 "support.code.wechat_hint" = "Scan with WeChat";
+"support.qq.title" = "QQ Group";
+"support.qq.number" = "Group number %@";
+"support.qq.copy" = "Copy Number";
+"support.qq.code" = "QR Code";
+"support.qq.hint" = "Scan with QQ to join";
 "help.section.collapsed" = "Collapsed Bar";
 "help.section.expanded" = "Expanded Panel";
 "help.section.more" = "More";
@@ -529,6 +534,10 @@
 "help.link.guide" = "User Guide";
 "help.link.issues" = "Report an Issue";
 "help.show_welcome" = "View the Welcome Guide Again";
+"help.quick.welcome" = "Welcome Guide";
+"help.quick.welcome_detail" = "Walk through the introduction again";
+"help.quick.guide_detail" = "Every feature, plus fixes for common problems";
+"help.quick.issues_detail" = "Report a bug or suggest an idea on GitHub";
 "connections.section.tasks" = "Task Sources";
 "connections.kind.ssh" = "SSH";
 "connections.kind.remote_control" = "Remote Control";
@@ -613,6 +622,7 @@
 "whats_new.title" = "What’s New in Codex Pacer";
 "whats_new.version" = "Version %@";
 "whats_new.release_notes" = "Release Notes";
+"whats_new.earlier" = "Earlier Versions";
 "whats_new.done" = "Continue";
 "whats_new.mark_all_read" = "Mark all as read";
 "whats_new.mark_all_read_detail" = "Clear every ended task at once, on all pages, with the new button next to the pin. Tasks that are running or waiting for your reply or approval stay in the list.";
@@ -858,6 +868,7 @@
 "deepseek.reset_week" = "Resets Mon 0:00";
 "help.services.title" = "Module colors";
 "help.services.detail" = "Teal is Codex, orange is Claude and blue is DeepSeek.";
+"help.services.shades" = "With one accent color, Codex, Claude and DeepSeek are its three shades, strongest first.";
 "help.customize.title" = "Customize";
 "help.customize.detail" = "Choose what shows, in what order and which module each ring shows in Settings → Collapsed Bar; choose the warnings in Settings → Reminders.";
 "help.open.title" = "Open a conversation";
@@ -1034,7 +1045,7 @@
 "main.history.subtitle" = "This cycle";
 "main.quota.left_5h" = "5h %@%% left";
 "main.quota.left_7d" = "7d %@%% left";
-"main.support.feedback" = "Feedback";
+"main.support.feedback" = "Feedback & Community";
 "main.update.sidebar" = "%@ available";
 "main.update.banner" = "Pacer %@ is available";
 "main.update.banner_detail" = "One click downloads and installs it, then Pacer restarts.";

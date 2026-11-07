@@ -467,17 +467,16 @@ struct SettingsAboutPane: View {
     @ObservedObject var updater: AppUpdater
     @Binding var automaticallyChecks: Bool
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
-    let module: AgentProvider
     let onShowWelcome: () -> Void
     @State private var tab = AboutTab.load()
 
     var body: some View {
         UpdateSettingsView(updater: updater, automaticallyChecks: $automaticallyChecks)
-        MainSegmented(options: AboutTab.allCases.map { ($0, $0.title) }, selection: $tab, label: L10n.text("main.pane.about"), expands: true)
+        MainSegmented(options: AboutTab.allCases.map { ($0, $0.title) }, selection: $tab, label: L10n.text("main.pane.about"))
             .onChange(of: tab) { _, value in UserDefaults.standard.set(value.rawValue, forKey: AboutTab.defaultsKey) }
         switch tab {
         case .whatsNew: SettingsWhatsNewPane(launchAtLogin: launchAtLogin)
-        case .help: SettingsHelpPane(module: module, onShowWelcome: onShowWelcome)
+        case .help: SettingsHelpPane(onShowWelcome: onShowWelcome)
         }
     }
 }
