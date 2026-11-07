@@ -1072,7 +1072,7 @@
 "main.welcome.continue" = "继续";
 "main.welcome.ring_info" = "任务图标外会多一圈进度，一眼就能看出这个任务大概做到哪了。";
 "main.welcome.notifications_info" = "任务需要你回复、已经结束或额度快用完时提醒你。";
-"main.welcome.login_info" = "随 Mac 一起启动，灵动岛随时都在。";
+"main.welcome.login_info" = "登录后自动启动，灵动岛随时都在。";
 "main.welcome.layout_info" = "选择折叠栏两侧显示哪些内容。";
 "main.collapsed.subtitle" = "点组件查看设置，拖动可以换位置。";
 "main.collapsed.components" = "组件";
