@@ -106,12 +106,10 @@ struct SettingsAppearancePane: View {
                         .buttonStyle(.main).disabled(placement == nil && customPosition == .center)
                 }
             }
-            CardPicker(title: L10n.text("settings.display_picker"), selection: $displayID) {
-                Text(L10n.text("settings.main_display")).tag(0)
-                ForEach(Array(NSScreen.screens.enumerated()), id: \.offset) { _, screen in
-                    Text(screen.localizedName).tag((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0)
-                }
-            }
+            CardPicker(title: L10n.text("settings.display_picker"), selection: $displayID,
+                       options: [(0, L10n.text("settings.main_display"))] + NSScreen.screens.map { screen in
+                           ((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0, screen.localizedName)
+                       })
             CardToggle(title: L10n.text("settings.fullscreen"), isOn: $fullscreen)
         }
         MainCard(title: L10n.text("main.appearance.panel")) {

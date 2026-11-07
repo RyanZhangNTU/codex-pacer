@@ -380,14 +380,10 @@ struct SettingsNotificationsPane: View {
             }
         }
         MainCard {
-            CardPicker(title: L10n.text("reminders.retention"), selection: $retention) {
-                Text(L10n.text("settings.five_minutes")).tag(5)
-                Text(L10n.text("settings.fifteen_minutes")).tag(15)
-                Text(L10n.text("settings.thirty_minutes")).tag(30)
-                Text(L10n.text("settings.one_hour")).tag(60)
-                Text(L10n.text("settings.four_hours")).tag(240)
-                Text(L10n.text("settings.until_clicked")).tag(0)
-            }
+            CardPicker(title: L10n.text("reminders.retention"), selection: $retention, options: [
+                (5, L10n.text("settings.five_minutes")), (15, L10n.text("settings.fifteen_minutes")),
+                (30, L10n.text("settings.thirty_minutes")), (60, L10n.text("settings.one_hour")),
+                (240, L10n.text("settings.four_hours")), (0, L10n.text("settings.until_clicked"))])
         }
     }
 

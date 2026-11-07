@@ -242,14 +242,12 @@ struct SettingsView: View {
                     .foregroundStyle(MainPalette.attention)
                 }
                 if let failure = launchAtLogin.failure { warning(failure) }
-                CardPicker(title: L10n.text("main.dock"), info: L10n.text("main.dock_info"), selection: $dockIcon) {
-                    ForEach(DockIconPreference.allCases) { Text($0.label).tag($0) }
-                }
+                CardPicker(title: L10n.text("main.dock"), info: L10n.text("main.dock_info"), selection: $dockIcon,
+                           options: DockIconPreference.allCases.map { ($0, $0.label) })
             }
             MainCard(title: L10n.text("main.section.language")) {
-                CardPicker(title: L10n.text("language.label"), selection: $language) {
-                    ForEach(LanguagePreference.allCases, id: \.rawValue) { Text($0.label).tag($0) }
-                }
+                CardPicker(title: L10n.text("language.label"), selection: $language,
+                           options: LanguagePreference.allCases.map { ($0, $0.label) })
                 if languageChanges {
                     CardRow(title: L10n.text("language.restart_hint")) {
                         Button(L10n.text("language.restart_now")) { relaunchForLanguage() }.buttonStyle(.mainProminent)

@@ -117,9 +117,8 @@ struct SettingsCollapsedBarPane: View {
     @ViewBuilder private func options(_ component: CompactIslandLayout.Component) -> some View {
         switch component {
         case .activity:
-            CardPicker(title: L10n.text("layout.single_task"), selection: $singleTask) {
-                ForEach(ActivityBadgeSingleTask.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
+            CardPicker(title: L10n.text("layout.single_task"), selection: $singleTask,
+                       options: ActivityBadgeSingleTask.allCases.map { ($0, $0.label) })
         case .quota:
             CardRow(title: L10n.text("settings.compact_metric")) {
                 MainSegmented(options: [("remaining", L10n.text("settings.remaining_quota")), ("pace", L10n.text("settings.pace_percentage"))],
@@ -161,9 +160,8 @@ struct SettingsCollapsedBarPane: View {
         } else {
             CardPicker(title: title, info: L10n.text("provider.window_info", provider.displayName), selection: Binding(
                 get: { QuotaWindowSelection(saved: selection.wrappedValue, snapshot: model.providerQuota(provider)) },
-                set: { selection.wrappedValue = $0.rawValue })) {
-                ForEach(QuotaWindowSelection.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
+                set: { selection.wrappedValue = $0.rawValue }),
+                options: QuotaWindowSelection.allCases.map { ($0, $0.label) })
         }
     }
 
@@ -186,10 +184,8 @@ struct SettingsCollapsedBarPane: View {
                            ? L10n.text("layout.ring_deepseek") : nil,
                        selection: Binding(get: { current[slot.rawValue] }, set: { value in
                            quotaRings = current; quotaRings[slot.rawValue] = value
-                       })) {
-                ForEach(providers, id: \.self) { Text($0.displayName).tag($0.rawValue) }
-                Text(L10n.text("layout.ring_none")).tag("none")
-            }
+                       }),
+                       options: providers.map { ($0.rawValue, $0.displayName) } + [("none", L10n.text("layout.ring_none"))])
         }
         if showsDeepSeek, !deepseekHasBudget {
             Text(L10n.text("layout.ring_deepseek_needs_budget")).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
