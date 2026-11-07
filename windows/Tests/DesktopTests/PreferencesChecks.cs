@@ -20,7 +20,7 @@ internal static class PreferencesChecks
                 Language = "zh-Hans", Position = "topRight", DisplayMode = "notch", IslandAppearance = "classic", ExpandedQuotaStyle = "classic", PositionChosen = true, LastSettingsPane = "appearance", HideProjects = true, ShowAppButtons = false, ShowEmbeddedCodexSessions = false, RetentionMinutes = 60,
                 CodexHome = @"C:\中文 space\.codex", CodexExecutable = @"C:\tools 中文\codex.exe",
                 DeepSeekPanelStyle = "simple", DeepSeekMode = "budget", DeepSeekDailyBudget = 12.5, DeepSeekWeeklyBudget = 70,
-                DeepSeekRingPeriod = "week", DeepSeekSpeedSource = "account", DeepSeekShowsTurnCost = false, DeepSeekBalanceSource = "apiKey",
+                DeepSeekRingPeriod = "week", DeepSeekSpeedSource = "account", DeepSeekShowsTurnCost = false, DeepSeekBalanceSource = "apiKey", DeepSeekProgressRing = true,
                 CompactLayout = "{\"version\":9,\"leading\":[\"firstOutput\",\"activity\"],\"trailing\":[\"quota\"]}",
                 CompactSingleTask = "count", CompactMetric = "pace", CodexQuotaWindow = "5h", ClaudeQuotaWindow = "7d", QuotaRingOuter = "claude", QuotaRingInner = "none",
                 ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "automatic", ["deepseek"] = "disabled" }
@@ -32,7 +32,8 @@ internal static class PreferencesChecks
                 && restored.Value.CodexHome == original.CodexHome && restored.Value.CodexExecutable == original.CodexExecutable
                 && restored.Value.DeepSeekPanelStyle == "simple" && restored.Value.DeepSeekMode == "budget" && restored.Value.DeepSeekDailyBudget == 12.5
                 && restored.Value.DeepSeekWeeklyBudget == 70 && restored.Value.DeepSeekRingPeriod == "week" && restored.Value.DeepSeekSpeedSource == "account" && !restored.Value.DeepSeekShowsTurnCost
-                && restored.Value.DeepSeekBalanceSource == "apiKey"
+                && restored.Value.DeepSeekBalanceSource == "apiKey" && restored.Value.DeepSeekProgressRing
+                && File.ReadAllText(file).Contains("\"deepseekProgressRing\": true") && !File.ReadAllText(file).Contains("deepSeekProgressRing")
                 && restored.Value.CompactLayout == original.CompactLayout && restored.Value.CompactSingleTask == "count" && restored.Value.CompactMetric == "pace"
                 && restored.Value.CodexQuotaWindow == "5h" && restored.Value.ClaudeQuotaWindow == "7d" && restored.Value.QuotaRingOuter == "claude" && restored.Value.QuotaRingInner == "none"
                 && restored.Value.ProviderModes["codex"] == "disabled" && restored.Value.ProviderModes["claude"] == "automatic"

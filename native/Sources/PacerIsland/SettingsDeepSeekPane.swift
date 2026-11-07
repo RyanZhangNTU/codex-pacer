@@ -49,6 +49,7 @@ struct SettingsDeepSeekSections: View {
     @Binding var balanceSource: DeepSeekBalanceSource
     @Binding var budgets: DeepSeekBudgetSettings
     @Binding var showsTurnCost: Bool
+    @Binding var showsProgressRing: Bool
     @Binding var speedSource: String
     /// The collapsed ring showing DeepSeek's budget, if any, and the way to choose one.
     let ringSlot: QuotaRingSlot?
@@ -72,6 +73,11 @@ struct SettingsDeepSeekSections: View {
                               selection: $speedSource, label: L10n.text("main.deepseek.speed_basis"))
             }
             CardToggle(title: L10n.text("deepseek.turn_cost"), info: L10n.text("deepseek.turn_cost_help"), isOn: $showsTurnCost)
+            // A failed removal stays visible after the switch is off, with Retry.
+            let setup = model.deepseekProgressSetup.flatMap { showsProgressRing || $0 == .failed || $0 == .conflict ? $0 : nil }
+            ProgressRingToggle(info: L10n.text("deepseek.progress_ring_help"), isOn: $showsProgressRing,
+                status: setup.map { L10n.text((showsProgressRing ? "deepseek.progress_setup." : "deepseek.progress_cleanup.") + $0.rawValue) },
+                canRetry: setup == .failed || setup == .conflict, retry: { model.syncDeepSeekProgressSwitch(force: true) })
         }
         MainCard(title: L10n.text("deepseek.section.pricing")) {
             DeepSeekPeakTimeline(now: model.now).padding(.vertical, 4)

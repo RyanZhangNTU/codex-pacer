@@ -145,6 +145,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard let selfReportedProgress, selfReportedProgress.turnID == turnID else { return nil }
         return selfReportedProgress
     }
+    private var codexSteps = CodexTurnSteps()
+    private var codexRootTurnID: String?
+    private var codexGoal: CodexGoalEvidence?
+    /// A physical turn ended, but the request's verified goal remains open.
+    private var codexHeldEnding: Date?
+    public var codexGoalPause: String? { codexHeldEnding == nil ? nil : codexGoal?.status.pauseLabel }
+    var awaitsCodexGoal: Bool { codexHeldEnding != nil }
+    /// A goal can hold an ended turn for a continuation. Snapshots of the same
+    /// goal do not extend that window.
+    var codexGoalDeadline: Date? { codexHeldEnding?.addingTimeInterval(15 * 60) }
+    func codexGoalExpired(at date: Date) -> Bool { codexGoalDeadline.map { date >= $0 } ?? false }
     /// A later estimate replaces an earlier one, including a lower one.
     mutating func reportProgress(_ percent: Int, at date: Date, turnID: String) {
         guard turnID == self.turnID, let value = SelfReportedProgress(percent: percent, reportedAt: date, turnID: turnID) else { return }
@@ -170,6 +181,13 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var backgroundWaitObservedAt: Date?
     /// The wait of the current turn only; a new turn clears it.
     public var currentBackgroundWait: BackgroundWait? {
+        if let turnID, let since = codexHeldEnding, codexGoal?.status == .active {
+            return BackgroundWait(turnID: turnID, since: since, kinds: ["codex-goal"], wakeups: 1)
+        }
+        if provider == .codex, let turnID, let since = codexSteps.waitingSince,
+           [.running, .waitingForInput].contains(phase) {
+            return BackgroundWait(turnID: turnID, since: since, kinds: ["codex-wait"], wakeups: 0)
+        }
         guard [.running, .waitingForInput].contains(phase) else { return nil }
         return backgroundWait?.turnID == turnID ? backgroundWait : nil
     }
@@ -288,6 +306,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if sameTurn, turnCost == nil, other.turnCost != nil {
             estimatedCost = other.estimatedCost; estimatedPeakCost = other.estimatedPeakCost; costTurnID = other.costTurnID
         }
+        if sameTurn, provider == .codex {
+            mergeCodexRequestEvidence(from: other)
+            if codexRootTurnID == nil || codexRootTurnID == turnID { codexRootTurnID = other.codexRootTurnID ?? codexRootTurnID }
+        }
         if sameTurn || bothUnattached {
             if modelName == nil { modelName = other.modelName }
             let ownEffortAt = reasoningEffortReportedAt ?? .distantPast
@@ -319,7 +341,6 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             lastMeasuredPerformance = other.lastMeasuredPerformance
         }
     }
-    private var waitingCallID: String?
     private var toolCalls: Set<String> = []
     private var outputRate = OutputRate()
     private var generationRate = GenerationRate()
@@ -480,6 +501,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if observedPhase(at: now) == .unknown, phase == .waitingForInput { return L10n.text("activity.last_waiting") }
         if observedPhase(at: now) == .unknown, phase == .running, stage == .tool { return L10n.text("activity.last_tool") }
         // The turn stopped for its background work; its last stage is over.
+        if let pause = codexGoalPause { return pause }
         if observedPhase(at: now) == .running, currentBackgroundWait != nil { return L10n.text("activity.background_wait") }
         return observedPhase(at: now) == .running ? stage.label : observedPhase(at: now).label
     }
@@ -490,6 +512,103 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         consume(value)
     }
     var acceptsLogAttention: Bool { provider == .codex && !ignoringInheritedHistory && !isInternalReview && !isIgnoredCodexSession }
+    mutating func mergeCodexRequestEvidence(from other: SessionActivity) {
+        guard provider == .codex, other.provider == .codex, sourceHostID == other.sourceHostID,
+              threadID == other.threadID, let turnID, turnID == other.turnID else { return }
+        if let estimate = other.currentProgress {
+            reportProgress(estimate.percent, at: estimate.reportedAt, turnID: turnID)
+        }
+        if let goal = other.codexGoal, codexGoal.map({
+            goal.createdAt > $0.createdAt || goal.createdAt == $0.createdAt &&
+                (goal.updatedAt > $0.updatedAt || goal.updatedAt == $0.updatedAt && goal.observedAt > $0.observedAt)
+        }) ?? true {
+            codexGoal = goal
+            if let held = codexHeldEnding, goal.status == .complete {
+                settleCodexGoal(at: max(held, goal.observedAt))
+            } else if goal.status != .complete, let end = phaseChangedAt,
+                      phase == .completed || turnFailed || phase == .interrupted && goal.status.pauseLabel != nil {
+                // The live terminal can reach us before its rollout record.
+                // A goal already bound by the log still owns this attempt.
+                holdCodexGoalEnding(at: end)
+            }
+        }
+    }
+
+    private mutating func observeCodexGoal(status raw: Any?, created: Any?, updated: Any?, turn: String?, at date: Date) {
+        guard provider == .codex, acceptsLogAttention, parentThreadID == nil, let turnID, phase != .unknown,
+              let raw = raw as? String, let status = CodexGoalEvidence.Status(rawValue: raw),
+              let created = created as? Double, let updated = updated as? Double,
+              created.isFinite, updated.isFinite, created >= 0, updated >= created,
+              date >= (turnStartedAt ?? .distantPast),
+              turn == turnID || turn == nil && codexGoal?.createdAt == created else { return }
+        if let previous = codexGoal {
+            guard date >= previous.observedAt, created >= previous.createdAt,
+                  created != previous.createdAt || updated >= previous.updatedAt else { return }
+        }
+        // An unbound historical goal does not turn an already ended attempt
+        // back into a running request.
+        guard ![.completed, .interrupted].contains(phase) else { return }
+        codexGoal = .init(status: status, createdAt: created, updatedAt: updated, observedAt: date)
+        if let end = codexHeldEnding, status == .complete { settleCodexGoal(at: max(end, date)) }
+    }
+
+    private mutating func holdCodexGoalEnding(at date: Date) {
+        guard let goal = codexGoal, goal.status != .complete else { return }
+        codexHeldEnding = date
+        phase = .running; turnFailed = false; stage = .working
+    }
+
+    private mutating func settleCodexGoal(at date: Date) {
+        codexHeldEnding = nil
+        phase = .completed; turnFailed = false; waitingForApproval = false
+        phaseChangedAt = date; lastObserved = max(date, lastObserved ?? date)
+    }
+
+    private mutating func clearCodexGoal(at date: Date) {
+        guard let goal = codexGoal, date >= goal.observedAt else { return }
+        codexGoal = nil
+        if codexHeldEnding != nil { markUnconfirmed() }
+    }
+
+    private mutating func acceptCodexProgress(_ raw: Any?, turn: String, at date: Date) {
+        guard acceptsLogAttention, parentThreadID == nil, turnID == turn, phase != .unknown,
+              date >= (turnStartedAt ?? .distantPast),
+              codexHeldEnding.map({ date <= $0 }) ?? true,
+              ![.completed, .interrupted].contains(phase) || date <= (phaseChangedAt ?? date),
+              let percent = CodexProgressEvidence.integer(raw) else { return }
+        reportProgress(percent, at: date, turnID: turn)
+    }
+
+    /// Report ordering is independent of lifecycle, including a result read
+    /// after newer work from a different collector.
+    private mutating func consumeCodexReport(_ outer: String?, _ payload: [String: Any], timestamp: Any?) -> Bool {
+        let kind = payload["type"] as? String
+        let call = outer == "response_item" && kind == "function_call" && CodexProgressEvidence.matches(
+            name: payload["name"] as? String, namespace: payload["namespace"] as? String)
+        let id = CodexProgressEvidence.identifier(payload["call_id"])
+        let output = outer == "response_item" && kind == "function_call_output" &&
+            (id.flatMap { codexSteps.reports[$0] } != nil || CodexProgressEvidence.isAcknowledgment(payload["output"]))
+        let item = outer == "event_msg" && kind == "item_completed" ? payload["item"] as? [String: Any] : nil
+        let reportItem = item.map(CodexProgressEvidence.isReportItem) == true
+        guard call || output || reportItem || ["pacer_progress", "pacer_progress_call", "pacer_progress_result"].contains(kind ?? "") else { return false }
+        guard acceptsLogAttention, parentThreadID == nil, let turnID, phase != .unknown,
+              let text = timestamp as? String, let stamp = Self.parseDate(text), stamp >= (turnStartedAt ?? .distantPast) else { return true }
+        let explicitTurn = payload["turn_id"] ?? (payload["internal_chat_message_metadata_passthrough"] as? [String: Any])?["turn_id"]
+        if let explicitTurn, CodexProgressEvidence.identifier(explicitTurn) != turnID { return true }
+        if reportItem || kind == "pacer_progress" {
+            guard payload["turn_id"] as? String == turnID, (payload["thread_id"] as? String)?.lowercased() == threadID else { return true }
+            let percent = item.flatMap(CodexProgressEvidence.itemPercent) ?? (kind == "pacer_progress" ? CodexProgressEvidence.integer(payload["percent"]) : nil)
+            acceptCodexProgress(percent, turn: turnID, at: stamp)
+        } else if let id, call || kind == "pacer_progress_call" {
+            guard [.running, .waitingForInput].contains(phase), codexSteps.reports.count < 64,
+                  let percent = call ? CodexProgressEvidence.percent(payload["arguments"]) : CodexProgressEvidence.integer(payload["percent"]) else { return true }
+            if codexSteps.reports[id] == nil { codexSteps.reports[id] = .init(percent: percent, at: stamp) }
+        } else if let id, let report = codexSteps.reports.removeValue(forKey: id), stamp >= report.at,
+                  (kind == "pacer_progress_result" && payload["accepted"] as? Bool == true) || CodexProgressEvidence.isAcknowledgment(payload["output"]) {
+            acceptCodexProgress(report.percent, turn: turnID, at: stamp)
+        }
+        return true
+    }
     mutating func consume(_ value: [String: Any]) {
         guard provider == .codex, let payload = value["payload"] as? [String: Any] else { return }
         defer { rememberRate() }
@@ -534,7 +653,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             // A current turn context is an explicit anchor when the start lies
             // outside the initial tail, or when the app attached mid-turn.
             if let contextTurn = payload["turn_id"] as? String, contextTurn != turnID {
-                beginTurn(contextTurn, at: date)
+                guard !retiredTurns.contains(contextTurn) else { return }
+                beginCodexTurn(contextTurn, root: payload["root_turn_id"], at: date)
             }
             updateModel(in: payload, effort: "effort", at: date)
             if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
@@ -550,6 +670,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 reasoning: usage["reasoning_output_tokens"] as? Int, at: date)
             return // Accounting cannot create activity, change state or extend retention.
         }
+        if consumeCodexReport(value["type"] as? String, payload, timestamp: value["timestamp"]) { return }
+        if value["type"] as? String == "event_msg", payload["type"] as? String == "thread_goal_updated" {
+            if let goal = payload["goal"] as? [String: Any],
+               (payload["threadId"] as? String)?.lowercased() == threadID,
+               let timestamp = value["timestamp"] as? String, let date = Self.parseDate(timestamp) {
+                observeCodexGoal(status: goal["status"], created: goal["createdAt"], updated: goal["updatedAt"],
+                    turn: payload["turnId"] as? String, at: date)
+            }
+            return
+        }
+        if codexHeldEnding != nil, value["type"] as? String == "response_item" { return }
         if value["type"] as? String == "event_msg", payload["type"] as? String == "item_completed" {
             guard payload["thread_id"] as? String == threadID, payload["turn_id"] as? String == turnID,
                   retainedLatency == nil, let began = logTurnStart,
@@ -579,6 +710,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if ["task_complete", "turn_aborted"].contains(kind ?? ""), value["type"] as? String == "event_msg" {
             // Without an observed start/context there is no current turn to end.
             guard let turnID, eventTurn == turnID else { return }
+            if codexHeldEnding != nil { return }
             if [.completed, .interrupted].contains(phase) { return }
         }
         lastObserved = date
@@ -588,7 +720,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         switch kind {
         case "task_started":
-            beginTurn(eventTurn, at: date)
+            guard eventTurn.map({ !retiredTurns.contains($0) }) ?? true else { return }
+            beginCodexTurn(eventTurn, root: payload["root_turn_id"] ?? (payload["turn_attribution"] as? [String: Any])?["root_turn_id"], at: date)
             if let context = payload["_model_context"] as? [String: Any] {
                 updateModel(in: context, effort: "effort", at: date)
                 if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
@@ -601,13 +734,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             }
         case "task_complete", "turn_aborted":
             retireTurn(turnID)
-            phase = kind == "turn_aborted" ? .interrupted : .completed
-            turnFailed = false; waitingForApproval = false
-            waitingCallID = nil
+            turnFailed = kind == "task_complete" && ((payload["error"] as? [String: Any])?["message"] is String || payload["hasTerminalError"] as? Bool == true)
+            phase = kind == "turn_aborted" || turnFailed ? .interrupted : .completed
+            waitingForApproval = false; codexSteps = CodexTurnSteps()
             toolCalls.removeAll()
             outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil
             performanceMeter.finish()
             phaseChangedAt = date
+            if kind == "task_complete" || codexGoal?.status.pauseLabel != nil { holdCodexGoalEnding(at: date) }
         case "token_count":
             if let info = payload["info"] as? [String: Any],
                let total = info["total_token_usage"] as? [String: Any],
@@ -619,6 +753,25 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                     reasoning: last?["reasoning_output_tokens"] as? Int, at: date)
             }
         default: break
+        }
+    }
+
+    private mutating func beginCodexTurn(_ id: String?, root: Any?, at date: Date, observed: Bool = true) {
+        guard provider == .codex else { beginTurn(id, at: date, observed: observed); return }
+        let verifiedRoot = CodexProgressEvidence.identifier(root)
+        let previous = currentProgress
+        let goal = codexGoal
+        let sameTurn = id != nil && id == turnID
+        let continues = !sameTurn && id != nil && verifiedRoot != nil && verifiedRoot == codexRootTurnID && !codexGoalExpired(at: date) &&
+            [.running, .waitingForInput].contains(phase)
+        let root = verifiedRoot ?? (sameTurn ? codexRootTurnID : id)
+        beginTurn(id, at: date, observed: observed)
+        codexRootTurnID = root
+        codexGoal = continues || sameTurn ? goal : nil
+        codexHeldEnding = nil
+        if continues, let previous, let id {
+            // A wake does not make an old estimate fresh again.
+            selfReportedProgress = SelfReportedProgress(percent: previous.percent, reportedAt: previous.reportedAt, turnID: id)
         }
     }
 
@@ -640,7 +793,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         turnFailed = false; waitingForApproval = false
         stage = .starting
         lastObserved = date
-        waitingCallID = nil
+        codexSteps = CodexTurnSteps()
         toolCalls.removeAll()
         outputRate.startTurn(at: date)
         generationRate.start(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil
@@ -668,10 +821,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         phase = .unknown
         turnFailed = false; waitingForApproval = false
         turnID = nil
+        codexSteps = CodexTurnSteps(); codexRootTurnID = nil
+        codexGoal = nil; codexHeldEnding = nil
         turnStartedAt = nil
         lastObserved = nil
         phaseChangedAt = nil
-        waitingCallID = nil
         toolCalls.removeAll()
         outputRate = OutputRate(); generationRate = GenerationRate(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; hasLiveEvidence = false
         performanceMeter = ResponsePerformanceMeter()
@@ -681,6 +835,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         logTurnStart = nil
         phase = .unknown
         waitingForApproval = false
+        codexSteps = CodexTurnSteps()
+        codexGoal = nil; codexHeldEnding = nil
         outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
     }
 
@@ -696,7 +852,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private mutating func observeWork(at date: Date) {
         if [.completed, .interrupted, .unknown].contains(phase) {
             // Fresh reasoning/calls prove activity, but do not identify a turn.
-            beginTurn(phase == .unknown ? turnID : nil, at: date, observed: false)
+            beginCodexTurn(phase == .unknown ? turnID : nil, root: nil, at: date, observed: false)
         }
     }
 
@@ -710,20 +866,26 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             generationRate.setWaiting(true, at: date)
             performanceMeter.setWaiting(true, at: date)
             let name = payload["name"] as? String ?? ""
+            let namespace = payload["namespace"] as? String
+            let wait = name == "clock.sleep" || name == "sleep" && (namespace == nil || namespace == "clock")
+            if toolCalls.contains(callID), CodexProgressEvidence.identifier(callID) != nil {
+                codexSteps.start(callID, at: date, waiting: wait)
+            }
+            toolWaitStartedAt = codexSteps.tools.values.min()
             // The async input tool returns immediately and does not pause the task.
             if name == "request_user_input" || name.hasSuffix(".request_user_input") {
-                waitingCallID = callID
+                if codexSteps.blockingCalls.count < 64 { codexSteps.blockingCalls.insert(callID) }
                 phase = .waitingForInput
                 waitingForApproval = false
                 phaseChangedAt = date
             } else if phase == .running { stage = .tool }
         case "function_call_output", "custom_tool_call_output":
             guard let callID = payload["call_id"] as? String else { return }
-            guard toolCalls.contains(callID) || waitingCallID == callID else { return }
+            guard toolCalls.contains(callID) || codexSteps.blockingCalls.contains(callID) else { return }
             toolCalls.remove(callID)
+            codexSteps.finish(callID); toolWaitStartedAt = codexSteps.tools.values.min()
             if toolCalls.isEmpty { generationRate.setWaiting(false, at: date); performanceMeter.inputBoundary(at: date) }
-            if waitingCallID == callID {
-                waitingCallID = nil
+            if codexSteps.blockingCalls.remove(callID) != nil, !codexSteps.isBlocked {
                 phase = .running
                 waitingForApproval = false
                 phaseChangedAt = date
@@ -754,6 +916,22 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let seconds = event["at"] as? Double, seconds.isFinite else { return }
         let date = Date(timeIntervalSince1970: seconds)
         defer { rememberRate() }
+        if method == "progress/reported" {
+            if provider == .codex, let turn = CodexProgressEvidence.identifier(event["turnId"]) {
+                // A snapshot without a report timestamp can seed a missing
+                // estimate, but cannot replace one observed independently.
+                if event["untimedReplay"] as? Bool != true || currentProgress == nil {
+                    acceptCodexProgress(event["percent"], turn: turn, at: date)
+                }
+            }
+            return
+        }
+        if method == "thread/goal/updated" {
+            observeCodexGoal(status: event["goalStatus"], created: event["goalCreatedAt"], updated: event["goalUpdatedAt"],
+                turn: event["turnId"] as? String, at: date)
+            return
+        }
+        if method == "thread/goal/cleared" { clearCodexGoal(at: date); return }
         if method == "subagents/updated" {
             guard event["turnId"] as? String == turnID, let states = event["states"] as? [String: String], states.count <= 64,
                   let parent = threadID, subagentStatesObservedAt.map({ date >= $0 }) ?? true else { return }
@@ -801,16 +979,20 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             // The remote runtime's metadata read confirms activity even during
             // a quiet tool/sleep, before this subscriber sees an item or turn ID.
             guard event["status"] as? String == "active" else { return }
+            if codexHeldEnding != nil { return }
             if !hasLiveEvidence || [.completed, .interrupted, .unknown].contains(phase) {
-                beginTurn(nil, at: date, observed: false); generationRate.start()
+                beginCodexTurn(nil, root: nil, at: date, observed: false); generationRate.start()
                 liveStatusOnly = true
             }
             hasLiveEvidence = true; liveTurnStarted = true; lastObserved = date
             let flags = event["flags"] as? [String] ?? []
+            if provider == .codex { codexSteps.blockingFlags = Set(flags.filter { ["waitingOnApproval", "waitingOnUserInput"].contains($0) }) }
             if flags.contains("waitingOnApproval") || flags.contains("waitingOnUserInput") {
                 phase = .waitingForInput; waitingForApproval = flags.contains("waitingOnApproval")
                 generationRate.setWaiting(true, at: date)
-            } else if phase == .waitingForInput { phase = .running; waitingForApproval = false }
+            } else if phase == .waitingForInput, provider != .codex || !codexSteps.isBlocked {
+                phase = .running; waitingForApproval = false
+            }
             return
         }
         if method == "thread/status/changed" {
@@ -820,13 +1002,17 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if ["notLoaded", "systemError"].contains(status ?? "") {
                 markUnconfirmed(); lastObserved = date; phaseChangedAt = date
             }
+            if codexHeldEnding != nil { return }
+            if provider == .codex, status == "active", let flags = event["flags"] as? [String] {
+                codexSteps.blockingFlags = Set(flags.filter { ["waitingOnApproval", "waitingOnUserInput"].contains($0) })
+            }
             // Idle status alone cannot prove that a particular turn completed.
             if status == "active", let flags = event["flags"] as? [String],
                flags.contains("waitingOnApproval") || flags.contains("waitingOnUserInput"), turnID != nil {
                 phase = .waitingForInput; phaseChangedAt = date
                 waitingForApproval = flags.contains("waitingOnApproval")
                 generationRate.setWaiting(true, at: date)
-            } else if status == "active", phase == .waitingForInput {
+            } else if status == "active", phase == .waitingForInput, provider != .codex || !codexSteps.isBlocked {
                 phase = .running; phaseChangedAt = date
                 waitingForApproval = false
                 if liveItems.isEmpty { generationRate.setWaiting(false, at: date) }
@@ -839,14 +1025,19 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard !retiredTurns.contains(eventTurn) else { return }
         if method == "turn/completed" {
             guard turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }
+            let status = event["status"] as? String
             isHistoricalCompletion = false
             identifyTurn(eventTurn); liveStatusOnly = false
             retireTurn(eventTurn)
-            phase = event["status"] as? String == "completed" ? .completed : .interrupted
-            turnFailed = event["status"] as? String == "failed"; waitingForApproval = false
+            // Older streams omit status. The owned terminal event still ends
+            // the turn, with explicit failure and interruption kept distinct.
+            phase = status == "failed" || status == "interrupted" ? .interrupted : .completed
+            turnFailed = status == "failed"; waitingForApproval = false
+            codexSteps = CodexTurnSteps()
             phaseChangedAt = date; lastObserved = date; hasLiveEvidence = true
             generationRate.finish(); outputRate.finishTurn(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; toolCalls.removeAll()
             performanceMeter.finish()
+            if status != "interrupted" || codexGoal?.status.pauseLabel != nil { holdCodexGoalEnding(at: date) }
             return
         }
         if !["turn/started", "turn/attached"].contains(method), turnID == eventTurn, [.completed, .interrupted].contains(phase) { return }
@@ -862,7 +1053,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let originalStart = retained == nil ? nil : turnStartedAt
             let start = originalStart ?? (event["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? date
             if !duplicateStart {
-                beginTurn(eventTurn, at: start <= date ? start : date, observed: method == "turn/started")
+                beginCodexTurn(eventTurn, root: event["rootTurnId"], at: start <= date ? start : date, observed: method == "turn/started")
                 if let retained { performanceMeter.merge(from: retained) }
             }
             if method == "turn/started", latencyStart == nil {
@@ -880,15 +1071,19 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         } else if turnID != eventTurn || !hasLiveEvidence {
             // Attaching halfway through a request must not divide all of that
             // request's tokens by the short period since we attached.
-            beginTurn(eventTurn, at: date, observed: false)
+            beginCodexTurn(eventTurn, root: event["rootTurnId"], at: date, observed: false)
             generationRate.start()
             liveStatusOnly = false
         } else if [.completed, .interrupted].contains(phase) { return }
         hasLiveEvidence = true; phaseAwareRate = true; lastObserved = max(date, lastObserved ?? date)
         let kind = RuntimeItemKind.normalized(event["itemType"] as? String ?? "")
         let modelItem = ["reasoning", "agentMessage", "plan"].contains(kind)
-        let toolItem = RuntimeItemKind.isTool(kind)
+        let codex = provider == .codex
+        let waitItem = codex && (kind == "sleep" || kind == "collabToolCall" && event["waitingForAgents"] as? Bool == true)
+        let toolItem = RuntimeItemKind.isTool(kind) || waitItem
+        let blocked = codex && codexSteps.isBlocked
         if method == "item/completed", modelItem {
+            if codex, let id = CodexProgressEvidence.identifier(event["itemId"]) { codexSteps.foregroundItems.remove(id) }
             if event["hasText"] as? Bool == true { observeFirstText(at: date) }
             performanceMeter.modelOutput(at: date, textDelta: event["hasText"] as? Bool == true)
         }
@@ -896,29 +1091,39 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             if toolItem {
                 if liveItems.isEmpty || toolWaitStartedAt == nil { toolWaitStartedAt = date }
                 if liveItems.count < 128 { liveItems.insert(id) }
-                generationRate.setWaiting(true, at: date); phase = .running; stage = .tool
+                if codex, liveItems.contains(id) {
+                    codexSteps.foregroundItems.removeAll()
+                    codexSteps.start(id, at: date, waiting: waitItem)
+                    toolWaitStartedAt = codexSteps.tools.values.min()
+                }
+                generationRate.setWaiting(true, at: date); if !blocked { phase = .running }; stage = .tool
                 performanceMeter.setWaiting(true, at: date)
             } else if modelItem {
+                if codex, codexSteps.foregroundItems.count < 128 { codexSteps.foregroundItems.insert(id) }
                 if event["hasText"] as? Bool == true {
                     observeFirstText(at: date); performanceMeter.modelOutput(at: date, textDelta: true)
                 }
-                generationRate.setWaiting(false, at: date); phase = .running
+                if !blocked { generationRate.setWaiting(false, at: date); phase = .running }
                 stage = kind == "reasoning" ? .thinking : .responding
             }
         } else if method == "item/completed", let id = event["itemId"] as? String, liveItems.remove(id) != nil {
+            if codex { codexSteps.finish(id); toolWaitStartedAt = codexSteps.tools.values.min() }
             if liveItems.isEmpty {
                 toolWaitStartedAt = nil
-                generationRate.setWaiting(false, at: date); phase = .running; stage = .thinking
+                if !blocked { generationRate.setWaiting(false, at: date); phase = .running }; stage = .thinking
                 performanceMeter.inputBoundary(at: date)
             }
         } else if method.hasSuffix("/delta") || method.contains("TextDelta") || method.contains("textDelta") {
+            if codex, let id = CodexProgressEvidence.identifier(event["itemId"]), codexSteps.foregroundItems.count < 128 {
+                codexSteps.foregroundItems.insert(id)
+            }
             let first = (event["firstDeltaAt"] as? Double).flatMap { $0.isFinite ? Date(timeIntervalSince1970: $0) : nil } ?? date
             if event["hasText"] as? Bool == true {
                 observeFirstText(at: first)
                 performanceMeter.modelOutput(at: first, textDelta: true)
                 if first != date { performanceMeter.modelOutput(at: date, textDelta: false) }
             }
-            generationRate.setWaiting(false, at: date); phase = .running
+            if !blocked { generationRate.setWaiting(false, at: date); phase = .running }
             stage = method.contains("reasoning") ? .thinking : .responding
         } else if method == "thread/tokenUsage/updated", let total = event["outputTokens"] as? Int {
             generationRate.observe(total: total, at: date, cached: event["cachedUsage"] as? Bool == true)

@@ -3,17 +3,18 @@ import PacerCore
 import QuartzCore
 import SwiftUI
 
-/// Claude's self-reported progress ring around a task row's status icon.
+/// The provider's self-reported progress ring around a task row's status icon.
 struct TaskProgressRingView: NSViewRepresentable {
     let id: String
     let ring: TaskProgressRing?
     let color: Color
     /// Off with reduced motion: final values and no loops.
     let animates: Bool
+    var completionPulseOnly = false
 
     func makeNSView(context: Context) -> TaskProgressRingNSView { TaskProgressRingNSView() }
     func updateNSView(_ view: TaskProgressRingNSView, context: Context) {
-        view.update(.init(id: id, ring: ring, color: NSColor(color).cgColor, animates: animates))
+        view.update(.init(id: id, ring: ring, color: NSColor(color).cgColor, animates: animates, completionPulseOnly: completionPulseOnly))
     }
 }
 
@@ -32,19 +33,21 @@ final class TaskProgressRingNSView: NSView {
         var stale = false
         let color: CGColor
         let animates: Bool
+        let completionPulseOnly: Bool
         init(id: String, state: TaskProgressRing.State?, mode: TaskProgressRing.Mode = .working, fraction: Double = 0,
-             stale: Bool = false, color: CGColor, animates: Bool) {
+             stale: Bool = false, color: CGColor, animates: Bool, completionPulseOnly: Bool = false) {
             self.id = id; self.state = state; self.mode = mode; self.fraction = fraction; self.stale = stale
             self.color = color; self.animates = animates
+            self.completionPulseOnly = completionPulseOnly
         }
-        init(id: String, ring: TaskProgressRing?, color: CGColor, animates: Bool) {
+        init(id: String, ring: TaskProgressRing?, color: CGColor, animates: Bool, completionPulseOnly: Bool = false) {
             self.init(id: id, state: ring?.state, mode: ring?.mode ?? .working, fraction: ring?.fraction ?? 0,
-                stale: ring?.stale ?? false, color: color, animates: animates)
+                stale: ring?.stale ?? false, color: color, animates: animates, completionPulseOnly: completionPulseOnly)
         }
         /// The same ring, perhaps with motion switched.
         func sameRing(as other: Input) -> Bool {
             other.id == id && other.state == state && other.mode == mode && other.fraction == fraction
-                && other.stale == stale && other.color == color
+                && other.stale == stale && other.color == color && other.completionPulseOnly == completionPulseOnly
         }
     }
     /// Whether a window shows its content now; tests replace it.
@@ -77,7 +80,7 @@ final class TaskProgressRingNSView: NSView {
         var from = 0.0, to = 0.0
         var start: CFTimeInterval = 0, duration: CFTimeInterval = 0
         var ease = Ease.cubicOut
-        var stale = false, full = false
+        var stale = false, full = false, done = false
         /// The ring was breathing: a request waiting for its background work.
         var breathing = false
         var color: CGColor
@@ -283,7 +286,9 @@ final class TaskProgressRingNSView: NSView {
         let dimmed = state == .reported && input.stale
         // Leaving the wait, the element eases from the breath's current opacity.
         let leftBreath = animate && previous?.breathing == true && mode != .waiting
-        var memory = Memory(owner: self, state: state, stale: dimmed, breathing: mode == .waiting, color: color, seen: now)
+        let justCompleted = input.completionPulseOnly && mode == .done && previous?.done == false
+        var memory = Memory(owner: self, state: state, stale: dimmed, done: mode == .done, breathing: mode == .waiting, color: color, seen: now)
+        if input.completionPulseOnly, previous?.done == true, mode != .done { container.removeAnimation(forKey: "pulse") }
         if state == .pending {
             let shown = previous?.state == .reported ? previous!.displayed(at: now) : 0
             pendingShown = true; arc.removeAnimation(forKey: "opacity"); arc.opacity = 1; ghost.opacity = 0
@@ -313,7 +318,9 @@ final class TaskProgressRingNSView: NSView {
             else { setFraction(target) }
             fade(wasStale: kept.stale, stale: dimmed, animate: animate)
             if leftBreath { easeOutOfBreath(arc, high: 1, to: dimmed ? Double(Self.staleOpacity) : 1, now: now) }
+            if animate, justCompleted { pulse(at: now + max(0, remaining)) }
             kept.owner = self; kept.seen = now; kept.color = color; kept.stale = dimmed; kept.breathing = mode == .waiting
+            kept.done = memory.done
             Self.memories[id] = kept
             return
         }
@@ -350,16 +357,19 @@ final class TaskProgressRingNSView: NSView {
         fade(wasStale: previous?.stale ?? false, stale: dimmed, animate: animate && previous != nil)
         if leftBreath, previous?.state == .reported { easeOutOfBreath(arc, high: 1, to: dimmed ? Double(Self.staleOpacity) : 1, now: now) }
         let full = target >= 0.9995
-        if full, animate, let previous, !previous.full, mode == .working || mode == .done {
-            // Reaching 100% settles with one small pulse once the sweep ends.
-            let pulse = CAKeyframeAnimation(keyPath: "transform.scale")
-            pulse.values = [1, 1.06, 1]; pulse.keyTimes = [0, 0.45, 1]; pulse.duration = 0.4
-            pulse.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
-            pulse.beginTime = container.convertTime(now + delay + duration + 0.05, from: nil)
-            container.add(pulse, forKey: "pulse")
+        if full, animate, justCompleted || !input.completionPulseOnly && previous?.full == false && (mode == .working || mode == .done) {
+            pulse(at: now + delay + duration)
         }
         memory.full = full
         Self.memories[id] = memory
+    }
+
+    private func pulse(at time: CFTimeInterval) {
+        let pulse = CAKeyframeAnimation(keyPath: "transform.scale")
+        pulse.values = [1, 1.06, 1]; pulse.keyTimes = [0, 0.45, 1]; pulse.duration = 0.4
+        pulse.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+        pulse.beginTime = container.convertTime(time + 0.05, from: nil)
+        container.add(pulse, forKey: "pulse")
     }
 
     // MARK: Motion

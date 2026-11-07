@@ -4,9 +4,23 @@ import Foundation
 /// A response is logged when its step ends, so stage, speed and cost settle
 /// per step rather than per token.
 struct DeepSeekActivityState: Sendable {
+    private struct Report: Sendable {
+        let step: Int
+        let seq: Int
+        let percent: Int?
+    }
+    private struct DeferredEnding: Sendable {
+        let attaching: Bool
+    }
     private struct Progress: Sendable {
         var turn: Int?
         var turnID: String?
+        var startSeq: Int?
+        var reportSeq: Int?
+        var reports: [String: Report] = [:]
+        var nestedQuestions: [String: String] = [:]
+        var jobs: Set<String> = []
+        var deferredEnding: DeferredEnding?
         var requestAt: Date?
         var measuredLatency = false
         var model: String?
@@ -31,6 +45,14 @@ struct DeepSeekActivityState: Sendable {
     private(set) var status = RuntimeStreamStatus()
     /// The billing provider of the newest request, for choosing a balance source.
     private(set) var latestProvider: (at: Date, name: String)?
+    /// Settlement and its waking turn are separate appends. Quiet delivery can
+    /// settle a job without opening a turn, so the wait must also converge.
+    /// The grace runs from when Pacer saw the settlement, never only from its
+    /// log time, so a late read cannot end a request before its wake arrives.
+    static let wakeGrace: TimeInterval = 10
+    /// Deadlines of deferred endings whose background work has settled.
+    private var wakeDeadlines: [String: Date] = [:]
+    var nextWakeDeadline: Date? { wakeDeadlines.values.min() }
     var activities: [SessionActivity] { sessions.values.map(withTurnCost).sorted { $0.id < $1.id } }
     var attention: [PendingAttentionRequest] { requests.values.sorted { $0.detectedAt < $1.detectedAt } }
     var performanceUpdates: [SessionPerformanceUpdate] { Array(metrics.values) }
@@ -66,6 +88,31 @@ struct DeepSeekActivityState: Sendable {
         sessions[key]?.markSourceUnavailable()
         requests = requests.filter { $0.value.threadID != session }
         progress[key]?.calls.removeAll(); progress[key]?.approvals.removeAll(); progress[key]?.turn = nil
+        progress[key]?.reports.removeAll(); progress[key]?.jobs.removeAll(); progress[key]?.deferredEnding = nil
+        progress[key]?.nestedQuestions.removeAll(); wakeDeadlines[key] = nil
+    }
+
+    /// Ends deferred requests whose grace has passed. Returns whether any did.
+    @discardableResult mutating func finishSettledWaits(now: Date) -> Bool {
+        let due = wakeDeadlines.filter { $0.value <= now }.map(\.key)
+        guard !due.isEmpty else { return false }
+        for key in due { finishSettledWait(key, now: now) }
+        status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
+        return true
+    }
+
+    private mutating func finishSettledWait(_ key: String, now: Date) {
+        guard let deadline = wakeDeadlines[key], deadline <= now else { return }
+        wakeDeadlines[key] = nil
+        guard var state = progress[key], let ending = state.deferredEnding,
+              let turn = state.turnID, var value = sessions[key], let session = value.threadID else { return }
+        state.deferredEnding = nil
+        value.applyRuntime(["method": "turn/completed", "threadId": session, "turnId": turn, "status": "completed",
+                            "at": deadline.timeIntervalSince1970])
+        if ending.attaching { value.suppressHistoricalCompletionNotifications() }
+        progress[key] = state; sessions[key] = value
+        historicalRunning.remove(key)
+        status.notifications += 1
     }
     mutating func pruneLedger(now: Date = Date()) {
         ledger.prune(now: now)
@@ -96,6 +143,7 @@ struct DeepSeekActivityState: Sendable {
     mutating func consume(_ record: DeepSeekLogRecord, session: String, attaching: Bool, now: Date = Date()) {
         guard record.at.timeIntervalSince(now) <= 300 else { return }
         let key = AgentProvider.deepseek.activityID(sessionID: session), seconds = record.at.timeIntervalSince1970
+        if case .turnStart = record.event { finishSettledWait(key, now: record.at) }
         var value = sessions[key] ?? SessionActivity(id: key, project: "DeepSeek", phaseAwareRate: true, provider: .deepseek, sessionID: session)
         var state = progress[key] ?? Progress()
         func event(_ method: String, _ extra: [String: Any] = [:]) -> [String: Any] {
@@ -126,10 +174,15 @@ struct DeepSeekActivityState: Sendable {
             if reported { fields["reasoningEffort"] = effort.map { $0 as Any } ?? NSNull() }
             metadata(fields); lifecycle = false
         case .turnStart(let turn):
+            let carried = state.deferredEnding != nil ? value.currentProgress : nil
+            let jobs = state.deferredEnding != nil ? state.jobs : []
             let id = String(turn) + "." + String(record.seq ?? Int(seconds * 1000))
-            state = Progress(turn: turn, turnID: id, model: state.model, provider: state.provider, startedAt: record.at)
+            wakeDeadlines[key] = nil
+            state = Progress(turn: turn, turnID: id, startSeq: record.seq, jobs: jobs,
+                             model: state.model, provider: state.provider, startedAt: record.at)
             requests = requests.filter { $0.value.threadID != session }
             value.applyRuntime(event(attaching ? "turn/attached" : "turn/started"))
+            if let carried { value.carryProgress(carried, at: record.at) }
         case let .stepStart(turn, step):
             guard turn == state.turn else { break }
             state.requestAt = record.at
@@ -166,11 +219,57 @@ struct DeepSeekActivityState: Sendable {
             }
             value.applyRuntime(event("item/started", ["itemId": call, "itemType": "commandExecution"]))
             if kind == .question { ask(.input, session: session, item: call, at: record.at, value: &value, event: event) }
-        case .toolResult(let call):
+        case let .progressCall(turn, step, call, percent):
+            lifecycle = false
+            guard turn == state.turn, let seq = record.seq, seq > (state.startSeq ?? -1), state.reports.count < 128,
+                  state.reports[call] == nil else { break }
+            state.reports[call] = Report(step: step, seq: seq, percent: percent)
+        case let .nestedProgress(root, percent):
+            lifecycle = false
+            guard state.turn != nil, state.calls[root] == .program else { break }
+            Self.report(percent, record: record, state: &state, value: &value)
+        case let .nestedQuestion(root, call, opening):
+            guard state.turn != nil, state.calls[root] == .program, let seq = record.seq, seq > (state.startSeq ?? -1) else { break }
+            if opening {
+                guard state.nestedQuestions.count < 64, state.nestedQuestions[call] == nil else { break }
+                state.nestedQuestions[call] = root
+                ask(.input, session: session, item: call, at: record.at, value: &value, event: event)
+            } else if state.nestedQuestions[call] == root {
+                state.nestedQuestions.removeValue(forKey: call)
+                requests.removeValue(forKey: key + ":" + call)
+                settleWaiting(session: session, value: &value, event: event)
+            }
+        case .toolResult(let call), .progressAccepted(_, _, let call):
+            if let report = state.reports[call] {
+                lifecycle = false
+                guard let seq = record.seq, seq > report.seq else { break }
+                // Any later result settles the call; only a matching acknowledgment reports.
+                state.reports.removeValue(forKey: call)
+                if case let .progressAccepted(turn, step, _) = record.event, turn == state.turn, step == report.step,
+                   let percent = report.percent {
+                    Self.report(percent, record: record, state: &state, value: &value)
+                }
+                break
+            }
             guard state.calls.removeValue(forKey: call) != nil else { break }
             requests.removeValue(forKey: key + ":" + call)
+            for nested in state.nestedQuestions.keys.filter({ state.nestedQuestions[$0] == call }) {
+                requests.removeValue(forKey: key + ":" + nested)
+                state.nestedQuestions.removeValue(forKey: nested)
+            }
             value.applyRuntime(event("item/completed", ["itemId": call, "itemType": "commandExecution"]))
             settleWaiting(session: session, value: &value, event: event)
+        case let .jobStarted(id, owner, root):
+            lifecycle = false
+            guard owner == session, state.turn != nil, state.calls[root] != nil,
+                  let seq = record.seq, seq > (state.startSeq ?? -1), state.jobs.count < 64 else { break }
+            state.jobs.insert(id)
+        case let .jobSettled(id, owner):
+            lifecycle = false
+            guard owner == session, state.jobs.remove(id) != nil, state.jobs.isEmpty, state.deferredEnding != nil else { break }
+            // A replayed settlement keeps its log time; a live one counts from now.
+            let seen = attaching ? record.at : max(record.at, now)
+            wakeDeadlines[key] = max(seen, state.endedAt ?? seen).addingTimeInterval(Self.wakeGrace)
         case let .approvalAsked(id, _):
             guard state.turn != nil, state.approvals.count < 64 else { break }
             state.approvals.insert(id)
@@ -181,9 +280,16 @@ struct DeepSeekActivityState: Sendable {
             settleWaiting(session: session, value: &value, event: event)
         case let .turnEnd(turn, outcome):
             guard turn == state.turn else { break }
-            value.applyRuntime(event("turn/completed", ["status": outcome == .completed ? "completed" : outcome == .failed ? "failed" : "interrupted"]))
+            if outcome == .completed, !state.jobs.isEmpty {
+                if value.phase == .waitingForInput { value.applyRuntime(event("thread/status/changed", ["status": "active"])) }
+                value.waitForBackground(kinds: ["job"], wakeups: 0, at: record.at)
+                state.deferredEnding = DeferredEnding(attaching: attaching)
+            } else {
+                value.applyRuntime(event("turn/completed", ["status": outcome == .completed ? "completed" : outcome == .failed ? "failed" : "interrupted"]))
+                state.jobs.removeAll()
+            }
             requests = requests.filter { $0.value.threadID != session }
-            state.turn = nil; state.calls.removeAll(); state.approvals.removeAll(); state.requestAt = nil
+            state.turn = nil; state.calls.removeAll(); state.approvals.removeAll(); state.reports.removeAll(); state.nestedQuestions.removeAll(); state.requestAt = nil
             state.endedAt = record.at
         }
         if lifecycle {
@@ -198,9 +304,16 @@ struct DeepSeekActivityState: Sendable {
         if sessions.count > 128 {
             for id in sessions.keys.sorted(by: { (sessions[$0]?.lastObserved ?? .distantPast) > (sessions[$1]?.lastObserved ?? .distantPast) }).dropFirst(128) {
                 sessions.removeValue(forKey: id); progress.removeValue(forKey: id); metrics.removeValue(forKey: id); historicalRunning.remove(id)
+                wakeDeadlines.removeValue(forKey: id)
                 requests = requests.filter { !$0.key.hasPrefix(id + ":") }
             }
         }
+    }
+
+    private static func report(_ percent: Int, record: DeepSeekLogRecord, state: inout Progress, value: inout SessionActivity) {
+        guard let turn = state.turnID, let seq = record.seq, seq > (state.reportSeq ?? state.startSeq ?? -1) else { return }
+        state.reportSeq = seq
+        value.reportProgress(percent, at: max(record.at, value.currentProgress?.reportedAt ?? record.at), turnID: turn)
     }
 
     private mutating func ask(_ kind: PendingAttentionRequest.Kind, session: String, item: String, at date: Date,

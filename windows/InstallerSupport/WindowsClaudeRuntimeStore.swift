@@ -18,8 +18,8 @@ public struct WindowsPythonPin: Decodable, Sendable {
     }
 }
 
-/// One current-user cache shared by every Claude home. Configuration changes
-/// stay in ClaudeHookInstaller; this type only manages owned runtime files.
+/// One current-user cache per provider. The same pinned Python package supplies
+/// Claude hooks and the Codex reporter, with separate ownership and lifetimes.
 public struct WindowsClaudeRuntimeStore {
     public enum Failure: Error { case invalidRuntime, unsafeRuntime, referenced, busy }
     private struct RuntimeFile: Codable { let name: String, sha256: String, bytes: Int }
@@ -35,8 +35,12 @@ public struct WindowsClaudeRuntimeStore {
     }
     private static let marker = ".pacer-owned.json"
     public let root: URL
+    private let directoryName: String
     private let storage = WindowsClaudeHookStorage()
-    public init(root: URL) { self.root = root.standardizedFileURL }
+    public init(root: URL) { self.root = root.standardizedFileURL; directoryName = "ClaudeRuntime" }
+    init(codexProgressRoot: URL) {
+        root = codexProgressRoot.standardizedFileURL; directoryName = WindowsCodexProgressPaths.directoryName
+    }
     public static var defaultRoot: URL {
         let environment = ProcessInfo.processInfo.environment
         let local = environment.first { $0.key.caseInsensitiveCompare("LOCALAPPDATA") == .orderedSame }?.value
@@ -50,8 +54,8 @@ public struct WindowsClaudeRuntimeStore {
         value.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}-[0-9a-f]{12}\z"#, options: .regularExpression) != nil
     }
     public func withLock<T>(_ action: () throws -> T) throws -> T {
-        guard root.lastPathComponent.caseInsensitiveCompare("ClaudeRuntime") == .orderedSame else { throw Failure.unsafeRuntime }
-        let name = "Global\\CodexPacer.ClaudeRuntime." + Self.digest(Data(root.path.lowercased().utf8))
+        guard root.lastPathComponent.caseInsensitiveCompare(directoryName) == .orderedSame else { throw Failure.unsafeRuntime }
+        let name = "Global\\CodexPacer." + directoryName + "." + Self.digest(Data(root.path.lowercased().utf8))
         guard let mutex = CreateMutexW(nil, false, Array(name.utf16) + [0]) else { throw Failure.busy }
         defer { _ = CloseHandle(mutex) }
         let state = WaitForSingleObject(mutex, 2000)
@@ -104,6 +108,9 @@ public struct WindowsClaudeRuntimeStore {
     /// Claim before copying, so interruption leaves a repairable owned cache.
     /// Only a verified official package is copied; unknown files are preserved.
     public func ensure(package source: URL, home: URL) throws -> URL {
+        try ensure(package: source, home: home, progressReporter: nil)
+    }
+    func ensure(package source: URL, home: URL, progressReporter: Data?) throws -> URL {
         try storage.validate(home)
         guard storage.isDirectory(home) else { throw Failure.unsafeRuntime }
         let pin = try WindowsPythonPin.load()
@@ -119,6 +126,15 @@ public struct WindowsClaudeRuntimeStore {
             let data = try WindowsFileSystem().read(url, offset: 0, maximumBytes: file.bytes + 1)
             guard data.count == file.bytes, Self.digest(data) == file.sha256 else { throw Failure.invalidRuntime }
             bytes.append((file, data))
+        }
+        if let progressReporter {
+            let name = WindowsCodexProgressPaths.scriptName
+            guard directoryName == WindowsCodexProgressPaths.directoryName, !package.files.contains(where: { $0.name == name }) else {
+                throw Failure.invalidRuntime
+            }
+            let file = RuntimeFile(name: name, sha256: Self.digest(progressReporter), bytes: progressReporter.count)
+            try validate(file)
+            bytes.append((file, progressReporter))
         }
         try createDirectory(root)
         let marker = root.appendingPathComponent(Self.marker)
@@ -139,9 +155,10 @@ public struct WindowsClaudeRuntimeStore {
             let prior = try versionClaim(directory)
             guard prior.archiveSHA256 == pin.sha256 else { throw Failure.unsafeRuntime }
         } else { guard try entries(directory).isEmpty else { throw Failure.unsafeRuntime } }
-        try write(VersionClaim(version: pin.version, archiveSHA256: pin.sha256, files: package.files), versionMarker)
-        let expected = Set(package.files.map(\.name) + [Self.marker])
+        let files = bytes.map { $0.0 }
+        let expected = Set(files.map(\.name) + [Self.marker])
         guard try entries(directory).allSatisfy({ expected.contains($0.lastPathComponent) }) else { throw Failure.unsafeRuntime }
+        try write(VersionClaim(version: pin.version, archiveSHA256: pin.sha256, files: files), versionMarker)
         for (file, data) in bytes {
             let target = directory.appendingPathComponent(file.name); try storage.validate(target)
             if storage.exists(target), let old = try? WindowsFileSystem().read(target, offset: 0, maximumBytes: file.bytes + 1), old == data { continue }

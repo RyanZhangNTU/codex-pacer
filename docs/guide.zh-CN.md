@@ -103,6 +103,8 @@ DeepSeek 没有额度窗口，按余额扣费。**余额**模式（默认）下�
 
 ## Codex
 
+**任务进度。** 打开“设置 → Codex → 任务进度圆环”。Pacer 会为新开的本地 Codex 会话配置上报工具。在 Codex 给出估计前，任务图标外会显示虚线环。[任务进度说明](codex-progress-setup.md)
+
 Pacer 会在常见位置查找 Codex 应用或 CLI，包括 Homebrew、nvm、fnm、Volta、asdf、mise、pnpm 等 npm 管理工具，以及移动过位置的 Codex.app。“设置 → Codex → 状态”显示找到的结果，悬停可查看具体路径；也可以在“自定义位置”中选择其他 CLI 或数据目录。自定义路径失效时会明确提示，不会悄悄换用别的 CLI。
 
 Codex 额度通过 CLI 使用你自己的 Codex 登录读取。使用 API Key 或 Amazon Bedrock 登录时没有 ChatGPT 订阅额度，Pacer 会说明这一点。
@@ -122,6 +124,8 @@ Pacer 默认使用 `~/.claude`，设置了 `CLAUDE_CONFIG_DIR` 时使用该目�
 **其他应用中的会话。** Zotero 插件等通过 Claude Agent SDK 内嵌 Claude Code 的应用，其会话会标出应用名称。不想看到这些会话及其提醒时，关闭“设置 → Claude → 其他应用中的会话”。终端、VS Code 和 Claude 桌面端的会话始终显示。
 
 ## DeepSeek Harness
+
+在 **设置 → DeepSeek → 任务进度圆环** 打开上报，配置完成后新建 Harness 会话。进度环会在收到估算前显示虚线，等待时保留当前数值，任务完成时填满。上报工具添加在 Harness 数据目录的 `cordis.patch.yml` 中，Harness 的所有配置和命令行都会使用。关闭开关即可移除；Windows 卸载也会移除。macOS 上请先关闭开关，再把 Pacer 移到废纸篓。如果 Pacer 已经删除，请删掉 `cordis.patch.yml` 中两行 `Codex Pacer DeepSeek progress` 标记及其之间的全部内容，以及 `pacer/deepseek-progress` 文件夹。详见 [DeepSeek 任务状态与动画](deepseek-task-state-animation.zh-CN.md)。
 
 Pacer 读取 DeepSeek Harness 保存在 `~/.dsh`（设置了 `DSH_HOME` 时用它）的会话日志；也可以在“设置 → DeepSeek → 自定义位置”中选择其他目录。它只根据 token 数和时间，追踪每一轮的阶段、速度和首输出时间、审批、等你回复的提问，以及这一轮如何结束。Harness 在每一步结束时才保存回复，所以速度和花费按步骤更新，而不是随文字逐字变化。暂不追踪 SSH 主机上的 Harness 会话。
 
@@ -155,7 +159,7 @@ Codex Remote Control 任务通过 Codex 桌面端获取。请保持 Codex 开启
 | --- | --- |
 | 概览 | 日期和任务数，需要你处理的事项（各带一个按钮），每个服务一张卡片（与展开灵动岛相同的额度视图），以及正在进行的任务。 |
 | 历史 | 各服务当前窗口的额度曲线、额度详情、Credit 和重置券，以及 DeepSeek 近 7 天的花费。 |
-| Codex、Claude、DeepSeek | 开关模块、状态（本机检测结果、Claude 登录和一行额度摘要）、各服务在其他应用中的会话、Claude 云端项目和任务进度圆环、自定义位置；DeepSeek 还有登录或 API Key 与余额来源、余额或预算模式、速度依据、回合花费估算，以及下一个工作日在本机时区的高峰时段。 |
+| Codex、Claude、DeepSeek | 开关模块、状态（本机检测结果、Claude 登录和一行额度摘要）、各服务在其他应用中的会话和任务进度圆环、Claude 云端项目、自定义位置；DeepSeek 还有登录或 API Key 与余额来源、余额或预算模式、速度依据、回合花费估算，以及下一个工作日在本机时区的高峰时段。 |
 | 远程 | 连接汇总、SSH 主机、Remote Control，以及其他任务来源的状态。 |
 | 外观 | 纯黑或液态玻璃；刘海或自由拖动，以及“回到顶部中央”；显示器；是否在全屏应用上方显示；展开后的额度样式（只开启 DeepSeek 时为 DeepSeek 内容）；显示应用按钮。 |
 | 折叠栏 | 显示哪些组件、放在摄像头哪一侧，单个任务时的徽标，剩余额度或配速，额度双环各显示哪个模块，以及每个服务的 5 小时或 7 天窗口。 |

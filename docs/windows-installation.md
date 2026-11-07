@@ -32,11 +32,13 @@ StartupApproved 的二进制格式没有公开 API 契约。当前识别已观�
 
 清理失败时可选择“重试”“继续卸载”或“取消”。取消会保留应用文件；预检发现无效 JSON、过大配置或不安全路径时，也不会更改 Claude 配置或应用注册。继续卸载会删除应用文件，清理仍能安全处理的自有注册项，保留失败项，并在卸载日志中说明手动清理方法。遗留的 Pacer hook 可能调用已删除的程序，在手动移除这些 Pacer 条目前，Claude Code 可能报错。提示只列配置文件名和定位方式，不显示配置内容或任务资料。
 
-静默卸载（/SILENT 或 /VERYSILENT）遇到清理失败会返回非零结果，保留应用文件。维护程序会在保留的数据目录中写入固定内容的 uninstall-cleanup.log，区分 Claude 配置与 Windows 注册清理失败；从 Windows 应用列表启动卸载也会启用 Inno 日志。排查命令行卸载时可另加 /LOG。重试可重复执行，不会重复删除用户配置。
+静默卸载（/SILENT 或 /VERYSILENT）遇到清理失败会返回非零结果，保留应用文件。维护程序在数据目录的 uninstall-cleanup.log 中区分 Codex 配置、DeepSeek Harness 配置、Claude 配置和 Windows 注册的清理失败。从 Windows 应用列表启动卸载也会启用 Inno 日志。排查命令行卸载时可另加 /LOG。
 
 卸载移除当前安装自有的安装登记、开始菜单和桌面快捷方式、启动项和通知注册。不同路径的启动项、其他应用的注册值，以及用户改过的快捷方式会保留。通知清理先核对激活程序路径，再调用 SDK 的 [UnregisterAll](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.windows.appnotifications.appnotificationmanager.unregisterall)，并移除当前可执行文件的路径映射。
 
 Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 Pacer 自有的当前或旧版 hook 命令；status-line 仍是 Pacer 包装时恢复原值；只移除安装记录里由 Pacer 添加且未被用户修改的环境值。原有或后来添加的用户 hooks、status-line 和其他配置不删除。处理本机默认、已配置及运行时索引记录的 Claude home，不处理远程 hooks。无安装记录时不推测归属。全部 hook 清理后，再按所有权和引用检查删除共享运行时；未知文件或用户引用会阻止删除。
+
+DeepSeek Harness 的进度上报在 `%USERPROFILE%\.dsh`（设置了 `DSH_HOME` 时用它）和 Pacer 设置中选择的数据目录里清理，只处理含 `pacer\deepseek-progress` 的目录。卸载先预检，再在关闭应用后移除 cordis.patch.yml 中校验和仍匹配的 Pacer 条目、开关文件和带 Pacer 标记的上报脚本。条目被改过时保留文件，作为清理失败报告，并给出手动删除两行标记及其之间全部内容的方法。
 
 偏好、历史、已读和登录资料保留。需要清除登录资料时，请在卸载前通过设置中的退出登录或删除 key 操作处理。共享卸载器也保留 Claude home 中的适配脚本与已清理的记账元数据；正常清理后，配置不再引用这些脚本。
 
@@ -55,6 +57,8 @@ Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 
     ./scripts/windows/package-installer.ps1 -Archive <ZIP>
 
 生命周期测试编译独立 QA 标识的安装器，使用中文路径、独立启动项、开始菜单目录、桌面快捷方式名称和合成 Claude 配置。它验证安装、默认快捷方式、损坏修复（静默修复保持快捷方式选择）、文件占用失败、运行中覆盖安装、合成偏好与已读文件保留、启动项、卸载清理和离线 demo。无效 Claude JSON 场景覆盖静默中止、交互取消、重复重试和明确继续卸载，并检查原始字节及日志隐私；交互选择通过仅限 QA 包的参数调用同一维护入口。测试后卸载并清理测试目录。截图只包含 demo 数据。
+
+可选的 `-CodexExecutable` 参数使用本机 Codex 和两个隔离配置测试进度上报。检查会在上报器仍运行时覆盖安装和卸载，并验证无效 TOML 会阻止卸载。成功卸载会从两个配置中撤销 Pacer 的 `pacer_progress`，让已连接的上报器停止接受估计。上报器运行时位于应用目录之外，随用户数据保留。
 
 使用屏幕前，测试等待其他展示或背景测试进程退出；每分钟检查一次，最多等 30 分钟。测试只关闭自己安装位置的应用。可选 ProtectedProcessId 参数只检查指定进程仍存在，不向它发送消息。
 

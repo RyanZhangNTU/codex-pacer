@@ -50,6 +50,8 @@ struct SettingsView: View {
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
     @AppStorage(IslandModel.showsClaudeCloudProjectsKey) private var showClaudeCloudProjects = true
     @AppStorage(IslandModel.claudeProgressRingKey) private var claudeProgressRing = false
+    @AppStorage(IslandModel.codexProgressRingKey) private var codexProgressRing = false
+    @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekProgressRing = false
     @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
@@ -292,7 +294,12 @@ struct SettingsView: View {
             MainCard { CardRow(title: L10n.text("main.module_off_hint")) }
         } else if provider == .deepseek {
             SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
-                showsTurnCost: $showsDeepSeekTurnCost, speedSource: $deepseekSpeedSource,
+                // Like Codex, the switch applies at once, so turning it off and quitting still removes the entry.
+                showsTurnCost: $showsDeepSeekTurnCost, showsProgressRing: Binding(get: { deepseekProgressRing }, set: { value in
+                    deepseekProgressRing = value
+                    model.syncDeepSeekProgressSwitch()
+                }),
+                speedSource: $deepseekSpeedSource,
                 ringSlot: model.deepseekValueShowsBudget ? QuotaRingSlot(rawValue: model.compactRingProviders.firstIndex(of: .deepseek) ?? 0) : nil,
                 openCollapsedBar: {
                     scrollTarget = Self.gaugeAnchor
@@ -309,6 +316,14 @@ struct SettingsView: View {
             MainCard(title: L10n.text("main.section.display")) {
                 if provider == .codex {
                     CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.codex_embedded"), isOn: $showEmbeddedCodexSessions)
+                    let setup = codexProgressRing ? model.codexProgressSetup : nil
+                    ProgressRingToggle(info: L10n.text("codex.progress_ring_help"), isOn: Binding(get: { codexProgressRing }, set: { value in
+                            codexProgressRing = value
+                            model.syncCodexProgressSwitch()
+                        }),
+                        status: setup.map { L10n.text("codex.progress_setup." + $0.rawValue) },
+                        canRetry: setup == .failed || setup == .missingCLI || setup == .conflict,
+                        retry: { model.syncCodexProgressSwitch(force: true) })
                 } else {
                     CardToggle(title: L10n.text("main.claude.cloud"), info: L10n.text("main.info.claude_cloud"), isOn: $showClaudeCloudProjects)
                     CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.claude_embedded"), isOn: $showEmbeddedClaudeSessions)
@@ -575,6 +590,7 @@ struct SettingsView: View {
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
+            codexProgressRing: codexProgressRing, deepseekProgressRing: deepseekProgressRing,
             showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
             quotaRings: quotaRings)
     }
@@ -707,6 +723,8 @@ private struct LiveSettings: Equatable {
     var claudeProgressRing: Bool
     var deepseekSource: DeepSeekBalanceSource
     var deepseekLowBalance: Double?
+    var codexProgressRing: Bool
+    var deepseekProgressRing: Bool
     var showsDeepSeekTurnCost: Bool
     var deepseekSpeedSource: String
     var deepseekSpikeLimit: Double?

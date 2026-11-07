@@ -103,6 +103,8 @@ The ⋯ menu in the task header refreshes data or quits Pacer; the gear opens Se
 
 ## Codex
 
+**Task progress.** Turn on **Settings → Codex → Progress Ring**. Pacer sets up reporting for new local Codex sessions. The ring stays dashed until Codex reports an estimate. [Codex task progress](codex-progress-setup.md)
+
 Pacer finds the Codex app or CLI in the usual places, including Homebrew, npm managers such as nvm, fnm, Volta, asdf, mise and pnpm, and a moved Codex.app. **Settings → Codex → Status** shows what it found; hover for the exact path, or pick another CLI or data folder under **Custom locations**. A custom path that stops working is reported rather than silently replaced.
 
 Codex quota comes from your own Codex sign-in through the CLI. API-key or Amazon Bedrock sign-ins do not have ChatGPT subscription limits, and Pacer says so.
@@ -124,6 +126,8 @@ Pacer uses `~/.claude`, or `CLAUDE_CONFIG_DIR` when set; choose another folder u
 **Sessions from other apps.** Apps that embed Claude Code through the Claude Agent SDK, such as a Zotero plugin, show their sessions with the app's name. To hide those sessions and their reminders, turn off **Settings → Claude → Sessions from Other Apps**. Terminal, VS Code and Claude Desktop sessions always show.
 
 ## DeepSeek Harness
+
+Turn on **Settings → DeepSeek → Progress Ring** to let Harness report its estimate for the current request. Start a new Harness session after Pacer configures the reporting tool. The ring stays dashed until an estimate arrives, keeps its value while the request waits, and fills when the request completes. The tool is added to `cordis.patch.yml` in the Harness data folder, so every Harness profile and the CLI use it. Turning the switch off removes it. The Windows uninstaller also removes it; on macOS, turn off the switch before moving Pacer to the Trash. If Pacer is already gone, delete both `Codex Pacer DeepSeek progress` marker lines in `cordis.patch.yml` and everything between them, and the `pacer/deepseek-progress` folder. See the [task states and animations](deepseek-task-state-animation.zh-CN.md).
 
 Pacer reads DeepSeek Harness's session logs in `~/.dsh`, or `DSH_HOME` when set; choose another folder under **Settings → DeepSeek → Custom locations**. It follows the stage of each turn, its speed and time to first output, approvals, questions that wait for your reply, and how the turn ended, from the token counts and timing only. Harness saves each reply when its step finishes, so speed and cost update step by step rather than while text streams. Harness sessions on SSH hosts are not followed yet.
 
@@ -157,7 +161,7 @@ Settings is Pacer's main window, opened with the gear in the expanded island. Se
 | --- | --- |
 | Overview | The date and task count, anything that needs you with one button to fix it, a card per service with the expanded island's quota view, and the running tasks. |
 | History | Each service's quota chart for the current window, quota details, credits and banked resets, and DeepSeek's last seven days. |
-| Codex, Claude, DeepSeek | Turn each module on or off, its status (what Pacer found on this Mac, Claude sign-in and a one-line quota summary), each service's sessions from other apps, Claude cloud Projects and the progress ring, and custom locations; for DeepSeek, sign-in or API key and the balance source, Balance or Budget mode, what speed counts, the turn-cost estimate and the peak hours of the next working day in your time zone. |
+| Codex, Claude, DeepSeek | Turn each module on or off, its status (what Pacer found on this Mac, Claude sign-in and a one-line quota summary), each service's sessions from other apps and progress ring, Claude cloud Projects, and custom locations; for DeepSeek, sign-in or API key and the balance source, Balance or Budget mode, what speed counts, the turn-cost estimate and the peak hours of the next working day in your time zone. |
 | Remote | A summary of the connections, SSH hosts, Remote Control and the status of every other task source. |
 | Appearance | Solid black or Liquid Glass, Notch or Free Move with Return to Top Center, display selection, visibility over full-screen apps, the expanded quota style (or DeepSeek's content when it is the only module) and Show App Buttons. |
 | Collapsed Bar | Which components appear and on which side of the camera, the single-task badge, remaining quota or pace, which module each quota ring shows, and each service's 5-hour or 7-day window. |

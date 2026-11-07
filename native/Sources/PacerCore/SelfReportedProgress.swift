@@ -46,6 +46,8 @@ public struct TaskProgressRing: Equatable, Sendable {
         case attention
         /// The turn stopped for background work that will wake the request.
         case waiting
+        /// A verified Codex goal is paused or limited between attempts.
+        case paused
         /// The turn ended normally with no background work left: the request
         /// is done, so the ring is full whatever the last estimate was.
         case done
@@ -71,14 +73,18 @@ public struct TaskProgressRing: Equatable, Sendable {
     /// completed turn means the request is done. An interrupted or failed one
     /// keeps its last estimate, and shows no ring without one. A cloud run is
     /// known only by its status until it ends, so it needs no turn ID to run.
-    public static func make(_ activity: SessionActivity, phase: ActivityPhase, enabled: Bool, at now: Date) -> Self? {
+    public static func make(_ activity: SessionActivity, phase: ActivityPhase, enabled: Bool, at now: Date,
+                            hasAttention: Bool = false, waitingForDependents: Bool = false) -> Self? {
         let cloud = activity.provider == .claude && activity.sourceHostID == ClaudeCloudProjectState.sourceID
-        guard enabled, activity.turnID != nil || cloud && [.running, .waitingForInput].contains(phase) else { return nil }
+        let codex = activity.provider == .codex
+        guard enabled, activity.turnID != nil || (cloud || codex && activity.hasLiveEvidence) && [.running, .waitingForInput].contains(phase) else { return nil }
         let progress = cloud ? nil : activity.currentProgress, mode: Mode
         switch phase {
         case .running, .waitingForInput:
-            if activity.currentBackgroundWait != nil { mode = .waiting }
-            else if phase == .waitingForInput { mode = .attention }
+            // A question or approval for the user outranks every kind of waiting.
+            if hasAttention || phase == .waitingForInput { mode = .attention }
+            else if codex && activity.codexGoalPause != nil { mode = .paused }
+            else if activity.currentBackgroundWait != nil || codex && waitingForDependents { mode = .waiting }
             else if let since = activity.toolWaitStartedAt, now.timeIntervalSince(since) >= longStepInterval { mode = .longStep }
             else { mode = .working }
         case .completed:
@@ -91,19 +97,21 @@ public struct TaskProgressRing: Equatable, Sendable {
             return .init(state: .reported, mode: mode, fraction: Double(progress.percent) / 100, percent: progress.percent,
                 stale: stale, reportedAt: progress.reportedAt)
         }
-        guard [.working, .longStep, .attention, .waiting].contains(mode) else { return nil }
+        guard [.working, .longStep, .attention, .waiting, .paused].contains(mode) else { return nil }
         return .init(state: .pending, mode: mode, fraction: 0, percent: nil, stale: false, reportedAt: nil, cloud: cloud)
     }
 
     public var accessibilityText: String {
         guard let percent else {
-            return L10n.text(cloud ? "activity.progress_cloud" : mode == .waiting ? "activity.progress_waiting_pending" : "activity.progress_pending")
+            return L10n.text(cloud ? "activity.progress_cloud" : mode == .waiting ? "activity.progress_waiting_pending" :
+                mode == .paused ? "activity.progress_paused_pending" : "activity.progress_pending")
         }
         switch mode {
         case .working: return L10n.text("activity.progress_reported", percent)
         case .longStep: return L10n.text("activity.progress_long_step", percent)
         case .attention: return L10n.text("activity.progress_attention", percent)
         case .waiting: return L10n.text("activity.progress_waiting", percent)
+        case .paused: return L10n.text("activity.progress_paused", percent)
         case .done: return L10n.text("activity.progress_done")
         case .interrupted: return L10n.text("activity.progress_interrupted", percent)
         case .failed: return L10n.text("activity.progress_failed", percent)

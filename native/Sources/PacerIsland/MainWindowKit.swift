@@ -214,6 +214,25 @@ struct CardToggle: View {
     }
 }
 
+/// The progress ring switch for a service Pacer sets up a reporting tool
+/// for: what the setup did under the title, and Retry when it failed.
+struct ProgressRingToggle: View {
+    var info: String
+    @Binding var isOn: Bool
+    var status: String? = nil
+    var canRetry = false
+    var retry: () -> Void = {}
+
+    var body: some View {
+        CardRow(title: L10n.text("main.claude.ring"), detail: status, info: info) {
+            HStack(spacing: 8) {
+                if canRetry { Button(L10n.text("connections.retry"), action: retry).buttonStyle(.main) }
+                Toggle(L10n.text("main.claude.ring"), isOn: $isOn).labelsHidden().toggleStyle(.switch)
+            }
+        }
+    }
+}
+
 /// A menu choice at the row's end.
 struct CardPicker<Value: Hashable, Options: View>: View {
     let title: String

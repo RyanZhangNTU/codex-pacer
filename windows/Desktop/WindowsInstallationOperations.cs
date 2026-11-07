@@ -11,7 +11,7 @@ using Microsoft.Win32;
 namespace CodexPacer.Windows;
 
 [Flags]
-internal enum UninstallFailure { None = 0, ClaudeConfiguration = 1, Registrations = 2 }
+internal enum UninstallFailure { None = 0, ClaudeConfiguration = 1, Registrations = 2, CodexConfiguration = 4, DeepSeekConfiguration = 8 }
 internal enum InstallShortcut { StartMenu, Desktop }
 
 internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity identity,
@@ -237,6 +237,7 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         var failures = UninstallFailure.None;
         string hooks = Path.Combine(identity.Root, "Engine", "PacerInstallerHooks.exe");
         IReadOnlyList<string>? homes = null;
+        string[]? codexCleanup = null, deepseekCleanup = null;
         string runtime = Path.Combine(identity.DataRoot, "ClaudeRuntime");
         static string[] HookArguments(string operation, string runtime, IReadOnlyList<string> homes) =>
             new[] { operation, runtime }.Concat(homes).ToArray();
@@ -246,6 +247,18 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
             await RunAsync(hooks, HookArguments("--check-uninstall-all", runtime, homes), TimeSpan.FromSeconds(10), cancellation);
         }
         catch { failures |= UninstallFailure.ClaudeConfiguration; }
+        try
+        {
+            codexCleanup = CodexProgressCleanupArguments();
+            if (codexCleanup != null) await RunAsync(hooks, codexCleanup, TimeSpan.FromSeconds(15), cancellation);
+        }
+        catch { failures |= UninstallFailure.CodexConfiguration; }
+        try
+        {
+            deepseekCleanup = DeepSeekProgressCleanupArguments();
+            if (deepseekCleanup != null) await RunAsync(hooks, deepseekCleanup, TimeSpan.FromSeconds(10), cancellation);
+        }
+        catch { failures |= UninstallFailure.DeepSeekConfiguration; }
         if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
         try { await WindowsMaintenanceSignal.StopAsync(identity.Executable, cancellation); }
         catch { return failures | UninstallFailure.Registrations; }
@@ -253,6 +266,18 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         {
             try { await RunAsync(hooks, HookArguments(continueAfterFailure ? "--uninstall-all-continue" : "--uninstall-all", runtime, homes), TimeSpan.FromSeconds(10), cancellation); }
             catch { failures |= UninstallFailure.ClaudeConfiguration; }
+        }
+        if (codexCleanup != null)
+        {
+            codexCleanup[0] = "--uninstall-codex-progress";
+            try { await RunAsync(hooks, codexCleanup, TimeSpan.FromSeconds(15), cancellation); }
+            catch { failures |= UninstallFailure.CodexConfiguration; }
+        }
+        if (deepseekCleanup != null)
+        {
+            deepseekCleanup[0] = "--uninstall-deepseek-progress";
+            try { await RunAsync(hooks, deepseekCleanup, TimeSpan.FromSeconds(10), cancellation); }
+            catch { failures |= UninstallFailure.DeepSeekConfiguration; }
         }
         if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
         try { await RunAsync(identity.Executable, ["--uninstall-notifications"], TimeSpan.FromSeconds(10), cancellation); }
@@ -306,6 +331,55 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         if (unavailable) throw new InvalidDataException("Repair the unreadable preferences before uninstalling.");
         if (!string.IsNullOrWhiteSpace(preferences.ClaudeHome)) homes.Add(WindowsInstallationIdentity.SafeRoot(preferences.ClaudeHome));
         return homes.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private string[]? CodexProgressCleanupArguments()
+    {
+        string runtime = identity.CodexProgressRuntimeRoot;
+        var (preferences, unavailable) = new PreferencesStore(Path.Combine(identity.DataRoot, "preferences-v1.json"), recoverDamagedFiles: false).Load();
+        if (unavailable) throw new InvalidDataException("Repair the unreadable preferences before uninstalling.");
+        var homes = new List<string>();
+        if (identity.QaScope != null) homes.Add(Path.Combine(identity.DataRoot, "codex"));
+        else
+        {
+            string? environment = Environment.GetEnvironmentVariable("CODEX_HOME");
+            homes.Add(string.IsNullOrWhiteSpace(environment)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex") : WindowsInstallationIdentity.SafeRoot(environment));
+            if (!string.IsNullOrWhiteSpace(preferences.CodexHome)) homes.Add(WindowsInstallationIdentity.SafeRoot(preferences.CodexHome));
+        }
+        if (!Directory.Exists(runtime) && !homes.Any(home => Directory.Exists(Path.Combine(home, "pacer", "codex-progress", "native")))) return null;
+        return new[] { "--check-uninstall-codex-progress", runtime, preferences.CodexExecutable }
+            .Concat(homes.Distinct(StringComparer.OrdinalIgnoreCase)).ToArray();
+    }
+
+    /// The Harness homes Pacer may have configured: the default or DSH_HOME,
+    /// and the custom location from preferences. Only homes that still hold
+    /// Pacer's progress folder are passed on.
+    internal string[]? DeepSeekProgressCleanupArguments()
+    {
+        var (preferences, unavailable) = new PreferencesStore(Path.Combine(identity.DataRoot, "preferences-v1.json"), recoverDamagedFiles: false).Load();
+        if (unavailable) throw new InvalidDataException("Repair the unreadable preferences before uninstalling.");
+        string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // The engine only writes to local homes without reparse points, so a
+        // location that fails these checks never held Pacer's entry.
+        string? Local(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            path = Environment.ExpandEnvironmentVariables(path.Trim());
+            if (path == "~" || path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith(@"~\", StringComparison.Ordinal))
+                path = Path.Combine(profile, path.Length > 2 ? path[2..] : "");
+            try { return WindowsInstallationIdentity.SafeRoot(path); } catch { return null; }
+        }
+        var homes = new List<string?>();
+        if (identity.QaScope != null) homes.Add(Path.Combine(identity.DataRoot, "deepseek"));
+        else
+        {
+            homes.Add(Local(Environment.GetEnvironmentVariable("DSH_HOME")) ?? Local(Path.Combine(profile, ".dsh")));
+            homes.Add(Local(preferences.DeepseekHome));
+        }
+        var configured = homes.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(home => Directory.Exists(Path.Combine(home, "pacer", "deepseek-progress"))).ToArray();
+        return configured.Length == 0 ? null : new[] { "--check-uninstall-deepseek-progress" }.Concat(configured).ToArray();
     }
     internal static async Task RunAsync(string executable, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellation)
     {

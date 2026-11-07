@@ -1,5 +1,6 @@
 import PacerMacSupport
 import AppKit
+import Darwin
 import SwiftUI
 import PacerCore
 import UserNotifications
@@ -9,6 +10,18 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 @main
 enum PacerMain {
     @MainActor static func main() {
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == CodexProgressReporter.argument {
+            var reporter = CodexProgressReporter(home: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true))
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            do {
+                while true {
+                    let count = Darwin.read(STDIN_FILENO, &buffer, buffer.count)
+                    guard count > 0 else { break }
+                    for reply in try reporter.receive(Data(buffer.prefix(count))) { try FileHandle.standardOutput.write(contentsOf: reply) }
+                }
+            } catch { }
+            return
+        }
         L10n.configureResources(bundle: MacResources.bundle)
         if let index = CommandLine.arguments.firstIndex(of: "--diagnose-claude-cache") {
             let action = index + 1 < CommandLine.arguments.count ? CommandLine.arguments[index + 1] : ""

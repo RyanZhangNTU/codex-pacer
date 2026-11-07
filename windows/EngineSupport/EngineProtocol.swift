@@ -40,6 +40,8 @@ struct EngineCommand: Decodable {
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
         var claudeProgressRing: Bool?
+        var codexProgressRing: Bool?
+        var deepseekProgressRing: Bool?
         var retentionMinutes: Int?
         var enabledProviders: [String]?
         var providerModes: [String: String]?
@@ -278,6 +280,8 @@ struct EngineSnapshot: Codable, Equatable {
     let claudeCloudConnection: EngineClaudeCloudConnection?
     let activityLinks: [EngineActivityLink]?
     let claudeSetup: EngineClaudeHookSetup?
+    let codexProgressSetup: CodexProgressSetupStatus?
+    let deepseekProgressSetup: DeepSeekProgressSetupStatus?
     let claudeRemoteSetups: [EngineClaudeRemoteSetup]?
     let connections: ConnectionPagePresentation?
     let navigationError: EngineNavigationFailure?
@@ -293,7 +297,8 @@ struct EngineSnapshot: Codable, Equatable {
          claudeCloudConnection: EngineClaudeCloudConnection? = nil, activityLinks: [EngineActivityLink]? = nil,
          notificationProjections: [EngineNotice]? = nil,
          navigationError: EngineNavigationFailure? = nil, openingActivityIDs: [String]? = nil, claudeSetup: EngineClaudeHookSetup? = nil,
-         claudeRemoteSetups: [EngineClaudeRemoteSetup]? = nil, connections: ConnectionPagePresentation? = nil) {
+         claudeRemoteSetups: [EngineClaudeRemoteSetup]? = nil, connections: ConnectionPagePresentation? = nil,
+         codexProgressSetup: CodexProgressSetupStatus? = nil, deepseekProgressSetup: DeepSeekProgressSetupStatus? = nil) {
         protocolVersion = EngineProtocol.version; type = "snapshot"; self.sequence = sequence
         self.demo = demo; capturedAt = now.timeIntervalSince1970
         tasks = activities.sorted { $0.id < $1.id }.map { EngineTask($0, unread: inbox.isUnread($0), hideProjects: hideProjects, at: now) }
@@ -314,6 +319,8 @@ struct EngineSnapshot: Codable, Equatable {
         self.claudeCloudConnection = claudeCloudConnection
         self.activityLinks = activityLinks
         self.claudeSetup = claudeSetup
+        self.codexProgressSetup = codexProgressSetup
+        self.deepseekProgressSetup = deepseekProgressSetup
         self.claudeRemoteSetups = claudeRemoteSetups
         self.connections = connections
         self.navigationError = navigationError; self.openingActivityIDs = openingActivityIDs

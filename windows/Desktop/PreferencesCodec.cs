@@ -23,7 +23,8 @@ internal static class PreferencesCodec
         ["deepSeekBalanceSource"] = "deepseekBalanceSource", ["deepSeekDailyBudget"] = "deepseekDailyBudget",
         ["deepSeekWeeklyBudget"] = "deepseekWeeklyBudget", ["deepSeekRingPeriod"] = "deepseekRingPeriod",
         ["deepSeekSpeedSource"] = "deepseekSpeedSource", ["deepSeekShowsTurnCost"] = "deepseekShowsTurnCost",
-        ["deepSeekLowBalanceLine"] = "deepseekLowBalanceLine", ["deepSeekSpikeLimit"] = "deepseekSpikeLimit"
+        ["deepSeekLowBalanceLine"] = "deepseekLowBalanceLine", ["deepSeekSpikeLimit"] = "deepseekSpikeLimit",
+        ["deepSeekProgressRing"] = "deepseekProgressRing"
     };
     private static string Key(string property) => Keys.GetValueOrDefault(property, property);
     internal static DesktopPreferences Decode(ReadOnlySpan<byte> bytes)
