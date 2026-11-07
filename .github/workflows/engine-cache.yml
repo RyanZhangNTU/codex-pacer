@@ -18,6 +18,7 @@ on:
       - 'native/Sources/CZstd/**'
       - 'native/Sources/CGzip/**'
       - 'native/Tests/PacerCoreTests/**'
+      - 'native/Tests/PacerTestSupport/**'
       - 'native/Tests/PresentationTables/**'
       - 'windows/Engine/**'
       - 'windows/EngineSupport/**'

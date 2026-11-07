@@ -14,7 +14,8 @@ import sys
 DOCUMENTATION = ("docs/", ".github/ISSUE_TEMPLATE/", "LICENSE")
 # Built on both platforms; the Windows engine compiles these (see scripts/windows/stage-engine.py).
 SHARED = ("native/Sources/PacerCore/", "native/Sources/CZstd/", "native/Sources/CGzip/",
-          "native/Tests/PacerCoreTests/", "native/Tests/PresentationTables/", "native/Info.plist",
+          "native/Tests/PacerCoreTests/", "native/Tests/PacerTestSupport/",
+          "native/Tests/PresentationTables/", "native/Info.plist",
           "Package.swift", "Package.resolved", ".github/workflows/", "scripts/ci/")
 MAC = ("native/", "scripts/native/", "scripts/release/", "Makefile")
 WINDOWS = ("windows/", "scripts/windows/", "global.json")

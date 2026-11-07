@@ -6,7 +6,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 DIRECTORIES = (
-    "native/Sources/PacerCore", "native/Sources/CZstd", "native/Sources/CGzip", "native/Tests/PacerCoreTests", "native/Tests/PresentationTables",
+    "native/Sources/PacerCore", "native/Sources/CZstd", "native/Sources/CGzip", "native/Tests/PacerCoreTests", "native/Tests/PacerTestSupport",
+    "native/Tests/PresentationTables",
     "windows/Engine", "windows/EngineSupport", "windows/Native", "windows/Tests/EngineTests",
     "windows/Bridge", "windows/InstallerSupport", "windows/InstallerHooks",
 )

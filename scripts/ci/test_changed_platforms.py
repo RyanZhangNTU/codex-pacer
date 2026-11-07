@@ -28,6 +28,7 @@ class ChangedPlatformsTests(unittest.TestCase):
 
     def test_shared_core_runs_both_platforms_without_the_installers(self):
         for path in ("native/Sources/PacerCore/IslandGeometry.swift", "native/Tests/PacerCoreTests/IslandPlacementTests.swift",
+                     "native/Tests/PacerTestSupport/TestDefaults.swift",
                      "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings", "native/Info.plist", "Package.swift"):
             self.assertEqual(platforms.classify([path]), (True, True, False), path)
 

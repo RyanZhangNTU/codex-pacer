@@ -1,12 +1,14 @@
 import Foundation
 
+#if canImport(Darwin)
 private let testDefaultsFolderPrefix = "codex-pacer-test-defaults."
 
 /// A unique `UserDefaults` suite name for a test.
 ///
-/// A suite named by an absolute path keeps its plist at that path instead of
-/// `~/Library/Preferences`. A reverse-DNS test suite leaves an empty plist there
-/// after `removePersistentDomain(forName:)`, because cfprefsd writes it later.
+/// On macOS a suite named by an absolute path keeps its plist at that path
+/// instead of `~/Library/Preferences`. A reverse-DNS test suite leaves an empty
+/// plist there after `removePersistentDomain(forName:)`, because cfprefsd
+/// writes it later.
 public func testDefaultsName(_ label: String) -> String {
     let folder = FileManager.default.temporaryDirectory
         .appendingPathComponent(testDefaultsFolderPrefix + label + "." + UUID().uuidString, isDirectory: true)
@@ -22,3 +24,14 @@ public func removeTestDefaults(_ name: String) {
     guard folder.lastPathComponent.hasPrefix(testDefaultsFolderPrefix) else { return }
     try? FileManager.default.removeItem(at: folder)
 }
+#else
+/// A unique `UserDefaults` suite name for a test.
+public func testDefaultsName(_ label: String) -> String {
+    "com.codexpacer." + label + "." + UUID().uuidString
+}
+
+/// Clears a suite made by `testDefaultsName(_:)`.
+public func removeTestDefaults(_ name: String) {
+    UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+}
+#endif
