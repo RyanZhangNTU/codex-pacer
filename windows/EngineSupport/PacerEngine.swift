@@ -252,6 +252,8 @@ actor EngineRuntime {
     private var deepseekProgressRing = false
     private let managesDeepSeekProgress: Bool
     private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
+    /// The latest DeepSeek setup, which shutdown lets finish.
+    private var deepseekProgressTask: Task<Void, Never>?
     private var deepseekProgressSetup: DeepSeekProgressSetupStatus?
     private let managesCodexProgress: Bool
     private let codexProgressPaths: WindowsCodexProgressPaths
@@ -1119,11 +1121,12 @@ actor EngineRuntime {
         guard managesDeepSeekProgress, let ticket = deepseekProgressQueue.request(
             .init(home: deepseekHome, enabled: deepseekProgressRing && enabled.contains(.deepseek)), force: force) else { return }
         deepseekProgressSetup = ticket.target.enabled ? .settingUp : nil
-        deepseekProgressQueue.track(Task { [weak self] in
+        let task = Task { [weak self] in
             await ticket.waitForPrevious()
             let status = await Self.configureDeepSeekReporter(ticket)
             await self?.receiveDeepSeekProgressSetup(status, ticket: ticket)
-        })
+        }
+        deepseekProgressQueue.track(task); deepseekProgressTask = task
     }
 
     private static func configureDeepSeekReporter(_ ticket: ProgressSetupQueue<DeepSeekProgressSetup.Target>.Ticket) async -> DeepSeekProgressSetupStatus? {
@@ -2206,6 +2209,10 @@ actor EngineRuntime {
     func stop() async {
         let plan = lifecycle.shutdown()
         guard plan.actions.contains(.stopSources) else { return }
+        // A switch turned off just before quitting still removes Pacer's
+        // Harness entry, so Harness stops loading the reporter.
+        let deepseekSetup = deepseekProgressTask
+        await ShutdownDeadline().perform([{ await deepseekSetup?.value }])
         initialized = false; projectionReady = false
         releaseHostWork()
         await cleanupSources(quota: quotaMonitor, claude: claudeQuotaMonitor, balance: balanceMonitor, sleeping: false)
