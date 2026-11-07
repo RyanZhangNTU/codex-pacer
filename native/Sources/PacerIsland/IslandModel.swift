@@ -359,7 +359,9 @@ final class IslandModel: ObservableObject {
         return await CodexProgressSetup.apply(home: home, reporter: command, storage: MacClaudeHookStorage(), owns: {
             $0.isNative(named: reporter.lastPathComponent, home: home)
         }) {
-            CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 2) }
+            // Setup also runs at login beside the other Codex readers, so it
+            // allows a cold start as long as the realtime collector does.
+            CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 8) }
         }
     }
     private var progressRingProviders: Set<AgentProvider> {

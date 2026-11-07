@@ -138,7 +138,7 @@ Reuse `pending` and `reported`, with existing working, longStep, attention, wait
 - Explicit successful request ending: sweep to full even if no estimate arrived. An active estimate of 100 may fill the numeric arc, but retains its active icon and triggers no completion pulse or notification.
 - Interruption/failure: preserve the last estimate, with no completion sweep. Explicit goal pause/limits remain static and use their own labels.
 - Windows: reuse `TaskProgressRing.cs`, `AnimationLease` and the real-clock continuity fixes. Verify Codex's provider color and transitions through an actual WPF window, including unload and reduced motion.
-- macOS: reuse the renderer from `develop`, with the same Codex setting and completion-only pulse rule. Native macOS window validation remains separate from the Windows test run.
+- macOS: reuse the renderer from `develop`, with the same Codex setting and completion-only pulse rule. The loopback check below drives the actual Mac app as well as the Windows engine.
 
 The implementation is split across these boundaries:
 
@@ -165,6 +165,6 @@ Use synthetic fixtures for parser and reducer coverage. Keep each distinct bound
 
 Extend the existing `RuntimeStateTests`, `StreamingRateTests`, `RequestBoundaryTests`, `NativeDesktopTests`, `CodexLogAttentionTests`, `SelfReportedProgressTests` and completion suites where their behavior applies. Run affected Windows engine suites with `scripts/windows/test-engine.ps1 -Filter ...` and the existing `scripts/windows/test-presentation.ps1 -Configuration Release -Group progress` for renderer changes. Use separate Swift scratch paths for concurrent worktrees. Run the applicable macOS checks when its renderer changes.
 
-The [loopback integration check](../scripts/diagnostics/test-codex-progress.py) runs the real Codex executable and Windows Pacer engine with a disposable profile. It checks that the model request receives the reporting tool and its guidance, that the ring shows 63% then 41%, and that the terminal outcome either fills the ring or retains 41%. It also checks disable and same-name conflicts.
+The [loopback integration check](../scripts/diagnostics/test-codex-progress.py) runs the real Codex executable with a disposable profile and either the Windows Pacer engine or the Mac app. It checks that the model request receives the reporting tool and its guidance, that the ring shows 63% then 41%, and that the terminal outcome either fills the ring or retains 41%. It also checks disable and same-name conflicts.
 
 Installation and lifecycle changes use the applicable checks in [the release workflow](releasing.md#validation-scope).
