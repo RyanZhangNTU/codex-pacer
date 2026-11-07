@@ -33,12 +33,6 @@ struct TaskRowView: View {
     }
     private var rate: OutputEstimate? { presentation.rate }
     private var turnTime: String? { presentation.turnTime }
-    static func turnTimeText(_ activity: SessionActivity, phase: ActivityPhase, now: Date) -> String? {
-        ActivityTaskRowPresentation.turnTimeText(activity, phase: phase, now: now)
-    }
-    static func isDimmed(phase: ActivityPhase, unread: Bool, attention: Bool, failed: Bool) -> Bool {
-        ActivityTaskRowPresentation.isDimmed(phase: phase, unread: unread, attention: attention, failed: failed)
-    }
     private var dimmed: Bool { presentation.dimmed }
     private var modelLabel: String { presentation.model }
     private var effortLabel: String? { presentation.effort }
@@ -172,7 +166,7 @@ struct TaskRowView: View {
                     if activity.sourceHostID != nil {
                         Image(systemName: activity.claudeCloud != nil ? "cloud" : "server.rack").font(.system(size: 9, weight: .semibold))
                     }
-                    Text(Self.middleTruncated(source, limit: 16))
+                    Text(ActivityTaskRowPresentation.middleTruncated(source, limit: 16))
                 }
                 .foregroundStyle(PacerPalette.secondary).lineLimit(1).fixedSize()
             }
@@ -218,9 +212,6 @@ struct TaskRowView: View {
         .font(.system(size: 11, weight: .medium)).foregroundStyle(activity.provider.tint)
         .opacity(dimmed ? 0.7 : 1).lineLimit(1).fixedSize()
     }
-
-    static func shortened(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.shortened(text, limit: limit) }
-    static func middleTruncated(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.middleTruncated(text, limit: limit) }
 }
 
 struct ExpandedContentIdealWidth: PreferenceKey {
