@@ -96,6 +96,10 @@ struct WhatsNewItemRow: View {
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     /// The update note draws each highlight larger, as a feature list.
     var large = false
+    /// The Help & Updates page keeps each explanation behind ⓘ; a sign-in
+    /// item problem still shows in place.
+    var detailInInfo = false
+    @State private var showsInfo = false
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showsEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showsEmbeddedCodexSessions = true
     @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
@@ -103,17 +107,31 @@ struct WhatsNewItemRow: View {
     var body: some View {
         let login = item.control == .openAtLogin
         let warning = login ? launchAtLogin.failure ?? (launchAtLogin.needsApproval ? L10n.text("settings.login_item_approval") : nil) : nil
-        HStack(alignment: large ? .top : .center, spacing: large ? 14 : 12) {
-            FeatureSymbol(symbol: item.symbol, size: large ? 40 : 28)
-            VStack(alignment: .leading, spacing: large ? 3 : 2) {
-                Text(L10n.text(item.titleKey)).font(.system(size: large ? 13.5 : 13, weight: large ? .semibold : .regular))
-                Text(warning ?? L10n.text(item.detailKey)).font(.system(size: large ? 12.5 : 11.5)).lineSpacing(large ? 1.5 : 0)
-                    .foregroundStyle(warning == nil ? Color.secondary : MainPalette.attention)
-                    .fixedSize(horizontal: false, vertical: true)
+        let title = L10n.text(item.titleKey)
+        let symbolSize: CGFloat = large ? 40 : 28
+        let spacing: CGFloat = large ? 14 : 12
+        let showsDetail = !detailInInfo || warning != nil
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: large && showsDetail ? .top : .center, spacing: spacing) {
+                FeatureSymbol(symbol: item.symbol, size: symbolSize)
+                VStack(alignment: .leading, spacing: large ? 3 : 2) {
+                    HStack(spacing: 4) {
+                        Text(title).font(.system(size: large ? 13.5 : 13, weight: large ? .semibold : .regular))
+                        if detailInInfo { InfoButton(title: title, isOn: $showsInfo) }
+                    }
+                    if showsDetail {
+                        Text(warning ?? L10n.text(item.detailKey)).font(.system(size: large ? 12.5 : 11.5)).lineSpacing(large ? 1.5 : 0)
+                            .foregroundStyle(warning == nil ? Color.secondary : MainPalette.attention)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.top, large && showsDetail ? 1 : 0)
+                Spacer(minLength: 8)
+                control.padding(.top, large && showsDetail ? 9 : 0)
             }
-            .padding(.top, large ? 1 : 0)
-            Spacer(minLength: 8)
-            control.padding(.top, large ? 9 : 0)
+            if detailInInfo, showsInfo {
+                InfoBox(text: L10n.text(item.detailKey)).padding(.leading, symbolSize + spacing)
+            }
         }
     }
 

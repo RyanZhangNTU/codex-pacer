@@ -529,6 +529,10 @@
 "help.link.guide" = "使用说明";
 "help.link.issues" = "反馈问题";
 "help.show_welcome" = "重新查看入门引导";
+"help.quick.welcome" = "入门引导";
+"help.quick.welcome_detail" = "重新看一遍入门介绍";
+"help.quick.guide_detail" = "每项功能的说明和常见问题";
+"help.quick.issues_detail" = "在 GitHub 报告问题或提建议";
 "connections.section.tasks" = "任务来源";
 "connections.kind.ssh" = "SSH";
 "connections.kind.remote_control" = "Remote Control";
@@ -613,6 +617,7 @@
 "whats_new.title" = "Codex Pacer 更新内容";
 "whats_new.version" = "版本 %@";
 "whats_new.release_notes" = "发布说明";
+"whats_new.earlier" = "更早版本";
 "whats_new.done" = "继续";
 "whats_new.mark_all_read" = "全部标为已读";
 "whats_new.mark_all_read_detail" = "点击固定按钮旁的新按钮，即可一次清除所有页面中已结束的任务。运行中以及等你回复或审批的任务不受影响。";
@@ -858,6 +863,7 @@
 "deepseek.reset_week" = "周一 0:00 重置";
 "help.services.title" = "模块颜色";
 "help.services.detail" = "青绿是 Codex，橙色是 Claude，蓝色是 DeepSeek。";
+"help.services.shades" = "选了单色强调色时，Codex、Claude、DeepSeek 是这个颜色由深到浅的三种色调。";
 "help.customize.title" = "自定义";
 "help.customize.detail" = "在“设置 → 折叠栏”中选显示哪些内容、怎么排列、圆环对应哪个模块；在“设置 → 提醒”中选显示哪些警告。";
 "help.open.title" = "打开会话";

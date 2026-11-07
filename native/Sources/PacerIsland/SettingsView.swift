@@ -279,7 +279,7 @@ struct SettingsView: View {
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
         case .about:
             SettingsAboutPane(updater: updater, automaticallyChecks: $automaticUpdateChecks, launchAtLogin: launchAtLogin,
-                module: AgentProvider.allCases.first(where: moduleEnabled) ?? .codex, onShowWelcome: onShowWelcome)
+                onShowWelcome: onShowWelcome)
         case .support:
             SettingsSupportPane()
         case .overview, .history:

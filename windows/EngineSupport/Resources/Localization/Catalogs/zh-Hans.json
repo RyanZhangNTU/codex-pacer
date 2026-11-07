@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "5bf4a82b680071fc85cdd867225fc40d11284892c1f68e3b1643116b156129f4",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "48213e09170e004ee1850f98023a9074647e10d4f1cb58e5548f2f833e12bdde",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8dc552a8181303b1ac1d8d47c938bec0c4d47b37930f90a1c685e5b2bcc829a5"
   },
   "strings": {
@@ -555,6 +555,10 @@
     "help.open.title": "\u6253\u5f00\u4f1a\u8bdd",
     "help.pace.detail": "\u767d\u8272\u523b\u5ea6\u662f\u53c2\u8003\u914d\u901f\uff0c\u5e2e\u4f60\u5224\u65ad\u7528\u5f97\u592a\u5feb\u8fd8\u662f\u592a\u6162\u3002",
     "help.pace.title": "\u914d\u901f",
+    "help.quick.guide_detail": "\u6bcf\u9879\u529f\u80fd\u7684\u8bf4\u660e\u548c\u5e38\u89c1\u95ee\u9898",
+    "help.quick.issues_detail": "\u5728 GitHub \u62a5\u544a\u95ee\u9898\u6216\u63d0\u5efa\u8bae",
+    "help.quick.welcome": "\u5165\u95e8\u5f15\u5bfc",
+    "help.quick.welcome_detail": "\u91cd\u65b0\u770b\u4e00\u904d\u5165\u95e8\u4ecb\u7ecd",
     "help.quota.detail": "\u663e\u793a\u5468\u989d\u5ea6\u8fd8\u5269\u591a\u5c11\uff0c\u5916\u5708\u548c\u5185\u5708\u5404\u5bf9\u5e94\u4e00\u4e2a\u6a21\u5757\u3002",
     "help.quota.title": "\u989d\u5ea6\u5706\u73af",
     "help.read.detail": "\u628a\u5df2\u7ed3\u675f\u7684\u4efb\u52a1\u4e00\u6b21\u6807\u4e3a\u5df2\u8bfb\uff0c\u4ece\u5217\u8868\u91cc\u6e05\u6389\u3002",
@@ -565,6 +569,7 @@
     "help.section.more": "\u66f4\u591a",
     "help.section.services": "\u6a21\u5757",
     "help.services.detail": "\u9752\u7eff\u662f Codex\uff0c\u6a59\u8272\u662f Claude\uff0c\u84dd\u8272\u662f DeepSeek\u3002",
+    "help.services.shades": "\u9009\u4e86\u5355\u8272\u5f3a\u8c03\u8272\u65f6\uff0cCodex\u3001Claude\u3001DeepSeek \u662f\u8fd9\u4e2a\u989c\u8272\u7531\u6df1\u5230\u6d45\u7684\u4e09\u79cd\u8272\u8c03\u3002",
     "help.services.title": "\u6a21\u5757\u989c\u8272",
     "help.show_welcome": "\u91cd\u65b0\u67e5\u770b\u5165\u95e8\u5f15\u5bfc",
     "help.tasks.detail": "\u6570\u5b57\u662f\u8fdb\u884c\u4e2d\u7684\u4efb\u52a1\u6570\u3002",
@@ -1035,6 +1040,7 @@
     "whats_new.done": "\u7ee7\u7eed",
     "whats_new.dual_orbit": "\u4e24\u4e2a\u670d\u52a1\u540c\u65f6\u8fd0\u884c\u65f6\u5fbd\u6807\u66f4\u987a\u6ed1",
     "whats_new.dual_orbit_detail": "Codex \u548c Claude \u540c\u65f6\u8fd0\u884c\u65f6\uff0c\u4efb\u52a1\u5fbd\u6807\u5468\u56f4\u7684\u4e24\u9053\u5149\u5f27\u5934\u90e8\u6e05\u6670\u3001\u4f4d\u7f6e\u56fa\u5b9a\uff0c\u4efb\u52a1\u5f00\u59cb\u6216\u7ed3\u675f\u65f6\u5e73\u6ed1\u5730\u957f\u51fa\u6216\u6de1\u51fa\u3002",
+    "whats_new.earlier": "\u66f4\u65e9\u7248\u672c",
     "whats_new.free_move": "\u81ea\u7531\u79fb\u52a8\u7075\u52a8\u5c9b",
     "whats_new.free_move_detail": "\u6309\u4f4f\u72b6\u6001\u680f\uff0c\u628a\u7075\u52a8\u5c9b\u62d6\u5230\u987a\u624b\u7684\u4f4d\u7f6e\uff0c\u9760\u8fd1\u5c4f\u5e55\u8fb9\u7f18\u677e\u624b\u4f1a\u5438\u9644\u3002\u5916\u89c2\u8bbe\u7f6e\u91cc\u7684\u56fa\u5b9a\u4f4d\u7f6e\u6539\u4e3a\u201c\u81ea\u7531\u62d6\u52a8\u201d\u3002",
     "whats_new.mark_all_read": "\u5168\u90e8\u6807\u4e3a\u5df2\u8bfb",

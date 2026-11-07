@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "fe64454f8be96ae56db9c2f094460e9ed40f763c8b15e86e528c23d01911bff4",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "45a2e4d1c259d045b03aa2e3cfce7f787e1061757ab95f583382a60978546a9e",
     "windows/EngineSupport/Resources/Localization/en.json": "d51c5ab970da692194c0871dbd1d74ff890a71ee301b8bbb8aadb51635edb820"
   },
   "strings": {
@@ -555,6 +555,10 @@
     "help.open.title": "Open a conversation",
     "help.pace.detail": "The white tick is a reference pace that shows whether you are using quota too fast or too slowly.",
     "help.pace.title": "Pace",
+    "help.quick.guide_detail": "Every feature, plus fixes for common problems",
+    "help.quick.issues_detail": "Report a bug or suggest an idea on GitHub",
+    "help.quick.welcome": "Welcome Guide",
+    "help.quick.welcome_detail": "Walk through the introduction again",
     "help.quota.detail": "Show how much weekly quota is left, one module on the outer ring and one on the inner.",
     "help.quota.title": "Quota rings",
     "help.read.detail": "Marks every ended task as read at once and clears it from the list.",
@@ -565,6 +569,7 @@
     "help.section.more": "More",
     "help.section.services": "Modules",
     "help.services.detail": "Teal is Codex, orange is Claude and blue is DeepSeek.",
+    "help.services.shades": "With one accent color, Codex, Claude and DeepSeek are its three shades, strongest first.",
     "help.services.title": "Module colors",
     "help.show_welcome": "View the Welcome Guide Again",
     "help.tasks.detail": "The number counts tasks in progress.",
@@ -1035,6 +1040,7 @@
     "whats_new.done": "Continue",
     "whats_new.dual_orbit": "A smoother badge with both services",
     "whats_new.dual_orbit_detail": "When Codex and Claude run together, both arcs around the task badge keep a clean head and their own places, and grow or fade smoothly as tasks start and end.",
+    "whats_new.earlier": "Earlier Versions",
     "whats_new.free_move": "Move the island anywhere",
     "whats_new.free_move_detail": "Drag the status bar to place the island where you want it. Release near a screen edge to snap. Free Move replaces the fixed positions in Appearance.",
     "whats_new.mark_all_read": "Mark all as read",
