@@ -58,7 +58,8 @@ struct IslandSurface: ViewModifier {
         } else { solid }
     }
 
+    /// Pure Black is true black, so the bar meets the hardware notch without a seam.
     private var solid: some View {
-        shape.fill(Color(red: 0.045, green: 0.047, blue: 0.056))
+        shape.fill(Color.black)
     }
 }

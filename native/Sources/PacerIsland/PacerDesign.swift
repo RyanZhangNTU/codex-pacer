@@ -16,7 +16,11 @@ enum PacerPalette {
 }
 
 extension AgentProvider {
-    var tint: Color {
+    /// The color the service draws in: its own under Multicolor, otherwise a
+    /// shade of the chosen accent.
+    var tint: Color { PacerAccent.current.tint(for: self) ?? brand }
+    /// The service's own color, which its icon keeps whatever the accent.
+    var brand: Color {
         switch self {
         case .codex: Color(red: 0.49, green: 0.84, blue: 0.77)
         case .claude: Color(red: 0.95, green: 0.61, blue: 0.42)
@@ -32,6 +36,97 @@ extension AgentProvider {
         case .claude: "asterisk"
         case .deepseek: "water.waves"
         }
+    }
+}
+
+/// The Appearance page's accent color. Multicolor keeps each service's own
+/// color and leaves controls to the system accent. A color takes over rings,
+/// progress, controls and selection; the services keep apart as three shades
+/// of it. Amber and red keep their meanings whatever the choice.
+enum PacerAccent: String, CaseIterable, Identifiable {
+    case multicolor, blue, purple, pink, red, orange, yellow, green, graphite
+    static let defaultsKey = "accentColor"
+    /// What drawing reads. The model refreshes it whenever settings apply.
+    static var current = PacerAccent(defaults: .standard)
+
+    init(defaults: UserDefaults) {
+        self = defaults.string(forKey: Self.defaultsKey).flatMap(Self.init(rawValue:)) ?? .multicolor
+    }
+    var id: String { rawValue }
+    var label: String { L10n.text("appearance.accent." + rawValue) }
+    /// The chosen color in sRGB, or nil for Multicolor.
+    var components: (red: Double, green: Double, blue: Double)? {
+        switch self {
+        case .multicolor: nil
+        case .blue: (0x0A / 255, 0x84 / 255, 0xFF / 255)
+        case .purple: (0xBF / 255, 0x5A / 255, 0xF2 / 255)
+        case .pink: (0xFF / 255, 0x6B / 255, 0xB5 / 255)
+        case .red: (0xFF / 255, 0x5A / 255, 0x52 / 255)
+        case .orange: (0xFF / 255, 0x9F / 255, 0x0A / 255)
+        case .yellow: (0xFF / 255, 0xD6 / 255, 0x0A / 255)
+        case .green: (0x32 / 255, 0xD7 / 255, 0x4B / 255)
+        case .graphite: (0xA1 / 255, 0xA1 / 255, 0xA6 / 255)
+        }
+    }
+    var color: Color? { components.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } }
+    /// Buttons, switches and selection: the system accent under Multicolor.
+    var control: Color { color ?? .accentColor }
+    /// Codex at full strength, Claude and DeepSeek lifted toward white, so the
+    /// outer and inner rings stay apart; nil under Multicolor.
+    func tint(for provider: AgentProvider) -> Color? {
+        guard let base = components else { return nil }
+        let lift = switch provider { case .codex: 0.0; case .claude: 0.42; case .deepseek: 0.66 }
+        func lifted(_ value: Double) -> Double { value + (1 - value) * lift }
+        return Color(red: lifted(base.red), green: lifted(base.green), blue: lifted(base.blue))
+    }
+}
+
+/// Pacer's windows in light, dark or the system's appearance. The island
+/// stays dark in every theme.
+enum AppTheme: String, CaseIterable, Identifiable {
+    case auto, light, dark
+    static let defaultsKey = "appTheme"
+
+    init(defaults: UserDefaults) {
+        self = defaults.string(forKey: Self.defaultsKey).flatMap(Self.init(rawValue:)) ?? .auto
+    }
+    var id: String { rawValue }
+    var label: String { L10n.text("appearance.theme." + rawValue) }
+    var appearance: NSAppearance? {
+        switch self {
+        case .auto: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+    @MainActor func apply() { NSApp.appearance = appearance }
+}
+
+private struct PacerAccentKey: EnvironmentKey {
+    static let defaultValue = Color.accentColor
+}
+
+extension EnvironmentValues {
+    /// The accent for controls and selection in Pacer's windows.
+    var pacerAccent: Color {
+        get { self[PacerAccentKey.self] }
+        set { self[PacerAccentKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Controls and selection in a window follow the chosen accent.
+    func pacerAccent(_ accent: PacerAccent) -> some View {
+        environment(\.pacerAccent, accent.control).tint(accent.control)
+    }
+}
+
+/// For windows that open apart from Settings: reads the saved accent and
+/// follows later changes.
+struct SavedPacerAccent: ViewModifier {
+    @AppStorage(PacerAccent.defaultsKey) private var raw = PacerAccent.multicolor.rawValue
+    func body(content: Content) -> some View {
+        content.pacerAccent(PacerAccent(rawValue: raw) ?? .multicolor)
     }
 }
 

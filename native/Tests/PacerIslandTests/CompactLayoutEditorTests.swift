@@ -27,7 +27,7 @@ final class CompactLayoutEditorTests: XCTestCase {
         defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
         var mode = IslandDisplayMode.automatic
         var position: IslandPosition?
-        let pane = SettingsAppearancePane(model: model, appearance: .constant(.classic),
+        let pane = SettingsAppearancePane(model: model, theme: .constant(.auto), appearance: .constant(.classic), accent: .constant(.multicolor),
             displayMode: Binding(get: { mode }, set: { mode = $0 }),
             position: Binding(get: { position }, set: { position = $0 }),
             displayID: .constant(0), fullscreen: .constant(false), quotaStyle: .constant(.split),

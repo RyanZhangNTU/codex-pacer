@@ -256,6 +256,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             UserDefaults.standard.persistentDomain(forName: "com.codexpacer.island.preview") ?? [:])
         UserDefaults.standard.register(defaults: ["completedRetentionMinutes": 30, "systemNotifications": false,
             "compactMetric": "remaining", "quotaWindowID": QuotaWindowSelection.weekly.rawValue])
+        AppTheme(defaults: .standard).apply()
         model = IslandModel(demo: CommandLine.arguments.contains("--demo"), initiallyExpanded: CommandLine.arguments.contains("--expanded"))
         model.makeClaudeCloudMonitor = { PacerMain.makeClaudeCloudMonitor() }
         updater = AppUpdater(enabled: !model.isDemo)
@@ -532,7 +533,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         welcomeWindow?.contentView = NSHostingView(rootView: WelcomeView(model: model, notificationPreference: notificationPreference,
             launchAtLogin: launchAtLogin,
             onOpenSettings: { [weak self] pane in self?.closeWelcome(); self?.showSettingsPane(pane) },
-            onDone: { [weak self] in self?.closeWelcome() }))
+            onDone: { [weak self] in self?.closeWelcome() }).modifier(SavedPacerAccent()))
         welcomeWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

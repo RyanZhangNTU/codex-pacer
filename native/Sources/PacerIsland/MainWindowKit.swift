@@ -352,6 +352,7 @@ struct MainButtonStyle: ButtonStyle {
         let fill: Color?
         let label: Color?
         @Environment(\.isEnabled) private var enabled
+        @Environment(\.pacerAccent) private var accent
         var body: some View {
             let large = height >= 32
             let shape = RoundedRectangle(cornerRadius: large ? 9 : 7, style: .continuous)
@@ -359,7 +360,7 @@ struct MainButtonStyle: ButtonStyle {
                 .font(.system(size: large ? 13.5 : height > 24 ? 12.5 : 12, weight: large && prominent ? .semibold : .medium)).lineLimit(1)
                 .foregroundStyle(label ?? (prominent ? Color.white : Color.primary))
                 .padding(.horizontal, large ? 16 : 11).frame(height: height)
-                .background(fill ?? (prominent ? Color.accentColor : MainPalette.button), in: shape)
+                .background(fill ?? (prominent ? accent : MainPalette.button), in: shape)
                 .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
                 .contentShape(shape)
         }

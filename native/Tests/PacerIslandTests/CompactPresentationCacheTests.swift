@@ -15,7 +15,7 @@ final class CompactPresentationCacheTests: XCTestCase {
     func testAlternatingStatusRequestsKeepSeparateCachedLayoutsAndInvalidateIndependently() async throws {
         let (defaults, suite) = try defaults()
         defer { removeTestDefaults(suite) }
-        CompactIslandLayout(leading: [.activity, .status, .tps], trailing: [.quotaLabel]).save(to: defaults)
+        CompactIslandLayout(leading: [.activity, .status, .tps], trailing: [.quota]).save(to: defaults)
         let model = IslandModel(defaults: defaults,
             installation: .init(codexInstalled: true, claudeInstalled: false, deepseekInstalled: false))
         model.now = Date(timeIntervalSince1970: 1_800_000_000)
