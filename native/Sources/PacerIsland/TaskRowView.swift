@@ -66,7 +66,16 @@ struct TaskRowView: View {
         if attention != nil || phase == .waitingForInput { return PacerPalette.attention }
         return activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
     }
-    private var symbol: String { StatusSymbols.symbol(presentation.symbol) }
+    /// A working stage shows its glyph over an orb; a request for the user or
+    /// an ending fills a disc, greyed once read; an unknown state draws a moon.
+    private var face: TaskStatusIconNSView.Face {
+        let symbol = presentation.symbol
+        switch symbol {
+        case .approval, .input, .completed, .interrupted, .failed: return .solid(symbol, read: dimmed)
+        case .unknown: return .plain(symbol)
+        default: return .working(symbol)
+        }
+    }
     private var progressRing: TaskProgressRing? { presentation.progressRing }
 
     var body: some View {
@@ -124,22 +133,17 @@ struct TaskRowView: View {
         .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
     }
 
-    /// The icon gives the progress ring room: 20 pt alone, 16 pt inside the
-    /// ring, where an ending glyph drops its own circle so the ring is the only
-    /// outline. The width probe draws no ring, so only the shown row moves it.
-    private func statusIcon(measuring: Bool) -> some View {
-        ZStack {
-            if !measuring {
-                TaskProgressRingView(id: activity.id, ring: progressRing, color: color, animates: !reduceMotion,
-                    completionPulseOnly: activity.provider == .codex)
-                    .frame(width: TaskProgressRingNSView.diameter, height: TaskProgressRingNSView.diameter)
-                    .accessibilityHidden(true)
-            }
-            StatusGlyph(symbol: progressRing == nil ? symbol : StatusSymbols.enclosed(symbol), tint: color)
-                .scaleEffect(progressRing == nil ? 1 : 0.8)
-                .animation(reduceMotion ? nil : .easeOut(duration: progressRing == nil ? 0.3 : 0.25), value: progressRing == nil)
+    /// The ring and the state share one 28 pt icon. The width probe draws
+    /// nothing, so only the shown row keeps a task's motion.
+    @ViewBuilder private func statusIcon(measuring: Bool) -> some View {
+        if measuring {
+            Color.clear.frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
+        } else {
+            TaskStatusIconView(id: activity.id, ring: progressRing, face: face, color: color, animates: !reduceMotion,
+                completionPulseOnly: activity.provider == .codex)
+                .frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
+                .accessibilityHidden(true)
         }
-        .frame(width: TaskProgressRingNSView.diameter, height: TaskProgressRingNSView.diameter)
     }
 
     /// Local SDK/ACP rows name the app that started their session.

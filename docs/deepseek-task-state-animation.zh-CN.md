@@ -39,7 +39,7 @@ stateDiagram-v2
 
 ## 图标和圆环
 
-Mac 和 Windows 使用和 Codex、Claude 相同的任务行组件。圆环显示在 DeepSeek 的任务图标外，估算和等待状态也会写入该行的辅助功能说明。
+Mac 和 Windows 使用和 Codex、Claude 相同的任务行组件。圆环显示在 DeepSeek 的任务图标外，估算和等待状态也会写入该行的辅助功能说明。下表按 Windows 的画法描述；macOS 用彗星代替转动的虚线、用沿弧流动的光代替光点，见[开发说明](development.md)。
 
 | 状态 | 中央图标 | 圆环 |
 | --- | --- | --- |

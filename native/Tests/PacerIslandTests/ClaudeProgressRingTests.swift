@@ -173,10 +173,10 @@ final class ClaudeProgressRingTests: XCTestCase {
 /// The ring view: continuity across rebuilt rows, looping motion by mode, and
 /// no clocks without motion.
 @MainActor
-final class TaskProgressRingViewTests: XCTestCase {
-    private typealias Ring = TaskProgressRingNSView
+final class TaskStatusIconViewTests: XCTestCase {
+    private typealias Ring = TaskStatusIconNSView
     private let ink = NSColor.orange.cgColor
-    private let loops: Set<String> = ["pending.spin", "pending.breath", "arc.breath", "dot.travel"]
+    private let loops: Set<String> = ["pending.spin", "pending.breath", "arc.breath", "flow.travel", "step.breath", "glyph.rhythm"]
     /// Whether the test windows count as on screen and unoccluded.
     private var shows = true
     private var windows: [NSWindow] = []
@@ -285,9 +285,9 @@ final class TaskProgressRingViewTests: XCTestCase {
             (.pending, .longStep, 0, false, ["pending.spin"]),
             (.pending, .attention, 0, false, []),
             (.pending, .waiting, 0, false, ["pending.breath"]),
-            (.reported, .working, 0.5, false, ["dot.travel"]),
+            (.reported, .working, 0.5, false, ["flow.travel"]),
             (.reported, .working, 0.5, true, []),
-            (.reported, .longStep, 0.5, false, []),
+            (.reported, .longStep, 0.5, false, ["step.breath"]),
             (.reported, .waiting, 0.5, false, ["arc.breath"]),
             (.reported, .attention, 0.5, false, []),
             (.reported, .done, 1, false, []),
@@ -307,18 +307,18 @@ final class TaskProgressRingViewTests: XCTestCase {
         view.update(input(id, .pending, .waiting))
         XCTAssertEqual(running(view), ["pending.breath"])
         view.update(input(id, .reported, .working, 0.4))
-        XCTAssertEqual(running(view), ["dot.travel"])
+        XCTAssertEqual(running(view), ["flow.travel"])
         XCTAssertTrue(view.animationKeys.isSuperset(of: ["pending.opacity", "track.opacity", "arc.sweep"]),
-            "The dashes close into the track before the first estimate sweeps in")
+            "The comet closes into the track before the first estimate sweeps in")
         view.update(input(id, .reported, .done, 1))
         XCTAssertEqual(running(view), [])
-        XCTAssertTrue(view.animationKeys.contains("container.pulse"), "Reaching 100% settles with one pulse")
+        XCTAssertTrue(view.animationKeys.contains("icon.pulse"), "Reaching 100% settles with one pulse")
     }
 
     /// Codex pulses only on a confirmed ending: a working 100% fills the arc
     /// quietly, and neither a rebuilt row nor a first sight replays it.
     func testCodexPulsesOnceWhenTheRequestEndsRatherThanWhenItReportsFull() throws {
-        let pulse = "container.pulse"
+        let pulse = "icon.pulse"
         let id = UUID().uuidString, view = shown()
         view.update(input(id, .reported, .working, 0.4, codex: true))
         view.update(input(id, .reported, .working, 1, codex: true))
@@ -341,7 +341,7 @@ final class TaskProgressRingViewTests: XCTestCase {
         row.update(input(next, .reported, .done, 1, codex: true))
         XCTAssertTrue(row.animationKeys.contains(pulse), "Each request's ending pulses once")
 
-        // A request that never reported closes its dashes, fills and pulses.
+        // A request that never reported closes its comet, fills and pulses.
         let unreported = UUID().uuidString, dashed = shown()
         dashed.update(input(unreported, .pending, .working, codex: true))
         dashed.update(input(unreported, .reported, .done, 1, codex: true))
@@ -366,7 +366,7 @@ final class TaskProgressRingViewTests: XCTestCase {
         XCTAssertEqual(view.restingFraction, 0.62, accuracy: 0.0001)
 
         view.update(input(id, .reported, .working, 0.62))
-        XCTAssertEqual(running(view), ["dot.travel"], "Motion returns with the setting")
+        XCTAssertEqual(running(view), ["flow.travel"], "Motion returns with the setting")
         view.update(input(id, .reported, .working, 0.8))
         shows = false
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
@@ -376,7 +376,7 @@ final class TaskProgressRingViewTests: XCTestCase {
         shows = true
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
         try await TestWait.until { !self.running(view).isEmpty }
-        XCTAssertEqual(running(view), ["dot.travel"])
+        XCTAssertEqual(running(view), ["flow.travel"])
     }
 
     func testReducedMotionAndOcclusionCancelFiniteAnimationsDuringEveryTransition() throws {
@@ -421,7 +421,7 @@ final class TaskProgressRingViewTests: XCTestCase {
         let id = UUID().uuidString, view = shown()
         view.update(input(id, .pending))
         view.update(input(id, .reported, .done, 1))
-        XCTAssertTrue(view.animationKeys.contains("container.pulse"))
+        XCTAssertTrue(view.animationKeys.contains("icon.pulse"))
         view.update(input(id, .reported, .working, 0.2, animates: false))
         XCTAssertTrue(view.animationKeys.isEmpty)
         XCTAssertEqual(view.restingFraction, 0.2, accuracy: 0.0001)
@@ -445,16 +445,123 @@ final class TaskProgressRingViewTests: XCTestCase {
         XCTAssertFalse(reduced.animationKeys.contains("container.fade"))
     }
 
-    func testACloudRunThatEndsClosesItsDashesBeforeTheArcSweepsToFull() throws {
+    func testACloudRunThatEndsClosesItsCometBeforeTheArcSweepsToFull() throws {
         let id = UUID().uuidString, view = shown()
         view.update(input(id, .pending, .working))
         let before = CACurrentMediaTime()
         view.update(input(id, .reported, .done, 1))
         let memory = try XCTUnwrap(Ring.memory(for: id))
         XCTAssertEqual(memory.from, 0); XCTAssertEqual(memory.to, 1)
-        XCTAssertGreaterThanOrEqual(memory.start, before + 0.2, "The arc waits for the dashes to close")
+        XCTAssertGreaterThanOrEqual(memory.start, before + 0.2, "The arc waits for the comet to close")
         XCTAssertEqual(memory.duration, 0.6, accuracy: 0.0001)
-        XCTAssertTrue(view.animationKeys.isSuperset(of: ["pending.opacity", "arc.sweep", "container.pulse"]))
-        XCTAssertEqual(running(view), [], "The dashes stop where they are")
+        XCTAssertTrue(view.animationKeys.isSuperset(of: ["pending.opacity", "arc.sweep", "icon.pulse"]))
+        XCTAssertEqual(running(view), [], "The comet stops where it is")
+    }
+
+    /// The middle of the icon: a working stage lights its glyph's parts in
+    /// turn; a request for the user or an ending fills a disc once, and a
+    /// rebuilt row or a first sight draws it without replaying the arrival.
+    func testFacesPlayTheirArrivalOnceAndOnlyWorkingGlyphsLoop() {
+        func face(_ id: String, _ face: Ring.Face, _ state: TaskProgressRing.State? = nil, _ mode: TaskProgressRing.Mode = .working,
+                  _ fraction: Double = 0, animates: Bool = true) -> Ring.Input {
+            .init(id: id, state: state, mode: mode, fraction: fraction, face: face, color: ink, animates: animates)
+        }
+        let id = UUID().uuidString, view = shown()
+        view.update(face(id, .working(.thinking), .reported, .working, 0.5))
+        XCTAssertTrue(view.showsOrb); XCTAssertFalse(view.showsDisc)
+        XCTAssertEqual(running(view), ["flow.travel", "glyph.rhythm"])
+        XCTAssertFalse(view.animationKeys.contains("glyph.swap"), "A first sight draws its glyph at once")
+        view.update(face(id, .working(.tool), .reported, .working, 0.5))
+        XCTAssertTrue(view.animationKeys.contains("glyph.swap"), "A new stage swaps its glyph")
+        view.update(face(id, .solid(.completed, read: false), .reported, .done, 1))
+        XCTAssertTrue(view.showsDisc); XCTAssertFalse(view.showsOrb)
+        XCTAssertTrue(view.animationKeys.isSuperset(of: ["arc.sweep", "disc.fill", "glyph.draw", "icon.pulse", "ring.opacity"]),
+            "The arc closes, the disc fills, the check is drawn and the icon pops")
+        XCTAssertEqual(running(view), [], "A solid face keeps still")
+
+        let rebuilt = shown()
+        view.removeFromSuperview()
+        rebuilt.update(face(id, .solid(.completed, read: false), .reported, .done, 1))
+        XCTAssertTrue(rebuilt.showsDisc)
+        XCTAssertTrue(rebuilt.animationKeys.isDisjoint(with: ["disc.fill", "glyph.draw", "icon.pulse"]), "A rebuilt row does not replay the ending")
+        rebuilt.update(face(id, .solid(.completed, read: true), .reported, .done, 1))
+        XCTAssertTrue(rebuilt.animationKeys.isDisjoint(with: ["disc.fill", "icon.pulse"]), "Reading an ending greys it without a second arrival")
+
+        let asking = UUID().uuidString, row = shown()
+        row.update(face(asking, .working(.tool), .pending))
+        XCTAssertEqual(running(row), ["pending.spin", "glyph.rhythm"])
+        row.update(face(asking, .solid(.approval, read: false), .pending, .attention))
+        XCTAssertTrue(row.animationKeys.isSuperset(of: ["disc.fill", "icon.bounce", "ripple.ping"]), "A request for the user bounces and rings")
+        XCTAssertEqual(running(row), [])
+        row.update(face(asking, .working(.tool), .pending))
+        XCTAssertTrue(row.animationKeys.isSuperset(of: ["disc.fill", "ring.opacity"]), "Back at work, the disc empties and the ring returns")
+        XCTAssertFalse(row.showsDisc)
+        XCTAssertEqual(running(row), ["pending.spin", "glyph.rhythm"])
+        row.update(face(asking, .solid(.failed, read: false), .reported, .failed, 0.4))
+        XCTAssertTrue(row.animationKeys.contains("icon.shake"), "A failure shakes once")
+
+        let seen = shown()
+        seen.update(face(UUID().uuidString, .solid(.approval, read: false), .pending, .attention))
+        XCTAssertTrue(seen.showsDisc)
+        XCTAssertEqual(seen.animationKeys, [], "A request seen for the first time draws without its arrival")
+
+        let quiet = UUID().uuidString, reduced = shown()
+        reduced.update(face(quiet, .working(.thinking), .reported, .working, 0.5, animates: false))
+        reduced.update(face(quiet, .solid(.completed, read: false), .reported, .done, 1, animates: false))
+        XCTAssertTrue(reduced.showsDisc)
+        XCTAssertTrue(reduced.animationKeys.isEmpty, "Reduced motion fills the disc without motion")
+        let still = shown()
+        still.update(face(UUID().uuidString, .working(.responding), .pending, animates: false))
+        XCTAssertTrue(still.animationKeys.isEmpty, "Without motion the glyph keeps all its parts lit and the comet stands still")
+    }
+
+    func testWorkingGlyphsAreDrawnInsideTheirBox() {
+        XCTAssertEqual(TaskGlyphArt.svg("M7.6 10.1l2.6 1.9-2.6 1.9").boundingBoxOfPath.integral, CGRect(x: 7, y: 10, width: 4, height: 4))
+        let cloud = TaskGlyphArt.svg("M7.6 18.2h9a4 4 0 0 0 .5-7.97 5.4 5.4 0 0 0-10.3 1.2A3.4 3.4 0 0 0 7.6 18.2z").boundingBoxOfPath
+        XCTAssertEqual(cloud.minX, 3.79, accuracy: 0.05, "The left lobe bulges outwards, on the side its flags pick")
+        XCTAssertEqual(cloud.maxY, 18.2, accuracy: 0.05); XCTAssertGreaterThan(cloud.minY, 3); XCTAssertLessThan(cloud.maxX, 22)
+        for symbol in [TaskSymbol.thinking, .tool, .responding, .starting, .working, .coordinating, .background] {
+            let parts = TaskGlyphArt.parts(for: symbol)
+            XCTAssertFalse(parts.isEmpty, "\(symbol)")
+            for part in parts {
+                let box = part.path.boundingBoxOfPath
+                XCTAssertGreaterThan(box.width + box.height, 1, "\(symbol)")
+                XCTAssertTrue(CGRect(x: 1, y: 1, width: 22, height: 22).contains(box), "\(symbol) \(box)")
+            }
+            XCTAssertTrue(symbol == .working || parts.contains { $0.rhythm != nil }, "Every working glyph but the cloud's has a part that moves")
+        }
+        for symbol in [TaskSymbol.approval, .input, .interrupted, .failed] {
+            let name = try? XCTUnwrap(TaskGlyphArt.solidSymbol(for: symbol))
+            XCTAssertNotNil(name.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }, "\(symbol)")
+        }
+    }
+
+    /// With one task reporting, the badge's comets give way to its estimate.
+    func testTheBadgeDrawsTheOnlyTasksEstimateWithTheRowsMotion() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: .borderless, backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        let orbit = ActivityOrbitView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
+        window.contentView?.addSubview(orbit)
+        orbit.layoutSubtreeIfNeeded()
+        let codex = [ActivityOrbit.Segment(color: .systemTeal, weight: 1), .init(color: .systemOrange, weight: 0)]
+        orbit.update(segments: codex, animates: true)
+        XCTAssertEqual(orbit.estimateAnimationKeys, ["orbit.orbit"])
+        XCTAssertFalse(orbit.showsEstimate)
+        orbit.update(segments: codex, progress: .init(fraction: 0.4, longStep: false, stale: false), animates: true)
+        XCTAssertTrue(orbit.showsEstimate)
+        XCTAssertEqual(orbit.estimateFraction, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(orbit.estimateAnimationKeys, ["flow.travel"], "Light runs along the arc in place of the orbit")
+        orbit.update(segments: codex, progress: .init(fraction: 0.4, longStep: true, stale: false), animates: true)
+        XCTAssertEqual(orbit.estimateAnimationKeys, ["step.breath"], "A long step breathes past the head")
+        orbit.update(segments: codex, progress: .init(fraction: 0.4, longStep: false, stale: true), animates: true)
+        XCTAssertEqual(orbit.estimateAnimationKeys, [], "A stale estimate keeps still")
+        orbit.update(segments: codex, progress: .init(fraction: 0.7, longStep: false, stale: false), animates: false)
+        XCTAssertEqual(orbit.estimateAnimationKeys, [])
+        XCTAssertEqual(orbit.estimateFraction, 0.7, accuracy: 0.0001)
+        orbit.update(segments: codex, progress: nil, animates: true)
+        XCTAssertEqual(orbit.estimateAnimationKeys, ["orbit.orbit"], "Without an estimate the comet returns")
+        XCTAssertFalse(orbit.showsEstimate)
+        window.close()
     }
 }
