@@ -36,7 +36,8 @@ internal sealed partial class SettingsWindow
         row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 8, 8, 8) };
-        var heading = new StackPanel { Orientation = Orientation.Horizontal };
+        // A wrap panel lets a long title wrap in a narrow card instead of being clipped.
+        var heading = new WrapPanel();
         var label = Label(title); label.TextWrapping = TextWrapping.Wrap; heading.Children.Add(label);
         text.Children.Add(heading);
         if (detail != null) { detail.Margin = new Thickness(0, 2, 0, 0); text.Children.Add(detail); }

@@ -20,7 +20,19 @@ internal sealed class CompactLayoutEditorView : Grid
     private readonly ResourceDictionary resources;
     private readonly Grid laneStrip = new();
     private readonly Dictionary<string, StackPanel> lanes = new();
-    private readonly Dictionary<string, Border> chips = new();
+    private readonly Dictionary<string, Border> chips = new(), strokes = new();
+    private string? selected;
+    /// A click (not a drag) or Return on a chip selects it for the settings beside the editor, as on the Mac.
+    internal event Action<string>? ComponentSelected;
+    internal void SetSelected(string? id)
+    {
+        selected = id;
+        foreach (var item in strokes)
+        {
+            item.Value.SetResourceReference(Border.BorderBrushProperty, item.Key == id ? "SettingsAccent" : "SettingsSeparator");
+            item.Value.BorderThickness = new Thickness(item.Key == id ? 1.5 : 1);
+        }
+    }
     private readonly Canvas overlay = new() { IsHitTestVisible = false };
     private readonly Border outline = new() { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), IsHitTestVisible = false, Opacity = 0 };
     private CompactProjection? data;
@@ -72,7 +84,7 @@ internal sealed class CompactLayoutEditorView : Grid
         if (next == signature) return;
         var focused = Keyboard.FocusedElement as FrameworkElement;
         string? focus = focused?.Tag as string;
-        CancelGesture(); signature = next; chips.Clear();
+        CancelGesture(); signature = next; chips.Clear(); strokes.Clear();
         foreach (string lane in new[] { "leading", "trailing" })
         {
             var stack = lanes[lane]; stack.Children.Clear(); bool right = lane == "trailing";
@@ -90,6 +102,7 @@ internal sealed class CompactLayoutEditorView : Grid
             }
         }
         var body = (StackPanel)Children[0]; body.Children.OfType<TextBlock>().Single(item => item.Name == "StripHelp").Visibility = docked ? Visibility.Visible : Visibility.Collapsed;
+        SetSelected(selected);
         if (focus != null && chips.TryGetValue(focus, out var restore)) ((Grid)restore.Child).Children[0].Focus();
     }
     private Border Chip(CompactComponent value)
@@ -110,9 +123,15 @@ internal sealed class CompactLayoutEditorView : Grid
         var stroke = new Border { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(13), Margin = new Thickness(-8, -4, -4, -4), IsHitTestVisible = false };
         Grid.SetColumnSpan(stroke, 2); row.Children.Add(stroke);
         chip.SetResourceReference(Border.BackgroundProperty, "SettingsCompactChip"); stroke.SetResourceReference(Border.BorderBrushProperty, "SettingsSeparator");
+        strokes[value.Id] = stroke;
         grip.GotKeyboardFocus += (_, _) => stroke.SetResourceReference(Border.BorderBrushProperty, "SettingsAccent");
-        grip.LostKeyboardFocus += (_, _) => stroke.SetResourceReference(Border.BorderBrushProperty, "SettingsSeparator");
-        grip.KeyDown += async (_, e) => { if (IsEnabled && grip.IsVisible && e.Key is Key.Left or Key.Right) { e.Handled = true; await Apply(new("shift", value.Id, Offset: e.Key == Key.Left ? -1 : 1), value.Id); } };
+        grip.LostKeyboardFocus += (_, _) => stroke.SetResourceReference(Border.BorderBrushProperty, selected == value.Id ? "SettingsAccent" : "SettingsSeparator");
+        grip.KeyDown += async (_, e) =>
+        {
+            if (!IsEnabled || !grip.IsVisible) return;
+            if (e.Key is Key.Enter or Key.Space) { e.Handled = true; ComponentSelected?.Invoke(value.Id); return; }
+            if (e.Key is Key.Left or Key.Right) { e.Handled = true; await Apply(new("shift", value.Id, Offset: e.Key == Key.Left ? -1 : 1), value.Id); }
+        };
         grip.MouseLeftButtonDown += (_, e) => { if (!BeginPointer(value.Id, e.GetPosition(this))) return; grip.Focus(); handle = grip; grip.CaptureMouse(); e.Handled = true; };
         grip.MouseMove += (_, e) => MovePointer(e.GetPosition(this), Mouse.LeftButton == MouseButtonState.Pressed);
         grip.MouseLeftButtonUp += async (_, e) =>
@@ -142,7 +161,8 @@ internal sealed class CompactLayoutEditorView : Grid
     }
     internal async Task EndPointer(Point point)
     {
-        string? id = dragged; CancelGesture();
+        string? id = dragged, clicked = pressed; CancelGesture();
+        if (id == null && clicked != null) { ComponentSelected?.Invoke(clicked); return; }
         if (id != null && IsEnabled && IsVisible && Finite(point) && DropAt(point) is var drop && drop.Lane != null)
             await Apply(new("move", id, drop.Lane, drop.Before), id);
     }

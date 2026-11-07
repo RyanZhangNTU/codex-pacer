@@ -83,8 +83,15 @@ internal static class CollapsedLayoutChecks
                 var check = Find<CheckBox>(window, "compact.component." + id); Toggle(check);
                 await Until(() => check.IsChecked == true && check.IsEnabled);
             }
+            // Each component's settings live in the inspector once it is selected, as on the Mac.
+            window.SelectCompactComponent("activity"); await Pump();
+            Check(Find<TextBlock>(window, "compact.inspector.title").Text == state.Components.Single(value => value.Id == "activity").Label && Find<ComboBox>(window, "compact.singleTask").IsVisible
+                && !Find<ComboBox>(window, "compact.metric.quota").IsVisible, "The inspector shows only the selected component's settings");
             Select(Find<ComboBox>(window, "compact.singleTask"), "count"); await Until(() => session.Current.CompactSingleTask == "count");
+            window.SelectCompactComponent("quota"); await Pump();
+            Check(Find<TextBlock>(window, "compact.window_label.codex").IsVisible && Find<TextBlock>(window, "compact.window_label.claude").IsVisible, "Quota windows follow the components that show a quota");
             Select(Find<ComboBox>(window, "compact.metric.quota"), "pace"); await Until(() => session.Current.CompactMetric == "pace");
+            window.SelectCompactComponent("quotaGauge"); await Pump();
             Select(Find<ComboBox>(window, "compact.ring.0"), "deepseek"); await Until(() => session.Current.QuotaRingOuter == "deepseek");
             Check(configurations == 0, "Readout and ring choices cannot restart sources");
             island.Reveal(); await island.WaitForPresentationAsync();

@@ -124,6 +124,23 @@
    </ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
+ <!-- A Collapsed Bar library tile: filled while on the bar, ringed in the accent while selected. -->
+ <Style x:Key="SettingsComponentTile" TargetType="CheckBox">
+  <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/>
+  <Setter Property="Foreground" Value="{DynamicResource SettingsSecondary}"/><Setter Property="Height" Value="32"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+   <Border x:Name="Surface" CornerRadius="8" Padding="10,0" BorderThickness="1" BorderBrush="{DynamicResource SettingsCardBorder}" Background="Transparent">
+    <ContentPresenter VerticalAlignment="Center"/>
+   </Border>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSearchFill}"/></Trigger>
+    <Trigger Property="Tag" Value="selected"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Surface" Property="BorderThickness" Value="1.5"/></Trigger>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.85"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
+    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
  <!-- History's rounded provider chips. -->
  <Style x:Key="SettingsChip" TargetType="RadioButton">
   <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/>
