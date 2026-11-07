@@ -53,6 +53,7 @@ struct TaskRowView: View {
     private var color: Color {
         if attention != nil { return PacerPalette.attention }
         if activity.turnFailed { return PacerPalette.danger }
+        if activity.codexGoalPause != nil { return PacerPalette.paused }
         if dimmed { return PacerPalette.secondary }
         switch phase {
         case .waitingForInput: return PacerPalette.attention
@@ -129,7 +130,8 @@ struct TaskRowView: View {
     private func statusIcon(measuring: Bool) -> some View {
         ZStack {
             if !measuring {
-                TaskProgressRingView(id: activity.id, ring: progressRing, color: color, animates: !reduceMotion)
+                TaskProgressRingView(id: activity.id, ring: progressRing, color: color, animates: !reduceMotion,
+                    completionPulseOnly: activity.provider == .codex)
                     .frame(width: TaskProgressRingNSView.diameter, height: TaskProgressRingNSView.diameter)
                     .accessibilityHidden(true)
             }

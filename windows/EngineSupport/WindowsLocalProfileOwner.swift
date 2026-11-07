@@ -2,9 +2,9 @@ import Foundation
 import PacerCore
 import WinSDK
 
-enum WindowsClaudeFileOwner {
-    static func allows(_ owner: PSID, user: PSID, administrators: PSID,
-                       elevated: Bool, administratorsEnabled: Bool) -> Bool {
+public enum WindowsLocalProfileOwner {
+    public static func allows(_ owner: PSID, user: PSID, administrators: PSID,
+                              elevated: Bool, administratorsEnabled: Bool) -> Bool {
         EqualSid(owner, user) || elevated && administratorsEnabled && EqualSid(owner, administrators)
     }
 

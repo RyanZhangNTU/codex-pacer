@@ -40,7 +40,8 @@ struct RuntimeEventState: Sendable {
                 }
                 return value
             }.filter { value in
-                guard let idle = confirmedIdle[value.id], ![.completed, .interrupted].contains(value.phase) else { return true }
+                guard let idle = confirmedIdle[value.id], !value.awaitsCodexGoal,
+                      ![.completed, .interrupted].contains(value.phase) else { return true }
                 return (value.phaseChangedAt ?? value.turnStartedAt ?? .distantPast) > idle
             }
     }

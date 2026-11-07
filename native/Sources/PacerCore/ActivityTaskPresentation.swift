@@ -6,6 +6,7 @@ public enum TaskSymbol: String, Sendable {
     public static func symbol(for activity: SessionActivity, attention: PendingAttentionRequest.Kind? = nil,
                               groupIsRunning: Bool = false) -> Self {
         if let attention { return attention == .approval ? .approval : .input }
+        if activity.codexGoalPause != nil, !groupIsRunning { return .interrupted }
         if groupIsRunning && activity.phase != .running { return .thinking }
         switch activity.phase {
         case .waitingForInput: return activity.waitingForApproval ? .approval : .input
@@ -133,7 +134,8 @@ public struct ActivityTaskRowPresentation: Sendable {
         ratePlaceholder = activity.claudeCloud == nil ? L10n.text("performance.awaiting_usage") : nil
         cost = activity.provider == .deepseek && options.showsDeepSeekTurnCost ? activity.turnCost.map(DeepSeekWallet.turnAmount) : nil
         peakCost = (activity.turnPeakCost ?? 0) >= 0.005
-        progressRing = TaskProgressRing.make(activity, phase: phase, enabled: options.progressRingProviders.contains(activity.provider), at: now)
+        progressRing = TaskProgressRing.make(activity, phase: phase, enabled: options.progressRingProviders.contains(activity.provider), at: now,
+            hasAttention: attention != nil, waitingForDependents: group?.isRunning == true && [.completed, .interrupted].contains(activity.phase))
     }
     public static func title(_ activity: SessionActivity, hideProjects: Bool) -> String {
         hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project
@@ -184,7 +186,7 @@ public struct ActivityTaskPresentation: Sendable {
         self.overview = overview ?? ActivityOverview(groups: groups, at: now)
         func attention(_ activity: SessionActivity) -> PendingAttentionRequest.Kind? { Self.attentionKind(activity, groups: groups, requests: requests) }
         var displayed = groups.filter {
-            $0.isRunning || $0.isWaiting || [.completed, .interrupted].contains($0.primary.phase) ||
+            $0.isRunning || $0.isWaiting || $0.primary.codexGoalPause != nil || [.completed, .interrupted].contains($0.primary.phase) ||
                 now.timeIntervalSince($0.primary.lastObserved ?? .distantPast) < 900
         }.map(\.primary)
         let known = Set(groups.flatMap { $0.members.map(\.id) }), roots = Set(groups.filter { !$0.isRunning }.map { $0.primary.id })
@@ -231,7 +233,10 @@ public struct ActivityTaskPresentation: Sendable {
         for task in overview.running { orbit[task.provider, default: 0] += 1 }
         let prompt = attention.map { symbol($0 == .approval ? .approval : .input) }
         let core: HeaderActivity.Core
-        if active == 0 { core = (prompt ?? ending.map { symbol($0.kind) }).map(HeaderActivity.Core.symbol) ?? .idle }
+        if active == 0 {
+            let paused = groups.contains { $0.primary.codexGoalPause != nil } ? symbol(.interrupted) : nil
+            core = (prompt ?? ending.map { symbol($0.kind) } ?? paused).map(HeaderActivity.Core.symbol) ?? .idle
+        }
         else if active == 1, singleTask == .stage, let glyph = prompt ?? overview.running.max(by: {
             let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
             return left == right ? $0.id < $1.id : left < right

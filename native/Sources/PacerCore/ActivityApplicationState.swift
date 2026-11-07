@@ -224,7 +224,7 @@ public struct ActivityApplicationState: Sendable {
         replaceActivities(activities.filter { ![.completed, .interrupted].contains($0.phase) || retained.contains($0.id) }, at: now)
     }
     /// Display-only wake-ups never request collection or reset a notice baseline.
-    public func nextDisplayDeadline(at now: Date, retention: TimeInterval) -> Date? {
+    public func nextDisplayDeadline(at now: Date, retention: TimeInterval, progressRingProviders: Set<AgentProvider> = []) -> Date? {
         var dates = activities.compactMap(\.rateExpiresAt)
         dates += activities.filter { ![.running, .waitingForInput, .completed, .interrupted].contains($0.phase) }
             .compactMap { $0.lastObserved?.addingTimeInterval(900) }
@@ -232,6 +232,10 @@ public struct ActivityApplicationState: Sendable {
         for value in activities where value.phase == .running {
             if let start = value.turnStartedAt, start <= now {
                 dates.append(start.addingTimeInterval((floor(now.timeIntervalSince(start) / 60) + 1) * 60))
+            }
+            if progressRingProviders.contains(value.provider) {
+                if let start = value.toolWaitStartedAt { dates.append(start.addingTimeInterval(TaskProgressRing.longStepInterval)) }
+                if let report = value.currentProgress { dates.append(report.reportedAt.addingTimeInterval(TaskProgressRing.staleInterval)) }
             }
         }
         return dates.filter { $0 > now && $0.timeIntervalSince1970.isFinite }.min()

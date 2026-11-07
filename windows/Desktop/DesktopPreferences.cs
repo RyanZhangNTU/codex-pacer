@@ -65,6 +65,7 @@ internal sealed record DesktopPreferences
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; }
+    public bool CodexProgressRing { get; init; }
     public bool MonitorSSH { get; init; } = true;
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
@@ -124,6 +125,7 @@ internal sealed record DesktopPreferences
             showEmbeddedClaudeSessions = ShowEmbeddedClaudeSessions,
             showClaudeCloudProjects = ShowClaudeCloudProjects,
             claudeProgressRing = ClaudeProgressRing,
+            codexProgressRing = CodexProgressRing,
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },

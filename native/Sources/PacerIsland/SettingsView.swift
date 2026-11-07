@@ -47,6 +47,7 @@ struct SettingsView: View {
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
     @AppStorage(IslandModel.showsClaudeCloudProjectsKey) private var showClaudeCloudProjects = true
     @AppStorage(IslandModel.claudeProgressRingKey) private var claudeProgressRing = false
+    @AppStorage(IslandModel.codexProgressRingKey) private var codexProgressRing = false
     @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
@@ -354,7 +355,22 @@ struct SettingsView: View {
     /// when something needs the user, and path overrides folded away.
     private func localSection(_ provider: AgentProvider) -> some View {
         Section(L10n.text("provider.section.local")) {
-            if provider == .codex { codexCLIRow; embeddedSessionsToggle(.codex) } else {
+            if provider == .codex {
+                codexCLIRow; embeddedSessionsToggle(.codex)
+                Toggle(isOn: $codexProgressRing) {
+                    Text(L10n.text("codex.progress_ring"))
+                    Text(L10n.text("codex.progress_ring_help"))
+                }
+                if codexProgressRing, let setup = model.codexProgressSetup {
+                    HStack {
+                        Text(L10n.text("codex.progress_setup." + setup.rawValue)).foregroundStyle(.secondary)
+                        Spacer()
+                        if setup == .failed || setup == .missingCLI || setup == .conflict {
+                            Button(L10n.text("connections.retry")) { model.syncCodexProgressSwitch(force: true) }
+                        }
+                    }
+                }
+            } else {
                 claudeMonitoringRow; claudeAccountRow
                 Toggle(isOn: $showClaudeCloudProjects) {
                     Text(L10n.text("claude.cloud_projects"))
@@ -744,6 +760,7 @@ struct SettingsView: View {
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
+            codexProgressRing: codexProgressRing,
             showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
             quotaRings: quotaRings)
     }
@@ -876,6 +893,7 @@ private struct LiveSettings: Equatable {
     var claudeProgressRing: Bool
     var deepseekSource: DeepSeekBalanceSource
     var deepseekLowBalance: Double?
+    var codexProgressRing: Bool
     var showsDeepSeekTurnCost: Bool
     var deepseekSpeedSource: String
     var deepseekSpikeLimit: Double?

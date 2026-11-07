@@ -41,7 +41,8 @@ public partial class TaskRow : Button
         var row = state.Value;
         var color = state.StatusInk is SolidColorBrush solid ? solid.Color : Colors.White;
         bool animate = animations && IsVisible;
-        var change = Ring.Show(row.Id, row.ProgressState, row.ProgressMode, row.ProgressFraction ?? 0, row.ProgressStale == true, color, animate);
+        var change = Ring.Show(row.Id, row.ProgressState, row.ProgressMode, row.ProgressFraction ?? 0, row.ProgressStale == true, color, animate,
+            completionPulseOnly: row.Provider == "codex");
         Glyph.RenderTransform = glyphScale;
         double target = change is TaskProgressRing.Change.Appeared or TaskProgressRing.Change.Shown ? 0.8 : 1;
         double from = change switch { TaskProgressRing.Change.Appeared => 1, TaskProgressRing.Change.Disappeared => 0.8, _ => target };
@@ -93,7 +94,7 @@ internal sealed class TaskRowState(EngineTaskRow value)
         : Value.Failed ? PacerPalette.Danger : PacerPalette.Secondary;
     public Brush StatusInk => Value.Attention != null || Value.Phase == "waitingForInput" ? PacerPalette.Attention
         : Value.Failed ? PacerPalette.Danger : Value.Dimmed ? PacerPalette.Secondary
-        : Value.Phase == "interrupted" ? PacerPalette.Paused : Value.Phase is "running" or "completed" ? ProviderInk : PacerPalette.Secondary;
+        : Value.Phase == "interrupted" || Value.Symbol == "pause.circle" ? PacerPalette.Paused : Value.Phase is "running" or "completed" ? ProviderInk : PacerPalette.Secondary;
     public Brush RateInk => Value.RateIsFresh && !Value.Dimmed ? PacerPalette.Primary : PacerPalette.Secondary;
     public Brush DurationInk => Value.Phase == "running" ? PacerPalette.Ink(245, 245, 245, 199) : PacerPalette.Secondary;
     public string? RateText => Value.RateText ?? Value.RatePlaceholder;

@@ -19,7 +19,10 @@ internal sealed partial class SettingsWindow
     private CheckBox? codexRemoteControl;
     private StackPanel? codexRemoteSources, codexRemoteStatus;
     private Button? codexRemoteRetry;
-    private CheckBox? codexEnabled, codexEmbedded;
+    private CheckBox? codexEnabled, codexEmbedded, codexProgress;
+    private TextBlock? codexProgressState;
+    private Button? codexProgressRetry;
+    private FrameworkElement? codexProgressStatus;
     private TextBlock? codexDetection, cliState, cliIssue, executableIssue, homeIssue, historyTitle;
     private QuotaHistoryView? codexHistory;
     private Ellipse? cliDot;
@@ -40,7 +43,8 @@ internal sealed partial class SettingsWindow
     {
         codexRemoteControl = null; codexRemoteSources = null; codexRemoteRetry = null;
         sourceInspectionRevision++; sourceCommitRevision++; Array.Clear(pendingSourceValidation); sourceInspectionKey = null; sourceReport = null;
-        codexEnabled = codexEmbedded = null; codexDetection = cliState = cliIssue = executableIssue = homeIssue = historyTitle = null; codexHistory = null;
+        codexEnabled = codexEmbedded = codexProgress = null; codexDetection = cliState = cliIssue = executableIssue = homeIssue = historyTitle = null; codexHistory = null;
+        codexProgressState = null; codexProgressRetry = null; codexProgressStatus = null;
         cliDot = null; codexAutomatic = cliRescan = cliCandidates = null; codexSections = null;
         executableField = homeField = null; executablePreference = homePreference = null;
     }
@@ -79,13 +83,28 @@ internal sealed partial class SettingsWindow
         var embedded = Toggle("codex.embedded_sessions", "codex.embedded_sessions_help", "settings.codex.embedded", out var embeddedSwitch);
         codexEmbedded = embeddedSwitch; editors.Add(embeddedSwitch);
         BindToggle(embeddedSwitch, (p, value) => p with { ShowEmbeddedCodexSessions = value });
+        var progress = Toggle("codex.progress_ring", "codex.progress_ring_help", "settings.codex.progress_ring", out var progressSwitch);
+        codexProgress = progressSwitch; editors.Add(progressSwitch);
+        BindToggle(progressSwitch, (p, value) => p with { CodexProgressRing = value });
+        codexProgressState = Detail(""); Identify(codexProgressState, "settings.codex.progress_state", "");
+        codexProgressRetry = new Button { Content = ui.Text("connections.retry"), Style = (Style)FindResource("SettingsLink") };
+        Identify(codexProgressRetry, "settings.codex.progress_retry", ui.Text("connections.retry"));
+        codexProgressRetry.Click += async (sender, _) =>
+        {
+            if (sourceClosed || !ReferenceEquals(sender, codexProgressRetry) || engine == null || !codexProgressRetry.IsEnabled) return;
+            try { await engine.SendAsync("retryCodexProgressSetup"); }
+            catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
+            { if (!sourceClosed && ReferenceEquals(sender, codexProgressRetry)) codexProgressState?.SetCurrentValue(TextBlock.TextProperty, ui.Text("codex.progress_setup.failed")); }
+        };
+        codexProgressStatus = Row(codexProgressState, codexProgressRetry);
+        var progressBlock = new StackPanel(); progressBlock.Children.Add(progress); progressBlock.Children.Add(codexProgressStatus);
         var locations = new Expander { Header = ui.Text("provider.custom_locations"), Style = (Style)FindResource("SettingsDisclosure"),
             IsExpanded = session.Current.CodexExecutable.Length > 0 || session.Current.CodexHome.Length > 0 };
         Identify(locations, "settings.codex.locations", ui.Text("provider.custom_locations"));
         var fields = new StackPanel { Margin = new Thickness(10, 6, 10, 10) };
         fields.Children.Add(SourceField(true, out executableField)); executableIssue = SourceIssue("settings.codex.executable.issue"); fields.Children.Add(executableIssue);
         fields.Children.Add(SourceField(false, out homeField)); homeIssue = SourceIssue("settings.codex.home.issue"); fields.Children.Add(homeIssue);
-        locations.Content = fields; codexSections.Children.Add(Card(cli, embedded, locations));
+        locations.Content = fields; codexSections.Children.Add(Card(cli, embedded, progressBlock, locations));
         var remote = Toggle("settings.monitor_remote_control", "settings.remote_control_help", "settings.codex.remote_control", out var remoteSwitch);
         codexRemoteControl = remoteSwitch; editors.Add(remoteSwitch);
         BindToggle(remoteSwitch, (p, value) => p with { MonitorRemoteControl = value });
@@ -172,6 +191,15 @@ internal sealed partial class SettingsWindow
         bool enabled = module?.Enabled ?? (mode != "disabled" && engine.LatestSnapshot?.QuotaDashboard?.Providers.Any(value => value.Provider == "codex") == true);
         codexEnabled.IsChecked = enabled;
         if (codexEmbedded != null) codexEmbedded.IsChecked = session.Current.ShowEmbeddedCodexSessions;
+        if (codexProgress != null) codexProgress.IsChecked = session.Current.CodexProgressRing;
+        if (codexProgressStatus != null && codexProgressState != null && codexProgressRetry != null)
+        {
+            var setup = engine.LatestSnapshot?.CodexProgressSetup;
+            codexProgressStatus.Visibility = !demo && enabled && session.Current.CodexProgressRing && setup != null ? Visibility.Visible : Visibility.Collapsed;
+            codexProgressState.Text = setup == null ? "" : ui.Text("codex.progress_setup." + setup);
+            codexProgressRetry.Visibility = setup is "failed" or "missingCLI" or "conflict" ? Visibility.Visible : Visibility.Collapsed;
+            codexProgressRetry.IsEnabled = !busy && !session.RequiresRestart && !engine.IsConnectionClosed;
+        }
         if (codexRemoteControl != null) codexRemoteControl.IsChecked = session.Current.MonitorRemoteControl;
         if (codexRemoteRetry != null) codexRemoteRetry.IsEnabled = enabled && session.Current.MonitorRemoteControl && !busy && !session.RequiresRestart && !engine.IsConnectionClosed;
         if (codexRemoteSources != null)

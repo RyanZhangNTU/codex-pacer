@@ -195,7 +195,7 @@ final class IslandModel: ObservableObject {
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id))) { .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop) }
         return .init(hideProjects: hideProjects, hostApplications: hosts,
             sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost,
-            progressRingProviders: showsClaudeProgressRing ? [.claude] : [])
+            progressRingProviders: progressRingProviders)
     }
     func taskSourceName(_ activity: SessionActivity) -> String? {
         ActivityTaskRowPresentation.sourceName(activity, options: taskPresentationOptions(for: [activity]))
@@ -324,6 +324,47 @@ final class IslandModel: ObservableObject {
         }
     }
     static let claudeProgressRingKey = "claudeProgressRing"
+    static let codexProgressRingKey = "codexProgressRing"
+    @Published private(set) var codexProgressSetup: CodexProgressSetupStatus?
+    private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
+    private var codexProgressSetupTask: Task<Void, Never>?
+    private var codexProgressSetupRequest: UUID?
+    var showsCodexProgressRing: Bool { defaults.bool(forKey: Self.codexProgressRingKey) }
+    func syncCodexProgressSwitch(force: Bool = false) {
+        guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL else { return }
+        let home = home, executable = defaults.string(forKey: "codexExecutable") ?? ""
+        let wanted = showsCodexProgressRing && isModuleEnabled(.codex)
+        let previous = codexProgressTarget
+        guard force || previous?.home != home || previous?.executable != executable || previous?.enabled != wanted else { return }
+        codexProgressTarget = (home, executable, wanted)
+        let pending = codexProgressSetupTask, request = UUID()
+        codexProgressSetupRequest = request
+        codexProgressSetup = wanted ? .settingUp : nil
+        codexProgressSetupTask = Task { [weak self] in
+            let status = await Task.detached(priority: .utility) {
+                await pending?.value
+                if let previous, previous.home != home {
+                    _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false)
+                }
+                return await Self.configureCodexReporter(home: home, executable: executable, reporter: reporter, enabled: wanted)
+            }.value
+            guard let self, !stopped, codexProgressSetupRequest == request else { return }
+            codexProgressSetupTask = nil
+            codexProgressSetup = status
+        }
+    }
+
+    private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool) async -> CodexProgressSetupStatus? {
+        await CodexProgressSetup.apply(enabled: enabled, home: home, reporter: reporter, storage: MacClaudeHookStorage()) {
+            CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 2) }
+        }
+    }
+    private var progressRingProviders: Set<AgentProvider> {
+        var providers: Set<AgentProvider> = []
+        if showsClaudeProgressRing { providers.insert(.claude) }
+        if showsCodexProgressRing { providers.insert(.codex) }
+        return providers
+    }
     /// Claude's self-reported progress ring; off until the user turns it on.
     var showsClaudeProgressRing: Bool { defaults.bool(forKey: Self.claudeProgressRingKey) }
     /// The setting the last settings pass applied, so a switch reaches SSH hosts once.
@@ -934,6 +975,7 @@ final class IslandModel: ObservableObject {
     func start() {
         let plan = lifecycle.start()
         guard !plan.actions.isEmpty else { return }
+        syncCodexProgressSwitch()
         performLifecycle(plan)
         let center = NSWorkspace.shared.notificationCenter
         observations.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -1556,6 +1598,7 @@ final class IslandModel: ObservableObject {
             ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         modules = .load(from: defaults)
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
+        syncCodexProgressSwitch()
         if !enabledProviders.contains(selectedProvider) { selectedProvider = enabledProviders.first ?? .codex }
         // The header reports its width only when it changes, so the last measurement
         // stays: clearing it would leave the bar at the wider estimate after any setting.
@@ -1705,7 +1748,7 @@ final class IslandModel: ObservableObject {
         clock?.tolerance = interval * 0.2
     }
     private func scheduleRateExpiry() {
-        let deadline = activityState.nextDisplayDeadline(at: now, retention: completedRetention)
+        let deadline = activityState.nextDisplayDeadline(at: now, retention: completedRetention, progressRingProviders: progressRingProviders)
         guard deadline != rateExpiryAt else { return }
         rateExpiryWork?.cancel(); rateExpiryWork = nil; rateExpiryAt = nil
         guard !sleeping, !stopped, let deadline else { return }

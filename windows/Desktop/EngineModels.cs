@@ -14,7 +14,7 @@ internal sealed record EngineSnapshot(
     JsonElement? CompactContext = null, DeepSeekConnection? DeepseekConnection = null, ClaudeConnection? ClaudeConnection = null,
     ClaudeCloudConnection? ClaudeCloudConnection = null, IReadOnlyList<EngineActivityLink>? ActivityLinks = null,
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
-    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null);
+    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null);
 internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
     bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
 internal sealed record ConnectionSourceRow(string Id, string Key, string Provider, string Name, string Kind, ConnectionModule Module);

@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 import PacerCore
+import PacerEngineSupport
 import WinSDK
 @testable import WindowsInstallerSupport
 
@@ -16,9 +17,9 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         let user = try sid(WinLocalSystemSid), admin = try sid(WinBuiltinAdministratorsSid), other = try sid(WinWorldSid)
         for elevated in [false, true] {
             for enabled in [false, true] {
-                XCTAssertTrue(WindowsClaudeFileOwner.allows(user, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled))
-                XCTAssertEqual(WindowsClaudeFileOwner.allows(admin, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled), elevated && enabled)
-                XCTAssertFalse(WindowsClaudeFileOwner.allows(other, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled), "Another owner stays foreign even for an elevated administrator")
+                XCTAssertTrue(WindowsLocalProfileOwner.allows(user, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled))
+                XCTAssertEqual(WindowsLocalProfileOwner.allows(admin, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled), elevated && enabled)
+                XCTAssertFalse(WindowsLocalProfileOwner.allows(other, user: user, administrators: admin, elevated: elevated, administratorsEnabled: enabled), "Another owner stays foreign even for an elevated administrator")
             }
         }
     }
