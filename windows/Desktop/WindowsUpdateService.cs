@@ -42,6 +42,8 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     private WindowsUpdatePackage? offer;
     private bool incremental;
     internal WindowsUpdateStatus Status { get; private set; } = new(false, false, "windows.updates.unconfigured");
+    /// When Pacer last asked for an update, if it ever has.
+    internal DateTimeOffset? LastCheck => lastCheck == DateTimeOffset.MinValue ? null : lastCheck;
     internal event Action<WindowsUpdateStatus>? Changed;
     internal IWindowsUpdatePresenter? Presenter { get; set; }
     /// What Install would download: the patch when it applies to this

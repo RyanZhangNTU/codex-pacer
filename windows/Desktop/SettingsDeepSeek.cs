@@ -61,10 +61,11 @@ internal sealed partial class SettingsWindow
         deepseekSections = new StackPanel(); form.Children.Add(deepseekSections);
 
         var amount = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        deepseekClock = new DeepSeekPriceClock { Width = 18, Height = 18 };
-        amount.Children.Add(new Border { Child = deepseekClock, Padding = new Thickness(3), Background = Brushes.Black, CornerRadius = new CornerRadius(6), Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
+        // The amount, its runway and the trend, as on the Mac (the price clock lives on the island and History).
+        deepseekClock = new DeepSeekPriceClock();
         deepseekBalance = Label("", 15, FontWeights.SemiBold); amount.Children.Add(deepseekBalance);
-        deepseekRunway = Detail(""); deepseekRunway.Margin = new Thickness(8, 0, 0, 0); deepseekRunway.VerticalAlignment = VerticalAlignment.Center; amount.Children.Add(deepseekRunway);
+        deepseekRunway = Label("", 12); deepseekRunway.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        deepseekRunway.Margin = new Thickness(8, 0, 0, 0); deepseekRunway.VerticalAlignment = VerticalAlignment.Center; amount.Children.Add(deepseekRunway);
         var trend = new Button { Content = ui.Text("main.quota.trend"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         Identify(trend, "settings.deepseek.trend", ui.Text("main.quota.trend")); trend.Click += async (_, _) => await NavigateAsync("history"); amount.Children.Add(trend);
         deepseekBalanceRow = InfoRow(ui.Text("deepseek.section.balance"), amount);
@@ -129,7 +130,7 @@ internal sealed partial class SettingsWindow
         {
             if (!SettingsPagePolicy.OpenPricing(ui.Language, guideLinkLauncher)) ShowIssue("windows.pages.open_failed");
         };
-        deepseekPricing = new DeepSeekPricingTimeline(ui) { Margin = new Thickness(14, 10, 14, 6) };
+        deepseekPricing = new DeepSeekPricingTimeline(ui) { Margin = new Thickness(14, 12, 14, 12) };
         deepseekSections.Children.Add(SectionTitle(ui.Text("deepseek.section.pricing")));
         deepseekSections.Children.Add(Card(deepseekPricing, InfoRow(ui.Text("main.deepseek.estimate"), pricing, ui.Text("windows.deepseek.pricing_note"), id: "settings.deepseek.estimate")));
 
@@ -137,7 +138,7 @@ internal sealed partial class SettingsWindow
         deepseekLocalDot = sessionDot; deepseekLocalState = sessionState; Identify(deepseekLocalState, "settings.deepseek.local_state", "");
         var home = ProviderHomeEditor("deepseek");
         // Session status reads first inside the folded locations, as on the Mac.
-        if (providerHomeLocations?.Content is StackPanel body) { body.Children.Insert(0, sessions); sessions.Margin = new Thickness(0, 0, 0, 4); }
+        if (providerHomeLocations?.Content is StackPanel body) { body.Children.Insert(1, sessions); body.Children.Insert(2, Hairline(0, 0)); sessions.Margin = new Thickness(0); }
         deepseekSections.Children.Add(Card(home));
     }
     private Task ChangeDeepSeek(Func<DesktopPreferences, DesktopPreferences> edit) => Change(edit);
@@ -153,12 +154,12 @@ internal sealed partial class SettingsWindow
             choice.Checked += async (_, _) => { if (!synchronizing) await change(option.Value); };
             deepseekChoices[id] = choice; row.Children.Add(choice); editors.Add(choice);
         }
-        var border = new Border { Child = row, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center }; border.SetResourceReference(Border.BackgroundProperty, "SettingsButton"); return border;
+        var border = new Border { Child = row, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center }; border.SetResourceReference(Border.BackgroundProperty, "SettingsFill"); return border;
     }
     private Grid DeepSeekBudgetField(bool daily)
     {
         string key = daily ? "deepseek.budget.daily" : "deepseek.budget.weekly";
-        var field = new TextBox { Width = 64, MaxLength = 320, TextAlignment = TextAlignment.Right, Tag = ui.Text("deepseek.budget.off"), VerticalAlignment = VerticalAlignment.Center };
+        var field = new TextBox { Width = 72, MaxLength = 320, TextAlignment = TextAlignment.Right, Tag = ui.Text("deepseek.budget.off"), VerticalAlignment = VerticalAlignment.Center };
         Identify(field, "settings.deepseek.budget." + (daily ? "daily" : "weekly"), ui.Text(key)); editors.Add(field);
         field.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await CommitDeepSeekBudget(daily, field); } };
         field.LostKeyboardFocus += async (_, _) => { if (!composing) await CommitDeepSeekBudget(daily, field); };

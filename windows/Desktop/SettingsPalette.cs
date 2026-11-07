@@ -14,11 +14,11 @@ internal static class SettingsPalette
         {
             var colors = appearance.Colors;
             foreach (string key in new[] { "SettingsBackground", "SettingsSidebar", "SettingsPopup", "SettingsInput", "SettingsChartMaterial" }) resources[key] = DesktopAppearance.Ink(colors.Window);
-            foreach (string key in new[] { "SettingsCard", "SettingsTile", "SettingsCompactChip", "SettingsSegment", "SettingsButton", "SettingsSwitchOff", "SettingsSearchFill", "SettingsInfoFill", "SettingsPickerFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
+            foreach (string key in new[] { "SettingsCard", "SettingsTile", "SettingsCompactChip", "SettingsSegment", "SettingsFill", "SettingsSelectedFill", "SettingsTileStroke", "SettingsButton", "SettingsSwitchOff", "SettingsSearchFill", "SettingsInfoFill", "SettingsPickerFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
             foreach (string key in new[] { "SettingsPickerStroke", "SettingsPickerHover" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             foreach (string key in new[] { "SettingsPrimary", "SettingsSecondary", "SettingsChartReference", "SettingsChartSecondary", "SettingsSeparator", "SettingsCardBorder" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
-            foreach (string key in new[] { "SettingsAccent", "SettingsLinkText", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
+            foreach (string key in new[] { "SettingsAccent", "SettingsLinkText", "SettingsIslandLink", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
             resources["SettingsAccentSoft"] = DesktopAppearance.Ink(colors.Control);
             resources["SettingsKnob"] = resources["SettingsSelectionText"] = DesktopAppearance.Ink(colors.HighlightText);
             resources["SettingsSidebarSelectionText"] = DesktopAppearance.Ink(colors.HighlightText); return;
@@ -36,7 +36,13 @@ internal static class SettingsPalette
             Brush("SettingsCard", dark ? (byte)36 : (byte)255, dark ? (byte)36 : (byte)255, dark ? (byte)40 : (byte)255);
         }
         Overlay("SettingsCardBorder", main ? dark ? (byte)18 : (byte)20 : (byte)0, dark ? (byte)255 : (byte)0);
-        Overlay("SettingsSidebarSelection", dark ? (byte)36 : (byte)23, dark ? (byte)255 : (byte)0);
+        // The Mac's primary at 9%.
+        Overlay("SettingsSidebarSelection", 23, dark ? (byte)255 : (byte)0);
+        // The Mac's control fill (white 7% / black 5%) and the raised choice on it (white 16% / white).
+        Overlay("SettingsFill", dark ? (byte)18 : (byte)13, dark ? (byte)255 : (byte)0);
+        // A picture choice's outline: primary at 10%.
+        Overlay("SettingsTileStroke", 26, dark ? (byte)255 : (byte)0);
+        if (dark) Overlay("SettingsSelectedFill", 41, 255); else Gray("SettingsSelectedFill", 255);
         Overlay("SettingsSearchFill", dark ? (byte)20 : (byte)15, dark ? (byte)255 : (byte)0);
         Overlay("SettingsInfoFill", dark ? (byte)13 : (byte)10, dark ? (byte)255 : (byte)0);
         // The outline picker: a 16% stroke that rises to 28% with a 5% wash on hover, as on the Mac.
@@ -50,8 +56,9 @@ internal static class SettingsPalette
         Gray("SettingsSecondary", dark ? (byte)157 : main ? (byte)108 : (byte)119);
         Gray("SettingsDisabled", dark ? (byte)105 : (byte)174);
         Gray("SettingsSeparator", dark ? (byte)51 : (byte)230);
-        Gray("SettingsButton", dark ? (byte)50 : (byte)235);
-        Gray("SettingsHover", dark ? (byte)61 : (byte)226);
+        // The Mac's small button: white 12% in dark, black 7% in light, a little stronger under the pointer.
+        Overlay("SettingsButton", dark ? (byte)31 : (byte)18, dark ? (byte)255 : (byte)0);
+        Overlay("SettingsHover", dark ? (byte)46 : (byte)28, dark ? (byte)255 : (byte)0);
         Gray("SettingsPopup", dark ? (byte)44 : (byte)252);
         Gray("SettingsInput", dark ? (byte)29 : (byte)255);
         Gray("SettingsChartReference", dark ? (byte)255 : (byte)0);
@@ -63,8 +70,10 @@ internal static class SettingsPalette
         Color tint = accent ?? Color.FromRgb(0, 122, 255);
         Brush("SettingsAccent", tint.R, tint.G, tint.B);
         resources["SettingsAccentSoft"] = new SolidColorBrush(Color.FromArgb(36, tint.R, tint.G, tint.B));
-        // Links stay readable on cards: a dim Windows accent is lightened in dark mode, a pale one darkened in light mode.
-        resources["SettingsLinkText"] = new SolidColorBrush(Readable(tint, dark ? (main ? Color.FromRgb(36, 36, 40) : Color.FromRgb(36, 36, 36)) : Colors.White, dark));
+        // Links take the Mac's link blue, not the accent, kept readable on the cards; the island's dark cards always use the dark blue.
+        Color link = dark ? Color.FromRgb(64, 156, 255) : Color.FromRgb(0, 104, 218);
+        resources["SettingsLinkText"] = new SolidColorBrush(Readable(link, dark ? (main ? Color.FromRgb(36, 36, 40) : Color.FromRgb(36, 36, 36)) : Colors.White, dark));
+        Brush("SettingsIslandLink", 64, 156, 255);
         // Light accents such as yellow need dark text on their fill.
         if (0.299 * tint.R + 0.587 * tint.G + 0.114 * tint.B > 186) Gray("SettingsSelectionText", 20);
         Brush("SettingsWarning", dark ? (byte)255 : (byte)194, dark ? (byte)146 : (byte)95, dark ? (byte)48 : (byte)0);

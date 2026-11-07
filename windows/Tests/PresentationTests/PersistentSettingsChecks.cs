@@ -58,10 +58,13 @@ internal static class PersistentSettingsChecks
             Select(Find<RadioButton>(first, "appearance.mode.notch"));
             await Until(() => session.Current.DisplayMode == "notch" && Find<RadioButton>(first, "appearance.mode.notch").IsEnabled);
             Select(Find<RadioButton>(first, "appearance.mode.free"));
-            await Until(() => session.Current.DisplayMode == "floating" && Find<Button>(first, "appearance.position.reset").IsEnabled);
+            // Already at the top center there is nothing to return to, as on the Mac; a saved placement enables the reset.
+            await Until(() => session.Current.DisplayMode == "floating" && Find<RadioButton>(first, "appearance.mode.free").IsEnabled
+                && Find<Button>(first, "appearance.position.reset").IsEnabled == (session.Current.IslandPlacement != null || session.Current.Position != "center"));
             var placement = new IslandPlacement(IslandEdge.Bottom, .43, 1);
             Check(await session.ChangeAsync(p => p with { IslandPlacement = placement }) == PreferencesApplyResult.Applied,
                 "A placement saves through the same session as settings");
+            await Until(() => Find<Button>(first, "appearance.position.reset").IsEnabled);
             await first.NavigateAsync("general"); await Pump();
             byte[] saved = File.ReadAllBytes(file);
             const string damaged = "{synthetic damaged preferences";

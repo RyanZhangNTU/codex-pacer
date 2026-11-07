@@ -41,7 +41,7 @@ internal static class CodexSettingsChecks
             Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5,
                 "The provider page must keep the original Mac client and sidebar dimensions");
             var module = Find<CheckBox>(window, "settings.codex.enabled");
-            Check(module.IsChecked == true && module.ActualWidth == 36 && module.ActualHeight == 18,
+            Check(module.IsChecked == true && module.ActualWidth == 38 && module.ActualHeight == 22,
                 "The module switch must use the original settings geometry and actual module state");
             var embedded = Find<CheckBox>(window, "settings.codex.embedded");
             Check(embedded.IsEnabled && embedded.IsChecked == true, "The source page must expose the acknowledged embedded-session preference");

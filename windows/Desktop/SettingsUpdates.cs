@@ -9,7 +9,6 @@ internal sealed partial class SettingsWindow
     private readonly WindowsUpdateService? updater;
     private CheckBox? automaticUpdates;
     private Button? updateCheck, updateNotesButton, updateInstall;
-    private FrameworkElement? updateNotesRow;
     private TextBlock? updateStatus;
     private bool changingUpdates, readingUpdateNotes;
     internal event System.Action<string>? SignedReleaseNotesRequested;
@@ -55,6 +54,14 @@ internal sealed partial class SettingsWindow
         { inlineUpdateText = ui.Text("main.update.failed").Replace("%@", ui.Text("windows.updates.failed"), System.StringComparison.Ordinal); inlineUpdateFailed = true; }
         finally { inlineDownload?.Dispose(); inlineDownload = null; inlineFraction = null; if (!sourceClosed) RefreshUpdates(); }
     }
+    /// Idle, the card says when Pacer last checked, or nothing; other states say themselves.
+    private string IdleUpdateText(string key)
+    {
+        if (key != "updates.policy") return ui.Text(key);
+        if (updater?.LastCheck is not { } last) return "";
+        var culture = System.Globalization.CultureInfo.GetCultureInfo(ui.Language == "zh-Hans" ? "zh-CN" : "en-US");
+        return ui.Text("updates.last_check").Replace("%@", last.ToLocalTime().ToString("g", culture), System.StringComparison.Ordinal);
+    }
     private void RefreshUpdates()
     {
         bool syncing = synchronizing; synchronizing = true;
@@ -63,16 +70,17 @@ internal sealed partial class SettingsWindow
             var status = updater?.Status ?? new WindowsUpdateStatus(false, false, demo ? "updates.demo_disabled" : "windows.updates.unconfigured");
             if (demo && status.MessageKey == "windows.updates.unconfigured") status = status with { MessageKey = "updates.demo_disabled" };
             bool available = status.Available && !status.Busy && !busy && !changingUpdates && !session.RequiresRestart;
-            if (automaticUpdates != null) { automaticUpdates.IsChecked = session.Current.AutomaticUpdates; automaticUpdates.IsEnabled = available; automaticUpdates.ToolTip = ui.Text(status.MessageKey); }
+            // The policy explains the switch; the card's line says what happened last, as on the Mac.
+            if (automaticUpdates != null) { automaticUpdates.IsChecked = session.Current.AutomaticUpdates; automaticUpdates.IsEnabled = available; automaticUpdates.ToolTip = ui.Text("updates.policy"); }
             if (updateCheck != null) updateCheck.IsEnabled = available;
-            if (updateNotesButton != null) updateNotesButton.IsEnabled = available && !readingUpdateNotes;
+            if (updateNotesButton != null) { updateNotesButton.IsEnabled = available && !readingUpdateNotes; updateNotesButton.Visibility = updater?.CurrentOffer != null && inlineDownload == null ? Visibility.Visible : Visibility.Collapsed; }
             string? found = updater?.CurrentOffer?.Version;
             bool downloading = inlineDownload != null;
             if (updateStatus != null)
             {
                 updateStatus.Text = downloading && inlineFraction is { } fraction
                     ? ui.Text("main.update.downloading_percent").Replace("%@", ((int)System.Math.Floor(fraction * 100)).ToString(System.Globalization.CultureInfo.CurrentCulture), System.StringComparison.Ordinal).Replace("%%", "%", System.StringComparison.Ordinal)
-                    : inlineUpdateText ?? (found != null ? ui.Text("main.update.available").Replace("%@", found, System.StringComparison.Ordinal) : ui.Text(status.MessageKey));
+                    : inlineUpdateText ?? (found != null ? ui.Text("main.update.available").Replace("%@", found, System.StringComparison.Ordinal) : IdleUpdateText(status.MessageKey));
                 updateStatus.SetResourceReference(TextBlock.ForegroundProperty, inlineUpdateFailed ? "SettingsWarning" : "SettingsSecondary");
                 AutomationProperties.SetName(updateStatus, updateStatus.Text);
             }

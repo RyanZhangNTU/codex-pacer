@@ -12,7 +12,7 @@ namespace CodexPacer.Windows;
 /// Drawings for the guide windows, sized like the Mac welcome guide.
 internal static class GuideArt
 {
-    internal static readonly Color CodexTile = Color.FromRgb(102, 205, 187), ClaudeTile = Color.FromRgb(255, 164, 119), DeepSeekTile = Color.FromRgb(126, 150, 255);
+    internal static readonly Color CodexTile = Color.FromRgb(125, 214, 196), ClaudeTile = Color.FromRgb(242, 156, 107), DeepSeekTile = Color.FromRgb(123, 147, 255);
     internal static Color ProviderTile(string provider) => provider == "claude" ? ClaudeTile : provider == "deepseek" ? DeepSeekTile : CodexTile;
     internal static string ProviderSymbol(string provider) => provider == "claude" ? "asterisk" : provider == "deepseek" ? "water.waves" : "chevron.left.forwardslash.chevron.right";
 
@@ -206,11 +206,13 @@ internal sealed class WelcomeGestureScene : Grid
 internal sealed class WelcomeMoveScene : Grid
 {
     protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePeer(this);
-    internal WelcomeMoveScene()
+    /// <param name="tall">Settings' position tile: the same strip on a 1.5:1 desktop, as the Mac's tiles share one shape.</param>
+    internal WelcomeMoveScene(bool tall = false)
     {
-        Width = 132; Height = 46;
-        var art = new Canvas { Width = 132, Height = 46, Clip = new RectangleGeometry(new Rect(0, 0, 132, 46), 8, 8),
-            Background = GuideArt.Wallpaper() };
+        Width = 132; Height = tall ? 88 : 46;
+        if (tall) { Background = GuideArt.Wallpaper(); Clip = new RectangleGeometry(new Rect(0, 0, 132, 88), 8, 8); }
+        var art = new Canvas { Width = 132, Height = 46, Clip = tall ? null : new RectangleGeometry(new Rect(0, 0, 132, 46), 8, 8),
+            Background = tall ? null : GuideArt.Wallpaper(), VerticalAlignment = VerticalAlignment.Center };
         Add(new Border { Width = 39, Height = 11, CornerRadius = new CornerRadius(5.5), Background = Brushes.Black }, 22, 17);
         Add(new Path { Data = Geometry.Parse("M 0 4 L 34 4 M 29 0 L 34 4 L 29 8"), Stroke = Brushes.White, StrokeThickness = 1.5 }, 68, 19);
         Add(new Border { Width = 12, Height = 29, CornerRadius = new CornerRadius(5, 0, 0, 5), Background = Brushes.Black,

@@ -34,8 +34,8 @@ internal sealed partial class SettingsWindow
             };
             tabs.Children.Add(choice);
         }
-        var segments = new Border { Child = tabs, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), Margin = new Thickness(0, 2, 0, 14), HorizontalAlignment = HorizontalAlignment.Left };
-        segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
+        var segments = new Border { Child = tabs, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 0, 0, 22), HorizontalAlignment = HorizontalAlignment.Left };
+        segments.SetResourceReference(Border.BackgroundProperty, "SettingsFill");
         AutomationProperties.SetAutomationId(segments, "settings.about.tabs"); form.Children.Add(segments);
         BuildGuidePage(aboutTab);
     }

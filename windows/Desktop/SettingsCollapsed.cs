@@ -81,6 +81,11 @@ internal sealed partial class SettingsWindow
     private FrameworkElement? compactRingsCustom;
     private string? compactSelected;
 
+    private Button? compactInfoButton;
+    private readonly Button?[] compactRingInfo = new Button?[2];
+    private readonly Border?[] compactRingBoxes = new Border?[2];
+    private readonly Dictionary<string, RadioButton> compactMetric = new();
+
     /// As on the Mac: the bar to click and drag, every component by group to add
     /// or remove, and the settings of the one selected. What each component is
     /// sits behind the inspector's info button.
@@ -94,21 +99,27 @@ internal sealed partial class SettingsWindow
             return;
         }
         compactEditor = new CompactLayoutEditorView(ui, Resources, EditCompact); editors.Add(compactEditor); form.Children.Add(Card(compactEditor));
+        // Restore Defaults sits at the header's end, as on the Mac.
+        var restore = new Button { Content = ui.Text("common.restore_defaults") };
+        Identify(restore, "compact.restore", ui.Text("common.restore_defaults")); editors.Add(restore);
+        restore.Click += async (_, _) => { if (compactEditor.IsEnabled && activePane == "collapsed") { await EditCompact(new("restore")); RefreshValues(); } };
+        SetPaneHeader(restore, true);
         compactEditor.ComponentSelected += SelectCompactComponent;
         var columns = new Grid();
         columns.ColumnDefinitions.Add(new ColumnDefinition()); columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) }); columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(264) });
-        var library = new StackPanel(); library.Children.Add(SectionTitle(ui.Text("main.collapsed.components"), 4));
+        var library = new StackPanel(); library.Children.Add(SectionTitle(ui.Text("main.collapsed.components")));
         var groups = new StackPanel { Margin = new Thickness(14) };
         foreach (var group in compactProjection.Groups)
         {
             var heading = Label(group.Label, 11.5); heading.Margin = new Thickness(0, groups.Children.Count == 0 ? 0 : 14, 0, 7);
             heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); AutomationProperties.SetHeadingLevel(heading, AutomationHeadingLevel.Level3);
-            var tiles = new WrapPanel(); compactGroups[group.Id] = new StackPanel { Children = { heading, tiles } }; groups.Children.Add(compactGroups[group.Id]);
+            var tiles = new System.Windows.Controls.Primitives.UniformGrid { Columns = 2, Margin = new Thickness(0, 0, -6, -6) };
+            compactGroups[group.Id] = new StackPanel { Children = { heading, tiles } }; groups.Children.Add(compactGroups[group.Id]);
             foreach (string id in group.Components) tiles.Children.Add(CompactTile(compactProjection.Components.Single(value => value.Id == id)));
             if (group.Id == "quota") { compactNoProviders = Detail(ui.Text("layout.no_quota_providers")); compactNoProviders.FontSize = 12; compactGroups[group.Id].Children.Add(compactNoProviders); }
         }
         library.Children.Add(Card(groups)); columns.Children.Add(library);
-        var inspector = new StackPanel(); inspector.Children.Add(SectionTitle(ui.Text("main.collapsed.selected"), 4));
+        var inspector = new StackPanel(); inspector.Children.Add(SectionTitle(ui.Text("main.collapsed.selected")));
         inspector.Children.Add(compactInspector = Card(BuildCompactInspector()));
         Grid.SetColumn(inspector, 2); columns.Children.Add(inspector);
         form.Children.Add(columns);
@@ -120,7 +131,7 @@ internal sealed partial class SettingsWindow
     /// selects it.
     private CheckBox CompactTile(CompactComponent component)
     {
-        var tile = new CheckBox { Style = (Style)FindResource("SettingsComponentTile"), Width = 152, Margin = new Thickness(0, 0, 6, 6) };
+        var tile = new CheckBox { Style = (Style)FindResource("SettingsComponentTile"), Margin = new Thickness(0, 0, 6, 6) };
         var row = new Grid(); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var icon = new IconGlyph { Symbol = component.Symbol, Width = 12, Height = 12, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
         icon.SetBinding(IconGlyph.InkProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = tile }); row.Children.Add(icon);
@@ -155,7 +166,7 @@ internal sealed partial class SettingsWindow
         Identify(compactInspectorTitle, "compact.inspector.title", ""); titleLine.Children.Add(compactInspectorTitle);
         compactInspectorDetail = Detail(""); var infoBox = new Border { Child = compactInspectorDetail };
         var box = InfoBox(""); box.Margin = new Thickness(14, 0, 14, 10);
-        titleLine.Children.Add(InfoButton(ui.Text("main.collapsed.selected"), box, "compact.inspector"));
+        compactInfoButton = InfoButton(ui.Text("main.collapsed.selected"), box, "compact.inspector"); titleLine.Children.Add(compactInfoButton);
         Grid.SetColumn(titleLine, 1); header.Children.Add(titleLine);
         compactInspectorToggle = new Button { VerticalAlignment = VerticalAlignment.Center }; Identify(compactInspectorToggle, "compact.inspector.toggle", "");
         compactInspectorToggle.Click += async (_, _) =>
@@ -168,16 +179,15 @@ internal sealed partial class SettingsWindow
         body.Children.Add(header); body.Children.Add(box);
         compactInspectorPanels["box"] = box;
 
-        Grid Option(string titleKey, UIElement choice)
-        { var row = InfoRow(ui.Text(titleKey), choice, minHeight: 40); return row; }
+        Grid Option(string titleKey, UIElement choice, string? info = null, string? id = null)
+        { var row = InfoRow(ui.Text(titleKey), choice, info, id: id); return row; }
         Border Hair() => Hairline(14);
         var activity = new StackPanel(); activity.Children.Add(Hair());
         activity.Children.Add(Option("layout.single_task", CompactChoice("singleTask", [("stage", "layout.single_task.stage"), ("count", "layout.single_task.count")],
             value => Change(p => p with { CompactSingleTask = value }))));
         compactInspectorPanels["activity"] = activity; body.Children.Add(activity);
         var quota = new StackPanel(); quota.Children.Add(Hair());
-        quota.Children.Add(Option("settings.compact_metric", CompactChoice("metric.quota", [("remaining", "settings.remaining_quota"), ("pace", "settings.pace_percentage")],
-            value => Change(p => p with { CompactMetric = value }))));
+        quota.Children.Add(Option("settings.compact_metric", CompactSegments()));
         compactInspectorPanels["quota"] = quota; body.Children.Add(quota);
         var rings = new StackPanel();
         for (int index = 0; index < 2; index++)
@@ -188,14 +198,19 @@ internal sealed partial class SettingsWindow
                 var current = await NativeCompactBar.Shared.ReadAsync(p, ui.Language, NativeCompactBar.Providers(p, engine?.LatestSnapshot));
                 return p with { QuotaRingOuter = slot == 0 ? value : current.RingChoices[0], QuotaRingInner = slot == 1 ? value : current.RingChoices[1] };
             }));
-            rings.Children.Add(Hair()); rings.Children.Add(Option(index == 0 ? "layout.ring_outer" : "layout.ring_inner", combo));
+            // A ring set to DeepSeek explains its budget behind ⓘ, as on the Mac.
+            var ringRow = Option(index == 0 ? "layout.ring_outer" : "layout.ring_inner", combo, ui.Text("layout.ring_deepseek"), "compact.ring." + index);
+            compactRingInfo[index] = (Button)((WrapPanel)((StackPanel)ringRow.Children[0]).Children[0]).Children[1];
+            compactRingBoxes[index] = ringRow.Children.OfType<Border>().Single(child => Grid.GetRow(child) == 1);
+            rings.Children.Add(Hair()); rings.Children.Add(ringRow);
         }
-        compactRingDetail = Detail(""); compactRingDetail.Margin = new Thickness(14, 0, 14, 10); rings.Children.Add(compactRingDetail);
+        compactRingDetail = Label("", 12); compactRingDetail.TextWrapping = TextWrapping.Wrap; compactRingDetail.Foreground = PacerPalette.Attention;
+        compactRingDetail.Margin = new Thickness(14, 0, 14, 10); Identify(compactRingDetail, "compact.ring.detail", ""); rings.Children.Add(compactRingDetail);
         compactAutomatic = new Button { Content = ui.Text("layout.ring_automatic"), VerticalAlignment = VerticalAlignment.Center };
         Identify(compactAutomatic, "compact.ring.automatic", ui.Text("layout.ring_automatic"));
         compactAutomatic.Click += async (_, _) => { if (compactAutomatic.IsVisible && activePane == "collapsed") await Change(p => p with { QuotaRingOuter = "", QuotaRingInner = "" }); };
         editors.Add(compactAutomatic);
-        var custom = new StackPanel(); custom.Children.Add(Hair()); custom.Children.Add(InfoRow(ui.Text("main.collapsed.rings_custom"), compactAutomatic, minHeight: 40));
+        var custom = new StackPanel(); custom.Children.Add(Hair()); custom.Children.Add(InfoRow(ui.Text("main.collapsed.rings_custom"), compactAutomatic));
         compactRingsCustom = custom; rings.Children.Add(custom);
         compactInspectorPanels["quotaGauge"] = rings; body.Children.Add(rings);
         compactWindowsPanel = new StackPanel();
@@ -207,7 +222,7 @@ internal sealed partial class SettingsWindow
             var choices = new Grid(); choices.Children.Add(combo); choices.Children.Add(fixedValue);
             string name = provider == "codex" ? "Codex" : "Claude";
             var row = InfoRow(ui.Text("provider.window_selection").Replace("%@", name, StringComparison.Ordinal), choices,
-                ui.Has("provider.window_info") ? ui.Text("provider.window_info").Replace("%@", name, StringComparison.Ordinal) : null, id: "compact.window." + provider, minHeight: 40);
+                ui.Has("provider.window_info") ? ui.Text("provider.window_info").Replace("%@", name, StringComparison.Ordinal) : null, id: "compact.window." + provider);
             var title = (TextBlock)((Panel)((StackPanel)row.Children[0]).Children[0]).Children[0]; Identify(title, "compact.window_label." + provider, title.Text);
             var host = new StackPanel(); host.Children.Add(Hair()); host.Children.Add(row);
             compactWindowRows[provider] = host; compactWindowsPanel.Children.Add(host);
@@ -215,7 +230,7 @@ internal sealed partial class SettingsWindow
         body.Children.Add(compactWindowsPanel);
         var warnings = new StackPanel(); warnings.Children.Add(Hair());
         var chevron = new IconGlyph { Symbol = "chevron.right", Width = 10, Height = 10 }; chevron.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
-        var choose = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Height = double.NaN, MinHeight = 40, Padding = new Thickness(14, 0, 14, 0), IsEnabled = engine != null };
+        var choose = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Height = double.NaN, MinHeight = 44, Padding = new Thickness(14, 0, 14, 0), IsEnabled = engine != null };
         var line = new DockPanel(); DockPanel.SetDock(chevron, Dock.Right); line.Children.Add(chevron); line.Children.Add(Label(ui.Text("main.collapsed.warnings_choose")));
         choose.Content = line; choose.SetResourceReference(ForegroundProperty, "SettingsPrimary");
         Identify(choose, "compact.warnings.choose", ui.Text("main.collapsed.warnings_choose"));
@@ -227,9 +242,24 @@ internal sealed partial class SettingsWindow
     /// Selects a component for the inspector, as a click on the bar or a library tile does.
     internal void SelectCompactComponent(string id)
     {
+        // A new selection starts with its explanation closed, as on the Mac.
+        if (id != compactSelected && compactInfoButton != null && compactInspectorPanels.TryGetValue("box", out var box)) SetInfoShown(compactInfoButton, box, false);
         compactSelected = id; compactEditor?.SetSelected(id);
         bool previous = synchronizing; synchronizing = true;
         try { RefreshCollapsed(); } finally { synchronizing = previous; }
+    }
+    /// What the quota component shows, Remaining or Pace, as the Mac's segmented control.
+    private Border CompactSegments()
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var (value, key) in new[] { ("remaining", "settings.remaining_quota"), ("pace", "settings.pace_percentage") })
+        {
+            var choice = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), GroupName = "compact.metric", Content = ui.Text(key) };
+            Identify(choice, "compact.metric." + value, ui.Text(key)); editors.Add(choice); compactMetric[value] = choice; row.Children.Add(choice);
+            choice.Checked += async (_, _) => { if (!synchronizing && activePane == "collapsed" && choice.IsVisible) await Change(p => p with { CompactMetric = value }); };
+        }
+        var track = new Border { Child = row, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center };
+        track.SetResourceReference(Border.BackgroundProperty, "SettingsFill"); Identify(track, "compact.metric.quota", ui.Text("settings.compact_metric")); return track;
     }
     private ComboBox CompactChoice(string id, (string Value, string Key)[] options, Func<string, Task> edit)
     {
@@ -285,6 +315,7 @@ internal sealed partial class SettingsWindow
         if (chosen != null)
         {
             compactInspectorTitle!.Text = chosen.Label; AutomationProperties.SetName(compactInspectorTitle, chosen.Label);
+            if (compactInfoButton != null) AutomationProperties.SetName(compactInfoButton, ui.Text("main.info").Replace("%@", chosen.Label, StringComparison.Ordinal));
             var glyph = new IconGlyph { Symbol = chosen.Symbol, Width = 12, Height = 12 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsAccent"); compactInspectorIcon!.Child = glyph;
             if (compactInspectorPanels["box"] is Border box && box.Child is TextBlock info) info.Text = chosen.Detail;
             compactInspectorToggle!.Content = ui.Text(placed ? "main.collapsed.remove" : "main.collapsed.add");
@@ -294,7 +325,7 @@ internal sealed partial class SettingsWindow
         foreach (var panel in compactInspectorPanels) if (panel.Key != "box") panel.Value.Visibility = placed && panel.Key == selected ? Visibility.Visible : Visibility.Collapsed;
         compactWindowsPanel!.Visibility = placed && selected is "quota" or "quotaGauge" or "timeRemaining" ? Visibility.Visible : Visibility.Collapsed;
         compactChoices["singleTask"].SelectedValue = session.Current.CompactSingleTask;
-        compactChoices["metric.quota"].SelectedValue = session.Current.CompactMetric;
+        foreach (var segment in compactMetric) segment.Value.IsChecked = segment.Key == session.Current.CompactMetric;
         string nextProviders = string.Join(",", providers);
         if (compactProviderSignature != nextProviders || compactChoices["ring.0"].Items.Count == 0)
         {
@@ -308,10 +339,15 @@ internal sealed partial class SettingsWindow
         }
         for (int index = 0; index < 2; index++) compactChoices["ring." + index].SelectedValue = projection.RingChoices[index];
         bool hasWallet = providers.Contains("deepseek") && projection.RingChoices.Contains("deepseek");
-        compactRingDetail!.Visibility = hasWallet ? Visibility.Visible : Visibility.Collapsed;
         bool budgets = engine?.LatestSnapshot?.Wallet?.Solo?.Budgets.Count > 0;
-        compactRingDetail.Text = ui.Text(budgets ? "layout.ring_deepseek" : "layout.ring_deepseek_needs_budget");
-        compactRingDetail.SetResourceReference(TextBlock.ForegroundProperty, budgets ? "SettingsSecondary" : "SettingsWarning");
+        // Without a budget the ring has nothing to fill, which shows in amber; with one, ⓘ on its ring explains it.
+        compactRingDetail!.Visibility = hasWallet && !budgets ? Visibility.Visible : Visibility.Collapsed;
+        compactRingDetail.Text = ui.Text("layout.ring_deepseek_needs_budget");
+        for (int index = 0; index < 2; index++)
+        {
+            bool info = hasWallet && budgets && projection.RingChoices[index] == "deepseek";
+            if (compactRingInfo[index] is { } button) { button.Visibility = info ? Visibility.Visible : Visibility.Collapsed; if (!info && compactRingBoxes[index] is { } ringBox) SetInfoShown(button, ringBox, false); }
+        }
         compactRingsCustom!.Visibility = session.Current.QuotaRingOuter.Length > 0 || session.Current.QuotaRingInner.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (string provider in new[] { "codex", "claude" })
             compactWindowRows[provider].Visibility = providers.Contains(provider) && projection.Windows.Any(value => value.Provider == provider) ? Visibility.Visible : Visibility.Collapsed;

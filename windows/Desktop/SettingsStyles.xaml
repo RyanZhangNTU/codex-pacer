@@ -19,19 +19,19 @@
  </Style>
  <Style TargetType="Button">
   <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/>
-  <Setter Property="FontSize" Value="13"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/>
-  <Setter Property="Background" Value="{DynamicResource SettingsButton}"/><Setter Property="Padding" Value="10,3"/>
+  <Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="Medium"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/>
+  <Setter Property="Background" Value="{DynamicResource SettingsButton}"/><Setter Property="Padding" Value="11,0"/><Setter Property="MinHeight" Value="24"/>
   <Setter Property="Margin" Value="0"/>
   <Setter Property="ContentTemplate" Value="{StaticResource SettingsButtonText}"/>
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-   <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="Transparent">
+   <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="Transparent">
     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True" TextElement.Foreground="{TemplateBinding Foreground}"/>
    </Border>
    <ControlTemplate.Triggers>
     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsHover}"/></Trigger>
     <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.7"/></Trigger>
     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
-    <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource SettingsDisabled}"/></Trigger>
+    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger>
    </ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
@@ -42,7 +42,7 @@
  <Style x:Key="SettingsProminentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
   <Setter Property="Background" Value="{DynamicResource SettingsAccent}"/><Setter Property="Foreground" Value="{DynamicResource SettingsSelectionText}"/>
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-   <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="Transparent">
+   <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="Transparent">
     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True" TextElement.Foreground="{TemplateBinding Foreground}"/>
    </Border>
    <ControlTemplate.Triggers>
@@ -93,16 +93,40 @@
    <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Details" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
+ <!-- A folding section inside a card that already pads its content: 28 tall, no inset, as the Mac's CardDisclosure. -->
+ <Style x:Key="SettingsCompactDisclosure" TargetType="Expander">
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Expander">
+   <StackPanel>
+    <ToggleButton AutomationProperties.Name="{Binding Header, RelativeSource={RelativeSource TemplatedParent}}" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0">
+     <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+      <Border x:Name="Surface" Background="Transparent" Padding="0" MinHeight="28" BorderThickness="1" BorderBrush="Transparent" CornerRadius="12">
+       <Grid VerticalAlignment="Center"><Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Path x:Name="Chevron" Data="M 2,1 L 6,5 L 2,9" Stroke="{DynamicResource SettingsSecondary}" StrokeThickness="1.6" Width="8" Height="10" RenderTransformOrigin="0.5,0.5" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="1" Text="{Binding Header, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsPrimary}" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="2" Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsSecondary}" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+       </Grid>
+      </Border>
+      <ControlTemplate.Triggers>
+       <Trigger Property="IsChecked" Value="True"><Setter TargetName="Chevron" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90"/></Setter.Value></Setter></Trigger>
+       <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
+      </ControlTemplate.Triggers>
+     </ControlTemplate></ToggleButton.Template>
+    </ToggleButton>
+    <ContentPresenter x:Name="Details" Visibility="Collapsed"/>
+   </StackPanel>
+   <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Details" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
  <!-- An earlier version on one line: its number, then its highlights until opened, as on the Mac. -->
  <Style x:Key="SettingsReleaseFold" TargetType="Expander">
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Expander">
    <StackPanel>
     <ToggleButton AutomationProperties.Name="{Binding (AutomationProperties.Name), RelativeSource={RelativeSource TemplatedParent}}" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0">
      <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
-      <Border x:Name="Surface" Background="Transparent" Padding="14,0" MinHeight="40" BorderThickness="1" BorderBrush="Transparent" CornerRadius="12">
+      <Border x:Name="Surface" Background="Transparent" Padding="14,0" MinHeight="44" BorderThickness="1" BorderBrush="Transparent" CornerRadius="12">
        <Grid VerticalAlignment="Center"><Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="Auto" MinWidth="52"/><ColumnDefinition/></Grid.ColumnDefinitions>
         <Path x:Name="Chevron" Data="M 2,1 L 6,5 L 2,9" Stroke="{DynamicResource SettingsSecondary}" StrokeThickness="1.6" Width="8" Height="10" HorizontalAlignment="Left" RenderTransformOrigin="0.5,0.5" VerticalAlignment="Center"/>
-        <TextBlock Grid.Column="1" Text="{Binding Header, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsPrimary}" FontWeight="Medium" Margin="0,0,10,0" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="1" Text="{Binding Header, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsPrimary}" FontSize="13" FontWeight="Medium" Margin="0,0,10,0" VerticalAlignment="Center"/>
         <TextBlock x:Name="Summary" Grid.Column="2" Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsSecondary}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
        </Grid>
       </Border>
@@ -119,10 +143,10 @@
  </Style>
  <!-- The Notifications matrix's small checkbox, as on the Mac. -->
  <Style x:Key="SettingsCheck" TargetType="CheckBox">
-  <Setter Property="Width" Value="18"/><Setter Property="Height" Value="18"/><Setter Property="Focusable" Value="True"/>
+  <Setter Property="Width" Value="16"/><Setter Property="Height" Value="16"/><Setter Property="Focusable" Value="True"/>
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
-   <Border x:Name="Box" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource SettingsSecondary}" Background="Transparent">
-    <Path x:Name="Mark" Data="M 3.5,8 L 6.8,11.3 L 12.6,4.8" Stroke="{DynamicResource SettingsSelectionText}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="Collapsed"/>
+   <Border x:Name="Box" CornerRadius="4" BorderThickness="1" BorderBrush="Transparent" Background="{DynamicResource SettingsButton}">
+    <Path x:Name="Mark" Data="M 3.2,7.6 L 6.3,10.6 L 11.6,4.6" Stroke="{DynamicResource SettingsSelectionText}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="Collapsed"/>
    </Border>
    <ControlTemplate.Triggers>
     <Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Mark" Property="Visibility" Value="Visible"/></Trigger>
@@ -133,16 +157,16 @@
  </Style>
  <!-- Appearance's accent swatch: a filled circle, ringed when chosen, as in System Settings. -->
  <Style x:Key="SettingsAccentSwatch" TargetType="RadioButton">
-  <Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/><Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Width" Value="26"/><Setter Property="Height" Value="26"/><Setter Property="Cursor" Value="Hand"/>
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
    <Grid Background="Transparent">
-    <Ellipse x:Name="Ring" Stroke="{DynamicResource SettingsPrimary}" StrokeThickness="2" Opacity="0"/>
-    <Ellipse Margin="4" Fill="{TemplateBinding Background}" Stroke="#26000000" StrokeThickness="0.5"/>
-    <Ellipse x:Name="Dot" Width="6" Height="6" Fill="White" Visibility="Collapsed"/>
+    <Ellipse x:Name="Ring" Width="25" Height="25" Stroke="{TemplateBinding BorderBrush}" StrokeThickness="1.5" Opacity="0"/>
+    <Ellipse Width="18" Height="18" Fill="{TemplateBinding Background}" Stroke="#24000000" StrokeThickness="0.5"/>
+    <Ellipse x:Name="Dot" Width="6" Height="6" Fill="White" Visibility="Collapsed"><Ellipse.Effect><DropShadowEffect BlurRadius="2" ShadowDepth="0" Opacity="0.35"/></Ellipse.Effect></Ellipse>
    </Grid>
    <ControlTemplate.Triggers>
-    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Ring" Property="Opacity" Value="0.55"/><Setter TargetName="Dot" Property="Visibility" Value="Visible"/></Trigger>
-    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Ring" Property="Opacity" Value="0.3"/></Trigger>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Ring" Property="Opacity" Value="0.35"/></Trigger>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Ring" Property="Opacity" Value="1"/><Setter TargetName="Dot" Property="Visibility" Value="Visible"/></Trigger>
     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Ring" Property="Opacity" Value="1"/></Trigger>
     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
    </ControlTemplate.Triggers>
@@ -157,7 +181,7 @@
     <ContentPresenter VerticalAlignment="Center"/>
    </Border>
    <ControlTemplate.Triggers>
-    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSearchFill}"/></Trigger>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsFill}"/></Trigger>
     <Trigger Property="Tag" Value="selected"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Surface" Property="BorderThickness" Value="1.5"/></Trigger>
     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.85"/></Trigger>
     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
@@ -203,7 +227,21 @@
    </Border>
    <ControlTemplate.Triggers>
     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSearchFill}"/></Trigger>
-    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSidebarSelection}"/><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsCardBorder}"/></Trigger>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSelectedFill}"/><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsCardBorder}"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <!-- A whole card row that acts, such as a feedback form: a light wash under the pointer. -->
+ <Style x:Key="SettingsRowButton" TargetType="Button">
+  <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/>
+  <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+   <Border x:Name="Surface" Background="Transparent" Padding="14,0" MinHeight="44" BorderThickness="1" BorderBrush="Transparent" CornerRadius="11">
+    <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+   </Border>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsFill}"/></Trigger>
     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
    </ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
@@ -238,11 +276,11 @@
   </ControlTemplate></Setter.Value></Setter>
  </Style>
  <Style x:Key="SettingsArtChoice" TargetType="RadioButton">
-  <Setter Property="Height" Value="82"/><Setter Property="Foreground" Value="{DynamicResource SettingsSecondary}"/>
+  <Setter Property="Foreground" Value="{DynamicResource SettingsSecondary}"/>
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
    <Grid>
-    <Border x:Name="Outline" CornerRadius="9" Background="{DynamicResource SettingsTile}" BorderBrush="{DynamicResource SettingsSeparator}" BorderThickness="1"/>
-    <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+    <Border x:Name="Outline" CornerRadius="9" Background="{DynamicResource SettingsFill}" BorderBrush="{DynamicResource SettingsTileStroke}" BorderThickness="1"/>
+    <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Top" Margin="10"/>
     <Border x:Name="Focus" Margin="-3" CornerRadius="11" BorderThickness="1" BorderBrush="Transparent" IsHitTestVisible="False"/>
    </Grid>
    <ControlTemplate.Triggers>
@@ -253,29 +291,30 @@
   </ControlTemplate></Setter.Value></Setter>
  </Style>
  <Style x:Key="SettingsSegmentChoice" TargetType="RadioButton">
-  <Setter Property="MinWidth" Value="76"/><Setter Property="Height" Value="24"/><Setter Property="Padding" Value="7,2"/>
-  <Setter Property="FontSize" Value="13"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/>
+  <Setter Property="Height" Value="24"/><Setter Property="Padding" Value="12,0"/>
+  <Setter Property="FontSize" Value="12"/><Setter Property="Foreground" Value="{DynamicResource SettingsSecondary}"/>
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
-   <Border x:Name="Surface" CornerRadius="5" Background="Transparent" Padding="{TemplateBinding Padding}"><TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+   <Border x:Name="Surface" CornerRadius="6" Background="Transparent" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="Transparent"><TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Center" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></Border>
    <ControlTemplate.Triggers>
-    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSegment}"/></Trigger>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSelectedFill}"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.55"/></Trigger>
    </ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
  <Style x:Key="SettingsSwitch" TargetType="CheckBox">
-  <Setter Property="Width" Value="36"/><Setter Property="Height" Value="18"/>
+  <Setter Property="Width" Value="38"/><Setter Property="Height" Value="22"/>
   <Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Focusable" Value="True"/>
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
    <Grid>
-    <Border x:Name="Focus" CornerRadius="10" BorderThickness="1" BorderBrush="Transparent" Margin="-2"/>
-    <Border x:Name="Track" CornerRadius="9" Background="{DynamicResource SettingsSwitchOff}"/>
-    <Ellipse x:Name="Knob" Width="16" Height="16" HorizontalAlignment="Left" Margin="1,0" Fill="{DynamicResource SettingsKnob}">
+    <Border x:Name="Focus" CornerRadius="13" BorderThickness="1" BorderBrush="Transparent" Margin="-2"/>
+    <Border x:Name="Track" CornerRadius="11" Background="{DynamicResource SettingsSwitchOff}"/>
+    <Ellipse x:Name="Knob" Width="20" Height="20" HorizontalAlignment="Left" Margin="1,0" Fill="{DynamicResource SettingsKnob}">
      <Ellipse.RenderTransform><TranslateTransform/></Ellipse.RenderTransform>
     </Ellipse>
    </Grid>
    <ControlTemplate.Triggers>
-    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Track" Property="Background" Value="{DynamicResource SettingsSwitchOn}"/><Setter TargetName="Knob" Property="RenderTransform"><Setter.Value><TranslateTransform X="18"/></Setter.Value></Setter></Trigger>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Track" Property="Background" Value="{DynamicResource SettingsSwitchOn}"/><Setter TargetName="Knob" Property="RenderTransform"><Setter.Value><TranslateTransform X="16"/></Setter.Value></Setter></Trigger>
     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
     <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Track" Property="Opacity" Value="0.6"/><Setter TargetName="Knob" Property="Opacity" Value="0.8"/></Trigger>
    </ControlTemplate.Triggers>
@@ -352,7 +391,7 @@
   <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/><Setter Property="FontSize" Value="13"/>
   <Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/><Setter Property="CaretBrush" Value="{DynamicResource SettingsPrimary}"/>
   <Setter Property="Padding" Value="6,3"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="PasswordBox">
-   <Border x:Name="Surface" CornerRadius="5" Background="Transparent" BorderBrush="Transparent" BorderThickness="1">
+   <Border x:Name="Surface" CornerRadius="6" Background="{DynamicResource SettingsInput}" BorderBrush="{DynamicResource SettingsPickerStroke}" BorderThickness="1">
     <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"/>
    </Border><ControlTemplate.Triggers><Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
    <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers>

@@ -12,6 +12,7 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private TextBlock? claudeAccountState, claudeAccountHelp, claudeHistoryTitle;
+    private System.Windows.Shapes.Ellipse? claudeAccountDot;
     private Button? claudeSignIn, claudeOptions, claudeRuntimeDownload;
     private QuotaHistoryView? claudeHistoryView;
     private long claudeAccountRevision;
@@ -25,9 +26,12 @@ internal sealed partial class SettingsWindow
     private FrameworkElement BuildClaudeConnection()
     {
         var content = new StackPanel(); var trailing = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        claudeAccountState = Detail(""); claudeAccountState.Margin = new Thickness(0, 0, 8, 0);
+        // A status dot and state, then Sign In, Choose Workspace or the account menu, as on the Mac.
+        claudeAccountDot = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
+        trailing.Children.Add(claudeAccountDot);
+        claudeAccountState = Label("", 12.5); claudeAccountState.Margin = new Thickness(0, 0, 8, 0); claudeAccountState.VerticalAlignment = VerticalAlignment.Center;
         Identify(claudeAccountState, "settings.claude.account_state", ""); trailing.Children.Add(claudeAccountState);
-        claudeSignIn = new Button { Content = ui.Text("welcome.module.sign_in") };
+        claudeSignIn = new Button { Content = ui.Text("claude.quota.connect") };
         Identify(claudeSignIn, "settings.claude.sign_in", ui.Text("claude.quota.connect")); editors.Add(claudeSignIn); trailing.Children.Add(claudeSignIn);
         claudeSignIn.Click += async (_, _) =>
         {
@@ -35,7 +39,8 @@ internal sealed partial class SettingsWindow
             if (state.State == "workspaceNeeded") await OpenClaudeAccountMenu(true);
             else await ChangeClaudeAccount(state.Context, "signIn");
         };
-        claudeOptions = new Button { Content = "•••", Margin = new Thickness(6, 0, 0, 0), Padding = new Thickness(8, 0, 8, 0) };
+        var more = new IconGlyph { Symbol = "ellipsis.circle", Width = 16, Height = 16 }; more.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        claudeOptions = new Button { Content = more, ContentTemplate = null, Style = (Style)FindResource("SettingsSidebarButton"), Width = 22, Height = 22, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
         Identify(claudeOptions, "settings.claude.account_options", ui.Text("claude.account.options")); editors.Add(claudeOptions); trailing.Children.Add(claudeOptions);
         claudeOptions.Click += async (_, _) => await OpenClaudeAccountMenu(false);
         content.Children.Add(Row(Label(ui.Text("claude.account")), trailing));
@@ -61,16 +66,19 @@ internal sealed partial class SettingsWindow
     {
         if (claudeSignIn == null) return;
         var state = engine?.LatestSnapshot?.ClaudeConnection;
-        claudeAccountState!.Text = ui.Text(state?.State switch {
+        // Green when signed in, amber when a workspace is needed, gray otherwise, as the Mac's status row.
+        SetStatus(claudeAccountDot, claudeAccountState, ui.Text(state?.State switch {
             "signedIn" => "claude.account.signed_in", "signedOut" => "claude.account.signed_out", "workspaceNeeded" => "claude.account.workspace_needed",
-            "checking" => "claude.account.checking", _ => "claude.account.unavailable" });
-        // Sign-in reads as a status; amber only when Claude needs the user.
-        claudeAccountState.SetResourceReference(TextBlock.ForegroundProperty, state?.State is "signedOut" or "workspaceNeeded" ? "SettingsWarning" : "SettingsSecondary");
+            "checking" => "claude.account.checking", _ => "claude.account.unavailable" }),
+            state?.State switch { "signedIn" => "positive", "workspaceNeeded" => "attention", _ => "neutral" });
         bool offline = claudeConnection?.IsOfflineDemo ?? demo;
         bool available = connected && !offline && claudeConnection?.Available == true && state != null;
         claudeSignIn.IsEnabled = claudeOptions!.IsEnabled = available && !busy && !claudeAccountBusy && !session.RequiresRestart;
-        claudeSignIn.Visibility = state?.State == "signedIn" ? Visibility.Collapsed : Visibility.Visible;
-        claudeSignIn.Content = ui.Text(state?.State == "workspaceNeeded" ? "claude.login.organization_title" : "welcome.module.sign_in");
+        bool action = state?.State is "signedOut" or "workspaceNeeded";
+        claudeSignIn.Visibility = action ? Visibility.Visible : Visibility.Collapsed;
+        claudeOptions.Visibility = action ? Visibility.Collapsed : Visibility.Visible;
+        claudeSignIn.Content = ui.Text(state?.State == "workspaceNeeded" ? "claude.quota.choose_workspace" : "claude.quota.connect");
+        claudeSignIn.Style = state?.State == "workspaceNeeded" ? (Style)FindResource(typeof(Button)) : (Style)FindResource("SettingsProminentButton");
         string help = offline ? ui.Text("windows.claude.demo_web_help") : claudeConnection is { Available: false } ? ui.Text("windows.claude.runtime_required") :
             claudeConnection?.LastFailure is string failure ? ui.Text(failure) : state?.Message ?? "";
         claudeAccountHelp!.Text = help; claudeAccountHelp.Visibility = help.Length == 0 ? Visibility.Collapsed : Visibility.Visible;

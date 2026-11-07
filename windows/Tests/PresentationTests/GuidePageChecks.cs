@@ -156,7 +156,7 @@ internal static class GuidePageChecks
             Select(Find<RadioButton>(settings, "settings.pane.support")); await Until(() => Has(settings, "guide.link.star"));
             foreach (string action in new[] { "star", "feature", "bug", "donate" }) { var button = Find<Button>(settings, "guide.link." + action); Check(button.Focusable, "Support links remain keyboard reachable"); Invoke(button); await Pump(); }
             var copy = Find<Button>(settings, "support.copy"); Invoke(copy); await Pump();
-            Check(copied == note.Links["repository"] && copy.Content!.ToString() == ui.Text("support.share.copied"), "Copy dispatches the public project URL and shows localized feedback without reading the clipboard");
+            Check(copied == note.Links["repository"] && AutomationProperties.GetName(copy) == ui.Text("support.share.copied"), "Copy dispatches the public project URL and shows localized feedback without reading the clipboard");
             // The QQ group sits under the bug report: its number, a copy and its code on request.
             Check(note.QqGroup is { Length: > 0 } && SelfAndDescendants(settings).OfType<TextBlock>().Any(text => text.Text == ui.Text("support.qq.number").Replace("%@", note.QqGroup, StringComparison.Ordinal)),
                 "Support shows the QQ group's number from the shared catalog");

@@ -46,13 +46,6 @@ internal sealed class CompactLayoutEditorView : Grid
     {
         this.ui = ui; this.resources = resources; this.edit = edit; Margin = new Thickness(10, 14, 10, 14);
         var content = new StackPanel(); Children.Add(content);
-        var title = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
-        var restoreText = new TextBlock { Text = ui.Text("common.restore_defaults"), FontSize = 12 }; restoreText.SetResourceReference(TextBlock.ForegroundProperty, "SettingsLinkText");
-        var restore = new Button { Content = restoreText, ContentTemplate = null, Padding = new Thickness(0), Style = Resource<Style>("SettingsLink"), FontSize = 12, HorizontalAlignment = HorizontalAlignment.Right };
-        Identify(restore, "compact.restore", ui.Text("common.restore_defaults"));
-        restore.Click += async (_, _) => { if (IsEnabled && IsVisible) await edit(new("restore")); };
-        DockPanel.SetDock(restore, Dock.Right); title.Children.Add(restore);
-        title.Children.Add(new TextBlock { Text = ui.Text("layout.arrangement"), FontSize = 13, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center }); content.Children.Add(title);
         laneStrip.ColumnDefinitions.Add(new ColumnDefinition()); laneStrip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) }); laneStrip.ColumnDefinitions.Add(new ColumnDefinition());
         foreach (string lane in new[] { "leading", "trailing" })
         {

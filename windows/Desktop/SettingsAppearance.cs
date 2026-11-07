@@ -12,9 +12,10 @@ internal sealed partial class SettingsWindow
 {
     private RadioButton? notchChoice, freeChoice;
     private FrameworkElement? positionRow;
+    private Button? positionReset;
     private readonly Dictionary<string, RadioButton> quotaStyleChoices = new();
     private readonly Dictionary<string, RadioButton> surfaceChoices = new();
-    private TextBlock? surfaceStatus;
+    private TextBlock? surfaceStatus, transparencyMode;
     private FrameworkElement? transparencyRow, expandedQuotaRow, deepseekPanelRow;
     private ComboBox? displayChoice;
     private CheckBox? fullscreenChoice;
@@ -23,15 +24,14 @@ internal sealed partial class SettingsWindow
     private sealed record DisplayOption(string Mode, DisplayMonitor? Monitor);
 
     private void ClearAppearance()
-    { ClearAppearanceTheme(); notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null;
+    { ClearAppearanceTheme(); notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = transparencyMode = null;
         displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = deepseekPanelRow = null; }
-    private TextBlock SectionHeader(string key, double top = 2) => SectionTitle(ui.Text(key), top > 2 ? 10 : 0);
-    private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true, double artHeight = 44)
+    private TextBlock SectionHeader(string key) => SectionTitle(ui.Text(key));
+    /// A picture choice, as on the Mac: the art (64 tall, or its own height when NaN), then its name 7 below.
+    private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true, double artHeight = 64)
     {
         var choice = new RadioButton { Style = (Style)FindResource("SettingsArtChoice"), GroupName = group, IsEnabled = enabled };
-        // Taller scenes grow the tile instead of clipping its title.
-        if (artHeight > 44) choice.Height = double.NaN;
-        var content = new StackPanel { Margin = new Thickness(0, 0, 0, artHeight > 44 ? 10 : 0) };
+        var content = new StackPanel();
         var artHost = new Grid { Height = artHeight }; artHost.Children.Add(art); content.Children.Add(artHost);
         var title = Label(name, 12); title.HorizontalAlignment = HorizontalAlignment.Center; title.Margin = new Thickness(0, 7, 0, 0);
         title.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = choice });
@@ -40,7 +40,7 @@ internal sealed partial class SettingsWindow
     }
     private static Grid Pair(UIElement left, UIElement right)
     {
-        var grid = new Grid { Margin = new Thickness(14, 12, 14, 12) };
+        var grid = new Grid { Margin = new Thickness(14, 14, 14, 14) };
         grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) }); grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.Children.Add(left); Grid.SetColumn(right, 2); grid.Children.Add(right); return grid;
     }
@@ -50,7 +50,7 @@ internal sealed partial class SettingsWindow
     {
         // Theme, then Material (the island's surface), then Accent, then Position, as on the Mac.
         BuildThemeSection();
-        form.Children.Add(ThemeSectionsAvailable && ui.Has("appearance.material") ? SectionTitle(ui.Text("appearance.material"), 10) : SectionHeader("appearance.style"));
+        form.Children.Add(ThemeSectionsAvailable && ui.Has("appearance.material") ? SectionTitle(ui.Text("appearance.material")) : SectionHeader("appearance.style"));
         var solid = ArtChoice("appearance.style.classic", ui.Text("settings.classic"), "appearance.styles", StyleSwatch(false));
         var glass = ArtChoice("appearance.style.liquidGlass", ui.Text("settings.liquid_glass"), "appearance.styles", StyleSwatch(true));
         foreach (var choice in new[] { (Name: "classic", Button: solid), (Name: "liquidGlass", Button: glass) })
@@ -60,10 +60,14 @@ internal sealed partial class SettingsWindow
         }
         surfaceStatus = Detail(""); surfaceStatus.Margin = new Thickness(14, 8, 14, 12);
         Identify(surfaceStatus, "appearance.status", ui.Text("appearance.style"));
-        var adjust = new Button { Content = ui.Text("appearance.glass_adjust"), Style = (Style)FindResource("SettingsLink") };
+        var adjust = new Button { Content = ui.Text("appearance.glass_adjust"), VerticalAlignment = VerticalAlignment.Center };
         Identify(adjust, "appearance.transparency.settings", ui.Text("appearance.glass_adjust"));
         adjust.Click += (_, _) => { if (!SettingsPagePolicy.OpenTransparency(systemSettingsLauncher)) ShowIssue("windows.settings.open_system_failed"); };
-        transparencyRow = Row(Label(ui.Text("appearance.glass_transparency")), adjust);
+        var transparencyEnd = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        transparencyMode = Label(ui.Text("appearance.glass_system"), 12.5); transparencyMode.Margin = new Thickness(0, 0, 8, 0); transparencyMode.VerticalAlignment = VerticalAlignment.Center;
+        transparencyMode.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        transparencyEnd.Children.Add(transparencyMode); transparencyEnd.Children.Add(adjust);
+        transparencyRow = InfoRow(ui.Text("appearance.glass_transparency"), transparencyEnd, ui.Text("windows.appearance.surface_available"), id: "appearance.transparency");
         form.Children.Add(Card(Pair(solid, glass), surfaceStatus, transparencyRow));
 
         var quotaChoices = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
@@ -74,19 +78,19 @@ internal sealed partial class SettingsWindow
             choice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { ExpandedQuotaStyle = style }); };
             quotaStyleChoices[style] = choice; editors.Add(choice); quotaChoices.Children.Add(choice);
         }
-        var segments = new Border { Child = quotaChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center };
-        segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
+        var segments = new Border { Child = quotaChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center };
+        segments.SetResourceReference(Border.BackgroundProperty, "SettingsFill");
         // The expanded panel's choices follow Position, as on the Mac.
         expandedQuotaRow = Row(Label(ui.Text("main.appearance.quota_style")), segments);
         BuildAccentSection();
-        form.Children.Add(SectionHeader("appearance.position", 20));
+        form.Children.Add(SectionHeader("appearance.position"));
         // Both positions are shown moving, with the welcome guide's scenes, as on the Mac.
-        notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", ModeScene(new WelcomeGestureScene()), artHeight: 96);
-        freeChoice = ArtChoice("appearance.mode.free", ui.Text("appearance.free_move"), "appearance.modes", ModeScene(new WelcomeMoveScene()), artHeight: 96);
+        notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", ModeScene(new WelcomeGestureScene()), artHeight: double.NaN);
+        freeChoice = ArtChoice("appearance.mode.free", ui.Text("appearance.free_move"), "appearance.modes", ModeScene(new WelcomeMoveScene(true)), artHeight: double.NaN);
         notchChoice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { DisplayMode = "notch" }); };
         freeChoice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { DisplayMode = "floating" }); };
         editors.Add(notchChoice); editors.Add(freeChoice);
-        var reset = new Button { Content = ui.Text("appearance.position_reset"), VerticalAlignment = VerticalAlignment.Center };
+        var reset = positionReset = new Button { Content = ui.Text("appearance.position_reset"), VerticalAlignment = VerticalAlignment.Center };
         Identify(reset, "appearance.position.reset", ui.Text("appearance.position_reset"));
         reset.Click += async (_, _) => await Change(p => p with { IslandPlacement = null, Position = "center", PositionChosen = false, DisplayMode = "floating" });
         editors.Add(reset);
@@ -128,6 +132,8 @@ internal sealed partial class SettingsWindow
         bool attached = session.Current.DisplayMode == "notch";
         notchChoice.IsChecked = attached; freeChoice.IsChecked = !attached;
         positionRow.Visibility = attached ? Visibility.Collapsed : Visibility.Visible;
+        // Nothing to return when the island already sits at the top center, as on the Mac.
+        if (positionReset != null) positionReset.IsEnabled = !busy && (session.Current.IslandPlacement != null || session.Current.Position != "center");
     }
     private void OnAppearanceDisplaysChanged()
     {
@@ -188,6 +194,9 @@ internal sealed partial class SettingsWindow
             BackdropReason.DeviceLost => "device_lost", _ => "unavailable"
         };
         surfaceStatus.Text = ui.Text("windows.appearance.surface_" + key);
+        // Classic and working glass need no note; a fallback explains itself under the pictures.
+        surfaceStatus.Visibility = key is "classic" or "available" ? Visibility.Collapsed : Visibility.Visible;
+        if (transparencyMode != null) transparencyMode.Text = ui.Text(key == "transparency_off" ? "appearance.glass_reduced" : "appearance.glass_system");
         if (surfaceChoices.TryGetValue("liquidGlass", out var choice))
         {
             choice.IsEnabled = !busy && !session.RequiresRestart && state.Build >= 22621;
@@ -195,28 +204,30 @@ internal sealed partial class SettingsWindow
             ToolTipService.SetShowOnDisabled(choice, true);
         }
     }
-    private static Canvas Wallpaper(double width, double height, double radius = 6)
-    {
-        var screen = new Canvas { Width = width, Height = height, Clip = new RectangleGeometry(new Rect(0, 0, width, height), radius, radius), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        var background = new SolidColorBrush(Color.FromRgb(48, 54, 64)); background.Freeze();
-        screen.Background = background; return screen;
-    }
     private static UIElement StyleSwatch(bool glass)
     {
-        var art = Wallpaper(112, 40);
-        var capsule = new Border { Width = 64, Height = 16, CornerRadius = new CornerRadius(8), Background = glass ? new SolidColorBrush(Color.FromArgb(77, 0, 0, 0)) : new SolidColorBrush(Color.FromRgb(11, 12, 14)), BorderThickness = new Thickness(0.5), BorderBrush = new SolidColorBrush(Color.FromArgb(glass ? (byte)102 : (byte)15, 255, 255, 255)) };
-        Canvas.SetLeft(capsule, 24); Canvas.SetTop(capsule, 12); art.Children.Add(capsule); return art;
+        var art = new Grid { Width = 132, Height = 58, Background = MaterialWallpaper(), Clip = new RectangleGeometry(new Rect(0, 0, 132, 58), 7, 7), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var capsule = new Grid { Width = 86, Height = 22 };
+        capsule.Children.Add(new Border { CornerRadius = new CornerRadius(11), Background = glass ? new SolidColorBrush(Color.FromArgb(77, 0, 0, 0)) : Brushes.Black,
+            BorderThickness = new Thickness(0.5), BorderBrush = new SolidColorBrush(Color.FromArgb(glass ? (byte)102 : (byte)15, 255, 255, 255)) });
+        capsule.Children.Add(new Border { Width = 20, Height = 4, CornerRadius = new CornerRadius(2), Background = new SolidColorBrush(Color.FromArgb(191, 255, 255, 255)), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(9, 0, 0, 0) });
+        // The ring takes Codex's color, which follows the accent.
+        var ring = new System.Windows.Shapes.Ellipse { Width = 10, Height = 10, StrokeThickness = 2, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 9, 0) };
+        ring.Stroke = PacerPalette.Codex; capsule.Children.Add(ring);
+        art.Children.Add(capsule); return art;
     }
-    private static Border ModeScene(FrameworkElement scene) => new()
+    /// A soft desktop so translucency has something to show through, as on the Mac.
+    private static Brush MaterialWallpaper()
     {
-        CornerRadius = new CornerRadius(7), ClipToBounds = true, Margin = new Thickness(10, 10, 10, 0), Background = new SolidColorBrush(Color.FromRgb(40, 44, 58)),
-        Child = new Viewbox { Child = scene, Stretch = Stretch.Uniform, Margin = new Thickness(8) }
-    };
-    private static UIElement PositionSwatch(bool attached)
-    {
-        var art = Wallpaper(112, 40); art.Children.Add(new Border { Width = 112, Height = 9, Background = new SolidColorBrush(Color.FromArgb(56, 0, 0, 0)) });
-        var island = new Border { Width = 52, Height = attached ? 12 : 11, Background = Brushes.Black,
-            CornerRadius = attached ? new CornerRadius(0, 0, 6, 6) : new CornerRadius(5.5) };
-        Canvas.SetLeft(island, 30); Canvas.SetTop(island, attached ? 0 : 18); art.Children.Add(island); return art;
+        var group = new DrawingGroup(); var bounds = new RectangleGeometry(new Rect(0, 0, 1, 1));
+        group.Children.Add(new GeometryDrawing(new LinearGradientBrush(new GradientStopCollection
+        { new(Color.FromRgb(61, 77, 120), 0), new(Color.FromRgb(115, 97, 143), 0.5), new(Color.FromRgb(219, 148, 120), 1) }, new Point(0, 0), new Point(1, 1)), null, bounds));
+        group.Children.Add(new GeometryDrawing(new RadialGradientBrush(Color.FromArgb(150, 250, 199, 140), Color.FromArgb(0, 250, 199, 140))
+        { Center = new Point(1.25, 0.95), GradientOrigin = new Point(1.25, 0.95), RadiusX = 0.75, RadiusY = 1.6 }, null, bounds));
+        group.Children.Add(new GeometryDrawing(new RadialGradientBrush(Color.FromArgb(150, 77, 140, 191), Color.FromArgb(0, 77, 140, 191))
+        { Center = new Point(-0.4, 0.6), GradientOrigin = new Point(-0.4, 0.6), RadiusX = 0.85, RadiusY = 1.8 }, null, bounds));
+        var brush = new DrawingBrush(group) { Stretch = Stretch.Fill }; brush.Freeze(); return brush;
     }
+    /// The welcome guide's scene, scaled to the tile up to 240 wide, as on the Mac.
+    private static Viewbox ModeScene(FrameworkElement scene) => new() { Child = scene, Stretch = Stretch.Uniform, MaxWidth = 240, HorizontalAlignment = HorizontalAlignment.Center };
 }

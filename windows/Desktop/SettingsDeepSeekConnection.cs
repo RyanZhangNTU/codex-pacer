@@ -44,7 +44,7 @@ internal sealed partial class SettingsWindow
     private StackPanel BuildDeepSeekConnection()
     {
         deepseekConnectionTitle = Label(ui.Text("deepseek.platform_account"));
-        deepseekSignIn = new Button { Content = ui.Text("deepseek.sign_in"), IsEnabled = false, Padding = new Thickness(12, 3, 12, 3) };
+        deepseekSignIn = new Button { Content = ui.Text("deepseek.sign_in"), IsEnabled = false };
         Identify(deepseekSignIn, "settings.deepseek.sign_in", ui.Text("deepseek.sign_in")); editors.Add(deepseekSignIn);
         var actionButton = deepseekSignIn;
         actionButton.Click += async (_, _) =>
@@ -53,9 +53,11 @@ internal sealed partial class SettingsWindow
             if (engine?.LatestSnapshot?.DeepseekConnection?.Reading.Action == "signIn") await ConnectDeepSeekWeb();
             else await RunDeepSeekConnection("retryDeepSeekBalance");
         };
-        deepseekConnection = Label(""); deepseekConnection.Margin = new Thickness(0, 0, 8, 0); deepseekConnection.VerticalAlignment = VerticalAlignment.Center;
+        // The Mac's status row: a 7-point dot and 12.5-point state.
+        deepseekConnection = Label("", 12.5); deepseekConnection.Margin = new Thickness(0, 0, 8, 0); deepseekConnection.VerticalAlignment = VerticalAlignment.Center;
+        deepseekConnection.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         var connection = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        var dot = new System.Windows.Shapes.Ellipse { Width = 6, Height = 6, Margin = new Thickness(0, 0, 8, 0) };
+        var dot = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
         deepseekConnectionDot = dot; connection.Children.Add(dot); connection.Children.Add(deepseekConnection); connection.Children.Add(deepseekSignIn);
         var icon = new IconGlyph { Symbol = "ellipsis.circle", Width = 14, Height = 14 }; icon.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
         deepseekAccountOptions = new Button { Style = (Style)FindResource("DeepSeekInfoButton"), Width = 16, Height = 16,
@@ -120,11 +122,11 @@ internal sealed partial class SettingsWindow
         var keys = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         // Keep one invalid extra character so paste cannot truncate an oversized
         // key into an accepted 256-byte credential and replace a saved key.
-        deepseekKeyInput = new PasswordBox { MaxLength = 257, Width = 120, HorizontalContentAlignment = HorizontalAlignment.Right,
+        deepseekKeyInput = new PasswordBox { MaxLength = 257, Width = 220, HorizontalContentAlignment = HorizontalAlignment.Left,
             Style = (Style)FindResource("SettingsSecretInput"), VerticalAlignment = VerticalAlignment.Center };
         Identify(deepseekKeyInput, "settings.deepseek.key.input", ui.Text("deepseek.paste_key")); editors.Add(deepseekKeyInput);
         var input = new Grid(); input.Children.Add(deepseekKeyInput);
-        var prompt = new TextBlock { Text = "sk-…", Margin = new Thickness(0, 0, 0, 2), HorizontalAlignment = HorizontalAlignment.Right,
+        var prompt = new TextBlock { Text = "sk-…", Margin = new Thickness(8, 0, 0, 1), HorizontalAlignment = HorizontalAlignment.Left,
             IsHitTestVisible = false, VerticalAlignment = VerticalAlignment.Center };
         prompt.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); input.Children.Add(prompt); keys.Children.Add(input);
         var keyInput = deepseekKeyInput;
@@ -224,6 +226,8 @@ internal sealed partial class SettingsWindow
             deepseekConnectionDot!.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, value.Color == "green" ? "SettingsSuccess" : value.Color == "orange" ? "SettingsWarning" : "SettingsSecondary");
             deepseekSignIn!.Content = value.ActionLabel ?? ui.Text("deepseek.sign_in"); AutomationProperties.SetName(deepseekSignIn, (string)deepseekSignIn.Content);
             deepseekSignIn.Visibility = value.Action == null ? Visibility.Collapsed : Visibility.Visible;
+            // Signing in is the page's call to action, as on the Mac; Retry stays a plain button.
+            deepseekSignIn.Style = value.Action == "signIn" ? (Style)FindResource("SettingsProminentButton") : (Style)FindResource(typeof(Button));
             deepseekSignIn.ToolTip = value.Action == "signIn" && (!state.WebAvailable || webConnection?.Available != true) ? DeepSeekWebHelp : null;
             deepseekAccountHelp!.Visibility = state.Mode != "apiKey" && (!state.WebAvailable || webConnection?.Available != true) && !value.Connected ? Visibility.Visible : Visibility.Collapsed;
             deepseekDetectedSource!.Text = value.DetectedText; deepseekDetectedSource.Visibility = value.ShowDetection ? Visibility.Visible : Visibility.Collapsed;

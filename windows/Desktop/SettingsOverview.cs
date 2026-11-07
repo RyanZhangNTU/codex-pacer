@@ -108,8 +108,8 @@ internal sealed partial class SettingsWindow
         overviewSubtitle = Label("", 12.5); overviewSubtitle.Margin = new Thickness(0, 3, 0, 0); overviewSubtitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         Identify(overviewSubtitle, "settings.overview.subtitle", ""); names.Children.Add(overviewSubtitle);
         header.Children.Add(names);
-        var glyph = new IconGlyph { Symbol = "arrow.clockwise", Width = 14, Height = 14 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsPrimary");
-        var refresh = new Button { Content = glyph, ContentTemplate = null, Width = 32, Height = 26, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center, ToolTip = ui.Text("common.refresh") };
+        var glyph = new IconGlyph { Symbol = "arrow.clockwise", Width = 13, Height = 13 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsPrimary");
+        var refresh = new Button { Content = glyph, ContentTemplate = null, Width = 34, Height = 24, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center, ToolTip = ui.Text("common.refresh") };
         Identify(refresh, "settings.overview.refresh", ui.Text("common.refresh")); editors.Add(refresh);
         refresh.Click += async (_, _) =>
         {
@@ -177,14 +177,14 @@ internal sealed partial class SettingsWindow
         later.Click += (_, _) => { dismissedUpdate = version; RefreshOverview(); };
         actions.Children.Add(later);
         Grid.SetColumn(actions, 2); grid.Children.Add(actions);
-        var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(16, 12, 16, 12), Margin = new Thickness(0, 0, 0, 12), Child = grid };
+        var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(16, 12, 16, 12), Margin = new Thickness(0, 0, 0, 22), Child = grid };
         card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         return card;
     }
 
     private Border AttentionCard(IReadOnlyList<AttentionItem> items)
     {
-        var amber = Color.FromRgb(255, 159, 10);
+        var amber = Color.FromRgb(255, 189, 97);
         var list = new StackPanel();
         for (int index = 0; index < items.Count; index++)
         {
@@ -193,7 +193,7 @@ internal sealed partial class SettingsWindow
             var row = new Grid { Margin = new Thickness(0, 11, 0, 11) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var mark = new IconGlyph { Symbol = "exclamationmark.circle", Width = 18, Height = 18, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
-            mark.SetResourceReference(IconGlyph.InkProperty, "SettingsWarning"); row.Children.Add(mark);
+            mark.Ink = PacerPalette.Attention; row.Children.Add(mark);
             var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(Label(item.Title, 13, FontWeights.SemiBold)); var detail = Detail(item.Detail); detail.FontSize = 11.5; text.Children.Add(detail);
             Grid.SetColumn(text, 1); row.Children.Add(text);
@@ -208,7 +208,7 @@ internal sealed partial class SettingsWindow
             AutomationProperties.SetName(row, item.Title + " " + item.Detail);
             list.Children.Add(row);
         }
-        return new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(16, 0, 16, 0), Margin = new Thickness(0, 0, 0, 12),
+        return new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(16, 0, 16, 0), Margin = new Thickness(0, 0, 0, 22),
             Background = new SolidColorBrush(Color.FromArgb(20, amber.R, amber.G, amber.B)), BorderBrush = new SolidColorBrush(Color.FromArgb(64, amber.R, amber.G, amber.B)), Child = list };
     }
 
@@ -219,7 +219,7 @@ internal sealed partial class SettingsWindow
         bool Wide(string provider) => provider != "deepseek" && snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider) is { } reading
             && reading.FiveHour.RemainingPercent != null && reading.Weekly.RemainingPercent != null;
         var wide = enabled.Where(Wide).ToArray(); var narrow = enabled.Except(wide).ToArray();
-        var stack = new StackPanel();
+        var stack = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
         for (int index = 0; index < narrow.Length; index += 2)
         {
             var pair = new Grid();
@@ -243,6 +243,8 @@ internal sealed partial class SettingsWindow
         var name = new TextBlock { Text = PaneTitle(provider), FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(name, 1); header.Children.Add(name);
         var details = new Button { Content = ui.Text("main.overview.details"), Style = (Style)FindResource("SettingsLink"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        // The island's cards stay dark in either theme, as on the Mac, so their links keep the dark blue.
+        details.SetResourceReference(ForegroundProperty, "SettingsIslandLink");
         Identify(details, "settings.overview.details." + provider, PaneTitle(provider) + " · " + ui.Text("main.overview.details"));
         details.Click += async (_, _) => await NavigateAsync(provider);
         Grid.SetColumn(details, 2); header.Children.Add(details);
@@ -268,7 +270,7 @@ internal sealed partial class SettingsWindow
     private Border TasksCard(EngineSnapshot? snapshot, IReadOnlyList<EngineTaskRow> rows)
     {
         var content = new StackPanel();
-        var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(9, 0, 9, 4) };
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(9, 0, 9, 6) };
         header.Children.Add(new TextBlock { Text = ui.Text("main.overview.running"), FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary });
         header.Children.Add(new TextBlock { Text = snapshot?.Presentation?.TaskCountText ?? "", FontSize = 12, Foreground = PacerPalette.Secondary, Margin = new Thickness(8, 1, 0, 0), VerticalAlignment = VerticalAlignment.Center });
         content.Children.Add(header);
@@ -282,7 +284,7 @@ internal sealed partial class SettingsWindow
         int index = 0;
         foreach (var value in rows.Take(8))
         {
-            if (index++ > 0) content.Children.Add(new Border { Height = 1, Margin = new Thickness(9, 0, 9, 0), Background = new SolidColorBrush(Color.FromArgb(15, 255, 255, 255)) });
+            if (index++ > 0) content.Children.Add(new Border { Height = 1, Margin = new Thickness(9, 4, 9, 4), Background = new SolidColorBrush(Color.FromArgb(15, 255, 255, 255)) });
             var row = new TaskRow(value) { Language = Language, Height = 54 };
             var state = (TaskRowState)row.DataContext;
             if (surfaceWindow?.CanOpenFromWindow(value) == true)
@@ -346,7 +348,7 @@ internal sealed partial class SettingsWindow
     private Border HistoryCard(string provider, string[] providers, QuotaHistoryPresentation? history)
     {
         var content = new StackPanel();
-        var header = new Grid { Margin = new Thickness(0, 0, 0, 8) }; header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 12) }; header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var title = Label(history?.Title ?? PaneTitle(provider), 13.5, FontWeights.SemiBold); Identify(title, "settings.history.title", title.Text); header.Children.Add(title);
         if (providers.Length > 1)
         {
@@ -365,9 +367,9 @@ internal sealed partial class SettingsWindow
         }
         content.Children.Add(header);
         historyView = new QuotaHistoryView(ui, provider == "claude" ? PacerPalette.Claude : PacerPalette.Codex, async () =>
-        { await sourceReady; if (!sourceClosed && engine != null) await engine.SendAsync("retryQuota", new { provider }); });
+        { await sourceReady; if (!sourceClosed && engine != null) await engine.SendAsync("retryQuota", new { provider }); }, 0);
         content.Children.Add(historyView);
-        var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(18, 16, 18, 16), Margin = new Thickness(0, 0, 0, 12), Child = content };
+        var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(18, 16, 18, 16), Margin = new Thickness(0, 0, 0, 22), Child = content };
         card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         Identify(card, "settings.history." + provider, history?.Title ?? PaneTitle(provider));
         return card;

@@ -45,6 +45,7 @@ internal sealed class GuideContent : StackPanel
         this.copyLink = copyLink ?? Clipboard.SetText;
         issue = Text("", 11); Identify(issue, "guide.issue", ""); AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive);
         issue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+        issue.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(TextBlock.Text)) { Source = issue, Converter = EmptyCollapses.Instance });
         Loaded += (_, _) => { session.Changed += PreferencesChanged; if (engine != null) engine.Snapshot += SnapshotChanged; if (notifications != null) notifications.Changed += Refresh; Refresh(); };
         Unloaded += (_, _) => { copyRevision++; session.Changed -= PreferencesChanged; if (engine != null) engine.Snapshot -= SnapshotChanged; if (notifications != null) notifications.Changed -= Refresh; if (code != null) code.IsOpen = false; share?.Dispose(); share = null; };
         PreviewKeyDown += (_, args) =>
@@ -93,11 +94,11 @@ internal sealed class GuideContent : StackPanel
         var content = new StackPanel();
         for (int i = 0; i < rows.Length; i++)
         {
-            if (i > 0) { var line = new Border { Height = 1, Margin = new Thickness(inset, 0, 0, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); content.Children.Add(line); }
+            if (i > 0) { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); content.Children.Add(line); }
             content.Children.Add(rows[i]);
         }
-        var group = new Border { Child = content, CornerRadius = new CornerRadius(10) };
-        group.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); return group;
+        var group = new Border { Child = content, CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1) };
+        group.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); group.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder"); return group;
     }
     private StackPanel Column(string key, UIElement content)
     {
@@ -488,17 +489,17 @@ internal sealed class GuideContent : StackPanel
         DockPanel.SetDock(notes, Dock.Right); header.Children.Add(notes);
         var title = Text(VersionTitle(list[0]), 15, true); AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level2); header.Children.Add(title);
         latest.Children.Add(header);
-        foreach (var item in list[0].Items) latest.Children.Add(InfoFeatureRow(item, true));
+        foreach (var item in list[0].Items) { var row = InfoFeatureRow(item, true); row.Margin = new Thickness(0, latest.Children.Count > 1 ? 16 : 0, 0, 0); latest.Children.Add(row); }
         Children.Add(Card(latest, new Thickness(18)));
         if (list.Count > 1)
         {
-            var heading = Text(ui.Text("whats_new.earlier"), 12, true); heading.Margin = new Thickness(4, 14, 0, 8); heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+            var heading = Text(ui.Text("whats_new.earlier"), 12, true); heading.Margin = new Thickness(4, 0, 0, 8); heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
             Children.Add(heading);
             var earlier = new StackPanel();
             foreach (var release in list.Skip(1))
             {
-                var rows = new StackPanel { Margin = new Thickness(34, 0, 14, 4) };
-                foreach (var item in release.Items) rows.Children.Add(InfoFeatureRow(item, false));
+                var rows = new StackPanel { Margin = new Thickness(34, 0, 14, 12) };
+                foreach (var item in release.Items) { var row = InfoFeatureRow(item, false); row.Margin = new Thickness(0, rows.Children.Count > 0 ? 12 : 0, 0, 0); rows.Children.Add(row); }
                 var fold = new Expander { Header = release.Version, Tag = string.Join(" · ", release.Items.Select(item => item.Title)), Content = rows, Style = (Style)FindResource("SettingsReleaseFold") };
                 Identify(fold, "whats_new.release." + release.Version, VersionTitle(release));
                 if (earlier.Children.Count > 0) { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); earlier.Children.Add(line); }
@@ -512,7 +513,7 @@ internal sealed class GuideContent : StackPanel
         ui.Has("whats_new.version") ? ui.Text("whats_new.version").Replace("%@", release.Version, StringComparison.Ordinal) : release.Title;
     private Border Card(UIElement child, Thickness padding)
     {
-        var card = new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Padding = padding, Child = child, Margin = new Thickness(0, 0, 0, 12) };
+        var card = new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Padding = padding, Child = child, Margin = new Thickness(0, 0, 0, 22) };
         card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         return card;
     }
@@ -528,7 +529,7 @@ internal sealed class GuideContent : StackPanel
             _ => null
         };
         double size = large ? 40 : 28;
-        var host = new StackPanel { Margin = new Thickness(0, 0, 0, large ? 14 : 10) };
+        var host = new StackPanel();
         var row = new Grid();
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var tile = FeatureSymbol(item.Symbol, size); tile.Margin = new Thickness(0, 0, large ? 14 : 12, 0); row.Children.Add(tile);
@@ -588,7 +589,7 @@ internal sealed class GuideContent : StackPanel
     internal void Help()
     {
         Reset(); string[] providers = ["codex", "claude", "deepseek"];
-        var quick = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+        var quick = new Grid { Margin = new Thickness(0, 0, 0, 22) };
         var tiles = new[] {
             QuickTile(Button(ui.Text("help.quick.welcome"), "help.welcome", welcome), "hand.wave", ui.Text("help.quick.welcome"), ui.Text("help.quick.welcome_detail"), false),
             QuickTile(Link("help.link.guide", "manual"), "book", ui.Text("help.link.guide"), ui.Text("help.quick.guide_detail"), true),
@@ -599,8 +600,8 @@ internal sealed class GuideContent : StackPanel
             quick.ColumnDefinitions.Add(new ColumnDefinition()); Grid.SetColumn(tiles[index], index * 2); quick.Children.Add(tiles[index]);
         }
         Children.Add(quick);
-        var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) }; var topic = new StackPanel(); var footer = Text(ui.Text("help.enable.detail"), 11.5);
-        footer.Margin = new Thickness(4, -4, 4, 0); footer.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) }; var topic = new StackPanel(); var footer = Text(ui.Text("help.enable.detail"), 11.5);
+        footer.Margin = new Thickness(4, 8, 4, 0); footer.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         AutomationProperties.SetName(chips, ui.Text("settings.pane.help"));
         foreach (string id in new[] { "collapsed", "expanded" }.Concat(providers))
         {
@@ -614,7 +615,7 @@ internal sealed class GuideContent : StackPanel
                 chip.Checked += (_, _) => glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSelectionText"); chip.Unchecked += (_, _) => glyph.Ink = PacerPalette.Provider(id);
                 label.Children.Add(glyph);
             }
-            var text = new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center };
+            var text = new TextBlock { Text = name, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
             text.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Control.Foreground)) { Source = chip }); label.Children.Add(text);
             chip.Content = label; Identify(chip, module ? "help.module." + id : "help.topic." + id, name);
             chip.Checked += (_, _) => { HelpTopic(topic, id, providers); footer.Visibility = module ? Visibility.Visible : Visibility.Collapsed; };
@@ -662,7 +663,7 @@ internal sealed class GuideContent : StackPanel
         var top = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
         if (external)
         {
-            var arrow = new IconGlyph { Symbol = "arrow.up.forward.app", Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Top };
+            var arrow = new IconGlyph { Symbol = "arrow.up.right", Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Top, Opacity = 0.7 };
             arrow.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary"); DockPanel.SetDock(arrow, Dock.Right); top.Children.Add(arrow);
         }
         var tile = FeatureSymbol(symbol, 30); tile.HorizontalAlignment = HorizontalAlignment.Left; top.Children.Add(tile);
@@ -680,11 +681,11 @@ internal sealed class GuideContent : StackPanel
     private Grid HelpRow(string key, params UIElement[] samples)
     {
         string title = ui.Text(key + ".title");
-        var row = new Grid { Margin = new Thickness(12, 8, 12, 8) };
+        var row = new Grid { Margin = new Thickness(14, 8, 14, 8) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition());
         var swatch = Swatch(samples); swatch.Margin = new Thickness(0, 0, 14, 0); row.Children.Add(swatch);
         var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(Text(title)); var detail = Text(ui.Text(key + ".detail"), 11); detail.Margin = new Thickness(0, 2, 0, 0); labels.Children.Add(detail);
+        labels.Children.Add(Text(title)); var detail = Text(ui.Text(key + ".detail"), 11.5); detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); detail.Margin = new Thickness(0, 2, 0, 0); labels.Children.Add(detail);
         Grid.SetColumn(labels, 1); row.Children.Add(labels); Identify(row, key, title); return row;
     }
     private void ModuleHelp(Panel target, string provider)
@@ -699,7 +700,7 @@ internal sealed class GuideContent : StackPanel
                 "windows" => [Warning("codex5hLow", false, provider), Warning("codex5hExhausted", true, provider)],
                 "cloud" => [Mark("cloud", tint)], "remote" => [Mark("network", tint)], _ => [Mark("square.on.square", tint)]
             };
-            if (target.Children.Count > 0) { var line = new Border { Height = 1, Margin = new Thickness(HelpInset, 0, 0, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); target.Children.Add(line); }
+            if (target.Children.Count > 0) { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); target.Children.Add(line); }
             target.Children.Add(HelpRow("help." + provider + "." + key, samples));
         }
     }
@@ -724,7 +725,8 @@ internal sealed class GuideContent : StackPanel
         // The icon and thanks over a faint wash of the three services' colors, as on the Mac.
         var thanks = new DockPanel { Margin = new Thickness(20, 18, 20, 18) };
         thanks.Children.Add(new DecorativeImage { Width = 60, Height = 60, Margin = new Thickness(0, 0, 16, 0), Stretch = Stretch.Uniform,
-            Source = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))) });
+            Source = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Direction = 270, Opacity = 0.25 } });
         var thanksText = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         thanksText.Children.Add(Text(ui.Text("support.thanks.title"), 17, true)); var thanksDetail = Text(ui.Text("support.thanks.detail"), 12.5); thanksDetail.Margin = new Thickness(0, 5, 0, 0); thanksDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); thanksText.Children.Add(thanksDetail);
         thanks.Children.Add(thanksText); Identify(thanks, "support.thanks", ui.Text("support.thanks.title"));
@@ -733,14 +735,17 @@ internal sealed class GuideContent : StackPanel
         var hero = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 0, 12), Child = new Border { CornerRadius = new CornerRadius(13), Background = wash, Child = thanks } };
         hero.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); hero.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         Children.Add(hero);
-        var star = Link("support.star.action", "star"); Prominent(star, "star.fill");
-        Button? copy = null; copy = Button(ui.Text("support.share.copy"), "support.copy", () => _ = Copy(copy!, catalog.Links["repository"], "support.share.copy"));
+        var star = Link("support.star.action", "star"); Prominent(star, "star");
+        Button? copy = null; copy = Button(ui.Text("support.share.copy"), "support.copy", () => _ = Copy(copy!, catalog.Links["repository"], "support.share.copy", "link"));
+        WithGlyph(copy, "link", ui.Text("support.share.copy"));
         var send = Button(ui.Text("support.share.action"), "support.share", () =>
         {
             var window = Window.GetWindow(this);
             if (window == null || !(share ??= new()).Show(new WindowInteropHelper(window).Handle, catalog, ui)) issue.Text = ui.Text("windows.support.share_unavailable");
         });
-        var donate = Link("support.coffee.title", "donate"); WithGlyph(donate, "cup.and.saucer", ui.Text("support.coffee.title"));
+        // The donation platform by its own name, as on the Mac.
+        WithGlyph(send, "square.and.arrow.up", ui.Text("support.share.action"));
+        var donate = Link("support.coffee.title", "donate"); WithGlyph(donate, "cup.and.saucer", "Buy Me a Coffee"); AutomationProperties.SetName(donate, "Buy Me a Coffee");
         var coffeeActions = new List<Button> { donate };
         string? file = catalog.SupportCode;
         if (file != null && file == Path.GetFileName(file))
@@ -788,7 +793,7 @@ internal sealed class GuideContent : StackPanel
         var detail = Text(ui.Text(key + ".detail"), 12); detail.Margin = new Thickness(0, 4, 0, 14); detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); top.Children.Add(detail);
         layout.Children.Add(top);
         var buttons = new StackPanel(); DockPanel.SetDock(buttons, Dock.Bottom);
-        foreach (var action in actions) { action.Margin = new Thickness(0, 6, 0, 0); action.HorizontalAlignment = HorizontalAlignment.Stretch; action.MinHeight = 28; buttons.Children.Add(action); }
+        foreach (var action in actions) { action.Margin = new Thickness(0, 6, 0, 0); action.HorizontalAlignment = HorizontalAlignment.Stretch; action.MinHeight = 28; action.FontSize = 12.5; buttons.Children.Add(action); }
         layout.Children.Add(buttons);
         var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(14), Child = layout };
         card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
@@ -797,7 +802,7 @@ internal sealed class GuideContent : StackPanel
     /// The QQ group: its number, a copy button and its code on request, as on the Mac.
     private Grid QqGroupRow(string number, string? file)
     {
-        var row = new Grid { Margin = new Thickness(12, 8, 12, 8) };
+        var row = new Grid { Margin = new Thickness(14, 8, 14, 8) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var tile = GuideArt.Tile("person.2", Color.FromRgb(0x12, 0xB7, 0xF5), 22); tile.Margin = new Thickness(0, 0, 10, 0); row.Children.Add(tile);
         var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -811,7 +816,8 @@ internal sealed class GuideContent : StackPanel
         if (image != null && File.Exists(image))
         {
             Popup? popup = null;
-            var show = Button(ui.Text("support.qq.code"), "support.qq.code", () => { if (popup != null) popup.IsOpen = !popup.IsOpen; }); show.Margin = new Thickness(8, 3, 0, 3);
+            var show = Button(ui.Text("support.qq.code"), "support.qq.code", () => { if (popup != null) popup.IsOpen = !popup.IsOpen; }); show.Margin = new Thickness(6, 3, 0, 3);
+            WithGlyph(show, "qrcode", ui.Text("support.qq.code"));
             var content = new StackPanel { Margin = new Thickness(12) };
             content.Children.Add(new Image { Source = BitmapFrame.Create(new Uri(image)), Width = 220, Height = 220, Stretch = Stretch.Uniform });
             var hint = Text(ui.Text("support.qq.hint"), 12); hint.Foreground = Brushes.Black; hint.HorizontalAlignment = HorizontalAlignment.Center; content.Children.Add(hint);
@@ -829,11 +835,14 @@ internal sealed class GuideContent : StackPanel
     /// A feedback form opened in the browser: tile, title and a chevron.
     private Grid FeedbackRow(Button link, string symbol, Color tint)
     {
-        var row = new Grid { Margin = new Thickness(12, 8, 12, 8) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition());
-        var tile = GuideArt.Tile(symbol, tint, 22); tile.Margin = new Thickness(0, 0, 10, 0); tile.VerticalAlignment = VerticalAlignment.Center; row.Children.Add(tile);
-        link.HorizontalAlignment = HorizontalAlignment.Left; link.VerticalAlignment = VerticalAlignment.Center; link.Style = (Style)FindResource("SettingsLink");
-        Grid.SetColumn(link, 1); row.Children.Add(link); return row;
+        var line = new Grid();
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); line.ColumnDefinitions.Add(new ColumnDefinition()); line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var tile = GuideArt.Tile(symbol, tint, 22); tile.Margin = new Thickness(0, 0, 10, 0); tile.VerticalAlignment = VerticalAlignment.Center; line.Children.Add(tile);
+        var title = Text(AutomationProperties.GetName(link), 13); Grid.SetColumn(title, 1); line.Children.Add(title);
+        var arrow = new IconGlyph { Symbol = "arrow.up.right", Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Center }; arrow.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        Grid.SetColumn(arrow, 2); line.Children.Add(arrow);
+        link.Style = (Style)FindResource("SettingsRowButton"); link.ContentTemplate = null; link.Content = line;
+        var row = new Grid(); row.Children.Add(link); return row;
     }
     /// A tile, the title over its detail, then the row's actions in one line.
     private Grid SupportRow(string key, string symbol, Color tint, params Button[] actions)
@@ -862,18 +871,31 @@ internal sealed class GuideContent : StackPanel
     {
         button.Style = (Style)FindResource("SettingsProminentButton"); WithGlyph(button, symbol, AutomationProperties.GetName(button));
     }
-    private async Task Copy(Button button, string value, string idleKey)
+    /// Copies, then says so for two seconds; a button with a symbol shows a check meanwhile, as on the Mac.
+    private async Task Copy(Button button, string value, string idleKey, string? symbol = null)
     {
+        void Show(string text, string? glyph)
+        {
+            if (glyph != null) WithGlyph(button, glyph, text); else button.Content = text;
+            AutomationProperties.SetName(button, text);
+        }
         try
         {
             copyLink(value); int revision = ++copyRevision;
-            button.Content = ui.Text("support.share.copied"); AutomationProperties.SetName(button, button.Content.ToString());
+            Show(ui.Text("support.share.copied"), symbol == null ? null : "checkmark");
             await Task.Delay(TimeSpan.FromSeconds(2));
-            if (IsLoaded && revision == copyRevision) { button.Content = ui.Text(idleKey); AutomationProperties.SetName(button, button.Content.ToString()); }
+            if (IsLoaded && revision == copyRevision) Show(ui.Text(idleKey), symbol);
         }
         catch (System.Runtime.InteropServices.COMException) { issue.Text = ui.Text("windows.pages.copy_failed"); }
     }
     internal Popup? SupportCodePopup => code;
+    /// Collapses a text that has nothing to say.
+    private sealed class EmptyCollapses : System.Windows.Data.IValueConverter
+    {
+        internal static readonly EmptyCollapses Instance = new();
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => value is string { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => throw new NotSupportedException();
+    }
     private Popup? qqCode;
     internal Popup? QqCodePopup => qqCode;
 }

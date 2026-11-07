@@ -92,14 +92,27 @@ internal sealed partial class SettingsWindow
         codexSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
         codexSections.Children.Add(Card(embedded, progress));
 
-        var fields = new StackPanel { Margin = new Thickness(14, 0, 14, 12) };
+        // Each location is a row of its own, as on the Mac: its name, the field, then Choose.
+        var fields = new StackPanel { Margin = new Thickness(14, 0, 14, 0) };
+        fields.Children.Add(Hairline(0, 0));
         fields.Children.Add(SourceField(true, out executableField)); executableIssue = SourceIssue("settings.codex.executable.issue"); fields.Children.Add(executableIssue);
+        fields.Children.Add(Hairline(0, 0));
         fields.Children.Add(SourceField(false, out homeField)); homeIssue = SourceIssue("settings.codex.home.issue"); fields.Children.Add(homeIssue);
         codexLocations = Disclosure(ui.Text("provider.custom_locations"), fields,
             session.Current.CodexExecutable.Length > 0 || session.Current.CodexHome.Length > 0, "settings.codex.locations");
         codexSections.Children.Add(Card(codexLocations));
     }
 
+    /// A custom location's row: a 96-wide name, the field, then its buttons, at least 44 tall.
+    private Grid LocationRow(string title, TextBox field, UIElement actions)
+    {
+        var row = new Grid { MinHeight = 44 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var name = Label(title); name.VerticalAlignment = VerticalAlignment.Center; name.TextTrimming = TextTrimming.CharacterEllipsis; name.Margin = new Thickness(0, 0, 8, 0); row.Children.Add(name);
+        field.VerticalAlignment = VerticalAlignment.Center; field.FontSize = 12.5; Grid.SetColumn(field, 1); row.Children.Add(field);
+        if (actions is FrameworkElement end) end.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(actions, 2); row.Children.Add(actions); return row;
+    }
     private TextBlock SourceIssue(string id)
     {
         var label = Detail(""); label.Visibility = Visibility.Collapsed; label.Margin = new Thickness(0, 3, 0, 6);
@@ -140,9 +153,7 @@ internal sealed partial class SettingsWindow
             cliCandidates.Click += (_, _) => ShowOtherExecutables(); actions.Children.Add(cliCandidates);
         }
         actions.Children.Add(choose);
-        var row = new Grid { MinHeight = 28, Margin = new Thickness(0, executable ? 0 : 10, 0, 0) };
-        row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.Children.Add(field); Grid.SetColumn(actions, 1); row.Children.Add(actions); return row;
+        return LocationRow(ui.Text(key), field, actions);
     }
 
     private void ShowOtherExecutables()

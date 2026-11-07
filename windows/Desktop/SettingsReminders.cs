@@ -29,7 +29,7 @@ internal sealed partial class SettingsWindow
         reminderLow = reminderSpike = null; reminderAmountIssue = notificationIssue = null; notificationSwitch = null; reminderRetention = null;
         reminderLowValue = reminderSpikeValue = null; Array.Clear(reminderPendingAmount);
     }
-    private const double NotifyColumn = 84;
+    private const double NotifyColumn = 76;
 
     /// One event: its title (with a note or an amount), then where it reminds
     /// you: the collapsed bar and system notifications, as on the Mac.
@@ -68,7 +68,7 @@ internal sealed partial class SettingsWindow
     }
     private Grid MatrixHeader(string title)
     {
-        var header = new Grid { Margin = new Thickness(4, 10, 14, 8) };
+        var header = new Grid { Margin = new Thickness(4, 0, 15, 8) };
         header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(NotifyColumn) }); header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(NotifyColumn) });
         var name = SectionTitle(title, 0); name.Margin = new Thickness(0); header.Children.Add(name);
         foreach (var (key, column) in new[] { ("main.notify.bar", 1), ("settings.system_notifications", 2) })
@@ -81,7 +81,7 @@ internal sealed partial class SettingsWindow
     private void BuildReminders()
     {
         paneSubtitle.Text = ui.Text("main.subtitle.notifications"); paneSubtitle.Visibility = Visibility.Visible;
-        var notifications = Toggle("settings.system_notifications", "settings.system_notifications_detail", "settings.reminders.notifications", out var check); notificationSwitch = check;
+        var notifications = Toggle("settings.system_notifications", null, "settings.reminders.notifications", out var check); notificationSwitch = check;
         RoutedEventHandler toggleNotifications = async (_, _) =>
         {
             if (synchronizing || this.notifications == null) return;
@@ -91,9 +91,8 @@ internal sealed partial class SettingsWindow
             RefreshValues();
         };
         check.Checked += toggleNotifications; check.Unchecked += toggleNotifications; editors.Add(check);
-        notificationIssue = Detail(""); notificationIssue.Margin = new Thickness(14, -4, 14, 4); notificationIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Identify(notificationIssue, "settings.reminders.notifications.issue", "");
-        var systemSettings = new Button { Content = ui.Text("common.open_settings"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5,
-            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(14, 0, 14, 12) };
+        notificationIssue = Label("", 12); notificationIssue.TextWrapping = TextWrapping.Wrap; notificationIssue.Foreground = PacerPalette.Attention; Identify(notificationIssue, "settings.reminders.notifications.issue", "");
+        var systemSettings = new Button { Content = ui.Text("common.open_settings") };
         Identify(systemSettings, "settings.reminders.notifications.settings", ui.Text("settings.system_notifications") + ": " + ui.Text("common.open_settings"));
         systemSettings.Click += (_, _) =>
         {
@@ -101,8 +100,10 @@ internal sealed partial class SettingsWindow
             catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or System.IO.IOException)
             { ShowIssue("windows.settings.notifications_failed"); }
         };
-        var notificationRows = new StackPanel(); notificationRows.Children.Add(notifications); notificationRows.Children.Add(notificationIssue); notificationRows.Children.Add(systemSettings);
-        form.Children.Add(Card(notificationRows));
+        // When Windows blocks notifications, the reason and a way to Settings take a row of their own.
+        var issueRow = Row(notificationIssue, systemSettings);
+        issueRow.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(Visibility)) { Source = notificationIssue });
+        form.Children.Add(Card(notifications, issueRow));
 
         form.Children.Add(MatrixHeader(ui.Text("main.notify.group.tasks")));
         form.Children.Add(Card(MatrixRow(ui.Text("main.notify.reply"), AlwaysCell(), FollowsCell("reply", ui.Text("main.notify.reply"))),
@@ -133,7 +134,7 @@ internal sealed partial class SettingsWindow
         var footer = CardFooter(ui.Text("main.notify.deepseek_one")); reminderFooter = footer; reminderWalletRows.Children.Add(footer);
         form.Children.Add(reminderWalletRows);
 
-        reminderRetention = new ComboBox { MinWidth = 140, VerticalAlignment = VerticalAlignment.Center, SelectedValuePath = "Tag" };
+        reminderRetention = new ComboBox { VerticalAlignment = VerticalAlignment.Center, SelectedValuePath = "Tag" };
         foreach (var item in new[] { (5, "settings.five_minutes"), (15, "settings.fifteen_minutes"), (30, "settings.thirty_minutes"), (60, "settings.one_hour"), (240, "settings.four_hours"), (0, "settings.until_clicked") })
             reminderRetention.Items.Add(new ComboBoxItem { Tag = item.Item1, Content = ui.Text(item.Item2) });
         Identify(reminderRetention, "settings.reminders.retention", ui.Text("reminders.retention")); editors.Add(reminderRetention);
@@ -144,7 +145,7 @@ internal sealed partial class SettingsWindow
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var currency = Label("¥"); currency.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); currency.Margin = new Thickness(0, 0, 3, 0); row.Children.Add(currency);
-        var field = new TextBox { Width = 76, MaxLength = 320, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Style = (Style)FindResource("SettingsPathInput") };
+        var field = new TextBox { Width = 76, MaxLength = 320, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Style = (Style)FindResource("SettingsPathInput"), FontSize = 12 };
         Identify(field, "settings.reminders." + (low ? "lowLine" : "spikeLine"), ui.Text(low ? "reminders.low_balance" : "reminders.spike"));
         field.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await CommitReminderAmount(low, field); } };
         field.LostKeyboardFocus += async (_, _) => { if (!composing) await CommitReminderAmount(low, field); };

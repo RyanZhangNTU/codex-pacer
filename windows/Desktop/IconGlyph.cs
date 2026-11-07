@@ -18,7 +18,7 @@ public sealed class IconGlyph : FrameworkElement
 
     private static readonly IReadOnlyDictionary<string, Geometry> Paths = CreatePaths();
     public IconGlyph() { IsHitTestVisible = false; Focusable = false; }
-    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble";
+    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble" or "xmark.circle.fill";
     protected override void OnRender(DrawingContext drawing)
     {
         base.OnRender(drawing);
@@ -31,6 +31,13 @@ public sealed class IconGlyph : FrameworkElement
         if (symbol.EndsWith(".circle", StringComparison.Ordinal)) drawing.DrawEllipse(null, pen, new Point(12, 12), 9.3, 9.3);
         bool filled = symbol is "pin.fill" or "sparkle" or "flame.fill" or "smallcircle.filled.circle" or "star.fill";
         if (Paths.TryGetValue(symbol, out Geometry? path)) drawing.DrawGeometry(filled ? ink : null, filled ? null : pen, path);
+        // A filled circle with the mark cut out, as the system's clear button.
+        if (symbol == "xmark.circle.fill")
+        {
+            var disc = new EllipseGeometry(new Point(12, 12), 10, 10);
+            var cross = Geometry.Parse("M8.4,8.4 L15.6,15.6 M15.6,8.4 L8.4,15.6").GetWidenedPathGeometry(new Pen(Brushes.Black, 2.2) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
+            drawing.DrawGeometry(ink, null, new CombinedGeometry(GeometryCombineMode.Exclude, disc, cross));
+        }
         if (symbol is "ellipsis" or "ellipsis.bubble")
             foreach (double x in new[] { 7.5, 12.0, 16.5 }) drawing.DrawEllipse(ink, null, new Point(x, symbol == "ellipsis" ? 12 : 10.8), 1, 1);
         drawing.Pop();
@@ -111,6 +118,10 @@ public sealed class IconGlyph : FrameworkElement
             ["bell"] = "M5,16.5 H19 L17,12.5 V9.5 C17,2.5 7,2.5 7,9.5 V12.5 Z M9.5,19.5 Q12,22.5 14.5,19.5",
             ["lightbulb"] = "M9,18 H15 M10,21 H14 M9,15.5 C6.5,14 5.5,11.8 5.5,9.5 A6.5,6.5 0 0 1 18.5,9.5 C18.5,11.8 17.5,14 15,15.5 Z",
             ["ladybug"] = "M12,6 C16.5,6 19,9.5 19,13.5 C19,18 15.8,21 12,21 C8.2,21 5,18 5,13.5 C5,9.5 7.5,6 12,6 Z M12,6 V21 M9,4 L10.5,6.2 M15,4 L13.5,6.2 M5.5,11 H8.5 M15.5,11 H18.5 M5.5,16 H8.5 M15.5,16 H18.5",
+            ["plus"] = "M12,4.5 V19.5 M4.5,12 H19.5",
+            ["arrow.up.right"] = "M7,17 L17,7 M9,7 H17 V15",
+            ["star"] = "M12,2.5 L14.9,8.6 L21.5,9.4 L16.6,13.9 L17.9,20.5 L12,17.2 L6.1,20.5 L7.4,13.9 L2.5,9.4 L9.1,8.6 Z",
+            ["link"] = "M10,13.5 A4,4 0 0 0 15.7,13.7 L18.6,10.8 A4,4 0 0 0 13,5.1 L11.4,6.7 M14,10.5 A4,4 0 0 0 8.3,10.3 L5.4,13.2 A4,4 0 0 0 11,18.9 L12.6,17.3",
             ["magnifyingglass"] = "M17,10.5 A6.5,6.5 0 1 1 4,10.5 A6.5,6.5 0 1 1 17,10.5 Z M15.3,15.3 L20.5,20.5"
         };
         var result = new Dictionary<string, Geometry>();

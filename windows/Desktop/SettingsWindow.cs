@@ -42,7 +42,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly Action<string>? guideCopyLink;
     private readonly Func<Uri, bool>? systemSettingsLauncher;
     private readonly Grid client = new() { Width = DefaultWidth, Height = DefaultHeight };
-    private readonly StackPanel form = new() { Margin = new Thickness(32, 4, 32, 32), MaxWidth = ColumnWidth };
+    private readonly StackPanel form = new() { Margin = new Thickness(32, 10, 32, 32), MaxWidth = ColumnWidth };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
     private readonly Button recoveryRestart = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(10, 0, 10, 10) };
     private readonly List<FrameworkElement> editors = [];
@@ -51,7 +51,10 @@ internal sealed partial class SettingsWindow : Window
     private readonly Grid headerColumn = new() { MaxWidth = ColumnWidth };
     private readonly StackPanel defaultHeader = new();
     private readonly ScrollViewer paneScroller;
-    private string activePane = "general", aboutTab = "whatsNew";
+    private string activePane = "general";
+    /// The Help & Updates tab last chosen, kept while Pacer runs, as the Mac remembers it.
+    private static string rememberedAboutTab = "whatsNew";
+    private string aboutTab { get => rememberedAboutTab; set => rememberedAboutTab = value; }
     internal const double DefaultWidth = 980, DefaultHeight = 660, MinimumWidth = 860, MinimumHeight = 560, ColumnWidth = 640, SidebarWidth = 220;
     private CheckBox? login, hideProjects, appButtons, monitorSSH;
     private TextBlock? startupStatus;
@@ -106,7 +109,8 @@ internal sealed partial class SettingsWindow : Window
         client.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
         client.ColumnDefinitions.Add(new ColumnDefinition());
         client.Children.Add(BuildSidebar());
-        var divider = new Border(); divider.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
+        // Black 25%, as the Mac draws the seam beside its sidebar.
+        var divider = new Border { Background = new SolidColorBrush(Color.FromArgb(64, 0, 0, 0)) };
         Grid.SetColumn(divider, 1); client.Children.Add(divider);
         var pane = new DockPanel(); Grid.SetColumn(pane, 2); client.Children.Add(pane);
         paneTitle = Label(ui.Text("settings.pane.general"), 22, FontWeights.Bold);
@@ -163,7 +167,7 @@ internal sealed partial class SettingsWindow : Window
         => new() { Text = text, FontSize = size, FontWeight = weight ?? FontWeights.Normal, VerticalAlignment = VerticalAlignment.Center };
     private TextBlock Detail(string text)
     {
-        var label = Label(text, 11); label.TextWrapping = TextWrapping.Wrap; label.Margin = new Thickness(0, 2, 0, 0);
+        var label = Label(text, 11.5); label.TextWrapping = TextWrapping.Wrap; label.Margin = new Thickness(0, 2, 0, 0);
         label.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); return label;
     }
     private static void Identify(DependencyObject control, string id, string name)
@@ -181,16 +185,20 @@ internal sealed partial class SettingsWindow : Window
     }
     private Border Card(params UIElement[] rows)
     {
-        var card = new Border { CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 0, 0, 12), BorderThickness = new Thickness(1) };
+        // 22 to whatever follows, as the Mac's page stack spaces its cards.
+        var card = new Border { CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 0, 0, 22), BorderThickness = new Thickness(1) };
         card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         var content = new StackPanel();
         for (int i = 0; i < rows.Length; i++)
         {
             if (i > 0)
             {
-                // A hidden optional row takes its hairline with it.
+                // A hairline shows only between two visible rows, so a hidden row takes its line with it,
+                // even when it is the first one.
                 var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
-                line.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(Visibility)) { Source = rows[i] }); content.Children.Add(line);
+                var visible = new System.Windows.Data.MultiBinding { Converter = SeparatorVisibility.Instance };
+                for (int j = 0; j <= i; j++) visible.Bindings.Add(new System.Windows.Data.Binding(nameof(Visibility)) { Source = rows[j] });
+                line.SetBinding(VisibilityProperty, visible); content.Children.Add(line);
             }
             content.Children.Add(rows[i]);
         }
@@ -237,16 +245,15 @@ internal sealed partial class SettingsWindow : Window
         updateInstall.Click += async (_, _) => await InstallInlineAsync();
         updateCancel = new Button { Content = ui.Text("common.cancel"), VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
         Identify(updateCancel, "settings.update.cancel", ui.Text("common.cancel")); updateCancel.Click += (_, _) => inlineDownload?.Cancel();
-        actions.Children.Add(update); actions.Children.Add(updateInstall); actions.Children.Add(updateCancel);
+        updateNotesButton = new Button { Content = ui.Text("main.update.notes"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0), Visibility = Visibility.Collapsed };
+        Identify(updateNotesButton, "settings.update.notes", ui.Text("main.update.notes")); updateNotesButton.Click += ReadUpdateNotes;
+        actions.Children.Add(updateNotesButton); actions.Children.Add(update); actions.Children.Add(updateInstall); actions.Children.Add(updateCancel);
         Grid.SetColumn(actions, 2); version.Children.Add(actions);
         var head = new Border { Child = version, Padding = new Thickness(14, 12, 14, 12) };
         var automatic = Toggle("updates.automatic", null, "settings.update.automatic", out var automaticSwitch); automaticUpdates = automaticSwitch;
         automaticSwitch.Checked += ChangeAutomaticUpdates; automaticSwitch.Unchecked += ChangeAutomaticUpdates;
-        updateNotesButton = new Button { Content = ui.Text("windows.updates.view_notes"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center };
-        Identify(updateNotesButton, "settings.update.notes", ui.Text("windows.updates.view_notes")); updateNotesButton.Click += ReadUpdateNotes;
-        updateNotesRow = InfoRow(ui.Text("main.update.notes"), updateNotesButton);
         RefreshUpdates();
-        form.Children.Add(Card(head, automatic, updateNotesRow));
+        form.Children.Add(Card(head, automatic));
     }
     /// Startup, language and privacy, as on the Mac. App buttons moved to
     /// Appearance and SSH to Remote; Windows has no Dock, so no icon choice.
@@ -270,15 +277,16 @@ internal sealed partial class SettingsWindow : Window
         editors.Add(startupSettings);
         startupRow = Row(startupStatus, startupSettings);
         form.Children.Add(SectionTitle(ui.Text("main.section.startup"), 0)); form.Children.Add(Card(loginRow, startupRow));
-        language = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MinWidth = 140, MaxWidth = 240, SelectedValuePath = "Tag" };
+        language = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MaxWidth = 240, SelectedValuePath = "Tag" };
         foreach (var choice in new[] { ("system", ui.Text("windows.language.system")), ("en", "English"), ("zh-Hans", "简体中文") })
             language.Items.Add(new ComboBoxItem { Content = choice.Item2, Tag = choice.Item1 });
         Identify(language, "settings.language", ui.Text("language.label"));
         language.SelectionChanged += async (_, _) => { if (!synchronizing && language.SelectedValue is string value) await Change(p => p with { Language = value }); };
         editors.Add(language);
-        var restartButton = new Button { Content = ui.Text("language.restart_now"), VerticalAlignment = VerticalAlignment.Center };
+        // A row titled with the hint and the accent button, as on the Mac.
+        var restartButton = new Button { Content = ui.Text("language.restart_now"), VerticalAlignment = VerticalAlignment.Center, Style = (Style)FindResource("SettingsProminentButton") };
         Identify(restartButton, "settings.restart", ui.Text("language.restart_now")); restartButton.Click += (_, _) => RestartRequested?.Invoke(); editors.Add(restartButton);
-        restartHint = Detail(ui.Text("language.restart_hint"));
+        restartHint = Label(ui.Text("language.restart_hint")); restartHint.TextWrapping = TextWrapping.Wrap;
         restart = new Border { Child = Row(restartHint, restartButton), Visibility = Visibility.Collapsed };
         form.Children.Add(SectionTitle(ui.Text("main.section.language"))); form.Children.Add(Card(Row(Label(ui.Text("language.label")), language), restart));
         var privacy = Toggle("settings.hide_projects", "settings.hide_projects_help", "settings.hide_projects", out var privacySwitch); hideProjects = privacySwitch;
@@ -399,7 +407,7 @@ internal sealed partial class SettingsWindow : Window
             login = hideProjects = appButtons = monitorSSH = null; startupStatus = null; startupRow = null;
             SetPaneHeader(defaultHeader); paneSubtitle.Text = ""; paneSubtitle.Visibility = Visibility.Collapsed;
             quotaRows.Clear(); ClearOverview(); form.MaxWidth = headerColumn.MaxWidth = ColumnWidth; language = null; restart = null; restartHint = null;
-            automaticUpdates = null; updateCheck = updateNotesButton = updateInstall = updateCancel = null; updateNotesRow = null; updateStatus = null; updateProgress = null;
+            automaticUpdates = null; updateCheck = updateNotesButton = updateInstall = updateCancel = null; updateStatus = null; updateProgress = null;
             ClearAppearance();
             ClearCodex();
             ClearClaude();
@@ -500,4 +508,16 @@ internal sealed partial class SettingsWindow : Window
         try { using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"); return key?.GetValue("AppsUseLightTheme") is int value && value == 0; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return false; }
     }
+}
+
+/// Shows a card's hairline when its row (the last value) and any row above it are visible.
+internal sealed class SeparatorVisibility : System.Windows.Data.IMultiValueConverter
+{
+    internal static readonly SeparatorVisibility Instance = new();
+    public object Convert(object[] values, System.Type targetType, object parameter, System.Globalization.CultureInfo culture)
+    {
+        bool Visible(object value) => value is Visibility visibility && visibility == Visibility.Visible;
+        return values.Length > 0 && Visible(values[^1]) && values.Take(values.Length - 1).Any(Visible) ? Visibility.Visible : Visibility.Collapsed;
+    }
+    public object[] ConvertBack(object value, System.Type[] targetTypes, object parameter, System.Globalization.CultureInfo culture) => throw new System.NotSupportedException();
 }

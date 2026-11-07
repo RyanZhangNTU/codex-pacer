@@ -83,7 +83,8 @@ internal sealed partial class SettingsWindow
         string summary = providerConnectionClosed ? ui.Text("windows.connection.closed") : page?.Title ?? ui.Text("connections.summary.checking");
         if (!providerConnectionClosed && page?.Detail is { Length: > 0 } detail) summary += " · " + detail;
         connectionTitle.Text = summary; AutomationProperties.SetName(connectionTitle, summary);
-        connectionTitle.SetResourceReference(TextBlock.ForegroundProperty, page?.Tone == "warning" ? "SettingsWarning" : "SettingsSecondary");
+        // The header line stays secondary, as the Mac's page subtitle; problems show on their rows.
+        connectionTitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         connectionRetryRow!.Visibility = page?.Retry == true ? Visibility.Visible : Visibility.Collapsed;
         connectionRetry!.IsEnabled = available && page?.State != "disabled";
         string content = JsonSerializer.Serialize(new { page, snapshot?.Sources, snapshot?.ClaudeRemoteSetups, available });
@@ -97,14 +98,14 @@ internal sealed partial class SettingsWindow
             var module = source.Module; var details = new StackPanel();
             details.Children.Add(StatusLine((source.Kind == source.Name ? "" : source.Kind + " · ") + module.Label, module.Tone));
             QuotaLines(module, snapshot, details);
-            var row = ConnectionRow(ProviderTile(module.Provider), source.Name, details, ModuleActions(module, snapshot, available, module.State == "connected" ? module.SessionsText : ""));
+            var row = ConnectionRow(ProviderTile(module.Provider), source.Name, details, ModuleActions(module, snapshot, available, module.State == "connected" ? SessionCount(module.Sessions) : ""));
             Identify(row, "settings.connections.source." + source.Id, source.Name + " " + module.Label);
             // Remote Control sessions sit under their switch; SSH hosts are listed by host below.
             if (source.Key.StartsWith("remote-control:", StringComparison.Ordinal)) { connectionControl.Children.Add(Hairline(14)); connectionControl.Children.Add(row); }
             else if (!source.Key.StartsWith("remote-ssh-discovered:", StringComparison.Ordinal))
             { if (others++ > 0) connectionSources.Children.Add(Hairline(14)); connectionSources.Children.Add(row); }
         }
-        connectionOthers!.Visibility = others > 0 || page.Retry ? Visibility.Visible : Visibility.Collapsed;
+        connectionOthers!.Visibility = others > 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var host in page.Hosts)
         {
             var details = new StackPanel(); var modules = new WrapPanel(); details.Children.Add(modules);
@@ -138,9 +139,11 @@ internal sealed partial class SettingsWindow
         return row;
     }
     private static Border ProviderTile(string provider, double size = 22) => GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), size, true);
-    private Border Hairline(double inset)
+    /// A connected source's session count, including none, as the Mac shows it.
+    private string SessionCount(int sessions) => sessions == 1 ? ui.Text("connections.sessions_one") : ui.Text("connections.sessions").Replace("%ld", sessions.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal);
+    private Border Hairline(double inset, double end = 14)
     {
-        var line = new Border { Height = 1, Margin = new Thickness(inset, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); return line;
+        var line = new Border { Height = 1, Margin = new Thickness(inset, 0, end, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); return line;
     }
     /// A colored dot before the state, in warning color only when something needs attention.
     private StackPanel StatusLine(string text, string tone)

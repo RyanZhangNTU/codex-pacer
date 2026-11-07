@@ -69,9 +69,9 @@ internal sealed partial class SettingsWindow
     };
     private static Color ProviderTint(string pane) => pane switch
     {
-        "codex" => Color.FromRgb(102, 205, 187),
-        "claude" => Color.FromRgb(255, 164, 119),
-        _ => Color.FromRgb(126, 150, 255)
+        "codex" => Color.FromRgb(125, 214, 196),
+        "claude" => Color.FromRgb(242, 156, 107),
+        _ => Color.FromRgb(123, 147, 255)
     };
 
     private UIElement BuildSidebar()
@@ -113,7 +113,7 @@ internal sealed partial class SettingsWindow
         search = new TextBox { Style = (Style)FindResource("SettingsSearchInput"), VerticalAlignment = VerticalAlignment.Stretch };
         Identify(search, "settings.search", ui.Text("main.search")); Grid.SetColumn(search, 1); grid.Children.Add(search);
         searchClear = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 22, Height = 22, Padding = new Thickness(0), Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
-        var clearGlyph = new IconGlyph { Symbol = "xmark.circle", Width = 13, Height = 13 }; clearGlyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        var clearGlyph = new IconGlyph { Symbol = "xmark.circle.fill", Width = 13, Height = 13 }; clearGlyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
         searchClear.Content = clearGlyph; Identify(searchClear, "settings.search.clear", ui.Text("main.search_clear"));
         searchClear.Click += (_, _) => { if (search != null) { search.Clear(); search.Focus(); } };
         Grid.SetColumn(searchClear, 2); grid.Children.Add(searchClear);
@@ -160,7 +160,14 @@ internal sealed partial class SettingsWindow
         {
             var result = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Margin = new Thickness(0, 0, 0, 2) };
             result.SetResourceReference(ForegroundProperty, "SettingsPrimary");
-            result.Content = RowContent(pane, result, null);
+            // A result is the row it leads to: its Off label, its attention dot and, for the open page, the selection.
+            var end = new StackPanel { Orientation = Orientation.Horizontal };
+            if (moduleOff.TryGetValue(pane, out var off) && off.Visibility == Visibility.Visible)
+            { var copy = Label(off.Text, 11); copy.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); end.Children.Add(copy); }
+            if (attentionDots.TryGetValue(pane, out var dot) && dot.Visibility == Visibility.Visible)
+                end.Children.Add(new Ellipse { Width = 7, Height = 7, Fill = PacerPalette.Attention, VerticalAlignment = VerticalAlignment.Center });
+            if (pane == activePane) result.SetResourceReference(BackgroundProperty, "SettingsSidebarSelection");
+            result.Content = RowContent(pane, result, end);
             Identify(result, "settings.search.result." + pane, PaneTitle(pane));
             result.Click += (_, _) => ChooseFromSearch(pane);
             searchResults.Children.Add(result);
@@ -188,7 +195,7 @@ internal sealed partial class SettingsWindow
         {
             // Amber only says that something needs the user.
             var dot = new Ellipse { Width = 7, Height = 7, Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
-            dot.SetResourceReference(Shape.FillProperty, "SettingsWarning"); AutomationProperties.SetName(dot, ui.Text("main.needs_attention"));
+            dot.Fill = PacerPalette.Attention; AutomationProperties.SetName(dot, ui.Text("main.needs_attention"));
             AutomationProperties.SetAutomationId(dot, "settings.pane." + pane + ".attention"); attentionDots[pane] = dot; end.Children.Add(dot);
         }
         button.Content = RowContent(pane, button, end);

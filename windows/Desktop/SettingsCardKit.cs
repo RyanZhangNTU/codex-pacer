@@ -14,7 +14,7 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     /// A small gray title over a card, like the Mac's section labels.
-    private TextBlock SectionTitle(string text, double top = 10)
+    private TextBlock SectionTitle(string text, double top = 0)
     {
         var title = Label(text, 12, FontWeights.SemiBold); title.Margin = new Thickness(4, top, 0, 8);
         title.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
@@ -25,16 +25,17 @@ internal sealed partial class SettingsWindow
     /// A gray note under a card.
     private TextBlock CardFooter(string text)
     {
-        var note = Detail(text); note.FontSize = 11.5; note.Margin = new Thickness(4, -4, 4, 12); return note;
+        var note = Detail(text); note.FontSize = 11.5; note.Margin = new Thickness(4, -14, 4, 22); return note;
     }
 
     /// One row: a title with an optional ⓘ, an optional line under it, then the
     /// row's own control at its end. The ⓘ opens the explanation under the row.
     private Grid InfoRow(string title, UIElement? trailing, string? info = null, TextBlock? detail = null, string? id = null, double minHeight = 44)
     {
-        var row = new Grid { MinHeight = minHeight, Margin = new Thickness(14, 0, 14, 0) };
+        var row = new Grid { Margin = new Thickness(14, 0, 14, 0) };
         row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        // The minimum belongs to the title line, so a short row centers its content as on the Mac.
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = minHeight }); row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 8, 8, 8) };
         // A wrap panel lets a long title wrap in a narrow card instead of being clipped.
         var heading = new WrapPanel();
@@ -71,13 +72,7 @@ internal sealed partial class SettingsWindow
         string name = ui.Text("main.info").Replace("%@", title, StringComparison.Ordinal);
         Identify(button, (id ?? "settings.row") + ".info", name);
         AutomationProperties.SetItemStatus(button, ui.Text("main.info_hidden"));
-        button.Click += (_, _) =>
-        {
-            bool show = box.Visibility != Visibility.Visible;
-            box.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-            glyph.SetResourceReference(IconGlyph.InkProperty, show ? "SettingsPrimary" : "SettingsSecondary");
-            AutomationProperties.SetItemStatus(button, ui.Text(show ? "main.info_shown" : "main.info_hidden"));
-        };
+        button.Click += (_, _) => SetInfoShown(button, box, box.Visibility != Visibility.Visible);
         return button;
     }
 
@@ -189,6 +184,24 @@ internal sealed partial class SettingsWindow
     /// Replaces the plain page title with a page's own header.
     private void SetPaneHeader(UIElement content)
     {
-        headerColumn.Children.Clear(); headerColumn.Children.Add(content);
+        headerColumn.Children.Clear();
+        // The default title may have been lent to a header with a trailing control.
+        if (content is FrameworkElement { Parent: Panel lender }) lender.Children.Remove(content);
+        headerColumn.Children.Add(content);
+    }
+    /// The default title and subtitle with a control at the header's end, as the Mac's PageHeader trailing.
+    private void SetPaneHeader(FrameworkElement trailing, bool keepTitle)
+    {
+        var header = new Grid(); header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerColumn.Children.Clear(); header.Children.Add(defaultHeader);
+        trailing.VerticalAlignment = VerticalAlignment.Center; trailing.Margin = new Thickness(12, 0, 0, 0); Grid.SetColumn(trailing, 1); header.Children.Add(trailing);
+        headerColumn.Children.Add(header);
+    }
+    /// Shows or hides an info button's explanation and paints the button to match.
+    private void SetInfoShown(Button button, UIElement box, bool show)
+    {
+        box.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (button.Content is IconGlyph glyph) glyph.SetResourceReference(IconGlyph.InkProperty, show ? "SettingsPrimary" : "SettingsSecondary");
+        AutomationProperties.SetItemStatus(button, ui.Text(show ? "main.info_shown" : "main.info_hidden"));
     }
 }

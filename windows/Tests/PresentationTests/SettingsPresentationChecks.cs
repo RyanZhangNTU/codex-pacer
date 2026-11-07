@@ -83,7 +83,7 @@ internal static class SettingsPresentationChecks
                 "Clearing the search restores the grouped pages and keeps the current one");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");
             var login = Find<CheckBox>(window, "settings.startup");
-            Check(privacy.ActualWidth == 36 && privacy.ActualHeight == 18 && privacy.IsChecked == false && session.Current.ShowAppButtons,
+            Check(privacy.ActualWidth == 38 && privacy.ActualHeight == 22 && privacy.IsChecked == false && session.Current.ShowAppButtons,
                 "Switch geometry and defaults must match the source preferences");
             string screenshot = Path.Combine(output, "settings-" + scenario + "-general.png");
             window.CapturePreview(screenshot); CheckOpaque(screenshot, window);
@@ -192,17 +192,19 @@ internal static class SettingsPresentationChecks
             await Until(() => Find<RadioButton>(window, "appearance.mode.notch").IsChecked == true && !rejectSave,
                 "A failed mode write restores the selected appearance");
             Select(Find<RadioButton>(window, "appearance.mode.free"));
-            await Until(() => session.Current.DisplayMode == "floating" && resetPosition.IsVisible && resetPosition.IsEnabled,
-                "Free Move starts at the untouched center and offers a reset");
+            // At the untouched center there is nothing to return to, so the reset waits, as on the Mac.
+            await Until(() => session.Current.DisplayMode == "floating" && resetPosition.IsVisible && !resetPosition.IsEnabled,
+                "Free Move starts at the untouched center with nothing to reset");
             Check(!session.Current.HasChosenPosition && session.Current.IslandPlacement == null,
                 "Toggling modes does not invent a position");
             var placement = new IslandPlacement(IslandEdge.Right, 1, .62);
             await session.ChangeAsync(p => p with { IslandPlacement = placement });
+            await Until(() => resetPosition.IsEnabled, "A saved placement offers the reset");
             rejectSave = true; Invoke(resetPosition);
             await Until(() => !rejectSave && resetPosition.IsEnabled, "A failed position reset must settle");
             Check(session.Current.IslandPlacement == placement, "A failed reset retains the last saved placement");
             Invoke(resetPosition);
-            await Until(() => session.Current.IslandPlacement == null && resetPosition.IsEnabled, "Reset returns to the untouched center");
+            await Until(() => session.Current.IslandPlacement == null && !resetPosition.IsEnabled, "Reset returns to the untouched center");
             Check(session.Current.Position == "center" && configureCalls == 3,
                 "Appearance choices and navigation cannot restart data collectors");
             Select(Find<RadioButton>(window, "settings.pane.remote"));
