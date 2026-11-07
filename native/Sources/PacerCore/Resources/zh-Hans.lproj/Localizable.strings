@@ -899,6 +899,8 @@
 "whats_new.cloud_projects_detail" = "项目里的线程和协调现在会出现在任务列表中，带云朵图标和项目名。使用你的 claude.ai 登录，可在“设置 → Claude”中关闭。";
 "whats_new.cloud_coordination" = "线程与协调";
 "whats_new.cloud_coordination_detail" = "线程等你决定或回复、已解决时都会提醒，在 Claude 中读过已解决的线程后，这里的卡片会自动消失。线程写回复时显示估算速度，一轮结束后显示真实速度。";
+"whats_new.progress_ring" = "Claude 进度环";
+"whats_new.progress_ring_detail" = "在“设置 → Claude”中打开后，Claude 会报告请求完成了多少，显示为任务图标外的圆环。Claude 等待后台工作时圆环保持等待，请求完成时填满。";
 "whats_new.free_move" = "自由移动灵动岛";
 "whats_new.free_move_detail" = "按住状态栏，把灵动岛拖到顺手的位置，靠近屏幕边缘松手会贴边。外观设置里的固定位置改为“自由拖动”。";
 "whats_new.subagent_endings" = "后台子代理按时结束";

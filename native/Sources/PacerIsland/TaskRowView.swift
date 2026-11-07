@@ -66,6 +66,7 @@ struct TaskRowView: View {
         return activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
     }
     private var symbol: String { StatusSymbols.symbol(presentation.symbol) }
+    private var progressRing: TaskProgressRing? { presentation.progressRing }
 
     var body: some View {
         Button(action: action) {
@@ -95,7 +96,8 @@ struct TaskRowView: View {
     }
 
     private var accessibilityText: String {
-        let state = [unread ? L10n.text("common.not_viewed") : nil, status, turnTime, subagents > 0 ? subagentText : nil]
+        let state = [unread ? L10n.text("common.not_viewed") : nil, status, progressRing?.accessibilityText, turnTime,
+                     subagents > 0 ? subagentText : nil]
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + (activity.claudeCloud == nil || rate != nil ? ", " + performanceText : "")
@@ -104,7 +106,7 @@ struct TaskRowView: View {
 
     private func rowContent(measuring: Bool) -> some View {
         HStack(spacing: 10) {
-            StatusGlyph(symbol: symbol, tint: color)
+            statusIcon(measuring: measuring)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 16) {
                     Text(name).font(.system(size: 13, weight: .semibold))
@@ -119,6 +121,23 @@ struct TaskRowView: View {
             }
         }
         .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
+    }
+
+    /// The icon gives the progress ring room: 20 pt alone, 16 pt inside the
+    /// ring, where an ending glyph drops its own circle so the ring is the only
+    /// outline. The width probe draws no ring, so only the shown row moves it.
+    private func statusIcon(measuring: Bool) -> some View {
+        ZStack {
+            if !measuring {
+                TaskProgressRingView(id: activity.id, ring: progressRing, color: color, animates: !reduceMotion)
+                    .frame(width: TaskProgressRingNSView.diameter, height: TaskProgressRingNSView.diameter)
+                    .accessibilityHidden(true)
+            }
+            StatusGlyph(symbol: progressRing == nil ? symbol : StatusSymbols.enclosed(symbol), tint: color)
+                .scaleEffect(progressRing == nil ? 1 : 0.8)
+                .animation(reduceMotion ? nil : .easeOut(duration: progressRing == nil ? 0.3 : 0.25), value: progressRing == nil)
+        }
+        .frame(width: TaskProgressRingNSView.diameter, height: TaskProgressRingNSView.diameter)
     }
 
     /// Local SDK/ACP rows name the app that started their session.

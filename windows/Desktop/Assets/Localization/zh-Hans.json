@@ -870,6 +870,8 @@
     "whats_new.mark_all_read": "全部标为已读",
     "whats_new.mark_all_read_detail": "点击固定按钮旁的新按钮，即可一次清除所有页面中已结束的任务。运行中以及等你回复或审批的任务不受影响。",
     "whats_new.open_at_login": "随 Mac 一起启动 Pacer，之后可随时在“设置 > 通用”中更改。",
+    "whats_new.progress_ring": "Claude 进度环",
+    "whats_new.progress_ring_detail": "在“设置 → Claude”中打开后，Claude 会报告请求完成了多少，显示为任务图标外的圆环。Claude 等待后台工作时圆环保持等待，请求完成时填满。",
     "whats_new.release_notes": "发布说明",
     "whats_new.remote_control": "Remote Control 连接更清晰",
     "whats_new.remote_control_detail": "通过设备名称识别远程任务，清楚区分在线、离线和等待会话的状态。",

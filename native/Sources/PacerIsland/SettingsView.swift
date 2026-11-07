@@ -46,6 +46,7 @@ struct SettingsView: View {
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
     @AppStorage(IslandModel.showsClaudeCloudProjectsKey) private var showClaudeCloudProjects = true
+    @AppStorage(IslandModel.claudeProgressRingKey) private var claudeProgressRing = false
     @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
@@ -360,6 +361,10 @@ struct SettingsView: View {
                     Text(L10n.text("claude.cloud_projects_help"))
                 }
                 embeddedSessionsToggle(.claude)
+                Toggle(isOn: $claudeProgressRing) {
+                    Text(L10n.text("claude.progress_ring"))
+                    Text(L10n.text("claude.progress_ring_help"))
+                }
             }
             DisclosureGroup(L10n.text("provider.custom_locations"), isExpanded: Binding(
                 get: { expandedLocations.contains(provider) },
@@ -738,7 +743,7 @@ struct SettingsView: View {
             quotaStyle: quotaStyle, deepseekPanelStyle: deepseekPanelStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
-            showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
+            showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
             showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
             quotaRings: quotaRings)
     }
@@ -868,6 +873,7 @@ private struct LiveSettings: Equatable {
     var showEmbeddedClaudeSessions: Bool
     var showEmbeddedCodexSessions: Bool
     var showClaudeCloudProjects: Bool
+    var claudeProgressRing: Bool
     var deepseekSource: DeepSeekBalanceSource
     var deepseekLowBalance: Double?
     var showsDeepSeekTurnCost: Bool
