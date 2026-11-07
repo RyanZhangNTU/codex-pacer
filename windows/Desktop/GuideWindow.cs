@@ -81,12 +81,12 @@ internal sealed class GuideWindow : Window
         Loaded += (_, _) => { Fit(); FocusDefault(); };
         DpiChanged += (_, _) => Fit(); LocationChanged += (_, _) => { if (IsLoaded) Fit(); };
         KeyDown += (_, args) => { if (args.Key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None) { Close(); args.Handled = true; } };
-        appearance.Changed += AppearanceChanged;
+        appearance.Changed += AppearanceChanged; body.LookChanged += AppearanceChanged;
         IsVisibleChanged += (_, _) => { body.IsEnabled = footer.IsEnabled = IsVisible && !closed; };
         Loaded += (_, _) => ApplyAppearance();
         Closed += (_, _) =>
         {
-            closed = true; IsEnabled = false; appearance.Changed -= AppearanceChanged;
+            closed = true; IsEnabled = false; appearance.Changed -= AppearanceChanged; body.LookChanged -= AppearanceChanged;
             semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose();
         };
     }
@@ -94,8 +94,9 @@ internal sealed class GuideWindow : Window
     protected override AutomationPeer OnCreateAutomationPeer() => new VisibleWindowAutomationPeer(this);
     private void ApplyAppearance()
     {
-        var state = appearance.Current; DesktopAppearance.Apply(this, state);
-        SettingsPalette.Apply(Resources, darkOverride ?? state.Dark, true, state, main: true); semanticPaint.Apply(state);
+        var system = appearance.Current; var state = system with { Dark = AccentPalette.Dark(body.Preferences.AppTheme, system.Dark) };
+        DesktopAppearance.Apply(this, state);
+        SettingsPalette.Apply(Resources, darkOverride ?? state.Dark, true, state, main: true, AccentPalette.Controls(body.Preferences.AccentColor, ownsAppearance && darkOverride == null)); semanticPaint.Apply(state);
     }
     private Button CreateButton(string key, string id, Action action, bool primary = false)
     {

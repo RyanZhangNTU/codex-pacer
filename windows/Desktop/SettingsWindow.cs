@@ -354,8 +354,13 @@ internal sealed partial class SettingsWindow : Window
         foreach (var item in navigation) item.Value.IsEnabled = enabled && PaneAvailable(item.Key);
         RefreshConnections();
     }
+    private string appliedLook = "";
     private void OnPreferencesChanged(DesktopPreferences value)
-    { if (!ReadOnlyGuidePane(activePane) && ResolvePane(value.LastSettingsPane) != activePane) RebuildPane(value.LastSettingsPane); RefreshValues(); }
+    {
+        string look = value.AppTheme + "/" + value.AccentColor;
+        if (look != appliedLook) { appliedLook = look; PacerPalette.ApplyAccent(value.AccentColor); RefreshTheme(); overviewKey = historyKey = null; }
+        if (!ReadOnlyGuidePane(activePane) && ResolvePane(value.LastSettingsPane) != activePane) RebuildPane(value.LastSettingsPane); RefreshValues();
+    }
     private string ResolvePane(string value)
     {
         value = CanonicalPane(value);
@@ -478,8 +483,11 @@ internal sealed partial class SettingsWindow : Window
     private void OnAppearanceChanged() => Dispatcher.InvokeAsync(() => { if (!sourceClosed) RefreshTheme(); });
     private void RefreshTheme()
     {
-        var state = appearance.Current; DesktopAppearance.Apply(this, state);
-        semanticPaint.Apply(state); bool dark = darkOverride ?? state.Dark; SettingsPalette.Apply(Resources, dark, IsActive, state, main: true);
+        // The window theme overrides Windows' light or dark choice; the island stays dark.
+        var system = appearance.Current; var state = system with { Dark = AccentPalette.Dark(session.Current.AppTheme, system.Dark) };
+        DesktopAppearance.Apply(this, state);
+        semanticPaint.Apply(state); bool dark = darkOverride ?? state.Dark;
+        SettingsPalette.Apply(Resources, dark, IsActive, state, main: true, AccentPalette.Controls(session.Current.AccentColor, !demo));
         RefreshSurfaceStatus();
     }
     internal static bool IsSystemDark()

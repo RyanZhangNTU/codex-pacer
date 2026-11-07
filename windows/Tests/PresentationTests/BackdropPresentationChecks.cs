@@ -44,7 +44,7 @@ internal static class BackdropPresentationChecks
                 pattern.Expand(); await window.WaitForPresentationAsync();
                 Check(pattern.ExpandCollapseState == ExpandCollapseState.Expanded && window.GlassVisible, "Accessible expansion restores the glass panel");
                 system.Set(new(26200, false, false)); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-                Check(!window.GlassVisible && ((SolidColorBrush)shell.Background).Color == Color.FromRgb(11, 12, 14), "System fallback makes the real WPF surface opaque Black");
+                Check(!window.GlassVisible && ((SolidColorBrush)shell.Background).Color == Color.FromRgb(0, 0, 0), "System fallback makes the real WPF surface opaque Black");
                 Check(window.SurfaceDecision.Preferred == "liquidGlass", "Fallback leaves the preference intact");
                 system.Set(new(26200, true, false)); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
                 Check(window.GlassVisible && surfaces.Count == 2, "Restoring system effects recreates the native material");

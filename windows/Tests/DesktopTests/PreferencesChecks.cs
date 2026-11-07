@@ -49,6 +49,10 @@ internal static class PreferencesChecks
             foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
                 Check(store.Save(original with { LastSettingsPane = pane }) && store.Load().Value.LastSettingsPane == pane, "The settings page survives a save: " + pane);
             Check(store.Save(original with { LastSettingsPane = "future-page" }) && store.Load().Value.LastSettingsPane == "overview", "An unknown page opens Overview, as on the Mac");
+            Check(store.Save(original with { AppTheme = "dark", AccentColor = "graphite" }) && store.Load().Value is { AppTheme: "dark", AccentColor: "graphite" }
+                && File.ReadAllText(file).Contains("\"appTheme\": \"dark\"") && File.ReadAllText(file).Contains("\"accentColor\": \"graphite\""),
+                "Theme and accent save under the Mac's keys");
+            Check(!store.Save(original with { AccentColor = "teal" }) && !store.Save(original with { AppTheme = "dim" }), "Unknown themes and accents cannot be saved");
             Check(store.Save(original), "Restore the original saved fixture before rejected-write assertions");
             Check(restored.Value.IslandAppearance == "classic" && JsonDocument.Parse(before).RootElement.GetProperty("islandAppearance").GetString() == "classic",
                 "The original appearance key and value survive relaunch");

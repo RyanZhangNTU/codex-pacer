@@ -107,6 +107,23 @@
    </ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
+ <!-- Appearance's accent swatch: a filled circle, ringed when chosen, as in System Settings. -->
+ <Style x:Key="SettingsAccentSwatch" TargetType="RadioButton">
+  <Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/><Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+   <Grid Background="Transparent">
+    <Ellipse x:Name="Ring" Stroke="{DynamicResource SettingsPrimary}" StrokeThickness="2" Opacity="0"/>
+    <Ellipse Margin="4" Fill="{TemplateBinding Background}" Stroke="#26000000" StrokeThickness="0.5"/>
+    <Ellipse x:Name="Dot" Width="6" Height="6" Fill="White" Visibility="Collapsed"/>
+   </Grid>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Ring" Property="Opacity" Value="0.55"/><Setter TargetName="Dot" Property="Visibility" Value="Visible"/></Trigger>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Ring" Property="Opacity" Value="0.3"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Ring" Property="Opacity" Value="1"/></Trigger>
+    <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
  <!-- History's rounded provider chips. -->
  <Style x:Key="SettingsChip" TargetType="RadioButton">
   <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/>
@@ -202,14 +219,13 @@
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox">
    <Grid>
     <ToggleButton Focusable="False" AutomationProperties.Name="{Binding (AutomationProperties.Name), RelativeSource={RelativeSource TemplatedParent}}" Foreground="{TemplateBinding Foreground}" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
-     <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Border x:Name="Surface" Background="Transparent" CornerRadius="5" Padding="5,3">
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="20"/></Grid.ColumnDefinitions>
-       <TextBlock Text="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ComboBox}}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,9,0"/>
-       <Border Grid.Column="1" Width="20" Height="20" CornerRadius="10" Background="{DynamicResource SettingsButton}">
-        <Path Stroke="{DynamicResource SettingsSecondary}" StrokeThickness="1.25" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M6,8 L10,5 L14,8 M6,12 L10,15 L14,12"/>
-       </Border>
+     <!-- The Mac's outline picker: the current choice and a chevron inside a thin rounded stroke. -->
+     <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Border x:Name="Surface" Background="Transparent" BorderBrush="{DynamicResource SettingsPickerStroke}" BorderThickness="1" CornerRadius="7" Padding="9,0,7,0" MinHeight="26">
+      <Grid VerticalAlignment="Center"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <TextBlock Text="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ComboBox}}" FontSize="12.5" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,8,0" TextTrimming="CharacterEllipsis"/>
+       <Path Grid.Column="1" Width="10" Height="10" Stretch="Uniform" Stroke="{DynamicResource SettingsSecondary}" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M1,3 L5,7 L9,3" VerticalAlignment="Center"/>
       </Grid>
-     </Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsHover}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></ToggleButton.Template>
+     </Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsPickerFill}"/><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsPickerHover}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></ToggleButton.Template>
     </ToggleButton>
     <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="None">
      <Border Background="{DynamicResource SettingsPopup}" BorderBrush="{DynamicResource SettingsSeparator}" BorderThickness="1" CornerRadius="7" Padding="4" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
@@ -223,8 +239,11 @@
  <Style TargetType="ComboBoxItem">
   <Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/><Setter Property="Padding" Value="8,5"/>
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem">
-   <Border x:Name="Surface" CornerRadius="4" Padding="{TemplateBinding Padding}"><TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"/></Border>
-   <ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsAccent}"/><Setter Property="Foreground" Value="{DynamicResource SettingsSelectionText}"/></Trigger></ControlTemplate.Triggers>
+   <!-- The current choice carries a check, as in the Mac's menu. -->
+   <Border x:Name="Surface" CornerRadius="4" Padding="{TemplateBinding Padding}"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition/></Grid.ColumnDefinitions>
+    <Path x:Name="Check" Width="10" Height="9" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource TemplatedParent}}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M1,5 L4,8 L9,1" Visibility="Hidden" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+    <TextBlock Grid.Column="1" Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"/></Grid></Border>
+   <ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter TargetName="Check" Property="Visibility" Value="Visible"/></Trigger><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsAccent}"/><Setter Property="Foreground" Value="{DynamicResource SettingsSelectionText}"/></Trigger></ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
  <Style TargetType="TextBox">

@@ -59,6 +59,11 @@ internal sealed record DesktopPreferences
     public double? DeepSeekSpikeLimit { get; init; }
     public bool? PositionChosen { get; init; }
     public string LastSettingsPane { get; init; } = "overview";
+    // The Mac's window theme and accent keys and values.
+    public string AppTheme { get; init; } = "auto";
+    public string AccentColor { get; init; } = "multicolor";
+    internal static readonly string[] AccentChoices = ["multicolor", "blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"];
+    internal static bool ValidAccent(string? value) => value != null && AccentChoices.Contains(value);
     public bool HideProjects { get; init; }
     public bool ShowAppButtons { get; init; } = true;
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
@@ -101,6 +106,7 @@ internal sealed record DesktopPreferences
         && WarningKinds is { Length: <= 6 } && WarningKinds.Distinct().Count() == WarningKinds.Length
         && WarningKinds.All(value => value is "fiveHour" or "ssh" or "quotaDelay" or "lowBalance" or "spendSpike" or "budget")
         && LastSettingsPane is { Length: > 0 and <= 64 } && !LastSettingsPane.Any(char.IsControl)
+        && AppTheme is "auto" or "light" or "dark" && ValidAccent(AccentColor)
         && RetentionMinutes is >= 0 and <= 10080
         && ValidPath(CodexExecutable) && ValidPath(CodexHome) && ValidPath(ClaudeHome) && ValidPath(DeepseekHome)
         && (ClaudeOrganization == "" || ClaudeOrganization is { Length: 36 } && Guid.TryParseExact(ClaudeOrganization, "D", out _))

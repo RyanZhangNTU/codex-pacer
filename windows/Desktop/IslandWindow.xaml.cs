@@ -287,6 +287,7 @@ public partial class IslandWindow : Window
     }
     internal void Reveal() { if (presentationStopped || updateInputSuspended) return; RecordInteraction("reveal"); RequestIslandVisibility(); SetPinned(true); SetExpanded(true); }
     internal Task SynchronizeExpansionAsync() => Send("setExpanded", new { expanded });
+    private string paintedAccent = "multicolor";
     internal void ApplyPreferences(DesktopPreferences preferences)
     {
         bool screenChanged = compactPreferences.DisplaySelection != preferences.DisplaySelection || compactPreferences.DisplayID != preferences.DisplayID
@@ -296,9 +297,13 @@ public partial class IslandWindow : Window
         if (screenChanged || placementChanged) CancelMove();
         compactPreferences = preferences;
         PreferSurface(preferences.IslandAppearance);
+        // A new accent repaints the services' colors in the quota views and rows.
+        PacerPalette.ApplyAccent(preferences.AccentColor);
+        bool accentChanged = paintedAccent != PacerPalette.Accent; paintedAccent = PacerPalette.Accent;
         position = Array.IndexOf(new[] { "center", "topLeft", "bottomLeft", "topRight", "bottomRight" }, preferences.Position);
         displayMode = Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode);
         showAppButtons = preferences.ShowAppButtons;
+        if (accentChanged && latest != null) { RenderQuota(latest); BuildPage(false, 0); }
         if (expandedQuotaStyle != preferences.ExpandedQuotaStyle || deepseekPanelStyle != preferences.DeepSeekPanelStyle)
         {
             expandedQuotaStyle = preferences.ExpandedQuotaStyle;

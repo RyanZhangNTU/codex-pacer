@@ -56,6 +56,19 @@ internal static class AccessibilitySettingsChecks
             await AuditHandle(((HwndSource)PresentationSource.FromVisual(selectedItem)!).Handle, "settings.language.popup");
             languageChoice.IsDropDownOpen = false; await Drain();
             Check(saves == 0 && configurations == 0, "Inspecting and closing the current choice does not commit a preference");
+            // The window theme overrides Windows, and a single accent tints controls and shades the services, as on the Mac.
+            appearance.Set(appearance.Current with { Dark = false, HighContrast = false }); await Drain();
+            await session.ChangeAsync(p => p with { AppTheme = "dark", AccentColor = "purple" }); await Drain();
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(27, 27, 30) && ColorOf(window.Resources["SettingsAccent"]) == Color.FromRgb(0xBF, 0x5A, 0xF2),
+                "The dark theme overrides a light Windows and the accent tints the controls");
+            Check(((SolidColorBrush)PacerPalette.Codex).Color == Color.FromRgb(0xBF, 0x5A, 0xF2) && ((SolidColorBrush)PacerPalette.Claude).Color == AccentPalette.Lighten(Color.FromRgb(0xBF, 0x5A, 0xF2), .42),
+                "A single accent turns the services into its shades");
+            await session.ChangeAsync(p => p with { AppTheme = "light" }); await Drain();
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(244, 244, 246), "The light theme applies at once");
+            await session.ChangeAsync(p => p with { AppTheme = "auto", AccentColor = "multicolor" }); await Drain();
+            Check(ColorOf(window.Resources["SettingsAccent"]) == Color.FromRgb(0, 122, 255) && ((SolidColorBrush)PacerPalette.Codex).Color == ((SolidColorBrush)PacerPalette.BrandCodex).Color,
+                "Multicolor restores the brand colors, and checks keep the classic blue");
+            appearance.Set(appearance.Current with { Dark = true }); await Drain();
             appearance.Set(appearance.Current with { HighContrast = false }); await Drain();
             Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(27, 27, 30), "Leaving high contrast restores the selected system theme");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");

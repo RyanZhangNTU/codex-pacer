@@ -6,13 +6,15 @@ namespace CodexPacer.Windows;
 internal static class SettingsPalette
 {
     /// <param name="main">Pacer's main window: a gray page with white cards and a neutral sidebar selection, as on the Mac.</param>
-    internal static void Apply(ResourceDictionary resources, bool dark, bool active, SystemAppearance? appearance = null, bool main = false)
+    /// <param name="accent">The accent for buttons, switches and selections; null keeps the classic blue.</param>
+    internal static void Apply(ResourceDictionary resources, bool dark, bool active, SystemAppearance? appearance = null, bool main = false, Color? accent = null)
     {
         if (appearance is { HighContrast: true })
         {
             var colors = appearance.Colors;
             foreach (string key in new[] { "SettingsBackground", "SettingsSidebar", "SettingsPopup", "SettingsInput", "SettingsChartMaterial" }) resources[key] = DesktopAppearance.Ink(colors.Window);
-            foreach (string key in new[] { "SettingsCard", "SettingsTile", "SettingsCompactChip", "SettingsSegment", "SettingsButton", "SettingsSwitchOff", "SettingsSearchFill", "SettingsInfoFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
+            foreach (string key in new[] { "SettingsCard", "SettingsTile", "SettingsCompactChip", "SettingsSegment", "SettingsButton", "SettingsSwitchOff", "SettingsSearchFill", "SettingsInfoFill", "SettingsPickerFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
+            foreach (string key in new[] { "SettingsPickerStroke", "SettingsPickerHover" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             foreach (string key in new[] { "SettingsPrimary", "SettingsSecondary", "SettingsChartReference", "SettingsChartSecondary", "SettingsSeparator", "SettingsCardBorder" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
             foreach (string key in new[] { "SettingsAccent", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
@@ -36,6 +38,9 @@ internal static class SettingsPalette
         Overlay("SettingsSidebarSelection", dark ? (byte)36 : (byte)23, dark ? (byte)255 : (byte)0);
         Overlay("SettingsSearchFill", dark ? (byte)20 : (byte)15, dark ? (byte)255 : (byte)0);
         Overlay("SettingsInfoFill", dark ? (byte)13 : (byte)10, dark ? (byte)255 : (byte)0);
+        // The outline picker: a 16% stroke that rises to 28% with a 5% wash on hover, as on the Mac.
+        byte ink = dark ? (byte)222 : (byte)36;
+        Overlay("SettingsPickerStroke", 41, ink); Overlay("SettingsPickerHover", 71, ink); Overlay("SettingsPickerFill", 13, ink);
         Gray("SettingsSidebarSelectionText", dark ? (byte)222 : (byte)36);
         Gray("SettingsTile", dark ? (byte)45 : (byte)237);
         Gray("SettingsCompactChip", dark ? (byte)31 : (byte)251);
@@ -54,11 +59,14 @@ internal static class SettingsPalette
         Gray("SettingsSwitchOff", dark ? (byte)49 : (byte)224);
         Gray("SettingsKnob", dark ? (byte)224 : (byte)255);
         Gray("SettingsSelectionText", 255);
-        Brush("SettingsAccent", 0, 122, 255);
-        resources["SettingsAccentSoft"] = new SolidColorBrush(Color.FromArgb(36, 0, 122, 255));
+        Color tint = accent ?? Color.FromRgb(0, 122, 255);
+        Brush("SettingsAccent", tint.R, tint.G, tint.B);
+        resources["SettingsAccentSoft"] = new SolidColorBrush(Color.FromArgb(36, tint.R, tint.G, tint.B));
+        // Light accents such as yellow need dark text on their fill.
+        if (0.299 * tint.R + 0.587 * tint.G + 0.114 * tint.B > 186) Gray("SettingsSelectionText", 20);
         Brush("SettingsWarning", dark ? (byte)255 : (byte)194, dark ? (byte)146 : (byte)95, dark ? (byte)48 : (byte)0);
         Brush("SettingsSuccess", 48, 186, 85);
-        if (active) Brush("SettingsSwitchOn", 0, 122, 255);
+        if (active) Brush("SettingsSwitchOn", tint.R, tint.G, tint.B);
         else Gray("SettingsSwitchOn", dark ? (byte)81 : (byte)210);
     }
 }

@@ -96,6 +96,8 @@ internal static class PreferencesCodec
     {
         DisplaySelection = value.DisplaySelection is "primary" or "specified" ? value.DisplaySelection : "automatic",
         Language = value.Language is "en" or "zh-Hans" ? value.Language : "system",
+        AppTheme = value.AppTheme is "light" or "dark" ? value.AppTheme : "auto",
+        AccentColor = DesktopPreferences.ValidAccent(value.AccentColor) ? value.AccentColor : "multicolor",
         Position = value.Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight" ? value.Position : "center",
         DisplayMode = value.DisplayMode is "notch" or "floating" ? value.DisplayMode : "automatic",
         IslandAppearance = value.IslandAppearance is "classic" ? "classic" : "liquidGlass",

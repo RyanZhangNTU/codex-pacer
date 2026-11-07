@@ -10,7 +10,7 @@ namespace CodexPacer.Windows;
 
 public partial class IslandWindow
 {
-    private static readonly Brush SurfaceBlack = PacerPalette.Ink(11, 12, 14);
+    private static readonly Brush SurfaceBlack = PacerPalette.Ink(0, 0, 0);
     // Alpha zero makes a layered HWND pass otherwise-empty areas to the next
     // window. One alpha step keeps the existing WPF controls' input surface.
     private static readonly Brush SurfaceInput = PacerPalette.Ink(0, 0, 0, 1);
@@ -53,7 +53,7 @@ public partial class IslandWindow
     {
         Shell.Background = appearance.Current.HighContrast ? DesktopAppearance.Ink(appearance.Current.Colors.Window) : GlassVisible ? SurfaceInput : SurfaceBlack;
         double black = GlassVisible && layout.Attached ? Math.Clamp(lastFrame.BlackOpacity, 0, 1) : 0;
-        HeaderBand.Background = black > 0 ? PacerPalette.Ink(11, 12, 14, (byte)Math.Round(255 * black)) : Brushes.Transparent;
+        HeaderBand.Background = black > 0 ? PacerPalette.Ink(0, 0, 0, (byte)Math.Round(255 * black)) : Brushes.Transparent;
         var decision = SurfaceDecision;
         if (announcedSurface != decision || announcedGlass != GlassVisible)
         { announcedSurface = decision; announcedGlass = GlassVisible; SurfaceChanged?.Invoke(); }

@@ -139,7 +139,7 @@ internal sealed partial class SettingsWindow
         var attention = AttentionItems();
         string? update = updater?.CurrentOffer?.Version;
         string key = JsonSerializer.Serialize(new { snapshot?.Presentation, snapshot?.QuotaDashboard, snapshot?.Wallet, snapshot?.Modules, snapshot?.ActivityLinks,
-            attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, session.Current.ExpandedQuotaStyle, closed });
+            attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed });
         if (key == overviewKey) return;
         overviewKey = key;
         foreach (UIElement child in overviewBody.Children) PageAccessibility.Retire(child);

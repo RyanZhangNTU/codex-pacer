@@ -23,14 +23,14 @@ internal sealed partial class SettingsWindow
     private sealed record DisplayOption(string Mode, DisplayMonitor? Monitor);
 
     private void ClearAppearance()
-    { notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null;
+    { ClearAppearanceTheme(); notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null;
         displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = deepseekPanelRow = null; }
     private TextBlock SectionHeader(string key, double top = 2) => SectionTitle(ui.Text(key), top > 2 ? 10 : 0);
-    private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true)
+    private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true, double artHeight = 44)
     {
         var choice = new RadioButton { Style = (Style)FindResource("SettingsArtChoice"), GroupName = group, IsEnabled = enabled };
         var content = new StackPanel();
-        var artHost = new Grid { Height = 44 }; artHost.Children.Add(art); content.Children.Add(artHost);
+        var artHost = new Grid { Height = artHeight }; artHost.Children.Add(art); content.Children.Add(artHost);
         var title = Label(name, 12); title.HorizontalAlignment = HorizontalAlignment.Center; title.Margin = new Thickness(0, 7, 0, 0);
         title.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = choice });
         title.SetBinding(TextBlock.FontWeightProperty, new System.Windows.Data.Binding(nameof(FontWeight)) { Source = choice });
@@ -46,7 +46,9 @@ internal sealed partial class SettingsWindow
     { element.IsEnabled = false; element.ToolTip = ui.Text(key); ToolTipService.SetShowOnDisabled(element, true); }
     private void BuildAppearance()
     {
-        form.Children.Add(SectionHeader("appearance.style"));
+        // Theme, then Material (the island's surface), then Accent, then Position, as on the Mac.
+        BuildThemeSection();
+        form.Children.Add(ThemeSectionsAvailable && ui.Has("appearance.material") ? SectionTitle(ui.Text("appearance.material"), 10) : SectionHeader("appearance.style"));
         var solid = ArtChoice("appearance.style.classic", ui.Text("settings.classic"), "appearance.styles", StyleSwatch(false));
         var glass = ArtChoice("appearance.style.liquidGlass", ui.Text("settings.liquid_glass"), "appearance.styles", StyleSwatch(true));
         foreach (var choice in new[] { (Name: "classic", Button: solid), (Name: "liquidGlass", Button: glass) })
@@ -72,11 +74,13 @@ internal sealed partial class SettingsWindow
         }
         var segments = new Border { Child = quotaChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center };
         segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
+        BuildAccentSection();
         // The expanded panel's choices follow Position, as on the Mac.
         expandedQuotaRow = Row(Label(ui.Text("main.appearance.quota_style")), segments);
         form.Children.Add(SectionHeader("appearance.position", 20));
-        notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", PositionSwatch(true));
-        freeChoice = ArtChoice("appearance.mode.free", ui.Text("appearance.free_move"), "appearance.modes", PositionSwatch(false));
+        // Both positions are shown moving, with the welcome guide's scenes, as on the Mac.
+        notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", ModeScene(new WelcomeGestureScene()), artHeight: 96);
+        freeChoice = ArtChoice("appearance.mode.free", ui.Text("appearance.free_move"), "appearance.modes", ModeScene(new WelcomeMoveScene()), artHeight: 96);
         notchChoice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { DisplayMode = "notch" }); };
         freeChoice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { DisplayMode = "floating" }); };
         editors.Add(notchChoice); editors.Add(freeChoice);
@@ -106,6 +110,7 @@ internal sealed partial class SettingsWindow
     }
     private void RefreshAppearance()
     {
+        RefreshAppearanceTheme();
         RefreshDisplayChoices();
         if (fullscreenChoice != null) fullscreenChoice.IsChecked = session.Current.ShowInFullscreen;
         foreach (var item in surfaceChoices) item.Value.IsChecked = item.Key == session.Current.IslandAppearance;
@@ -200,6 +205,11 @@ internal sealed partial class SettingsWindow
         var capsule = new Border { Width = 64, Height = 16, CornerRadius = new CornerRadius(8), Background = glass ? new SolidColorBrush(Color.FromArgb(77, 0, 0, 0)) : new SolidColorBrush(Color.FromRgb(11, 12, 14)), BorderThickness = new Thickness(0.5), BorderBrush = new SolidColorBrush(Color.FromArgb(glass ? (byte)102 : (byte)15, 255, 255, 255)) };
         Canvas.SetLeft(capsule, 24); Canvas.SetTop(capsule, 12); art.Children.Add(capsule); return art;
     }
+    private static Border ModeScene(FrameworkElement scene) => new()
+    {
+        CornerRadius = new CornerRadius(7), ClipToBounds = true, Margin = new Thickness(10, 10, 10, 0), Background = new SolidColorBrush(Color.FromRgb(40, 44, 58)),
+        Child = new Viewbox { Child = scene, Stretch = Stretch.Uniform, Margin = new Thickness(8) }
+    };
     private static UIElement PositionSwatch(bool attached)
     {
         var art = Wallpaper(112, 40); art.Children.Add(new Border { Width = 112, Height = 9, Background = new SolidColorBrush(Color.FromArgb(56, 0, 0, 0)) });

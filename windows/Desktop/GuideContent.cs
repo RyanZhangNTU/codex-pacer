@@ -49,7 +49,12 @@ internal sealed class GuideContent : StackPanel
         Unloaded += (_, _) => { copyRevision++; session.Changed -= PreferencesChanged; if (engine != null) engine.Snapshot -= SnapshotChanged; if (notifications != null) notifications.Changed -= Refresh; if (code != null) code.IsOpen = false; share?.Dispose(); share = null; };
         PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape && code?.IsOpen == true) { code.IsOpen = false; args.Handled = true; } };
     }
-    private void PreferencesChanged(DesktopPreferences _) => Refresh();
+    private void PreferencesChanged(DesktopPreferences value)
+    {
+        string next = value.AppTheme + "/" + value.AccentColor;
+        if (next != look) { look = next; LookChanged?.Invoke(); }
+        Refresh();
+    }
     private void SnapshotChanged(EngineSnapshot _) => Dispatcher.InvokeAsync(Refresh);
     internal void Refresh()
     {
@@ -65,6 +70,9 @@ internal sealed class GuideContent : StackPanel
         foreach (UIElement child in Children) if (child != issue) PageAccessibility.Retire(child);
         Children.Clear(); refresh.Clear(); editors.Clear(); Children.Add(issue); issue.Text = "";
     }
+    internal DesktopPreferences Preferences => session.Current;
+    internal event Action? LookChanged;
+    private string look = "";
     internal static void Identify(DependencyObject value, string id, string name)
     { AutomationProperties.SetAutomationId(value, id); AutomationProperties.SetName(value, name); }
     private TextBlock Text(string text, double size = 13, bool bold = false)

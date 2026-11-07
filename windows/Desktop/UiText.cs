@@ -33,6 +33,8 @@ internal sealed class UiText
     }
     // Formatted business values continue to come from L10n in the engine; do
     // not create a second implementation of Apple's printf/locale formatting.
+    /// Whether the shared catalog has this string yet, for pages that wait on a newer catalog.
+    internal bool Has(string key) => strings.ContainsKey(key);
     internal string Text(string key) => strings.TryGetValue(key, out string? value) ? value
         : throw new InvalidDataException("Unknown shared UI key: " + key);
 }
