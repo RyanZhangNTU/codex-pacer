@@ -35,6 +35,27 @@ final class WindowsInstallerHooksTests: XCTestCase {
         XCTAssertTrue(NSDictionary(dictionary: original).isEqual(to:
             try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])))
     }
+    func testDeepSeekProgressUninstallChecksEveryConfiguredHomeBeforeRemovingIt() throws {
+        let owned = try fixture(), edited = try fixture(), untouched = try fixture()
+        for home in [owned, edited] {
+            try FileManager.default.createDirectory(at: home.appendingPathComponent("profiles"), withIntermediateDirectories: true)
+            try Data("- id: user\n".utf8).write(to: home.appendingPathComponent("cordis.patch.yml"))
+            XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: true, storage: WindowsLocalProfileStorage()), .ready)
+        }
+        let patch = edited.appendingPathComponent("cordis.patch.yml")
+        let changed = Data(String(decoding: try Data(contentsOf: patch), as: UTF8.self).replacingOccurrences(of: "transport: stdio", with: "transport: http").utf8)
+        try changed.write(to: patch)
+        let installed = try Data(contentsOf: owned.appendingPathComponent("cordis.patch.yml"))
+        XCTAssertThrowsError(try WindowsDeepSeekProgressCleanup.unregister(homes: [owned, edited, untouched], checkOnly: true))
+        XCTAssertEqual(try Data(contentsOf: owned.appendingPathComponent("cordis.patch.yml")), installed, "A check changes no home")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: owned.appendingPathComponent("pacer/deepseek-progress/enabled").path))
+        XCTAssertThrowsError(try WindowsDeepSeekProgressCleanup.unregister(homes: [owned, edited, untouched], checkOnly: false))
+        XCTAssertEqual(try Data(contentsOf: owned.appendingPathComponent("cordis.patch.yml")), Data("- id: user\n".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: owned.appendingPathComponent("pacer/deepseek-progress/report-progress.mjs").path))
+        XCTAssertEqual(try Data(contentsOf: patch), changed, "An edited entry stays for manual cleanup")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: edited.appendingPathComponent("pacer/deepseek-progress/enabled").path))
+        XCTAssertNoThrow(try WindowsDeepSeekProgressCleanup.unregister(homes: [owned, untouched], checkOnly: false))
+    }
     func testUserEditsAfterInstallArePreserved() throws {
         let home = try fixture(), settings = home.appendingPathComponent("settings.json")
         _ = try WindowsClaudeHookCleanup.installer().install(home: home)

@@ -99,10 +99,20 @@ internal sealed partial class SettingsWindow
         var progress = Toggle("deepseek.progress_ring", "deepseek.progress_ring_help", "settings.deepseek.progress_ring", out var progressSwitch);
         deepseekProgress = progressSwitch; editors.Add(progressSwitch); BindToggle(progressSwitch, (p, value) => p with { DeepSeekProgressRing = value });
         deepseekProgressState = Detail(""); deepseekProgressState.TextWrapping = TextWrapping.Wrap;
+        Identify(deepseekProgressState, "settings.deepseek.progress_state", "");
         deepseekProgressRetry = new Button { Content = ui.Text("connections.retry"), Style = (Style)FindResource("SettingsLink") };
         Identify(deepseekProgressRetry, "settings.deepseek.progress_retry", ui.Text("connections.retry"));
-        deepseekProgressRetry.Click += async (_, _) =>
-        { if (engine != null && !engine.IsConnectionClosed) await engine.SendAsync("retryDeepSeekProgressSetup"); };
+        deepseekProgressRetry.Click += async (sender, _) =>
+        {
+            if (sourceClosed || !ReferenceEquals(sender, deepseekProgressRetry) || engine == null || !deepseekProgressRetry.IsEnabled) return;
+            try { await engine.SendAsync("retryDeepSeekProgressSetup"); }
+            catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
+            {
+                if (!sourceClosed && ReferenceEquals(sender, deepseekProgressRetry))
+                    deepseekProgressState?.SetCurrentValue(TextBlock.TextProperty, ui.Text(
+                        (session.Current.DeepSeekProgressRing ? "deepseek.progress_setup." : "deepseek.progress_cleanup.") + "failed"));
+            }
+        };
         deepseekProgressStatus = Row(deepseekProgressState, deepseekProgressRetry, 36);
         deepseekSections.Children.Add(Card(costs, progress, deepseekProgressStatus));
         deepseekSections.Children.Add(SectionHeader("deepseek.section.pricing", 22));
@@ -211,9 +221,12 @@ internal sealed partial class SettingsWindow
         deepseekProgress!.IsChecked = settings.DeepSeekProgressRing;
         deepseekProgress.IsEnabled = !busy && !session.RequiresRestart && connected && snapshot != null;
         var setup = snapshot?.DeepSeekProgressSetup;
-        deepseekProgressStatus!.Visibility = !demo && settings.DeepSeekProgressRing && setup != null ? Visibility.Visible : Visibility.Collapsed;
-        deepseekProgressState!.Text = setup == null ? "" : ui.Text("deepseek.progress_setup." + setup);
-        deepseekProgressRetry!.Visibility = setup is "failed" or "conflict" ? Visibility.Visible : Visibility.Collapsed;
+        bool setupFailed = setup is "failed" or "conflict";
+        // A failed removal stays visible after the switch is off, with Retry.
+        deepseekProgressStatus!.Visibility = !demo && setup != null && (settings.DeepSeekProgressRing || setupFailed) ? Visibility.Visible : Visibility.Collapsed;
+        deepseekProgressState!.Text = setup == null ? "" : ui.Text((settings.DeepSeekProgressRing ? "deepseek.progress_setup." : "deepseek.progress_cleanup.") + setup);
+        AutomationProperties.SetName(deepseekProgressState, deepseekProgressState.Text);
+        deepseekProgressRetry!.Visibility = setupFailed ? Visibility.Visible : Visibility.Collapsed;
         deepseekProgressRetry.IsEnabled = deepseekProgress.IsEnabled;
         deepseekDaily!.IsEnabled = deepseekWeekly!.IsEnabled = deepseekTurnCost.IsEnabled = !busy && !session.RequiresRestart && connected && reading != null;
         deepseekAutomatic.IsEnabled = !busy && !session.RequiresRestart && connected && snapshot != null;

@@ -4,76 +4,108 @@ public enum DeepSeekProgressSetupStatus: String, Codable, Sendable {
     case settingUp, ready, conflict, failed
 }
 
-/// Manages one owned entry in the home-level Harness patch, which both Desktop
-/// and the CLI load. The enable file also revokes a server already in memory.
+/// Manages one owned entry in the home-level Harness patch, which every
+/// profile, Desktop and the CLI load. The enable file also revokes a server
+/// already in memory. The entry's begin line carries a checksum of its body and
+/// the reporter starts with an ownership line, so a later Pacer replaces its own
+/// older files but never takes over an entry or file someone else edited.
 public enum DeepSeekProgressSetup {
+    public struct Target: Equatable, Sendable {
+        public let home: URL
+        public let enabled: Bool
+        public init(home: URL, enabled: Bool) { self.home = home; self.enabled = enabled }
+    }
+
     private static let begin = "# BEGIN Codex Pacer DeepSeek progress"
     private static let end = "# END Codex Pacer DeepSeek progress"
-    private static let emptySequence = "# Codex Pacer original empty sequence: "
+    /// Saves an empty file or empty sequence the entry replaced, so disabling restores it.
+    private static let original = "# Codex Pacer original patch: "
     private static let on = Data("on\n".utf8)
     private static let maximumPatchBytes = 256 * 1024
+    private static let newline = UInt8(ascii: "\n")
+    /// The first line of every reporter Pacer ships.
+    static let reporterOwner = Data("// Codex Pacer DeepSeek progress reporter.".utf8)
 
-    public static func apply(home: URL, enabled: Bool, storage: any ClaudeHookStorage) -> DeepSeekProgressSetupStatus? {
-        let pacer = home.appendingPathComponent("pacer", isDirectory: true)
-        let directory = pacer.appendingPathComponent("deepseek-progress", isDirectory: true)
+    static func folder(_ home: URL) -> URL {
+        home.appendingPathComponent("pacer", isDirectory: true).appendingPathComponent("deepseek-progress", isDirectory: true)
+    }
+
+    /// Setup keeps this folder, so later cleanup knows which homes to check.
+    public static func wasConfigured(in home: URL) -> Bool { FileManager.default.fileExists(atPath: folder(home).path) }
+
+    /// Revokes a home the switch moved away from, then applies the new target.
+    public static func sync(from previous: Target?, to target: Target, storage: any ClaudeHookStorage) -> DeepSeekProgressSetupStatus? {
+        if let previous, previous.home != target.home { _ = apply(home: previous.home, enabled: false, storage: storage) }
+        return apply(home: target.home, enabled: target.enabled, storage: storage)
+    }
+
+    /// With `checkOnly`, reports whether the change would succeed without writing.
+    public static func apply(home: URL, enabled: Bool, storage: any ClaudeHookStorage, checkOnly: Bool = false) -> DeepSeekProgressSetupStatus? {
+        let pacer = home.appendingPathComponent("pacer", isDirectory: true), directory = folder(home)
         let flag = directory.appendingPathComponent("enabled")
         let script = directory.appendingPathComponent("report-progress.mjs")
         let patch = home.appendingPathComponent("cordis.patch.yml")
-        guard enabled || storage.exists(flag) || storage.exists(script) else { return nil }
+        guard enabled || storage.exists(directory) else { return nil }
+        func refuse(_ status: DeepSeekProgressSetupStatus) throws -> DeepSeekProgressSetupStatus {
+            if !checkOnly, storage.exists(flag) { try storage.remove(flag) }
+            return status
+        }
         do {
             for path in [home, pacer, directory, flag, script, patch] { try storage.validate(path) }
-            guard storage.isDirectory(home), storage.isDirectory(home.appendingPathComponent("profiles")) else { return enabled ? .failed : nil }
+            guard storage.isDirectory(home) else { return enabled ? .failed : nil }
+            if enabled, !storage.isDirectory(home.appendingPathComponent("profiles")) { return .failed }
             if storage.exists(flag) {
                 guard try storage.read(flag) == on else { return .conflict }
-                if !enabled { try storage.remove(flag) }
+                if !enabled, !checkOnly { try storage.remove(flag) }
             }
-            let original = try storage.exists(patch) ? storage.read(patch) : nil
-            guard (original?.count ?? 0) <= maximumPatchBytes,
-                  let text = String(data: original ?? Data(), encoding: .utf8) else {
-                if storage.exists(flag) { try storage.remove(flag) }
-                return .conflict
-            }
-            let block = try patchBlock(script: script)
-            guard let updated = update(text, block: block, enabled: enabled) else {
-                if storage.exists(flag) { try storage.remove(flag) }
-                return .conflict
-            }
+            let source = try storage.exists(patch) ? storage.read(patch) : nil
+            guard (source?.count ?? 0) <= maximumPatchBytes else { return try refuse(.conflict) }
+            let edit = update(source, entry: try entry(script: script), enabled: enabled)
+            if edit == .conflict { return try refuse(.conflict) }
+            let installed = try storage.exists(script) ? storage.read(script) : nil
+            if checkOnly { return nil }
             if enabled {
-                guard let resource = Bundle.module.url(forResource: "deepseek-progress", withExtension: "mjs") else { return .failed }
+                guard let resource = Bundle.module.url(forResource: "deepseek-progress", withExtension: "mjs") else { return try refuse(.failed) }
                 let program = try Data(contentsOf: resource)
-                if !storage.isDirectory(directory) { try storage.createDirectory(directory, permissions: 0o700) }
-                if storage.exists(script) {
-                    guard try storage.read(script) == program else {
-                        if storage.exists(flag) { try storage.remove(flag) }
-                        return .conflict
-                    }
-                } else {
+                if installed != program {
+                    // A reporter from an earlier Pacer is replaced; any other file is left alone.
+                    guard installed.map(ownsReporter) ?? true else { return try refuse(.conflict) }
+                    if !storage.isDirectory(directory) { try storage.createDirectory(directory, permissions: 0o700) }
                     try storage.replace(script, with: program, permissions: 0o600)
                 }
                 if !storage.exists(flag) { try storage.replace(flag, with: on, permissions: 0o600) }
             }
-            if updated != text {
+            if edit != .keep {
                 let current = try storage.exists(patch) ? storage.read(patch) : nil
-                guard current == original else {
-                    if storage.exists(flag) { try storage.remove(flag) }
-                    return .conflict
-                }
-                if updated.isEmpty { try storage.remove(patch) }
-                else { try storage.replace(patch, with: Data(updated.utf8), permissions: 0o600) }
+                guard current == source else { return try refuse(.conflict) }
+                if case .write(let data) = edit { try storage.replace(patch, with: data, permissions: 0o600) }
+                else { try storage.remove(patch) }
             }
+            // The entry is gone, so nothing launches the reporter any more.
+            if !enabled, let installed, ownsReporter(installed) { try storage.remove(script) }
             return enabled ? .ready : nil
         } catch {
-            if storage.exists(flag), (try? storage.read(flag)) == on { try? storage.remove(flag) }
+            if !checkOnly, storage.exists(flag), (try? storage.read(flag)) == on { try? storage.remove(flag) }
             return .failed
         }
     }
 
-    private static func patchBlock(script: URL) throws -> String {
+    static func ownsReporter(_ data: Data) -> Bool { data.starts(with: reporterOwner) }
+
+    /// FNV-1a over the entry body: it detects an edit, not an adversary.
+    static func checksum<Bytes: Sequence>(_ bytes: Bytes) -> String where Bytes.Element == UInt8 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in bytes { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3 }
+        let digits = String(hash, radix: 16)
+        return String(repeating: "0", count: 16 - digits.count) + digits
+    }
+
+    /// The entry without its framing newlines.
+    static func core(script: URL) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .withoutEscapingSlashes
         let arguments = String(decoding: try encoder.encode([script.path]), as: UTF8.self)
-        return "\n" + """
-        \(begin)
+        let body = """
         - insert:
             - id: pacer-deepseek-progress
               name: '@deepseek-ai/dsh-mcp-client'
@@ -84,41 +116,80 @@ public enum DeepSeekProgressSetup {
                 args: \(arguments)
                 env:
                   ELECTRON_RUN_AS_NODE: '1'
-        \(end)
         """ + "\n"
+        return Data((begin + " " + checksum(body.utf8) + "\n" + body + end).utf8)
     }
 
-    private static func update(_ text: String, block: String, enabled: Bool) -> String? {
-        if let range = text.range(of: block) {
-            var rest = text
-            rest.removeSubrange(range)
-            guard !rest.contains(begin), !rest.contains(end) else { return nil }
-            if enabled { return text }
-            if rest.hasPrefix(emptySequence), let newline = rest.firstIndex(of: "\n") {
-                let suffix = rest[rest.index(after: newline)...]
-                let encoded = rest[rest.index(rest.startIndex, offsetBy: emptySequence.count)..<newline]
-                if suffix.isEmpty, let data = Data(base64Encoded: String(encoded)),
-                   let original = String(data: data, encoding: .utf8), original.trimmingCharacters(in: .whitespacesAndNewlines) == "[]" {
-                    return original
-                }
-                return String(suffix)
+    /// Framed by newlines, so appending never joins an existing line.
+    private static func entry(script: URL) throws -> Data { Data([newline]) + (try core(script: script)) + Data([newline]) }
+
+    private enum Edit: Equatable { case keep, write(Data), remove, conflict }
+    private enum Found { case none, foreign, owned(core: Range<Int>, framed: Range<Int>) }
+
+    /// An owned entry has one begin and one end line, in order, and its body
+    /// still matches the begin line's checksum. Anything else is someone's edit.
+    private static func find(_ data: Data) -> Found {
+        let head = Data(begin.utf8), tail = Data(end.utf8)
+        let heads = occurrences(head, in: data), tails = occurrences(tail, in: data)
+        if heads == 0 && tails == 0 { return .none }
+        guard heads == 1, tails == 1, let start = data.range(of: head), let stop = data.range(of: tail),
+              start.lowerBound == data.startIndex || data[start.lowerBound - 1] == newline,
+              let lineEnd = data[start.upperBound...].firstIndex(of: newline), lineEnd < stop.lowerBound,
+              data[stop.lowerBound - 1] == newline,
+              stop.upperBound == data.endIndex || data[stop.upperBound] == newline,
+              data[start.upperBound..<lineEnd] == Data((" " + checksum(data[(lineEnd + 1)..<stop.lowerBound])).utf8) else { return .foreign }
+        let lower = start.lowerBound > data.startIndex ? start.lowerBound - 1 : start.lowerBound
+        let upper = stop.upperBound < data.endIndex ? stop.upperBound + 1 : stop.upperBound
+        return .owned(core: start.lowerBound..<stop.upperBound, framed: lower..<upper)
+    }
+
+    private static func occurrences(_ needle: Data, in data: Data) -> Int {
+        var count = 0, cursor = data.startIndex
+        while let found = data.range(of: needle, in: cursor..<data.endIndex) { count += 1; cursor = found.upperBound }
+        return count
+    }
+
+    private static func update(_ source: Data?, entry: Data, enabled: Bool) -> Edit {
+        let data = source ?? Data()
+        switch find(data) {
+        case .foreign:
+            return .conflict
+        case let .owned(core, framed):
+            if enabled {
+                // An entry from an earlier Pacer is replaced in place.
+                let current = entry.dropFirst().dropLast()
+                return data[core] == current ? .keep : .write(data[data.startIndex..<core.lowerBound] + current + data[core.upperBound...])
             }
-            return rest
+            var before = Data(data[data.startIndex..<framed.lowerBound])
+            let after = Data(data[framed.upperBound...])
+            if !before.isEmpty, !after.isEmpty, before.last != newline { before.append(newline) }
+            let rest = before + after
+            let marker = Data(original.utf8)
+            if rest.starts(with: marker), let lineEnd = rest.firstIndex(of: newline),
+               let saved = Data(base64Encoded: Data(rest[(rest.startIndex + marker.count)..<lineEnd])) {
+                let suffix = rest[(lineEnd + 1)...]
+                return .write(suffix.isEmpty ? saved : Data(suffix))
+            }
+            return rest.isEmpty ? .remove : .write(rest)
+        case .none:
+            guard enabled else { return .keep }
+            guard data.range(of: Data("pacer-deepseek-progress".utf8)) == nil,
+                  data.range(of: Data(CodexProgressEvidence.server.utf8)) == nil,
+                  let text = String(data: data, encoding: .utf8) else { return .conflict }
+            let bare = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
+            let trimmed = bare.trimmingCharacters(in: .whitespacesAndNewlines)
+            if source != nil, trimmed.isEmpty || trimmed == "[]" {
+                return .write(Data((original + data.base64EncodedString() + "\n").utf8) + entry)
+            }
+            // Appending a new item preserves a block-style sequence byte for byte.
+            // Leave other YAML shapes to the profile owner.
+            let items = bare.split(whereSeparator: \.isNewline).filter {
+                let line = $0.trimmingCharacters(in: .whitespaces)
+                return !line.isEmpty && !line.hasPrefix("#")
+            }
+            guard !items.contains(where: { $0.hasPrefix("---") || $0.hasPrefix("...") || $0.hasPrefix("%") }),
+                  items.first.map({ $0 == "-" || $0.hasPrefix("- ") }) ?? true else { return .conflict }
+            return .write(data + entry)
         }
-        guard !text.contains(begin), !text.contains(end) else { return nil }
-        guard enabled else { return text }
-        guard !text.contains("pacer-deepseek-progress"), !text.contains(CodexProgressEvidence.server) else { return nil }
-        if text.trimmingCharacters(in: .whitespacesAndNewlines) == "[]" {
-            return emptySequence + Data(text.utf8).base64EncodedString() + "\n" + block
-        }
-        // Appending a new item preserves a block-style sequence byte for byte.
-        // Leave other YAML shapes to the profile owner.
-        let items = text.split(whereSeparator: \.isNewline).filter {
-            let line = $0.trimmingCharacters(in: .whitespaces)
-            return !line.isEmpty && !line.hasPrefix("#")
-        }
-        guard !items.contains(where: { $0.hasPrefix("---") || $0.hasPrefix("...") || $0.hasPrefix("%") }),
-              items.first.map({ $0 == "-" || $0.hasPrefix("- ") }) ?? true else { return nil }
-        return text + block
     }
 }

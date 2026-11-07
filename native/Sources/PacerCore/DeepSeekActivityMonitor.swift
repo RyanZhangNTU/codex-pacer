@@ -72,11 +72,12 @@ public actor DeepSeekActivityMonitor {
         if !quiet.isEmpty { state.expire(candidates: quiet, live: liveSessions(reader.lockURLs(sessions: quiet))) }
         await publish()
     }
-    private func read(discover: Bool) async {
+    private func read(discover: Bool, publishNow: Bool = false) async {
         guard let home else { return }
         let date = clock(), result = reader.read(home: home, discover: discover, now: clock())
         for line in result.lines { state.consume(line.record, session: line.session, attaching: line.attaching, now: date) }
-        if result.caughtUp { state.finishSettledWaits(now: date) }
+        var finished = false
+        if result.caughtUp { finished = state.finishSettledWaits(now: date) }
         state.setAvailable(result.available, watching: !result.watchURLs.isEmpty)
         if baselinePending, result.caughtUp {
             baselinePending = false
@@ -100,7 +101,7 @@ public actor DeepSeekActivityMonitor {
         }
         if result.caughtUp {
             scheduleWake(state.nextWakeDeadline)
-            await schedulePublish(immediate: result.lines.contains { Self.urgent($0.record.event) })
+            await schedulePublish(immediate: publishNow || finished || result.lines.contains { Self.urgent($0.record.event) })
         }
     }
     private func scheduleWake(_ deadline: Date?) {
@@ -117,9 +118,9 @@ public actor DeepSeekActivityMonitor {
     private func wakeDue(generation: UUID, deadline: Date) async {
         guard self.generation == generation, wakeDeadline == deadline else { return }
         wake = nil; wakeDeadline = nil
-        // Read a wake already in the log before committing the deferred ending.
-        await read(discover: false)
-        await publish()
+        // Read a wake already in the log before committing the deferred ending;
+        // the caught-up read publishes the result once.
+        await read(discover: false, publishNow: true)
     }
     private func continueRead() async { catchup = nil; await read(discover: false) }
     private func retryDiscovery() async { retry = nil; await read(discover: true) }

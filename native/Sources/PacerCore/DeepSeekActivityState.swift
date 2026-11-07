@@ -11,7 +11,6 @@ struct DeepSeekActivityState: Sendable {
     }
     private struct DeferredEnding: Sendable {
         let attaching: Bool
-        var deadline: Date?
     }
     private struct Progress: Sendable {
         var turn: Int?
@@ -48,8 +47,12 @@ struct DeepSeekActivityState: Sendable {
     private(set) var latestProvider: (at: Date, name: String)?
     /// Settlement and its waking turn are separate appends. Quiet delivery can
     /// settle a job without opening a turn, so the wait must also converge.
-    static let wakeGrace: TimeInterval = 5
-    var nextWakeDeadline: Date? { progress.values.compactMap { $0.deferredEnding?.deadline }.min() }
+    /// The grace runs from when Pacer saw the settlement, never only from its
+    /// log time, so a late read cannot end a request before its wake arrives.
+    static let wakeGrace: TimeInterval = 10
+    /// Deadlines of deferred endings whose background work has settled.
+    private var wakeDeadlines: [String: Date] = [:]
+    var nextWakeDeadline: Date? { wakeDeadlines.values.min() }
     var activities: [SessionActivity] { sessions.values.map(withTurnCost).sorted { $0.id < $1.id } }
     var attention: [PendingAttentionRequest] { requests.values.sorted { $0.detectedAt < $1.detectedAt } }
     var performanceUpdates: [SessionPerformanceUpdate] { Array(metrics.values) }
@@ -86,16 +89,22 @@ struct DeepSeekActivityState: Sendable {
         requests = requests.filter { $0.value.threadID != session }
         progress[key]?.calls.removeAll(); progress[key]?.approvals.removeAll(); progress[key]?.turn = nil
         progress[key]?.reports.removeAll(); progress[key]?.jobs.removeAll(); progress[key]?.deferredEnding = nil
-        progress[key]?.nestedQuestions.removeAll()
+        progress[key]?.nestedQuestions.removeAll(); wakeDeadlines[key] = nil
     }
 
-    mutating func finishSettledWaits(now: Date) {
-        for key in Array(progress.keys) { finishSettledWait(key, now: now) }
+    /// Ends deferred requests whose grace has passed. Returns whether any did.
+    @discardableResult mutating func finishSettledWaits(now: Date) -> Bool {
+        let due = wakeDeadlines.filter { $0.value <= now }.map(\.key)
+        guard !due.isEmpty else { return false }
+        for key in due { finishSettledWait(key, now: now) }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
+        return true
     }
 
     private mutating func finishSettledWait(_ key: String, now: Date) {
-        guard var state = progress[key], let ending = state.deferredEnding, let deadline = ending.deadline, deadline <= now,
+        guard let deadline = wakeDeadlines[key], deadline <= now else { return }
+        wakeDeadlines[key] = nil
+        guard var state = progress[key], let ending = state.deferredEnding,
               let turn = state.turnID, var value = sessions[key], let session = value.threadID else { return }
         state.deferredEnding = nil
         value.applyRuntime(["method": "turn/completed", "threadId": session, "turnId": turn, "status": "completed",
@@ -168,6 +177,7 @@ struct DeepSeekActivityState: Sendable {
             let carried = state.deferredEnding != nil ? value.currentProgress : nil
             let jobs = state.deferredEnding != nil ? state.jobs : []
             let id = String(turn) + "." + String(record.seq ?? Int(seconds * 1000))
+            wakeDeadlines[key] = nil
             state = Progress(turn: turn, turnID: id, startSeq: record.seq, jobs: jobs,
                              model: state.model, provider: state.provider, startedAt: record.at)
             requests = requests.filter { $0.value.threadID != session }
@@ -233,11 +243,12 @@ struct DeepSeekActivityState: Sendable {
             if let report = state.reports[call] {
                 lifecycle = false
                 guard let seq = record.seq, seq > report.seq else { break }
-                if case let .progressAccepted(turn, step, _) = record.event {
-                    guard turn == state.turn, step == report.step else { break }
-                    if let percent = report.percent { Self.report(percent, record: record, state: &state, value: &value) }
-                }
+                // Any later result settles the call; only a matching acknowledgment reports.
                 state.reports.removeValue(forKey: call)
+                if case let .progressAccepted(turn, step, _) = record.event, turn == state.turn, step == report.step,
+                   let percent = report.percent {
+                    Self.report(percent, record: record, state: &state, value: &value)
+                }
                 break
             }
             guard state.calls.removeValue(forKey: call) != nil else { break }
@@ -256,7 +267,9 @@ struct DeepSeekActivityState: Sendable {
         case let .jobSettled(id, owner):
             lifecycle = false
             guard owner == session, state.jobs.remove(id) != nil, state.jobs.isEmpty, state.deferredEnding != nil else { break }
-            state.deferredEnding?.deadline = max(record.at, state.endedAt ?? record.at).addingTimeInterval(Self.wakeGrace)
+            // A replayed settlement keeps its log time; a live one counts from now.
+            let seen = attaching ? record.at : max(record.at, now)
+            wakeDeadlines[key] = max(seen, state.endedAt ?? seen).addingTimeInterval(Self.wakeGrace)
         case let .approvalAsked(id, _):
             guard state.turn != nil, state.approvals.count < 64 else { break }
             state.approvals.insert(id)
@@ -291,6 +304,7 @@ struct DeepSeekActivityState: Sendable {
         if sessions.count > 128 {
             for id in sessions.keys.sorted(by: { (sessions[$0]?.lastObserved ?? .distantPast) > (sessions[$1]?.lastObserved ?? .distantPast) }).dropFirst(128) {
                 sessions.removeValue(forKey: id); progress.removeValue(forKey: id); metrics.removeValue(forKey: id); historicalRunning.remove(id)
+                wakeDeadlines.removeValue(forKey: id)
                 requests = requests.filter { !$0.key.hasPrefix(id + ":") }
             }
         }

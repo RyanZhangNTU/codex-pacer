@@ -164,9 +164,11 @@ struct SettingsDeepSeekSections: View {
                 Text(L10n.text("deepseek.progress_ring"))
                 Text(L10n.text("deepseek.progress_ring_help"))
             }
-            if showsProgressRing, let setup = model.deepseekProgressSetup {
+            // A failed removal stays visible after the switch is off, with Retry.
+            if let setup = model.deepseekProgressSetup, showsProgressRing || setup == .failed || setup == .conflict {
                 HStack {
-                    Text(L10n.text("deepseek.progress_setup." + setup.rawValue)).foregroundStyle(.secondary)
+                    Text(L10n.text((showsProgressRing ? "deepseek.progress_setup." : "deepseek.progress_cleanup.") + setup.rawValue))
+                        .foregroundStyle(.secondary)
                     if setup == .failed || setup == .conflict {
                         Button(L10n.text("connections.retry")) { model.syncDeepSeekProgressSwitch(force: true) }
                     }

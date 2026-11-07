@@ -1,3 +1,4 @@
+// Codex Pacer DeepSeek progress reporter. Pacer replaces this file when it updates and removes it when reporting is turned off.
 import { lstatSync, readFileSync } from 'node:fs';
 
 const flag = new URL('enabled', import.meta.url);

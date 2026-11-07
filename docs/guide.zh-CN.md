@@ -125,7 +125,7 @@ Pacer 默认使用 `~/.claude`，设置了 `CLAUDE_CONFIG_DIR` 时使用该目�
 
 ## DeepSeek Harness
 
-在 **设置 → DeepSeek → 显示 DeepSeek 任务进度** 打开上报，配置完成后新建 Harness 会话。进度环会在收到估算前显示虚线，等待时保留当前数值，任务完成时填满。详见 [DeepSeek 任务状态与动画](deepseek-task-state-animation.zh-CN.md)。
+在 **设置 → DeepSeek → 显示 DeepSeek 任务进度** 打开上报，配置完成后新建 Harness 会话。进度环会在收到估算前显示虚线，等待时保留当前数值，任务完成时填满。上报工具添加在 Harness 数据目录的 `cordis.patch.yml` 中，Harness 的所有配置和命令行都会使用。关闭开关即可移除；Windows 卸载也会移除。macOS 上请先关闭开关，再把 Pacer 移到废纸篓。如果 Pacer 已经删除，请删掉 `cordis.patch.yml` 中两行 `Codex Pacer DeepSeek progress` 标记之间的内容，以及 `pacer/deepseek-progress` 文件夹。详见 [DeepSeek 任务状态与动画](deepseek-task-state-animation.zh-CN.md)。
 
 Pacer 读取 DeepSeek Harness 保存在 `~/.dsh`（设置了 `DSH_HOME` 时用它）的会话日志；也可以在“设置 → DeepSeek → 自定义位置”中选择其他目录。它只根据 token 数和时间，追踪每一轮的阶段、速度和首输出时间、审批、等你回复的提问，以及这一轮如何结束。Harness 在每一步结束时才保存回复，所以速度和花费按步骤更新，而不是随文字逐字变化。暂不追踪 SSH 主机上的 Harness 会话。
 

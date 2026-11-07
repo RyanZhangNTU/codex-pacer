@@ -251,14 +251,12 @@ actor EngineRuntime {
     private var codexProgressRing = false
     private var deepseekProgressRing = false
     private let managesDeepSeekProgress: Bool
-    private var deepseekProgressTarget: (home: URL, enabled: Bool)?
+    private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
     private var deepseekProgressSetup: DeepSeekProgressSetupStatus?
     private let managesCodexProgress: Bool
     private let codexProgressPaths: WindowsCodexProgressPaths
-    private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
+    private var codexProgressQueue = ProgressSetupQueue<CodexProgressSetup.Target>()
     private var codexProgressSetup: CodexProgressSetupStatus?
-    private var codexProgressTask: Task<Void, Never>?
-    private var codexProgressRequest: UUID?
     private var progressRingProviders: Set<AgentProvider> {
         var providers: Set<AgentProvider> = []
         if claudeProgressRing { providers.insert(.claude) }
@@ -765,8 +763,11 @@ actor EngineRuntime {
             scheduleCodexProgressSetup(force: true)
             publish(notices: [])
         case "retryDeepSeekProgressSetup":
-            guard managesDeepSeekProgress, deepseekProgressRing, enabled.contains(.deepseek) else { failure(id: command.id, code: "deepseekProgressSetupUnavailable"); return true }
-            syncDeepSeekProgressSetup(force: true)
+            // Turning the switch off can fail too; its retry removes the entry again.
+            guard managesDeepSeekProgress, deepseekProgressRing && enabled.contains(.deepseek) || [.conflict, .failed].contains(deepseekProgressSetup) else {
+                failure(id: command.id, code: "deepseekProgressSetupUnavailable"); return true
+            }
+            scheduleDeepSeekProgressSetup(force: true)
             publish(notices: [])
         case "initialize", "configure":
             let plan: ApplicationLifecycleCoordinator.Plan
@@ -1021,7 +1022,7 @@ actor EngineRuntime {
         }
         applyClaudeProgressSwitch()
         scheduleCodexProgressSetup()
-        syncDeepSeekProgressSetup()
+        scheduleDeepSeekProgressSetup()
         bindCodexCompletionSources()
         bindWSLCompletionSources(.claude)
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
@@ -1112,42 +1113,47 @@ actor EngineRuntime {
         applyClaudeProgressSwitch(setupConfirmed: report.state == .ready)
         publish(notices: [])
     }
-    private func syncDeepSeekProgressSetup(force: Bool = false) {
-        guard managesDeepSeekProgress else { return }
-        let home = deepseekHome, wanted = deepseekProgressRing && enabled.contains(.deepseek)
-        let previous = deepseekProgressTarget
-        guard force || previous?.home != home || previous?.enabled != wanted else { return }
-        deepseekProgressTarget = (home, wanted)
-        let storage = WindowsLocalProfileStorage()
-        if let previous, previous.home != home {
-            _ = DeepSeekProgressSetup.apply(home: previous.home, enabled: false, storage: storage)
-        }
-        deepseekProgressSetup = DeepSeekProgressSetup.apply(home: home, enabled: wanted, storage: storage)
+    /// Profile files are written off the actor, like the Codex setup.
+    private func scheduleDeepSeekProgressSetup(force: Bool = false) {
+        guard managesDeepSeekProgress, let ticket = deepseekProgressQueue.request(
+            .init(home: deepseekHome, enabled: deepseekProgressRing && enabled.contains(.deepseek)), force: force) else { return }
+        deepseekProgressSetup = ticket.target.enabled ? .settingUp : nil
+        deepseekProgressQueue.track(Task { [weak self] in
+            await ticket.waitForPrevious()
+            let status = await Self.configureDeepSeekReporter(ticket)
+            await self?.receiveDeepSeekProgressSetup(status, ticket: ticket)
+        })
+    }
+
+    private static func configureDeepSeekReporter(_ ticket: ProgressSetupQueue<DeepSeekProgressSetup.Target>.Ticket) async -> DeepSeekProgressSetupStatus? {
+        DeepSeekProgressSetup.sync(from: ticket.previous, to: ticket.target, storage: WindowsLocalProfileStorage())
+    }
+
+    private func receiveDeepSeekProgressSetup(_ status: DeepSeekProgressSetupStatus?, ticket: ProgressSetupQueue<DeepSeekProgressSetup.Target>.Ticket) {
+        guard deepseekProgressQueue.finish(ticket) else { return }
+        deepseekProgressSetup = status
+        if initialized { publish(notices: []) }
     }
 
     private func scheduleCodexProgressSetup(force: Bool = false) {
-        guard managesCodexProgress else { return }
-        let home = codexHome, executable = codexExecutable, wanted = codexProgressRing && enabled.contains(.codex)
-        let previous = codexProgressTarget
-        guard force || previous?.home != home || previous?.executable != executable || previous?.enabled != wanted else { return }
-        codexProgressTarget = (home, executable, wanted)
-        let pending = codexProgressTask, request = UUID(), paths = codexProgressPaths
-        codexProgressRequest = request
-        codexProgressSetup = wanted ? .settingUp : nil
-        codexProgressTask = Task { [weak self] in
-            await pending?.value
-            guard !Task.isCancelled else { return }
-            if let previous, previous.home != home {
+        guard managesCodexProgress, let ticket = codexProgressQueue.request(
+            .init(home: codexHome, executable: codexExecutable, enabled: codexProgressRing && enabled.contains(.codex)), force: force) else { return }
+        let paths = codexProgressPaths
+        codexProgressSetup = ticket.target.enabled ? .settingUp : nil
+        codexProgressQueue.track(Task { [weak self] in
+            await ticket.waitForPrevious()
+            if let previous = ticket.previous, previous.home != ticket.target.home {
                 _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, enabled: false, paths: paths)
             }
-            let status = await Self.configureCodexReporter(home: home, executable: executable, enabled: wanted, paths: paths)
-            await self?.receiveCodexProgressSetup(status, request: request)
-        }
+            let target = ticket.target
+            let status = await Self.configureCodexReporter(home: target.home, executable: target.executable, enabled: target.enabled, paths: paths)
+            await self?.receiveCodexProgressSetup(status, ticket: ticket)
+        })
     }
 
-    private func receiveCodexProgressSetup(_ status: CodexProgressSetupStatus?, request: UUID) {
-        guard codexProgressRequest == request else { return }
-        codexProgressTask = nil; codexProgressSetup = status
+    private func receiveCodexProgressSetup(_ status: CodexProgressSetupStatus?, ticket: ProgressSetupQueue<CodexProgressSetup.Target>.Ticket) {
+        guard codexProgressQueue.finish(ticket) else { return }
+        codexProgressSetup = status
         if initialized { publish(notices: []) }
     }
 

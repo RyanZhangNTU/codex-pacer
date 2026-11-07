@@ -327,60 +327,44 @@ final class IslandModel: ObservableObject {
     static let codexProgressRingKey = "codexProgressRing"
     static let deepseekProgressRingKey = "deepseekProgressRing"
     @Published private(set) var deepseekProgressSetup: DeepSeekProgressSetupStatus?
-    private var deepseekProgressTarget: (home: URL, enabled: Bool)?
-    private var deepseekProgressTask: Task<Void, Never>?
-    private var deepseekProgressRequest: UUID?
+    private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
     var showsDeepSeekProgressRing: Bool { defaults.bool(forKey: Self.deepseekProgressRingKey) }
+    /// Also runs when the switch turns off, which removes Pacer's entry.
     func syncDeepSeekProgressSwitch(force: Bool = false) {
-        guard !demo, !stopped, installationOverride == nil else { return }
-        let home = deepseekHome, wanted = showsDeepSeekProgressRing && isModuleEnabled(.deepseek)
-        let previous = deepseekProgressTarget
-        guard force || previous?.home != home || previous?.enabled != wanted else { return }
-        deepseekProgressTarget = (home, wanted)
-        let pending = deepseekProgressTask, request = UUID()
-        deepseekProgressRequest = request
-        deepseekProgressSetup = wanted ? .settingUp : nil
-        deepseekProgressTask = Task { [weak self] in
+        guard !demo, !stopped, installationOverride == nil, let ticket = deepseekProgressQueue.request(
+            .init(home: deepseekHome, enabled: showsDeepSeekProgressRing && isModuleEnabled(.deepseek)), force: force) else { return }
+        deepseekProgressSetup = ticket.target.enabled ? .settingUp : nil
+        let task = Task { [weak self] in
             let status = await Task.detached(priority: .utility) {
-                await pending?.value
-                let storage = MacClaudeHookStorage()
-                if let previous, previous.home != home {
-                    _ = DeepSeekProgressSetup.apply(home: previous.home, enabled: false, storage: storage)
-                }
-                return DeepSeekProgressSetup.apply(home: home, enabled: wanted, storage: storage)
+                await ticket.waitForPrevious()
+                return DeepSeekProgressSetup.sync(from: ticket.previous, to: ticket.target, storage: MacClaudeHookStorage())
             }.value
-            guard let self, !stopped, deepseekProgressRequest == request else { return }
-            deepseekProgressTask = nil
+            guard let self, !stopped, deepseekProgressQueue.finish(ticket) else { return }
             deepseekProgressSetup = status
         }
+        deepseekProgressQueue.track(task)
     }
     @Published private(set) var codexProgressSetup: CodexProgressSetupStatus?
-    private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
-    private var codexProgressSetupTask: Task<Void, Never>?
-    private var codexProgressSetupRequest: UUID?
+    private var codexProgressQueue = ProgressSetupQueue<CodexProgressSetup.Target>()
     var showsCodexProgressRing: Bool { defaults.bool(forKey: Self.codexProgressRingKey) }
     func syncCodexProgressSwitch(force: Bool = false) {
-        guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL else { return }
-        let home = home, executable = defaults.string(forKey: "codexExecutable") ?? ""
-        let wanted = showsCodexProgressRing && isModuleEnabled(.codex)
-        let previous = codexProgressTarget
-        guard force || previous?.home != home || previous?.executable != executable || previous?.enabled != wanted else { return }
-        codexProgressTarget = (home, executable, wanted)
-        let pending = codexProgressSetupTask, request = UUID()
-        codexProgressSetupRequest = request
-        codexProgressSetup = wanted ? .settingUp : nil
-        codexProgressSetupTask = Task { [weak self] in
+        guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL,
+              let ticket = codexProgressQueue.request(.init(home: home, executable: defaults.string(forKey: "codexExecutable") ?? "",
+                                                            enabled: showsCodexProgressRing && isModuleEnabled(.codex)), force: force) else { return }
+        codexProgressSetup = ticket.target.enabled ? .settingUp : nil
+        let task = Task { [weak self] in
             let status = await Task.detached(priority: .utility) {
-                await pending?.value
-                if let previous, previous.home != home {
+                await ticket.waitForPrevious()
+                let target = ticket.target
+                if let previous = ticket.previous, previous.home != target.home {
                     _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false)
                 }
-                return await Self.configureCodexReporter(home: home, executable: executable, reporter: reporter, enabled: wanted)
+                return await Self.configureCodexReporter(home: target.home, executable: target.executable, reporter: reporter, enabled: target.enabled)
             }.value
-            guard let self, !stopped, codexProgressSetupRequest == request else { return }
-            codexProgressSetupTask = nil
+            guard let self, !stopped, codexProgressQueue.finish(ticket) else { return }
             codexProgressSetup = status
         }
+        codexProgressQueue.track(task)
     }
 
     private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool) async -> CodexProgressSetupStatus? {

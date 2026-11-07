@@ -182,22 +182,53 @@ final class DeepSeekActivityTests: XCTestCase {
         XCTAssertNil(state.activities.first?.currentProgress)
     }
 
+    func testDeepSeekProgressResultSettlesItsCallEvenWhenItsStepDiffers() {
+        var state = DeepSeekActivityState()
+        feed(&state, [header, line("turn/start", seq: 1, at: 1, ["turn": 1]), reportCall(70, seq: 2), reportResult(3, step: 2), reportResult(4)])
+        XCTAssertNil(state.activities.first?.currentProgress, "The first result settles the call, so a later copy cannot report it")
+    }
+
+    func testDeepSeekNestedQuestionFindsItsNameAfterLargeFieldsAndClearsOnItsOwnResult() throws {
+        var state = DeepSeekActivityState()
+        let large = String(repeating: "PRIVATE ", count: 400), time = Int((peak.timeIntervalSince1970 + 3) * 1000)
+        let opening = Data(#"{"type":"tool/ptc-dispatch-start","seq":3,"time":\#(time),"data":{"rootCallId": "program", "subCallId": "program:ptc:0", "arguments": {"question": "\#(large)"}, "name": "ask_user_question"}}"#.utf8)
+        let answered = Data(#"{"type":"tool/ptc-dispatch","seq":4,"time":\#(time + 1000),"data":{"rootCallId": "program", "subCallId": "program:ptc:0", "content": [{"type": "text", "text": "\#(large)"}], "isError": false, "name": "ask_user_question"}}"#.utf8)
+        feed(&state, [header, line("turn/start", seq: 1, at: 1, ["turn": 1]),
+                      line("tool/call", seq: 2, at: 2, ["turn": 1, "step": 1, "callId": "program", "name": "run_code"]), opening])
+        XCTAssertEqual(state.attention.map(\.kind), [.input])
+        XCTAssertEqual(state.activities.first?.phase, .waitingForInput)
+        feed(&state, [answered])
+        XCTAssertTrue(state.attention.isEmpty, "The answered sub-call clears its question while run_code continues")
+        XCTAssertEqual(state.activities.first?.phase, .running)
+    }
+
     func testDeepSeekProgressWaitsForOwnedBackgroundWorkAndContinuesTheRequest() throws {
         var state = DeepSeekActivityState()
         let owner = "session-" + session, job = "bash-fixture"
         feed(&state, [header, line("turn/start", seq: 1, at: 1, ["turn": 1]), reportCall(44, seq: 2), reportResult(3),
                       line("tool/call", seq: 4, at: 4, ["turn": 1, "step": 1, "callId": "background", "name": "bash"]),
-                      line("job/registered", seq: 5, at: 5, ["owner": owner, "jobId": job, "toolCall": ["rootCallId": "background"]]),
+                      line("job/registered", seq: 5, at: 5, ["owner": owner, "jobId": job,
+                          "toolCall": ["rootCallId": "background", "arguments": ["command": "PRIVATE_COMMAND"]]]),
                       line("tool/result", seq: 6, at: 6, ["turn": 1, "step": 1, "message": ["toolCallId": "background"] as KeyValuePairs<String, Any>]),
                       line("turn/end", seq: 7, at: 7, ["turn": 1, "reason": ["kind": "completed"]])])
         let waiting = try XCTUnwrap(state.activities.first)
         XCTAssertEqual(waiting.phase, .running)
         XCTAssertEqual(TaskProgressRing.make(waiting, phase: waiting.phase, enabled: true, at: peak.addingTimeInterval(8))?.mode, .waiting)
         XCTAssertEqual(waiting.lastObserved, peak.addingTimeInterval(6))
-        feed(&state, [line("job/settled", seq: 8, at: 8, ["owner": owner, "jobId": job])])
+        let settled = line("job/settled", seq: 8, at: 8, ["owner": owner, "jobId": job])
+        var late = state
+        feed(&state, [settled], now: peak.addingTimeInterval(8))
+        XCTAssertEqual(state.nextWakeDeadline, peak.addingTimeInterval(8 + DeepSeekActivityState.wakeGrace))
         var quiet = state
-        quiet.finishSettledWaits(now: peak.addingTimeInterval(12.9)); XCTAssertEqual(quiet.activities.first?.phase, .running)
-        quiet.finishSettledWaits(now: peak.addingTimeInterval(13)); XCTAssertEqual(quiet.activities.first?.phase, .completed)
+        XCTAssertFalse(quiet.finishSettledWaits(now: peak.addingTimeInterval(17.9))); XCTAssertEqual(quiet.activities.first?.phase, .running)
+        XCTAssertTrue(quiet.finishSettledWaits(now: peak.addingTimeInterval(18))); XCTAssertEqual(quiet.activities.first?.phase, .completed)
+        XCTAssertNil(quiet.nextWakeDeadline)
+        // Read 30 s after Harness wrote it, the settlement still leaves time for its wake.
+        feed(&late, [settled], now: peak.addingTimeInterval(38))
+        XCTAssertFalse(late.finishSettledWaits(now: peak.addingTimeInterval(38)))
+        feed(&late, [line("turn/start", seq: 9, at: 9, ["turn": 2])], now: peak.addingTimeInterval(39))
+        XCTAssertEqual(late.activities.first?.currentProgress?.percent, 44)
+        XCTAssertNil(late.nextWakeDeadline)
         feed(&state, [line("turn/start", seq: 9, at: 9, ["turn": 2])])
         XCTAssertEqual(state.activities.first?.currentProgress?.percent, 44)
         XCTAssertNil(state.activities.first?.currentBackgroundWait)
@@ -219,21 +250,64 @@ final class DeepSeekActivityTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
         let patch = home.appendingPathComponent("cordis.patch.yml")
         let flag = home.appendingPathComponent("pacer/deepseek-progress/enabled")
-        for original in [Data("[]\r\n".utf8), Data("# local overrides\n- id: other\n  config: {}".utf8)] {
-            try storage.replace(patch, with: original, permissions: 0o600)
-            XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: true, storage: storage), .ready)
-            let installed = try storage.read(patch)
-            XCTAssertTrue(String(decoding: installed, as: UTF8.self).contains("serverName: pacer_progress"))
-            XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: true, storage: storage), .ready)
-            XCTAssertEqual(try storage.read(patch), installed)
-            XCTAssertNil(DeepSeekProgressSetup.apply(home: home, enabled: false, storage: storage))
-            XCTAssertEqual(try storage.read(patch), original); XCTAssertFalse(storage.exists(flag))
+        let script = home.appendingPathComponent("pacer/deepseek-progress/report-progress.mjs")
+        func apply(_ enabled: Bool, checkOnly: Bool = false) -> DeepSeekProgressSetupStatus? {
+            DeepSeekProgressSetup.apply(home: home, enabled: enabled, storage: storage, checkOnly: checkOnly)
         }
-        XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: true, storage: storage), .ready)
-        let edited = Data(String(decoding: try storage.read(patch), as: UTF8.self).replacingOccurrences(of: "process.execPath", with: "'user-node'").utf8)
+        func text() throws -> String { String(decoding: try storage.read(patch), as: UTF8.self) }
+        for original in [Data("[]\r\n".utf8), Data(), Data("# local overrides\n- id: other\n  config: {}".utf8)] {
+            try storage.replace(patch, with: original, permissions: 0o600)
+            XCTAssertEqual(apply(true), .ready)
+            let installed = try storage.read(patch)
+            XCTAssertTrue(try text().contains("serverName: pacer_progress"))
+            XCTAssertEqual(apply(true), .ready)
+            XCTAssertEqual(try storage.read(patch), installed)
+            XCTAssertNil(apply(false, checkOnly: true))
+            XCTAssertEqual(try storage.read(patch), installed, "A check never writes"); XCTAssertTrue(storage.exists(flag))
+            XCTAssertNil(apply(false))
+            XCTAssertTrue(storage.exists(patch), "A file that existed stays, even an empty one")
+            XCTAssertEqual(try storage.read(patch), original); XCTAssertFalse(storage.exists(flag)); XCTAssertFalse(storage.exists(script))
+        }
+        try storage.remove(patch)
+        XCTAssertEqual(apply(true), .ready); XCTAssertNil(apply(false))
+        XCTAssertFalse(storage.exists(patch), "Disabling removes the file Pacer created")
+
+        // An item added after Pacer's entry keeps its own line.
+        try storage.replace(patch, with: Data("- id: other".utf8), permissions: 0o600)
+        XCTAssertEqual(apply(true), .ready)
+        try storage.replace(patch, with: try storage.read(patch) + Data("- id: mine\n".utf8), permissions: 0o600)
+        XCTAssertNil(apply(false))
+        XCTAssertEqual(try text(), "- id: other\n- id: mine\n")
+
+        // An earlier Pacer's entry and reporter are replaced in place, then removed.
+        let older = "- insert: []\n", olderReporter = DeepSeekProgressSetup.reporterOwner + Data(" Older build.\n".utf8)
+        try storage.replace(patch, with: Data(("- id: other\n\n# BEGIN Codex Pacer DeepSeek progress " + DeepSeekProgressSetup.checksum(older.utf8) +
+            "\n" + older + "# END Codex Pacer DeepSeek progress\n").utf8), permissions: 0o600)
+        try storage.replace(script, with: olderReporter, permissions: 0o600)
+        XCTAssertEqual(apply(true), .ready)
+        XCTAssertTrue(try text().hasPrefix("- id: other\n\n# BEGIN Codex Pacer DeepSeek progress "))
+        XCTAssertTrue(try text().contains("serverName: pacer_progress")); XCTAssertFalse(try text().contains("insert: []"))
+        let reporter = try storage.read(script)
+        XCTAssertTrue(DeepSeekProgressSetup.ownsReporter(reporter)); XCTAssertNotEqual(reporter, olderReporter)
+        XCTAssertNil(apply(false))
+        XCTAssertEqual(try text(), "- id: other\n"); XCTAssertFalse(storage.exists(script))
+
+        // Someone else's reporter is neither replaced nor removed.
+        let foreign = Data("console.log('mine')\n".utf8)
+        try storage.replace(script, with: foreign, permissions: 0o600)
+        XCTAssertEqual(apply(true), .conflict)
+        XCTAssertEqual(try text(), "- id: other\n"); XCTAssertFalse(storage.exists(flag))
+        XCTAssertNil(apply(false)); XCTAssertEqual(try storage.read(script), foreign)
+        try storage.remove(script)
+
+        // An edited entry is left in place; its reporter stays for whatever still launches it.
+        XCTAssertEqual(apply(true), .ready)
+        let edited = Data(try text().replacingOccurrences(of: "process.execPath", with: "'user-node'").utf8)
         try storage.replace(patch, with: edited, permissions: 0o600)
-        XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: false, storage: storage), .conflict)
-        XCTAssertEqual(try storage.read(patch), edited); XCTAssertFalse(storage.exists(flag))
+        XCTAssertEqual(apply(false, checkOnly: true), .conflict); XCTAssertTrue(storage.exists(flag))
+        XCTAssertEqual(apply(false), .conflict)
+        XCTAssertEqual(try storage.read(patch), edited); XCTAssertFalse(storage.exists(flag)); XCTAssertTrue(storage.exists(script))
+        XCTAssertEqual(apply(true), .conflict)
     }
 
     func testPeakScheduleAndPrices() throws {

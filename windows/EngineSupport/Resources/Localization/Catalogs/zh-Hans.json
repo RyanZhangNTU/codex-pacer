@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "3802205aef4c1563e6585d6470966f1e2a04d2089c843afb095e908a0b829eac",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "084cbf632558d8b3a5593a3c89c1b4048d48c41b4dddd6c9aeb409fc0032ce6d",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8dc552a8181303b1ac1d8d47c938bec0c4d47b37930f90a1c685e5b2bcc829a5"
   },
   "strings": {
@@ -396,9 +396,11 @@
     "deepseek.platform_account": "\u5f00\u653e\u5e73\u53f0\u8d26\u53f7",
     "deepseek.price_list": "DeepSeek \u4ef7\u76ee\u8868",
     "deepseek.pricing_note": "\u82b1\u8d39\u7531\u672c\u673a\u6309 token \u6570\u548c DeepSeek \u516c\u5e03\u7684\u5355\u4ef7\u4f30\u7b97\uff1a\u5317\u4eac\u65f6\u95f4\u5de5\u4f5c\u65e5 09:00\u201312:00\u300114:00\u201318:00 \u6309\u4e24\u500d\u8ba1\u7b97\uff0c\u5468\u672b\u548c 2026 \u5e74\u6cd5\u5b9a\u8282\u5047\u65e5\u6309\u5e73\u4ef7\uff08\u8c03\u4f11\u4e0a\u73ed\u65e5\u4e5f\u6309\u5e73\u4ef7\uff0c\u5c5e\u4f30\u7b97\uff09\uff1b\u8054\u7f51\u641c\u7d22\u81ea 2026 \u5e74 11 \u6708 1 \u65e5\u8d77\u6bcf\u5343\u6b21 \u00a55\u3002\u53ea\u4f30\u7b97 DeepSeek \u5b98\u65b9\u6e20\u9053\uff0c\u4ee5\u5f00\u653e\u5e73\u53f0\u8d26\u5355\u4e3a\u51c6\u3002",
+    "deepseek.progress_cleanup.conflict": "cordis.patch.yml \u4e2d Pacer \u7684\u6761\u76ee\u5df2\u88ab\u6539\u52a8\uff0c\u65e0\u6cd5\u79fb\u9664\u4e0a\u62a5\u5de5\u5177\u3002\u8bf7\u5220\u9664\u4e24\u884c Codex Pacer \u6807\u8bb0\u4e4b\u95f4\u7684\u5185\u5bb9\u540e\u91cd\u8bd5\u3002",
+    "deepseek.progress_cleanup.failed": "\u65e0\u6cd5\u79fb\u9664\u4e0a\u62a5\u5de5\u5177\u3002\u8bf7\u68c0\u67e5 Harness \u6570\u636e\u76ee\u5f55\u540e\u91cd\u8bd5\u3002",
     "deepseek.progress_ring": "\u663e\u793a DeepSeek \u4efb\u52a1\u8fdb\u5ea6",
-    "deepseek.progress_ring_help": "\u5728\u6240\u9009\u7684\u672c\u673a Harness \u914d\u7f6e\u4e2d\u6dfb\u52a0 Pacer \u7684\u4e0a\u62a5\u5de5\u5177\u3002\u8fdb\u5ea6\u73af\u663e\u793a DeepSeek \u5bf9\u5f53\u524d\u8bf7\u6c42\u7684\u5b8c\u6210\u5ea6\u4f30\u7b97\u3002",
-    "deepseek.progress_setup.conflict": "Harness \u7684\u914d\u7f6e\u4e0e Pacer \u7684\u4e0a\u62a5\u5de5\u5177\u51b2\u7a81\u3002\u8bf7\u68c0\u67e5 cordis.patch.yml \u540e\u91cd\u8bd5\u3002",
+    "deepseek.progress_ring_help": "\u5728 Harness \u6570\u636e\u76ee\u5f55\u4e2d\u6dfb\u52a0 Pacer \u7684\u4e0a\u62a5\u5de5\u5177\uff0cHarness \u7684\u6240\u6709\u914d\u7f6e\u548c\u547d\u4ee4\u884c\u90fd\u4f1a\u4f7f\u7528\u5b83\u3002\u8fdb\u5ea6\u73af\u663e\u793a DeepSeek \u5bf9\u5f53\u524d\u8bf7\u6c42\u7684\u5b8c\u6210\u5ea6\u4f30\u7b97\u3002",
+    "deepseek.progress_setup.conflict": "cordis.patch.yml \u6216 pacer/deepseek-progress \u6587\u4ef6\u5939\u5df2\u88ab\u6539\u52a8\uff0cPacer \u4e0d\u4f1a\u4fee\u6539\u4e0d\u5c5e\u4e8e\u5b83\u7684\u6587\u4ef6\u3002\u8bf7\u68c0\u67e5\u540e\u91cd\u8bd5\u3002",
     "deepseek.progress_setup.failed": "\u65e0\u6cd5\u914d\u7f6e\u8fdb\u5ea6\u4e0a\u62a5\u3002\u8bf7\u68c0\u67e5 Harness \u6570\u636e\u76ee\u5f55\u540e\u91cd\u8bd5\u3002",
     "deepseek.progress_setup.ready": "\u4e0a\u62a5\u5de5\u5177\u5df2\u914d\u7f6e\u3002\u65b0\u5efa Harness \u4f1a\u8bdd\u5373\u53ef\u4f7f\u7528\u3002",
     "deepseek.progress_setup.settingUp": "\u6b63\u5728\u914d\u7f6e\u8fdb\u5ea6\u4e0a\u62a5\u5de5\u5177\u2026",
