@@ -175,28 +175,39 @@ final class TaskProgressRingViewTests: XCTestCase {
     }
     private func running(_ view: Ring) -> Set<String> { view.animationKeys.intersection(loops) }
 
-    func testARowAppliesItsRingOnlyOnceShownAndARebuiltRowContinuesTheSweep() throws {
+    func testARowAppliesItsRingOnlyOnceShownAndRebuildsContinueTheSweepInEitherRemovalOrder() throws {
         let id = UUID().uuidString
         let detached = Ring(frame: NSRect(x: 0, y: 0, width: Ring.diameter, height: Ring.diameter))
         detached.update(input(id, .reported, .working, 0.3))
         XCTAssertNil(Ring.memory(for: id), "A row resumes motion only once it is in a window")
 
-        let first = shown()
-        first.update(input(id, .reported, .working, 0.3))
-        XCTAssertEqual(Ring.memory(for: id)?.duration, 0, "A ring that appears with an estimate draws it at once")
-        XCTAssertEqual(first.restingFraction, 0.3, accuracy: 0.0001)
-        first.update(input(id, .reported, .working, 0.62))
-        let sweep = try XCTUnwrap(Ring.memory(for: id))
-        XCTAssertEqual(sweep.from, 0.3, accuracy: 0.0001); XCTAssertEqual(sweep.to, 0.62, accuracy: 0.0001)
-        XCTAssertEqual(sweep.duration, 0.3 + 0.3 * 0.32, accuracy: 0.0001)
-        XCTAssertTrue(first.animationKeys.contains("arc.sweep"))
+        for removeFirst in [false, true] {
+            let id = UUID().uuidString, first = shown()
+            first.update(input(id, .reported, .working, 0.3))
+            XCTAssertEqual(Ring.memory(for: id)?.duration, 0, "A ring that appears with an estimate draws it at once")
+            XCTAssertEqual(first.restingFraction, 0.3, accuracy: 0.0001)
+            first.update(input(id, .reported, .working, 0.62))
+            let sweep = try XCTUnwrap(Ring.memory(for: id)), firstBegin = try XCTUnwrap(first.sweepBegin())
+            XCTAssertEqual(sweep.from, 0.3, accuracy: 0.0001); XCTAssertEqual(sweep.to, 0.62, accuracy: 0.0001)
+            XCTAssertEqual(sweep.duration, 0.3 + 0.3 * 0.32, accuracy: 0.0001)
 
-        // The page changes mid-sweep: the new row continues on the same clock.
-        let second = shown()
-        second.update(input(id, .reported, .working, 0.62))
-        XCTAssertEqual(Ring.memory(for: id)?.start, sweep.start)
-        let begin = try XCTUnwrap(second.sweepBegin()), firstBegin = try XCTUnwrap(first.sweepBegin())
-        XCTAssertEqual(begin, firstBegin, accuracy: 0.0001)
+            if removeFirst { first.removeFromSuperview() }
+            let second = shown()
+            second.update(input(id, .reported, .working, 0.62))
+            if !removeFirst { first.removeFromSuperview() }
+            let resumed = try XCTUnwrap(Ring.memory(for: id))
+            XCTAssertEqual(resumed.start, sweep.start, "Removing the previous row must preserve the sweep's clock")
+            XCTAssertEqual(resumed.duration, sweep.duration)
+            XCTAssertEqual(try XCTUnwrap(second.sweepBegin()), firstBegin, accuracy: 0.0001)
+            XCTAssertTrue(first.animationKeys.isEmpty, "A removed row stops all its own animation")
+
+            let before = CACurrentMediaTime()
+            second.update(input(id, .reported, .working, 0.1))
+            let after = CACurrentMediaTime(), falling = try XCTUnwrap(Ring.memory(for: id))
+            XCTAssertGreaterThanOrEqual(falling.from, sweep.displayed(at: before) - 0.0001)
+            XCTAssertLessThanOrEqual(falling.from, sweep.displayed(at: after) + 0.0001,
+                "The next estimate starts from the displayed value rather than the previous target")
+        }
     }
 
     func testALoweredEstimateStartsFromTheDisplayedValueAndLeavesATrace() throws {
@@ -209,6 +220,36 @@ final class TaskProgressRingViewTests: XCTestCase {
         XCTAssertEqual(memory.to, 0.1, accuracy: 0.0001)
         XCTAssertEqual(memory.ease, .sineInOut); XCTAssertEqual(memory.duration, 0.5, accuracy: 0.0001)
         XCTAssertTrue(view.animationKeys.contains("ghost.opacity"))
+    }
+
+    func testOccludingAnOldRowCannotSettleItsVisibleSuccessor() throws {
+        let id = UUID().uuidString, first = shown()
+        first.update(input(id, .reported, .working, 0.3))
+        first.update(input(id, .reported, .working, 0.8))
+        let second = shown()
+        second.update(input(id, .reported, .working, 0.8))
+        let sweep = try XCTUnwrap(Ring.memory(for: id))
+        shows = false
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: first.window)
+        shows = true
+        XCTAssertTrue(first.animationKeys.isEmpty)
+        XCTAssertTrue(second.animationKeys.contains("arc.sweep"))
+        XCTAssertEqual(Ring.memory(for: id)?.start, sweep.start)
+        XCTAssertEqual(Ring.memory(for: id)?.duration, sweep.duration)
+    }
+
+    func testRememberedSweepsDoNotRetainRemovedRows() {
+        let id = UUID().uuidString
+        weak var removed: Ring?
+        autoreleasepool {
+            let view = shown()
+            view.update(input(id, .reported, .working, 0.3))
+            view.update(input(id, .reported, .working, 0.8))
+            removed = view
+            view.removeFromSuperview()
+        }
+        XCTAssertNil(removed)
+        XCTAssertNotNil(Ring.memory(for: id), "The next row can still resume the sweep after its owner is released")
     }
 
     func testLoopingMotionFollowsTheLifecycleMode() {
@@ -259,13 +300,61 @@ final class TaskProgressRingViewTests: XCTestCase {
         shows = false
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
         try await TestWait.until { self.running(view).isEmpty }
-        XCTAssertEqual(running(view), [], "An occluded or hidden panel runs no loops")
-        XCTAssertFalse(view.animationKeys.contains("arc.sweep"))
+        XCTAssertTrue(view.animationKeys.isEmpty, "An occluded or hidden panel runs no animations")
         XCTAssertEqual(Ring.memory(for: id)?.duration, 0, "A rebuilt row inherits the settled value")
         shows = true
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
         try await TestWait.until { !self.running(view).isEmpty }
         XCTAssertEqual(running(view), ["dot.travel"])
+    }
+
+    func testReducedMotionAndOcclusionCancelFiniteAnimationsDuringEveryTransition() throws {
+        for occluded in [false, true] {
+            let id = UUID().uuidString
+            let transitions = [
+                [input(id, .pending)],
+                [input(id, .pending), input(id, .reported, .working, 0.62)],
+                [input(id, .reported, .working, 0.8), input(id, .reported, .working, 0.1)],
+                [input(id, .pending), input(id, .reported, .done, 1)],
+                [input(id, .reported, .working, 0.8), input(id, .pending)],
+                [input(id, .reported, .waiting, 0.5)],
+                [input(id, .pending), input(id, nil)]
+            ]
+            for transition in transitions {
+                shows = true
+                let view = shown()
+                // Each scenario has its own task memory.
+                let taskID = UUID().uuidString
+                for value in transition {
+                    view.update(.init(id: taskID, state: value.state, mode: value.mode, fraction: value.fraction,
+                        color: ink, animates: true))
+                }
+                let last = try XCTUnwrap(transition.last)
+                XCTAssertFalse(view.animationKeys.isEmpty, "The transition must be in motion before it is stopped")
+                if occluded {
+                    shows = false
+                    NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
+                } else {
+                    view.update(.init(id: taskID, state: last.state, mode: last.mode, fraction: last.fraction,
+                        color: ink, animates: false))
+                }
+                XCTAssertTrue(view.animationKeys.isEmpty, "Stopping motion cancels pulses, crossfades, traces and loops")
+                XCTAssertEqual(view.restingFraction, last.fraction, accuracy: 0.0001)
+                XCTAssertEqual(view.showsRing, last.state != nil)
+                if last.state != nil { XCTAssertEqual(Ring.memory(for: taskID)?.duration, 0) }
+            }
+        }
+    }
+
+    func testReducedMotionAppliesANewEstimateWithoutKeepingAnEarlierCompletionPulse() {
+        let id = UUID().uuidString, view = shown()
+        view.update(input(id, .pending))
+        view.update(input(id, .reported, .done, 1))
+        XCTAssertTrue(view.animationKeys.contains("container.pulse"))
+        view.update(input(id, .reported, .working, 0.2, animates: false))
+        XCTAssertTrue(view.animationKeys.isEmpty)
+        XCTAssertEqual(view.restingFraction, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(Ring.memory(for: id)?.duration, 0)
     }
 
     func testARingWithoutAnEstimateAtItsEndFadesAndIsForgotten() {

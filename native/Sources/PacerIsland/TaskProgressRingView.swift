@@ -70,6 +70,9 @@ final class TaskProgressRingNSView: NSView {
     }
     /// What a task's ring last showed, kept across row rebuilds.
     struct Memory {
+        /// A replaced row cannot settle its successor's clock, and the memory
+        /// must not keep a discarded view alive.
+        weak var owner: TaskProgressRingNSView?
         var state: TaskProgressRing.State
         var from = 0.0, to = 0.0
         var start: CFTimeInterval = 0, duration: CFTimeInterval = 0
@@ -201,16 +204,30 @@ final class TaskProgressRingNSView: NSView {
         let next = (input?.animates ?? false) && windowVisible
         if next != motion {
             motion = next
-            if !motion {
-                Self.withoutActions { setFraction(targetFraction) }
-                // A rebuilt row inherits the settled value.
-                if let taskID, var memory = Self.memories[taskID] {
-                    memory.from = memory.to; memory.start = CACurrentMediaTime(); memory.duration = 0
-                    Self.memories[taskID] = memory
-                }
-            }
+            if motion, let input { show(input); return }
+            Self.withoutActions { settleMotion() }
         }
         updateLoops()
+    }
+
+    /// Cancel finite animations as well as loops, including delayed pulses and
+    /// crossfades. The model layers already hold their final drawing values.
+    private func settleMotion() {
+        if spinning { pending.transform = rotation(Self.spinAngle(CACurrentMediaTime())) }
+        for layer in [container, pending, track, ghost, arc, dot] { layer.removeAllAnimations() }
+        spinning = false; dotFraction = nil; breathingTarget = nil; fading = false
+        container.opacity = 1; container.isHidden = input?.state == nil
+        pending.opacity = pendingShown ? Self.pendingOpacity : 0
+        track.opacity = input?.state == .reported ? 1 : 0
+        arc.opacity = dim ? Self.staleOpacity : 1
+        ghost.opacity = 0; dot.opacity = 0
+        setFraction(targetFraction)
+        // A row leaving the tree stops its own animations but keeps the shared
+        // sweep available to its replacement, whichever row is removed first.
+        if window != nil, let taskID, var memory = Self.memories[taskID], memory.owner === self {
+            memory.from = memory.to; memory.start = CACurrentMediaTime(); memory.duration = 0
+            Self.memories[taskID] = memory
+        }
     }
 
     private func show(_ input: Input) {
@@ -221,6 +238,7 @@ final class TaskProgressRingNSView: NSView {
             stopBreathing()
             if fresh { pending.transform = rotation(Self.spinAngle(CACurrentMediaTime())) }
             apply(input)
+            if !motion { settleMotion() }
         }
         applying = false
         updateLoops()
@@ -265,7 +283,7 @@ final class TaskProgressRingNSView: NSView {
         let dimmed = state == .reported && input.stale
         // Leaving the wait, the element eases from the breath's current opacity.
         let leftBreath = animate && previous?.breathing == true && mode != .waiting
-        var memory = Memory(state: state, stale: dimmed, breathing: mode == .waiting, color: color, seen: now)
+        var memory = Memory(owner: self, state: state, stale: dimmed, breathing: mode == .waiting, color: color, seen: now)
         if state == .pending {
             let shown = previous?.state == .reported ? previous!.displayed(at: now) : 0
             pendingShown = true; arc.removeAnimation(forKey: "opacity"); arc.opacity = 1; ghost.opacity = 0
@@ -295,7 +313,7 @@ final class TaskProgressRingNSView: NSView {
             else { setFraction(target) }
             fade(wasStale: kept.stale, stale: dimmed, animate: animate)
             if leftBreath { easeOutOfBreath(arc, high: 1, to: dimmed ? Double(Self.staleOpacity) : 1, now: now) }
-            kept.seen = now; kept.color = color; kept.stale = dimmed; kept.breathing = mode == .waiting
+            kept.owner = self; kept.seen = now; kept.color = color; kept.stale = dimmed; kept.breathing = mode == .waiting
             Self.memories[id] = kept
             return
         }
