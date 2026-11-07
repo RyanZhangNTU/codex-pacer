@@ -1036,7 +1036,7 @@
 "main.info.app_buttons" = "Puts buttons that open Codex and Claude at the top of the task list, even when nothing is running.";
 "main.info.speed" = "This Mac: estimated live from tasks on this Mac. Account: from balance changes, including other devices, updated about once a minute.";
 "main.location.custom" = "Custom";
-"main.deepseek.estimate_note" = "Costs are estimated on this Mac from token counts and published prices. Your DeepSeek Platform bill is final.";
+"main.deepseek.estimate_note" = "Costs are estimated on this computer from token counts and published prices. Your DeepSeek Platform bill is final.";
 "main.remote.retry_all" = "Retry sources with problems";
 "main.attention.quota_waits" = "Quota won't update until then";
 "main.attention.codex_cli" = "Codex quota needs the CLI";
@@ -1072,7 +1072,7 @@
 "main.welcome.continue" = "Continue";
 "main.welcome.ring_info" = "A ring around each task’s icon shows roughly how far along it is, so you can tell how much is left at a glance.";
 "main.welcome.notifications_info" = "Pacer tells you when a task needs your reply, finishes, or quota runs low.";
-"main.welcome.login_info" = "Pacer starts with your Mac, so the island is always there.";
+"main.welcome.login_info" = "Pacer starts when you log in, so the island is always there.";
 "main.welcome.layout_info" = "Choose what the collapsed bar shows on each side.";
 "main.collapsed.subtitle" = "Click a component for its settings. Drag it to move it.";
 "main.collapsed.components" = "Components";

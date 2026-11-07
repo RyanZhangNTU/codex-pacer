@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "51decc9b6b61139ccc97728cf07489e9057f2552fef11c707d6c99bb241131fa",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "cd373fb70fc7a72e15f0564d81a0f897bec1e1517123502952a5d50bc56fd380",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "98a252b85bca9a791ab59d47bc80d386ba230d0d1483822c0456951a989a79fa"
   },
   "strings": {
@@ -768,7 +768,7 @@
     "main.welcome.finish_subtitle": "\u4e4b\u540e\u90fd\u53ef\u4ee5\u5728\u8bbe\u7f6e\u91cc\u4fee\u6539\u3002",
     "main.welcome.finish_title": "\u6700\u540e\u51e0\u9879\u8bbe\u7f6e",
     "main.welcome.layout_info": "\u9009\u62e9\u6298\u53e0\u680f\u4e24\u4fa7\u663e\u793a\u54ea\u4e9b\u5185\u5bb9\u3002",
-    "main.welcome.login_info": "\u968f Mac \u4e00\u8d77\u542f\u52a8\uff0c\u7075\u52a8\u5c9b\u968f\u65f6\u90fd\u5728\u3002",
+    "main.welcome.login_info": "\u767b\u5f55\u540e\u81ea\u52a8\u542f\u52a8\uff0c\u7075\u52a8\u5c9b\u968f\u65f6\u90fd\u5728\u3002",
     "main.welcome.mode_free": "\u81ea\u7531\u62d6\u52a8\u6a21\u5f0f",
     "main.welcome.mode_island": "\u7075\u52a8\u5c9b\u6a21\u5f0f",
     "main.welcome.mode_island_detail": "\u8d34\u5728\u5c4f\u5e55\u9876\u90e8\u4e2d\u592e\uff0c\u548c\u5218\u6d77\u8fde\u5728\u4e00\u8d77\u3002",
