@@ -37,7 +37,7 @@ internal sealed class GuideWindow : Window
         WindowRendering.Prepare(this); FontFamily = PacerFonts.Interface; Language = PacerFonts.RenderingLanguage(ui);
         Title = ui.Text(welcome ? "welcome.window_title" : "whats_new.window_title");
         WindowStartupLocation = WindowStartupLocation.CenterScreen; ResizeMode = ResizeMode.NoResize;
-        Width = (welcome ? 560 : 480) + 2 * SystemParameters.FixedFrameVerticalBorderWidth; SizeToContent = SizeToContent.Height;
+        Width = (welcome ? 640 : 480) + 2 * SystemParameters.FixedFrameVerticalBorderWidth; SizeToContent = SizeToContent.Height;
         Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CodexPacer;component/SettingsStyles.xaml", UriKind.Relative) });
         ApplyAppearance(); SetResourceReference(BackgroundProperty, "SettingsBackground");
         root.SetResourceReference(Panel.BackgroundProperty, "SettingsBackground");
@@ -56,13 +56,15 @@ internal sealed class GuideWindow : Window
         heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsPrimary"); titles.Children.Add(heading);
         var subtitle = new TextBlock { Text = welcome ? ui.Text("welcome.subtitle") : catalog.VersionTitle, FontSize = 12, Margin = new Thickness(0, 4, 0, 0), TextWrapping = TextWrapping.Wrap };
         subtitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); if (welcome) titles.Children.Add(subtitle); header.Children.Add(titles); root.Children.Add(header);
-        body.Margin = welcome ? new Thickness(20, 0, 20, 18) : new Thickness(40, 26, 40, 8);
+        // Each welcome page draws its own centered header, as on the Mac.
+        if (welcome) header.Visibility = Visibility.Collapsed;
+        body.Margin = welcome ? new Thickness(32, 40, 32, 8) : new Thickness(40, 26, 40, 8);
         scroller = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         GuideContent.Identify(scroller, "guide.highlights", ui.Text(welcome ? "welcome.step.island" : "whats_new.title"));
         var divider = new Border { Height = 1 }; divider.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
         DockPanel.SetDock(dots, Dock.Left); DockPanel.SetDock(actions, Dock.Right); footer.Children.Add(dots); footer.Children.Add(actions);
         Grid.SetRow(scroller, 1); root.Children.Add(scroller); Grid.SetRow(divider, 2); root.Children.Add(divider); Grid.SetRow(footer, 3); root.Children.Add(footer); Content = root;
-        if (welcome) ShowStep();
+        if (welcome) { divider.Visibility = Visibility.Collapsed; footer.Margin = new Thickness(28, 12, 28, 20); ShowStep(); }
         else
         {
             body.Releases(catalog.Releases, large: true);
@@ -93,7 +95,7 @@ internal sealed class GuideWindow : Window
     private void ApplyAppearance()
     {
         var state = appearance.Current; DesktopAppearance.Apply(this, state);
-        SettingsPalette.Apply(Resources, darkOverride ?? state.Dark, true, state, main: !welcome); semanticPaint.Apply(state);
+        SettingsPalette.Apply(Resources, darkOverride ?? state.Dark, true, state, main: true); semanticPaint.Apply(state);
     }
     private Button CreateButton(string key, string id, Action action, bool primary = false)
     {
@@ -110,21 +112,25 @@ internal sealed class GuideWindow : Window
     {
         foreach (UIElement child in actions.Children) PageAccessibility.Retire(child);
         body.WelcomeStep(step); actions.Children.Clear(); dots.Children.Clear();
-        GuideContent.Identify(scroller, "guide.highlights", catalog.Steps[step]);
-        for (int i = 0; i < 2; i++)
+        string name = StepName(step);
+        GuideContent.Identify(scroller, "guide.highlights", name);
+        // Capsule dots: the current page is the long one, as on the Mac.
+        for (int i = 0; i < GuideContent.WelcomePages.Length; i++)
         {
-            var dot = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 0, 6, 0), Opacity = i == step ? 0.8 : 0.22 };
+            var dot = new System.Windows.Shapes.Rectangle { Width = i == step ? 16 : 6, Height = 6, RadiusX = 3, RadiusY = 3, Margin = new Thickness(0, 0, 6, 0), Opacity = i == step ? 0.75 : 0.18, VerticalAlignment = VerticalAlignment.Center };
             dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "SettingsPrimary"); dots.Children.Add(dot);
         }
-        GuideContent.Identify(dots, "welcome.progress", catalog.Steps[step]); System.Windows.Automation.AutomationProperties.SetLiveSetting(dots, System.Windows.Automation.AutomationLiveSetting.Polite);
-        if (step == 0)
-        {
-            AddButton("welcome.all_marks", "welcome.allMarks", body.OpenHelp);
-            AddButton("welcome.next", "welcome.next", () => { step = 1; ShowStep(); FocusDefault(); }, true);
-        }
-        else { AddButton("welcome.back", "welcome.back", () => { step = 0; ShowStep(); FocusDefault(); }); AddButton("welcome.done", "guide.done", Close, true); }
+        GuideContent.Identify(dots, "welcome.progress", name); System.Windows.Automation.AutomationProperties.SetLiveSetting(dots, System.Windows.Automation.AutomationLiveSetting.Polite);
+        bool last = step == GuideContent.WelcomePages.Length - 1;
+        if (step > 0) AddButton("welcome.back", "welcome.back", () => { step--; ShowStep(); FocusDefault(); });
+        if (last) AddButton("welcome.done", "guide.done", Close, true);
+        else AddButton("main.welcome.continue", "welcome.next", () => { step++; ShowStep(); FocusDefault(); }, true);
+        foreach (var item in actions.Children) if (item is Button button) button.MinHeight = 32;
         scroller.ScrollToTop();
     }
+    /// A page's accessible name is its own title.
+    internal string StepName(int index) => ui.Text(GuideContent.WelcomePages[Math.Clamp(index, 0, GuideContent.WelcomePages.Length - 1)]);
+    internal int Step => step;
     private void FocusDefault() { foreach (var item in actions.Children) if (item is Button { IsDefault: true } button) { button.Focus(); break; } }
     private void Fit()
     {
@@ -134,7 +140,7 @@ internal sealed class GuideWindow : Window
         double chrome = Math.Max(0, ActualHeight - root.ActualHeight);
         double maximum = GuideSession.MaximumNoteHeight(work, chrome);
         // Windows text runs slightly taller than the Mac guide's 532 points.
-        if (welcome) root.Height = Math.Min(560, maximum);
+        if (welcome) root.Height = Math.Min(500, maximum);
         else
         {
             body.Measure(new Size(400, double.PositiveInfinity));

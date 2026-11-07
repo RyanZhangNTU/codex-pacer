@@ -234,56 +234,138 @@ internal sealed class GuideContent : StackPanel
     }
     private static WarningMark Warning(string kind, bool solid = false, string provider = "codex") => new(new(kind == "lowBalance" ? "balance" : "fiveHour", kind == "lowBalance" ? "deepseek" : provider, solid,
         kind == "lowBalance" ? null : solid ? "0" : "12", kind == "lowBalance" ? "exclamationmark.circle" : null, ""));
+    /// The four welcome pages, as on the Mac: what the island shows, how it
+    /// appears, which services it watches, and a last few choices.
+    internal static readonly string[] WelcomePages = ["main.welcome.title", "main.welcome.mode_title", "main.welcome.services_title", "main.welcome.finish_title"];
+    private StackPanel PageHeader(string title, string subtitle)
+    {
+        var header = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
+        var heading = Text(title, 24, true); heading.FontWeight = FontWeights.Bold; heading.TextAlignment = TextAlignment.Center; heading.TextWrapping = TextWrapping.Wrap;
+        AutomationProperties.SetHeadingLevel(heading, AutomationHeadingLevel.Level1); header.Children.Add(heading);
+        var detail = Text(subtitle, 13); detail.TextAlignment = TextAlignment.Center; detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 6, 0, 0);
+        detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); header.Children.Add(detail);
+        return header;
+    }
     internal void WelcomeStep(int step)
     {
-        Reset(); Heading(step == 0 ? "welcome.step.island" : "welcome.step.start");
-        if (step == 0)
+        Reset();
+        switch (step)
         {
-            var map = new WelcomeIslandMap(ui, Badge, Rings(("codex", 58), ("claude", 81)), Warning("codex5hLow"));
-            Identify(map, "welcome.bar", ui.Text("welcome.step.island")); Children.Add(map);
-            var legends = new Grid { Margin = new Thickness(0, 14, 0, 0) };
-            legends.ColumnDefinitions.Add(new ColumnDefinition()); legends.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) }); legends.ColumnDefinitions.Add(new ColumnDefinition());
-            legends.Children.Add(Column("welcome.badges", Group(52, BadgeRow(0, ui.Text("welcome.badge.running")),
-                BadgeRow(1, ui.Text("welcome.badge.waiting"), tint: PacerPalette.Attention), BadgeRow(2, ui.Text("welcome.badge.ended"), ui.Text("welcome.badge.ended_hint")))));
-            var gestures = Column("welcome.gestures", Gestures()); Grid.SetColumn(gestures, 2); legends.Children.Add(gestures); Children.Add(legends);
-        }
-        else
-        {
-            var modules = new Grid();
-            string[] providers = ["codex", "claude", "deepseek"];
-            for (int i = 0; i < providers.Length; i++)
-            {
-                if (i > 0) modules.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
-                modules.ColumnDefinitions.Add(new ColumnDefinition());
-                var card = Module(providers[i]); Grid.SetColumn(card, i * 2); modules.Children.Add(card);
-            }
-            Children.Add(modules);
-            var note = Text(ui.Text("welcome.modules_note"), 11); note.Margin = new Thickness(10, 8, 10, 0); Children.Add(note);
-            Heading("welcome.section.personalize");
-            var notification = Switch(ui.Text("settings.system_notifications"), "welcome.notifications", () => notifications?.DesiredEnabled == true,
-                async value => notifications != null && await notifications.SetEnabledAsync(value) == NotificationChangeResult.Applied);
-            refresh.Add(() => notification.IsEnabled = !changing && !session.RequiresRestart && notifications != null);
-            var notificationDetail = Text("", 11);
-            refresh.Add(() =>
-            {
-                bool denied = notifications?.Availability == NotificationAvailability.Denied;
-                notificationDetail.Text = ui.Text(denied ? "windows.settings.notification_denied" : "welcome.notifications_detail");
-                notificationDetail.SetResourceReference(TextBlock.ForegroundProperty, denied ? "SettingsWarning" : "SettingsSecondary");
-            });
-            var loginDetail = Text("", 11); Identify(loginDetail, "welcome.system.status", "");
-            refresh.Add(() =>
-            {
-                string blocked = StartupDetail();
-                loginDetail.Text = blocked.Length > 0 ? blocked : ui.Text("windows.settings.open_at_login_detail"); AutomationProperties.SetName(loginDetail, loginDetail.Text);
-                loginDetail.SetResourceReference(TextBlock.ForegroundProperty, blocked.Length > 0 ? "SettingsWarning" : "SettingsSecondary");
-            });
-            var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
-            Children.Add(Group(50,
-                TileRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 26), ui.Text("welcome.layout.title"), Text(ui.Text("welcome.layout.detail"), 11), layout),
-                TileRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 26), ui.Text("settings.system_notifications"), notificationDetail, notification),
-                TileRow(GuideArt.Tile("gearshape", Color.FromRgb(133, 133, 133), 26), ui.Text("settings.open_at_login"), loginDetail, Login(ui.Text("settings.open_at_login"), "welcome.startup"))));
+            case 0:
+                var icon = new DecorativeImage { Width = 84, Height = 84, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center,
+                    Source = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))) };
+                Children.Add(icon);
+                var intro = PageHeader(ui.Text("main.welcome.title"), ui.Text("welcome.subtitle")); intro.Margin = new Thickness(0, 8, 0, 26); Children.Add(intro);
+                var map = new WelcomeIslandMap(ui, Badge, Rings(("codex", 58), ("claude", 81)), Warning("codex5hLow"));
+                Identify(map, "welcome.bar", ui.Text("welcome.step.island")); Children.Add(map);
+                break;
+            case 1:
+                var mode = PageHeader(ui.Text("main.welcome.mode_title"), ui.Text("main.welcome.mode_subtitle")); mode.Margin = new Thickness(0, 4, 0, 24); Children.Add(mode);
+                var cards = new Grid();
+                cards.ColumnDefinitions.Add(new ColumnDefinition()); cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) }); cards.ColumnDefinitions.Add(new ColumnDefinition());
+                var island = ModeCard(true, ui.Text("main.welcome.mode_island"), ui.Text("main.welcome.mode_island_detail"), new WelcomeGestureScene());
+                var free = ModeCard(false, ui.Text("main.welcome.mode_free"), ui.Text("appearance.free_move_detail"), new WelcomeMoveScene());
+                cards.Children.Add(island); Grid.SetColumn(free, 2); cards.Children.Add(free); Children.Add(cards);
+                break;
+            case 2:
+                var services = PageHeader(ui.Text("main.welcome.services_title"), ui.Text("welcome.modules_note")); services.Margin = new Thickness(0, 4, 0, 24); Children.Add(services);
+                var modules = new Grid();
+                string[] providers = ["codex", "claude", "deepseek"];
+                for (int i = 0; i < providers.Length; i++)
+                {
+                    if (i > 0) modules.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+                    modules.ColumnDefinitions.Add(new ColumnDefinition());
+                    var card = Module(providers[i]); Grid.SetColumn(card, i * 2); modules.Children.Add(card);
+                }
+                Children.Add(modules);
+                break;
+            default:
+                var finish = PageHeader(ui.Text("main.welcome.finish_title"), ui.Text("main.welcome.finish_subtitle")); finish.Margin = new Thickness(24, 4, 24, 24); Children.Add(finish);
+                // One switch for every service's ring; Settings keeps one per service.
+                var rings = Switch(ui.Text("main.claude.ring"), "welcome.rings", () => session.Current.ClaudeProgressRing || session.Current.CodexProgressRing || session.Current.DeepSeekProgressRing,
+                    value => Preference(p => p with { ClaudeProgressRing = value, CodexProgressRing = value, DeepSeekProgressRing = value }));
+                var notification = Switch(ui.Text("settings.system_notifications"), "welcome.notifications", () => notifications?.DesiredEnabled == true,
+                    async value => notifications != null && await notifications.SetEnabledAsync(value) == NotificationChangeResult.Applied);
+                refresh.Add(() => notification.IsEnabled = !changing && !session.RequiresRestart && notifications != null);
+                var notificationProblem = Text("", 11.5); notificationProblem.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+                refresh.Add(() =>
+                {
+                    bool denied = notifications?.Availability == NotificationAvailability.Denied;
+                    notificationProblem.Text = denied ? ui.Text("windows.settings.notification_denied") : "";
+                    notificationProblem.Visibility = denied ? Visibility.Visible : Visibility.Collapsed;
+                });
+                var loginProblem = Text("", 11.5); Identify(loginProblem, "welcome.system.status", ""); loginProblem.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+                refresh.Add(() =>
+                {
+                    string blocked = StartupDetail();
+                    loginProblem.Text = blocked; AutomationProperties.SetName(loginProblem, blocked);
+                    loginProblem.Visibility = blocked.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+                });
+                var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
+                var choices = Group(54,
+                    ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings),
+                    ChoiceRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 28), ui.Text("settings.system_notifications"), ui.Text("main.welcome.notifications_info"), notificationProblem, notification),
+                    ChoiceRow(GuideArt.Tile("power", Color.FromRgb(51, 189, 102), 28), ui.Text("settings.open_at_login"), ui.Text("main.welcome.login_info"), loginProblem, Login(ui.Text("settings.open_at_login"), "welcome.startup")),
+                    ChoiceRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 28), ui.Text("welcome.layout.title"), ui.Text("main.welcome.layout_info"), null, layout));
+                choices.Margin = new Thickness(24, 0, 24, 0); Children.Add(choices);
+                break;
         }
         Refresh();
+    }
+    /// One way the island appears, shown moving. Choosing it moves the real island
+    /// at once, the same choice as Appearance > Position.
+    private RadioButton ModeCard(bool attached, string title, string detail, FrameworkElement art)
+    {
+        var card = new RadioButton { Style = (Style)FindResource("SettingsArtChoice"), GroupName = "welcome.mode", Height = double.NaN, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        var content = new StackPanel { Margin = new Thickness(12, 12, 12, 14) };
+        var frame = new Border { Height = 118, CornerRadius = new CornerRadius(8), ClipToBounds = true, Background = new SolidColorBrush(Color.FromRgb(40, 44, 58)),
+            Child = new Viewbox { Child = art, Stretch = Stretch.Uniform, Margin = new Thickness(10) } };
+        content.Children.Add(frame);
+        var heading = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
+        var mark = new IconGlyph { Width = 17, Height = 17, VerticalAlignment = VerticalAlignment.Center }; DockPanel.SetDock(mark, Dock.Right); heading.Children.Add(mark);
+        heading.Children.Add(Text(title, 14, true)); content.Children.Add(heading);
+        var text = Text(detail, 11.5); text.Margin = new Thickness(0, 3, 0, 0); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); content.Children.Add(text);
+        card.Content = content; Identify(card, attached ? "welcome.mode.notch" : "welcome.mode.free", title);
+        refresh.Add(() =>
+        {
+            bool selected = (session.Current.DisplayMode == "notch") == attached;
+            card.IsChecked = selected;
+            mark.Symbol = selected ? "checkmark.circle" : "empty.circle";
+            mark.SetResourceReference(IconGlyph.InkProperty, selected ? "SettingsAccent" : "SettingsSecondary");
+        });
+        editors.Add(card);
+        card.Checked += async (_, _) => { if (!syncing && (session.Current.DisplayMode == "notch") != attached) await Edit(() => Preference(p => p with { DisplayMode = attached ? "notch" : "floating" })); };
+        return card;
+    }
+    /// A row of the last page: a tile, the title with an info button, then its control.
+    /// A problem shows under the title in amber; the explanation opens under the row.
+    private StackPanel ChoiceRow(Border tile, string title, string info, TextBlock? problem, UIElement control)
+    {
+        var row = new Grid { Margin = new Thickness(12, 10, 12, 10) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        tile.Margin = new Thickness(0, 0, 12, 0); row.Children.Add(tile);
+        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+        var heading = new StackPanel { Orientation = Orientation.Horizontal }; heading.Children.Add(Text(title));
+        var box = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(11, 9, 11, 9), Margin = new Thickness(52, 0, 12, 10), Visibility = Visibility.Collapsed };
+        box.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");
+        var body = Text(info, 12); body.LineHeight = 17; body.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); box.Child = body;
+        var glyph = new IconGlyph { Symbol = "info.circle", Width = 14, Height = 14 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        var button = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 22, Height = 22, Padding = new Thickness(0), Margin = new Thickness(3, -2, 0, -2), Content = glyph, VerticalAlignment = VerticalAlignment.Center };
+        Identify(button, "welcome.info." + (AutomationProperties.GetAutomationId(control) is { Length: > 0 } id ? id : title), ui.Text("main.info").Replace("%@", title, StringComparison.Ordinal));
+        button.Click += (_, _) =>
+        {
+            bool show = box.Visibility != Visibility.Visible; box.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            glyph.SetResourceReference(IconGlyph.InkProperty, show ? "SettingsPrimary" : "SettingsSecondary");
+            AutomationProperties.SetItemStatus(button, ui.Text(show ? "main.info_shown" : "main.info_hidden"));
+        };
+        AutomationProperties.SetItemStatus(button, ui.Text("main.info_hidden"));
+        heading.Children.Add(button); labels.Children.Add(heading);
+        if (problem != null) { problem.Margin = new Thickness(0, 2, 0, 0); labels.Children.Add(problem); }
+        Grid.SetColumn(labels, 1); row.Children.Add(labels);
+        if (control is FrameworkElement end) end.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(control, 2); row.Children.Add(control);
+        AutomationProperties.SetHelpText(control, info);
+        var host = new StackPanel(); host.Children.Add(row); host.Children.Add(box); return host;
     }
     private string StartupDetail()
     {

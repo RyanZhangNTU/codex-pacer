@@ -25,10 +25,10 @@ internal static class AccessibilityGuideChecks
             {
                 window.Show(); await Drain();
                 appearance.Set(appearance.Current with { Dark = false, HighContrast = false }); await Drain();
-                // What's New reads like the main window's gray page; the welcome guide keeps its plain page.
-                Check(((SolidColorBrush)window.Resources["SettingsBackground"]).Color == (window.IsWelcome ? Colors.White : Color.FromRgb(244, 244, 246)), "Guide windows follow the injected light theme");
+                // Both guides read like the main window's gray page, as on the Mac.
+                Check(((SolidColorBrush)window.Resources["SettingsBackground"]).Color == Color.FromRgb(244, 244, 246), "Guide windows follow the injected light theme");
                 appearance.Set(appearance.Current with { Dark = true }); await Drain();
-                Check(((SolidColorBrush)window.Resources["SettingsBackground"]).Color == (window.IsWelcome ? Color.FromRgb(31, 31, 31) : Color.FromRgb(27, 27, 30)), "Guide windows follow the injected dark theme");
+                Check(((SolidColorBrush)window.Resources["SettingsBackground"]).Color == Color.FromRgb(27, 27, 30), "Guide windows follow the injected dark theme");
                 await Audit(window, welcome ? "welcome" : "whatsNew");
                 if (welcome)
                 {
@@ -36,6 +36,10 @@ internal static class AccessibilityGuideChecks
                     await PresentationWait.UntilAsync(() => Descendants(window).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "welcome.back"), "The next action replaces the welcome step");
                     Check(!oldNext.IsEnabled, "A replaced welcome footer immediately disables its old action"); RejectDisabled(oldNext);
                     await Audit(window, "welcome.step2");
+                    // The four pages each pass the same audit, then Back walks home.
+                    Invoke(Find<Button>(window, "welcome.next")); await Drain(); await Audit(window, "welcome.step3");
+                    Invoke(Find<Button>(window, "welcome.next")); await Drain(); await Audit(window, "welcome.step4");
+                    Invoke(Find<Button>(window, "welcome.back")); await Drain(); Invoke(Find<Button>(window, "welcome.back")); await Drain();
                     Invoke(Find<Button>(window, "welcome.back")); await Drain();
                     Check(Find<Button>(window, "welcome.next").IsDefault, "Reversing a welcome step restores its current default action");
                 }

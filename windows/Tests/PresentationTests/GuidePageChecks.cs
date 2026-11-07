@@ -34,25 +34,24 @@ internal static class GuidePageChecks
         try
         {
             window.Show(); await Pump();
-            Check(window.Title == ui.Text("welcome.window_title") && AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[0], "Welcome title and first step are localized and accessible");
+            Check(window.Title == ui.Text("welcome.window_title") && AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(0), "Welcome title and first page are localized and announced");
             var highlights = Find<ScrollViewer>(window, "guide.highlights");
             var highlightsPeer = UIElementAutomationPeer.CreatePeerForElement(highlights);
-            Check(highlightsPeer.GetName() == catalog.Steps[0], "The welcome content UIA name identifies the first step");
-            Check(SelfAndDescendants(body).OfType<ActivityBadge>().Count() == 4 && SelfAndDescendants(body).OfType<CompactQuotaGlyph>().Any()
-                && SelfAndDescendants(body).OfType<WarningMark>().Any(), "The island map and three badge states use production components");
-            Check(Find<Button>(window, "welcome.next").IsDefault && Find<Button>(window, "welcome.allMarks").Focusable, "Welcome actions participate in keyboard navigation");
-            Check(Has(window, "welcome.gesture.drag") && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any()
-                && SelfAndDescendants(body).OfType<TextBlock>().Any(text => text.Text == ui.Text("welcome.gesture.snap")),
-                "The first welcome step teaches dragging and edge snapping beside an illustration");
-            var gestureLines = new[] { "welcome.gesture.hover", "welcome.gesture.leave", "welcome.gesture.drag" }
-                .Select(id => (FrameworkElement)SelfAndDescendants(body).OfType<FrameworkElement>().First(item => AutomationProperties.GetAutomationId(item) == id)).ToArray();
-            Check(gestureLines.All(line => line is StackPanel panel && panel.Children[0] is TextBlock first && first.Text.Contains(" → ")),
-                "All three gestures share one action → result style");
-            Invoke(Find<Button>(window, "welcome.allMarks")); await Pump(); Check(settingsActions.SequenceEqual(new[] { "help" }) && saved == 0, "All Marks opens Help without saving page state");
+            Check(highlightsPeer.GetName() == window.StepName(0), "The welcome content UIA name identifies the first page");
+            Check(SelfAndDescendants(body).OfType<ActivityBadge>().Any() && SelfAndDescendants(body).OfType<CompactQuotaGlyph>().Any()
+                && SelfAndDescendants(body).OfType<WarningMark>().Any(), "The island map uses production components");
+            Check(Find<Button>(window, "welcome.next").IsDefault && !Has(window, "welcome.back"), "The first page offers only Continue");
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-1-" + language + (dark ? "-dark" : "-light") + ".png"));
             Space(Find<Button>(window, "welcome.next")); await Pump();
-            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[1], "Space on the focused Next action reaches the second step");
-            Check(highlightsPeer.GetName() == catalog.Steps[1], "The same content UIA peer updates to the second step");
+            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(1) && highlightsPeer.GetName() == window.StepName(1),
+                "Space on the focused Continue reaches the display mode page on the same content peer");
+            Check(SelfAndDescendants(body).OfType<WelcomeGestureScene>().Any() && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any(), "Both display modes are shown moving");
+            Select(Find<RadioButton>(window, "welcome.mode.notch")); await Until(() => session.Current.DisplayMode == "notch");
+            Check(Find<RadioButton>(window, "welcome.mode.notch").IsChecked == true && Find<RadioButton>(window, "welcome.mode.free").IsChecked == false, "Choosing the island mode saves at once");
+            Select(Find<RadioButton>(window, "welcome.mode.free")); await Until(() => session.Current.DisplayMode == "floating");
+            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Invoke(Find<Button>(window, "welcome.next")); await Pump();
+            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(2), "Continue reaches the services page");
             foreach (string provider in new[] { "codex", "claude", "deepseek" })
             {
                 var toggle = Find<CheckBox>(window, "welcome.module." + provider); Toggle(toggle);
@@ -63,11 +62,6 @@ internal static class GuidePageChecks
             var codex = Find<CheckBox>(window, "welcome.module.codex"); var beforeRejected = session.Current;
             reject = true; Toggle(codex); await Until(() => !reject && codex.IsEnabled);
             Check(session.Current == beforeRejected && Find<TextBlock>(body, "guide.issue").Text == ui.Text("windows.settings.save_failed"), "Rejected module changes restore the acknowledged profile and show an accessible error");
-            Toggle(Find<CheckBox>(window, "welcome.notifications")); await Until(() => notifications.DesiredEnabled && !notifications.IsChanging);
-            Check(session.Current.SystemNotifications, "The welcome notification switch uses the existing permission and preference coordinator");
-            Toggle(Find<CheckBox>(window, "welcome.startup")); Check(startup.Enabled && startup.Calls == 1, "Open at Login uses the injected OS registration without an invented preference");
-            startup.Blocked = true; body.Refresh(); Check(Find<TextBlock>(window, "welcome.system.status").Text == ui.Text("windows.settings.startup_disabled"), "Blocked OS startup state remains visible");
-            Invoke(Find<Button>(window, "welcome.collapsed")); await Pump(); Check(settingsActions.Last() == "collapsed", "The collapsed-bar shortcut navigates to its settings pane");
             await session.ChangeAsync(p => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = "enabled", ["claude"] = "enabled", ["deepseek"] = "enabled" } });
             snapshot = engine.LatestSnapshot! with { Modules = new[] { new EngineModule("codex", "enabled", false, true), new EngineModule("claude", "enabled", true, true), new EngineModule("deepseek", "enabled", true, true) },
                 ClaudeConnection = new("qa-context", true, false, false, true, "workspaceNeeded", null), Wallet = null };
@@ -75,9 +69,23 @@ internal static class GuidePageChecks
             Check(Find<TextBlock>(window, "welcome.module.codex.status").Text == ui.Text("welcome.module.codex_missing")
                 && Find<Button>(window, "welcome.module.claude.action").Content!.ToString() == ui.Text("claude.quota.choose_workspace"), "Missing installation and workspace states each show the matching single action");
             Invoke(Find<Button>(window, "welcome.module.claude.action")); await Pump(); Check(settingsActions.Last() == "claude", "Workspace actions dispatch to the provider coordinator boundary");
-            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
-            Invoke(Find<Button>(window, "welcome.back")); await Pump(); Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[0], "Back restores the first step");
-            Check(highlightsPeer.GetName() == catalog.Steps[0], "Returning restores the first-step UIA name on the retained peer");
+            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-3-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Invoke(Find<Button>(window, "welcome.next")); await Pump();
+            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(3) && Has(window, "guide.done") && !Has(window, "welcome.next"),
+                "The last page finishes with Done");
+            var rings = Find<CheckBox>(window, "welcome.rings"); Toggle(rings);
+            await Until(() => !session.Current.ClaudeProgressRing && !session.Current.CodexProgressRing && !session.Current.DeepSeekProgressRing && rings.IsEnabled);
+            Toggle(rings);
+            await Until(() => session.Current.ClaudeProgressRing && session.Current.CodexProgressRing && session.Current.DeepSeekProgressRing && rings.IsEnabled);
+            Check(rings.IsChecked == true, "One switch turns every service's progress ring on or off");
+            Toggle(Find<CheckBox>(window, "welcome.notifications")); await Until(() => notifications.DesiredEnabled && !notifications.IsChanging);
+            Check(session.Current.SystemNotifications, "The welcome notification switch uses the existing permission and preference coordinator");
+            Toggle(Find<CheckBox>(window, "welcome.startup")); Check(startup.Enabled && startup.Calls == 1, "Open at Login uses the injected OS registration without an invented preference");
+            startup.Blocked = true; body.Refresh(); Check(Find<TextBlock>(window, "welcome.system.status").Text == ui.Text("windows.settings.startup_disabled"), "Blocked OS startup state remains visible");
+            Invoke(Find<Button>(window, "welcome.collapsed")); await Pump(); Check(settingsActions.Last() == "collapsed", "The collapsed-bar shortcut navigates to its settings pane");
+            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-4-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Invoke(Find<Button>(window, "welcome.back")); await Pump(); Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(2), "Back returns one page");
+            Check(highlightsPeer.GetName() == window.StepName(2), "Returning updates the retained content peer");
             Invoke(Find<Button>(window, "welcome.next")); await Pump();
             Invoke(Find<Button>(window, "guide.done")); await Pump(); Check(!window.IsVisible, "The default Done action closes the guide");
         }
