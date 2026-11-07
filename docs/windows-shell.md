@@ -58,6 +58,8 @@ The What's New window follows the main window too: the icon over one large cente
 
 Snapshots supply task labels, counts, rates, quota and wallet projections. The additive read-only methods `projectCompactBar` and `layoutQuotaChart` call `CompactBarPresentation` and `QuotaCycleChartPresentation` in Core. WPF handles drawing and input. `PacerWindowsBridge` supplies UI geometry, finite motion and native application activation; it does not calculate quotas, billing or compact component rules.
 
+When a dragged island opens, the panel chooses a direction and an anchor from the available space. If more content needs room, the full panel slides inward to fit the work area and keeps that edge when it shrinks again. The direction stays fixed until the panel closes or the placement changes.
+
 All engine requests are asynchronous. Ordinary commands have a 15-second deadline; presentation queries have a 3-second deadline. The deadline includes waiting for the write gate, writing the command and receiving its result. The hello handshake has a 10-second deadline. An engine exit fails pending requests. Rendering reads a bounded cache and returns immediately; identical requests share one pending operation. Failed inputs are not retried by repainting. A missing or failed projection shows a loading/error placeholder, and settings edits report failure without saving an incomplete layout.
 
 `SlowEngineChecks` tests silent, slow and exiting engines. It checks dispatcher heartbeats, immediate rendering, visible errors, bounded request counts and rejection of late responses. Pipe readers await input; animation subscriptions end when motion settles. There is no request polling loop.

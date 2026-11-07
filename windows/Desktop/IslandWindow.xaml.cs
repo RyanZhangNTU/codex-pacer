@@ -67,6 +67,7 @@ public partial class IslandWindow : Window
     private IslandLayout layout;
     private MotionBounds destination;
     private MotionBounds surfaceBounds;
+    private (bool OpensUp, double Y)? expansionAnchor;
     private bool destinationExpanded;
     private int page;
     private RevealHost? currentPage;
@@ -411,21 +412,22 @@ public partial class IslandWindow : Window
             value ? ExpandCollapseState.Expanded : ExpandCollapseState.Collapsed);
         SetCompactDimState(value, true); Relayout(snap); _ = Send("setExpanded", new { expanded = value });
     }
-    private IslandLayout MeasureLayout(double contentWidth, double contentHeight, double headerWidth, bool open)
+    private IslandLayout MeasureLayout(double contentWidth, double contentHeight, double headerWidth, bool open,
+        (bool OpensUp, double Y)? anchor = null)
     {
         var current = IslandScreen.Read(this, SelectedDisplay.Display);
         var bounds = screenGeometry?.Invoke() ?? (current.Screen, current.Work);
         var preferences = displayedPlacement ?? compactPreferences;
         if (preferences.DisplayMode != "notch" && preferences.IslandPlacement is { } placement)
-            return MeasurePlacement(placement, bounds.Item1, bounds.Item2, contentWidth, contentHeight, headerWidth, open);
+            return MeasurePlacement(placement, bounds.Item1, bounds.Item2, contentWidth, contentHeight, headerWidth, open, anchor);
         return geometry.Measure(bounds.Item1, bounds.Item2, displayMode, 0, 0, position, open, contentWidth, contentHeight, headerWidth, measuredStripHeight);
     }
     private IslandLayout MeasurePlacement(IslandPlacement placement, MotionBounds screen, MotionBounds work,
-        double contentWidth, double contentHeight, double headerWidth, bool open)
+        double contentWidth, double contentHeight, double headerWidth, bool open, (bool OpensUp, double Y)? anchor = null)
     {
         int side = placement.Edge == IslandEdge.Left ? 1 : placement.Edge == IslandEdge.Right ? 3 : 0;
         var measured = geometry.Measure(screen, work, 2, 0, 0, side, false, contentWidth, contentHeight, headerWidth, measuredStripHeight);
-        return placement.Arrange(work, measured, measured.Target.Width, measured.Target.Height, contentHeight, open);
+        return placement.Arrange(work, measured, measured.Target.Width, measured.Target.Height, contentHeight, open, anchor);
     }
     private void Relayout(bool snap = false)
     {
@@ -456,7 +458,10 @@ public partial class IslandWindow : Window
         // already measured content when geometry snaps the panel to points.
         contentHeight = Math.Ceiling(contentHeight);
         int previousAnchor = layout.MotionAnchor;
-        layout = MeasureLayout(contentWidth, contentHeight, measuredHeader, expanded);
+        layout = MeasureLayout(contentWidth, contentHeight, measuredHeader, expanded, snap ? null : expansionAnchor);
+        // If the panel had to move to fit, hold that edge until it closes.
+        if (expanded)
+            expansionAnchor = (layout.OpensUp, layout.Target.Y + (layout.OpensUp ? layout.Target.Height : 0));
         snap |= previousAnchor != layout.MotionAnchor;
         ApplyPresentationLayout();
         bool blackHeader = layout.Attached && islandAppearance == "liquidGlass";
@@ -548,6 +553,7 @@ public partial class IslandWindow : Window
     private void ApplyMotion(MotionFrame frame)
     {
         lastFrame = frame;
+        if (frame.Finished && !expanded) expansionAnchor = null;
         double started = Clock();
         PlaceShell(frame.Window);
         boundsMilliseconds += (Clock() - started) * 1000; started = Clock();

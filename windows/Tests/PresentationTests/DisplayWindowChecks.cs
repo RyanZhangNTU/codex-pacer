@@ -61,9 +61,74 @@ internal static class DisplayWindowChecks
             finally { window.AllowClose = true; window.Close(); }
         }
         await CheckTopology(main);
+        await CheckExpansionAnchor();
         File.WriteAllText(Path.Combine(output, "display-acceptance.json"), JsonSerializer.Serialize(new
         { syntheticOnly = true, physicalMonitorCount = native.Current.Count, fullscreen = "borderless", styles = measured, injectedTopology = true, windowsClosed = true }, new JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine("PASS display windows: target topology, disconnect/reconnect, fullscreen off/on, all-surface order, nonactivation, outside hit and restoration");
+    }
+
+    internal static async Task CheckExpansionAnchor()
+    {
+        var work = new MotionBounds(0, 0, 960, 700);
+        foreach (var edge in new[] { IslandEdge.Free, IslandEdge.Left, IslandEdge.Right })
+        {
+            await using var engine = new EngineClient();
+            var window = new IslandWindow(engine, true, false, animationOverride: true, screenGeometry: () => (work, work))
+                { ShowActivated = false, IsHitTestVisible = false };
+            try
+            {
+                window.ApplyPreferences(new DesktopPreferences
+                {
+                    IslandAppearance = "classic", DisplayMode = "floating", IslandPlacement = new(edge, .5, .7)
+                });
+                window.ReceiveSnapshot(Snapshot(1, 3));
+                window.Show();
+                window.Reveal();
+                await window.WaitForPresentationAsync();
+                var tall = window.LogicalTarget;
+                var frames = new List<MotionBounds>();
+                window.FrameApplied += frame => frames.Add(frame.Window);
+
+                window.ReceiveSnapshot(Snapshot(2, 0));
+                await window.WaitForPresentationAsync();
+                var shortPanel = window.LogicalTarget;
+                double bottom = tall.Y + tall.Height;
+                Check(shortPanel.Height < tall.Height && Math.Abs(shortPanel.Y + shortPanel.Height - bottom) <= 1
+                    && frames.All(frame => Math.Abs(frame.Y + frame.Height - bottom) <= 1),
+                    $"The {edge} island must keep its bottom anchor when an upward panel loses rows ({bottom} to {shortPanel.Y + shortPanel.Height})");
+
+                window.CollapseForAutomation();
+                await window.WaitForPresentationAsync();
+                window.Reveal();
+                double top = window.LogicalTarget.Y;
+                frames.Clear();
+                window.ReceiveSnapshot(Snapshot(3, 3));
+                await window.WaitForPresentationAsync();
+                var grown = window.LogicalTarget;
+                Check(Math.Abs(grown.Height - tall.Height) <= 1 && grown.Y + grown.Height <= work.Height
+                    && grown.Y <= top + 1 && frames.All(frame => frame.Y <= top + 1)
+                    && ((ScrollViewer)window.FindName("ExpandedScroll")).ScrollableHeight <= 1,
+                    $"The {edge} island must fit every row when more tasks arrive during a downward expansion");
+
+                frames.Clear();
+                window.ReceiveSnapshot(Snapshot(4, 0));
+                await window.WaitForPresentationAsync();
+                Check(Math.Abs(window.LogicalTarget.Y - grown.Y) <= 1 && frames.All(frame => Math.Abs(frame.Y - grown.Y) <= 1),
+                    $"The {edge} island must stay where it moved to fit when the rows disappear again");
+            }
+            finally { window.AllowClose = true; window.Close(); }
+        }
+        Console.WriteLine("PASS expansion anchors: free, left and right placements fit the full panel without dropping as task rows change");
+
+        static EngineSnapshot Snapshot(ulong sequence, int count)
+        {
+            var rows = Enumerable.Range(1, count).Select(index => new EngineTaskRow(
+                $"qa-{index}", "codex", $"Demo task {index}", "Thinking", null, null, null, "running",
+                "sparkle", null, "Demo", null, null, false, null, null, 0, false, false, false, null, false)).ToArray();
+            var header = new EngineHeader(count, null, new Dictionary<string, int>(), null, null, null, false);
+            return new(1, "snapshot", sequence, true, 0, [], [], [], [], [], count, 0, null, false,
+                Presentation: new(rows, 3, 3, 1, header));
+        }
     }
     private static async Task CheckTopology(DisplayMonitor physical)
     {

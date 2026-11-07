@@ -46,17 +46,18 @@ internal static class IslandPlacementGeometry
         };
     }
 
-    internal static IslandLayout Arrange(this IslandPlacement placement, MotionBounds work, IslandLayout measured, double barWidth, double barHeight, double contentHeight, bool expanded)
+    internal static IslandLayout Arrange(this IslandPlacement placement, MotionBounds work, IslandLayout measured, double barWidth, double barHeight,
+        double contentHeight, bool expanded, (bool OpensUp, double Y)? expansionAnchor = null)
     {
         var edge = placement.Edge;
         var bar = placement.CollapsedFrame(work, barWidth, barHeight);
         double below = Bottom(work) - bar.Y, above = Bottom(bar) - work.Y;
         double full = placement.Vertical ? Math.Max(bar.Height, contentHeight) : bar.Height + contentHeight;
-        bool up = edge == IslandEdge.Bottom || (edge != IslandEdge.Top && below < full && above > below);
-        // A bar placed mid-screen can have too little room on both sides; the open
-        // panel then slides inward to fit the work area instead of being clipped.
+        bool up = edge == IslandEdge.Bottom || (edge != IslandEdge.Top && (expansionAnchor?.OpensUp ?? (below < full && above > below)));
         double height = Math.Min(full, work.Height);
-        double top = Math.Clamp(up ? Bottom(bar) - height : bar.Y, work.Y, Bottom(work) - height);
+        // Fit the full panel in the work area. When it grows, move its edge only as far as needed.
+        double anchorY = expansionAnchor?.Y ?? (up ? Bottom(bar) : bar.Y);
+        double top = Math.Clamp(up ? anchorY - height : anchorY, work.Y, Bottom(work) - height);
         double width = Math.Min(measured.CanvasWidth, work.Width);
         double center = bar.X + bar.Width / 2;
         bool left = edge == IslandEdge.Left || (!placement.Vertical && center - width / 2 < work.X);
