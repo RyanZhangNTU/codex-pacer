@@ -306,7 +306,7 @@
 "appearance.glass_reduced" = "纯黑（已开启“降低透明度”）";
 "appearance.screen_position" = "屏幕位置";
 "appearance.free_move" = "自由拖动";
-"appearance.free_move_detail" = "按住状态栏拖动，靠近屏幕边缘松手会贴边。";
+"appearance.free_move_detail" = "按住状态栏拖动，靠近屏幕边缘松手会吸附。";
 "appearance.position_reset" = "回到顶部中央";
 "position.center" = "中间";
 "position.topLeft" = "左上";
@@ -398,7 +398,7 @@
 "layout.lane.trailing" = "右侧";
 "layout.lane.strip_top" = "上段";
 "layout.lane.strip_bottom" = "下段";
-"layout.strip_help" = "当前是贴边竖条，上段排在下段上方；状态文字和额度标签不在竖条中显示。";
+"layout.strip_help" = "当前吸附在屏幕侧边、显示为竖条，上段排在下段上方；状态文字和额度标签不在竖条中显示。";
 "layout.component.activity" = "活动徽标";
 "layout.component.status" = "状态文字";
 "layout.component.tps" = "总 TPS";
@@ -570,7 +570,7 @@
 "welcome.gesture.collapse" = "收起";
 "welcome.gesture.drag" = "拖动状态栏";
 "welcome.gesture.move" = "移动";
-"welcome.gesture.snap" = "靠近屏幕边缘松手会贴边。";
+"welcome.gesture.snap" = "靠近屏幕边缘松手会吸附。";
 "welcome.modules_note" = "各模块互不影响，可随时在设置里开启或关闭。";
 "welcome.section.personalize" = "个性化";
 "welcome.module.ready" = "已就绪";
@@ -885,7 +885,7 @@
 "help.hover.title" = "展开与收起";
 "help.hover.detail" = "鼠标移到折叠栏上就展开，移开就收起。";
 "help.move.title" = "移动灵动岛";
-"help.move.detail" = "按住状态栏拖动，靠近屏幕边缘松手会贴边。要恢复默认，选“设置 → 外观 → 回到顶部中央”。";
+"help.move.detail" = "按住状态栏拖动，靠近屏幕边缘松手会吸附。要恢复默认，选“设置 → 外观 → 回到顶部中央”。";
 "help.section.services" = "模块";
 "help.enable.title" = "选择模块";
 "help.enable.detail" = "Codex、Claude、DeepSeek 可以分别开关，在设置里对应模块的页面中启用。";
@@ -920,10 +920,10 @@
 "whats_new.cloud_projects_detail" = "项目里的线程和协调现在会出现在任务列表中，带云朵图标和项目名。使用你的 claude.ai 登录，可在“设置 → Claude”中关闭。";
 "whats_new.cloud_coordination" = "线程与协调";
 "whats_new.cloud_coordination_detail" = "线程等你决定或回复、已解决时都会提醒，在 Claude 中读过已解决的线程后，这里的卡片会自动消失。线程写回复时显示估算速度，一轮结束后显示真实速度。";
-"whats_new.progress_ring" = "Claude 进度环";
-"whats_new.progress_ring_detail" = "在“设置 → Claude”中打开后，Claude 会报告请求完成了多少，显示为任务图标外的圆环。Claude 等待后台工作时圆环保持等待，请求完成时填满。";
+"whats_new.progress_ring" = "任务进度圆环";
+"whats_new.progress_ring_detail" = "Codex、Claude 和 DeepSeek 的任务图标外圈会显示请求完成了多少。后台工作运行时圆环保持等待，请求完成时填满。不需要时可在各服务的设置中关闭。";
 "whats_new.free_move" = "自由移动灵动岛";
-"whats_new.free_move_detail" = "按住状态栏，把灵动岛拖到顺手的位置，靠近屏幕边缘松手会贴边。外观设置里的固定位置改为“自由拖动”。";
+"whats_new.free_move_detail" = "按住状态栏，把灵动岛拖到顺手的位置，靠近屏幕边缘松手会吸附。外观设置里的固定位置改为“自由拖动”。";
 "whats_new.subagent_endings" = "后台子代理按时结束";
 "whats_new.subagent_endings_detail" = "对话正忙时结束的 Claude Code 后台子代理不再一直显示为运行中；只有子代理在工作时，速度也会继续更新。";
 
@@ -1030,3 +1030,18 @@
 "main.update.up_to_date" = "已是最新版本。";
 "main.update.failed" = "更新没有完成：%@";
 "main.update.download_page" = "从 GitHub 下载";
+"main.whats_new.title" = "Pacer %@ 新功能";
+"main.welcome.title" = "欢迎使用 Codex Pacer";
+"main.welcome.mode_title" = "选择显示方式";
+"main.welcome.mode_subtitle" = "指针移到灵动岛上就会展开。之后可以在外观设置里更改。";
+"main.welcome.mode_island" = "灵动岛模式";
+"main.welcome.mode_island_detail" = "贴在屏幕顶部中央，和刘海连在一起。";
+"main.welcome.mode_free" = "自由拖动模式";
+"main.welcome.services_title" = "选择要追踪的服务";
+"main.welcome.finish_title" = "最后几项设置";
+"main.welcome.finish_subtitle" = "之后都可以在设置里修改。";
+"main.welcome.continue" = "继续";
+"main.welcome.ring_info" = "任务图标外会多一圈进度，一眼就能看出这个任务大概做到哪了。";
+"main.welcome.notifications_info" = "任务需要你回复、已经结束或额度快用完时提醒你。";
+"main.welcome.login_info" = "随 Mac 一起启动，灵动岛随时都在。";
+"main.welcome.layout_info" = "选择折叠栏两侧显示哪些内容。";

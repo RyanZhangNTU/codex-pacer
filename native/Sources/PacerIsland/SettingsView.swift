@@ -49,9 +49,9 @@ struct SettingsView: View {
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
     @AppStorage(IslandModel.showsClaudeCloudProjectsKey) private var showClaudeCloudProjects = true
-    @AppStorage(IslandModel.claudeProgressRingKey) private var claudeProgressRing = false
-    @AppStorage(IslandModel.codexProgressRingKey) private var codexProgressRing = false
-    @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekProgressRing = false
+    @AppStorage(IslandModel.claudeProgressRingKey) private var claudeProgressRing = true
+    @AppStorage(IslandModel.codexProgressRingKey) private var codexProgressRing = true
+    @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekProgressRing = true
     @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?

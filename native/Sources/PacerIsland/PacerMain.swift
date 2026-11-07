@@ -510,11 +510,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         showSettings()
     }
 
+    /// The page reaches the top edge like the main window; the title stays
+    /// for the Window menu and VoiceOver, and the background drags the window.
+    private static func useBorderlessTitle(_ window: NSWindow) {
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+    }
+
     private func showWelcome() {
         if welcomeWindow == nil {
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: WelcomeView.size),
-                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
             window.title = L10n.text("welcome.window_title")
+            Self.useBorderlessTitle(window)
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.center()
@@ -531,8 +540,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private func showWhatsNew(version: String, releases: [WhatsNew.Release]) {
         if whatsNewWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: WhatsNewView.width, height: 300),
-                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
             window.title = L10n.text("whats_new.window_title")
+            Self.useBorderlessTitle(window)
             window.isReleasedWhenClosed = false
             window.delegate = self
             whatsNewWindow = window
