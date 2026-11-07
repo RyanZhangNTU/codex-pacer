@@ -1,7 +1,6 @@
 import Foundation
 import XCTest
 @testable import PacerCore
-import PacerTestSupport
 
 /// Free Move geometry in AppKit coordinates; it mirrors the Windows
 /// IslandPlacementChecks, whose work areas measure y downward.

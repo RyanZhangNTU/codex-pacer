@@ -5,7 +5,6 @@ import PacerMacSupport
 #endif
 import XCTest
 @testable import PacerCore
-import PacerTestSupport
 
 final class ProviderTests: XCTestCase {
     private let session = "019a0000-0000-7000-8000-000000000001"

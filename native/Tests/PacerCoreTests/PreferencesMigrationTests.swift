@@ -1,7 +1,6 @@
 import Foundation
 import XCTest
 @testable import PacerCore
-import PacerTestSupport
 
 final class PreferencesMigrationTests: XCTestCase {
     func testMigrationPreservesUserChoicesWithoutImportingUnrelatedDataOrOverwritingProduction() throws {

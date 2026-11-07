@@ -1,6 +1,5 @@
 import XCTest
 @testable import PacerCore
-import PacerTestSupport
 
 final class IslandDisplayModeTests: XCTestCase {
     func testOldPreferencesKeepTheirBehaviorAndExplicitModeTakesPrecedence() throws {

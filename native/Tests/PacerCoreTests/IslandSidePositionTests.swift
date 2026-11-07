@@ -1,6 +1,5 @@
 import XCTest
 @testable import PacerCore
-import PacerTestSupport
 
 final class IslandSidePositionTests: XCTestCase {
     private let corners: [IslandPosition] = [.topLeft, .bottomLeft, .topRight, .bottomRight]

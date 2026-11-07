@@ -6,7 +6,6 @@ import PacerMacSupport
 import Foundation
 import XCTest
 @testable import PacerCore
-import PacerTestSupport
 
 final class ClaudeRemoteSetupContractTests: XCTestCase {
     private let success = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false}"#
