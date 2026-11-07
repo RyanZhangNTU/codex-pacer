@@ -1,6 +1,7 @@
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class ClaudeHostTrackingTests: XCTestCase {
@@ -34,7 +35,7 @@ final class ClaudeHostTrackingTests: XCTestCase {
         // DeepSeek Harness is never embedded, so it has no host scans.
         for provider in [AgentProvider.codex, .claude] {
             let fixture = try fixture(claudeEnabled: false)
-            defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+            defer { removeTestDefaults(fixture.domain) }
             let model = fixture.model, scans = PendingScans()
             let session = "019a0000-0000-7000-8000-0000000000e1"
             model.hostApplicationResolver = { actual, sessions, _ in actual == provider ? await scans.resolve(sessions) : [:] }
@@ -70,7 +71,7 @@ final class ClaudeHostTrackingTests: XCTestCase {
 
     func testHostIsScannedOnceAfterEndingAndKeptOnlyWhileShown() async throws {
         let fixture = try fixture()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let model = fixture.model, scans = Scans(), first = zotero, second = terminal
         let running = "019a0000-0000-7000-8000-0000000000a1", ended = "019a0000-0000-7000-8000-0000000000a2"
         let vanishing = "019a0000-0000-7000-8000-0000000000a3"
@@ -105,7 +106,7 @@ final class ClaudeHostTrackingTests: XCTestCase {
 
     func testLabelsNameNonDesktopHostsAndSubagentsUseTheirSessionsHost() async throws {
         let fixture = try fixture()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let model = fixture.model
         let parent = "019a0000-0000-7000-8000-0000000000b1", child = "019a0000-0000-7000-8000-0000000000b2"
         let inDesktop = "019a0000-0000-7000-8000-0000000000b3", remote = "019a0000-0000-7000-8000-0000000000b4"
@@ -126,7 +127,7 @@ final class ClaudeHostTrackingTests: XCTestCase {
 
     func testHidingEmbeddedSessionsTakesTheirSubagentsQuestionsAndEndingsAndShowingRestoresThem() async throws {
         let fixture = try fixture()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let model = fixture.model
         let plugin = "019a0000-0000-7000-8000-0000000000c1", child = "019a0000-0000-7000-8000-0000000000c2"
         let terminal = "019a0000-0000-7000-8000-0000000000c3"
@@ -158,7 +159,7 @@ final class ClaudeHostTrackingTests: XCTestCase {
 
     func testOpenFailureClearsItselfUnlessReplaced() async throws {
         let fixture = try fixture()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let model = fixture.model
         XCTAssertEqual(model.navigationErrorDuration, 30)
         model.navigationErrorDuration = 0.2
@@ -189,7 +190,7 @@ final class ClaudeHostTrackingTests: XCTestCase {
     private struct Fixture { let model: IslandModel; let defaults: UserDefaults; let domain: String }
 
     private func fixture(claudeEnabled: Bool = true) throws -> Fixture {
-        let domain = "com.codexpacer.claude-host-tests." + UUID().uuidString
+        let domain = testDefaultsName("claude-host-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         ProviderModules(codexMode: .disabled, claudeMode: claudeEnabled ? .enabled : .disabled).save(to: defaults)
         // Own defaults leave system notifications off; no monitor is started.

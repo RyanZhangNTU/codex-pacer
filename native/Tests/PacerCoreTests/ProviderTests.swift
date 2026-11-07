@@ -5,6 +5,7 @@ import PacerMacSupport
 #endif
 import XCTest
 @testable import PacerCore
+import PacerTestSupport
 
 final class ProviderTests: XCTestCase {
     private let session = "019a0000-0000-7000-8000-000000000001"
@@ -209,9 +210,9 @@ final class ProviderTests: XCTestCase {
     }
 
     func testModuleOverridesPersistAndAutomaticDoesNotWriteOrOverrideChoices() throws {
-        let name = "ProviderTests." + UUID().uuidString
+        let name = testDefaultsName("ProviderTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         let onlyClaude = ProviderInstallationDetection(codexInstalled: false, claudeInstalled: true)
         var modules = ProviderModules.load(from: defaults)
         XCTAssertEqual(modules.enabledProviders(detection: onlyClaude), [.claude])

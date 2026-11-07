@@ -1,5 +1,6 @@
 import XCTest
 @testable import PacerCore
+import PacerTestSupport
 
 final class LocalizationTests: XCTestCase {
     func testSystemPreferenceUsesFirstSupportedLanguageAndEnglishFallback() {
@@ -14,9 +15,9 @@ final class LocalizationTests: XCTestCase {
     }
 
     func testExplicitOverridePersistsOnlyInTheAppAndSystemRemovesIt() throws {
-        let name = "com.codexpacer.language-tests." + UUID().uuidString
+        let name = testDefaultsName("language-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         let systemBefore = LanguagePreference.systemLanguages()
         defaults.set("keep", forKey: "otherPreference")
         XCTAssertEqual(LanguagePreference.load(from: defaults), .system)

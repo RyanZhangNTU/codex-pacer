@@ -1,6 +1,7 @@
 import XCTest
 import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class ActivityOpeningTests: XCTestCase {
@@ -154,9 +155,9 @@ final class ActivityOpeningTests: XCTestCase {
     }
 
     func testAppButtonsOfferEnabledModulesWithADesktopAppAndOpenOnlyThose() async throws {
-        let domain = "com.codexpacer.app-button-tests." + UUID().uuidString
+        let domain = testDefaultsName("app-button-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        defer { defaults.removePersistentDomain(forName: domain) }
+        defer { removeTestDefaults(domain) }
         func model(codex: ProviderModuleMode, demo: Bool = false) -> IslandModel {
             ProviderModules(codexMode: codex, claudeMode: .enabled).save(to: defaults)
             return IslandModel(demo: demo, defaults: defaults,

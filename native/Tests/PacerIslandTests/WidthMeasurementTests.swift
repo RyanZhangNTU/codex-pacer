@@ -3,6 +3,7 @@ import SwiftUI
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class WidthMeasurementTests: XCTestCase {
@@ -12,9 +13,9 @@ final class WidthMeasurementTests: XCTestCase {
 
     func testThreeProviderTaskToolbarMeasuresItsWholeEnglishAndChineseWidth() async throws {
         _ = NSApplication.shared
-        let domain = "TaskToolbarWidthTests-" + UUID().uuidString
+        let domain = testDefaultsName("TaskToolbarWidthTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        defer { defaults.removePersistentDomain(forName: domain) }
+        defer { removeTestDefaults(domain) }
         ProviderModules(codexMode: .enabled, claudeMode: .enabled, deepseekMode: .enabled).save(to: defaults)
         defaults.set("/synthetic/toolbar/codex", forKey: "codexHome")
         defaults.set("/synthetic/toolbar/claude", forKey: "claudeHome")
@@ -102,9 +103,9 @@ final class WidthMeasurementTests: XCTestCase {
     }
 
     func testApplyingSettingsKeepsTheMeasuredBarWidth() async {
-        let name = "WidthMeasurementTests-" + UUID().uuidString
+        let name = testDefaultsName("WidthMeasurementTests")
         let defaults = UserDefaults(suiteName: name)!
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         let model = IslandModel(demo: true, defaults: defaults)
         model.updateMeasuredCompactWidth(212)
         defaults.set(false, forKey: "showAppButtons")

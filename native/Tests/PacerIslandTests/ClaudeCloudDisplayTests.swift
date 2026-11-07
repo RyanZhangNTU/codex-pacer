@@ -2,6 +2,7 @@ import PacerMacSupport
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class ClaudeCloudDisplayTests: XCTestCase {
@@ -16,9 +17,9 @@ final class ClaudeCloudDisplayTests: XCTestCase {
     }
     private func fixture() throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-cloud-display-" + UUID().uuidString)
-        let domain = "com.codexpacer.cloud-display-tests." + UUID().uuidString
+        let domain = testDefaultsName("cloud-display-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        addTeardownBlock { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: directory) }
+        addTeardownBlock { removeTestDefaults(domain); try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")

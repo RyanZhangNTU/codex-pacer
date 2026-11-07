@@ -1,5 +1,6 @@
 import XCTest
 @testable import PacerCore
+import PacerTestSupport
 
 final class CompactIslandLayoutTests: XCTestCase {
     func testMovesPreserveOneComponentAndSupportPositionsAndInsertion() {
@@ -25,9 +26,9 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertTrue(layout.components.contains(.tps))
     }
     func testDefaultsAndCustomLayoutPersistWithoutChangingOtherPreferences() throws {
-        let name = "CompactLayoutTests." + UUID().uuidString
+        let name = testDefaultsName("CompactLayoutTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         defaults.set("floating", forKey: "islandDisplayMode")
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), .standard)
         XCTAssertNil(defaults.data(forKey: CompactIslandLayout.defaultsKey), "A new or upgraded profile must not write settings on load")
@@ -48,9 +49,9 @@ final class CompactIslandLayoutTests: XCTestCase {
         let layout = try JSONDecoder().decode(CompactIslandLayout.self, from: data).normalized
         XCTAssertEqual(layout.leading, [.tps, .status, .firstOutput])
         XCTAssertTrue(layout.trailing.isEmpty)
-        let name = "CompactLayoutMigrationTests." + UUID().uuidString
+        let name = testDefaultsName("CompactLayoutMigrationTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         defaults.set(data, forKey: CompactIslandLayout.defaultsKey)
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), layout)
         XCTAssertEqual(defaults.data(forKey: CompactIslandLayout.defaultsKey), data)
@@ -170,9 +171,9 @@ final class CompactIslandLayoutTests: XCTestCase {
     }
 
     func testQuotaComponentsFollowEnabledModulesAndChoicesSurviveSaveAndReload() throws {
-        let name = "CompactProviderLayoutTests." + UUID().uuidString
+        let name = testDefaultsName("CompactProviderLayoutTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         let legacy = Data(#"{"version":3,"leading":["quotaMetric","tps"],"trailing":["taskCount"]}"#.utf8)
         defaults.set(legacy, forKey: CompactIslandLayout.defaultsKey)
         var layout = CompactIslandLayout.load(from: defaults)

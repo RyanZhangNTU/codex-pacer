@@ -2,6 +2,7 @@ import PacerMacSupport
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class CodexLogAttentionDisplayTests: XCTestCase {
@@ -55,11 +56,11 @@ final class CodexLogAttentionDisplayTests: XCTestCase {
         return activity
     }
     private func fixture() throws -> IslandModel {
-        let domain = "com.codexpacer.log-attention-tests." + UUID().uuidString
+        let domain = testDefaultsName("log-attention-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-log-attention-model-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        addTeardownBlock { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: root) }
+        addTeardownBlock { removeTestDefaults(domain); try? FileManager.default.removeItem(at: root) }
         defaults.set(root.appendingPathComponent("codex").path, forKey: "codexHome")
         defaults.set(root.appendingPathComponent("claude").path, forKey: "claudeHome")
         defaults.set(false, forKey: "monitorSSH")

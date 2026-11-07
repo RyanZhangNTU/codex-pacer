@@ -6,14 +6,15 @@ import PacerMacSupport
 import Foundation
 import XCTest
 @testable import PacerCore
+import PacerTestSupport
 
 final class ClaudeRemoteSetupContractTests: XCTestCase {
     private let success = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false}"#
     private var target: RemoteActivityTarget { RemoteActivityTarget(id: "fixture-host", name: "Fixture", alias: "fixture-host", home: "/private-codex-home") }
 
     func testAutomaticSetupRunsOncePerDigestForConnectedHostsAndBacksOffFailures() throws {
-        let suite = "pacer-claude-auto-" + UUID().uuidString
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)); defer { defaults.removePersistentDomain(forName: suite) }
+        let suite = testDefaultsName("pacer-claude-auto")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)); defer { removeTestDefaults(suite) }
 
         func host(_ alias: String) -> RemoteActivityTarget {
             RemoteActivityTarget(id: "remote-ssh-discovered:" + alias, name: alias, alias: alias, home: "~/.claude")
