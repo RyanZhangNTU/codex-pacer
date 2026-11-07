@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "cd373fb70fc7a72e15f0564d81a0f897bec1e1517123502952a5d50bc56fd380",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "9d4cbd191cdcbaed2f83b8f6860d314c2295a65b7d9bbabf5feae6454915e9a9",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "98a252b85bca9a791ab59d47bc80d386ba230d0d1483822c0456951a989a79fa"
   },
   "strings": {
@@ -1048,6 +1048,8 @@
     "whats_new.earlier": "\u66f4\u65e9\u7248\u672c",
     "whats_new.free_move": "\u81ea\u7531\u79fb\u52a8\u7075\u52a8\u5c9b",
     "whats_new.free_move_detail": "\u6309\u4f4f\u72b6\u6001\u680f\uff0c\u628a\u7075\u52a8\u5c9b\u62d6\u5230\u987a\u624b\u7684\u4f4d\u7f6e\uff0c\u9760\u8fd1\u5c4f\u5e55\u8fb9\u7f18\u677e\u624b\u4f1a\u5438\u9644\u3002\u5916\u89c2\u8bbe\u7f6e\u91cc\u7684\u56fa\u5b9a\u4f4d\u7f6e\u6539\u4e3a\u201c\u81ea\u7531\u62d6\u52a8\u201d\u3002",
+    "whats_new.main_window": "\u5168\u65b0\u4e3b\u7a97\u53e3",
+    "whats_new.main_window_detail": "\u8bbe\u7f6e\u53d8\u6210\u4e86 Pacer \u7684\u4e3b\u7a97\u53e3\uff1a\u4e00\u9875\u603b\u89c8\u5404\u670d\u52a1\uff0c\u67e5\u770b\u989d\u5ea6\u5386\u53f2\uff0c\u66f4\u65b0\u4e5f\u5728\u7a97\u53e3\u91cc\u76f4\u63a5\u5b8c\u6210\u3002\u5916\u89c2\u91cc\u65b0\u589e\u4e86\u4e3b\u9898\u548c\u5f3a\u8c03\u8272\u3002",
     "whats_new.mark_all_read": "\u5168\u90e8\u6807\u4e3a\u5df2\u8bfb",
     "whats_new.mark_all_read_detail": "\u70b9\u51fb\u56fa\u5b9a\u6309\u94ae\u65c1\u7684\u65b0\u6309\u94ae\uff0c\u5373\u53ef\u4e00\u6b21\u6e05\u9664\u6240\u6709\u9875\u9762\u4e2d\u5df2\u7ed3\u675f\u7684\u4efb\u52a1\u3002\u8fd0\u884c\u4e2d\u4ee5\u53ca\u7b49\u4f60\u56de\u590d\u6216\u5ba1\u6279\u7684\u4efb\u52a1\u4e0d\u53d7\u5f71\u54cd\u3002",
     "whats_new.open_at_login": "\u968f Mac \u4e00\u8d77\u542f\u52a8 Pacer\uff0c\u4e4b\u540e\u53ef\u968f\u65f6\u5728\u201c\u8bbe\u7f6e > \u901a\u7528\u201d\u4e2d\u66f4\u6539\u3002",

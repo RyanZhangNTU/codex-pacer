@@ -1044,6 +1044,8 @@
     "whats_new.earlier": "更早版本",
     "whats_new.free_move": "自由移动灵动岛",
     "whats_new.free_move_detail": "按住状态栏，把灵动岛拖到顺手的位置，靠近屏幕边缘松手会吸附。外观设置里的固定位置改为“自由拖动”。",
+    "whats_new.main_window": "全新主窗口",
+    "whats_new.main_window_detail": "设置变成了 Pacer 的主窗口：一页总览各服务，查看额度历史，更新也在窗口里直接完成。外观里新增了主题和强调色。",
     "whats_new.mark_all_read": "全部标为已读",
     "whats_new.mark_all_read_detail": "点击固定按钮旁的新按钮，即可一次清除所有页面中已结束的任务。运行中以及等你回复或审批的任务不受影响。",
     "whats_new.open_at_login": "随 Mac 一起启动 Pacer，之后可随时在“设置 > 通用”中更改。",

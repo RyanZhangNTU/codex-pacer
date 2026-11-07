@@ -949,6 +949,8 @@
 "whats_new.cloud_projects_detail" = "项目里的线程和协调现在会出现在任务列表中，带云朵图标和项目名。使用你的 claude.ai 登录，可在“设置 → Claude”中关闭。";
 "whats_new.cloud_coordination" = "线程与协调";
 "whats_new.cloud_coordination_detail" = "线程等你决定或回复、已解决时都会提醒，在 Claude 中读过已解决的线程后，这里的卡片会自动消失。线程写回复时显示估算速度，一轮结束后显示真实速度。";
+"whats_new.main_window" = "全新主窗口";
+"whats_new.main_window_detail" = "设置变成了 Pacer 的主窗口：一页总览各服务，查看额度历史，更新也在窗口里直接完成。外观里新增了主题和强调色。";
 "whats_new.progress_ring" = "任务进度圆环";
 "whats_new.progress_ring_detail" = "Codex、Claude 和 DeepSeek 的任务图标外圈会显示请求完成了多少。后台工作运行时圆环保持等待，请求完成时填满。不需要时可在各服务的设置中关闭。";
 "whats_new.free_move" = "自由移动灵动岛";
