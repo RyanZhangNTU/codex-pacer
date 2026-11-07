@@ -37,7 +37,7 @@ A newly typed request that starts independent work resets its estimate. A steer,
 | Request state | Entry evidence | Exit and presentation |
 | --- | --- | --- |
 | Unconfirmed | Initial discovery, connection loss, invalid revision, unsupported snapshot, `notLoaded` or `systemError` without an authoritative ending | Rehydrate from a verified snapshot or owned log anchor. Hide live ring motion; preserve a previously verified ending. |
-| Starting | Owned `task_started`, `turn/started`, or active runtime metadata | Enter the observed work stage. Active metadata without a turn ID may show a dashed pending ring; it cannot accept a numeric report yet. |
+| Starting | Owned `task_started`, `turn/started`, or active runtime metadata | Enter the observed work stage. Active metadata without a turn ID may show the pending comet; it cannot accept a numeric report yet. |
 | Thinking or responding | Reasoning/message lifecycle or generated-text presence | `working`; preserve the estimate. Commentary, partial answers and final-answer items do not independently end a turn. |
 | Executing | Non-reporting tool start; outstanding tool IDs form a bounded set | Return to work only when matching items finish. A tool failure or declined approval does not itself fail the request. |
 | Long step | The oldest outstanding ordinary tool has run for at least 30 seconds | `longStep`. Keep each item's start time so completing an older parallel tool updates the threshold correctly. |
@@ -124,7 +124,7 @@ Pacer's observer remains passive: it must not start a turn, answer an approval o
 | --- | --- | --- |
 | Local CLI and local-execution Desktop | Request states from existing logs and runtime. New local sessions load Pacer's MCP tool. | Test each executable independently. Verify reload behavior, tool discovery, turn metadata and both history formats. |
 | SSH and WSL | Same Core reducer; reporting after setup on the execution host | The remote probes forward the sanitized numeric evidence. Real remote-host lifecycle and setup still need host validation. |
-| Remote Control | Observable lifecycle and a dashed ring when no report is visible | Numeric support requires the allowlisted completed item in the forwarded snapshot or patch. The projection handles it when present; an actual Remote Control session was not tested here. |
+| Remote Control | Observable lifecycle and the pending comet when no report is visible | Numeric support requires the allowlisted completed item in the forwarded snapshot or patch. The projection handles it when present; an actual Remote Control session was not tested here. |
 | Hosted or cloud-orchestrated execution | Observable lifecycle and pending ring where the existing collector has evidence | Local hooks/MCP availability is not implied by a visible task. [OpenAI documents restrictions on local hooks under cloud orchestration](https://learn.chatgpt.com/docs/extend/mcp#use-mcp-backed-tools-in-chatgpt-web). Advertise numeric support only after an actual supported route is verified. |
 
 Desktop IPC remains private and version sensitive. Preserve version/revision/owner checks and bounded snapshot recovery. The [snapshot-loss investigation](diagnostics/codex-desktop-ipc.md) demonstrates why a connected socket cannot establish complete observation. Expose reporting capability separately from connection status; source failure must not become task failure or success.
@@ -133,7 +133,7 @@ Desktop IPC remains private and version sensitive. Preserve version/revision/own
 
 Reuse `pending` and `reported`, with existing working, longStep, attention, waiting, done, interrupted and failed modes. Add a static paused mode for explicitly paused/blocked/limited goals. An unconfirmed source stops live motion and exposes its source status rather than manufacturing an ending.
 
-- No valid estimate: dashed ring while observed work is active. A turn ID is required to accept a number, not to display metadata-confirmed pending work.
+- No valid estimate: the pending comet circles while observed work is active. A turn ID is required to accept a number, not to display metadata-confirmed pending work.
 - Valid estimate: draw the reported fraction, including a later lower value. After 120 seconds without a report, fade only ordinary working mode. Long tools, explicit waits and attention keep the last estimate readable.
 - Explicit successful request ending: sweep to full even if no estimate arrived. An active estimate of 100 may fill the numeric arc, but retains its active icon and triggers no completion pulse or notification.
 - Interruption/failure: preserve the last estimate, with no completion sweep. Explicit goal pause/limits remain static and use their own labels.

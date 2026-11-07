@@ -259,11 +259,9 @@ final class DeepSeekWalletTests: XCTestCase {
         XCTAssertEqual(DeepSeekWallet.compactRemaining(-3.2), "−¥3.2", "An exceeded budget shows how far over")
     }
 
-    func testBalanceHasNoWindowForTheLabelOrTimeRemaining() {
-        for component in [CompactIslandLayout.Component.quotaLabel, .timeRemaining] {
-            XCTAssertFalse(component.isAvailable(for: [.deepseek]))
-            XCTAssertTrue(component.isAvailable(for: [.deepseek, .claude]))
-        }
+    func testBalanceHasNoWindowForTimeRemaining() {
+        XCTAssertFalse(CompactIslandLayout.Component.timeRemaining.isAvailable(for: [.deepseek]))
+        XCTAssertTrue(CompactIslandLayout.Component.timeRemaining.isAvailable(for: [.deepseek, .claude]))
         XCTAssertTrue(CompactIslandLayout.Component.quota.isAvailable(for: [.deepseek]), "The balance takes the value's place")
         XCTAssertTrue(CompactIslandLayout.Component.quotaGauge.isAvailable(for: [.deepseek]), "A budget can join the rings")
         XCTAssertTrue(CompactIslandLayout.Component.priceClock.isAvailable(for: [.deepseek]))

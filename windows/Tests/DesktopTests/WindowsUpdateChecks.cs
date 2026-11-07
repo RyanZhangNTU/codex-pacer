@@ -88,15 +88,19 @@ internal static class WindowsUpdateChecks
         internal byte[]? Package;
         internal bool Fail, Corrupt, Stall, Unsized;
         internal TimeSpan Pause = TimeSpan.Zero;
+        /// While set, feed reads wait for it, so a check stays in progress.
+        internal TaskCompletionSource? FeedHold;
         internal readonly List<Uri> Calls = [];
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls.Add(request.RequestUri!);
             byte[] body = Package ?? Payload;
-            HttpContent content = request.RequestUri!.AbsolutePath.EndsWith(".xml", StringComparison.Ordinal) ? new ByteArrayContent(Feed)
+            bool feedRead = request.RequestUri!.AbsolutePath.EndsWith(".xml", StringComparison.Ordinal);
+            if (feedRead && FeedHold is { } hold) await hold.Task.WaitAsync(cancellationToken);
+            HttpContent content = feedRead ? new ByteArrayContent(Feed)
                 : Corrupt ? new ByteArrayContent([1, 2, 3]) : Stall ? new StreamContent(new Silent())
                 : Unsized || Pause > TimeSpan.Zero ? new StreamContent(new Paced(body, Pause)) : new ByteArrayContent(body);
-            return Task.FromResult(new HttpResponseMessage(Fail ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK) { RequestMessage = request, Content = content });
+            return new HttpResponseMessage(Fail ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK) { RequestMessage = request, Content = content };
         }
     }
     /// Absolute URLs answer with a body or a redirect; anything else is missing.
@@ -116,6 +120,7 @@ internal static class WindowsUpdateChecks
     private sealed class Presenter : IWindowsUpdatePresenter
     {
         internal readonly List<string> Events = [];
+        public bool KeepsResultOpen { get; set; } = true;
         public void Checking() => Events.Add("checking");
         public void Offer(WindowsUpdatePackage package, bool manual) => Events.Add((manual ? "offer:" : "auto-offer:") + package.Build);
         public void UpToDate() => Events.Add("up-to-date");
@@ -274,7 +279,11 @@ internal static class WindowsUpdateChecks
         Check(updates.CurrentOffer?.Build == new Version(1, 2, 3, 7), "A changed feed replaces the stale offer");
         updates.Dismiss();
         clock += TimeSpan.FromDays(1); presenter.Events.Clear();
-        Check(await updates.CheckAutomaticIfDueAsync() && presenter.Events.SequenceEqual(["auto-offer:1.2.3.7"]) && updates.Status.Busy, "A newer build than the skipped one is offered automatically");
+        var backgroundStatuses = new List<WindowsUpdateStatus>();
+        updates.Changed += backgroundStatuses.Add;
+        Check(await updates.CheckAutomaticIfDueAsync() && presenter.Events.SequenceEqual(["auto-offer:1.2.3.7"])
+            && backgroundStatuses.All(status => !status.Busy), "A newer build is offered in the background without suspending the island");
+        updates.Changed -= backgroundStatuses.Add;
         updates.Dismiss();
         transport.Feed = key.Feed(); presenter.Events.Clear();
         Check(await updates.CheckAsync() && presenter.Events.SequenceEqual(["checking", "up-to-date"]) && updates.Status.MessageKey == "updates.no_update", "No update shows the up-to-date result");
@@ -292,7 +301,38 @@ internal static class WindowsUpdateChecks
         Check(await updates.ApplyAutomaticAsync(false, saving) && !saving.Current.AutomaticUpdates && state.Read("PacerAutomaticChecks") == "0", "Automatic checks can be disabled and persisted");
         clock += TimeSpan.FromDays(2); presenter.Events.Clear();
         Check(!await updates.CheckAutomaticIfDueAsync() && presenter.Events.Count == 0, "Disabled automatic checks never run");
-        Check(await updates.CheckAsync(), "Disabling automatic checks keeps manual checks available"); updates.Dismiss();
+        presenter.KeepsResultOpen = false;
+        transport.Feed = feed;
+        Check(await updates.CheckAsync() && !updates.Status.Busy && updates.CurrentOffer != null,
+            "An inline check leaves the offered version ready to install");
+        using (var cancel = new CancellationTokenSource())
+        {
+            transport.Stall = true;
+            var download = updates.DownloadAsync(null, cancel.Token);
+            Check(updates.Status.Busy && !await updates.CheckAsync(), "An inline download owns the update operation until it finishes");
+            cancel.Cancel();
+            await Fails<OperationCanceledException>(() => download, "Cancel stops the inline download");
+            transport.Stall = false;
+        }
+        Check(!updates.Status.Busy && updates.CurrentOffer != null, "Cancelling an inline download restores input and keeps the offer");
+        transport.Fail = true;
+        Check(!await updates.CheckAsync() && !updates.Status.Busy && updates.CurrentOffer != null, "An inline error allows retry without losing the offer");
+        transport.Fail = false; transport.Feed = key.Feed();
+        Check(await updates.CheckAsync() && !updates.Status.Busy && updates.CurrentOffer == null, "A successful inline check clears an offer the feed withdrew");
+        // Update and Restart during a background check waits for it instead of failing.
+        transport.Feed = key.Feed(Item(key, build: "1.2.3.7"));
+        Check(await updates.CheckAsync() && updates.CurrentOffer?.Build == new Version(1, 2, 3, 7), "An inline check offers a newer build");
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        transport.FeedHold = hold;
+        var background = updates.RetryAfterFailedPatchAsync();
+        var waiting = updates.DownloadAsync(null, CancellationToken.None);
+        Check(!background.IsCompleted && !waiting.IsCompleted && !updates.Status.Busy, "A download asked for during a background check waits for it");
+        transport.FeedHold = null; hold.SetResult();
+        Check(await background, "The background check finishes first");
+        var afterCheck = await waiting;
+        Check(afterCheck.Package == updates.CurrentOffer && File.Exists(afterCheck.Installer) && !updates.Status.Busy,
+            "The waiting download then runs and restores input");
+        updates.Dismiss();
         Check(!presenter.Events.Contains("quit"), "No check or dismissal hands off an installer");
     }
     private static async Task HttpsChecks(SigningFixture key, WindowsUpdateChannel template, string root)

@@ -16,9 +16,6 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? codexRemoteControl;
-    private StackPanel? codexRemoteSources, codexRemoteStatus;
-    private Button? codexRemoteRetry;
     private CheckBox? codexEnabled, codexEmbedded, codexProgress;
     private TextBlock? codexProgressState;
     private Button? codexProgressRetry;
@@ -28,6 +25,8 @@ internal sealed partial class SettingsWindow
     private Ellipse? cliDot;
     private Button? codexAutomatic, cliRescan, cliCandidates;
     private StackPanel? codexSections;
+    private Border? codexOff;
+    private Expander? codexLocations;
     private TextBox? executableField, homeField;
     private CodexSourceReport? sourceReport;
     private string? sourceInspectionKey, executablePreference, homePreference;
@@ -41,53 +40,44 @@ internal sealed partial class SettingsWindow
 
     private void ClearCodex()
     {
-        codexRemoteControl = null; codexRemoteSources = null; codexRemoteRetry = null;
         sourceInspectionRevision++; sourceCommitRevision++; Array.Clear(pendingSourceValidation); sourceInspectionKey = null; sourceReport = null;
         codexEnabled = codexEmbedded = codexProgress = null; codexDetection = cliState = cliIssue = executableIssue = homeIssue = historyTitle = null; codexHistory = null;
         codexProgressState = null; codexProgressRetry = null; codexProgressStatus = null;
-        cliDot = null; codexAutomatic = cliRescan = cliCandidates = null; codexSections = null;
+        cliDot = null; codexAutomatic = cliRescan = cliCandidates = null; codexSections = null; codexOff = null; codexLocations = null;
         executableField = homeField = null; executablePreference = homePreference = null;
     }
 
+    /// As on the Mac: the header holds the module switch, then Status (CLI and
+    /// quota), Display, and folded custom locations. Remote Control lives on
+    /// Remote and the quota trend on History.
     private void BuildCodex()
     {
-        var tile = new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(9.88),
-            Background = new SolidColorBrush(Color.FromRgb(102, 205, 187)), Margin = new Thickness(0, 0, 12, 0) };
-        tile.Child = new IconGlyph { Symbol = "chevron.left.forwardslash.chevron.right", Width = 25, Height = 25,
-            Ink = new SolidColorBrush(Color.FromArgb(184, 0, 0, 0)) };
-        var name = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        name.Children.Add(Label("Codex", 14, FontWeights.SemiBold)); codexDetection = Detail(""); name.Children.Add(codexDetection);
-        var identity = new StackPanel { Orientation = Orientation.Horizontal }; identity.Children.Add(tile); identity.Children.Add(name);
-        codexEnabled = new CheckBox { Style = (Style)FindResource("SettingsSwitch") };
+        SetPaneHeader(ProviderHeader("codex", out var detection, out var module, out var automatic));
+        codexDetection = detection; codexEnabled = module; codexAutomatic = automatic;
         Identify(codexEnabled, "settings.codex.enabled", "Codex"); editors.Add(codexEnabled);
         BindToggle(codexEnabled, (p, value) => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = value ? "enabled" : "disabled" } });
-        form.Children.Add(Card(Row(identity, codexEnabled, 62)));
-        codexAutomatic = new Button { Content = ui.Text("provider.restore_automatic"), Style = (Style)FindResource("SettingsLink"),
-            HorizontalAlignment = HorizontalAlignment.Right, FontSize = 11, Margin = new Thickness(0, 0, 10, 16) };
         Identify(codexAutomatic, "settings.codex.automatic", ui.Text("provider.restore_automatic")); editors.Add(codexAutomatic);
         codexAutomatic.Click += async (_, _) => await Change(p => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = "automatic" } });
-        form.Children.Add(codexAutomatic);
+        codexOff = ModuleOffCard(); form.Children.Add(codexOff);
         codexSections = new StackPanel(); form.Children.Add(codexSections);
-        codexSections.Children.Add(SectionHeader("windows.provider.local", 10));
 
-        cliState = Detail(ui.Text("provider.state.searching")); cliState.Margin = new Thickness(0, 0, 8, 0);
-        Identify(cliState, "settings.codex.cli.status", cliState.Text);
-        cliDot = new Ellipse { Width = 6, Height = 6, Margin = new Thickness(0, 0, 8, 0) };
         cliRescan = new Button { Content = ui.Text("settings.rescan"), Visibility = Visibility.Collapsed };
         Identify(cliRescan, "settings.codex.rescan", ui.Text("settings.rescan")); editors.Add(cliRescan);
         cliRescan.Click += async (_, _) => { sourceInspection = InspectSavedSourceAsync(); await sourceInspection; };
-        var status = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        status.Children.Add(cliDot); status.Children.Add(cliState); status.Children.Add(cliRescan);
-        var cli = new StackPanel(); cli.Children.Add(Row(Label("Codex CLI"), status, 36));
-        cliIssue = Detail(""); cliIssue.Margin = new Thickness(10, 0, 10, 8); cli.Children.Add(cliIssue);
-        var embedded = Toggle("codex.embedded_sessions", "codex.embedded_sessions_help", "settings.codex.embedded", out var embeddedSwitch);
+        cliIssue = Detail(""); cliIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+        var cli = StatusRow("Codex CLI", out var dot, out var state, cliRescan, cliIssue); cliDot = dot; cliState = state;
+        cliState.Text = ui.Text("provider.state.searching"); Identify(cliState, "settings.codex.cli.status", cliState.Text);
+        codexSections.Children.Add(SectionTitle(ui.Text("main.section.status"), 0));
+        codexSections.Children.Add(Card(cli, ProviderQuotaRow("codex")));
+
+        var embedded = Toggle("main.embedded", "main.info.codex_embedded", "settings.codex.embedded", out var embeddedSwitch);
         codexEmbedded = embeddedSwitch; editors.Add(embeddedSwitch);
         BindToggle(embeddedSwitch, (p, value) => p with { ShowEmbeddedCodexSessions = value });
-        var progress = Toggle("codex.progress_ring", "codex.progress_ring_help", "settings.codex.progress_ring", out var progressSwitch);
-        codexProgress = progressSwitch; editors.Add(progressSwitch);
-        BindToggle(progressSwitch, (p, value) => p with { CodexProgressRing = value });
+        codexProgress = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };
+        Identify(codexProgress, "settings.codex.progress_ring", ui.Text("main.claude.ring")); editors.Add(codexProgress);
+        BindToggle(codexProgress, (p, value) => p with { CodexProgressRing = value });
         codexProgressState = Detail(""); Identify(codexProgressState, "settings.codex.progress_state", "");
-        codexProgressRetry = new Button { Content = ui.Text("connections.retry"), Style = (Style)FindResource("SettingsLink") };
+        codexProgressRetry = new Button { Content = ui.Text("connections.retry"), Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
         Identify(codexProgressRetry, "settings.codex.progress_retry", ui.Text("connections.retry"));
         codexProgressRetry.Click += async (sender, _) =>
         {
@@ -96,35 +86,33 @@ internal sealed partial class SettingsWindow
             catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
             { if (!sourceClosed && ReferenceEquals(sender, codexProgressRetry)) codexProgressState?.SetCurrentValue(TextBlock.TextProperty, ui.Text("codex.progress_setup.failed")); }
         };
-        codexProgressStatus = Row(codexProgressState, codexProgressRetry);
-        var progressBlock = new StackPanel(); progressBlock.Children.Add(progress); progressBlock.Children.Add(codexProgressStatus);
-        var locations = new Expander { Header = ui.Text("provider.custom_locations"), Style = (Style)FindResource("SettingsDisclosure"),
-            IsExpanded = session.Current.CodexExecutable.Length > 0 || session.Current.CodexHome.Length > 0 };
-        Identify(locations, "settings.codex.locations", ui.Text("provider.custom_locations"));
-        var fields = new StackPanel { Margin = new Thickness(10, 6, 10, 10) };
+        var progressEnd = new StackPanel { Orientation = Orientation.Horizontal }; progressEnd.Children.Add(codexProgressRetry); progressEnd.Children.Add(codexProgress);
+        var progress = InfoRow(ui.Text("main.claude.ring"), progressEnd, ui.Text("codex.progress_ring_help"), codexProgressState, "settings.codex.progress_ring");
+        codexProgressStatus = codexProgressState;
+        codexSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
+        codexSections.Children.Add(Card(embedded, progress));
+
+        // Each location is a row of its own, as on the Mac: its name, the field, then Choose.
+        var fields = new StackPanel { Margin = new Thickness(14, 0, 14, 0) };
+        fields.Children.Add(Hairline(0, 0));
         fields.Children.Add(SourceField(true, out executableField)); executableIssue = SourceIssue("settings.codex.executable.issue"); fields.Children.Add(executableIssue);
+        fields.Children.Add(Hairline(0, 0));
         fields.Children.Add(SourceField(false, out homeField)); homeIssue = SourceIssue("settings.codex.home.issue"); fields.Children.Add(homeIssue);
-        locations.Content = fields; codexSections.Children.Add(Card(cli, embedded, progressBlock, locations));
-        var remote = Toggle("settings.monitor_remote_control", "settings.remote_control_help", "settings.codex.remote_control", out var remoteSwitch);
-        codexRemoteControl = remoteSwitch; editors.Add(remoteSwitch);
-        BindToggle(remoteSwitch, (p, value) => p with { MonitorRemoteControl = value });
-        codexRemoteRetry = new Button { Content = ui.Text("connections.retry"), VerticalAlignment = VerticalAlignment.Center };
-        Identify(codexRemoteRetry, "settings.codex.remote_retry", ui.Text("connections.retry")); editors.Add(codexRemoteRetry);
-        codexRemoteRetry.Click += async (_, _) =>
-        { await sourceReady; if (!sourceClosed && engine != null) await engine.SendAsync("refreshRemoteControl"); };
-        codexRemoteSources = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; Identify(codexRemoteSources, "settings.codex.remote_sources", ui.Text("connections.kind.remote_control"));
-        // The sources read as one status row whose trailing action retries them; it shows only while monitoring.
-        var hairline = new Border { Height = 1, Margin = new Thickness(10, 0, 10, 0) }; hairline.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
-        codexRemoteStatus = new StackPanel(); codexRemoteStatus.Children.Add(hairline); codexRemoteStatus.Children.Add(Row(codexRemoteSources, codexRemoteRetry));
-        var remoteBlock = new StackPanel(); remoteBlock.Children.Add(remote); remoteBlock.Children.Add(codexRemoteStatus);
-        codexSections.Children.Add(Card(remoteBlock));
-        historyTitle = Label("", 13, FontWeights.SemiBold);
-        historyTitle.Margin = new Thickness(10, 20, 0, 8); codexSections.Children.Add(historyTitle);
-        codexHistory = new QuotaHistoryView(ui, PacerPalette.Codex, async () =>
-        { await sourceReady; if (!sourceClosed && engine != null) await engine.SendAsync("retryQuota", new { provider = "codex" }); });
-        codexSections.Children.Add(Card(codexHistory));
+        codexLocations = Disclosure(ui.Text("provider.custom_locations"), fields,
+            session.Current.CodexExecutable.Length > 0 || session.Current.CodexHome.Length > 0, "settings.codex.locations");
+        codexSections.Children.Add(Card(codexLocations));
     }
 
+    /// A custom location's row: a 96-wide name, the field, then its buttons, at least 44 tall.
+    private Grid LocationRow(string title, TextBox field, UIElement actions)
+    {
+        var row = new Grid { MinHeight = 44 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var name = Label(title); name.VerticalAlignment = VerticalAlignment.Center; name.TextTrimming = TextTrimming.CharacterEllipsis; name.Margin = new Thickness(0, 0, 8, 0); row.Children.Add(name);
+        field.VerticalAlignment = VerticalAlignment.Center; field.FontSize = 12.5; Grid.SetColumn(field, 1); row.Children.Add(field);
+        if (actions is FrameworkElement end) end.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(actions, 2); row.Children.Add(actions); return row;
+    }
     private TextBlock SourceIssue(string id)
     {
         var label = Detail(""); label.Visibility = Visibility.Collapsed; label.Margin = new Thickness(0, 3, 0, 6);
@@ -165,9 +153,7 @@ internal sealed partial class SettingsWindow
             cliCandidates.Click += (_, _) => ShowOtherExecutables(); actions.Children.Add(cliCandidates);
         }
         actions.Children.Add(choose);
-        var row = new Grid { MinHeight = 28, Margin = new Thickness(0, executable ? 0 : 10, 0, 0) };
-        row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.Children.Add(field); Grid.SetColumn(actions, 1); row.Children.Add(actions); return row;
+        return LocationRow(ui.Text(key), field, actions);
     }
 
     private void ShowOtherExecutables()
@@ -196,33 +182,19 @@ internal sealed partial class SettingsWindow
         {
             var setup = engine.LatestSnapshot?.CodexProgressSetup;
             codexProgressStatus.Visibility = !demo && enabled && session.Current.CodexProgressRing && setup != null ? Visibility.Visible : Visibility.Collapsed;
+            if (setup is "failed" or "missingCLI" or "conflict") codexProgressState.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+            else codexProgressState.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
             codexProgressState.Text = setup == null ? "" : ui.Text("codex.progress_setup." + setup);
             codexProgressRetry.Visibility = setup is "failed" or "missingCLI" or "conflict" ? Visibility.Visible : Visibility.Collapsed;
             codexProgressRetry.IsEnabled = !busy && !session.RequiresRestart && !engine.IsConnectionClosed;
-        }
-        if (codexRemoteControl != null) codexRemoteControl.IsChecked = session.Current.MonitorRemoteControl;
-        if (codexRemoteRetry != null) codexRemoteRetry.IsEnabled = enabled && session.Current.MonitorRemoteControl && !busy && !session.RequiresRestart && !engine.IsConnectionClosed;
-        if (codexRemoteSources != null)
-        {
-            codexRemoteSources.Children.Clear();
-            codexRemoteStatus!.Visibility = session.Current.MonitorRemoteControl ? Visibility.Visible : Visibility.Collapsed;
-            if (session.Current.MonitorRemoteControl)
-            {
-                var remoteSources = engine.LatestSnapshot?.Sources.Where(value => value.Provider == "codex" && value.Transport == "remote-control").ToArray() ?? [];
-                foreach (var source in remoteSources)
-                {
-                    var line = new DockPanel { Margin = new Thickness(0, 1, 0, 1) };
-                    var state = Detail(source.StateLabel ?? ""); state.Margin = new Thickness(8, 0, 0, 0); DockPanel.SetDock(state, Dock.Right);
-                    line.Children.Add(state); line.Children.Add(Label(source.SourceName ?? ui.Text("connections.kind.remote_control")));
-                    codexRemoteSources.Children.Add(line);
-                }
-                if (remoteSources.Length == 0) { var checking = Detail(ui.Text("connections.summary.checking")); checking.Margin = new Thickness(0); codexRemoteSources.Children.Add(checking); }
-            }
         }
         codexDetection.Text = ui.Text(module?.Installed == false ? "windows.provider.not_detected" : module?.Installed == true ? "windows.provider.detected" : "provider.state.searching")
             + (mode == "automatic" ? " · " + ui.Text("provider.automatic") : "");
         codexAutomatic!.Visibility = mode == "automatic" ? Visibility.Collapsed : Visibility.Visible;
         codexSections.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        if (codexOff != null) codexOff.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+        if (codexLocations != null) codexLocations.Tag = ui.Text(session.Current.CodexExecutable.Length == 0 && session.Current.CodexHome.Length == 0 ? "settings.auto_discovery" : "main.location.custom");
+        RefreshProviderQuotaRow("codex");
         if (executablePreference != session.Current.CodexExecutable)
         { executablePreference = session.Current.CodexExecutable; executableField!.Text = executablePreference; SetSourceIssue(executableIssue, null); }
         if (homePreference != session.Current.CodexHome)
@@ -239,7 +211,7 @@ internal sealed partial class SettingsWindow
     private void OnProviderSnapshot(EngineSnapshot snapshot)
     {
         if (Dispatcher.HasShutdownStarted) return;
-        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed) { synchronizing = true; try { RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshCollapsed(); RefreshConnections(); } finally { synchronizing = false; } } });
+        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed) { synchronizing = true; try { RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshCollapsed(); RefreshConnections(); RefreshSidebar(); RefreshOverview(); RefreshHistory(); } finally { synchronizing = false; } } });
     }
     private void OnProviderStatus(string status)
     {
@@ -249,7 +221,7 @@ internal sealed partial class SettingsWindow
             if (sourceClosed) return;
             providerConnectionClosed = true; sourceInspectionRevision++; sourceReport = null; sourceInspectionFailed = true;
             synchronizing = true;
-            try { UpdateSourceStatus(); RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshConnections(); }
+            try { UpdateSourceStatus(); RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshConnections(); RefreshSidebar(); RefreshOverview(); RefreshHistory(); }
             finally { synchronizing = false; }
         });
     }

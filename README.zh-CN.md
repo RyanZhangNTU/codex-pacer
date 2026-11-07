@@ -77,7 +77,7 @@ Codex Pacer 以通用 DMG 发布，已使用 Developer ID 签名并通过 Apple 
 1. 双击下载的 DMG，把 **Codex Pacer** 拖入“应用程序”。
 2. 从“应用程序”中打开 Codex Pacer。macOS 会询问一次是否打开从互联网下载的应用，点击“打开”即可。
 
-之后 Pacer 会自行更新：每天检查一次，由你决定何时安装，更新后会显示一次更新内容。在“设置 → 通用 → 检查更新”中可以立即检查。关于 Gatekeeper 的更多说明见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
+之后 Pacer 会自行更新：每天检查一次，发现新版本时在主窗口中提示，点“更新并重启”即可一键安装，更新后会显示一次更新内容。在“设置 → 帮助与更新 → 检查更新”中可以立即检查。关于 Gatekeeper 的更多说明见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
 
 ### Windows
 

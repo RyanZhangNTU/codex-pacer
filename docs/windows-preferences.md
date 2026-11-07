@@ -16,7 +16,7 @@ Every released Windows build (4.2.2 and later) uses schema 2. Schema-1 files com
 | Quota windows and rings | `quotaWindowID`, `claudeQuotaWindowID`, `quotaRingOuter`, `quotaRingInner` | `auto`; absent ring keys mean automatic |
 | DeepSeek | `deepseekPanelStyle`, `deepseekMode`, `deepseekBalanceSource`, `deepseekDailyBudget`, `deepseekWeeklyBudget`, `deepseekRingPeriod`, `deepseekSpeedSource`, `deepseekShowsTurnCost`, `deepseekLowBalanceLine`, `deepseekSpikeLimit` | `detailed`, `balance`, `automatic`, no amounts, `day`, `local`, turn cost on |
 | Privacy and visible tasks | `hideProjects`, `showAppButtons`, `showEmbeddedCodexSessions`, `showClaudeCloudProjects` | `false`, `true`, `true`, `true` |
-| Claude progress ring | `claudeProgressRing` | `false` |
+| Task progress rings | `claudeProgressRing`, `codexProgressRing`, `deepseekProgressRing` | `true`; a saved `false` is kept |
 | Retention and settings pane | `completedRetentionMinutes`, `settingsPane` | `30`, `general` |
 | Sources and Claude organization | `codexExecutable`, `codexHome`, `claudeHome`, `deepseekHome`, `claudeWebOrganizationID` | Empty overrides |
 | Modules | `providerModule.codex`, `providerModule.claude`, `providerModule.deepseek` | `automatic` |

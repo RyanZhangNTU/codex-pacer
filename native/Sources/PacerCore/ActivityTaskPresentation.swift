@@ -41,8 +41,13 @@ public struct HeaderActivity: Equatable, Sendable {
     public var orbit: [AgentProvider: Int]
     public var attention: PendingAttentionRequest.Kind?
     public var ending: Ending?
-    public init(core: Core, activeCount: Int, orbit: [AgentProvider: Int], attention: PendingAttentionRequest.Kind? = nil, ending: Ending? = nil) {
+    /// The only active task's reported estimate while it works; the badge
+    /// draws it in place of the orbit.
+    public var progress: TaskProgressRing?
+    public init(core: Core, activeCount: Int, orbit: [AgentProvider: Int], attention: PendingAttentionRequest.Kind? = nil, ending: Ending? = nil,
+                progress: TaskProgressRing? = nil) {
         self.core = core; self.activeCount = activeCount; self.orbit = orbit; self.attention = attention; self.ending = ending
+        self.progress = progress
     }
     public var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
     public var showsEndingMark: Bool { ending != nil && !endingIsCore }
@@ -243,6 +248,10 @@ public struct ActivityTaskPresentation: Sendable {
         }).map({ activity in symbol(TaskSymbol.symbol(for: activity, groupIsRunning: groups.first { $0.primary.id == activity.id }?.isRunning == true)) }) {
             core = .symbol(glyph)
         } else { core = .count(active) }
-        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending)
+        // One task working with a reported estimate shows it, whatever the core shows.
+        let progress = active == 1 && attention == nil ? overview.running.first.flatMap { running in
+            rows.first { $0.activity.id == running.id }?.progressRing
+        }.flatMap { ring in ring.state == .reported && [.working, .longStep].contains(ring.mode) ? ring : nil } : nil
+        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress)
     }
 }

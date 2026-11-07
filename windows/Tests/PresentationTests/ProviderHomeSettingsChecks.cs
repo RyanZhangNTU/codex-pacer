@@ -39,7 +39,7 @@ internal static class ProviderHomeSettingsChecks
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, configuration: preferences.EngineConfiguration(), referenceFixture: true);
             ready.SetResult(); await window.WaitForSourceInspectionAsync(); await Pump();
             var module = Find<CheckBox>(window, prefix + ".enabled");
-            Check(module.IsEnabled && module.IsChecked == true && window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600,
+            Check(module.IsEnabled && module.IsChecked == true && Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5,
                 "The provider page must retain native canvas geometry and acknowledged module state");
             if (provider == "claude")
             {
@@ -126,7 +126,8 @@ internal static class ProviderHomeSettingsChecks
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
-    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
+    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().SingleOrDefault(value => AutomationProperties.GetAutomationId(value) == id)
+        ?? throw new InvalidOperationException("Missing element: " + id);
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static async Task Until(Func<bool> condition)
     { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Task.Delay(20); Check(condition(), "The bounded provider source action must finish"); await Pump(); }

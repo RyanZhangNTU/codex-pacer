@@ -2,142 +2,206 @@ import AppKit
 import PacerCore
 import SwiftUI
 
-/// First-launch guide for 3.0 in two steps: what the island shows, drawn with
-/// the real components on the Appearance wallpaper, then which services to
-/// follow. Settings → Help keeps the full legend.
+/// The first-launch guide, drawn like the main window: a page per idea with
+/// a large title. The island's parts, its mode, the services to follow and a
+/// few choices. Settings → Help & Updates keeps the full legend of badges.
 struct WelcomeView: View {
-    static let size = CGSize(width: 560, height: 532)
+    @Environment(\.pacerAccent) private var accent
+    static let size = CGSize(width: 640, height: 500)
+    /// The guide's pages, in order.
+    enum Step: Int, CaseIterable { case welcome, mode, services, finish }
 
     @ObservedObject var model: IslandModel
     @ObservedObject var notificationPreference: SystemNotificationPreference
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     let onOpenSettings: (SettingsPane) -> Void
     let onDone: () -> Void
-    @State private var step = 0
+    /// The page the guide opens on; checks render each page directly.
+    var startStep = Step.welcome
+    @State private var chosenStep: Step?
+    private var step: Step { chosenStep ?? startStep }
+    @State private var forward = true
     @State private var modules = ProviderModules.load()
+    @AppStorage(IslandModel.claudeProgressRingKey) private var claudeRing = true
+    @AppStorage(IslandModel.codexProgressRingKey) private var codexRing = true
+    @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekRing = true
+    /// Read so a mode chosen here, or a drag of the island, redraws the cards.
+    @AppStorage("islandDisplayMode") private var displayModeValue = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Group {
-                if step == 0 { islandStep } else { servicesStep }
+            ZStack(alignment: .top) {
+                page(step).id(step)
+                    .transition(reduceMotion ? .opacity : .asymmetric(
+                        insertion: .offset(x: forward ? 36 : -36).combined(with: .opacity), removal: .opacity))
             }
-            .padding(.horizontal, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            Divider()
+            .clipped()
             footer
         }
         .frame(width: Self.size.width, height: Self.size.height)
+        .background(MainPalette.page)
         .environment(\.locale, L10n.locale)
     }
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 52, height: 52).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.text("welcome.title")).font(.system(size: 20, weight: .semibold))
-                Text(L10n.text("welcome.subtitle")).font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 4)
-    }
-
-    private func stepTitle(_ key: String) -> some View {
-        Text(L10n.text(key)).font(.system(size: 13, weight: .semibold))
-            .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 8)
-    }
-
-    // MARK: Step 1
-
-    private var islandStep: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            stepTitle("welcome.step.island")
-            WelcomeIslandMap()
-            HStack(alignment: .top, spacing: 12) {
-                column("welcome.badges") {
-                    badgeRow(L10n.text("welcome.badge.running")) {
-                        ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1, .claude: 1]))
-                    }
-                    Divider().padding(.leading, 52)
-                    badgeRow(L10n.text("welcome.badge.waiting"), tint: PacerPalette.attention) {
-                        ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [:], attention: .input))
-                    }
-                    Divider().padding(.leading, 52)
-                    badgeRow(L10n.text("welcome.badge.ended"), hint: L10n.text("welcome.badge.ended_hint")) {
-                        ActivityBadge(activity: .init(core: .symbol(StatusSymbols.complete), activeCount: 0, orbit: [:], ending: .completed(.codex)))
-                    }
-                }
-                column("welcome.gestures") { WelcomeGestureDemo() }
-            }
-            .padding(.top, 14)
+    @ViewBuilder private func page(_ step: Step) -> some View {
+        switch step {
+        case .welcome: welcomePage
+        case .mode: modePage
+        case .services: servicesPage
+        case .finish: finishPage
         }
     }
 
-    private func column<Content: View>(_ key: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(L10n.text(key)).font(.system(size: 12)).foregroundStyle(.secondary).padding(.leading, 10)
-            VStack(spacing: 0) { content() }.welcomeGroup()
+    private func header(_ title: String, _ subtitle: String) -> some View {
+        VStack(spacing: 6) {
+            Text(title).font(.system(size: 24, weight: .bold)).accessibilityAddTraits(.isHeader)
+            Text(subtitle).font(.system(size: 13)).foregroundStyle(.secondary)
         }
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity)
     }
 
-    /// Badges sit on a bar-colored swatch, as they appear on the island.
-    private func badgeRow<Badge: View>(_ title: String, hint: String? = nil, tint: Color = .primary,
-                                       @ViewBuilder badge: () -> Badge) -> some View {
-        HStack(spacing: 10) {
-            badge().foregroundStyle(PacerPalette.primary)
-                .frame(width: 30, height: 26).background(Color.black, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            HStack(spacing: 4) {
-                Text(title).foregroundStyle(tint)
-                if let hint { Text("· " + hint).foregroundStyle(.secondary) }
-            }
-            Spacer(minLength: 0)
+    // MARK: Pages
+
+    private var welcomePage: some View {
+        VStack(spacing: 0) {
+            Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high)
+                .frame(width: 84, height: 84).accessibilityHidden(true)
+            header(L10n.text("main.welcome.title"), L10n.text("welcome.subtitle")).padding(.top, 8)
+            WelcomeIslandMap().padding(.top, 26)
         }
-        .font(.system(size: 13))
-        .padding(.horizontal, 12).frame(height: 38)
-        .accessibilityElement(children: .combine)
+        .padding(.horizontal, 32).padding(.top, 40)
     }
 
-    // MARK: Step 2
+    /// The island's two modes, each shown moving. Choosing one moves the
+    /// real island at once, the same choice as Appearance → Position.
+    private var modePage: some View {
+        VStack(spacing: 24) {
+            header(L10n.text("main.welcome.mode_title"), L10n.text("main.welcome.mode_subtitle"))
+            HStack(alignment: .top, spacing: Self.modeSpacing) {
+                modeCard(attached: true, title: L10n.text("main.welcome.mode_island"),
+                         detail: L10n.text("main.welcome.mode_island_detail")) {
+                    WelcomeHoverScene(width: Self.modeArtWidth)
+                }
+                modeCard(attached: false, title: L10n.text("main.welcome.mode_free"),
+                         detail: L10n.text("appearance.free_move_detail")) {
+                    WelcomeDragScene(width: Self.modeArtWidth)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, Self.pageMargin).padding(.top, 44)
+    }
 
-    private var servicesStep: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            stepTitle("welcome.step.start")
-            HStack(spacing: 10) {
+    private static let pageMargin: CGFloat = 32
+    private static let modeSpacing: CGFloat = 14
+    private static let modePadding: CGFloat = 12
+    private static let modeArtWidth = (size.width - pageMargin * 2 - modeSpacing) / 2 - modePadding * 2
+
+    /// Whether the island hangs from the top edge now: a choice of Notch, or
+    /// a notched display before any choice.
+    private var attachesNow: Bool {
+        _ = displayModeValue
+        return IslandDisplayMode.load().layout(safeAreaTop: model.screenNotchSize.height,
+                                               hardwareNotchWidth: model.screenNotchSize.width).attached
+    }
+
+    private func chooseMode(attached: Bool) {
+        if attached {
+            IslandDisplayMode.notch.save()
+        } else {
+            // Free Move starts where Appearance would: the saved spot, or a
+            // corner when the island leaves the notch.
+            IslandPosition.custom(saved: IslandPosition.saved(), attached: attachesNow).save()
+            IslandDisplayMode.floating.save()
+        }
+        model.applySettings(sourceChanged: false)
+    }
+
+    private func modeCard<Art: View>(attached: Bool, title: String, detail: String, @ViewBuilder art: () -> Art) -> some View {
+        let selected = attachesNow == attached
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return Button { chooseMode(attached: attached) } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                art()
+                HStack(spacing: 8) {
+                    Text(title).font(.system(size: 14, weight: .semibold))
+                    Spacer(minLength: 4)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.system(size: 17))
+                        .foregroundStyle(selected ? accent : Color.secondary.opacity(0.5))
+                        .accessibilityHidden(true)
+                }
+                .padding(.top, 12)
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 3)
+            }
+            .padding(Self.modePadding).padding(.bottom, 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(MainPalette.card, in: shape)
+            .overlay(shape.strokeBorder(selected ? accent : MainPalette.cardBorder, lineWidth: selected ? 2 : 1))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var servicesPage: some View {
+        VStack(spacing: 24) {
+            header(L10n.text("main.welcome.services_title"), L10n.text("welcome.modules_note"))
+            HStack(spacing: 12) {
                 moduleCard(.codex)
                 moduleCard(.claude)
                 moduleCard(.deepseek)
             }
             .fixedSize(horizontal: false, vertical: true)
-            Text(L10n.text("welcome.modules_note")).font(.system(size: 11)).foregroundStyle(.secondary)
-                .padding(.horizontal, 10).padding(.top, 8)
-            stepTitle("welcome.section.personalize").padding(.top, 6)
-            VStack(spacing: 0) {
-                personalizeRow(.collapsedBar, title: L10n.text("welcome.layout.title"), detail: L10n.text("welcome.layout.detail")) {
-                    Button(L10n.text("welcome.go")) { onOpenSettings(.collapsedBar) }
+        }
+        .padding(.horizontal, 32).padding(.top, 44)
+    }
+
+    /// Titles only, like the main window: what a row does sits behind ⓘ,
+    /// and only a problem the user must fix shows under the title.
+    private var finishPage: some View {
+        VStack(spacing: 24) {
+            header(L10n.text("main.welcome.finish_title"), L10n.text("main.welcome.finish_subtitle"))
+            MainCard {
+                WelcomeChoiceRow(symbol: "circle.dashed", tint: Color(red: 0.19, green: 0.69, blue: 0.78),
+                                 title: L10n.text("main.claude.ring"), info: L10n.text("main.welcome.ring_info")) {
+                    Toggle(L10n.text("main.claude.ring"), isOn: ringsBinding).labelsHidden().toggleStyle(.switch)
                 }
-                Divider().padding(.leading, 50)
-                personalizeRow(.reminders, title: L10n.text("settings.system_notifications"),
-                               detail: L10n.text(notificationPreference.denied ? "settings.notification_denied" : "welcome.notifications_detail"),
-                               detailTint: notificationPreference.denied ? .orange : .secondary) {
+                WelcomeChoiceRow(symbol: SettingsPane.notifications.tileSymbol, tint: SettingsPane.notifications.tint,
+                                 title: L10n.text("settings.system_notifications"), info: L10n.text("main.welcome.notifications_info"),
+                                 problem: notificationPreference.denied ? L10n.text("settings.notification_denied") : nil) {
                     Toggle(L10n.text("settings.system_notifications"), isOn: Binding(get: { notificationPreference.enabled },
                         set: { notificationPreference.setEnabled($0) })).labelsHidden().toggleStyle(.switch)
                 }
-                Divider().padding(.leading, 50)
-                personalizeRow(.general, title: L10n.text("settings.open_at_login"), detail: launchAtLoginDetail,
-                               detailTint: launchAtLogin.needsApproval || launchAtLogin.failure != nil ? .orange : .secondary) {
+                WelcomeChoiceRow(symbol: "power", tint: Color(red: 0.2, green: 0.74, blue: 0.4),
+                                 title: L10n.text("settings.open_at_login"), info: L10n.text("main.welcome.login_info"),
+                                 problem: launchAtLogin.failure ?? (launchAtLogin.needsApproval ? L10n.text("settings.login_item_approval") : nil)) {
                     Toggle(L10n.text("settings.open_at_login"), isOn: Binding(get: { launchAtLogin.enabled },
                         set: { launchAtLogin.setEnabled($0) })).labelsHidden().toggleStyle(.switch)
                 }
+                WelcomeChoiceRow(symbol: SettingsPane.collapsedBar.tileSymbol, tint: SettingsPane.collapsedBar.tint,
+                                 title: L10n.text("welcome.layout.title"), info: L10n.text("main.welcome.layout_info")) {
+                    Button(L10n.text("welcome.go")) { onOpenSettings(.collapsedBar) }.buttonStyle(.main)
+                }
             }
-            .welcomeGroup()
         }
+        .padding(.horizontal, 56).padding(.top, 44)
     }
 
-    private var launchAtLoginDetail: String {
-        launchAtLogin.failure ?? L10n.text(launchAtLogin.needsApproval ? "settings.login_item_approval" : "welcome.login_detail")
+    /// One switch for every service's ring; Settings keeps one per service.
+    private var ringsBinding: Binding<Bool> {
+        Binding(get: { claudeRing || codexRing || deepseekRing }, set: { value in
+            claudeRing = value; codexRing = value; deepseekRing = value
+            model.applySettings(sourceChanged: false)
+        })
     }
+
+    // MARK: Services
 
     private func moduleEnabled(_ provider: AgentProvider) -> Bool {
         switch modules.mode(for: provider) {
@@ -159,44 +223,32 @@ struct WelcomeView: View {
         let status = moduleStatus(provider, enabled: enabled)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72), size: 34)
+                SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72), size: 40)
                     .saturation(enabled ? 1 : 0).opacity(enabled ? 1 : 0.5)
                 Spacer()
                 Toggle(provider.displayName, isOn: Binding(get: { enabled }, set: { setModule(provider, enabled: $0) }))
                     .labelsHidden().toggleStyle(.switch)
             }
             Text(provider.displayName).font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(enabled ? .primary : .secondary).padding(.top, 9)
-            // Three cards can leave too little room for a status beside its button;
-            // it then wraps and the button moves to the card's bottom, level
-            // with the other cards' buttons.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 6) {
-                    statusLabel(status, lines: 1)
-                    Spacer(minLength: 4)
-                    statusAction(status, provider: provider)
-                }
-                VStack(alignment: .leading, spacing: 0) {
-                    statusLabel(status, lines: 2)
-                    Spacer(minLength: 6)
-                    statusAction(status, provider: provider)
-                }
-            }
-            .font(.system(size: 11))
-            .frame(minHeight: 22).padding(.top, 3)
+                .foregroundStyle(enabled ? .primary : .secondary).padding(.top, 12)
+            statusLabel(status).padding(.top, 4)
+            Spacer(minLength: 12)
+            // Every card keeps the action's place, so the buttons line up.
+            statusAction(status, provider: provider).frame(height: 26, alignment: .leading)
         }
-        .padding(12)
+        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .welcomeGroup()
+        .mainCardSurface(radius: 14)
     }
 
-    private func statusLabel(_ status: ModuleStatus, lines: Int) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+    private func statusLabel(_ status: ModuleStatus) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
             if status.ready {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityHidden(true)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(MainPalette.positive).accessibilityHidden(true)
             }
-            Text(status.text).foregroundStyle(.secondary).lineLimit(lines).fixedSize(horizontal: false, vertical: true)
+            Text(status.text).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
+        .font(.system(size: 11.5))
     }
 
     /// Connecting is what the card is waiting for, so it takes the provider's
@@ -205,9 +257,9 @@ struct WelcomeView: View {
         if let action = status.action {
             if action.connects {
                 Button(action.title, action: action.perform)
-                    .buttonStyle(.borderedProminent).tint(provider.tint).controlSize(.small)
+                    .buttonStyle(MainButtonStyle(prominent: true, height: 26, fill: provider.tint, label: Color.black.opacity(0.8)))
             } else {
-                Button(action.title, action: action.perform).controlSize(.small)
+                Button(action.title, action: action.perform).buttonStyle(MainButtonStyle(height: 26))
             }
         }
     }
@@ -254,57 +306,70 @@ struct WelcomeView: View {
                             action: (L10n.text("welcome.module.sign_in"), true, { model.connectDeepSeek() }))
     }
 
-    private func personalizeRow<Control: View>(_ pane: SettingsPane, title: String, detail: String, detailTint: Color = .secondary,
-                                               @ViewBuilder control: () -> Control) -> some View {
-        HStack(spacing: 12) {
-            SettingsIconTile(symbol: pane.symbol, tint: pane.tint, glyph: pane.glyphColor, size: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(detail).font(.system(size: 11)).foregroundStyle(detailTint).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            control()
-        }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-    }
-
     // MARK: Footer
 
     private var footer: some View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
-                ForEach(0..<2, id: \.self) { index in
-                    Circle().fill(Color.primary.opacity(index == step ? 0.8 : 0.22)).frame(width: 7, height: 7)
+                ForEach(Step.allCases, id: \.self) { index in
+                    Capsule().fill(Color.primary.opacity(index == step ? 0.75 : 0.18))
+                        .frame(width: index == step ? 16 : 6, height: 6)
                 }
             }
-            .accessibilityElement().accessibilityLabel(L10n.text("welcome.step_of", step + 1, 2))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: step)
+            .accessibilityElement().accessibilityLabel(L10n.text("welcome.step_of", step.rawValue + 1, Step.allCases.count))
             Spacer(minLength: 8)
-            if step == 0 {
-                Button(L10n.text("welcome.all_marks")) { onOpenSettings(.help) }
-                Button(L10n.text("welcome.next")) { step = 1 }
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-            } else {
-                Button(L10n.text("welcome.back")) { step = 0 }
-                Button(L10n.text("welcome.done"), action: onDone)
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+            if step != .welcome {
+                Button(L10n.text("welcome.back")) { go(-1) }.buttonStyle(MainButtonStyle(height: 32))
             }
+            Button(L10n.text(step == .finish ? "welcome.done" : "main.welcome.continue")) {
+                if step == .finish { onDone() } else { go(1) }
+            }
+            .buttonStyle(MainButtonStyle(prominent: true, height: 32))
+            .keyboardShortcut(.defaultAction)
         }
-        .padding(.horizontal, 20).padding(.vertical, 12)
+        .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 20)
+    }
+
+    private func go(_ offset: Int) {
+        guard let next = Step(rawValue: step.rawValue + offset) else { return }
+        forward = offset > 0
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { chosenStep = next }
     }
 }
 
-extension View {
-    /// A grouped-form box that reads in light and dark appearance.
-    func welcomeGroup() -> some View {
-        background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(WelcomeColors.group))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
-    }
-}
+/// A row of the guide's last page: a tile, the title with ⓘ, then its
+/// control. A problem shows under the title in amber; the explanation opens
+/// under the row, as in the main window.
+private struct WelcomeChoiceRow<Control: View>: View {
+    let symbol: String
+    let tint: Color
+    let title: String
+    let info: String
+    var problem: String? = nil
+    @ViewBuilder let control: Control
+    @State private var showsInfo = false
 
-private enum WelcomeColors {
-    static let group = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.055) : NSColor(white: 1, alpha: 0.85)
-    })
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                SettingsIconTile(symbol: symbol, tint: tint, size: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(title).font(.system(size: 13))
+                        InfoButton(title: title, isOn: $showsInfo)
+                    }
+                    if let problem {
+                        Text(problem).font(.system(size: 11.5)).foregroundStyle(MainPalette.attention)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                control
+            }
+            if showsInfo { InfoBox(text: info).padding(.leading, 40) }
+        }
+    }
 }
 
 // MARK: - Island map
@@ -333,7 +398,7 @@ private struct WelcomeIslandMap: View {
             bar
             labels.frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 14)
         }
-        .frame(width: WelcomeView.size.width - 40, height: 176)
+        .frame(width: WelcomeView.size.width - 64, height: 196)
         .overlayPreferenceValue(Anchors.self) { anchors in
             GeometryReader { proxy in
                 ForEach(Part.allCases, id: \.self) { part in
@@ -436,16 +501,34 @@ private extension View {
     }
 }
 
-// MARK: - Gestures
+// MARK: - Mode scenes
 
-/// The island's own spring, scaled down: the pointer arrives and the bar
-/// opens, then it leaves and the bar closes. Reduce Motion shows it open.
-/// Below, the third gesture: dragging the bar to a screen edge.
-private struct WelcomeGestureDemo: View {
+/// Both mode cards draw a small screen in the same points, then scale it.
+private enum WelcomeScreen {
+    static let size = CGSize(width: 528, height: 352)
+    static let menuBar: CGFloat = 32
+
+    static func ease(_ value: Double) -> Double {
+        let clamped = min(1, max(0, value))
+        return clamped * clamped * (3 - 2 * clamped)
+    }
+
+    static var desk: some View {
+        ZStack(alignment: .top) {
+            Wallpaper().frame(width: size.width, height: size.height)
+            Rectangle().fill(Color.black.opacity(0.22)).frame(width: size.width, height: menuBar)
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
+}
+
+/// Island mode: the island's own spring, scaled down. The pointer arrives and
+/// the bar opens from the notch, then it leaves and the bar closes. Reduce
+/// Motion shows it open.
+struct WelcomeHoverScene: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let scale: CGFloat = 0.25
-    private static let canvas = CGSize(width: 132, height: 88)
-    private static let screen = CGSize(width: canvas.width / scale, height: canvas.height / scale)
+    let width: CGFloat
+    private static let screen = WelcomeScreen.size
     private static let collapsed = CGRect(x: (screen.width - 300) / 2, y: screen.height - 32, width: 300, height: 32)
     private static let expanded = CGRect(x: (screen.width - 404) / 2, y: screen.height - 232, width: 404, height: 232)
     private static let period: TimeInterval = 5
@@ -454,63 +537,29 @@ private struct WelcomeGestureDemo: View {
     private static let closing = IslandMotion(from: .resting(at: expanded, expanded: true), to: collapsed, opening: false, start: closesAt)
 
     var body: some View {
+        let scale = width / Self.screen.width
         TimelineView(.animation(minimumInterval: nil, paused: reduceMotion)) { context in
             let time = reduceMotion ? 1.6 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.period)
-            let hovering = time >= 0.3 && time < Self.closesAt
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    scene(at: time)
-                        .frame(width: Self.canvas.width, height: Self.canvas.height)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 0) {
-                        gesture("welcome.gesture.hover", "welcome.gesture.expand", active: reduceMotion || hovering)
-                        Divider()
-                        gesture("welcome.gesture.leave", "welcome.gesture.collapse", active: reduceMotion || !hovering)
-                    }
-                }
-                Divider().padding(.leading, Self.canvas.width + 12)
-                // The snap hint spans the card: the text column beside the
-                // scenes is too narrow for it in English.
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 12) {
-                        WelcomeMoveScene().frame(width: Self.canvas.width, height: WelcomeMoveScene.height).accessibilityHidden(true)
-                        gesture("welcome.gesture.drag", "welcome.gesture.move", minHeight: WelcomeMoveScene.height, active: true)
-                    }
-                    Text(L10n.text("welcome.gesture.snap")).font(.system(size: 11)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .accessibilityElement(children: .combine)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 8)
+            scene(at: time)
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(width: width, height: Self.screen.height * scale, alignment: .topLeading)
         }
-    }
-
-    /// Each gesture reads "action → result" in one style.
-    private func gesture(_ verb: String, _ result: String, minHeight: CGFloat = 44, active: Bool) -> some View {
-        Text(L10n.text(verb) + " → " + L10n.text(result)).font(.system(size: 13))
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(active ? 1 : 0.4)
-            .animation(.easeOut(duration: 0.2), value: active)
-            .frame(minHeight: minHeight)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityHidden(true)
     }
 
     private func scene(at time: TimeInterval) -> some View {
         let sample = time < Self.closesAt ? Self.opening.sample(at: time) : Self.closing.sample(at: time)
         let frame = sample.frame
         return ZStack(alignment: .topLeading) {
-            Wallpaper().frame(width: Self.screen.width, height: Self.screen.height)
-            Rectangle().fill(Color.black.opacity(0.22)).frame(width: Self.screen.width, height: 32)
+            WelcomeScreen.desk
             panelContent.opacity(sample.content)
                 .frame(width: frame.width, height: frame.height, alignment: .top)
                 .modifier(IslandSurface(appearance: .classic, attached: true, expanded: false, progress: sample.expansion))
                 .offset(x: frame.minX, y: Self.screen.height - frame.maxY)
-            pointer.offset(pointerPosition(at: time))
+            WelcomePointer().frame(width: 26, height: 42).offset(pointerPosition(at: time))
         }
         .frame(width: Self.screen.width, height: Self.screen.height, alignment: .topLeading)
-        .scaleEffect(Self.scale, anchor: .topLeading)
-        .frame(width: Self.canvas.width, height: Self.canvas.height, alignment: .topLeading)
     }
 
     /// Rows and rings in the expanded panel's places, without real data.
@@ -539,49 +588,100 @@ private struct WelcomeGestureDemo: View {
 
     /// The pointer rests below the open panel, travels onto the bar, then leaves.
     private func pointerPosition(at time: TimeInterval) -> CGSize {
-        let away = CGSize(width: Self.screen.width * 0.84, height: Self.screen.height * 0.84)
+        let away = CGSize(width: Self.screen.width * 0.82, height: Self.screen.height * 0.8)
         let over = CGSize(width: Self.screen.width / 2 + 40, height: 8)
-        func ease(_ value: Double) -> Double { value * value * (3 - 2 * value) }
         let fraction: Double
         switch time {
         case ..<0.3: fraction = 0
-        case ..<Self.opensAt: fraction = ease((time - 0.3) / (Self.opensAt - 0.3))
+        case ..<Self.opensAt: fraction = WelcomeScreen.ease((time - 0.3) / (Self.opensAt - 0.3))
         case ..<Self.leavesAt: fraction = 1
-        case ..<Self.closesAt: fraction = 1 - ease((time - Self.leavesAt) / (Self.closesAt - Self.leavesAt))
+        case ..<Self.closesAt: fraction = 1 - WelcomeScreen.ease((time - Self.leavesAt) / (Self.closesAt - Self.leavesAt))
         default: fraction = 0
         }
         return CGSize(width: away.width + (over.width - away.width) * fraction, height: away.height + (over.height - away.height) * fraction)
     }
+}
 
-    private var pointer: some View {
-        PointerArrow().fill(Color.white)
-            .overlay(PointerArrow().stroke(Color.black, lineWidth: 3))
-            .frame(width: 41, height: 66)
+/// Free Move: the pointer grabs the floating bar and drags it toward the
+/// right edge, where it snaps into a strip. Reduce Motion shows it mid-drag.
+struct WelcomeDragScene: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let width: CGFloat
+    private static let screen = WelcomeScreen.size
+    private static let period: TimeInterval = 4.6
+    private static let bar = CGSize(width: 210, height: 32)
+    private static let strip = CGSize(width: 28, height: 132)
+    private static let startX: CGFloat = 170, endX: CGFloat = 400, rowY: CGFloat = 150
+
+    var body: some View {
+        let scale = width / Self.screen.width
+        TimelineView(.animation(minimumInterval: nil, paused: reduceMotion)) { context in
+            let time = reduceMotion ? 1.4 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.period)
+            scene(at: time)
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(width: width, height: Self.screen.height * scale, alignment: .topLeading)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityHidden(true)
+    }
+
+    private func scene(at time: TimeInterval) -> some View {
+        // 0–0.5 reach, 0.5–0.7 press, 0.7–2.0 drag, 2.0–2.4 snap, then hold and fade.
+        let drag = WelcomeScreen.ease((time - 0.7) / 1.3)
+        let snap = WelcomeScreen.ease((time - 2.0) / 0.4)
+        let fade = 1 - WelcomeScreen.ease((time - 4.0) / 0.5)
+        let centerX = Self.startX + (Self.endX - Self.startX) * drag
+        let docked = CGRect(x: Self.screen.width - Self.strip.width + 10, y: Self.rowY - Self.strip.height / 2,
+                            width: Self.strip.width, height: Self.strip.height)
+        let floating = CGRect(x: centerX - Self.bar.width / 2, y: Self.rowY - Self.bar.height / 2,
+                              width: Self.bar.width, height: Self.bar.height)
+        let frame = CGRect(x: floating.minX + (docked.minX - floating.minX) * snap, y: floating.minY + (docked.minY - floating.minY) * snap,
+                           width: floating.width + (docked.width - floating.width) * snap,
+                           height: floating.height + (docked.height - floating.height) * snap)
+        let reach = WelcomeScreen.ease(time / 0.5)
+        let rest = CGPoint(x: Self.screen.width * 0.3, y: Self.screen.height * 0.86)
+        let grip = CGPoint(x: centerX + 30, y: Self.rowY + 4)
+        let pointer = time < 2.0
+            ? CGPoint(x: rest.x + (grip.x - rest.x) * reach, y: rest.y + (grip.y - rest.y) * reach)
+            : CGPoint(x: grip.x - 70 * snap, y: grip.y + 60 * snap)
+        return ZStack(alignment: .topLeading) {
+            WelcomeScreen.desk
+            // The way the bar travels, faint so the motion reads as a drag.
+            Path { path in
+                path.move(to: CGPoint(x: Self.startX + Self.bar.width / 2 + 16, y: Self.rowY))
+                path.addLine(to: CGPoint(x: Self.screen.width - 44, y: Self.rowY))
+            }
+            .stroke(Color.white.opacity(0.4 * (1 - snap)), style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [2, 12]))
+            RoundedRectangle(cornerRadius: min(frame.width, frame.height) / 2, style: .continuous)
+                .fill(Color.black)
+                .overlay(barContent.opacity(1 - snap))
+                .overlay(RoundedRectangle(cornerRadius: min(frame.width, frame.height) / 2, style: .continuous)
+                    .strokeBorder(AgentProvider.codex.tint.opacity(snap), lineWidth: 3))
+                .frame(width: frame.width, height: frame.height)
+                .offset(x: frame.minX, y: frame.minY)
+            WelcomePointer().frame(width: 26, height: 42).offset(x: pointer.x, y: pointer.y)
+        }
+        .opacity(time > 4.0 ? fade : 1)
+        .frame(width: Self.screen.width, height: Self.screen.height, alignment: .topLeading)
+    }
+
+    /// A ring and a value, where the collapsed bar shows them.
+    private var barContent: some View {
+        HStack(spacing: 10) {
+            Circle().trim(from: 0, to: 0.62).stroke(AgentProvider.codex.tint, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                .rotationEffect(.degrees(-90)).frame(width: 16, height: 16)
+            Capsule().fill(Color.white.opacity(0.7)).frame(width: 34, height: 9)
+            Spacer(minLength: 0)
+            Capsule().fill(Color.white.opacity(0.35)).frame(width: 44, height: 9)
+        }
+        .padding(.horizontal, 14)
     }
 }
 
-/// The bar dragged toward the right edge, where it docks as a strip.
-private struct WelcomeMoveScene: View {
-    static let height: CGFloat = 32
-
+/// The standard pointer: white with a black outline.
+private struct WelcomePointer: View {
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Wallpaper().frame(width: 132, height: Self.height)
-            Capsule().fill(Color.black).frame(width: 39, height: 11).offset(x: 22, y: 10)
-            Path { path in
-                path.move(to: CGPoint(x: 0, y: 4)); path.addLine(to: CGPoint(x: 34, y: 4))
-                path.move(to: CGPoint(x: 29, y: 0)); path.addLine(to: CGPoint(x: 34, y: 4)); path.addLine(to: CGPoint(x: 29, y: 8))
-            }
-            .stroke(Color.white, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-            .frame(width: 34, height: 8).offset(x: 68, y: 12)
-            UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 5).fill(Color.black)
-                .overlay(UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 5).stroke(AgentProvider.codex.tint, lineWidth: 1))
-                .frame(width: 12, height: 24).offset(x: 120, y: 4)
-            PointerArrow().fill(Color.white).overlay(PointerArrow().stroke(Color.black, lineWidth: 1))
-                .frame(width: 9, height: 14).offset(x: 52, y: 15)
-        }
-        .frame(width: 132, height: Self.height, alignment: .topLeading)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        PointerArrow().fill(Color.white).overlay(PointerArrow().stroke(Color.black, lineWidth: 2.5))
     }
 }
 

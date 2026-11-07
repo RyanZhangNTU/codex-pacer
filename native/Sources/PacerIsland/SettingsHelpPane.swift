@@ -1,93 +1,98 @@
+import AppKit
 import PacerCore
 import SwiftUI
 
-/// Help in two parts: what every module shares, then one module's details
-/// chosen with a switch. Each entry says what you see and what it means, in a
-/// sentence; troubleshooting and the rules behind the numbers live in the guide.
-/// Samples are the real components on a swatch shaped like the bar, so the
-/// help stays accurate as the UI changes and reads in both light and dark Settings.
+/// Help: three ways in (the welcome guide, the user guide, an issue), then
+/// what each mark means, one topic at a time. Each entry says what you see
+/// and what it means, in a sentence; troubleshooting and the rules behind the
+/// numbers live in the guide. Samples are the real components on a swatch
+/// shaped like the bar, so the help stays accurate as the UI changes and
+/// reads in both light and dark Settings.
 struct SettingsHelpPane: View {
     private static let repository = "https://github.com/RyanZhangNTU/codex-pacer"
     var onShowWelcome: (() -> Void)?
-    @State private var module: AgentProvider
+    @State private var topic = HelpTopic.collapsed
 
-    init(module: AgentProvider = .codex, onShowWelcome: (() -> Void)? = nil) {
-        _module = State(initialValue: module)
+    init(onShowWelcome: (() -> Void)? = nil) {
         self.onShowWelcome = onShowWelcome
     }
 
     var body: some View {
-        Section(L10n.text("help.section.services")) {
-            row("help.enable", symbol: "switch.2")
-            row("help.services") {
-                ForEach(AgentProvider.allCases, id: \.self) { ProviderTile(provider: $0) }
+        HStack(spacing: 10) {
+            if let onShowWelcome {
+                QuickTile(symbol: "hand.wave", title: L10n.text("help.quick.welcome"),
+                          detail: L10n.text("help.quick.welcome_detail"), action: onShowWelcome)
+            }
+            QuickTile(symbol: "book", title: L10n.text("help.link.guide"), detail: L10n.text("help.quick.guide_detail"),
+                      external: true) { NSWorkspace.shared.open(Self.guide) }
+            QuickTile(symbol: "exclamationmark.bubble", title: L10n.text("help.link.issues"),
+                      detail: L10n.text("help.quick.issues_detail"), external: true) {
+                NSWorkspace.shared.open(URL(string: Self.repository + "/issues")!)
             }
         }
-        Section(L10n.text("help.section.collapsed")) {
-            row("help.tasks") {
-                ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [.codex: 1]))
-                ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1, .claude: 1]))
-                ActivityBadge(activity: .init(core: .count(3), activeCount: 3, orbit: [.codex: 1, .claude: 1, .deepseek: 1]))
-            }
-            row("help.attention") {
-                ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1], attention: .approval))
-            }
-            row("help.endings") {
-                ActivityBadge(activity: .init(core: .symbol(StatusSymbols.complete), activeCount: 0, orbit: [:], ending: .completed(.codex)))
-                ActivityBadge(activity: .init(core: .symbol(StatusSymbols.tool), activeCount: 1, orbit: [.claude: 1], ending: .completed(.codex)))
-            }
-            row("help.quota") {
-                QuotaRingsGlyph(rings: [.init(tint: AgentProvider.codex.tint, remaining: 58, stale: false),
-                    .init(tint: AgentProvider.claude.tint, remaining: 81, stale: false)])
-                AlternatingQuotaText(entries: [.init(text: "58%", color: NSColor(AgentProvider.codex.tint)),
-                    .init(text: "81%", color: NSColor(AgentProvider.claude.tint))], animates: true)
-            }
-            row("help.warnings") {
-                FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint)
-                DeepSeekAlertGlyph(alert: .lowBalance)
-                Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold))
-            }
-            row("help.customize", symbol: "slider.horizontal.3")
-            row("help.move") { MoveSample() }
-        }
-        Section(L10n.text("help.section.expanded")) {
-            row("help.hover", symbol: "cursorarrow.rays")
-            row("help.open", symbol: "arrow.up.forward.app")
-            row("help.app_buttons") {
-                ForEach(AgentProvider.allCases, id: \.self) { provider in
-                    Image(systemName: provider.glyph).font(.system(size: 12, weight: .semibold)).foregroundStyle(provider.tint)
+        .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 10) {
+            TopicChips(selection: $topic)
+            MainCard(footer: topic.isModule ? L10n.text("help.enable.detail") : nil) {
+                switch topic {
+                case .collapsed: collapsedRows
+                case .expanded: expandedRows
+                case .module(.codex): codexRows
+                case .module(.claude): claudeRows
+                case .module(.deepseek): deepseekRows
                 }
             }
-            row("help.read", symbol: "checkmark.rectangle.stack")
-            row("help.pace") {
-                PaceTickSample()
-                QuotaVerdictChip(verdict: .spare)
+        }
+    }
+
+    private static var guide: URL {
+        URL(string: repository + (L10n.language == .simplifiedChinese ? "/blob/main/docs/guide.zh-CN.md" : "/blob/main/docs/guide.md"))!
+    }
+
+    @ViewBuilder private var collapsedRows: some View {
+        // Under one accent the services are its shades, as the tiles draw them.
+        row("help.services", detail: PacerAccent.current == .multicolor ? nil : "help.services.shades") {
+            ForEach(AgentProvider.allCases, id: \.self) { ProviderTile(provider: $0) }
+        }
+        row("help.tasks") {
+            ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [.codex: 1]))
+            ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1, .claude: 1]))
+            ActivityBadge(activity: .init(core: .count(3), activeCount: 3, orbit: [.codex: 1, .claude: 1, .deepseek: 1]))
+        }
+        row("help.attention") {
+            ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1], attention: .approval))
+        }
+        row("help.endings") {
+            ActivityBadge(activity: .init(core: .symbol(StatusSymbols.complete), activeCount: 0, orbit: [:], ending: .completed(.codex)))
+            ActivityBadge(activity: .init(core: .symbol(StatusSymbols.tool), activeCount: 1, orbit: [.claude: 1], ending: .completed(.codex)))
+        }
+        row("help.quota") {
+            QuotaRingsGlyph(rings: [.init(tint: AgentProvider.codex.tint, remaining: 58, stale: false),
+                .init(tint: AgentProvider.claude.tint, remaining: 81, stale: false)])
+            AlternatingQuotaText(entries: [.init(text: "58%", color: NSColor(AgentProvider.codex.tint)),
+                .init(text: "81%", color: NSColor(AgentProvider.claude.tint))], animates: true)
+        }
+        row("help.warnings") {
+            FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint)
+            DeepSeekAlertGlyph(alert: .lowBalance)
+            Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold))
+        }
+        row("help.customize", symbol: "slider.horizontal.3")
+        row("help.move") { MoveSample() }
+    }
+
+    @ViewBuilder private var expandedRows: some View {
+        row("help.hover", symbol: "cursorarrow.rays")
+        row("help.open", symbol: "arrow.up.forward.app")
+        row("help.app_buttons") {
+            ForEach(AgentProvider.allCases, id: \.self) { provider in
+                Image(systemName: provider.glyph).font(.system(size: 12, weight: .semibold)).foregroundStyle(provider.tint)
             }
         }
-        Section {
-            Picker(L10n.text("help.section.modules"), selection: $module) {
-                ForEach(AgentProvider.allCases, id: \.self) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden()
-            switch module {
-            case .codex: codexRows
-            case .claude: claudeRows
-            case .deepseek: deepseekRows
-            }
-        } header: {
-            Text(L10n.text("help.section.modules"))
-        }
-        Section(L10n.text("help.section.more")) {
-            if let onShowWelcome {
-                Button(action: onShowWelcome) { Label(L10n.text("help.show_welcome"), systemImage: "hand.wave") }
-                    .buttonStyle(.link)
-            }
-            Link(destination: URL(string: Self.repository + (L10n.language == .simplifiedChinese ? "/blob/main/docs/guide.zh-CN.md" : "/blob/main/docs/guide.md"))!) {
-                Label(L10n.text("help.link.guide"), systemImage: "book")
-            }
-            Link(destination: URL(string: Self.repository + "/issues")!) {
-                Label(L10n.text("help.link.issues"), systemImage: "exclamationmark.bubble")
-            }
+        row("help.read", symbol: "checkmark.rectangle.stack")
+        row("help.pace") {
+            PaceTickSample()
+            QuotaVerdictChip(verdict: .spare)
         }
     }
 
@@ -156,16 +161,106 @@ struct SettingsHelpPane: View {
         row(key) { Image(systemName: symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint) }
     }
 
-    private func row<Sample: View>(_ key: String, @ViewBuilder sample: () -> Sample) -> some View {
+    /// `detail` replaces the entry's own explanation when one applies.
+    private func row<Sample: View>(_ key: String, detail: String? = nil, @ViewBuilder sample: () -> Sample) -> some View {
         HStack(spacing: 14) {
             IslandSampleSwatch(content: sample)
             VStack(alignment: .leading, spacing: 2) {
-                Text(L10n.text(key + ".title"))
-                Text(L10n.text(key + ".detail")).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(L10n.text(key + ".title")).font(.system(size: 13))
+                Text(L10n.text(detail ?? key + ".detail")).font(.system(size: 11.5)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// What the legend shows: the bar, the panel or one module's own marks.
+private enum HelpTopic: Hashable {
+    case collapsed, expanded, module(AgentProvider)
+
+    static var all: [HelpTopic] { [.collapsed, .expanded] + AgentProvider.allCases.map(HelpTopic.module) }
+    var isModule: Bool { if case .module = self { true } else { false } }
+    var title: String {
+        switch self {
+        case .collapsed: L10n.text("help.section.collapsed")
+        case .expanded: L10n.text("help.section.expanded")
+        case .module(let provider): provider.displayName
+        }
+    }
+}
+
+/// The topics as a row of pills; the chosen one fills with the accent.
+private struct TopicChips: View {
+    @Binding var selection: HelpTopic
+    @Environment(\.pacerAccent) private var accent
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(HelpTopic.all, id: \.self) { topic in
+                let selected = topic == selection
+                Button { selection = topic } label: {
+                    HStack(spacing: 5) {
+                        if case .module(let provider) = topic {
+                            Image(systemName: provider.glyph).font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(selected ? Color.white : provider.tint)
+                        }
+                        Text(topic.title).font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    }
+                    .foregroundStyle(selected ? Color.white : Color.primary)
+                    .padding(.horizontal, 12).frame(height: 26)
+                    .background(selected ? accent : MainPalette.fill, in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(topic.title)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.text("settings.pane.help"))
+    }
+}
+
+/// A way into more help: a symbol, a title and what it opens. Links out of
+/// Pacer carry an arrow.
+private struct QuickTile: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    var external = false
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top) {
+                    FeatureSymbol(symbol: symbol, size: 30)
+                    Spacer(minLength: 4)
+                    if external {
+                        Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                    Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .mainCardSurface()
+            .overlay(shape.fill(Color.primary.opacity(hovering ? 0.035 : 0)))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
+        .accessibilityAddTraits(external ? .isLink : .isButton)
     }
 }
 

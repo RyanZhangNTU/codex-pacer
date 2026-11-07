@@ -125,5 +125,6 @@
   "windows.updates.error_title": "更新未能完成",
   "windows.updates.error_detail": "Pacer 无法检查或下载更新。请检查网络连接后重试。",
   "windows.updates.try_again": "重试",
-  "windows.updates.notes_empty": "这个版本没有更新说明。"
+  "windows.updates.notes_empty": "这个版本没有更新说明。",
+  "windows.main.pane_later": "将在重构的下一步加入。"
 }

@@ -78,7 +78,7 @@ Codex Pacer is distributed as a universal DMG signed with Developer ID and notar
 1. Double-click the downloaded DMG and drag **Codex Pacer** into **Applications**.
 2. Open Codex Pacer from Applications. macOS asks once to confirm an app downloaded from the internet; click **Open**.
 
-After that, Pacer updates itself: it checks daily, installs when you choose to and shows what changed once after an update. **Settings → General → Check for Updates** checks right away. See [Apple's guide to opening apps](https://support.apple.com/102445) for more on Gatekeeper.
+After that, Pacer updates itself: it checks daily, shows a new version in its window and installs it with one click on **Update and Restart**, then shows what changed once. **Settings → Help & Updates → Check for Updates** checks right away. See [Apple's guide to opening apps](https://support.apple.com/102445) for more on Gatekeeper.
 
 ### Windows
 

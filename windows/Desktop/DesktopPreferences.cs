@@ -51,13 +51,19 @@ internal sealed record DesktopPreferences
     public string DeepSeekRingPeriod { get; init; } = "day";
     public string DeepSeekSpeedSource { get; init; } = "local";
     public bool DeepSeekShowsTurnCost { get; init; } = true;
-    public bool DeepSeekProgressRing { get; init; }
+    // Progress rings are on until the user turns one off, as on the Mac; a saved choice is kept.
+    public bool DeepSeekProgressRing { get; init; } = true;
     public bool SystemNotifications { get; init; }
     public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget"];
     public double? DeepSeekLowBalanceLine { get; init; }
     public double? DeepSeekSpikeLimit { get; init; }
     public bool? PositionChosen { get; init; }
-    public string LastSettingsPane { get; init; } = "general";
+    public string LastSettingsPane { get; init; } = "overview";
+    // The Mac's window theme and accent keys and values.
+    public string AppTheme { get; init; } = "auto";
+    public string AccentColor { get; init; } = "multicolor";
+    internal static readonly string[] AccentChoices = ["multicolor", "blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"];
+    internal static bool ValidAccent(string? value) => value != null && AccentChoices.Contains(value);
     public bool HideProjects { get; init; }
     public bool ShowAppButtons { get; init; } = true;
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
@@ -65,8 +71,8 @@ internal sealed record DesktopPreferences
     public bool MonitorWSL { get; init; } = true;
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
-    public bool ClaudeProgressRing { get; init; }
-    public bool CodexProgressRing { get; init; }
+    public bool ClaudeProgressRing { get; init; } = true;
+    public bool CodexProgressRing { get; init; } = true;
     public bool MonitorSSH { get; init; } = true;
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
@@ -100,6 +106,7 @@ internal sealed record DesktopPreferences
         && WarningKinds is { Length: <= 6 } && WarningKinds.Distinct().Count() == WarningKinds.Length
         && WarningKinds.All(value => value is "fiveHour" or "ssh" or "quotaDelay" or "lowBalance" or "spendSpike" or "budget")
         && LastSettingsPane is { Length: > 0 and <= 64 } && !LastSettingsPane.Any(char.IsControl)
+        && AppTheme is "auto" or "light" or "dark" && ValidAccent(AccentColor)
         && RetentionMinutes is >= 0 and <= 10080
         && ValidPath(CodexExecutable) && ValidPath(CodexHome) && ValidPath(ClaudeHome) && ValidPath(DeepseekHome)
         && (ClaudeOrganization == "" || ClaudeOrganization is { Length: 36 } && Guid.TryParseExact(ClaudeOrganization, "D", out _))

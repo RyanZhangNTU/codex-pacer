@@ -10,7 +10,8 @@ internal sealed record GuideItem(string Symbol, string Title, string Detail, str
 internal sealed record GuideRelease(string Version, string Title, IReadOnlyList<GuideItem> Items);
 internal sealed record GuideCatalog(int SchemaVersion, string? Page, int Major, string NextSeen, bool RecordLaunch, bool RecordClose,
     string VersionTitle, IReadOnlyList<string> Steps, IReadOnlyDictionary<string, string> ModuleOff,
-    IReadOnlyList<GuideRelease> Releases, IReadOnlyList<GuideRelease> History, IReadOnlyDictionary<string, string> Links, string? SupportCode);
+    IReadOnlyList<GuideRelease> Releases, IReadOnlyList<GuideRelease> History, IReadOnlyDictionary<string, string> Links, string? SupportCode,
+    string? QqGroup = null, string? QqCode = null);
 internal sealed record GuideRequest(
     [property: JsonPropertyName("current")] string Current,
     [property: JsonPropertyName("seen")] string? Seen,

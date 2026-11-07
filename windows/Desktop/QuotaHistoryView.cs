@@ -13,7 +13,7 @@ internal sealed class QuotaHistoryView : StackPanel
 {
     private readonly UiText ui;
     private readonly Brush accent;
-    private readonly TextBlock source = Text("", 11), freshness = Text("", 11), error = Text("", 11), placeholder = Text("", 12), retryError = Text("", 11);
+    private readonly TextBlock source = Text("", 11.5), freshness = Text("", 11.5), error = Text("", 12), placeholder = Text("", 12), retryError = Text("", 11);
     private readonly StackPanel stale, warning, buckets = new(), expiryDetails = new();
     private readonly Border chartHost = new(), accountDetails;
     private readonly Expander details;
@@ -28,20 +28,26 @@ internal sealed class QuotaHistoryView : StackPanel
     private string? accountContext;
     internal QuotaHistoryChart? Chart => chart;
 
-    internal QuotaHistoryView(UiText ui, Brush accent, Func<Task> retry)
+    /// <param name="inset">Space around the view; History's card already pads its content, as on the Mac.</param>
+    internal QuotaHistoryView(UiText ui, Brush accent, Func<Task> retry, double inset = 10)
     {
-        this.ui = ui; this.accent = accent; Margin = new Thickness(10, 10, 10, 10);
+        this.ui = ui; this.accent = accent; Margin = new Thickness(inset);
+        // One line, as on the Mac: the source, then "Not updated", the freshness and Refresh at its end.
         var heading = new Grid { Margin = new Thickness(0, 0, 0, 8) };
-        heading.ColumnDefinitions.Add(new()); heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        source.Margin = new Thickness(0, 0, 8, 0); heading.Children.Add(source); Grid.SetColumn(freshness, 1); heading.Children.Add(freshness); Children.Add(heading);
-        stale = Status("clock.arrow.circlepath", ui.Text("common.not_updated")); Children.Add(stale);
-        error.Margin = new Thickness(0, 0, 0, 8); error.TextWrapping = TextWrapping.Wrap; Children.Add(error);
+        heading.ColumnDefinitions.Add(new()); for (int column = 0; column < 3; column++) heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        source.Margin = new Thickness(0, 0, 8, 0); source.VerticalAlignment = VerticalAlignment.Center; heading.Children.Add(source);
+        stale = Status("clock.arrow.circlepath", ui.Text("common.not_updated")); stale.Margin = new Thickness(0, 0, 6, 0); stale.VerticalAlignment = VerticalAlignment.Center;
+        foreach (var part in stale.Children) { if (part is IconGlyph glyph) glyph.Ink = PacerPalette.Attention; else if (part is TextBlock label) { label.Foreground = PacerPalette.Attention; label.FontSize = 11.5; } }
+        Grid.SetColumn(stale, 1); heading.Children.Add(stale);
+        freshness.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(freshness, 2); heading.Children.Add(freshness);
+        refresh = new Button { Content = ui.Text("common.refresh"), Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(refresh, 3); heading.Children.Add(refresh); Children.Add(heading);
+        error.Margin = new Thickness(0, 0, 0, 8); error.TextWrapping = TextWrapping.Wrap; error.Foreground = PacerPalette.Attention; Children.Add(error);
         AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Polite);
         chartHost.Margin = new Thickness(0, 8, 0, 8); Children.Add(chartHost);
         placeholder.Margin = new Thickness(0, 0, 0, 8); Children.Add(placeholder);
-        details = new Expander { Header = ui.Text("settings.quota_details"), Margin = new Thickness(-10, 0, -10, 0), Content = buckets };
-        details.SetResourceReference(StyleProperty, "SettingsDisclosure"); Identify(details, "quota.history.details", ui.Text("settings.quota_details")); Children.Add(details);
-        buckets.Margin = new Thickness(10, 0, 10, 0);
+        details = new Expander { Header = ui.Text("settings.quota_details"), Content = buckets };
+        details.SetResourceReference(StyleProperty, "SettingsCompactDisclosure"); Identify(details, "quota.history.details", ui.Text("settings.quota_details"));
         accountRow = new Grid { Margin = new Thickness(0, 3, 0, 3) };
         accountRow.ColumnDefinitions.Add(new()); accountRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         resets = new Button { Style = PlainButton(), HorizontalAlignment = HorizontalAlignment.Left };
@@ -56,9 +62,10 @@ internal sealed class QuotaHistoryView : StackPanel
         var creditLabel = Text(ui.Text("account.credits"), 13); creditLabel.Margin = new Thickness(5, 0, 0, 0); credits.Children.Add(creditLabel);
         Grid.SetColumn(credits, 1); accountRow.Children.Add(credits); Identify(credits, "quota.history.credits", ""); account.Children.Add(accountRow);
         accountDetails = new Border { Padding = new Thickness(12), CornerRadius = new CornerRadius(10), Background = new SolidColorBrush(Color.FromArgb(10, 255, 255, 255)), Child = expiryDetails, Margin = new Thickness(0, 12, 0, 0) };
-        account.Children.Add(accountDetails); Children.Add(account);
+        account.Children.Add(accountDetails);
+        // Chart, then the account, then the details, each after a hairline, as on the Mac.
+        Children.Add(Hairline(account)); Children.Add(account); Children.Add(Hairline(details)); Children.Add(details);
         warning = Status("exclamationmark.circle", ui.Text("quota.chart_warning")); Children.Add(warning);
-        refresh = new Button { Content = ui.Text("common.refresh"), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
         Identify(refresh, "quota.history.refresh", ui.Text("common.refresh"));
         refresh.Click += async (_, _) =>
         {
@@ -69,7 +76,7 @@ internal sealed class QuotaHistoryView : StackPanel
             { retryError.Text = ui.Text("windows.quota.refresh_failed"); retryError.Visibility = Visibility.Visible; }
             finally { requestPending = false; RefreshButton(); }
         };
-        Children.Add(refresh); retryError.Visibility = Visibility.Collapsed; retryError.Margin = new Thickness(0, 6, 0, 0); retryError.TextWrapping = TextWrapping.Wrap;
+        retryError.Visibility = Visibility.Collapsed; retryError.Margin = new Thickness(0, 6, 0, 0); retryError.TextWrapping = TextWrapping.Wrap;
         AutomationProperties.SetLiveSetting(retryError, AutomationLiveSetting.Polite); Children.Add(retryError);
         Update(null);
     }
@@ -172,6 +179,12 @@ internal sealed class QuotaHistoryView : StackPanel
     }
     private static void SetText(TextBlock control, string? value) { control.Text = value ?? ""; control.Visibility = value == null ? Visibility.Collapsed : Visibility.Visible; }
     private static TextBlock Text(string value, double size, FontWeight? weight = null) => QuotaHistoryChart.Text(value, size, weight: weight);
+    /// A hairline that shows and hides with the part it introduces.
+    private static Border Hairline(FrameworkElement follows)
+    {
+        var line = new Border { Height = 1, Margin = new Thickness(0, 4, 0, 4) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
+        line.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(Visibility)) { Source = follows }); return line;
+    }
     private static StackPanel Status(string symbol, string text)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };

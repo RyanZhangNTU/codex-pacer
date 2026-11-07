@@ -13,11 +13,8 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private CheckBox? connectionsSSH, connectionsRemote, connectionsWSL;
-    private StackPanel? connectionSources, connectionHosts, connectionQuotas;
-    private TextBlock? connectionTitle, connectionDetail, connectionQuotaHeader;
-    private Border? connectionQuotaCard;
-    private IconGlyph? connectionMark;
-    private Ellipse? connectionHalo;
+    private StackPanel? connectionSources, connectionHosts, connectionControl, connectionWslHosts, connectionOthers, connectionRetryRow;
+    private TextBlock? connectionTitle;
     private Button? connectionRetry;
     private string? connectionContent;
     private bool connectionBusy;
@@ -26,47 +23,51 @@ internal sealed partial class SettingsWindow
     private void ClearConnections()
     {
         connectionsSSH = connectionsRemote = connectionsWSL = null;
-        connectionSources = connectionHosts = connectionQuotas = null;
-        connectionTitle = connectionDetail = connectionQuotaHeader = null; connectionQuotaCard = null; connectionMark = null; connectionHalo = null;
-        connectionRetry = null; connectionContent = null;
+        connectionSources = connectionHosts = connectionControl = connectionWslHosts = null;
+        connectionTitle = null;
+        connectionRetry = null; connectionContent = null; connectionOthers = null; connectionRetryRow = null;
         connectionActions.Clear();
     }
+    /// As on the Mac: the overall state is the page's subtitle, then SSH hosts,
+    /// Codex Remote Control and any other task source, each in its own card.
+    /// WSL is the Windows-only fourth card. Quota lives on each service page.
     private void BuildConnections()
     {
-        // The summary leads with a tinted state mark, as on the Mac pane; Retry appears only while sources retry.
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; connectionTitle = Label("", 14, FontWeights.SemiBold); connectionDetail = Detail("");
+        var header = new StackPanel();
+        var title = Label(PaneTitle("remote"), 22, FontWeights.Bold); AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1); header.Children.Add(title);
+        connectionTitle = Label("", 12.5); connectionTitle.Margin = new Thickness(0, 3, 0, 0); connectionTitle.TextWrapping = TextWrapping.Wrap;
+        connectionTitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         Identify(connectionTitle, "settings.connections.summary", ""); AutomationProperties.SetLiveSetting(connectionTitle, AutomationLiveSetting.Polite);
-        text.Children.Add(connectionTitle); text.Children.Add(connectionDetail);
-        connectionRetry = new Button { Content = ui.Text("connections.retry"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
-        Identify(connectionRetry, "settings.connections.retry", ui.Text("connections.retry")); editors.Add(connectionRetry);
-        connectionRetry.Click += async (_, _) => await RunConnectionAction(async () => { if (engine != null) await engine.SendAsync("refreshTaskSources"); });
-        connectionMark = new IconGlyph { Width = 15, Height = 15, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        connectionHalo = new Ellipse { Opacity = 0.16 };
-        var mark = new Grid { Width = 32, Height = 32, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
-        mark.Children.Add(connectionHalo); mark.Children.Add(connectionMark);
-        var summary = new DockPanel { Margin = new Thickness(12, 10, 12, 10) };
-        DockPanel.SetDock(mark, Dock.Left); DockPanel.SetDock(connectionRetry, Dock.Right);
-        summary.Children.Add(mark); summary.Children.Add(connectionRetry); summary.Children.Add(text);
-        form.Children.Add(Card(summary));
-        form.Children.Add(SectionHeader("connections.section.tasks", 10));
+        header.Children.Add(connectionTitle); SetPaneHeader(header);
+
+        var ssh = Toggle("settings.monitor_ssh", null, "settings.connections.ssh", out var sshSwitch);
+        connectionsSSH = sshSwitch; monitorSSH = sshSwitch; editors.Add(sshSwitch); BindToggle(sshSwitch, (p, value) => p with { MonitorSSH = value });
+        connectionHosts = new StackPanel(); var hosts = new StackPanel(); hosts.Children.Add(ssh); hosts.Children.Add(connectionHosts);
+        form.Children.Add(SectionTitle(ui.Text("connections.section.ssh"), 0)); form.Children.Add(Card(hosts));
+
         var remote = Toggle("settings.monitor_remote_control", "settings.remote_control_help", "settings.connections.remote_control", out var remoteSwitch);
         connectionsRemote = remoteSwitch; editors.Add(remoteSwitch);
         BindToggle(remoteSwitch, (p, value) => p with { MonitorRemoteControl = value });
+        connectionControl = new StackPanel(); var control = new StackPanel(); control.Children.Add(remote); control.Children.Add(connectionControl);
+        form.Children.Add(SectionTitle("Codex Remote Control")); form.Children.Add(Card(control));
+
         var wsl = Toggle("windows.connections.monitor_wsl", "windows.connections.wsl_help", "settings.connections.wsl", out var wslSwitch);
         connectionsWSL = wslSwitch; editors.Add(wslSwitch); BindToggle(wslSwitch, (p, value) => p with { MonitorWSL = value });
-        // Source rows bring their own trailing hairline, so an empty list leaves no stray line above the switches.
-        connectionSources = new StackPanel(); var tasks = new StackPanel(); tasks.Children.Add(connectionSources); tasks.Children.Add(remote);
-        tasks.Children.Add(Hairline(10)); tasks.Children.Add(wsl); form.Children.Add(Card(tasks));
-        form.Children.Add(SectionHeader("connections.section.ssh", 10));
-        var ssh = Toggle("settings.monitor_ssh", null, "settings.connections.ssh", out var sshSwitch);
-        connectionsSSH = sshSwitch; editors.Add(sshSwitch); BindToggle(sshSwitch, (p, value) => p with { MonitorSSH = value });
-        connectionHosts = new StackPanel(); var hosts = new StackPanel(); hosts.Children.Add(ssh); hosts.Children.Add(connectionHosts); form.Children.Add(Card(hosts));
-        connectionQuotaHeader = SectionHeader("layout.group.quota", 10); form.Children.Add(connectionQuotaHeader);
-        connectionQuotas = new StackPanel(); connectionQuotaCard = Card(connectionQuotas); form.Children.Add(connectionQuotaCard);
+        connectionWslHosts = new StackPanel(); var wslCard = new StackPanel(); wslCard.Children.Add(wsl); wslCard.Children.Add(connectionWslHosts);
+        form.Children.Add(SectionTitle("WSL")); form.Children.Add(Card(wslCard));
+
+        connectionSources = new StackPanel();
+        connectionRetry = new Button { Content = ui.Text("connections.retry"), VerticalAlignment = VerticalAlignment.Center };
+        Identify(connectionRetry, "settings.connections.retry", ui.Text("main.remote.retry_all")); editors.Add(connectionRetry);
+        connectionRetry.Click += async (_, _) => await RunConnectionAction(async () => { if (engine != null) await engine.SendAsync("refreshTaskSources"); });
+        connectionRetryRow = new StackPanel(); connectionRetryRow.Children.Add(Hairline(14)); connectionRetryRow.Children.Add(InfoRow(ui.Text("main.remote.retry_all"), connectionRetry));
+        var others = new StackPanel(); others.Children.Add(connectionSources); others.Children.Add(connectionRetryRow);
+        connectionOthers = new StackPanel(); connectionOthers.Children.Add(SectionTitle(ui.Text("connections.section.tasks"))); connectionOthers.Children.Add(Card(others));
+        form.Children.Add(connectionOthers);
     }
     private void RefreshConnections()
     {
-        if (connectionTitle == null || connectionSources == null || connectionHosts == null || connectionQuotas == null) return;
+        if (connectionTitle == null || connectionSources == null || connectionHosts == null || connectionControl == null || connectionWslHosts == null) return;
         var snapshot = engine?.LatestSnapshot; var page = snapshot?.Connections;
         bool available = !sourceClosed && !providerConnectionClosed && !busy && !connectionBusy && !session.RequiresRestart && engine != null;
         bool codex = snapshot?.Modules?.FirstOrDefault(value => value.Provider == "codex")?.Enabled ?? snapshot?.QuotaDashboard?.Providers.Any(value => value.Provider == "codex") == true;
@@ -79,30 +80,32 @@ internal sealed partial class SettingsWindow
             connectionsWSL!.IsChecked = session.Current.MonitorWSL; connectionsWSL.IsEnabled = available && (codex || claude);
         }
         finally { synchronizing = previous; }
-        connectionTitle.Text = providerConnectionClosed ? ui.Text("windows.connection.closed") : page?.Title ?? ui.Text("connections.summary.checking");
-        connectionDetail!.Text = page?.Detail ?? ""; connectionDetail.Visibility = connectionDetail.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        string summaryState = providerConnectionClosed ? "offline" : page?.State ?? "checking";
-        connectionMark!.Symbol = summaryState switch
-        { "connected" => "checkmark", "retrying" => "arrow.clockwise", "paused" => "pause", "offline" => "network.slash", "disabled" => "power", _ => "ellipsis" };
-        connectionMark.SetResourceReference(IconGlyph.InkProperty, Tone(page?.Tone)); connectionHalo!.SetResourceReference(Shape.FillProperty, Tone(page?.Tone));
-        AutomationProperties.SetName(connectionTitle, connectionTitle.Text + " " + connectionDetail.Text);
-        connectionRetry!.Visibility = page?.Retry == true ? Visibility.Visible : Visibility.Collapsed;
-        connectionRetry.IsEnabled = available && page?.State != "disabled";
-        string content = JsonSerializer.Serialize(new { page, snapshot?.Sources, snapshot?.ClaudeRemoteSetups,
-            readings = snapshot?.QuotaDashboard?.Providers.Select(value => new { value.Provider, value.Status, value.FiveHour.FreshnessText, value.FiveHour.SourceText }), available });
+        string summary = providerConnectionClosed ? ui.Text("windows.connection.closed") : page?.Title ?? ui.Text("connections.summary.checking");
+        if (!providerConnectionClosed && page?.Detail is { Length: > 0 } detail) summary += " · " + detail;
+        connectionTitle.Text = summary; AutomationProperties.SetName(connectionTitle, summary);
+        // The header line stays secondary, as the Mac's page subtitle; problems show on their rows.
+        connectionTitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        connectionRetryRow!.Visibility = page?.Retry == true ? Visibility.Visible : Visibility.Collapsed;
+        connectionRetry!.IsEnabled = available && page?.State != "disabled";
+        string content = JsonSerializer.Serialize(new { page, snapshot?.Sources, snapshot?.ClaudeRemoteSetups, available });
         if (content == connectionContent) return;
-        connectionContent = content; connectionActions.Clear(); connectionSources.Children.Clear(); connectionHosts.Children.Clear(); connectionQuotas.Children.Clear();
-        connectionQuotaHeader!.Visibility = connectionQuotaCard!.Visibility = Visibility.Collapsed;
-        if (page == null) return;
+        connectionContent = content; connectionActions.Clear();
+        connectionSources.Children.Clear(); connectionHosts.Children.Clear(); connectionControl.Children.Clear(); connectionWslHosts.Children.Clear();
+        if (page == null) { connectionOthers!.Visibility = Visibility.Collapsed; return; }
+        int others = 0;
         foreach (var source in page.Sources)
         {
             var module = source.Module; var details = new StackPanel();
             details.Children.Add(StatusLine((source.Kind == source.Name ? "" : source.Kind + " · ") + module.Label, module.Tone));
             QuotaLines(module, snapshot, details);
-            var row = ConnectionRow(ProviderTile(module.Provider), source.Name, details, ModuleActions(module, snapshot, available, module.State == "connected" ? module.SessionsText : ""));
+            var row = ConnectionRow(ProviderTile(module.Provider), source.Name, details, ModuleActions(module, snapshot, available, module.State == "connected" ? SessionCount(module.Sessions) : ""));
             Identify(row, "settings.connections.source." + source.Id, source.Name + " " + module.Label);
-            connectionSources.Children.Add(row); connectionSources.Children.Add(Hairline(10));
+            // Remote Control sessions sit under their switch; SSH hosts are listed by host below.
+            if (source.Key.StartsWith("remote-control:", StringComparison.Ordinal)) { connectionControl.Children.Add(Hairline(14)); connectionControl.Children.Add(row); }
+            else if (!source.Key.StartsWith("remote-ssh-discovered:", StringComparison.Ordinal))
+            { if (others++ > 0) connectionSources.Children.Add(Hairline(14)); connectionSources.Children.Add(row); }
         }
+        connectionOthers!.Visibility = others > 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var host in page.Hosts)
         {
             var details = new StackPanel(); var modules = new WrapPanel(); details.Children.Add(modules);
@@ -113,53 +116,34 @@ internal sealed partial class SettingsWindow
                 line.Margin = new Thickness(0, 0, 14, 0); modules.Children.Add(line);
                 QuotaLines(module, snapshot, details); actions.Children.Add(ModuleActions(module, snapshot, available, ""));
             }
-            var server = new Border { Width = 22, Height = 22, CornerRadius = new CornerRadius(6) }; server.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
-            var glyph = new IconGlyph { Symbol = "server.rack", Width = 13, Height = 13 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary"); server.Child = glyph;
-            var row = ConnectionRow(server, host.Name + " · " + host.Kind, details, actions);
+            var tiles = new StackPanel { Orientation = Orientation.Horizontal, Width = 42 };
+            foreach (var module in host.Modules.DistinctBy(value => value.Provider))
+            { var tile = ProviderTile(module.Provider, 18); tile.Margin = new Thickness(0, 0, 3, 0); tiles.Children.Add(tile); }
+            var holder = new Border { Child = tiles };
+            var row = ConnectionRow(holder, host.Name, details, actions);
             Identify(row, "settings.connections.host." + host.Id, host.Name + " " + host.Kind);
-            connectionHosts.Children.Add(Hairline(10)); connectionHosts.Children.Add(row);
+            var target = host.Kind.Contains("WSL", StringComparison.OrdinalIgnoreCase) ? connectionWslHosts : connectionHosts;
+            target.Children.Add(Hairline(14)); target.Children.Add(row);
         }
-        var readings = snapshot?.QuotaDashboard?.Providers ?? [];
-        foreach (var reading in readings)
-        {
-            string detail = reading.Provider == "deepseek" ? snapshot?.DeepseekConnection?.Status?.Message ?? snapshot?.Wallet?.Dial?.Freshness ?? reading.FiveHour.FreshnessText :
-                reading.Status?.Message ?? string.Join(" · ", new[] { reading.FiveHour.SourceText, reading.FiveHour.FreshnessText }.Where(value => !string.IsNullOrEmpty(value)));
-            var state = Detail(detail); state.Margin = new Thickness(0, 2, 0, 0); if (reading.Status?.State == "error") state.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
-            Button? retry = null;
-            var quotaActions = reading.Provider == "deepseek" ? snapshot?.DeepseekConnection?.Status?.Actions : reading.Status?.Actions;
-            if (quotaActions?.FirstOrDefault(value => value.Enabled) is { } quotaAction)
-            {
-                retry = ConnectionButton(quotaAction.Title, "settings.connections.quota." + reading.Provider, available);
-                retry.Click += async (_, _) =>
-                {
-                    if (quotaAction.Kind == "settings") await NavigateAsync(reading.Provider);
-                    else if (reading.Provider == "claude" && engine?.LatestSnapshot?.ClaudeConnection?.State is "signedOut" or "workspaceNeeded")
-                        await NavigateAsync("claude");
-                    else if (reading.Provider == "deepseek") await NavigateAsync("deepseek");
-                    else await RunConnectionAction(async () => { if (engine != null) await engine.SendAsync("retryQuota", new { provider = reading.Provider }); });
-                };
-            }
-            if (connectionQuotas.Children.Count > 0) connectionQuotas.Children.Add(Hairline(42));
-            connectionQuotas.Children.Add(ConnectionRow(ProviderTile(reading.Provider), ProviderName(reading.Provider), state, retry));
-        }
-        connectionQuotaHeader.Visibility = connectionQuotaCard.Visibility = readings.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
     /// A provider or host tile, the name over its state, and the row's trailing actions.
     private Grid ConnectionRow(Border tile, string name, UIElement details, UIElement? trailing)
     {
-        var row = new Grid { Margin = new Thickness(10, 8, 10, 8), MinHeight = 32 };
+        var row = new Grid { Margin = new Thickness(14, 8, 14, 8), MinHeight = 32 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        tile.Margin = new Thickness(0, 0, 10, 0); tile.VerticalAlignment = VerticalAlignment.Center; row.Children.Add(tile);
+        tile.Margin = new Thickness(0, 0, 12, 0); tile.VerticalAlignment = VerticalAlignment.Center; row.Children.Add(tile);
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var title = Label(name); title.TextTrimming = TextTrimming.CharacterEllipsis; title.ToolTip = name; text.Children.Add(title); text.Children.Add(details);
         Grid.SetColumn(text, 1); row.Children.Add(text);
         if (trailing is FrameworkElement end) { end.VerticalAlignment = VerticalAlignment.Center; end.Margin = new Thickness(8, 0, 0, 0); Grid.SetColumn(end, 2); row.Children.Add(end); }
         return row;
     }
-    private static Border ProviderTile(string provider) => GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), 22, true);
-    private Border Hairline(double inset)
+    private static Border ProviderTile(string provider, double size = 22) => GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), size, true);
+    /// A connected source's session count, including none, as the Mac shows it.
+    private string SessionCount(int sessions) => sessions == 1 ? ui.Text("connections.sessions_one") : ui.Text("connections.sessions").Replace("%ld", sessions.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal);
+    private Border Hairline(double inset, double end = 14)
     {
-        var line = new Border { Height = 1, Margin = new Thickness(inset, 0, 10, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); return line;
+        var line = new Border { Height = 1, Margin = new Thickness(inset, 0, end, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); return line;
     }
     /// A colored dot before the state, in warning color only when something needs attention.
     private StackPanel StatusLine(string text, string tone)
@@ -216,9 +200,9 @@ internal sealed partial class SettingsWindow
     private static string Tone(string? tone) => tone switch { "warning" => "SettingsWarning", "success" => "SettingsSuccess", _ => "SettingsSecondary" };
     private async Task RunConnectionAction(Func<Task> action)
     {
-        if (sourceClosed || providerConnectionClosed || busy || connectionBusy || session.RequiresRestart || activePane != "connections") return;
+        if (sourceClosed || providerConnectionClosed || busy || connectionBusy || session.RequiresRestart || activePane != "remote") return;
         connectionBusy = true; RefreshConnections();
-        try { await sourceReady; if (!sourceClosed && !providerConnectionClosed && activePane == "connections" && !session.RequiresRestart) await action(); }
+        try { await sourceReady; if (!sourceClosed && !providerConnectionClosed && activePane == "remote" && !session.RequiresRestart) await action(); }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { if (!sourceClosed) ShowIssue("windows.connection.refresh_failed"); }
         finally { connectionBusy = false; if (!sourceClosed) RefreshConnections(); }
     }

@@ -6,7 +6,7 @@ Pacer for Windows checks, downloads and verifies updates itself and shows them i
 
 The automatic preference defaults to enabled and persists under `SUEnableAutomaticChecks`, with the same meaning as the Mac setting. Turning it off leaves manual checks available. The host checks at most once per day from its saved check time, using a sleeping task rather than a polling loop. A failed setting change or preference save restores the previous value and shows an error.
 
-**Check for Updates** in Settings opens the window at once with the check's progress. An automatic check opens it only for an offer, without taking focus, and stays quiet when nothing is found, when the check fails, or when the offer is a build the person chose to skip. A manual check still offers a skipped build. The window's stages are:
+**Check for Updates** on Help & Updates reports in that card instead of a window, as on the Mac: checking, up to date, a found version, or a failure in amber. **Update and Restart** there (or on Overview's update banner) downloads with real progress and Cancel, verifies, and hands off to the installer, which restarts Pacer. A check started anywhere else opens the update window at once with the check's progress. An automatic check opens no window, as on the Mac: a found version shows on Overview's update banner and as a dot by Help & Updates in the sidebar, and the check stays quiet when nothing is found, when it fails, or when the offer is a build the person chose to skip. A manual check still offers a skipped build. The window's stages are:
 
 - **Offer:** the new and installed versions and the signed notes for this language. Buttons: **Skip This Version**, **Remind Me Later** and **Install Update** (the default).
 - **Download:** a progress bar with megabytes and percentage, and **Cancel**.
@@ -14,6 +14,8 @@ The automatic preference defaults to enabled and persists under `SUEnableAutomat
 - **Up to date**, or a failure with **Try Again**.
 
 Escape closes the window. Later, Cancel and closing all discard an unfinished download.
+
+Inline checks release the island as soon as the result is available. A background offer leaves the island interactive. The offered version stays available if a check fails or the user cancels a download. A successful check that finds no update clears the offer. Update and Restart during a background check waits for that check, and fails like a changed offer if the check replaced the version. Closing Settings during an inline download cancels it.
 
 The notes are the signed Markdown from the feed, rendered from a small subset: headings, paragraphs, lists, bold, code and links. Their colors come only from the Settings palette, so they stay readable in light, dark and high contrast. HTML and other markup stay literal text. Links stay active only for HTTPS GitHub URLs; external release-note URLs and active HTML are never followed.
 

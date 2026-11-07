@@ -96,6 +96,8 @@ internal static class PreferencesCodec
     {
         DisplaySelection = value.DisplaySelection is "primary" or "specified" ? value.DisplaySelection : "automatic",
         Language = value.Language is "en" or "zh-Hans" ? value.Language : "system",
+        AppTheme = value.AppTheme is "light" or "dark" ? value.AppTheme : "auto",
+        AccentColor = DesktopPreferences.ValidAccent(value.AccentColor) ? value.AccentColor : "multicolor",
         Position = value.Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight" ? value.Position : "center",
         DisplayMode = value.DisplayMode is "notch" or "floating" ? value.DisplayMode : "automatic",
         IslandAppearance = value.IslandAppearance is "classic" ? "classic" : "liquidGlass",
@@ -107,7 +109,7 @@ internal static class PreferencesCodec
         DeepSeekRingPeriod = value.DeepSeekRingPeriod is "week" ? "week" : "day",
         CompactSingleTask = value.CompactSingleTask is "count" ? "count" : "stage",
         CompactMetric = value.CompactMetric is "pace" ? "pace" : "remaining",
-        LastSettingsPane = value.LastSettingsPane is "appearance" or "collapsed" or "reminders" or "codex" or "claude" or "deepseek" or "connections" or "help" or "support" or "whatsNew" ? value.LastSettingsPane : "general"
+        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "notifications" or "codex" or "claude" or "deepseek" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew" ? value.LastSettingsPane : "overview"
     };
     internal static byte[] Encode(DesktopPreferences value, ReadOnlySpan<byte> original = default)
     {

@@ -33,8 +33,8 @@ internal static class CollapsedLayoutChecks
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
             await Pump(); await island.WaitForPresentationAsync();
             var editor = SelfAndDescendants(window).OfType<CompactLayoutEditorView>().Single();
-            Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600 && editor.ActualWidth <= 510,
-                "The inline editor must fit the existing Settings canvas");
+            Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5 && editor.ActualWidth <= SettingsWindow.ColumnWidth,
+                "The inline editor must fit the main window's page column");
             Check(engine.LatestSnapshot!.CompactContext != null, "The engine must provide a sanitized compact context");
             string[] everyProvider = ["codex", "claude", "deepseek"];
             var context = engine.LatestSnapshot!.CompactContext!.Value;
@@ -83,8 +83,15 @@ internal static class CollapsedLayoutChecks
                 var check = Find<CheckBox>(window, "compact.component." + id); Toggle(check);
                 await Until(() => check.IsChecked == true && check.IsEnabled);
             }
+            // Each component's settings live in the inspector once it is selected, as on the Mac.
+            window.SelectCompactComponent("activity"); await Pump();
+            Check(Find<TextBlock>(window, "compact.inspector.title").Text == state.Components.Single(value => value.Id == "activity").Label && Find<ComboBox>(window, "compact.singleTask").IsVisible
+                && !Find<Border>(window, "compact.metric.quota").IsVisible, "The inspector shows only the selected component's settings");
             Select(Find<ComboBox>(window, "compact.singleTask"), "count"); await Until(() => session.Current.CompactSingleTask == "count");
-            Select(Find<ComboBox>(window, "compact.metric.quota"), "pace"); await Until(() => session.Current.CompactMetric == "pace");
+            window.SelectCompactComponent("quota"); await Pump();
+            Check(Find<TextBlock>(window, "compact.window_label.codex").IsVisible && Find<TextBlock>(window, "compact.window_label.claude").IsVisible, "Quota windows follow the components that show a quota");
+            Select(Find<RadioButton>(window, "compact.metric.pace")); await Until(() => session.Current.CompactMetric == "pace");
+            window.SelectCompactComponent("quotaGauge"); await Pump();
             Select(Find<ComboBox>(window, "compact.ring.0"), "deepseek"); await Until(() => session.Current.QuotaRingOuter == "deepseek");
             Check(configurations == 0, "Readout and ring choices cannot restart sources");
             island.Reveal(); await island.WaitForPresentationAsync();
@@ -151,7 +158,7 @@ internal static class CollapsedLayoutChecks
             await window.NavigateAsync("collapsed"); await Pump();
             await session.ChangeAsync(p => p with { Position = "bottomLeft", DisplayMode = "floating" }); await island.WaitForPresentationAsync();
             Check(SelfAndDescendants(island).OfType<Button>().Where(value => AutomationProperties.GetAutomationId(value).StartsWith("compact.strip.", StringComparison.Ordinal)).All(value =>
-                !AutomationProperties.GetAutomationId(value).EndsWith(".status", StringComparison.Ordinal) && !AutomationProperties.GetAutomationId(value).EndsWith(".quotaLabel", StringComparison.Ordinal)),
+                !AutomationProperties.GetAutomationId(value).EndsWith(".status", StringComparison.Ordinal)),
                 "The side strip must retain its saved components while omitting the two word labels");
             island.CapturePreview(Path.Combine(output, "collapsed-strip-" + name + ".png"));
         }
@@ -165,6 +172,7 @@ internal static class CollapsedLayoutChecks
         => SelfAndDescendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
+    private static void Select(RadioButton value) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(value).GetPattern(PatternInterface.SelectionItem)).Select();
     private static void Select(ComboBox value, string selection)
     {
         value.SelectedItem = value.Items.Cast<ComboBoxItem>().Single(item => (string)item.Tag == selection);

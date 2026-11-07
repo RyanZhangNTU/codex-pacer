@@ -126,6 +126,13 @@ final class SelfReportedProgressTests: XCTestCase {
         XCTAssertEqual(rows.first?.progressRing?.percent, 62)
         XCTAssertNil(ActivityTaskPresentation(activities: [activity], requests: [], inbox: CompletionInbox(),
             options: .init(progressRingProviders: [.codex]), at: now).rows.first?.progressRing)
+        // The collapsed badge draws the only task's estimate while it works.
+        func badge(_ providers: Set<AgentProvider>) -> TaskProgressRing? {
+            ActivityTaskPresentation(activities: [activity], requests: [], inbox: CompletionInbox(),
+                options: .init(progressRingProviders: providers), at: now.addingTimeInterval(30)).header(symbol: { $0.rawValue }).progress
+        }
+        XCTAssertEqual(badge([.claude])?.percent, 62)
+        XCTAssertNil(badge([.codex]), "No ring in the row, none in the badge")
     }
 
     func testATurnWaitingForBackgroundWorkStaysOpenAndItsWakeContinuesTheEstimate() throws {
@@ -319,6 +326,9 @@ final class SelfReportedProgressTests: XCTestCase {
         let rows = ActivityTaskPresentation(activities: [activity], requests: [], inbox: CompletionInbox(),
             options: .init(progressRingProviders: [.claude]), at: now.addingTimeInterval(5)).rows
         XCTAssertEqual(rows.first?.progressRing?.state, .pending)
+        XCTAssertNil(ActivityTaskPresentation(activities: [activity], requests: [], inbox: CompletionInbox(),
+            options: .init(progressRingProviders: [.claude]), at: now.addingTimeInterval(5)).header(symbol: { $0.rawValue }).progress,
+            "Without an estimate the badge keeps its orbit")
         activity.applyRuntime(["method": "thread/observed", "threadId": thread, "status": "active", "flags": ["waitingOnUserInput"], "at": start + 10])
         let asking = try XCTUnwrap(ring(activity, at: 10))
         XCTAssertEqual(asking.state, .pending); XCTAssertEqual(asking.mode, .attention)

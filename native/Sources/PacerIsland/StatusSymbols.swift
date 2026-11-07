@@ -7,14 +7,14 @@ import PacerCore
 enum StatusSymbols {
     static let thinking = "sparkle"
     static let tool = "terminal"
-    static let replying = "text.bubble"
+    static let replying = "ellipsis.bubble"
     static let starting = "hourglass"
     static let cloudWork = "cloud"
     static let coordinating = "arrow.triangle.branch"
     /// A turn paused while its background work runs; it resumes on the wake.
-    static let backgroundWait = "zzz"
+    static let backgroundWait = "moon.zzz"
     static let idle = "moon"
-    static let input = "ellipsis.bubble"
+    static let input = "questionmark.bubble"
     static let approval = "hand.raised"
     static let complete = "checkmark.circle"
     static let interrupted = "pause.circle"

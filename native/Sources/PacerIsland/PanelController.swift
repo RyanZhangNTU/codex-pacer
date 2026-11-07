@@ -101,25 +101,6 @@ final class PanelController: NSObject {
         panel.makeKey()
     }
 
-    func setUpdatePresentationActive(_ active: Bool) {
-        guard active != model.interactionSuspended else { return }
-        if active { cancelMove() }
-        model.setInteractionSuspended(active)
-        panel.ignoresMouseEvents = active
-        // A normal-level window is constrained below the menu bar. Restore the
-        // status-bar level before laying out the island at the screen's top edge.
-        panel.level = active ? .normal : .statusBar
-        // Snap closed before runModal; animation timers may not advance there.
-        layout(animated: false)
-        if active {
-            panel.resignKey()
-            panel.orderBack(nil)
-        } else {
-            // Return only the collapsed island without stealing updater focus.
-            panel.orderFrontRegardless()
-        }
-    }
-
     private static func number(_ screen: NSScreen) -> Int {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0
     }

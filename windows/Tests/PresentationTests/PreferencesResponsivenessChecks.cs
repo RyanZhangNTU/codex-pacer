@@ -20,7 +20,8 @@ internal static class PreferencesResponsivenessChecks
             await using var engine = new EngineClient(TimeSpan.FromMilliseconds(500));
             await engine.StartAsync(Environment.ProcessPath!, true, mode);
             int saves = 0, configurations = 0, beats = 0;
-            var session = new PreferencesSession(new(), _ => { configurations++; return Task.CompletedTask; }, _ => { saves++; return true; },
+            // The language picker is on General; the main window would otherwise open on Overview.
+            var session = new PreferencesSession(new() { LastSettingsPane = "general" }, _ => { configurations++; return Task.CompletedTask; }, _ => { saves++; return true; },
                 value => PreferencesAcknowledgement.ValidateAsync(engine, value, TimeSpan.FromMilliseconds(350)));
             var window = new SettingsWindow(UiText.For(false), session, new DemoStartupRegistration(), true, true, engine) { ShowActivated = false, IsHitTestVisible = false };
             var pulse = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) }; pulse.Tick += (_, _) => beats++;

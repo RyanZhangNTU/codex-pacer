@@ -39,7 +39,7 @@ internal static class ReminderSettingsChecks
             island.Reveal(); await island.WaitForPresentationAsync(); await Pump();
             var low = Find<TextBox>(window, "settings.reminders.lowLine"); var spike = Find<TextBox>(window, "settings.reminders.spikeLine");
             var lowSwitch = Find<CheckBox>(window, "settings.reminders.lowBalance"); var budget = Find<CheckBox>(window, "settings.reminders.budget");
-            Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600 && low.Tag is string { Length: > 0 } && spike.Tag is string { Length: > 0 }, "Reminder geometry and automatic thresholds follow the original page and Core rules");
+            Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5 && low.Tag is string { Length: > 0 } && spike.Tag is string { Length: > 0 }, "Reminder geometry and automatic thresholds follow the original page and Core rules");
             var ssh = Find<CheckBox>(window, "settings.reminders.ssh"); bool sshShown = session.Current.WarningKinds.Contains("ssh");
             Check(ssh.IsEnabled && ssh.ToolTip == null && Find<CheckBox>(window, "settings.reminders.fiveHour").IsEnabled, "The SSH reminder is configurable like the quota reminders");
             Toggle(ssh); await Until(() => session.Current.WarningKinds.Contains("ssh") != sshShown && ssh.IsEnabled);
@@ -97,7 +97,8 @@ internal static class ReminderSettingsChecks
     }
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
-    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
+    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().SingleOrDefault(value => AutomationProperties.GetAutomationId(value) == id)
+        ?? throw new InvalidOperationException("Missing element: " + id);
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
     private static async Task Until(Func<bool> condition)
     { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Task.Delay(20); Check(condition(), "The reminder settings action must finish"); await Pump(); }

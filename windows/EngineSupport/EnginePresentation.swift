@@ -85,13 +85,13 @@ struct EngineTaskRow: Codable, Equatable {
         switch kind {
         case .thinking: return "sparkle"
         case .tool: return "terminal"
-        case .responding: return "text.bubble"
+        case .responding: return "ellipsis.bubble"
         case .starting: return "hourglass"
         case .working: return "cloud"
         case .coordinating: return "arrow.triangle.branch"
-        case .background: return "zzz"
+        case .background: return "moon.zzz"
         case .approval: return "hand.raised"
-        case .input: return "ellipsis.bubble"
+        case .input: return "questionmark.bubble"
         case .completed: return "checkmark.circle"
         case .interrupted: return "pause.circle"
         case .failed: return "xmark.circle"
@@ -111,6 +111,10 @@ struct EngineHeader: Codable, Equatable {
     let ending: String?
     let endingProvider: String?
     let endingIsCore: Bool
+    /// The only active task's reported estimate while it works; the badge draws it in place of the orbit.
+    let progressFraction: Double?
+    let progressLongStep: Bool?
+    let progressStale: Bool?
 
     init(groups: [ActivityTaskGroup], requests: [PendingAttentionRequest], inbox: CompletionInbox, at now: Date) {
         self.init(ActivityTaskPresentation(activities: groups.flatMap(\.members), requests: requests, inbox: inbox,
@@ -127,5 +131,8 @@ struct EngineHeader: Codable, Equatable {
         else { endingProvider = suppliedProvider?.rawValue }
         endingIsCore = value.endingIsCore
         if case .symbol(let glyph) = value.core { coreSymbol = glyph } else { coreSymbol = nil }
+        progressFraction = value.progress?.fraction
+        progressLongStep = value.progress.map { $0.mode == .longStep }
+        progressStale = value.progress?.stale
     }
 }

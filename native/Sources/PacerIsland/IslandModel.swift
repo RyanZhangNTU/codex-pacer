@@ -326,11 +326,16 @@ final class IslandModel: ObservableObject {
     static let claudeProgressRingKey = "claudeProgressRing"
     static let codexProgressRingKey = "codexProgressRing"
     static let deepseekProgressRingKey = "deepseekProgressRing"
+    /// Every service's ring is on until the user turns it off; a stored
+    /// choice, on or off, always wins.
+    static func progressRingEnabled(_ key: String, in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? true
+    }
     @Published private(set) var deepseekProgressSetup: DeepSeekProgressSetupStatus?
     private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
     /// The newest setup, which waits for the earlier ones; shutdown lets it finish.
     private var deepseekProgressTask: Task<Void, Never>?
-    var showsDeepSeekProgressRing: Bool { defaults.bool(forKey: Self.deepseekProgressRingKey) }
+    var showsDeepSeekProgressRing: Bool { Self.progressRingEnabled(Self.deepseekProgressRingKey, in: defaults) }
     /// Also runs when the switch turns off, which removes Pacer's entry.
     func syncDeepSeekProgressSwitch(force: Bool = false) {
         guard !demo, !stopped, installationOverride == nil, let ticket = deepseekProgressQueue.request(
@@ -352,7 +357,7 @@ final class IslandModel: ObservableObject {
     private var codexProgressQueue = ProgressSetupQueue<CodexProgressSetup.Target>()
     private var codexProgressFlagTask: Task<Int, Never>?
     private let codexProgressGate = CodexProgressSwitchGate()
-    var showsCodexProgressRing: Bool { defaults.bool(forKey: Self.codexProgressRingKey) }
+    var showsCodexProgressRing: Bool { Self.progressRingEnabled(Self.codexProgressRingKey, in: defaults) }
     func syncCodexProgressSwitch(force: Bool = false) {
         guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL,
               let ticket = codexProgressQueue.request(.init(home: home, executable: defaults.string(forKey: "codexExecutable") ?? "",
@@ -404,8 +409,8 @@ final class IslandModel: ObservableObject {
         if showsDeepSeekProgressRing { providers.insert(.deepseek) }
         return providers
     }
-    /// Claude's self-reported progress ring; off until the user turns it on.
-    var showsClaudeProgressRing: Bool { defaults.bool(forKey: Self.claudeProgressRingKey) }
+    /// Claude's self-reported progress ring; on until the user turns it off.
+    var showsClaudeProgressRing: Bool { Self.progressRingEnabled(Self.claudeProgressRingKey, in: defaults) }
     /// The setting the last settings pass applied, so a switch reaches SSH hosts once.
     private var appliedClaudeProgressRing = false
     /// The Claude home where this app turned the ring's switch on.
@@ -982,7 +987,7 @@ final class IslandModel: ObservableObject {
         self.installation = installation ?? (demo && demoArguments != nil
             ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         self.modules = .load(from: defaults)
-        self.appliedClaudeProgressRing = defaults.bool(forKey: Self.claudeProgressRingKey)
+        self.appliedClaudeProgressRing = Self.progressRingEnabled(Self.claudeProgressRingKey, in: defaults)
         self.demo = demo
         self.demoClock = demoClock
         self.demoArguments = demoArguments
@@ -1637,6 +1642,7 @@ final class IslandModel: ObservableObject {
         installation = installationOverride ?? (demo && demoArguments != nil
             ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         modules = .load(from: defaults)
+        PacerAccent.current = PacerAccent(defaults: defaults)
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         syncCodexProgressSwitch()
         syncDeepSeekProgressSwitch()

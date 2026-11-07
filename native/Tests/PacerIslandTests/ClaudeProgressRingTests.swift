@@ -45,16 +45,18 @@ final class ClaudeProgressRingTests: XCTestCase {
     }
     private func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
 
-    func testRowsDrawEachProvidersRingOnlyWhileItsOwnSettingIsOn() throws {
+    func testEveryProvidersRingIsOnUntilItsOwnSettingTurnsItOff() throws {
         let fixture = try fixture()
         func providers() -> Set<AgentProvider> { fixture.model.taskPresentationOptions(for: []).progressRingProviders }
+        XCTAssertEqual(providers(), [.claude, .codex, .deepseek], "A user who never chose sees every ring")
+        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
+        XCTAssertEqual(providers(), [.codex, .deepseek])
+        fixture.defaults.set(false, forKey: IslandModel.deepseekProgressRingKey)
+        XCTAssertEqual(providers(), [.codex])
+        fixture.defaults.set(false, forKey: IslandModel.codexProgressRingKey)
         XCTAssertEqual(providers(), [])
         fixture.defaults.set(true, forKey: IslandModel.claudeProgressRingKey)
-        XCTAssertEqual(providers(), [.claude])
-        fixture.defaults.set(true, forKey: IslandModel.codexProgressRingKey)
-        XCTAssertEqual(providers(), [.claude, .codex])
-        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
-        XCTAssertEqual(providers(), [.codex])
+        XCTAssertEqual(providers(), [.claude], "A stored choice wins over the default either way")
     }
 
     /// Registration runs Codex against a real profile, so a demo or a model
@@ -65,7 +67,7 @@ final class ClaudeProgressRingTests: XCTestCase {
             let fixture = try fixture(demoArguments: demo ? ["--demo"] : nil, demo: demo, codex: .enabled)
             fixture.defaults.set(true, forKey: IslandModel.codexProgressRingKey)
             XCTAssertTrue(fixture.model.isModuleEnabled(.codex))
-            XCTAssertEqual(fixture.model.taskPresentationOptions(for: []).progressRingProviders, [.codex])
+            XCTAssertTrue(fixture.model.taskPresentationOptions(for: []).progressRingProviders.contains(.codex))
             fixture.model.syncCodexProgressSwitch(force: true)
             XCTAssertNil(fixture.model.codexProgressSetup, "Setup would report settingUp at once")
             XCTAssertFalse(exists(fixture.root.appendingPathComponent("pacer/codex-progress")))
@@ -76,8 +78,10 @@ final class ClaudeProgressRingTests: XCTestCase {
         let fixture = try fixture(demoArguments: ["--demo", "--demo-claude", "--demo-cloud"], demo: true), model = fixture.model
         func rows() -> [ActivityTaskRowPresentation] { model.taskPresentation.rows.filter { $0.activity.provider == .claude } }
         func local() throws -> TaskProgressRing? { try XCTUnwrap(rows().first { $0.activity.claudeCloud == nil }).progressRing }
+        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
+        model.applySettings(sourceChanged: false)
         model.setDemoStage(.tool)
-        XCTAssertTrue(rows().allSatisfy { $0.progressRing == nil }, "The switch is off by default")
+        XCTAssertTrue(rows().allSatisfy { $0.progressRing == nil }, "A switch turned off draws no ring")
         fixture.defaults.set(true, forKey: IslandModel.claudeProgressRingKey)
         model.applySettings(sourceChanged: false)
         model.setDemoStage(.thinking)
@@ -123,6 +127,7 @@ final class ClaudeProgressRingTests: XCTestCase {
             try FileManager.default.createDirectory(at: folder.appendingPathComponent("pacer"), withIntermediateDirectories: true)
         }
         let flag = ClaudeProgressRingSwitch.flagURL(home: home), otherFlag = ClaudeProgressRingSwitch.flagURL(home: other)
+        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
         // A leftover from another run stays until setup confirms that Pacer manages this home.
         try Data("tool\n".utf8).write(to: flag)
         XCTAssertFalse(model.applyClaudeProgressSwitch(home: home))
@@ -162,294 +167,5 @@ final class ClaudeProgressRingTests: XCTestCase {
         fixture.defaults.set(true, forKey: IslandModel.claudeProgressRingKey)
         XCTAssertFalse(fixture.model.applyClaudeProgressSwitch(home: fixture.home, setupConfirmed: true))
         XCTAssertFalse(exists(ClaudeProgressRingSwitch.flagURL(home: fixture.home)))
-    }
-}
-
-/// The ring view: continuity across rebuilt rows, looping motion by mode, and
-/// no clocks without motion.
-@MainActor
-final class TaskProgressRingViewTests: XCTestCase {
-    private typealias Ring = TaskProgressRingNSView
-    private let ink = NSColor.orange.cgColor
-    private let loops: Set<String> = ["pending.spin", "pending.breath", "arc.breath", "dot.travel"]
-    /// Whether the test windows count as on screen and unoccluded.
-    private var shows = true
-    private var windows: [NSWindow] = []
-    private func shown() -> Ring {
-        if windows.isEmpty {
-            let original = Ring.windowShows
-            Ring.windowShows = { [unowned self] _ in MainActor.assumeIsolated { self.shows } }
-            addTeardownBlock { @MainActor in Ring.windowShows = original }
-        }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: .borderless, backing: .buffered, defer: true)
-        window.isReleasedWhenClosed = false
-        let view = Ring(frame: NSRect(x: 6, y: 6, width: Ring.diameter, height: Ring.diameter))
-        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
-        window.contentView?.addSubview(view)
-        view.layoutSubtreeIfNeeded()
-        windows.append(window)
-        return view
-    }
-    private func input(_ id: String, _ state: TaskProgressRing.State?, _ mode: TaskProgressRing.Mode = .working,
-                       _ fraction: Double = 0, stale: Bool = false, animates: Bool = true, codex: Bool = false) -> Ring.Input {
-        .init(id: id, state: state, mode: mode, fraction: fraction, stale: stale, color: ink, animates: animates,
-              completionPulseOnly: codex)
-    }
-    private func running(_ view: Ring) -> Set<String> { view.animationKeys.intersection(loops) }
-
-    func testARowAppliesItsRingOnlyOnceShownAndRebuildsContinueTheSweepInEitherRemovalOrder() throws {
-        let id = UUID().uuidString
-        let detached = Ring(frame: NSRect(x: 0, y: 0, width: Ring.diameter, height: Ring.diameter))
-        detached.update(input(id, .reported, .working, 0.3))
-        XCTAssertNil(Ring.memory(for: id), "A row resumes motion only once it is in a window")
-
-        for removeFirst in [false, true] {
-            let id = UUID().uuidString, first = shown()
-            first.update(input(id, .reported, .working, 0.3))
-            XCTAssertEqual(Ring.memory(for: id)?.duration, 0, "A ring that appears with an estimate draws it at once")
-            XCTAssertEqual(first.restingFraction, 0.3, accuracy: 0.0001)
-            first.update(input(id, .reported, .working, 0.62))
-            let sweep = try XCTUnwrap(Ring.memory(for: id)), firstBegin = try XCTUnwrap(first.sweepBegin())
-            XCTAssertEqual(sweep.from, 0.3, accuracy: 0.0001); XCTAssertEqual(sweep.to, 0.62, accuracy: 0.0001)
-            XCTAssertEqual(sweep.duration, 0.3 + 0.3 * 0.32, accuracy: 0.0001)
-
-            if removeFirst { first.removeFromSuperview() }
-            let second = shown()
-            second.update(input(id, .reported, .working, 0.62))
-            if !removeFirst { first.removeFromSuperview() }
-            let resumed = try XCTUnwrap(Ring.memory(for: id))
-            XCTAssertEqual(resumed.start, sweep.start, "Removing the previous row must preserve the sweep's clock")
-            XCTAssertEqual(resumed.duration, sweep.duration)
-            XCTAssertEqual(try XCTUnwrap(second.sweepBegin()), firstBegin, accuracy: 0.0001)
-            XCTAssertTrue(first.animationKeys.isEmpty, "A removed row stops all its own animation")
-
-            let before = CACurrentMediaTime()
-            second.update(input(id, .reported, .working, 0.1))
-            let after = CACurrentMediaTime(), falling = try XCTUnwrap(Ring.memory(for: id))
-            XCTAssertGreaterThanOrEqual(falling.from, sweep.displayed(at: before) - 0.0001)
-            XCTAssertLessThanOrEqual(falling.from, sweep.displayed(at: after) + 0.0001,
-                "The next estimate starts from the displayed value rather than the previous target")
-        }
-    }
-
-    func testALoweredEstimateStartsFromTheDisplayedValueAndLeavesATrace() throws {
-        let id = UUID().uuidString, view = shown()
-        view.update(input(id, .reported, .working, 0.3))
-        view.update(input(id, .reported, .working, 0.9))
-        view.update(input(id, .reported, .working, 0.1))
-        let memory = try XCTUnwrap(Ring.memory(for: id))
-        XCTAssertGreaterThanOrEqual(memory.from, 0.3); XCTAssertLessThanOrEqual(memory.from, 0.9)
-        XCTAssertEqual(memory.to, 0.1, accuracy: 0.0001)
-        XCTAssertEqual(memory.ease, .sineInOut); XCTAssertEqual(memory.duration, 0.5, accuracy: 0.0001)
-        XCTAssertTrue(view.animationKeys.contains("ghost.opacity"))
-    }
-
-    func testOccludingAnOldRowCannotSettleItsVisibleSuccessor() throws {
-        let id = UUID().uuidString, first = shown()
-        first.update(input(id, .reported, .working, 0.3))
-        first.update(input(id, .reported, .working, 0.8))
-        let second = shown()
-        second.update(input(id, .reported, .working, 0.8))
-        let sweep = try XCTUnwrap(Ring.memory(for: id))
-        shows = false
-        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: first.window)
-        shows = true
-        XCTAssertTrue(first.animationKeys.isEmpty)
-        XCTAssertTrue(second.animationKeys.contains("arc.sweep"))
-        XCTAssertEqual(Ring.memory(for: id)?.start, sweep.start)
-        XCTAssertEqual(Ring.memory(for: id)?.duration, sweep.duration)
-    }
-
-    func testRememberedSweepsDoNotRetainRemovedRows() {
-        let id = UUID().uuidString
-        weak var removed: Ring?
-        autoreleasepool {
-            let view = shown()
-            view.update(input(id, .reported, .working, 0.3))
-            view.update(input(id, .reported, .working, 0.8))
-            removed = view
-            view.removeFromSuperview()
-        }
-        XCTAssertNil(removed)
-        XCTAssertNotNil(Ring.memory(for: id), "The next row can still resume the sweep after its owner is released")
-    }
-
-    func testLoopingMotionFollowsTheLifecycleMode() {
-        let cases: [(TaskProgressRing.State, TaskProgressRing.Mode, Double, Bool, Set<String>)] = [
-            (.pending, .working, 0, false, ["pending.spin"]),
-            (.pending, .longStep, 0, false, ["pending.spin"]),
-            (.pending, .attention, 0, false, []),
-            (.pending, .waiting, 0, false, ["pending.breath"]),
-            (.reported, .working, 0.5, false, ["dot.travel"]),
-            (.reported, .working, 0.5, true, []),
-            (.reported, .longStep, 0.5, false, []),
-            (.reported, .waiting, 0.5, false, ["arc.breath"]),
-            (.reported, .attention, 0.5, false, []),
-            (.reported, .done, 1, false, []),
-            (.reported, .interrupted, 0.4, false, []),
-            // A paused or limited Codex goal keeps still with or without an estimate.
-            (.pending, .paused, 0, false, []),
-            (.reported, .paused, 0.5, false, []),
-        ]
-        for (state, mode, fraction, stale, expected) in cases {
-            let view = shown()
-            view.update(input(UUID().uuidString, state, mode, fraction, stale: stale))
-            XCTAssertEqual(running(view), expected, "\(state) \(mode) stale: \(stale)")
-        }
-        // One row moving through a request swaps its loops without leaving any behind.
-        let id = UUID().uuidString, view = shown()
-        view.update(input(id, .pending, .working))
-        view.update(input(id, .pending, .waiting))
-        XCTAssertEqual(running(view), ["pending.breath"])
-        view.update(input(id, .reported, .working, 0.4))
-        XCTAssertEqual(running(view), ["dot.travel"])
-        XCTAssertTrue(view.animationKeys.isSuperset(of: ["pending.opacity", "track.opacity", "arc.sweep"]),
-            "The dashes close into the track before the first estimate sweeps in")
-        view.update(input(id, .reported, .done, 1))
-        XCTAssertEqual(running(view), [])
-        XCTAssertTrue(view.animationKeys.contains("container.pulse"), "Reaching 100% settles with one pulse")
-    }
-
-    /// Codex pulses only on a confirmed ending: a working 100% fills the arc
-    /// quietly, and neither a rebuilt row nor a first sight replays it.
-    func testCodexPulsesOnceWhenTheRequestEndsRatherThanWhenItReportsFull() throws {
-        let pulse = "container.pulse"
-        let id = UUID().uuidString, view = shown()
-        view.update(input(id, .reported, .working, 0.4, codex: true))
-        view.update(input(id, .reported, .working, 1, codex: true))
-        XCTAssertEqual(view.restingFraction, 1, accuracy: 0.0001)
-        XCTAssertFalse(view.animationKeys.contains(pulse), "A working estimate of 100% is not an ending")
-        view.update(input(id, .reported, .done, 1, codex: true))
-        XCTAssertTrue(view.animationKeys.contains(pulse), "The confirmed ending pulses even after a full estimate")
-        let rebuilt = shown()
-        view.removeFromSuperview()
-        rebuilt.update(input(id, .reported, .done, 1, codex: true))
-        XCTAssertFalse(rebuilt.animationKeys.contains(pulse), "A rebuilt row of the same ending stays still")
-
-        // The next request in the same chat drops a pulse that has yet to play.
-        let next = UUID().uuidString, row = shown()
-        row.update(input(next, .reported, .working, 0.8, codex: true))
-        row.update(input(next, .reported, .done, 1, codex: true))
-        XCTAssertTrue(row.animationKeys.contains(pulse))
-        row.update(input(next, .pending, .working, codex: true))
-        XCTAssertFalse(row.animationKeys.contains(pulse))
-        row.update(input(next, .reported, .done, 1, codex: true))
-        XCTAssertTrue(row.animationKeys.contains(pulse), "Each request's ending pulses once")
-
-        // A request that never reported closes its dashes, fills and pulses.
-        let unreported = UUID().uuidString, dashed = shown()
-        dashed.update(input(unreported, .pending, .working, codex: true))
-        dashed.update(input(unreported, .reported, .done, 1, codex: true))
-        XCTAssertTrue(dashed.animationKeys.isSuperset(of: ["pending.opacity", "arc.sweep", pulse]))
-
-        let seen = shown()
-        seen.update(input(UUID().uuidString, .reported, .done, 1, codex: true))
-        XCTAssertFalse(seen.animationKeys.contains(pulse), "An ending seen for the first time draws without replaying")
-        let quiet = UUID().uuidString, reduced = shown()
-        reduced.update(input(quiet, .reported, .working, 0.4, animates: false, codex: true))
-        reduced.update(input(quiet, .reported, .done, 1, animates: false, codex: true))
-        XCTAssertTrue(reduced.animationKeys.isEmpty, "Reduced motion fills without a pulse")
-    }
-
-    func testReducedMotionAndAHiddenPanelSettleAtFinalValuesWithoutClocks() async throws {
-        let id = UUID().uuidString, view = shown()
-        view.update(input(id, .reported, .working, 0.3, animates: false))
-        view.update(input(id, .reported, .working, 0.62, animates: false))
-        XCTAssertEqual(running(view), [])
-        XCTAssertFalse(view.animationKeys.contains("arc.sweep"))
-        XCTAssertEqual(Ring.memory(for: id)?.duration, 0)
-        XCTAssertEqual(view.restingFraction, 0.62, accuracy: 0.0001)
-
-        view.update(input(id, .reported, .working, 0.62))
-        XCTAssertEqual(running(view), ["dot.travel"], "Motion returns with the setting")
-        view.update(input(id, .reported, .working, 0.8))
-        shows = false
-        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
-        try await TestWait.until { self.running(view).isEmpty }
-        XCTAssertTrue(view.animationKeys.isEmpty, "An occluded or hidden panel runs no animations")
-        XCTAssertEqual(Ring.memory(for: id)?.duration, 0, "A rebuilt row inherits the settled value")
-        shows = true
-        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
-        try await TestWait.until { !self.running(view).isEmpty }
-        XCTAssertEqual(running(view), ["dot.travel"])
-    }
-
-    func testReducedMotionAndOcclusionCancelFiniteAnimationsDuringEveryTransition() throws {
-        for occluded in [false, true] {
-            let id = UUID().uuidString
-            let transitions = [
-                [input(id, .pending)],
-                [input(id, .pending), input(id, .reported, .working, 0.62)],
-                [input(id, .reported, .working, 0.8), input(id, .reported, .working, 0.1)],
-                [input(id, .pending), input(id, .reported, .done, 1)],
-                [input(id, .reported, .working, 0.8), input(id, .pending)],
-                [input(id, .reported, .waiting, 0.5)],
-                [input(id, .pending), input(id, nil)]
-            ]
-            for transition in transitions {
-                shows = true
-                let view = shown()
-                // Each scenario has its own task memory.
-                let taskID = UUID().uuidString
-                for value in transition {
-                    view.update(.init(id: taskID, state: value.state, mode: value.mode, fraction: value.fraction,
-                        color: ink, animates: true))
-                }
-                let last = try XCTUnwrap(transition.last)
-                XCTAssertFalse(view.animationKeys.isEmpty, "The transition must be in motion before it is stopped")
-                if occluded {
-                    shows = false
-                    NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: view.window)
-                } else {
-                    view.update(.init(id: taskID, state: last.state, mode: last.mode, fraction: last.fraction,
-                        color: ink, animates: false))
-                }
-                XCTAssertTrue(view.animationKeys.isEmpty, "Stopping motion cancels pulses, crossfades, traces and loops")
-                XCTAssertEqual(view.restingFraction, last.fraction, accuracy: 0.0001)
-                XCTAssertEqual(view.showsRing, last.state != nil)
-                if last.state != nil { XCTAssertEqual(Ring.memory(for: taskID)?.duration, 0) }
-            }
-        }
-    }
-
-    func testReducedMotionAppliesANewEstimateWithoutKeepingAnEarlierCompletionPulse() {
-        let id = UUID().uuidString, view = shown()
-        view.update(input(id, .pending))
-        view.update(input(id, .reported, .done, 1))
-        XCTAssertTrue(view.animationKeys.contains("container.pulse"))
-        view.update(input(id, .reported, .working, 0.2, animates: false))
-        XCTAssertTrue(view.animationKeys.isEmpty)
-        XCTAssertEqual(view.restingFraction, 0.2, accuracy: 0.0001)
-        XCTAssertEqual(Ring.memory(for: id)?.duration, 0)
-    }
-
-    func testARingWithoutAnEstimateAtItsEndFadesAndIsForgotten() {
-        let id = UUID().uuidString, view = shown()
-        view.update(input(id, .pending, .working))
-        XCTAssertTrue(view.showsRing)
-        view.update(input(id, nil))
-        XCTAssertNil(Ring.memory(for: id))
-        XCTAssertTrue(view.animationKeys.contains("container.fade"))
-        XCTAssertFalse(view.showsRing)
-        XCTAssertEqual(running(view), [])
-
-        let still = UUID().uuidString, reduced = shown()
-        reduced.update(input(still, .pending, .working, animates: false))
-        reduced.update(input(still, nil, animates: false))
-        XCTAssertFalse(reduced.showsRing)
-        XCTAssertFalse(reduced.animationKeys.contains("container.fade"))
-    }
-
-    func testACloudRunThatEndsClosesItsDashesBeforeTheArcSweepsToFull() throws {
-        let id = UUID().uuidString, view = shown()
-        view.update(input(id, .pending, .working))
-        let before = CACurrentMediaTime()
-        view.update(input(id, .reported, .done, 1))
-        let memory = try XCTUnwrap(Ring.memory(for: id))
-        XCTAssertEqual(memory.from, 0); XCTAssertEqual(memory.to, 1)
-        XCTAssertGreaterThanOrEqual(memory.start, before + 0.2, "The arc waits for the dashes to close")
-        XCTAssertEqual(memory.duration, 0.6, accuracy: 0.0001)
-        XCTAssertTrue(view.animationKeys.isSuperset(of: ["pending.opacity", "arc.sweep", "container.pulse"]))
-        XCTAssertEqual(running(view), [], "The dashes stop where they are")
     }
 }

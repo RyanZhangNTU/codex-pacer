@@ -1,6 +1,6 @@
 # Codex task progress
 
-Turn on **Settings → Codex → Show Codex Task Progress**. Pacer registers its bundled reporting tool in the selected local Codex profile. Start a new local Codex session after Pacer shows that reporting is ready. The tool description tells Codex when to report, and the ring stays dashed until Codex sends its first estimate.
+**Settings → Codex → Progress Ring** (**Show Codex Task Progress** on Windows) is on by default. Pacer registers its bundled reporting tool in the selected local Codex profile. Start a new local Codex session after Pacer shows that reporting is ready. The tool description tells Codex when to report, and until Codex sends its first estimate the ring only shows that the task is working.
 
 If setup fails, check the Codex executable and data folder in the same pane, then choose **Retry**. A same-name MCP entry that belongs to another tool takes precedence. Pacer reports the conflict in Settings.
 

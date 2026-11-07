@@ -33,12 +33,6 @@ struct TaskRowView: View {
     }
     private var rate: OutputEstimate? { presentation.rate }
     private var turnTime: String? { presentation.turnTime }
-    static func turnTimeText(_ activity: SessionActivity, phase: ActivityPhase, now: Date) -> String? {
-        ActivityTaskRowPresentation.turnTimeText(activity, phase: phase, now: now)
-    }
-    static func isDimmed(phase: ActivityPhase, unread: Bool, attention: Bool, failed: Bool) -> Bool {
-        ActivityTaskRowPresentation.isDimmed(phase: phase, unread: unread, attention: attention, failed: failed)
-    }
     private var dimmed: Bool { presentation.dimmed }
     private var modelLabel: String { presentation.model }
     private var effortLabel: String? { presentation.effort }
@@ -66,7 +60,16 @@ struct TaskRowView: View {
         if attention != nil || phase == .waitingForInput { return PacerPalette.attention }
         return activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
     }
-    private var symbol: String { StatusSymbols.symbol(presentation.symbol) }
+    /// A working stage shows its glyph over an orb; a request for the user or
+    /// an ending fills a disc, greyed once read; an unknown state draws a moon.
+    private var face: TaskStatusIconNSView.Face {
+        let symbol = presentation.symbol
+        switch symbol {
+        case .approval, .input, .completed, .interrupted, .failed: return .solid(symbol, read: dimmed)
+        case .unknown: return .plain(symbol)
+        default: return .working(symbol)
+        }
+    }
     private var progressRing: TaskProgressRing? { presentation.progressRing }
 
     var body: some View {
@@ -124,22 +127,17 @@ struct TaskRowView: View {
         .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
     }
 
-    /// The icon gives the progress ring room: 20 pt alone, 16 pt inside the
-    /// ring, where an ending glyph drops its own circle so the ring is the only
-    /// outline. The width probe draws no ring, so only the shown row moves it.
-    private func statusIcon(measuring: Bool) -> some View {
-        ZStack {
-            if !measuring {
-                TaskProgressRingView(id: activity.id, ring: progressRing, color: color, animates: !reduceMotion,
-                    completionPulseOnly: activity.provider == .codex)
-                    .frame(width: TaskProgressRingNSView.diameter, height: TaskProgressRingNSView.diameter)
-                    .accessibilityHidden(true)
-            }
-            StatusGlyph(symbol: progressRing == nil ? symbol : StatusSymbols.enclosed(symbol), tint: color)
-                .scaleEffect(progressRing == nil ? 1 : 0.8)
-                .animation(reduceMotion ? nil : .easeOut(duration: progressRing == nil ? 0.3 : 0.25), value: progressRing == nil)
+    /// The ring and the state share one 28 pt icon. The width probe draws
+    /// nothing, so only the shown row keeps a task's motion.
+    @ViewBuilder private func statusIcon(measuring: Bool) -> some View {
+        if measuring {
+            Color.clear.frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
+        } else {
+            TaskStatusIconView(id: activity.id, ring: progressRing, face: face, color: color, animates: !reduceMotion,
+                completionPulseOnly: activity.provider == .codex)
+                .frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
+                .accessibilityHidden(true)
         }
-        .frame(width: TaskProgressRingNSView.diameter, height: TaskProgressRingNSView.diameter)
     }
 
     /// Local SDK/ACP rows name the app that started their session.
@@ -168,7 +166,7 @@ struct TaskRowView: View {
                     if activity.sourceHostID != nil {
                         Image(systemName: activity.claudeCloud != nil ? "cloud" : "server.rack").font(.system(size: 9, weight: .semibold))
                     }
-                    Text(Self.middleTruncated(source, limit: 16))
+                    Text(ActivityTaskRowPresentation.middleTruncated(source, limit: 16))
                 }
                 .foregroundStyle(PacerPalette.secondary).lineLimit(1).fixedSize()
             }
@@ -214,9 +212,6 @@ struct TaskRowView: View {
         .font(.system(size: 11, weight: .medium)).foregroundStyle(activity.provider.tint)
         .opacity(dimmed ? 0.7 : 1).lineLimit(1).fixedSize()
     }
-
-    static func shortened(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.shortened(text, limit: limit) }
-    static func middleTruncated(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.middleTruncated(text, limit: limit) }
 }
 
 struct ExpandedContentIdealWidth: PreferenceKey {

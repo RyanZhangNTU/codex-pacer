@@ -123,6 +123,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
             let payload = try XCTUnwrap(command.split(separator: " ").last.flatMap { Data(base64Encoded: String($0)) })
             return try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [String: Any])
         }
+        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
         let off = await model.configureClaudeRemote(targetID: targetID)
         XCTAssertNil(off)
         XCTAssertEqual(try request()["progressRing"] as? Bool, false, "Off is stated, so a host that had the ring loses it")
