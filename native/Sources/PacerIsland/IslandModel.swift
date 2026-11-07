@@ -329,6 +329,7 @@ final class IslandModel: ObservableObject {
     private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
     private var codexProgressSetupTask: Task<Void, Never>?
     private var codexProgressSetupRequest: UUID?
+    private let codexProgressGate = CodexProgressSwitchGate()
     var showsCodexProgressRing: Bool { defaults.bool(forKey: Self.codexProgressRingKey) }
     func syncCodexProgressSwitch(force: Bool = false) {
         guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL else { return }
@@ -337,6 +338,11 @@ final class IslandModel: ObservableObject {
         let previous = codexProgressTarget
         guard force || previous?.home != home || previous?.executable != executable || previous?.enabled != wanted else { return }
         codexProgressTarget = (home, executable, wanted)
+        // Turning reporting off, or leaving a home, takes effect at once: an
+        // earlier setup may still be waiting for Codex, and Pacer may quit
+        // before the registration itself is removed.
+        let gate = codexProgressGate
+        let generation = gate.change(home: home, wanted: wanted, previous: previous?.home, storage: MacClaudeHookStorage())
         let pending = codexProgressSetupTask, request = UUID()
         codexProgressSetupRequest = request
         codexProgressSetup = wanted ? .settingUp : nil
@@ -346,7 +352,8 @@ final class IslandModel: ObservableObject {
                 if let previous, previous.home != home {
                     _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false)
                 }
-                return await Self.configureCodexReporter(home: home, executable: executable, reporter: reporter, enabled: wanted)
+                return await Self.configureCodexReporter(home: home, executable: executable, reporter: reporter, enabled: wanted,
+                                                         gate: gate, request: generation)
             }.value
             guard let self, !stopped, codexProgressSetupRequest == request else { return }
             codexProgressSetupTask = nil
@@ -354,9 +361,11 @@ final class IslandModel: ObservableObject {
         }
     }
 
-    private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool) async -> CodexProgressSetupStatus? {
+    private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool,
+                                                           gate: CodexProgressSwitchGate? = nil, request: Int = 0) async -> CodexProgressSetupStatus? {
         let command: CodexProgressCommand? = enabled ? .native(executable: reporter, home: home) : nil
-        return await CodexProgressSetup.apply(home: home, reporter: command, storage: MacClaudeHookStorage(), owns: {
+        return await CodexProgressSetup.apply(home: home, reporter: command, storage: MacClaudeHookStorage(),
+                                              gate: gate, request: request, owns: {
             $0.isNative(named: reporter.lastPathComponent, home: home)
         }) {
             // Setup also runs at login beside the other Codex readers, so it

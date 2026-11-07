@@ -114,7 +114,7 @@ Pacer uses explicit sleeps, agent waits and bound goal status to recognize Codex
 
 ### Setup and source support
 
-The `codexProgressRing` preference is off by default and independent of `claudeProgressRing`. Enabling it registers Pacer's bundled stdio MCP server in the selected local home. The MCP tool description tells Codex when to report. Pacer uses Codex's versioned config API to update or remove the entry it owns. Setup status and retry are in the Codex settings pane. [Codex task progress](codex-progress-setup.md)
+The `codexProgressRing` preference is off by default and independent of `claudeProgressRing`. Enabling it registers Pacer's bundled stdio MCP server in the selected local home. The MCP tool description tells Codex when to report. Pacer uses Codex's versioned config API to update or remove the entry it owns. Turning the switch off, or choosing another home, stops reporting in the profile it leaves before Codex answers, and a setup still waiting on Codex cannot turn reporting back on. Setup status and retry are in the Codex settings pane. [Codex task progress](codex-progress-setup.md)
 
 Windows deploys the reporter and its pinned Python interpreter to a separate user-data cache. An open Codex session can hold that interpreter while Pacer's installer replaces the application. Uninstall disables cached reporters and removes the owned MCP entry from each recorded profile.
 
@@ -165,6 +165,6 @@ Use synthetic fixtures for parser and reducer coverage. Keep each distinct bound
 
 Extend the existing `RuntimeStateTests`, `StreamingRateTests`, `RequestBoundaryTests`, `NativeDesktopTests`, `CodexLogAttentionTests`, `SelfReportedProgressTests` and completion suites where their behavior applies. Run affected Windows engine suites with `scripts/windows/test-engine.ps1 -Filter ...` and the existing `scripts/windows/test-presentation.ps1 -Configuration Release -Group progress` for renderer changes. Use separate Swift scratch paths for concurrent worktrees. Run the applicable macOS checks when its renderer changes.
 
-The [loopback integration check](../scripts/diagnostics/test-codex-progress.py) runs the real Codex executable with a disposable profile and either the Windows Pacer engine or the Mac app. It checks that the model request receives the reporting tool and its guidance, that the ring shows 63% then 41%, and that the terminal outcome either fills the ring or retains 41%. It also checks disable and same-name conflicts.
+The [loopback integration check](../scripts/diagnostics/test-codex-progress.py) runs the real Codex executable with a disposable profile and either the Windows Pacer engine or the Mac app. It checks that the model request receives the reporting tool and its guidance, that the ring shows 63% then 41%, and that the terminal outcome either fills the ring or retains 41%. It also checks disable and same-name conflicts. The Mac host drives the Settings switch and Retry button, and turns the switch off during a slow Codex start to check that reporting stops at once.
 
 Installation and lifecycle changes use the applicable checks in [the release workflow](releasing.md#validation-scope).

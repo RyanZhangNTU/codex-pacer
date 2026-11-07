@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import plistlib
 import queue
+import re
 import shutil
 import subprocess
 import tempfile
@@ -22,18 +23,20 @@ CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 REPORTS = [63, 41]
 MAC_QA_ID = "com.codexpacer.app.qa.codex-progress"
 MAC_OWNER = {"PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"}
+MAC_SWITCH = "Show Codex Task Progress"
 MAC_SETUP = {"ready": "Progress reporting is ready for new local Codex sessions.",
              "conflict": "The Codex MCP configuration already has an entry named pacer_progress."}
 MAC_RING = {"working": "Self-reported progress about %d%%", "done": "Request done", "failed": "Failed at a self-reported %d%%"}
-# Lists a process's windows, or prints the accessibility text of its windows
-# one element per line. SwiftUI builds the tree once a client asks for it.
+# Lists a process's windows, prints the accessibility text of its windows one
+# element per line, or presses the control a label names (its own label, or a
+# text beside it in the same row). SwiftUI builds the tree once a client asks.
 MAC_HELPER = r"""
 import ApplicationServices
 import CoreGraphics
 import Foundation
 
-let pid = Int32(CommandLine.arguments[2])!
-if CommandLine.arguments[1] == "windows" {
+let mode = CommandLine.arguments[1], pid = Int32(CommandLine.arguments[2])!
+if mode == "windows" {
     let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
     for window in list where window[kCGWindowOwnerPID as String] as? Int32 == pid {
         let bounds = window[kCGWindowBounds as String] as? [String: Double] ?? [:]
@@ -48,14 +51,34 @@ func value(_ element: AXUIElement, _ name: String) -> AnyObject? {
     var result: AnyObject?
     return AXUIElementCopyAttributeValue(element, name as CFString, &result) == .success ? result : nil
 }
+func labels(_ element: AXUIElement) -> [String] {
+    [kAXDescriptionAttribute, kAXTitleAttribute, kAXValueAttribute].compactMap { value(element, $0) as? String }.filter { !$0.isEmpty }
+}
+func pressable(_ element: AXUIElement) -> Bool {
+    var names: CFArray?
+    AXUIElementCopyActionNames(element, &names)
+    return ["AXCheckBox", "AXButton"].contains(value(element, kAXRoleAttribute) as? String ?? "")
+        && ((names as? [String]) ?? []).contains(kAXPressAction)
+}
+var pressed = false
 func walk(_ element: AXUIElement, depth: Int) {
-    guard depth < 40 else { return }
-    for name in [kAXDescriptionAttribute, kAXTitleAttribute, kAXValueAttribute] {
-        if let text = value(element, name) as? String, !text.isEmpty { print(text.replacingOccurrences(of: "\n", with: " ")) }
+    guard depth < 40, !pressed else { return }
+    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+    if mode == "press" {
+        // A Settings section is one group: a switch follows its title and help text.
+        let needle = CommandLine.arguments[3]
+        var control = pressable(element) && labels(element).contains(needle) ? element : nil
+        if control == nil, let index = children.firstIndex(where: { labels($0).contains(needle) }), !pressable(children[index]) {
+            control = children[(index + 1)...].first(where: pressable)
+        }
+        if let control { pressed = AXUIElementPerformAction(control, kAXPressAction as CFString) == .success; return }
+    } else {
+        for text in labels(element) { print(text.replacingOccurrences(of: "\n", with: " ")) }
     }
-    for child in value(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] { walk(child, depth: depth + 1) }
+    for child in children { walk(child, depth: depth + 1) }
 }
 for window in value(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] { walk(window, depth: 0) }
+exit(mode == "press" && !pressed ? 1 : 0)
 """
 
 
@@ -317,13 +340,14 @@ class MacHost:
         self.quit()
         subprocess.run(["defaults", "delete", MAC_QA_ID], capture_output=True)
 
-    def launch(self, enabled):
+    def launch(self, executable=None):
         self.quit()
-        # Flags follow the defaults pairs so each `-key value` parses as one setting.
+        # The switch is never a launch argument, which would mask the preference
+        # the Settings switch writes. Flags follow the defaults pairs so each
+        # `-key value` parses as one setting.
         argv = [str(self.executable), "-appLanguage", "en", "-settingsPane", "codex",
-                "-codexHome", str(self.profile), "-codexExecutable", self.codex,
-                "-codexProgressRing", "YES" if enabled else "NO", "-providerModule.codex", "enabled",
-                "-providerModule.claude", "disabled", "-providerModule.deepseek", "disabled",
+                "-codexHome", str(self.profile), "-codexExecutable", executable or self.codex,
+                "-providerModule.codex", "enabled", "-providerModule.claude", "disabled", "-providerModule.deepseek", "disabled",
                 "-monitorSSH", "NO", "-monitorRemoteControl", "NO", "--settings", "--expanded"]
         self.process = subprocess.Popen(argv, env=self.env, stdin=subprocess.DEVNULL,
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -345,13 +369,46 @@ class MacHost:
         result = subprocess.run([str(self.helper), "ax", str(self.process.pid)], capture_output=True, text=True, timeout=15)
         return result.stdout.splitlines()
 
-    def wait_label(self, accept, description, timeout=20):
+    def press(self, label):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if subprocess.run([str(self.helper), "press", str(self.process.pid), label], capture_output=True, timeout=15).returncode == 0:
+                return
+            time.sleep(0.25)
+        self.capture("failure")
+        raise RuntimeError("The macOS app has no control named " + repr(label))
+
+    def wait_until(self, condition, failure, timeout=20):
         deadline = time.monotonic() + timeout
-        seen = []
+        while time.monotonic() < deadline:
+            if condition():
+                return
+            time.sleep(0.2)
+        raise RuntimeError(failure)
+
+    def reporting(self):
+        """Whether a reporter that Codex already started still accepts an estimate."""
+        with Lines([str(self.executable), "--codex-progress-mcp", str(self.profile)], self.profile, os.environ) as reporter:
+            reporter.rpc("initialize", {"protocolVersion": "2025-06-18"}, mcp=True)
+            call = {"name": "report_progress", "arguments": {"percent": 41}}
+            return not reporter.rpc("tools/call", call, mcp=True)["isError"]
+
+    def wait_label(self, accept, description, timeout=20, expanded=False):
+        deadline = time.monotonic() + timeout
+        seen, reopened = [], 0.0
         while time.monotonic() < deadline:
             seen = self.labels()
             if any(accept(label) for label in seen):
                 return
+            # A click anywhere else collapses even a pinned island: the bar then
+            # counts a task but shows no rows. Opening Pacer again shows and pins
+            # the running island, as it does for a person.
+            hidden = any(re.match(r"\d+ tasks? · ", label) for label in seen) and not any(
+                label.startswith("Codex, ") for label in seen)
+            if expanded and hidden and time.monotonic() - reopened > 2:
+                reopened = time.monotonic()
+                subprocess.run([str(self.executable)], env=self.env, stdin=subprocess.DEVNULL,
+                               capture_output=True, timeout=15)
             time.sleep(0.25)
         self.capture("failure")
         if self.shots:
@@ -385,23 +442,24 @@ class MacHost:
                 and args[0] == "--codex-progress-mcp" and Path(args[1]).resolve() == self.profile.resolve()
                 and Path(entry["command"]).resolve() == self.executable.resolve())
 
-    def check_setup(self):
-        self.launch(True)
+    def check_setup(self, workspace):
+        """Drives the Settings switch and Retry button themselves."""
+        self.launch()
+        time.sleep(2)
+        if self.entry() is not None or self.flag.exists():
+            raise RuntimeError("Setup ran while the switch was still off")
+        self.press(MAC_SWITCH)
         self.wait_setup("ready")
         self.capture("setup-ready")
         if not self.registered() or self.flag.read_bytes() != b"on\n" or (self.profile / "hooks.json").exists():
             raise RuntimeError("Unexpected registration from the macOS switch: %s" % self.entry())
         ready = self.config.read_bytes()
-        self.launch(True)
+        self.launch()
         self.wait_setup("ready")
         if self.config.read_bytes() != ready:
             raise RuntimeError("A relaunch rewrote the current registration")
-        self.launch(False)
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline and (self.flag.exists() or self.entry() is not None):
-            time.sleep(0.2)
-        if self.flag.exists() or self.entry() is not None:
-            raise RuntimeError("Turning the macOS switch off left the registration")
+        self.press(MAC_SWITCH)
+        self.wait_until(lambda: not self.flag.exists() and self.entry() is None, "Turning the switch off left the registration")
         if tomllib.loads(self.config.read_text(encoding="utf-8"))["mcp_servers"] != {
                 "unrelated_fixture": {"command": "keep-existing-mcp", "enabled": False}}:
             raise RuntimeError("An unrelated MCP entry changed")
@@ -409,19 +467,39 @@ class MacHost:
         with self.config.open("a", encoding="utf-8") as output:
             output.write('\n[mcp_servers.pacer_progress]\ncommand = "fixture-owner"\n')
         conflict = self.config.read_bytes()
-        self.launch(True)
+        self.press(MAC_SWITCH)
         self.wait_setup("conflict")
         self.capture("setup-conflict")
         if self.config.read_bytes() != conflict or self.flag.exists():
             raise RuntimeError("Setup did not preserve a same-name user entry")
         self.config.write_bytes(clean)
-        self.launch(True)
+        self.press("Retry")
         self.wait_setup("ready")
-        print("PASS macOS switch: register, keep, disable, conflict and recover", flush=True)
+        if not self.registered():
+            raise RuntimeError("Retry did not restore the registration")
+        print("PASS macOS switch: Settings switch registers, persists, removes and reports a conflict; Retry recovers", flush=True)
+
+        # A slow Codex keeps setup waiting. Turning the switch off and quitting
+        # at once must still stop every reporter Codex already started.
+        slow = workspace / "slow-codex" / "codex"
+        slow.parent.mkdir()
+        slow.write_text('#!/bin/sh\nsleep 6\nexec "%s" "$@"\n' % self.codex, encoding="utf-8")
+        slow.chmod(0o755)
+        self.launch(str(slow))
+        self.press(MAC_SWITCH)
+        self.wait_until(lambda: not self.flag.exists(), "Turning the switch off waited for the slow setup", timeout=3)
+        self.quit()
+        if self.flag.exists() or self.reporting():
+            raise RuntimeError("A reporter still accepted estimates after the switch turned off during a slow setup")
+        self.launch()
+        self.wait_until(lambda: self.entry() is None, "The next launch kept the leftover registration")
+        self.press(MAC_SWITCH)
+        self.wait_setup("ready")
+        print("PASS macOS switch: turning off during a slow setup stops reporting at once; the next launch cleans up", flush=True)
 
     def check_ring(self, mode, fraction):
         text = MAC_RING[mode] % round(fraction * 100) if "%" in MAC_RING[mode] else MAC_RING[mode]
-        self.wait_label(lambda label: label.startswith("Codex, ") and text in label, repr(text), timeout=75)
+        self.wait_label(lambda label: label.startswith("Codex, ") and text in label, repr(text), timeout=75, expanded=True)
         self.capture("ring-%s-%d" % (mode, round(fraction * 100)))
 
 
@@ -468,7 +546,7 @@ stream_max_retries = 0
         engine = None
         if args.mac_app:
             host = processes.enter_context(MacHost(args.mac_app.resolve(), workspace, profile, exe, env, args.screenshots))
-            host.check_setup()
+            host.check_setup(workspace)
             check = host.check_ring
         else:
             executable = args.engine.resolve()

@@ -14,7 +14,7 @@ final class ClaudeProgressRingTests: XCTestCase {
         let home: URL
         let root: URL
     }
-    private func fixture(demoArguments: [String]? = nil, demo: Bool = false) throws -> Fixture {
+    private func fixture(demoArguments: [String]? = nil, demo: Bool = false, codex: ProviderModuleMode = .disabled) throws -> Fixture {
         let root = URL(fileURLWithPath: "/private/tmp/pacer-progress-ring-" + UUID().uuidString)
         let home = root.appendingPathComponent("claude-home")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -23,7 +23,7 @@ final class ClaudeProgressRingTests: XCTestCase {
         defaults.set(root.path, forKey: "codexHome")
         defaults.set(home.path, forKey: "claudeHome")
         defaults.set(false, forKey: "monitorSSH")
-        ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
+        ProviderModules(codexMode: codex, claudeMode: .enabled).save(to: defaults)
         let clock = Date(timeIntervalSince1970: 1_800_000_000)
         let model = IslandModel(demo: demo, demoClock: { clock }, demoArguments: demoArguments, defaults: defaults,
             installation: demo ? nil : ProviderInstallationDetection(codexInstalled: false, claudeInstalled: true),
@@ -57,13 +57,16 @@ final class ClaudeProgressRingTests: XCTestCase {
     }
 
     /// Registration runs Codex against a real profile, so a demo or a model
-    /// with injected installation state must never start it.
+    /// with injected installation state must never start it. Codex and its
+    /// switch are on, so only those guards keep setup from starting.
     func testDemoAndInjectedModelsNeverRegisterTheCodexReporter() throws {
         for demo in [false, true] {
-            let fixture = try fixture(demoArguments: demo ? ["--demo"] : nil, demo: demo)
+            let fixture = try fixture(demoArguments: demo ? ["--demo"] : nil, demo: demo, codex: .enabled)
             fixture.defaults.set(true, forKey: IslandModel.codexProgressRingKey)
+            XCTAssertTrue(fixture.model.isModuleEnabled(.codex))
+            XCTAssertEqual(fixture.model.taskPresentationOptions(for: []).progressRingProviders, [.codex])
             fixture.model.syncCodexProgressSwitch(force: true)
-            XCTAssertNil(fixture.model.codexProgressSetup)
+            XCTAssertNil(fixture.model.codexProgressSetup, "Setup would report settingUp at once")
             XCTAssertFalse(exists(fixture.root.appendingPathComponent("pacer/codex-progress")))
         }
     }
