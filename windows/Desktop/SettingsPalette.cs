@@ -1,3 +1,4 @@
+using System;
 using System.Windows;
 using System.Windows.Media;
 
@@ -17,7 +18,7 @@ internal static class SettingsPalette
             foreach (string key in new[] { "SettingsPickerStroke", "SettingsPickerHover" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             foreach (string key in new[] { "SettingsPrimary", "SettingsSecondary", "SettingsChartReference", "SettingsChartSecondary", "SettingsSeparator", "SettingsCardBorder" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
-            foreach (string key in new[] { "SettingsAccent", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
+            foreach (string key in new[] { "SettingsAccent", "SettingsLinkText", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
             resources["SettingsAccentSoft"] = DesktopAppearance.Ink(colors.Control);
             resources["SettingsKnob"] = resources["SettingsSelectionText"] = DesktopAppearance.Ink(colors.HighlightText);
             resources["SettingsSidebarSelectionText"] = DesktopAppearance.Ink(colors.HighlightText); return;
@@ -62,11 +63,32 @@ internal static class SettingsPalette
         Color tint = accent ?? Color.FromRgb(0, 122, 255);
         Brush("SettingsAccent", tint.R, tint.G, tint.B);
         resources["SettingsAccentSoft"] = new SolidColorBrush(Color.FromArgb(36, tint.R, tint.G, tint.B));
+        // Links stay readable on cards: a dim Windows accent is lightened in dark mode, a pale one darkened in light mode.
+        resources["SettingsLinkText"] = new SolidColorBrush(Readable(tint, dark ? (main ? Color.FromRgb(36, 36, 40) : Color.FromRgb(36, 36, 36)) : Colors.White, dark));
         // Light accents such as yellow need dark text on their fill.
         if (0.299 * tint.R + 0.587 * tint.G + 0.114 * tint.B > 186) Gray("SettingsSelectionText", 20);
         Brush("SettingsWarning", dark ? (byte)255 : (byte)194, dark ? (byte)146 : (byte)95, dark ? (byte)48 : (byte)0);
         Brush("SettingsSuccess", 48, 186, 85);
         if (active) Brush("SettingsSwitchOn", tint.R, tint.G, tint.B);
         else Gray("SettingsSwitchOn", dark ? (byte)81 : (byte)210);
+    }
+
+    /// The accent moved toward white (or black) just far enough for 4.5:1 text contrast on the background.
+    internal static Color Readable(Color tint, Color background, bool lighten)
+    {
+        Color value = tint;
+        for (int step = 1; step <= 20 && Contrast(value, background) < 4.5; step++)
+        {
+            double amount = step / 20.0;
+            byte Mix(byte channel) => (byte)Math.Round(lighten ? channel + (255 - channel) * amount : channel * (1 - amount));
+            value = Color.FromRgb(Mix(tint.R), Mix(tint.G), Mix(tint.B));
+        }
+        return value;
+    }
+    internal static double Contrast(Color first, Color second)
+    {
+        static double Channel(byte value) { double normalized = value / 255.0; return normalized <= 0.04045 ? normalized / 12.92 : Math.Pow((normalized + 0.055) / 1.055, 2.4); }
+        static double Luminance(Color value) => 0.2126 * Channel(value.R) + 0.7152 * Channel(value.G) + 0.0722 * Channel(value.B);
+        double a = Luminance(first), b = Luminance(second); return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
     }
 }

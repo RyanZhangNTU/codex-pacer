@@ -65,6 +65,12 @@ internal static class AccessibilitySettingsChecks
                 "A single accent turns the services into its shades");
             await session.ChangeAsync(p => p with { AppTheme = "light" }); await Drain();
             Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(244, 244, 246), "The light theme applies at once");
+            Check(SettingsPalette.Contrast(ColorOf(window.Resources["SettingsLinkText"]), ColorOf(window.Resources["SettingsCard"])) >= 4.5, "Links keep readable contrast on light cards");
+            // A dim Windows accent (a dark warm gray) still gives links readable text on dark cards, without changing the control fill.
+            var dim = Color.FromRgb(0x58, 0x4B, 0x46); var probe = new ResourceDictionary();
+            SettingsPalette.Apply(probe, true, true, main: true, accent: dim);
+            Check(ColorOf(probe["SettingsAccent"]) == dim && SettingsPalette.Contrast(ColorOf(probe["SettingsLinkText"]), ColorOf(probe["SettingsCard"])) >= 4.5
+                && SettingsPalette.Contrast(ColorOf(probe["SettingsLinkText"]), Colors.Black) >= 4.5, "A dim accent's links are lightened until readable on dark and island cards");
             await session.ChangeAsync(p => p with { AppTheme = "auto", AccentColor = "multicolor" }); await Drain();
             Check(ColorOf(window.Resources["SettingsAccent"]) == Color.FromRgb(0, 122, 255) && ((SolidColorBrush)PacerPalette.Codex).Color == ((SolidColorBrush)PacerPalette.BrandCodex).Color,
                 "Multicolor restores the brand colors, and checks keep the classic blue");

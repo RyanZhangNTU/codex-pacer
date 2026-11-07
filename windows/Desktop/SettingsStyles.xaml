@@ -36,7 +36,7 @@
   </ControlTemplate></Setter.Value></Setter>
  </Style>
  <Style x:Key="SettingsLink" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-  <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{DynamicResource SettingsAccent}"/><Setter Property="Padding" Value="0,2"/>
+  <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{DynamicResource SettingsLinkText}"/><Setter Property="Padding" Value="0,2"/>
  </Style>
  <!-- The default action keeps its accent while hovered, as a prominent Mac button does. -->
  <Style x:Key="SettingsProminentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">

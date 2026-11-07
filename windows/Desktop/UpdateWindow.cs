@@ -206,7 +206,7 @@ internal sealed class UpdateWindow : Window, IWindowsUpdatePresenter
     private static Hyperlink LinkTo(NoteSpan span)
     {
         var link = new Hyperlink(new Run(span.Text)) { NavigateUri = span.Link };
-        link.SetResourceReference(TextElement.ForegroundProperty, "SettingsAccent");
+        link.SetResourceReference(TextElement.ForegroundProperty, "SettingsLinkText");
         link.RequestNavigate += (_, args) =>
         {
             args.Handled = true;

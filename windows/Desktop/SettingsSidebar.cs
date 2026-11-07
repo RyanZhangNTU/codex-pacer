@@ -286,7 +286,7 @@ internal sealed partial class SettingsWindow
         if (found != null)
         {
             aboutDetail.Text = ui.Text("main.update.sidebar").Replace("%@", found, StringComparison.Ordinal);
-            aboutDetail.FontWeight = FontWeights.Medium; aboutDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsAccent");
+            aboutDetail.FontWeight = FontWeights.Medium; aboutDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsLinkText");
         }
         else
         {

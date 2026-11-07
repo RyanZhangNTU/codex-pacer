@@ -226,6 +226,8 @@ internal sealed partial class SettingsWindow
             pair.ColumnDefinitions.Add(new ColumnDefinition()); pair.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) }); pair.ColumnDefinitions.Add(new ColumnDefinition());
             var first = ServiceCard(narrow[index], snapshot); pair.Children.Add(first);
             if (index + 1 < narrow.Length) { var second = ServiceCard(narrow[index + 1], snapshot); Grid.SetColumn(second, 2); pair.Children.Add(second); }
+            // A card left alone fills its row, as on the Mac.
+            else Grid.SetColumnSpan(first, 3);
             stack.Children.Add(pair);
         }
         foreach (string provider in wide) stack.Children.Add(ServiceCard(provider, snapshot));
@@ -255,7 +257,8 @@ internal sealed partial class SettingsWindow
                 ? new QuotaConnectionView(provider, connection, ui, () => engine!.SendAsync("retryQuota", new { provider }), () => _ = NavigateAsync(provider)) : null;
             FrameworkElement view = session.Current.ExpandedQuotaStyle == "classic"
                 ? new QuotaCell(provider, raw, snapshot.Wallet, help, reading, status) { HorizontalAlignment = HorizontalAlignment.Left }
-                : new SingleQuotaView(reading, raw, ui, help, status) { MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Left };
+                // The details take the rest of the card, so each value lines up at its right edge as on the Mac.
+                : new SingleQuotaView(reading, raw, ui, help, status);
             content.Children.Add(view);
         }
         else content.Children.Add(new TextBlock { Text = ui.Text("provider.state.searching"), FontSize = 12, Foreground = PacerPalette.Secondary });
