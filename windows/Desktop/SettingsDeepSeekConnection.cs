@@ -41,7 +41,7 @@ internal sealed partial class SettingsWindow
         deepseekConnectionSeparator = deepseekEditorSeparator = null;
         deepseekSwitchAccount = deepseekSignOut = null; deepseekWebMenuSeparator = null;
     }
-    private Border BuildDeepSeekConnection()
+    private StackPanel BuildDeepSeekConnection()
     {
         deepseekConnectionTitle = Label(ui.Text("deepseek.platform_account"));
         deepseekSignIn = new Button { Content = ui.Text("deepseek.sign_in"), IsEnabled = false, Padding = new Thickness(12, 3, 12, 3) };
@@ -99,7 +99,7 @@ internal sealed partial class SettingsWindow
             if (ReferenceEquals(deepseekAccountOptions, optionsButton) && CanUseDeepSeekConnection() && optionsButton.IsVisible && optionsButton.IsEnabled)
             { deepseekSourceMenu.PlacementTarget = deepseekAccountOptions; deepseekSourceMenu.IsOpen = true; }
         };
-        Border Line() { var line = new Border { Height = 1, Margin = new Thickness(10, 0, 10, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); return line; }
+        Border Line() { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); return line; }
         var body = new StackPanel(); body.Children.Add(Row(deepseekConnectionTitle, connection, 44));
         deepseekConnectionSeparator = Line(); body.Children.Add(deepseekConnectionSeparator);
         deepseekDetectedSource = DeepSeekCaption(""); body.Children.Add(deepseekDetectedSource);
@@ -142,7 +142,7 @@ internal sealed partial class SettingsWindow
         deepseekKeyEditor.Children.Add(Row(keyLabel, keys, 44)); deepseekKeyEditor.Children.Add(Line());
         deepseekKeyIssue = DeepSeekCaption(DeepSeekKeyHelp); deepseekKeyIssue.Margin = new Thickness(10, 10, 10, 12);
         Identify(deepseekKeyIssue, "settings.deepseek.key.issue", ""); deepseekKeyEditor.Children.Add(deepseekKeyIssue);
-        body.Children.Add(deepseekKeyEditor); return Card(body);
+        body.Children.Add(deepseekKeyEditor); return body;
     }
     private bool CanUseDeepSeekConnection() => !sourceClosed && activePane == "deepseek" && !busy && !deepseekConnectionBusy && !session.RequiresRestart &&
         engine != null && !engine.IsConnectionClosed && !providerConnectionClosed && deepseekSections?.IsVisible == true && engine.LatestSnapshot?.DeepseekConnection != null;

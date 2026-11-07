@@ -45,6 +45,10 @@ internal static class PreferencesChecks
             using (var config = JsonDocument.Parse(JsonSerializer.Serialize(independentlyHidden.EngineConfiguration())))
                 Check(config.RootElement.GetProperty("showEmbeddedCodexSessions").GetBoolean() && !config.RootElement.GetProperty("showEmbeddedClaudeSessions").GetBoolean(),
                     "The acknowledged engine configuration carries both Mac preference keys independently");
+            // Every main-window page reopens where it was; older names are kept for the window to map.
+            foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
+                Check(store.Save(original with { LastSettingsPane = pane }) && store.Load().Value.LastSettingsPane == pane, "The settings page survives a save: " + pane);
+            Check(store.Save(original with { LastSettingsPane = "future-page" }) && store.Load().Value.LastSettingsPane == "overview", "An unknown page opens Overview, as on the Mac");
             Check(store.Save(original), "Restore the original saved fixture before rejected-write assertions");
             Check(restored.Value.IslandAppearance == "classic" && JsonDocument.Parse(before).RootElement.GetProperty("islandAppearance").GetString() == "classic",
                 "The original appearance key and value survive relaunch");
@@ -68,7 +72,7 @@ internal static class PreferencesChecks
                 "A profile that never saved a progress ring choice turns all three rings on, as on the Mac");
             Check(legacy.Value.IslandAppearance == "liquidGlass", "A missing appearance uses Liquid Glass without rewriting the profile");
             Check(!legacy.Unavailable && legacy.Value.HasChosenPosition && legacy.Value.DisplayMode == "automatic"
-                && legacy.Value.LastSettingsPane == "general" && legacy.Value.ShowEmbeddedCodexSessions && legacy.Value.ExpandedQuotaStyle == "split"
+                && legacy.Value.LastSettingsPane == "overview" && legacy.Value.ShowEmbeddedCodexSessions && legacy.Value.ExpandedQuotaStyle == "split"
                 && legacy.Value.DeepSeekMode == "balance" && legacy.Value.DeepSeekPanelStyle == "detailed" && legacy.Value.DeepSeekDailyBudget == null && legacy.Value.DeepSeekShowsTurnCost
                 && legacy.Value.DeepSeekBalanceSource == "automatic", "Older corner choices must remain explicit while new optional settings use defaults");
             File.WriteAllText(file, "{\"schemaVersion\":1,\"position\":\"bottomRight\",\"expandedQuotaStyle\":\"future-style\"}");

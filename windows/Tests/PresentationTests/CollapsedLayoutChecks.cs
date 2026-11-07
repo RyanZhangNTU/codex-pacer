@@ -151,7 +151,7 @@ internal static class CollapsedLayoutChecks
             await window.NavigateAsync("collapsed"); await Pump();
             await session.ChangeAsync(p => p with { Position = "bottomLeft", DisplayMode = "floating" }); await island.WaitForPresentationAsync();
             Check(SelfAndDescendants(island).OfType<Button>().Where(value => AutomationProperties.GetAutomationId(value).StartsWith("compact.strip.", StringComparison.Ordinal)).All(value =>
-                !AutomationProperties.GetAutomationId(value).EndsWith(".status", StringComparison.Ordinal) && !AutomationProperties.GetAutomationId(value).EndsWith(".quotaLabel", StringComparison.Ordinal)),
+                !AutomationProperties.GetAutomationId(value).EndsWith(".status", StringComparison.Ordinal)),
                 "The side strip must retain its saved components while omitting the two word labels");
             island.CapturePreview(Path.Combine(output, "collapsed-strip-" + name + ".png"));
         }

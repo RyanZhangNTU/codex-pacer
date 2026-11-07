@@ -768,6 +768,47 @@ public partial class IslandWindow : Window
         row.SetOpenAction(available ? () => _ = OpenConversationTaskAsync(row, link!) : null,
             available ? state.AccessibleName + "\n" + ui.Text("common.open_chat") : ui.Text("activity.no_link"), DecorationsAnimate);
     }
+    /// The main window's Overview lists the same rows; a click there opens the
+    /// task through the same prepared navigation as a row on the island.
+    internal bool CanOpenFromWindow(EngineTaskRow value)
+    {
+        var link = latest?.ActivityLinks?.FirstOrDefault(item => item.ActivityID == value.Id && item.Provider == value.Provider);
+        return !presentationStopped && link != null && (value.Provider != "deepseek" || harnessAvailable) &&
+            !openingActivityContexts.Contains(link.Context) && latest?.OpeningActivityIDs?.Contains(value.Id) != true;
+    }
+    internal async Task OpenFromWindowAsync(EngineTaskRow value)
+    {
+        var link = latest?.ActivityLinks?.FirstOrDefault(item => item.ActivityID == value.Id && item.Provider == value.Provider);
+        if (link == null || !CanOpenFromWindow(value) || !openingActivityContexts.Add(link.Context)) return;
+        ClearNavigationError();
+        try
+        {
+            var plan = await engine.QueryAsync<EngineNavigationPlan>("prepareActivityOpen", new { context = link.Context });
+            if (!CurrentConversationLink(link) || plan.Context != link.Context || plan.Provider != link.Provider) return;
+            bool opened = await openConversation(plan, value);
+            if (!CurrentConversationLink(link)) return;
+            if (!opened)
+            {
+                await ReportNavigationFailureAsync(ui.Text(link.Provider == "deepseek"
+                    ? desktopApplications?.CanOpenHarness == true ? "windows.app.open_failed" : "deepseek.app_missing"
+                    : "activity.open_failed"), link.Context);
+                return;
+            }
+            try { await engine.SendAsync("completeActivityOpen", new { context = link.Context }); }
+            catch (Exception error) when (error is IOException or OperationCanceledException or EngineCommandException) { }
+        }
+        catch (Exception error) when (error is IOException or OperationCanceledException or InvalidOperationException)
+        {
+            if (CurrentConversationLink(link)) await ReportNavigationFailureAsync(ui.Text(error is EngineCommandException command ? command.Code switch {
+                "missingClaudeHost" => "activity.claude_host_missing", "missingCodexHost" => "activity.codex_host_missing", _ => "activity.open_failed"
+            } : "activity.open_failed"), link.Context);
+        }
+        finally
+        {
+            await Send("cancelActivityOpen", new { context = link.Context });
+            openingActivityContexts.Remove(link.Context);
+        }
+    }
     private bool CurrentConversationAction(TaskRow control, EngineActivityLink link) => !presentationStopped && expanded && Expanded.IsAccessible &&
         currentPage?.IsAccessible == true && currentPage.IsAncestorOf(control) && latest?.ActivityLinks?.Contains(link) == true;
     private bool CurrentConversationLink(EngineActivityLink link) => !presentationStopped && latest?.ActivityLinks?.Contains(link) == true;

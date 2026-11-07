@@ -20,6 +20,7 @@ internal sealed partial class SettingsWindow
     internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "remote", "appearance", "collapsed", "notifications", "general", "about", "support"];
     private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "remote"], ["appearance", "collapsed", "notifications", "general"]];
     private readonly Dictionary<string, TextBlock> moduleOff = new();
+    private readonly Dictionary<string, Ellipse> attentionDots = new();
     private readonly StackPanel paneGroups = new(), searchResults = new() { Visibility = Visibility.Collapsed };
     private TextBox? search;
     private TextBlock? searchPlaceholder, aboutDetail;
@@ -35,9 +36,9 @@ internal sealed partial class SettingsWindow
         "collapsedBar" => "collapsed",
         _ => value
     };
-    /// Overview and History arrive with the next step of the redesign.
-    private static bool PendingPane(string pane) => pane is "overview" or "history";
-    private static bool EnginePane(string pane) => pane is "codex" or "claude" or "deepseek" or "notifications" or "remote";
+    /// Nothing waits for a later step any more; kept so a page can be held back again.
+    private static bool PendingPane(string pane) => false;
+    private static bool EnginePane(string pane) => pane is "overview" or "history" or "codex" or "claude" or "deepseek" or "notifications" or "remote";
     private bool PaneAvailable(string pane) => !PendingPane(pane) && ResolvePane(pane) == pane;
     /// The Mac's raw value, which names the shared search words.
     private static string MacPane(string pane) => pane == "collapsed" ? "collapsedBar" : pane;
@@ -177,13 +178,20 @@ internal sealed partial class SettingsWindow
     {
         string title = PaneTitle(pane);
         var button = new RadioButton { Style = (Style)FindResource("SettingsSidebarChoice"), GroupName = "settings.panes", Margin = new Thickness(0, 0, 0, 2), IsEnabled = PaneAvailable(pane) };
-        TextBlock? off = null;
+        var end = new StackPanel { Orientation = Orientation.Horizontal };
         if (ProviderPane(pane))
         {
-            off = Label(ui.Text("settings.module_off"), 11); off.Visibility = Visibility.Collapsed;
-            off.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); moduleOff[pane] = off;
+            var off = Label(ui.Text("settings.module_off"), 11); off.Visibility = Visibility.Collapsed;
+            off.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); moduleOff[pane] = off; end.Children.Add(off);
         }
-        button.Content = RowContent(pane, button, off);
+        if (pane is "claude" or "codex" or "remote")
+        {
+            // Amber only says that something needs the user.
+            var dot = new Ellipse { Width = 7, Height = 7, Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
+            dot.SetResourceReference(Shape.FillProperty, "SettingsWarning"); AutomationProperties.SetName(dot, ui.Text("main.needs_attention"));
+            AutomationProperties.SetAutomationId(dot, "settings.pane." + pane + ".attention"); attentionDots[pane] = dot; end.Children.Add(dot);
+        }
+        button.Content = RowContent(pane, button, end);
         Identify(button, "settings.pane." + pane, title);
         string? tip = PendingPane(pane) ? "windows.main.pane_later" : EnginePane(pane) && engine == null ? "windows.settings.pane_pending" : null;
         if (tip != null) { button.ToolTip = ui.Text(tip); ToolTipService.SetShowOnDisabled(button, true); }
@@ -258,6 +266,14 @@ internal sealed partial class SettingsWindow
     /// Off services say so, and a found update replaces the installed version.
     private void RefreshSidebar()
     {
+        EnsureCodexCheck();
+        var needs = AttentionItems().Select(value => value.Id).ToHashSet();
+        foreach (var item in attentionDots)
+        {
+            item.Value.Visibility = needs.Contains(item.Key) ? Visibility.Visible : Visibility.Collapsed;
+            if (navigation.TryGetValue(item.Key, out var row))
+                AutomationProperties.SetItemStatus(row, needs.Contains(item.Key) ? ui.Text("main.needs_attention") : "");
+        }
         var modules = engine?.LatestSnapshot?.Modules;
         foreach (var item in moduleOff)
         {

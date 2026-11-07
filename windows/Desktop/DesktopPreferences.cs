@@ -58,7 +58,7 @@ internal sealed record DesktopPreferences
     public double? DeepSeekLowBalanceLine { get; init; }
     public double? DeepSeekSpikeLimit { get; init; }
     public bool? PositionChosen { get; init; }
-    public string LastSettingsPane { get; init; } = "general";
+    public string LastSettingsPane { get; init; } = "overview";
     public bool HideProjects { get; init; }
     public bool ShowAppButtons { get; init; } = true;
     public bool ShowEmbeddedCodexSessions { get; init; } = true;

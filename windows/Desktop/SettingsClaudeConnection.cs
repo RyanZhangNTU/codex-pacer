@@ -38,10 +38,10 @@ internal sealed partial class SettingsWindow
         claudeOptions = new Button { Content = "•••", Margin = new Thickness(6, 0, 0, 0), Padding = new Thickness(8, 0, 8, 0) };
         Identify(claudeOptions, "settings.claude.account_options", ui.Text("claude.account.options")); editors.Add(claudeOptions); trailing.Children.Add(claudeOptions);
         claudeOptions.Click += async (_, _) => await OpenClaudeAccountMenu(false);
-        content.Children.Add(Row(Label(ui.Text("claude.account")), trailing, 40));
-        claudeAccountHelp = Detail(""); claudeAccountHelp.Margin = new Thickness(10, 0, 10, 8); content.Children.Add(claudeAccountHelp);
+        content.Children.Add(Row(Label(ui.Text("claude.account")), trailing));
+        claudeAccountHelp = Detail(""); claudeAccountHelp.Margin = new Thickness(14, -4, 14, 10); content.Children.Add(claudeAccountHelp);
         claudeRuntimeDownload = new Button { Content = ui.Text("windows.deepseek.runtime_download"), Style = (Style)FindResource("SettingsLink"),
-            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(10, 0, 10, 8) };
+            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(14, 0, 14, 10) };
         Identify(claudeRuntimeDownload, "settings.claude.runtime_download", ui.Text("windows.deepseek.runtime_download"));
         claudeRuntimeDownload.Click += (_, _) =>
         {
@@ -64,6 +64,8 @@ internal sealed partial class SettingsWindow
         claudeAccountState!.Text = ui.Text(state?.State switch {
             "signedIn" => "claude.account.signed_in", "signedOut" => "claude.account.signed_out", "workspaceNeeded" => "claude.account.workspace_needed",
             "checking" => "claude.account.checking", _ => "claude.account.unavailable" });
+        // Sign-in reads as a status; amber only when Claude needs the user.
+        claudeAccountState.SetResourceReference(TextBlock.ForegroundProperty, state?.State is "signedOut" or "workspaceNeeded" ? "SettingsWarning" : "SettingsSecondary");
         bool offline = claudeConnection?.IsOfflineDemo ?? demo;
         bool available = connected && !offline && claudeConnection?.Available == true && state != null;
         claudeSignIn.IsEnabled = claudeOptions!.IsEnabled = available && !busy && !claudeAccountBusy && !session.RequiresRestart;
@@ -74,7 +76,7 @@ internal sealed partial class SettingsWindow
         claudeAccountHelp!.Text = help; claudeAccountHelp.Visibility = help.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         claudeRuntimeDownload!.Visibility = !offline && claudeConnection is { Available: false } ? Visibility.Visible : Visibility.Collapsed;
         var history = engine?.LatestSnapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == "claude")?.History;
-        claudeHistoryTitle!.Text = history?.Title ?? ""; claudeHistoryTitle.Visibility = history?.Title == null ? Visibility.Collapsed : Visibility.Visible;
+        if (claudeHistoryTitle != null) { claudeHistoryTitle.Text = history?.Title ?? ""; claudeHistoryTitle.Visibility = history?.Title == null ? Visibility.Collapsed : Visibility.Visible; }
         if (!connected) claudeHistoryView?.ShowUnavailable(ui.Text("windows.connection.closed")); else claudeHistoryView?.Update(history);
         claudeHistoryView?.SetInteractionEnabled(connected && !busy && !claudeAccountBusy && !session.RequiresRestart);
     }

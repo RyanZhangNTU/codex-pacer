@@ -13,6 +13,7 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private TextBox? providerHomeField;
+    private Expander? providerHomeLocations;
     private TextBlock? providerHomeIssue;
     private Button? providerHomeChoose;
     private string? homeProvider, homeSaved, homePending, homeInspectionKey;
@@ -21,7 +22,7 @@ internal sealed partial class SettingsWindow
     private void ClearProviderHome()
     {
         homePaneRevision++; homeFieldRevision++; homeProvider = homeSaved = homePending = homeInspectionKey = null;
-        providerHomeField = null; providerHomeIssue = null; providerHomeChoose = null; homeInspection = Task.CompletedTask;
+        providerHomeField = null; providerHomeLocations = null; providerHomeIssue = null; providerHomeChoose = null; homeInspection = Task.CompletedTask;
     }
     private string SavedHome(string provider) => provider == "claude" ? session.Current.ClaudeHome : session.Current.DeepseekHome;
     private bool CanEditHome(string provider) => !sourceClosed && !providerConnectionClosed && !busy && !session.RequiresRestart &&
@@ -30,9 +31,9 @@ internal sealed partial class SettingsWindow
     private FrameworkElement ProviderHomeEditor(string provider)
     {
         homeProvider = provider;
-        var locations = new Expander { Header = ui.Text("provider.custom_locations"), Style = (Style)FindResource("SettingsDisclosure"), IsExpanded = SavedHome(provider).Length > 0 };
-        Identify(locations, "settings." + provider + ".locations", ui.Text("provider.custom_locations"));
-        var body = new StackPanel { Margin = new Thickness(10, 6, 10, 10) };
+        var body = new StackPanel { Margin = new Thickness(14, 0, 14, 12) };
+        var locations = Disclosure(ui.Text("provider.custom_locations"), body, SavedHome(provider).Length > 0, "settings." + provider + ".locations");
+        providerHomeLocations = locations;
         var grid = new Grid(); grid.ColumnDefinitions.Add(new()); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         string label = ui.Text(provider == "claude" ? "provider.claude_home" : "deepseek.home");
         var field = new TextBox { Style = (Style)FindResource("SettingsPathInput"), Tag = label, MaxLength = 32768, VerticalContentAlignment = VerticalAlignment.Center };
@@ -51,7 +52,7 @@ internal sealed partial class SettingsWindow
         };
         Grid.SetColumn(choose,1); grid.Children.Add(choose); body.Children.Add(grid);
         var hint = Detail(ui.Text("windows.settings.default_location")); hint.Margin = new Thickness(0, 6, 0, 0); body.Children.Add(hint);
-        providerHomeIssue = SourceIssue("settings." + provider + ".home.issue"); body.Children.Add(providerHomeIssue); locations.Content = body;
+        providerHomeIssue = SourceIssue("settings." + provider + ".home.issue"); body.Children.Add(providerHomeIssue);
         return locations;
     }
     private void RefreshProviderHome()
@@ -62,6 +63,7 @@ internal sealed partial class SettingsWindow
             engine.LatestSnapshot?.Modules?.Any(value => value.Provider == homeProvider && value.Enabled) == true;
         providerHomeField.IsEnabled = enabled; if (providerHomeChoose != null) providerHomeChoose.IsEnabled = enabled;
         if (homeSaved != saved) { homeSaved = saved; providerHomeField.Text = saved; SetSourceIssue(providerHomeIssue, null); }
+        if (providerHomeLocations != null) providerHomeLocations.Tag = saved.Length > 0 ? ui.Text("main.location.custom") : providerHomeField.ToolTip as string ?? "";
         string key = homeProvider + "\0" + saved;
         if (homeInspectionKey != key) homeInspection = InspectProviderHome(homeProvider, saved, homePaneRevision);
     }
@@ -76,6 +78,7 @@ internal sealed partial class SettingsWindow
             var report = await engine.QueryAsync<ProviderHomeReport>("inspectProviderHome", new { provider, sourceHome = saved });
             if (sourceClosed || pane != homePaneRevision || SavedHome(provider) != saved || providerHomeField == null) return;
             providerHomeField.ToolTip = report.EffectiveHome;
+            if (providerHomeLocations != null && saved.Length == 0) providerHomeLocations.Tag = report.EffectiveHome;
             if (providerHomeField.Text == saved && saved.Length > 0 && report.Issue != null) SetSourceIssue(providerHomeIssue, report.Issue);
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or InvalidOperationException)

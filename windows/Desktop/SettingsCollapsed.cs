@@ -79,7 +79,7 @@ internal sealed partial class SettingsWindow
         compactEditor = new CompactLayoutEditorView(ui, Resources, EditCompact); editors.Add(compactEditor); form.Children.Add(Card(compactEditor));
         foreach (var group in compactProjection.Groups)
         {
-            var title = Label(group.Label, 13, FontWeights.SemiBold); title.Margin = new Thickness(10, 22, 0, 8); form.Children.Add(title);
+            form.Children.Add(SectionTitle(group.Label));
             var rows = new StackPanel(); compactGroups[group.Id] = rows; form.Children.Add(Card(rows));
             foreach (string id in group.Components)
             {
@@ -97,7 +97,7 @@ internal sealed partial class SettingsWindow
                 };
                 check.Checked += changed; check.Unchecked += changed;
                 var row = new StackPanel(); row.Children.Add(Row(identity, check, 52));
-                var options = new StackPanel { Margin = new Thickness(36, 0, 10, 0) }; row.Children.Add(options);
+                var options = new StackPanel { Margin = new Thickness(50, 0, 14, 0) }; row.Children.Add(options);
                 compactRows[id] = row; compactOptions[id] = options; BuildCompactOptions(id, options);
             }
         }
@@ -124,7 +124,7 @@ internal sealed partial class SettingsWindow
         if (id == "activity")
             host.Children.Add(Option(Label(ui.Text("layout.single_task")), CompactChoice("singleTask", [("stage", "layout.single_task.stage"), ("count", "layout.single_task.count")],
                 value => Change(p => p with { CompactSingleTask = value }))));
-        else if (id is "quota" or "quotaLabel")
+        else if (id == "quota")
             host.Children.Add(Option(Label(ui.Text("settings.compact_metric")), CompactChoice("metric." + id, [("remaining", "settings.remaining_quota"), ("pace", "settings.pace_percentage")],
                 value => Change(p => p with { CompactMetric = value }))));
         else if (id == "warnings")
@@ -184,12 +184,11 @@ internal sealed partial class SettingsWindow
         foreach (var component in projection.Components)
         {
             compactChecks[component.Id].IsChecked = component.Shown;
-            bool options = component.Shown && component.Id is "activity" or "quota" or "quotaGauge" or "warnings" or "quotaLabel";
-            if (component.Id == "quotaLabel" && components["quota"].Shown) options = false;
+            bool options = component.Shown && component.Id is "activity" or "quota" or "quotaGauge" or "warnings";
             compactOptions[component.Id].Visibility = options ? Visibility.Visible : Visibility.Collapsed;
         }
         compactChoices["singleTask"].SelectedValue = session.Current.CompactSingleTask;
-        compactChoices["metric.quota"].SelectedValue = compactChoices["metric.quotaLabel"].SelectedValue = session.Current.CompactMetric;
+        compactChoices["metric.quota"].SelectedValue = session.Current.CompactMetric;
         string nextProviders = string.Join(",", providers);
         if (compactProviderSignature != nextProviders || compactChoices["ring.0"].Items.Count == 0)
         {

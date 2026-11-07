@@ -41,6 +41,8 @@ internal static class DeepSeekConnectionChecks
             var field = Find<PasswordBox>(window, "settings.deepseek.key.input"); var save = Find<Button>(window, "settings.deepseek.key.save");
             Check(field.IsVisible && field.IsEnabled && !save.IsEnabled && engine.LatestSnapshot!.Wallet!.Balance == null,
                 "API mode must show a real secure input and cannot retain the old web balance");
+            // Session status reads inside the folded locations, as on the Mac.
+            Find<Expander>(window, "settings.deepseek.locations").IsExpanded = true; await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             Check(Find<TextBlock>(window, "settings.deepseek.local_state").Text == ui.Text("provider.state.found"),
                 "Balance availability cannot replace the independent local-session status");
             Check(UIElementAutomationPeer.CreatePeerForElement(field)?.IsPassword() == true, "Assistive clients must see a password field");

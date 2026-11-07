@@ -13,10 +13,9 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private readonly Dictionary<string, CheckBox> reminderKinds = new();
+    private readonly Dictionary<string, CheckBox> reminderKinds = new(), reminderFollows = new();
     private StackPanel? reminderQuotaRows, reminderWalletRows;
     private FrameworkElement? reminderFooter;
-    private Border? reminderGroupSeparator;
     private TextBox? reminderLow, reminderSpike;
     private TextBlock? reminderAmountIssue, notificationIssue;
     private CheckBox? notificationSwitch;
@@ -26,67 +25,63 @@ internal sealed partial class SettingsWindow
 
     private void ClearReminders()
     {
-        reminderKinds.Clear(); reminderQuotaRows = reminderWalletRows = null; reminderFooter = null; reminderGroupSeparator = null;
+        reminderKinds.Clear(); reminderFollows.Clear(); reminderQuotaRows = reminderWalletRows = null; reminderFooter = null;
         reminderLow = reminderSpike = null; reminderAmountIssue = notificationIssue = null; notificationSwitch = null; reminderRetention = null;
         reminderLowValue = reminderSpikeValue = null; Array.Clear(reminderPendingAmount);
     }
-    private static Border ReminderSample(params UIElement[] marks)
+    private const double NotifyColumn = 84;
+
+    /// One event: its title (with a note or an amount), then where it reminds
+    /// you: the collapsed bar and system notifications, as on the Mac.
+    private Grid MatrixRow(string title, UIElement bar, UIElement system, string? note = null, FrameworkElement? field = null)
     {
-        var content = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        for (int index = 0; index < marks.Length; index++) { if (index > 0 && marks[index] is FrameworkElement child) child.Margin = new Thickness(3, 0, 0, 0); content.Children.Add(marks[index]); }
-        var sample = new Border { Width = 44, Height = 28, Background = Brushes.Black, CornerRadius = new CornerRadius(8), Child = content, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
-        return sample;
+        var row = new Grid { MinHeight = 44, Margin = new Thickness(14, 0, 14, 0) };
+        row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(NotifyColumn) }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(NotifyColumn) });
+        var left = new WrapPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 8, 8, 8) };
+        var label = Label(title); label.Margin = new Thickness(0, 0, 10, 0); left.Children.Add(label);
+        if (note != null) { var detail = Detail(note); detail.FontSize = 11.5; detail.Margin = new Thickness(0, 1, 10, 0); detail.VerticalAlignment = VerticalAlignment.Center; left.Children.Add(detail); }
+        if (field != null) { field.VerticalAlignment = VerticalAlignment.Center; left.Children.Add(field); }
+        row.Children.Add(left);
+        foreach (var (cell, column) in new[] { (bar, 1), (system, 2) })
+        { if (cell is FrameworkElement element) { element.HorizontalAlignment = HorizontalAlignment.Center; element.VerticalAlignment = VerticalAlignment.Center; } Grid.SetColumn(cell, column); row.Children.Add(cell); }
+        return row;
     }
-    private static WarningMark ReminderMark(string kind, string provider, bool solid, string? label = null, string? symbol = null)
-        => new(new(kind, provider, solid, label, symbol, ""));
-    private Grid ReminderRow(string kind, string title, string? detail, Border sample, FrameworkElement? amount = null)
+    private TextBlock AlwaysCell() { var text = Label(ui.Text("main.notify.always"), 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); return text; }
+    private TextBlock NoneCell()
+    { var text = Label("—", 13); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsDisabled"); AutomationProperties.SetName(text, ui.Text("main.notify.unavailable")); return text; }
+    /// A collapsed-bar warning the user chooses here.
+    private CheckBox BarCell(string kind, string title)
     {
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        var heading = new StackPanel { Orientation = Orientation.Horizontal }; heading.Children.Add(Label(title));
-        if (amount != null) { amount.Margin = new Thickness(6, 0, 0, 0); heading.Children.Add(amount); }
-        text.Children.Add(heading); if (detail != null) { var caption = Detail(detail); caption.MaxWidth = 352; caption.HorizontalAlignment = HorizontalAlignment.Left; text.Children.Add(caption); }
-        var identity = new DockPanel { LastChildFill = true }; DockPanel.SetDock(sample, Dock.Left); identity.Children.Add(sample); identity.Children.Add(text);
-        var check = new CheckBox { Style = (Style)FindResource("SettingsSwitch") };
-        Identify(check, "settings.reminders." + kind, ui.Text("warning." + kind)); editors.Add(check); reminderKinds[kind] = check;
-        if (detail != null) AutomationProperties.SetHelpText(check, detail);
+        var check = new CheckBox { Style = (Style)FindResource("SettingsCheck") };
+        Identify(check, "settings.reminders." + kind, title + " · " + ui.Text("main.notify.bar")); editors.Add(check); reminderKinds[kind] = check;
         BindToggle(check, (p, value) => NativeCompactBar.Shared.EditAsync(p, ui.Language, NativeCompactBar.Providers(p, engine?.LatestSnapshot), new(value ? "warning" : "warningOff", kind)));
-        // Native Reminders uses taller amount rows; captions can grow further
-        // with localization without overlapping the trailing switch.
-        return Row(identity, check, amount != null ? 74 : detail != null ? 52 : 48);
+        return check;
     }
-    private void AddReminderRow(StackPanel group, UIElement row)
+    /// System notifications still follow their one switch (DeepSeek's also its
+    /// collapsed-bar warning), so this column only shows the result.
+    private CheckBox FollowsCell(string kind, string title)
     {
-        if (group.Children.Count > 0)
+        var check = new CheckBox { Style = (Style)FindResource("SettingsCheck"), IsEnabled = false, ToolTip = ui.Text("main.notify.follows") };
+        ToolTipService.SetShowOnDisabled(check, true);
+        Identify(check, "settings.reminders." + kind + ".system", title + " · " + ui.Text("settings.system_notifications"));
+        AutomationProperties.SetHelpText(check, ui.Text("main.notify.follows")); reminderFollows[kind] = check; return check;
+    }
+    private Grid MatrixHeader(string title)
+    {
+        var header = new Grid { Margin = new Thickness(4, 10, 14, 8) };
+        header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(NotifyColumn) }); header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(NotifyColumn) });
+        var name = SectionTitle(title, 0); name.Margin = new Thickness(0); header.Children.Add(name);
+        foreach (var (key, column) in new[] { ("main.notify.bar", 1), ("settings.system_notifications", 2) })
         {
-            var line = new Border { Height = 1, Margin = new Thickness(10, 0, 10, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); group.Children.Add(line);
+            var label = Label(ui.Text(key), 11.5, FontWeights.Medium); label.HorizontalAlignment = HorizontalAlignment.Center; label.TextTrimming = TextTrimming.CharacterEllipsis;
+            label.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); Grid.SetColumn(label, column); header.Children.Add(label);
         }
-        group.Children.Add(row);
+        return header;
     }
     private void BuildReminders()
     {
-        form.Children.Add(SectionHeader("reminders.section.warnings"));
-        reminderQuotaRows = new StackPanel(); reminderWalletRows = new StackPanel();
-        AddReminderRow(reminderQuotaRows, ReminderRow("fiveHour", ui.Text("warning.fiveHour"), null, ReminderSample(ReminderMark("fiveHour", "codex", false, "5h"))));
-        AddReminderRow(reminderQuotaRows, ReminderRow("ssh", ui.Text("warning.ssh"), null, ReminderSample(new IconGlyph { Symbol = "network.slash", Width = 11, Height = 11, Ink = PacerPalette.Attention })));
-        AddReminderRow(reminderQuotaRows, ReminderRow("quotaDelay", ui.Text("warning.quotaDelay"), null, ReminderSample(new IconGlyph { Symbol = "clock.arrow.circlepath", Width = 11, Height = 11, Ink = PacerPalette.Attention })));
-        AddReminderRow(reminderWalletRows, ReminderRow("lowBalance", ui.Text("reminders.low_balance"), ui.Text("reminders.low_balance_detail"),
-            ReminderSample(ReminderMark("lowBalance", "deepseek", false, "¥"), ReminderMark("exhausted", "deepseek", true, "¥")), ReminderAmount(true)));
-        AddReminderRow(reminderWalletRows, ReminderRow("spendSpike", ui.Text("reminders.spike"), ui.Text("reminders.spike_detail"),
-            ReminderSample(ReminderMark("spike", "deepseek", true, symbol: "flame.fill")), ReminderAmount(false)));
-        AddReminderRow(reminderWalletRows, ReminderRow("budget", ui.Text("reminders.budget"), ui.Text("reminders.budget_detail"),
-            ReminderSample(ReminderMark("nearingBudget", "deepseek", false, ui.Text("deepseek.alert.day")), ReminderMark("overBudget", "deepseek", true, ui.Text("deepseek.alert.week")))));
-        var warnings = new StackPanel(); warnings.Children.Add(reminderQuotaRows);
-        var groupSeparator = new Border { Height = 1, Margin = new Thickness(10, 0, 10, 0) }; groupSeparator.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); warnings.Children.Add(groupSeparator); warnings.Children.Add(reminderWalletRows);
-        reminderGroupSeparator = groupSeparator; form.Children.Add(Card(warnings));
-        var footer = new WrapPanel { Margin = new Thickness(10, 0, 10, 24) }; var footerText = Detail(ui.Text("reminders.one_at_a_time")); footerText.Margin = new Thickness(0, 0, 4, 0); footer.Children.Add(footerText);
-        var budget = new Button { Content = ui.Text("reminders.budget_link"), Style = (Style)FindResource("SettingsLink"), FontSize = 11 };
-        Identify(budget, "settings.reminders.budget_link", ui.Text("reminders.budget_link")); budget.Click += async (_, _) => await NavigateAsync("deepseek"); footer.Children.Add(budget); reminderFooter = footer; form.Children.Add(footer);
-        reminderAmountIssue = Detail(""); reminderAmountIssue.Visibility = Visibility.Collapsed; reminderAmountIssue.Margin = new Thickness(10, 0, 10, 8); reminderAmountIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Identify(reminderAmountIssue, "settings.reminders.amount.issue", ""); form.Children.Add(reminderAmountIssue);
+        paneSubtitle.Text = ui.Text("main.subtitle.notifications"); paneSubtitle.Visibility = Visibility.Visible;
         var notifications = Toggle("settings.system_notifications", "settings.system_notifications_detail", "settings.reminders.notifications", out var check); notificationSwitch = check;
-        notifications.MinHeight = 66;
-        var notificationIdentity = (FrameworkElement)notifications.Children[0]; notifications.Children.Remove(notificationIdentity);
-        var withSample = new DockPanel(); var sample = ReminderSample(new IconGlyph { Symbol = "bell.badge", Width = 12, Height = 12, Ink = PacerPalette.Ink(255, 255, 255, 217) });
-        DockPanel.SetDock(sample, Dock.Left); withSample.Children.Add(sample); withSample.Children.Add(notificationIdentity); notifications.Children.Insert(0, withSample);
         RoutedEventHandler toggleNotifications = async (_, _) =>
         {
             if (synchronizing || this.notifications == null) return;
@@ -96,10 +91,9 @@ internal sealed partial class SettingsWindow
             RefreshValues();
         };
         check.Checked += toggleNotifications; check.Unchecked += toggleNotifications; editors.Add(check);
-        notificationIssue = Detail(""); notificationIssue.Margin = new Thickness(66, 0, 10, 10); notificationIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Identify(notificationIssue, "settings.reminders.notifications.issue", "");
-        var notificationRows = new StackPanel(); notificationRows.Children.Add(notifications); notificationRows.Children.Add(notificationIssue);
-        var systemSettings = new Button { Content = ui.Text("common.open_settings"), Style = (Style)FindResource("SettingsLink"),
-            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(66, 0, 10, 10) };
+        notificationIssue = Detail(""); notificationIssue.Margin = new Thickness(14, -4, 14, 4); notificationIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Identify(notificationIssue, "settings.reminders.notifications.issue", "");
+        var systemSettings = new Button { Content = ui.Text("common.open_settings"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5,
+            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(14, 0, 14, 12) };
         Identify(systemSettings, "settings.reminders.notifications.settings", ui.Text("settings.system_notifications") + ": " + ui.Text("common.open_settings"));
         systemSettings.Click += (_, _) =>
         {
@@ -107,19 +101,50 @@ internal sealed partial class SettingsWindow
             catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or System.IO.IOException)
             { ShowIssue("windows.settings.notifications_failed"); }
         };
-        notificationRows.Children.Add(systemSettings); form.Children.Add(Card(notificationRows));
+        var notificationRows = new StackPanel(); notificationRows.Children.Add(notifications); notificationRows.Children.Add(notificationIssue); notificationRows.Children.Add(systemSettings);
+        form.Children.Add(Card(notificationRows));
+
+        form.Children.Add(MatrixHeader(ui.Text("main.notify.group.tasks")));
+        form.Children.Add(Card(MatrixRow(ui.Text("main.notify.reply"), AlwaysCell(), FollowsCell("reply", ui.Text("main.notify.reply"))),
+            MatrixRow(ui.Text("main.notify.end"), AlwaysCell(), FollowsCell("end", ui.Text("main.notify.end")))));
+
+        reminderQuotaRows = new StackPanel();
+        reminderQuotaRows.Children.Add(SectionTitle(ui.Text("main.notify.group.quota")));
+        reminderQuotaRows.Children.Add(Card(MatrixRow(ui.Text("warning.fiveHour"), BarCell("fiveHour", ui.Text("warning.fiveHour")), FollowsCell("fiveHour", ui.Text("warning.fiveHour")), ui.Text("main.notify.low_quota_note")),
+            MatrixRow(ui.Text("warning.quotaDelay"), BarCell("quotaDelay", ui.Text("warning.quotaDelay")), NoneCell())));
+        reminderQuotaRows.Children.Add(SectionTitle(ui.Text("main.pane.remote")));
+        reminderQuotaRows.Children.Add(Card(MatrixRow(ui.Text("warning.ssh"), BarCell("ssh", ui.Text("warning.ssh")), NoneCell())));
+        form.Children.Add(reminderQuotaRows);
+
+        reminderWalletRows = new StackPanel();
+        reminderWalletRows.Children.Add(SectionTitle("DeepSeek"));
+        var budget = new Button { Content = ui.Text("main.notify.budget_link"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5 };
+        Identify(budget, "settings.reminders.budget_link", ui.Text("main.notify.budget_link")); budget.Click += async (_, _) => await NavigateAsync("deepseek");
+        reminderAmountIssue = Detail(""); reminderAmountIssue.Visibility = Visibility.Collapsed; reminderAmountIssue.Margin = new Thickness(14, 0, 14, 10);
+        reminderAmountIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Identify(reminderAmountIssue, "settings.reminders.amount.issue", "");
+        var wallet = new StackPanel();
+        wallet.Children.Add(MatrixRow(ui.Text("main.notify.low_balance"), BarCell("lowBalance", ui.Text("main.notify.low_balance")), FollowsCell("lowBalance", ui.Text("main.notify.low_balance")), field: ReminderAmount(true)));
+        wallet.Children.Add(Hairline(14));
+        wallet.Children.Add(MatrixRow(ui.Text("main.notify.spike"), BarCell("spendSpike", ui.Text("main.notify.spike")), FollowsCell("spendSpike", ui.Text("main.notify.spike")), field: ReminderAmount(false)));
+        wallet.Children.Add(Hairline(14));
+        wallet.Children.Add(MatrixRow(ui.Text("main.notify.budget"), BarCell("budget", ui.Text("main.notify.budget")), FollowsCell("budget", ui.Text("main.notify.budget")), field: budget));
+        wallet.Children.Add(reminderAmountIssue);
+        reminderWalletRows.Children.Add(Card(wallet));
+        var footer = CardFooter(ui.Text("main.notify.deepseek_one")); reminderFooter = footer; reminderWalletRows.Children.Add(footer);
+        form.Children.Add(reminderWalletRows);
+
         reminderRetention = new ComboBox { MinWidth = 140, VerticalAlignment = VerticalAlignment.Center, SelectedValuePath = "Tag" };
         foreach (var item in new[] { (5, "settings.five_minutes"), (15, "settings.fifteen_minutes"), (30, "settings.thirty_minutes"), (60, "settings.one_hour"), (240, "settings.four_hours"), (0, "settings.until_clicked") })
             reminderRetention.Items.Add(new ComboBoxItem { Tag = item.Item1, Content = ui.Text(item.Item2) });
         Identify(reminderRetention, "settings.reminders.retention", ui.Text("reminders.retention")); editors.Add(reminderRetention);
         reminderRetention.SelectionChanged += async (_, _) => { if (!synchronizing && reminderRetention.SelectedValue is int minutes) await Change(p => p with { RetentionMinutes = minutes }); };
-        form.Children.Add(Card(Row(Label(ui.Text("reminders.retention")), reminderRetention, 40)));
+        form.Children.Add(Card(Row(Label(ui.Text("reminders.retention")), reminderRetention)));
     }
     private FrameworkElement ReminderAmount(bool low)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var currency = Label("¥"); currency.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); currency.Margin = new Thickness(0, 0, 3, 0); row.Children.Add(currency);
-        var field = new TextBox { Width = 64, MaxLength = 320, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Style = (Style)FindResource("SettingsPathInput") };
+        var field = new TextBox { Width = 76, MaxLength = 320, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Style = (Style)FindResource("SettingsPathInput") };
         Identify(field, "settings.reminders." + (low ? "lowLine" : "spikeLine"), ui.Text(low ? "reminders.low_balance" : "reminders.spike"));
         field.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await CommitReminderAmount(low, field); } };
         field.LostKeyboardFocus += async (_, _) => { if (!composing) await CommitReminderAmount(low, field); };
@@ -164,8 +189,10 @@ internal sealed partial class SettingsWindow
         var warnings = NativeCompactBar.Shared.Read(preferences, ui.Language, NativeCompactBar.Providers(preferences, snapshot)).Components.FirstOrDefault(value => value.Id == "warnings");
         foreach (var pair in reminderKinds) { pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && warnings != null; }
         reminderQuotaRows!.Visibility = Module("codex") || Module("claude") ? Visibility.Visible : Visibility.Collapsed;
-        reminderWalletRows!.Visibility = reminderFooter!.Visibility = Module("deepseek") ? Visibility.Visible : Visibility.Collapsed;
-        reminderGroupSeparator!.Visibility = reminderQuotaRows.Visibility == Visibility.Visible && reminderWalletRows.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+        reminderWalletRows!.Visibility = Module("deepseek") ? Visibility.Visible : Visibility.Collapsed;
+        bool system = notifications?.DesiredEnabled ?? preferences.SystemNotifications;
+        foreach (var pair in reminderFollows)
+            pair.Value.IsChecked = system && (pair.Key is not ("lowBalance" or "spendSpike" or "budget") || reminderKinds.TryGetValue(pair.Key, out var bar) && bar.IsChecked == true);
         if (reminderLowValue != preferences.DeepSeekLowBalanceLine) { reminderLowValue = preferences.DeepSeekLowBalanceLine; reminderLow!.Text = DeepSeekBudgetText(reminderLowValue); }
         if (reminderSpikeValue != preferences.DeepSeekSpikeLimit) { reminderSpikeValue = preferences.DeepSeekSpikeLimit; reminderSpike!.Text = DeepSeekBudgetText(reminderSpikeValue); }
         reminderLow!.Tag = snapshot?.Wallet?.Reminders?.LowPlaceholder ?? ""; reminderSpike!.Tag = snapshot?.Wallet?.Reminders?.SpikePlaceholder ?? "";

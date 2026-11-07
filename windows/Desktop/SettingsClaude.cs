@@ -11,36 +11,30 @@ internal sealed partial class SettingsWindow
     private Button? claudeAutomatic, claudeSetupRetry;
     private TextBlock? claudeDetection, claudeLocalState, claudeSetupState;
     private StackPanel? claudeSections;
+    private Border? claudeOff;
+    private System.Windows.Shapes.Ellipse? claudeMonitorDot;
 
     private void ClearClaude()
     {
         ClearClaudeConnection();
         claudeEnabled = claudeCloudProjects = claudeEmbedded = claudeProgress = null; claudeAutomatic = null; claudeDetection = claudeLocalState = null; claudeSections = null;
-        claudeSetupRetry = null; claudeSetupState = null;
+        claudeSetupRetry = null; claudeSetupState = null; claudeOff = null; claudeMonitorDot = null;
     }
+    /// As on the Mac: the header holds the module switch, then Status
+    /// (monitoring, account, quota), Display, and folded custom locations.
+    /// The quota trend lives on History.
     private void BuildClaude()
     {
-        var tile = new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(9.88),
-            Background = new SolidColorBrush(Color.FromRgb(255, 164, 119)), Margin = new Thickness(0, 0, 12, 0),
-            Child = new IconGlyph { Symbol = "asterisk", Width = 25, Height = 25, Ink = new SolidColorBrush(Color.FromArgb(184, 0, 0, 0)) } };
-        var name = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        name.Children.Add(Label("Claude", 14, FontWeights.SemiBold)); claudeDetection = Detail(""); name.Children.Add(claudeDetection);
-        var identity = new StackPanel { Orientation = Orientation.Horizontal }; identity.Children.Add(tile); identity.Children.Add(name);
-        claudeEnabled = new CheckBox { Style = (Style)FindResource("SettingsSwitch") };
+        SetPaneHeader(ProviderHeader("claude", out var detection, out var module, out var automatic));
+        claudeDetection = detection; claudeEnabled = module; claudeAutomatic = automatic;
         Identify(claudeEnabled, "settings.claude.enabled", "Claude"); editors.Add(claudeEnabled);
         BindToggle(claudeEnabled, (p, value) => p with { ProviderModes = new(p.ProviderModes) { ["claude"] = value ? "enabled" : "disabled" } });
-        form.Children.Add(Card(Row(identity, claudeEnabled, 62)));
-        claudeAutomatic = new Button { Content = ui.Text("provider.restore_automatic"), Style = (Style)FindResource("SettingsLink"),
-            HorizontalAlignment = HorizontalAlignment.Right, FontSize = 11, Margin = new Thickness(0, 0, 10, 16) };
         Identify(claudeAutomatic, "settings.claude.automatic", ui.Text("provider.restore_automatic")); editors.Add(claudeAutomatic);
         claudeAutomatic.Click += async (_, _) => await Change(p => p with { ProviderModes = new(p.ProviderModes) { ["claude"] = "automatic" } });
-        form.Children.Add(claudeAutomatic);
+        claudeOff = ModuleOffCard(); form.Children.Add(claudeOff);
         claudeSections = new StackPanel(); form.Children.Add(claudeSections);
-        claudeSections.Children.Add(SectionHeader("windows.provider.local", 10));
-        claudeLocalState = Detail(""); Identify(claudeLocalState, "settings.claude.local_state", "");
-        var help = Detail(ui.Text("windows.claude.local_help")); help.Margin = new Thickness(10, 0, 10, 10);
         claudeSetupState = Detail(""); Identify(claudeSetupState, "settings.claude.setup", "");
-        claudeSetupRetry = new Button { Content = ui.Text("windows.claude.retry_setup"), Style = (Style)FindResource("SettingsLink") };
+        claudeSetupRetry = new Button { Content = ui.Text("connections.retry"), Visibility = Visibility.Collapsed };
         Identify(claudeSetupRetry, "settings.claude.retry_setup", ui.Text("windows.claude.retry_setup"));
         claudeSetupRetry.Click += async (sender, _) =>
         {
@@ -49,7 +43,11 @@ internal sealed partial class SettingsWindow
             catch (System.Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
             { if (!sourceClosed && ReferenceEquals(sender, claudeSetupRetry)) claudeSetupState?.SetCurrentValue(TextBlock.TextProperty, ui.Text("windows.claude.setup_failed")); }
         };
-        var cloud = Toggle("claude.cloud_projects", "claude.cloud_projects_help", "settings.claude.cloud_projects", out var cloudSwitch);
+        var monitoring = StatusRow(ui.Text("provider.monitoring"), out var dot, out var state, claudeSetupRetry, claudeSetupState);
+        claudeMonitorDot = dot; claudeLocalState = state; Identify(claudeLocalState, "settings.claude.local_state", "");
+        claudeSections.Children.Add(SectionTitle(ui.Text("main.section.status"), 0));
+        claudeSections.Children.Add(Card(monitoring, BuildClaudeConnection(), ProviderQuotaRow("claude")));
+        var cloud = Toggle("main.claude.cloud", "main.info.claude_cloud", "settings.claude.cloud_projects", out var cloudSwitch);
         claudeCloudProjects = cloudSwitch; editors.Add(cloudSwitch);
         RoutedEventHandler cloudChanged = async (_, _) =>
         {
@@ -59,16 +57,15 @@ internal sealed partial class SettingsWindow
             await Change(p => p with { ShowClaudeCloudProjects = value });
         };
         cloudSwitch.Checked += cloudChanged; cloudSwitch.Unchecked += cloudChanged;
-        var embedded = Toggle("claude.embedded_sessions", "claude.embedded_sessions_help", "settings.claude.embedded", out var embeddedSwitch);
+        var embedded = Toggle("main.embedded", "main.info.claude_embedded", "settings.claude.embedded", out var embeddedSwitch);
         claudeEmbedded = embeddedSwitch; editors.Add(embeddedSwitch);
         BindToggle(embeddedSwitch, (p, value) => p with { ShowEmbeddedClaudeSessions = value });
-        var progress = Toggle("claude.progress_ring", "claude.progress_ring_help", "settings.claude.progress_ring", out var progressSwitch);
+        var progress = Toggle("main.claude.ring", "main.info.claude_ring", "settings.claude.progress_ring", out var progressSwitch);
         claudeProgress = progressSwitch; editors.Add(progressSwitch);
         BindToggle(progressSwitch, (p, value) => p with { ClaudeProgressRing = value });
-        claudeSections.Children.Add(Card(Row(Label(ui.Text("windows.claude.local_logs")), claudeLocalState), help,
-            Row(claudeSetupState, claudeSetupRetry),
-            BuildClaudeConnection(), cloud, embedded, progress, ProviderHomeEditor("claude")));
-        BuildClaudeHistory(claudeSections);
+        claudeSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
+        claudeSections.Children.Add(Card(cloud, embedded, progress));
+        claudeSections.Children.Add(Card(ProviderHomeEditor("claude")));
     }
     private void RefreshClaude()
     {
@@ -84,17 +81,31 @@ internal sealed partial class SettingsWindow
         claudeAutomatic!.Visibility = mode == "automatic" ? Visibility.Collapsed : Visibility.Visible;
         claudeAutomatic.IsEnabled = claudeEnabled.IsEnabled;
         claudeSections!.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        if (claudeOff != null) claudeOff.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         claudeCloudProjects!.IsChecked = session.Current.ShowClaudeCloudProjects;
         claudeEmbedded!.IsChecked = session.Current.ShowEmbeddedClaudeSessions;
         claudeEmbedded.IsEnabled = enabled && connected && !busy && !session.RequiresRestart;
         claudeProgress!.IsChecked = session.Current.ClaudeProgressRing;
         claudeProgress.IsEnabled = claudeEmbedded.IsEnabled;
         claudeCloudProjects.IsEnabled = enabled && connected && !busy && !claudeAccountBusy && !session.RequiresRestart;
-        claudeLocalState!.Text = ui.Text(!connected ? "provider.state.failed" : snapshot?.Sources.Any(value =>
-            (value.Id is "claude:local-logs" or "claude:demo") && value.Available) == true ? "provider.state.found" : "provider.state.no_home");
         string setup = !connected ? "failed" : snapshot?.ClaudeSetup?.State ?? (snapshot?.Demo == true ? "ready" : "failed");
+        bool logs = snapshot?.Sources.Any(value => (value.Id is "claude:local-logs" or "claude:demo") && value.Available) == true;
+        // Monitoring reads as one state, as on the Mac; the setup sentence shows only when it says more.
+        var (stateKey, tone) = setup switch
+        {
+            "failed" => ("provider.state.failed", "attention"),
+            "settingUp" => ("provider.state.configuring", "neutral"),
+            "missingHome" => ("provider.state.no_home", "neutral"),
+            "ready" => ("provider.state.ready", "positive"),
+            _ => (logs ? "provider.state.found" : "provider.state.no_home", "neutral")
+        };
+        SetStatus(claudeMonitorDot, claudeLocalState, ui.Text(stateKey), tone);
         claudeSetupState!.Text = ClaudeSetupDescription(ui, setup, snapshot?.ClaudeSetup);
-        claudeSetupRetry!.IsEnabled = enabled && connected && !busy && setup != "settingUp" && snapshot?.Demo == false;
+        claudeSetupState.Visibility = setup == "ready" && snapshot?.ClaudeSetup is not { TelemetryConflict: true } && snapshot?.ClaudeSetup?.LaunchMode != "powershell" ? Visibility.Collapsed : Visibility.Visible;
+        claudeSetupState.SetResourceReference(TextBlock.ForegroundProperty, setup == "failed" ? "SettingsWarning" : "SettingsSecondary");
+        claudeSetupRetry!.Visibility = setup == "failed" ? Visibility.Visible : Visibility.Collapsed;
+        claudeSetupRetry.IsEnabled = enabled && connected && !busy && setup != "settingUp" && snapshot?.Demo == false;
+        RefreshProviderQuotaRow("claude");
         RefreshClaudeConnection(connected && enabled);
     }
     internal static string ClaudeSetupDescription(UiText ui, string state, ClaudeHookSetup? setup)

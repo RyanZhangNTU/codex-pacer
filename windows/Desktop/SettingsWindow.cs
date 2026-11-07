@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -46,12 +47,15 @@ internal sealed partial class SettingsWindow : Window
     private readonly Button recoveryRestart = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(10, 0, 10, 10) };
     private readonly List<FrameworkElement> editors = [];
     private readonly Dictionary<string, RadioButton> navigation = new();
-    private readonly TextBlock paneTitle;
+    private readonly TextBlock paneTitle, paneSubtitle;
+    private readonly Grid headerColumn = new() { MaxWidth = ColumnWidth };
+    private readonly StackPanel defaultHeader = new();
     private readonly ScrollViewer paneScroller;
     private string activePane = "general", aboutTab = "whatsNew";
     internal const double DefaultWidth = 980, DefaultHeight = 660, MinimumWidth = 860, MinimumHeight = 560, ColumnWidth = 640, SidebarWidth = 220;
     private CheckBox? login, hideProjects, appButtons, monitorSSH;
     private TextBlock? startupStatus;
+    private Grid? startupRow;
     private ComboBox? language;
     private Border? restart;
     private TextBlock? restartHint;
@@ -107,7 +111,9 @@ internal sealed partial class SettingsWindow : Window
         var pane = new DockPanel(); Grid.SetColumn(pane, 2); client.Children.Add(pane);
         paneTitle = Label(ui.Text("settings.pane.general"), 22, FontWeights.Bold);
         AutomationProperties.SetHeadingLevel(paneTitle, AutomationHeadingLevel.Level1);
-        var headerColumn = new Grid { MaxWidth = ColumnWidth }; headerColumn.Children.Add(paneTitle);
+        paneSubtitle = Label("", 12.5); paneSubtitle.Margin = new Thickness(0, 3, 0, 0); paneSubtitle.TextWrapping = TextWrapping.Wrap;
+        paneSubtitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); AutomationProperties.SetAutomationId(paneSubtitle, "settings.subtitle");
+        defaultHeader.Children.Add(paneTitle); defaultHeader.Children.Add(paneSubtitle); headerColumn.Children.Add(defaultHeader);
         var paneHeader = new Border { Child = headerColumn, Padding = new Thickness(32, 22, 32, 12), BorderThickness = new Thickness(0, 0, 0, 1), BorderBrush = Brushes.Transparent };
         DockPanel.SetDock(paneHeader, Dock.Top); pane.Children.Add(paneHeader);
         InitializeStorageRecovery(pane, preferencesStore);
@@ -180,46 +186,68 @@ internal sealed partial class SettingsWindow : Window
         var content = new StackPanel();
         for (int i = 0; i < rows.Length; i++)
         {
-            if (i > 0) { var line = new Border { Height = 1, Margin = new Thickness(10, 0, 10, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); content.Children.Add(line); }
+            if (i > 0)
+            {
+                // A hidden optional row takes its hairline with it.
+                var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
+                line.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(Visibility)) { Source = rows[i] }); content.Children.Add(line);
+            }
             content.Children.Add(rows[i]);
         }
         card.Child = content; return card;
     }
-    private Grid Row(UIElement label, UIElement trailing, double minHeight = 36)
+    private Grid Row(UIElement label, UIElement trailing, double minHeight = 44)
     {
-        var row = new Grid { MinHeight = minHeight, Margin = new Thickness(10, 0, 10, 0) };
+        var row = new Grid { MinHeight = minHeight, Margin = new Thickness(14, 0, 14, 0) };
         row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         if (label is FrameworkElement left) left.Margin = new Thickness(0, 8, 8, 8);
         row.Children.Add(label); Grid.SetColumn(trailing, 1); row.Children.Add(trailing); return row;
     }
-    private Grid Toggle(string key, string? detailKey, string id, out CheckBox check)
+    /// A switch row; its explanation waits behind ⓘ, as on the Mac.
+    private Grid Toggle(string key, string? infoKey, string id, out CheckBox check, string? title = null)
     {
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; text.Children.Add(Label(ui.Text(key)));
-        if (detailKey != null) text.Children.Add(Detail(ui.Text(detailKey)));
         check = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), HorizontalAlignment = HorizontalAlignment.Right };
-        Identify(check, id, ui.Text(key)); if (detailKey != null) AutomationProperties.SetHelpText(check, ui.Text(detailKey));
-        return Row(text, check);
+        string name = title ?? ui.Text(key);
+        Identify(check, id, name);
+        return InfoRow(name, check, infoKey == null ? null : ui.Text(infoKey), id: id);
     }
-    /// The installed version, its check and automatic checks; Help & Updates heads with it.
+    /// The installed version, where updates stand and its one action, then
+    /// automatic checks, as on the Mac. Downloading and installing still run
+    /// in the Windows update window.
     private void BuildUpdateCard()
     {
-        var version = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        version.Children.Add(AppIcon(34)); var labels = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(Label("Codex Pacer " + Version)); updateStatus = Detail(""); labels.Children.Add(updateStatus); version.Children.Add(labels);
+        var version = new Grid(); version.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); version.ColumnDefinitions.Add(new ColumnDefinition()); version.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var icon = AppIcon(48); icon.Margin = new Thickness(0, 0, 14, 0); icon.VerticalAlignment = VerticalAlignment.Center; version.Children.Add(icon);
+        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var name = new TextBlock { FontSize = 18 };
+        name.Inlines.Add(new System.Windows.Documents.Run("Codex Pacer") { FontWeight = FontWeights.Bold });
+        var number = new System.Windows.Documents.Run("  " + (Version.Length > 0 ? Version : ui.Text("build.development"))); number.SetResourceReference(TextElement.ForegroundProperty, "SettingsSecondary"); name.Inlines.Add(number);
+        AutomationProperties.SetName(name, "Codex Pacer " + Version); labels.Children.Add(name);
+        updateStatus = Detail(""); updateStatus.FontSize = 12.5; updateStatus.Margin = new Thickness(0, 3, 0, 0); labels.Children.Add(updateStatus);
+        Grid.SetColumn(labels, 1); version.Children.Add(labels);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var update = new Button { Content = ui.Text("updates.check"), VerticalAlignment = VerticalAlignment.Center }; updateCheck = update;
         Identify(update, "settings.update.check", ui.Text("updates.check"));
+        update.Click += async (_, _) => { if (updater != null) _ = await updater.CheckAsync(); };
+        updateInstall = new Button { Content = ui.Text("main.update.install"), Style = (Style)FindResource("SettingsProminentButton"), Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
+        Identify(updateInstall, "settings.update.install", ui.Text("main.update.install"));
+        updateInstall.Click += (_, _) => { if (updater?.CurrentOffer is { } offer) updater.Presenter?.Offer(offer, true); };
+        actions.Children.Add(update); actions.Children.Add(updateInstall);
+        Grid.SetColumn(actions, 2); version.Children.Add(actions);
+        var head = new Border { Child = version, Padding = new Thickness(14, 12, 14, 12) };
         var automatic = Toggle("updates.automatic", null, "settings.update.automatic", out var automaticSwitch); automaticUpdates = automaticSwitch;
         automaticSwitch.Checked += ChangeAutomaticUpdates; automaticSwitch.Unchecked += ChangeAutomaticUpdates;
-        update.Click += async (_, _) => { if (updater != null) _ = await updater.CheckAsync(); };
-        updateNotesButton = new Button { Content = ui.Text("windows.updates.view_notes"), Style = (Style)FindResource("SettingsLink"), Margin = new Thickness(10, 4, 10, 8), HorizontalAlignment = HorizontalAlignment.Left };
+        updateNotesButton = new Button { Content = ui.Text("windows.updates.view_notes"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center };
         Identify(updateNotesButton, "settings.update.notes", ui.Text("windows.updates.view_notes")); updateNotesButton.Click += ReadUpdateNotes;
+        updateNotesRow = InfoRow(ui.Text("main.update.notes"), updateNotesButton);
         RefreshUpdates();
-        form.Children.Add(Card(Row(version, update, 54), automatic, updateNotesButton));
+        form.Children.Add(Card(head, automatic, updateNotesRow));
     }
+    /// Startup, language and privacy, as on the Mac. App buttons moved to
+    /// Appearance and SSH to Remote; Windows has no Dock, so no icon choice.
     private void BuildGeneral()
     {
         var loginRow = Toggle("settings.open_at_login", "windows.settings.open_at_login_detail", "settings.startup", out var loginSwitch); login = loginSwitch;
-        loginRow.MinHeight = 52;
         RoutedEventHandler changeStartup = (_, _) =>
         {
             if (synchronizing) return;
@@ -235,7 +263,8 @@ internal sealed partial class SettingsWindow : Window
         Identify(startupSettings, "settings.startup.settings", ui.Text("windows.settings.startup_settings"));
         startupSettings.Click += (_, _) => { if (!startup.OpenSettings()) ShowIssue("windows.settings.startup_settings_failed"); else ClearIssue(); };
         editors.Add(startupSettings);
-        form.Children.Add(Card(loginRow, Row(startupStatus, startupSettings, 34)));
+        startupRow = Row(startupStatus, startupSettings);
+        form.Children.Add(SectionTitle(ui.Text("main.section.startup"), 0)); form.Children.Add(Card(loginRow, startupRow));
         language = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MinWidth = 140, MaxWidth = 240, SelectedValuePath = "Tag" };
         foreach (var choice in new[] { ("system", ui.Text("windows.language.system")), ("en", "English"), ("zh-Hans", "简体中文") })
             language.Items.Add(new ComboBoxItem { Content = choice.Item2, Tag = choice.Item1 });
@@ -246,22 +275,10 @@ internal sealed partial class SettingsWindow : Window
         Identify(restartButton, "settings.restart", ui.Text("language.restart_now")); restartButton.Click += (_, _) => RestartRequested?.Invoke(); editors.Add(restartButton);
         restartHint = Detail(ui.Text("language.restart_hint"));
         restart = new Border { Child = Row(restartHint, restartButton), Visibility = Visibility.Collapsed };
-        form.Children.Add(Card(Row(Label(ui.Text("language.label")), language, 38), restart));
-        // A collapsed optional row must not leave its separator visible.
-        restart.IsVisibleChanged += (_, _) =>
-        {
-            if (restart.Parent is Panel rows && rows.Children.Count == 3) rows.Children[1].Visibility = restart.Visibility;
-        };
+        form.Children.Add(SectionTitle(ui.Text("main.section.language"))); form.Children.Add(Card(Row(Label(ui.Text("language.label")), language), restart));
         var privacy = Toggle("settings.hide_projects", "settings.hide_projects_help", "settings.hide_projects", out var privacySwitch); hideProjects = privacySwitch;
         BindToggle(hideProjects, (p, value) => p with { HideProjects = value }); editors.Add(hideProjects);
-        var apps = Toggle("settings.app_buttons", "settings.app_buttons_help", "settings.app_buttons", out var appsSwitch); appButtons = appsSwitch;
-        ((FrameworkElement)privacy.Children[0]).Margin = new Thickness(0, 11, 8, 11);
-        ((FrameworkElement)apps.Children[0]).Margin = new Thickness(0, 11, 8, 11);
-        BindToggle(appButtons, (p, value) => p with { ShowAppButtons = value }); editors.Add(appButtons);
-        form.Children.Add(Card(privacy, apps));
-        var ssh = Toggle("settings.monitor_ssh", null, "settings.monitor_ssh", out var sshSwitch); monitorSSH = sshSwitch;
-        BindToggle(monitorSSH, (p, value) => p with { MonitorSSH = value }); editors.Add(monitorSSH);
-        form.Children.Add(Card(ssh));
+        form.Children.Add(SectionTitle(ui.Text("main.privacy"))); form.Children.Add(Card(privacy));
     }
     private void BindToggle(CheckBox check, Func<DesktopPreferences, bool, DesktopPreferences> edit)
         => BindToggle(check, (value, enabled) => System.Threading.Tasks.Task.FromResult(edit(value, enabled)));
@@ -297,7 +314,7 @@ internal sealed partial class SettingsWindow : Window
             schemaVersion = 1, syntheticOnly = true, acceptance = "pending", pane = activePane, language = ui.Language,
             dark = darkOverride ?? IsSystemDark(), active = IsActive, renderMode = WindowRendering.Mode(this), clientWidth = client.ActualWidth, clientHeight = client.ActualHeight,
             expandedQuotaStyle = session.Current.ExpandedQuotaStyle,
-            hideProjects = hideProjects?.IsChecked, showAppButtons = appButtons?.IsChecked, languageChoice = language?.SelectedValue as string,
+            hideProjects = hideProjects?.IsChecked ?? session.Current.HideProjects, showAppButtons = appButtons?.IsChecked ?? session.Current.ShowAppButtons, languageChoice = language?.SelectedValue as string,
             deepseekMode = activePane == "deepseek" ? session.Current.DeepSeekMode : null,
             deepseekPanelStyle = activePane == "deepseek" ? session.Current.DeepSeekPanelStyle : null,
             deepseekBudgetPeriods = activePane == "deepseek" ? engine?.LatestSnapshot?.Wallet?.Solo?.Budgets.Select(value => value.Kind).ToArray() : null,
@@ -369,8 +386,10 @@ internal sealed partial class SettingsWindow : Window
             foreach (UIElement child in form.Children)
                 if (child != issue && child != recoveryRestart) PageAccessibility.Retire(child);
             form.Children.Clear(); editors.Clear(); form.Children.Add(issue); form.Children.Add(recoveryRestart);
-            login = hideProjects = appButtons = monitorSSH = null; startupStatus = null; language = null; restart = null; restartHint = null;
-            automaticUpdates = null; updateCheck = updateNotesButton = null; updateStatus = null;
+            login = hideProjects = appButtons = monitorSSH = null; startupStatus = null; startupRow = null;
+            SetPaneHeader(defaultHeader); paneSubtitle.Text = ""; paneSubtitle.Visibility = Visibility.Collapsed;
+            quotaRows.Clear(); ClearOverview(); form.MaxWidth = headerColumn.MaxWidth = ColumnWidth; language = null; restart = null; restartHint = null;
+            automaticUpdates = null; updateCheck = updateNotesButton = updateInstall = null; updateNotesRow = null; updateStatus = null;
             ClearAppearance();
             ClearCodex();
             ClearClaude();
@@ -384,6 +403,8 @@ internal sealed partial class SettingsWindow : Window
             AutomationProperties.SetName(paneScroller, paneTitle.Text);
             switch (activePane)
             {
+                case "overview": BuildOverview(); break;
+                case "history": BuildHistory(); break;
                 case "about": BuildAbout(); break;
                 case "support": BuildGuidePage("support"); break;
                 case "appearance": BuildAppearance(); break;
@@ -419,6 +440,7 @@ internal sealed partial class SettingsWindow : Window
                 if (startupStatus != null)
                 {
                     startupStatus.Text = key == null ? "" : ui.Text(key);
+                    if (startupRow != null) startupRow.Visibility = key == null ? Visibility.Collapsed : Visibility.Visible;
                     AutomationProperties.SetName(startupStatus, startupStatus.Text);
                 }
             }
@@ -433,7 +455,6 @@ internal sealed partial class SettingsWindow : Window
                 restart.Visibility = desired != ui.Language || session.RequiresRestart ? Visibility.Visible : Visibility.Collapsed;
                 if (restartHint != null) restartHint.Text = ui.Text(session.RequiresRestart ? "windows.settings.recovery_required" : "language.restart_hint");
                 if (session.RequiresRestart && restart.Child is Grid row) row.Children[1].IsEnabled = true;
-                if (restart.Parent is Panel rows && rows.Children.Count == 3) rows.Children[1].Visibility = restart.Visibility;
             }
             RefreshAppearance();
             RefreshCodex();
@@ -444,6 +465,8 @@ internal sealed partial class SettingsWindow : Window
             RefreshCollapsed();
             RefreshConnections();
             RefreshSidebar();
+            RefreshOverview();
+            RefreshHistory();
             recoveryRestart.Visibility = session.RequiresRestart && activePane != "general" ? Visibility.Visible : Visibility.Collapsed;
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
         }

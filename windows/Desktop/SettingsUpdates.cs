@@ -8,11 +8,12 @@ internal sealed partial class SettingsWindow
 {
     private readonly WindowsUpdateService? updater;
     private CheckBox? automaticUpdates;
-    private Button? updateCheck, updateNotesButton;
+    private Button? updateCheck, updateNotesButton, updateInstall;
+    private FrameworkElement? updateNotesRow;
     private TextBlock? updateStatus;
     private bool changingUpdates, readingUpdateNotes;
     internal event System.Action<string>? SignedReleaseNotesRequested;
-    private void OnUpdateStatus(WindowsUpdateStatus value) => RefreshUpdates();
+    private void OnUpdateStatus(WindowsUpdateStatus value) { RefreshUpdates(); RefreshSidebar(); RefreshOverview(); }
     private void RefreshUpdates()
     {
         bool syncing = synchronizing; synchronizing = true;
@@ -24,7 +25,15 @@ internal sealed partial class SettingsWindow
             if (automaticUpdates != null) { automaticUpdates.IsChecked = session.Current.AutomaticUpdates; automaticUpdates.IsEnabled = available; automaticUpdates.ToolTip = ui.Text(status.MessageKey); }
             if (updateCheck != null) updateCheck.IsEnabled = available;
             if (updateNotesButton != null) updateNotesButton.IsEnabled = available && !readingUpdateNotes;
-            if (updateStatus != null) { updateStatus.Text = ui.Text(status.MessageKey); AutomationProperties.SetName(updateStatus, updateStatus.Text); }
+            string? found = updater?.CurrentOffer?.Version;
+            if (updateStatus != null)
+            {
+                updateStatus.Text = found != null ? ui.Text("main.update.available").Replace("%@", found, System.StringComparison.Ordinal) : ui.Text(status.MessageKey);
+                AutomationProperties.SetName(updateStatus, updateStatus.Text);
+            }
+            // A found version replaces the check with the one-click update, as on the Mac.
+            if (updateCheck != null) updateCheck.Visibility = found == null ? Visibility.Visible : Visibility.Collapsed;
+            if (updateInstall != null) { updateInstall.Visibility = found != null ? Visibility.Visible : Visibility.Collapsed; updateInstall.IsEnabled = !status.Busy && !busy; }
         }
         finally { synchronizing = syncing; }
     }

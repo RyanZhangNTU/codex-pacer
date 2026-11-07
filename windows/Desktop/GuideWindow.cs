@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
@@ -36,21 +37,26 @@ internal sealed class GuideWindow : Window
         WindowRendering.Prepare(this); FontFamily = PacerFonts.Interface; Language = PacerFonts.RenderingLanguage(ui);
         Title = ui.Text(welcome ? "welcome.window_title" : "whats_new.window_title");
         WindowStartupLocation = WindowStartupLocation.CenterScreen; ResizeMode = ResizeMode.NoResize;
-        Width = (welcome ? 560 : 460) + 2 * SystemParameters.FixedFrameVerticalBorderWidth; SizeToContent = SizeToContent.Height;
+        Width = (welcome ? 560 : 480) + 2 * SystemParameters.FixedFrameVerticalBorderWidth; SizeToContent = SizeToContent.Height;
         Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CodexPacer;component/SettingsStyles.xaml", UriKind.Relative) });
         ApplyAppearance(); SetResourceReference(BackgroundProperty, "SettingsBackground");
         root.SetResourceReference(Panel.BackgroundProperty, "SettingsBackground");
         foreach (var height in new[] { GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto }) root.RowDefinitions.Add(new RowDefinition { Height = height });
-        var header = new DockPanel { Margin = new Thickness(24, 20, 24, welcome ? 4 : 14) };
-        var icon = new DecorativeImage { Width = 52, Height = 52, Margin = new Thickness(0, 0, 14, 0), Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center,
+        var header = new DockPanel { Margin = welcome ? new Thickness(24, 20, 24, 4) : new Thickness(40, 36, 40, 0) };
+        var icon = new DecorativeImage { Width = welcome ? 52 : 72, Height = welcome ? 52 : 72, Margin = new Thickness(0, 0, 14, 0), Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center,
             Source = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))) };
         header.Children.Add(icon);
+        // What's New reads like the main window: the icon over one large centered title.
+        if (!welcome) { DockPanel.SetDock(icon, Dock.Top); icon.Margin = new Thickness(0); icon.HorizontalAlignment = HorizontalAlignment.Center; }
         var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        var heading = new TextBlock { Text = ui.Text(welcome ? "welcome.title" : "whats_new.title"), FontSize = 20, FontWeight = FontWeights.SemiBold };
+        string version = catalog.Releases.FirstOrDefault()?.Version ?? "";
+        var heading = new TextBlock { Text = welcome ? ui.Text("welcome.title") : ui.Text("main.whats_new.title").Replace("%@", version, StringComparison.Ordinal),
+            FontSize = welcome ? 20 : 24, FontWeight = welcome ? FontWeights.SemiBold : FontWeights.Bold, TextWrapping = TextWrapping.Wrap, TextAlignment = welcome ? TextAlignment.Left : TextAlignment.Center };
+        if (!welcome) { heading.Margin = new Thickness(0, 8, 0, 0); titles.HorizontalAlignment = HorizontalAlignment.Stretch; }
         heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsPrimary"); titles.Children.Add(heading);
         var subtitle = new TextBlock { Text = welcome ? ui.Text("welcome.subtitle") : catalog.VersionTitle, FontSize = 12, Margin = new Thickness(0, 4, 0, 0), TextWrapping = TextWrapping.Wrap };
-        subtitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); titles.Children.Add(subtitle); header.Children.Add(titles); root.Children.Add(header);
-        body.Margin = new Thickness(20, 0, 20, 18);
+        subtitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); if (welcome) titles.Children.Add(subtitle); header.Children.Add(titles); root.Children.Add(header);
+        body.Margin = welcome ? new Thickness(20, 0, 20, 18) : new Thickness(40, 26, 40, 8);
         scroller = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         GuideContent.Identify(scroller, "guide.highlights", ui.Text(welcome ? "welcome.step.island" : "whats_new.title"));
         var divider = new Border { Height = 1 }; divider.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
@@ -59,10 +65,16 @@ internal sealed class GuideWindow : Window
         if (welcome) ShowStep();
         else
         {
-            body.Releases(catalog.Releases);
-            // Release Notes sits apart on the left; the default action closes on the right.
-            var notes = CreateButton("whats_new.release_notes", "guide.releaseNotes", body.OpenReleaseNotes); DockPanel.SetDock(notes, Dock.Left); footer.Children.Insert(0, notes);
+            body.Releases(catalog.Releases, large: true);
+            // One wide Continue, then Release Notes as a quiet link under it, as on the Mac.
+            divider.Visibility = Visibility.Collapsed; footer.Margin = new Thickness(40, 6, 40, 22);
             AddButton("whats_new.done", "guide.done", Close, true);
+            var done = (Button)actions.Children[0]; done.MinHeight = 34; done.HorizontalAlignment = HorizontalAlignment.Stretch;
+            DockPanel.SetDock(actions, Dock.Top); actions.HorizontalAlignment = HorizontalAlignment.Stretch; actions.Orientation = Orientation.Vertical;
+            var notes = CreateButton("whats_new.release_notes", "guide.releaseNotes", body.OpenReleaseNotes);
+            notes.Style = (Style)FindResource("SettingsLink"); notes.Content = ui.Text("whats_new.release_notes") + " ↗"; notes.FontSize = 12;
+            notes.SetResourceReference(ForegroundProperty, "SettingsSecondary"); notes.HorizontalAlignment = HorizontalAlignment.Center; notes.Margin = new Thickness(0, 12, 0, 0);
+            actions.Children.Add(notes);
         }
         Loaded += (_, _) => { Fit(); FocusDefault(); };
         DpiChanged += (_, _) => Fit(); LocationChanged += (_, _) => { if (IsLoaded) Fit(); };
@@ -81,7 +93,7 @@ internal sealed class GuideWindow : Window
     private void ApplyAppearance()
     {
         var state = appearance.Current; DesktopAppearance.Apply(this, state);
-        SettingsPalette.Apply(Resources, darkOverride ?? state.Dark, true, state); semanticPaint.Apply(state);
+        SettingsPalette.Apply(Resources, darkOverride ?? state.Dark, true, state, main: !welcome); semanticPaint.Apply(state);
     }
     private Button CreateButton(string key, string id, Action action, bool primary = false)
     {
@@ -125,7 +137,7 @@ internal sealed class GuideWindow : Window
         if (welcome) root.Height = Math.Min(560, maximum);
         else
         {
-            body.Measure(new Size(420, double.PositiveInfinity));
+            body.Measure(new Size(400, double.PositiveInfinity));
             double natural = body.DesiredSize.Height + body.Margin.Top + body.Margin.Bottom + root.Children[0].DesiredSize.Height + 1 + footer.DesiredSize.Height;
             root.Height = Math.Min(natural, maximum);
         }

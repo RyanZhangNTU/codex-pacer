@@ -75,10 +75,11 @@
    <StackPanel>
     <ToggleButton AutomationProperties.Name="{Binding Header, RelativeSource={RelativeSource TemplatedParent}}" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0">
      <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
-      <Border x:Name="Surface" Background="Transparent" Padding="10,9" BorderThickness="1" BorderBrush="Transparent" CornerRadius="5">
-       <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
-        <Path x:Name="Chevron" Data="M 2,1 L 6,5 L 2,9" Stroke="{DynamicResource SettingsPrimary}" StrokeThickness="1.2" Width="8" Height="10" RenderTransformOrigin="0.5,0.5"/>
-        <TextBlock Grid.Column="1" Text="{Binding Header, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsPrimary}"/>
+      <Border x:Name="Surface" Background="Transparent" Padding="14,0" MinHeight="44" BorderThickness="1" BorderBrush="Transparent" CornerRadius="12">
+       <Grid VerticalAlignment="Center"><Grid.ColumnDefinitions><ColumnDefinition Width="16"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Path x:Name="Chevron" Data="M 2,1 L 6,5 L 2,9" Stroke="{DynamicResource SettingsSecondary}" StrokeThickness="1.6" Width="8" Height="10" RenderTransformOrigin="0.5,0.5" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="1" Text="{Binding Header, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsPrimary}" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="2" Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsSecondary}" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
        </Grid>
       </Border>
       <ControlTemplate.Triggers>
@@ -90,6 +91,35 @@
     <ContentPresenter x:Name="Details" Visibility="Collapsed"/>
    </StackPanel>
    <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Details" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <!-- The Notifications matrix's small checkbox, as on the Mac. -->
+ <Style x:Key="SettingsCheck" TargetType="CheckBox">
+  <Setter Property="Width" Value="18"/><Setter Property="Height" Value="18"/><Setter Property="Focusable" Value="True"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+   <Border x:Name="Box" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource SettingsSecondary}" Background="Transparent">
+    <Path x:Name="Mark" Data="M 3.5,8 L 6.8,11.3 L 12.6,4.8" Stroke="{DynamicResource SettingsSelectionText}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="Collapsed"/>
+   </Border>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Mark" Property="Visibility" Value="Visible"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Box" Property="BorderThickness" Value="2"/><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource SettingsPrimary}"/></Trigger>
+    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Box" Property="Opacity" Value="0.5"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <!-- History's rounded provider chips. -->
+ <Style x:Key="SettingsChip" TargetType="RadioButton">
+  <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/>
+  <Setter Property="FontSize" Value="12"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/><Setter Property="Height" Value="24"/><Setter Property="Padding" Value="10,0"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+   <Border x:Name="Surface" Background="Transparent" CornerRadius="12" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="{DynamicResource SettingsSeparator}">
+    <ContentPresenter VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}"/>
+   </Border>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSearchFill}"/></Trigger>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSidebarSelection}"/><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsCardBorder}"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
+   </ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
  <Style x:Key="SettingsSidebarButton" TargetType="Button">

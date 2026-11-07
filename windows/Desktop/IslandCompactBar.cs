@@ -18,7 +18,6 @@ public partial class IslandWindow
     private readonly TextBlock compactStatus = CompactText(12, FontWeights.Medium, PacerPalette.Primary);
     private readonly TextBlock compactFirst = CompactText(11, FontWeights.Medium, PacerPalette.Secondary);
     private readonly TextBlock compactStripFirst = CompactText(10, FontWeights.SemiBold, PacerPalette.Secondary);
-    private readonly TextBlock compactMetric = CompactText(10, FontWeights.Medium, PacerPalette.Tertiary);
     private readonly DeepSeekPriceClock compactClock = new() { Width = 18, Height = 18 }, compactStripClock = new() { Width = 18, Height = 18 };
     private readonly StackPanel compactTime = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
     private readonly StackPanel compactStripTime = new() { HorizontalAlignment = HorizontalAlignment.Center };
@@ -50,7 +49,7 @@ public partial class IslandWindow
         Add("activity", Badge, StripBadge); Add("status", compactStatus, new Border()); Add("tps", RatePanel, StripRatePanel);
         Add("firstOutput", compactFirst, firstColumn); Add("warnings", WarningGlyphs, StripWarnings);
         Add("quotaGauge", QuotaGlyph, StripQuotaGlyph); Add("priceClock", compactClock, compactStripClock);
-        Add("quota", QuotaLabel, quotaColumn); Add("quotaLabel", compactMetric, new Border()); Add("timeRemaining", compactTime, compactStripTime);
+        Add("quota", QuotaLabel, quotaColumn); Add("timeRemaining", compactTime, compactStripTime);
         void Add(string id, FrameworkElement row, FrameworkElement column)
         {
             compactRow[id] = Host(id, row, false); compactColumn[id] = Host(id, column, true);
@@ -111,7 +110,8 @@ public partial class IslandWindow
             if (data.Components.Length == 0) return;
             foreach (var item in data.Components)
             {
-                var slot = slots[item.Id]; slot.Tag = item.DimsExpanded;
+                if (!slots.TryGetValue(item.Id, out var slot)) continue;
+                slot.Tag = item.DimsExpanded;
                 AutomationProperties.SetName(slot, item.Accessibility); AutomationProperties.SetHelpText(slot, item.Help);
             }
             var rate = data.Components.Single(value => value.Id == "tps");
@@ -121,7 +121,6 @@ public partial class IslandWindow
             var first = data.Components.Single(value => value.Id == "firstOutput");
             if (column) FitStripNumber(compactStripFirst, first.StripText); else compactFirst.Text = first.Text;
             compactStatus.Text = data.Components.Single(value => value.Id == "status").Text;
-            compactMetric.Text = data.Components.Single(value => value.Id == "quotaLabel").Text;
             var quota = data.Components.Single(value => value.Id == "quota");
             var values = quota.Entries.Select(value => (value.Provider, column ? value.StripText : value.Text)).ToArray();
             var dimmed = quota.Entries.Select(value => value.Dimmed).ToArray();
@@ -159,6 +158,8 @@ public partial class IslandWindow
     }
     private static void Fill(StackPanel panel, string[] ids, Dictionary<string, Button> slots, bool vertical, double gap)
     {
+        // A component this host does not draw (such as a retired one) is skipped.
+        ids = ids.Where(slots.ContainsKey).ToArray();
         if (!panel.Children.Cast<Button>().Select(value => value.Name).SequenceEqual(ids))
         {
             panel.Children.Clear();

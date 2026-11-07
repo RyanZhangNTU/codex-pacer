@@ -25,9 +25,10 @@ internal static class AccessibilityGuideChecks
             {
                 window.Show(); await Drain();
                 appearance.Set(appearance.Current with { Dark = false, HighContrast = false }); await Drain();
-                Check(((SolidColorBrush)window.Resources["SettingsBackground"]).Color == Colors.White, "Guide windows follow the injected light theme");
+                // What's New reads like the main window's gray page; the welcome guide keeps its plain page.
+                Check(((SolidColorBrush)window.Resources["SettingsBackground"]).Color == (window.IsWelcome ? Colors.White : Color.FromRgb(244, 244, 246)), "Guide windows follow the injected light theme");
                 appearance.Set(appearance.Current with { Dark = true }); await Drain();
-                Check(((SolidColorBrush)window.Resources["SettingsBackground"]).Color == Color.FromRgb(31, 31, 31), "Guide windows follow the injected dark theme");
+                Check(((SolidColorBrush)window.Resources["SettingsBackground"]).Color == (window.IsWelcome ? Color.FromRgb(31, 31, 31) : Color.FromRgb(27, 27, 30)), "Guide windows follow the injected dark theme");
                 await Audit(window, welcome ? "welcome" : "whatsNew");
                 if (welcome)
                 {

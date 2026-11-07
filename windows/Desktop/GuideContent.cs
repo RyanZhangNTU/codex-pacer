@@ -340,7 +340,16 @@ internal sealed class GuideContent : StackPanel
         });
         var card = new Border { Child = layout, CornerRadius = new CornerRadius(10) }; card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); return card;
     }
-    internal void Releases(IEnumerable<GuideRelease> releases)
+    /// A highlight's symbol in the accent color on a soft tile of the same hue, as on the Mac.
+    private static Border FeatureSymbol(string symbol, double size)
+    {
+        var glyph = new IconGlyph { Symbol = GuideArt.Symbol(symbol), Width = size * 0.52, Height = size * 0.52 };
+        glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsAccent");
+        var tile = new Border { Width = size, Height = size, CornerRadius = new CornerRadius(size * 0.26), Child = glyph };
+        tile.SetResourceReference(Border.BackgroundProperty, "SettingsAccentSoft"); return tile;
+    }
+    /// The update note draws each highlight larger, as a feature list without cards.
+    internal void Releases(IEnumerable<GuideRelease> releases, bool large = false)
     {
         Reset(); var list = releases.ToList();
         foreach (var release in list)
@@ -349,7 +358,7 @@ internal sealed class GuideContent : StackPanel
             if (list.Count > 1)
             {
                 var heading = Text(release.Title, 12); heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-                heading.Margin = new Thickness(10, release == list[0] ? 0 : 14, 0, 6); Children.Add(heading);
+                heading.Margin = new Thickness(large ? 0 : 10, release == list[0] ? 0 : large ? 22 : 14, 0, large ? 16 : 6); if (large) heading.FontWeight = FontWeights.SemiBold; Children.Add(heading);
             }
             var rows = new List<UIElement>();
             foreach (var item in release.Items)
@@ -362,12 +371,24 @@ internal sealed class GuideContent : StackPanel
                     _ => null
                 };
                 string detail = item.Control == "openAtLogin" ? ui.Text("windows.settings.open_at_login_detail") : item.Detail;
-                var tile = GuideArt.Tile(GuideArt.Symbol(item.Symbol), Colors.White, 26); tile.SetResourceReference(Border.BackgroundProperty, "SettingsAccent");
-                rows.Add(TileRow(tile, item.Title, Text(detail, 11), control));
+                if (large) { Children.Add(FeatureRow(item.Symbol, item.Title, detail, control)); continue; }
+                rows.Add(TileRow(FeatureSymbol(item.Symbol, 28), item.Title, Text(detail, 11.5), control));
             }
-            Children.Add(Group(50, rows.ToArray()));
+            if (!large) Children.Add(Group(50, rows.ToArray()));
         }
         Refresh();
+    }
+    private Grid FeatureRow(string symbol, string title, string detail, UIElement? control)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 16) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var tile = FeatureSymbol(symbol, 40); tile.Margin = new Thickness(0, 0, 14, 0); tile.VerticalAlignment = VerticalAlignment.Top; row.Children.Add(tile);
+        var labels = new StackPanel { Margin = new Thickness(0, 1, 8, 0) };
+        labels.Children.Add(Text(title, 13.5, true));
+        var text = Text(detail, 12.5); text.Margin = new Thickness(0, 3, 0, 0); text.LineHeight = 18; text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); labels.Children.Add(text);
+        Grid.SetColumn(labels, 1); row.Children.Add(labels);
+        if (control is FrameworkElement end) { end.Margin = new Thickness(0, 9, 0, 0); end.VerticalAlignment = VerticalAlignment.Top; Grid.SetColumn(end, 2); row.Children.Add(end); }
+        return row;
     }
     private CheckBox EmbeddedControl(string title, string detail)
     {
@@ -463,12 +484,18 @@ internal sealed class GuideContent : StackPanel
     internal void Support()
     {
         Reset();
-        var thanks = new DockPanel { Margin = new Thickness(14, 12, 14, 12) };
-        thanks.Children.Add(new DecorativeImage { Width = 48, Height = 48, Margin = new Thickness(0, 0, 14, 0), Stretch = Stretch.Uniform,
+        // The icon and thanks over a faint wash of the three services' colors, as on the Mac.
+        var thanks = new DockPanel { Margin = new Thickness(20, 18, 20, 18) };
+        thanks.Children.Add(new DecorativeImage { Width = 60, Height = 60, Margin = new Thickness(0, 0, 16, 0), Stretch = Stretch.Uniform,
             Source = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))) });
         var thanksText = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        thanksText.Children.Add(Text(ui.Text("support.thanks.title"), 15, true)); var thanksDetail = Text(ui.Text("support.thanks.detail"), 11); thanksDetail.Margin = new Thickness(0, 3, 0, 0); thanksText.Children.Add(thanksDetail);
-        thanks.Children.Add(thanksText); Identify(thanks, "support.thanks", ui.Text("support.thanks.title")); var intro = Group(0, thanks); intro.Margin = new Thickness(0, 0, 0, 14); Children.Add(intro);
+        thanksText.Children.Add(Text(ui.Text("support.thanks.title"), 17, true)); var thanksDetail = Text(ui.Text("support.thanks.detail"), 12.5); thanksDetail.Margin = new Thickness(0, 5, 0, 0); thanksDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); thanksText.Children.Add(thanksDetail);
+        thanks.Children.Add(thanksText); Identify(thanks, "support.thanks", ui.Text("support.thanks.title"));
+        var wash = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
+        wash.GradientStops.Add(new GradientStop(Color.FromArgb(41, 102, 205, 187), 0)); wash.GradientStops.Add(new GradientStop(Color.FromArgb(31, 255, 164, 119), .5)); wash.GradientStops.Add(new GradientStop(Color.FromArgb(41, 126, 150, 255), 1));
+        var hero = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 0, 12), Child = new Border { CornerRadius = new CornerRadius(13), Background = wash, Child = thanks } };
+        hero.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); hero.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
+        Children.Add(hero);
         var star = Link("support.star.action", "star"); Prominent(star, "star.fill");
         Button? copy = null; copy = Button(ui.Text("support.share.copy"), "support.copy", () => _ = Copy(copy!));
         var send = Button(ui.Text("support.share.action"), "support.share", () =>
@@ -496,10 +523,46 @@ internal sealed class GuideContent : StackPanel
                 WindowRendering.Prepare(code); code.Opened += (_, _) => close.Focus();
             }
         }
-        Children.Add(Group(50,
-            SupportRow("support.star", "star.fill", Color.FromRgb(245, 173, 28), star, Link("support.star.feature", "feature"), Link("support.star.bug", "bug")),
-            SupportRow("support.share", "square.and.arrow.up", Color.FromRgb(51, 168, 115), send, copy),
-            SupportRow("support.coffee", "cup.and.saucer", Color.FromRgb(158, 107, 69), coffeeActions.ToArray())));
+        // Three ways to help back side by side, their buttons pinned to the bottom so the cards line up.
+        var cards = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+        foreach (var (card, column) in new[] {
+            (SupportCard("support.star", "star.fill", Color.FromRgb(245, 173, 28), star), 0),
+            (SupportCard("support.share", "square.and.arrow.up", Color.FromRgb(51, 168, 115), send, copy), 2),
+            (SupportCard("support.coffee", "cup.and.saucer", Color.FromRgb(158, 107, 69), coffeeActions.ToArray()), 4) })
+        {
+            if (column > 0) cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+            cards.ColumnDefinitions.Add(new ColumnDefinition()); Grid.SetColumn(card, column); cards.Children.Add(card);
+        }
+        Children.Add(cards);
+        var feedbackTitle = Text(ui.Text("main.support.feedback"), 12, true); feedbackTitle.Margin = new Thickness(4, 10, 0, 8); feedbackTitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        Children.Add(feedbackTitle);
+        Children.Add(Group(0, FeedbackRow(Link("support.star.feature", "feature"), "lightbulb", Color.FromRgb(250, 194, 51)),
+            FeedbackRow(Link("support.star.bug", "bug"), "ladybug", Color.FromRgb(240, 92, 84))));
+    }
+    /// One way to help: its tile, name and a sentence, then full-width buttons at the bottom.
+    private Border SupportCard(string key, string symbol, Color tint, params Button[] actions)
+    {
+        var layout = new DockPanel { LastChildFill = false };
+        var top = new StackPanel(); DockPanel.SetDock(top, Dock.Top);
+        var tile = GuideArt.Tile(symbol, tint, 30); tile.HorizontalAlignment = HorizontalAlignment.Left; top.Children.Add(tile);
+        var title = Text(ui.Text(key + ".title"), 13.5, true); title.Margin = new Thickness(0, 12, 0, 0); top.Children.Add(title);
+        var detail = Text(ui.Text(key + ".detail"), 12); detail.Margin = new Thickness(0, 4, 0, 14); detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); top.Children.Add(detail);
+        layout.Children.Add(top);
+        var buttons = new StackPanel(); DockPanel.SetDock(buttons, Dock.Bottom);
+        foreach (var action in actions) { action.Margin = new Thickness(0, 6, 0, 0); action.HorizontalAlignment = HorizontalAlignment.Stretch; action.MinHeight = 28; buttons.Children.Add(action); }
+        layout.Children.Add(buttons);
+        var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(14), Child = layout };
+        card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
+        AutomationProperties.SetName(card, ui.Text(key + ".title")); return card;
+    }
+    /// A feedback form opened in the browser: tile, title and a chevron.
+    private Grid FeedbackRow(Button link, string symbol, Color tint)
+    {
+        var row = new Grid { Margin = new Thickness(12, 8, 12, 8) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition());
+        var tile = GuideArt.Tile(symbol, tint, 22); tile.Margin = new Thickness(0, 0, 10, 0); tile.VerticalAlignment = VerticalAlignment.Center; row.Children.Add(tile);
+        link.HorizontalAlignment = HorizontalAlignment.Left; link.VerticalAlignment = VerticalAlignment.Center; link.Style = (Style)FindResource("SettingsLink");
+        Grid.SetColumn(link, 1); row.Children.Add(link); return row;
     }
     /// A tile, the title over its detail, then the row's actions in one line.
     private Grid SupportRow(string key, string symbol, Color tint, params Button[] actions)

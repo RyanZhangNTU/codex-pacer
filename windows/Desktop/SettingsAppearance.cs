@@ -12,11 +12,10 @@ internal sealed partial class SettingsWindow
 {
     private RadioButton? notchChoice, freeChoice;
     private FrameworkElement? positionRow;
-    private Border? positionSeparator;
     private readonly Dictionary<string, RadioButton> quotaStyleChoices = new();
     private readonly Dictionary<string, RadioButton> surfaceChoices = new();
     private TextBlock? surfaceStatus;
-    private FrameworkElement? transparencyRow, expandedQuotaRow;
+    private FrameworkElement? transparencyRow, expandedQuotaRow, deepseekPanelRow;
     private ComboBox? displayChoice;
     private CheckBox? fullscreenChoice;
     private TextBlock? displayStatus;
@@ -24,12 +23,9 @@ internal sealed partial class SettingsWindow
     private sealed record DisplayOption(string Mode, DisplayMonitor? Monitor);
 
     private void ClearAppearance()
-    { notchChoice = freeChoice = null; positionRow = null; positionSeparator = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null;
-        displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = null; }
-    private TextBlock SectionHeader(string key, double top = 2)
-    {
-        var text = Label(ui.Text(key), 13, FontWeights.SemiBold); text.Margin = new Thickness(10, top, 0, 8); return text;
-    }
+    { notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = null;
+        displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = deepseekPanelRow = null; }
+    private TextBlock SectionHeader(string key, double top = 2) => SectionTitle(ui.Text(key), top > 2 ? 10 : 0);
     private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true)
     {
         var choice = new RadioButton { Style = (Style)FindResource("SettingsArtChoice"), GroupName = group, IsEnabled = enabled };
@@ -42,7 +38,7 @@ internal sealed partial class SettingsWindow
     }
     private static Grid Pair(UIElement left, UIElement right)
     {
-        var grid = new Grid { Margin = new Thickness(10) };
+        var grid = new Grid { Margin = new Thickness(14, 12, 14, 12) };
         grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) }); grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.Children.Add(left); Grid.SetColumn(right, 2); grid.Children.Add(right); return grid;
     }
@@ -58,12 +54,12 @@ internal sealed partial class SettingsWindow
             surfaceChoices[choice.Name] = choice.Button; editors.Add(choice.Button);
             choice.Button.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { IslandAppearance = choice.Name }); };
         }
-        surfaceStatus = Detail(""); surfaceStatus.Margin = new Thickness(10, 0, 10, 10);
+        surfaceStatus = Detail(""); surfaceStatus.Margin = new Thickness(14, 8, 14, 12);
         Identify(surfaceStatus, "appearance.status", ui.Text("appearance.style"));
         var adjust = new Button { Content = ui.Text("appearance.glass_adjust"), Style = (Style)FindResource("SettingsLink") };
         Identify(adjust, "appearance.transparency.settings", ui.Text("appearance.glass_adjust"));
         adjust.Click += (_, _) => { if (!SettingsPagePolicy.OpenTransparency(systemSettingsLauncher)) ShowIssue("windows.settings.open_system_failed"); };
-        transparencyRow = Row(Label(ui.Text("appearance.glass_transparency")), adjust, 36);
+        transparencyRow = Row(Label(ui.Text("appearance.glass_transparency")), adjust);
         form.Children.Add(Card(Pair(solid, glass), surfaceStatus, transparencyRow));
 
         var quotaChoices = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
@@ -76,21 +72,19 @@ internal sealed partial class SettingsWindow
         }
         var segments = new Border { Child = quotaChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center };
         segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
-        expandedQuotaRow = Card(Row(Label(ui.Text("appearance.expanded_quota")), segments, 40)); form.Children.Add(expandedQuotaRow);
+        // The expanded panel's choices follow Position, as on the Mac.
+        expandedQuotaRow = Row(Label(ui.Text("main.appearance.quota_style")), segments);
         form.Children.Add(SectionHeader("appearance.position", 20));
         notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", PositionSwatch(true));
         freeChoice = ArtChoice("appearance.mode.free", ui.Text("appearance.free_move"), "appearance.modes", PositionSwatch(false));
         notchChoice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { DisplayMode = "notch" }); };
         freeChoice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { DisplayMode = "floating" }); };
         editors.Add(notchChoice); editors.Add(freeChoice);
-        var caption = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 8, 12, 8) };
-        caption.Children.Add(Label(ui.Text("appearance.screen_position")));
-        caption.Children.Add(Detail(ui.Text("appearance.free_move_detail")));
-        var reset = new Button { Content = ui.Text("appearance.position_reset"), Style = (Style)FindResource("SettingsLink"), VerticalAlignment = VerticalAlignment.Center };
+        var reset = new Button { Content = ui.Text("appearance.position_reset"), VerticalAlignment = VerticalAlignment.Center };
         Identify(reset, "appearance.position.reset", ui.Text("appearance.position_reset"));
         reset.Click += async (_, _) => await Change(p => p with { IslandPlacement = null, Position = "center", PositionChosen = false, DisplayMode = "floating" });
         editors.Add(reset);
-        positionRow = Row(caption, reset, 56);
+        positionRow = InfoRow(ui.Text("appearance.free_move_detail"), reset);
         displayChoice = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MinWidth = 150, MaxWidth = 270 };
         Identify(displayChoice, "appearance.display", ui.Text("settings.display_picker")); editors.Add(displayChoice);
         displayChoice.DropDownOpened += (_, _) => appearanceDisplays.Refresh();
@@ -103,8 +97,12 @@ internal sealed partial class SettingsWindow
         displayStatus = Detail(""); displayStatus.MaxWidth = 230; Identify(displayStatus, "appearance.display.status", ui.Text("settings.display_picker")); displayCaption.Children.Add(displayStatus);
         var fullscreen = Toggle("windows.appearance.fullscreen", null, "appearance.fullscreen", out var full); fullscreenChoice = full;
         BindToggle(full, (p, value) => p with { ShowInFullscreen = value }); editors.Add(full);
-        var positionCard = Card(Pair(notchChoice, freeChoice), positionRow, Row(displayCaption, displayChoice, 40), fullscreen);
-        positionSeparator = (Border)((Panel)positionCard.Child).Children[1]; form.Children.Add(positionCard);
+        var positionCard = Card(Pair(notchChoice, freeChoice), positionRow, Row(displayCaption, displayChoice), fullscreen);
+        form.Children.Add(positionCard);
+        deepseekPanelRow = Row(Label(ui.Text("main.appearance.deepseek_panel")), DeepSeekSegments("panel", new[] { ("simple", "deepseek.panel_style.simple"), ("detailed", "deepseek.panel_style.detailed") }, value => ChangeDeepSeek(p => p with { DeepSeekPanelStyle = value })));
+        var apps = Toggle("settings.app_buttons", "main.info.app_buttons", "settings.app_buttons", out var appsSwitch); appButtons = appsSwitch;
+        BindToggle(appsSwitch, (p, value) => p with { ShowAppButtons = value }); editors.Add(appsSwitch);
+        form.Children.Add(SectionTitle(ui.Text("main.appearance.panel"))); form.Children.Add(Card(expandedQuotaRow, deepseekPanelRow, apps));
     }
     private void RefreshAppearance()
     {
@@ -113,11 +111,16 @@ internal sealed partial class SettingsWindow
         foreach (var item in surfaceChoices) item.Value.IsChecked = item.Key == session.Current.IslandAppearance;
         RefreshSurfaceStatus();
         if (expandedQuotaRow != null) expandedQuotaRow.Visibility = SettingsPagePolicy.ShowExpandedQuotaStyle(CompactProviders()) ? Visibility.Visible : Visibility.Collapsed;
+        // DeepSeek alone has its own dashboard, so the panel offers Simple or Detailed instead.
+        if (deepseekPanelRow != null) deepseekPanelRow.Visibility = CompactProviders() is ["deepseek"] ? Visibility.Visible : Visibility.Collapsed;
+        if (appButtons != null) appButtons.IsChecked = session.Current.ShowAppButtons;
+        foreach (var choice in deepseekChoices.Where(value => value.Key.StartsWith("panel.", StringComparison.Ordinal)))
+            choice.Value.IsChecked = choice.Key == "panel." + session.Current.DeepSeekPanelStyle;
         foreach (var item in quotaStyleChoices) item.Value.IsChecked = item.Key == session.Current.ExpandedQuotaStyle;
         if (notchChoice == null || freeChoice == null || positionRow == null) return;
         bool attached = session.Current.DisplayMode == "notch";
         notchChoice.IsChecked = attached; freeChoice.IsChecked = !attached;
-        positionRow.Visibility = positionSeparator!.Visibility = attached ? Visibility.Collapsed : Visibility.Visible;
+        positionRow.Visibility = attached ? Visibility.Collapsed : Visibility.Visible;
     }
     private void OnAppearanceDisplaysChanged()
     {

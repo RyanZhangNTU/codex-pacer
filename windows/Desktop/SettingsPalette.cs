@@ -12,10 +12,11 @@ internal static class SettingsPalette
         {
             var colors = appearance.Colors;
             foreach (string key in new[] { "SettingsBackground", "SettingsSidebar", "SettingsPopup", "SettingsInput", "SettingsChartMaterial" }) resources[key] = DesktopAppearance.Ink(colors.Window);
-            foreach (string key in new[] { "SettingsCard", "SettingsTile", "SettingsCompactChip", "SettingsSegment", "SettingsButton", "SettingsSwitchOff", "SettingsSearchFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
+            foreach (string key in new[] { "SettingsCard", "SettingsTile", "SettingsCompactChip", "SettingsSegment", "SettingsButton", "SettingsSwitchOff", "SettingsSearchFill", "SettingsInfoFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
             foreach (string key in new[] { "SettingsPrimary", "SettingsSecondary", "SettingsChartReference", "SettingsChartSecondary", "SettingsSeparator", "SettingsCardBorder" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
             foreach (string key in new[] { "SettingsAccent", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
+            resources["SettingsAccentSoft"] = DesktopAppearance.Ink(colors.Control);
             resources["SettingsKnob"] = resources["SettingsSelectionText"] = DesktopAppearance.Ink(colors.HighlightText);
             resources["SettingsSidebarSelectionText"] = DesktopAppearance.Ink(colors.HighlightText); return;
         }
@@ -34,6 +35,7 @@ internal static class SettingsPalette
         Overlay("SettingsCardBorder", main ? dark ? (byte)18 : (byte)20 : (byte)0, dark ? (byte)255 : (byte)0);
         Overlay("SettingsSidebarSelection", dark ? (byte)36 : (byte)23, dark ? (byte)255 : (byte)0);
         Overlay("SettingsSearchFill", dark ? (byte)20 : (byte)15, dark ? (byte)255 : (byte)0);
+        Overlay("SettingsInfoFill", dark ? (byte)13 : (byte)10, dark ? (byte)255 : (byte)0);
         Gray("SettingsSidebarSelectionText", dark ? (byte)222 : (byte)36);
         Gray("SettingsTile", dark ? (byte)45 : (byte)237);
         Gray("SettingsCompactChip", dark ? (byte)31 : (byte)251);
@@ -53,6 +55,7 @@ internal static class SettingsPalette
         Gray("SettingsKnob", dark ? (byte)224 : (byte)255);
         Gray("SettingsSelectionText", 255);
         Brush("SettingsAccent", 0, 122, 255);
+        resources["SettingsAccentSoft"] = new SolidColorBrush(Color.FromArgb(36, 0, 122, 255));
         Brush("SettingsWarning", dark ? (byte)255 : (byte)194, dark ? (byte)146 : (byte)95, dark ? (byte)48 : (byte)0);
         Brush("SettingsSuccess", 48, 186, 85);
         if (active) Brush("SettingsSwitchOn", 0, 122, 255);

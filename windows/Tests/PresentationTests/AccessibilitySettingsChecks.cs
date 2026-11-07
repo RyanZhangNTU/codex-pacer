@@ -17,7 +17,8 @@ internal static class AccessibilitySettingsChecks
     internal static async Task Run(string language, AppearanceFixture appearance, EngineClient engine, IslandWindow island)
     {
         int saves = 0, configurations = 0, subscribers = appearance.Subscribers;
-        var session = new PreferencesSession(new(), _ => { configurations++; return Task.CompletedTask; }, _ => { saves++; return true; });
+        // General holds the switches and picker this audit drives; Overview is checked with the other pages below.
+        var session = new PreferencesSession(new() { LastSettingsPane = "general" }, _ => { configurations++; return Task.CompletedTask; }, _ => { saves++; return true; });
         var window = new SettingsWindow(UiText.For(language == "zh-Hans"), session, new Startup(), true, engine: engine,
             surfaceWindow: island, appearanceSource: appearance) { ShowActivated = false, IsHitTestVisible = false };
         try
@@ -31,7 +32,8 @@ internal static class AccessibilitySettingsChecks
             Check(ColorOf(window.Resources["SettingsBackground"]) == appearance.Current.Colors.Window
                 && ColorOf(window.Resources["SettingsAccent"]) == appearance.Current.Colors.Highlight
                 && ColorOf(window.Resources["SettingsDisabled"]) == appearance.Current.Colors.Disabled,
-                "High contrast uses semantic background, selection and disabled colors");
+                "High contrast uses semantic background, selection and disabled colors: " + ColorOf(window.Resources["SettingsBackground"]) + "/" + appearance.Current.Colors.Window
+                + " " + ColorOf(window.Resources["SettingsAccent"]) + "/" + appearance.Current.Colors.Highlight + " " + ColorOf(window.Resources["SettingsDisabled"]) + "/" + appearance.Current.Colors.Disabled);
             var selected = Find<RadioButton>(window, "settings.pane.general");
             Check(ColorOf(selected.Foreground) == appearance.Current.Colors.HighlightText, "The selected navigation choice uses semantic selection text");
             Check(saves == 0 && configurations == 0, "System appearance changes do not save preferences or configure collectors");
@@ -61,7 +63,7 @@ internal static class AccessibilitySettingsChecks
             CheckFocusOrder(window, privacy); privacy.Focus();
             PostKey(window, Key.Space); await PresentationWait.UntilAsync(() => session.Current.HideProjects, "Space toggles a focused settings choice");
             await session.WaitForChangesAsync();
-            foreach (string page in new[] { "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "whatsNew", "help", "support", "general" })
+            foreach (string page in new[] { "overview", "history", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "whatsNew", "help", "support", "general" })
             {
                 // What's New and Help are tabs of Help & Updates.
                 string pane = SettingsWindow.CanonicalPane(page);

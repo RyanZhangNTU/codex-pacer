@@ -107,7 +107,7 @@ internal static class PreferencesCodec
         DeepSeekRingPeriod = value.DeepSeekRingPeriod is "week" ? "week" : "day",
         CompactSingleTask = value.CompactSingleTask is "count" ? "count" : "stage",
         CompactMetric = value.CompactMetric is "pace" ? "pace" : "remaining",
-        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "appearance" or "collapsed" or "notifications" or "codex" or "claude" or "deepseek" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew" ? value.LastSettingsPane : "general"
+        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "notifications" or "codex" or "claude" or "deepseek" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew" ? value.LastSettingsPane : "overview"
     };
     internal static byte[] Encode(DesktopPreferences value, ReadOnlySpan<byte> original = default)
     {

@@ -48,8 +48,8 @@ internal static class SettingsPresentationChecks
                 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5, "The main window opens at the Mac's default size");
             Check(window.ResizeMode == ResizeMode.CanResize && window.MinWidth >= SettingsWindow.MinimumWidth && window.MinHeight >= SettingsWindow.MinimumHeight,
                 "The main window resizes down to the Mac's minimum client size");
-            Check(!Find<RadioButton>(window, "settings.pane.overview").IsEnabled && !Find<RadioButton>(window, "settings.pane.history").IsEnabled,
-                "Overview and History stay visible but closed until they are ported");
+            Check(Find<RadioButton>(window, "settings.pane.overview").IsChecked == true && Find<RadioButton>(window, "settings.pane.history").IsEnabled,
+                "The main window opens on Overview, with History beside it, as on the Mac");
             await window.NavigateAsync("about"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             Check(window.Title == ui.Text("menu.settings_title"), "The system window title must use the shared catalog");
             var update = Find<Button>(window, "settings.update.check");
@@ -68,18 +68,15 @@ internal static class SettingsPresentationChecks
             Check(window.SearchMatches().Contains("remote") && Find<Button>(window, "settings.search.result.remote").IsVisible
                 && !Find<RadioButton>(window, "settings.pane.general").IsVisible, "Search lists pages by their shared search words in place of the groups");
             search.Text = ui.Text("main.pane.overview"); window.UpdateLayout();
-            Check(!window.SearchMatches().Contains("overview"), "Search leaves out pages that cannot open yet");
+            Check(window.SearchMatches().Contains("overview"), "Search finds a page by its own title");
             search.Text = "␀"; window.UpdateLayout();
             Check(window.SearchMatches().Count == 0 && Find<TextBlock>(window, "settings.search.empty").IsVisible, "Search says when nothing matches");
             search.Clear(); window.UpdateLayout();
             Check(Find<RadioButton>(window, "settings.pane.general").IsVisible && Find<RadioButton>(window, "settings.pane.general").IsChecked == true,
                 "Clearing the search restores the grouped pages and keeps the current one");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");
-            var apps = Find<CheckBox>(window, "settings.app_buttons");
             var login = Find<CheckBox>(window, "settings.startup");
-            var ssh = Find<CheckBox>(window, "settings.monitor_ssh");
-            Check(ssh.IsChecked == true, "SSH monitoring uses the shared default");
-            Check(privacy.ActualWidth == 36 && privacy.ActualHeight == 18 && privacy.IsChecked == false && apps.IsChecked == true,
+            Check(privacy.ActualWidth == 36 && privacy.ActualHeight == 18 && privacy.IsChecked == false && session.Current.ShowAppButtons,
                 "Switch geometry and defaults must match the source preferences");
             string screenshot = Path.Combine(output, "settings-" + scenario + "-general.png");
             window.CapturePreview(screenshot); CheckOpaque(screenshot, window);
@@ -108,8 +105,16 @@ internal static class SettingsPresentationChecks
             await Until(() => session.Current.HideProjects && privacy.IsEnabled, "Accessible privacy changes must await the real engine acknowledgement");
             Check(latest?.Tasks.Count > 0 && latest.Tasks.All(value => value.Title == (language == "en" ? "Local task" : "本地任务")),
                 "The settings switch must redact names before they cross the engine protocol");
+            // App buttons moved to Appearance's expanded panel, as on the Mac.
+            await window.NavigateAsync("appearance"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            var apps = Find<CheckBox>(window, "settings.app_buttons");
+            Check(apps.IsChecked == true, "App buttons default on under Appearance");
             Toggle(apps);
             await Until(() => !session.Current.ShowAppButtons && apps.IsEnabled, "App button choices must commit immediately");
+            await window.NavigateAsync("general"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            navigationSaves += 2;
+            // Returning rebuilt General, so its switches are new controls.
+            privacy = Find<CheckBox>(window, "settings.hide_projects"); login = Find<CheckBox>(window, "settings.startup");
             Check(configureCalls == 1, "Host-only choices cannot restart or reconfigure data collectors");
 
             var picker = Find<ComboBox>(window, "settings.language");
@@ -196,6 +201,11 @@ internal static class SettingsPresentationChecks
             Select(Find<RadioButton>(window, "settings.pane.remote"));
             await Until(() => session.Current.LastSettingsPane == "remote" && Descendants(window).OfType<FrameworkElement>().Any(value =>
                 AutomationProperties.GetAutomationId(value) == "settings.connections.summary"), "Connections opens with its live summary");
+            // SSH monitoring moved to Remote's SSH card, as on the Mac.
+            var remoteSSH = Find<CheckBox>(window, "settings.connections.ssh");
+            Check(remoteSSH.IsChecked == true, "SSH monitoring uses the shared default");
+            Toggle(remoteSSH); await Until(() => !session.Current.MonitorSSH && remoteSSH.IsEnabled, "The SSH switch awaits engine acknowledgement");
+            Toggle(remoteSSH); await Until(() => session.Current.MonitorSSH && remoteSSH.IsEnabled, "SSH monitoring can be enabled again");
             string connectionsImage = Path.Combine(output, "settings-" + scenario + "-connections.png");
             window.CapturePreview(connectionsImage); CheckOpaque(connectionsImage, window);
             Select(Find<RadioButton>(window, "settings.pane.appearance"));
@@ -209,14 +219,6 @@ internal static class SettingsPresentationChecks
                 Check(Find<RadioButton>(reopened, "settings.pane.appearance").IsChecked == true
                     && Find<RadioButton>(reopened, "appearance.mode.free").IsChecked == true,
                     "Reopening settings must restore the last pane and position");
-                Select(Find<RadioButton>(reopened, "settings.pane.general"));
-                await Until(() => Find<RadioButton>(reopened, "settings.pane.general").IsChecked == true, "General must open before editing SSH");
-                await Until(() => Descendants(reopened).OfType<CheckBox>().Any(value =>
-                    AutomationProperties.GetAutomationId(value) == "settings.monitor_ssh" && value.IsEnabled),
-                    "The General pane must finish its asynchronous preference edit before the SSH toggle is used");
-                var reopenedSSH = Find<CheckBox>(reopened, "settings.monitor_ssh");
-                Toggle(reopenedSSH); await Until(() => !session.Current.MonitorSSH && reopenedSSH.IsEnabled, "The SSH switch awaits engine acknowledgement");
-                Toggle(reopenedSSH); await Until(() => session.Current.MonitorSSH && reopenedSSH.IsEnabled, "SSH monitoring can be enabled again");
             }
             finally { reopened.AllowClose = true; reopened.Close(); }
             Console.WriteLine("PASS settings " + scenario + ": General/Appearance bounds, captures, UI Automation, position rules, rollback and lifecycle actions");

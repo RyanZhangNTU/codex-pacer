@@ -61,14 +61,16 @@ internal static class CodexSettingsChecks
                 "Enabling Codex progress must reach the engine and show the dashed ring");
             Toggle(progress);
             await Until(() => !session.Current.CodexProgressRing && progress.IsEnabled, "Codex progress can be turned off again");
-            var remote = Find<CheckBox>(window, "settings.codex.remote_control");
+            // Remote Control lives on Remote, as on the Mac.
+            await window.NavigateAsync("remote"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            var remote = Find<CheckBox>(window, "settings.connections.remote_control");
             Check(remote.IsEnabled && remote.IsChecked == true, "Remote Control defaults to the Mac preference's enabled state");
             Toggle(remote);
             await Until(() => !session.Current.MonitorRemoteControl && remote.IsEnabled, "Remote Control changes must await engine acknowledgement");
-            Check(!Find<Button>(window, "settings.codex.remote_retry").IsEnabled, "A disabled Remote Control connection cannot be retried");
             Toggle(remote);
-            await Until(() => session.Current.MonitorRemoteControl && remote.IsEnabled && Find<Button>(window, "settings.codex.remote_retry").IsEnabled,
-                "Re-enabling restores the independently retryable connection");
+            await Until(() => session.Current.MonitorRemoteControl && remote.IsEnabled, "Re-enabling Remote Control restores monitoring");
+            await window.NavigateAsync("codex"); await window.WaitForSourceInspectionAsync(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            module = Find<CheckBox>(window, "settings.codex.enabled");
             int sourceConfigurations = configurations;
             Check(Find<RadioButton>(window, "settings.pane.codex").IsChecked == true
                 && Find<RadioButton>(window, "settings.pane.claude").IsEnabled

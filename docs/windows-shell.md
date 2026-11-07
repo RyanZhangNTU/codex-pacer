@@ -35,9 +35,20 @@ For local toolchains outside the worktree, set `PACER_SWIFT_ROOT`, `PACER_WINDOW
 
 ## Main window
 
-Settings is Pacer's main window, as on the Mac. It opens at 980 by 660 and resizes down to 860 by 560. Each page is one centered column of cards, at most 640 wide. The sidebar has a search field, then Overview and History, then the services (Codex, Claude, DeepSeek, Remote) and the preferences (Appearance, Collapsed Bar, Notifications, General). Help & Updates and Support & Feedback sit in its footer, with Quit, because Windows has no app menu. A service that is turned off shows Off, and a found update replaces the installed version under Help & Updates.
+Settings is Pacer's main window, as on the Mac. It opens at 980 by 660, resizes down to 860 by 560, and opens on Overview. Most pages are one centered column of cards, at most 640 wide; Overview and History use 900. Cards follow the Mac's kit: gray section titles, 44-point rows, explanations behind an ⓘ that opens under the row, status rows with a colored dot, and folding rows for custom locations.
 
-Search matches page titles and the shared `main.search.*` words, and lists only pages that can open. Return opens the first match, and Escape clears the query before it can close the window. Overview and History stay visible but disabled until they are ported. The page id is stored in `settingsPane`. Older values open where their content moved: `reminders` opens Notifications, `connections` opens Remote, and `whatsNew` or `help` opens the matching tab of Help & Updates.
+The sidebar has a search field, then Overview and History, then the services (Codex, Claude, DeepSeek, Remote) and the preferences (Appearance, Collapsed Bar, Notifications, General). Help & Updates and Support & Feedback sit in its footer, with Quit, because Windows has no app menu. A service that is turned off shows Off. An amber dot marks Claude, Codex or Remote when it needs the user, using the same rules as Overview's attention card. A found update replaces the installed version under Help & Updates.
+
+- Overview: the attention card, one dark card per service with the island's own quota view, and up to eight task rows. A row opens its task through the island's prepared navigation.
+- History: one service's current quota cycle at a time, with chips to switch, and DeepSeek's last seven days.
+- Service pages: the module switch sits in the page header, then Status (source, account, a one-line quota summary with a link to History), Display, and folded custom locations. Remote Control moved to Remote, and the quota trend to History.
+- Remote: the overall state is the subtitle, then SSH hosts, Codex Remote Control, WSL (Windows only) and other task sources.
+- Notifications: each event shows where it reminds you, in the collapsed bar and in system notifications. System notifications still follow their one switch, so that column only shows the result.
+- Help & Updates: the version card with one action (Check for Updates, or Update and Restart, which opens the Windows update window), then What's New and Help as tabs.
+
+Search matches page titles and the shared `main.search.*` words, and lists only pages that can open. Return opens the first match, and Escape clears the query before it can close the window. The page id is stored in `settingsPane`, and an unknown value opens Overview. Older values open where their content moved: `reminders` opens Notifications, `connections` opens Remote, and `whatsNew` or `help` opens the matching tab of Help & Updates. Windows has no Dock, so the Mac's Dock icon choice has no Windows counterpart.
+
+The What's New window follows the main window too: the icon over one large centered title, each highlight as a feature row with its setting in place, then one wide Continue and a Release Notes link.
 
 ## Presentation and request handling
 
