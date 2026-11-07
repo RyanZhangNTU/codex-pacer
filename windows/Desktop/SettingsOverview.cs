@@ -168,7 +168,8 @@ internal sealed partial class SettingsWindow
         var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var install = new Button { Content = ui.Text("main.update.install"), Style = (Style)FindResource("SettingsProminentButton") };
         Identify(install, "settings.overview.update", ui.Text("main.update.install"));
-        install.Click += (_, _) => { if (updater?.CurrentOffer is { } offer) updater.Presenter?.Offer(offer, true); };
+        // One click downloads and installs from Help & Updates, where its progress shows.
+        install.Click += async (_, _) => { await NavigateAsync("about"); await InstallInlineAsync(); };
         actions.Children.Add(install);
         var glyph = new IconGlyph { Symbol = "xmark", Width = 11, Height = 11 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
         var later = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 24, Height = 24, Padding = new Thickness(0), Content = glyph, Margin = new Thickness(8, 0, 0, 0), ToolTip = ui.Text("main.update.later") };

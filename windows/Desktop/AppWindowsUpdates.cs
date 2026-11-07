@@ -21,10 +21,12 @@ public partial class App
     private string updateVersion = "";
     private sealed class UpdatePresenter(App app) : IWindowsUpdatePresenter
     {
-        public void Checking() => app.PresentUpdate(true, window => window.Checking());
-        public void Offer(WindowsUpdatePackage package, bool manual) => app.PresentUpdate(manual, window => window.Offer(package, manual));
-        public void UpToDate() => app.PresentUpdate(true, window => window.UpToDate());
-        public void Failed() => app.PresentUpdate(true, window => window.Failed());
+        // While Help & Updates is showing, a check reports in its card instead of a window, as on the Mac.
+        private bool Inline => app.settings?.ShowsUpdatesInline == true && app.updateWindow == null;
+        public void Checking() { if (Inline) app.settings!.InlineUpdate("checking"); else app.PresentUpdate(true, window => window.Checking()); }
+        public void Offer(WindowsUpdatePackage package, bool manual) { if (manual && Inline) app.settings!.InlineUpdate("offer"); else app.PresentUpdate(manual, window => window.Offer(package, manual)); }
+        public void UpToDate() { if (Inline) app.settings!.InlineUpdate("upToDate"); else app.PresentUpdate(true, window => window.UpToDate()); }
+        public void Failed() { if (Inline) app.settings!.InlineUpdate("failed"); else app.PresentUpdate(true, window => window.Failed()); }
     }
     private Task CreateWindowsUpdaterAsync(string[] arguments, Guid? qa, bool reference)
     {

@@ -14,6 +14,47 @@ internal sealed partial class SettingsWindow
     private bool changingUpdates, readingUpdateNotes;
     internal event System.Action<string>? SignedReleaseNotesRequested;
     private void OnUpdateStatus(WindowsUpdateStatus value) { RefreshUpdates(); RefreshSidebar(); RefreshOverview(); }
+    // Checks, progress, cancel and failures started here show in the card, as on the Mac.
+    private string? inlineUpdateText; private bool inlineUpdateFailed;
+    private System.Threading.CancellationTokenSource? inlineDownload;
+    private double? inlineFraction;
+    private ProgressBar? updateProgress;
+    private Button? updateCancel;
+    /// Whether Help & Updates is showing, so a check started here reports here instead of in a window.
+    internal bool ShowsUpdatesInline => IsVisible && !sourceClosed && activePane == "about" && updateStatus != null;
+    internal void InlineUpdate(string phase)
+    {
+        inlineUpdateFailed = phase == "failed";
+        inlineUpdateText = phase switch
+        {
+            "checking" => ui.Text("updates.checking"),
+            "upToDate" => ui.Text("main.update.up_to_date"),
+            "failed" => ui.Text("windows.updates.failed"),
+            _ => null
+        };
+        RefreshUpdates(); RefreshSidebar(); RefreshOverview();
+    }
+    /// Update and Restart: download with real progress, verify, then hand off to the installer, which restarts Pacer.
+    internal async System.Threading.Tasks.Task InstallInlineAsync()
+    {
+        if (updater?.CurrentOffer is not { } package || inlineDownload != null || sourceClosed) return;
+        inlineDownload = new System.Threading.CancellationTokenSource(); inlineFraction = 0; inlineUpdateText = null; inlineUpdateFailed = false; RefreshUpdates();
+        try
+        {
+            var verified = await updater.DownloadAsync(new System.Progress<UpdateProgress>(value =>
+            {
+                if (value.Total > 0) inlineFraction = System.Math.Clamp((double)value.Received / value.Total, 0, 1);
+                RefreshUpdates();
+            }), inlineDownload.Token);
+            if (sourceClosed) return;
+            inlineFraction = null; inlineUpdateText = ui.Text("main.update.installing"); RefreshUpdates();
+            if (!updater.Install(verified)) { inlineUpdateText = ui.Text("windows.updates.failed"); inlineUpdateFailed = true; }
+        }
+        catch (System.OperationCanceledException) { inlineUpdateText = null; }
+        catch (System.Exception error) when (WindowsUpdateService.Recoverable(error))
+        { inlineUpdateText = ui.Text("main.update.failed").Replace("%@", ui.Text("windows.updates.failed"), System.StringComparison.Ordinal); inlineUpdateFailed = true; }
+        finally { inlineDownload?.Dispose(); inlineDownload = null; inlineFraction = null; if (!sourceClosed) RefreshUpdates(); }
+    }
     private void RefreshUpdates()
     {
         bool syncing = synchronizing; synchronizing = true;
@@ -26,14 +67,25 @@ internal sealed partial class SettingsWindow
             if (updateCheck != null) updateCheck.IsEnabled = available;
             if (updateNotesButton != null) updateNotesButton.IsEnabled = available && !readingUpdateNotes;
             string? found = updater?.CurrentOffer?.Version;
+            bool downloading = inlineDownload != null;
             if (updateStatus != null)
             {
-                updateStatus.Text = found != null ? ui.Text("main.update.available").Replace("%@", found, System.StringComparison.Ordinal) : ui.Text(status.MessageKey);
+                updateStatus.Text = downloading && inlineFraction is { } fraction
+                    ? ui.Text("main.update.downloading_percent").Replace("%@", ((int)System.Math.Floor(fraction * 100)).ToString(System.Globalization.CultureInfo.CurrentCulture), System.StringComparison.Ordinal).Replace("%%", "%", System.StringComparison.Ordinal)
+                    : inlineUpdateText ?? (found != null ? ui.Text("main.update.available").Replace("%@", found, System.StringComparison.Ordinal) : ui.Text(status.MessageKey));
+                updateStatus.SetResourceReference(TextBlock.ForegroundProperty, inlineUpdateFailed ? "SettingsWarning" : "SettingsSecondary");
                 AutomationProperties.SetName(updateStatus, updateStatus.Text);
             }
-            // A found version replaces the check with the one-click update, as on the Mac.
-            if (updateCheck != null) updateCheck.Visibility = found == null ? Visibility.Visible : Visibility.Collapsed;
-            if (updateInstall != null) { updateInstall.Visibility = found != null ? Visibility.Visible : Visibility.Collapsed; updateInstall.IsEnabled = !status.Busy && !busy; }
+            if (updateProgress != null)
+            {
+                updateProgress.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
+                updateProgress.IsIndeterminate = downloading && inlineFraction == null;
+                if (inlineFraction is { } value) updateProgress.Value = value;
+            }
+            // A found version replaces the check with the one-click update; while it downloads, Cancel takes its place.
+            if (updateCheck != null) updateCheck.Visibility = found == null && !downloading ? Visibility.Visible : Visibility.Collapsed;
+            if (updateInstall != null) { updateInstall.Visibility = found != null && !downloading ? Visibility.Visible : Visibility.Collapsed; updateInstall.IsEnabled = !status.Busy && !busy; }
+            if (updateCancel != null) updateCancel.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
         }
         finally { synchronizing = syncing; }
     }

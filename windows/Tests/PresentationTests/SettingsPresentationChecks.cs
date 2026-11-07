@@ -56,6 +56,13 @@ internal static class SettingsPresentationChecks
             var automatic = Find<CheckBox>(window, "settings.update.automatic");
             Check(!update.IsEnabled && !automatic.IsEnabled, "The preview cannot expose unimplemented update actions");
             Check(Find<TextBlock>(window, "settings.about.version").Text.Length > 0, "Help & Updates shows the installed version in the sidebar");
+            // A check started from Help & Updates reports in its card, as on the Mac.
+            Check(window.ShowsUpdatesInline, "Help & Updates takes over update reports while it shows");
+            window.InlineUpdate("checking"); Check(Find<TextBlock>(window, "settings.update.status").Text == ui.Text("updates.checking"), "Checking shows in the card");
+            window.InlineUpdate("upToDate"); Check(Find<TextBlock>(window, "settings.update.status").Text == ui.Text("main.update.up_to_date"), "An up-to-date result shows in the card");
+            window.InlineUpdate("failed"); Check(Find<TextBlock>(window, "settings.update.status").Text == ui.Text("windows.updates.failed")
+                && !Find<ProgressBar>(window, "settings.update.progress").IsVisible, "A failure shows in the card without a stale progress bar");
+            window.InlineUpdate("offer");
             await window.NavigateAsync("general"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             // Opening Help & Updates and returning to General each saved the page.
             int navigationSaves = saved.Count;
