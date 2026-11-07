@@ -328,6 +328,8 @@ final class IslandModel: ObservableObject {
     static let deepseekProgressRingKey = "deepseekProgressRing"
     @Published private(set) var deepseekProgressSetup: DeepSeekProgressSetupStatus?
     private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
+    /// The newest setup, which waits for the earlier ones; shutdown lets it finish.
+    private var deepseekProgressTask: Task<Void, Never>?
     var showsDeepSeekProgressRing: Bool { defaults.bool(forKey: Self.deepseekProgressRingKey) }
     /// Also runs when the switch turns off, which removes Pacer's entry.
     func syncDeepSeekProgressSwitch(force: Bool = false) {
@@ -340,9 +342,11 @@ final class IslandModel: ObservableObject {
                 return DeepSeekProgressSetup.sync(from: ticket.previous, to: ticket.target, storage: MacClaudeHookStorage())
             }.value
             guard let self, !stopped, deepseekProgressQueue.finish(ticket) else { return }
+            deepseekProgressTask = nil
             deepseekProgressSetup = status
         }
         deepseekProgressQueue.track(task)
+        deepseekProgressTask = task
     }
     @Published private(set) var codexProgressSetup: CodexProgressSetupStatus?
     private var codexProgressQueue = ProgressSetupQueue<CodexProgressSetup.Target>()
@@ -1742,6 +1746,7 @@ final class IslandModel: ObservableObject {
         // A saved opt-out also takes effect if the settings view has not yet
         // applied its pending changes.
         if codexProgressQueue.target?.enabled == true, !showsCodexProgressRing { syncCodexProgressSwitch() }
+        if deepseekProgressQueue.target?.enabled == true, !showsDeepSeekProgressRing { syncDeepSeekProgressSwitch() }
         let plan = lifecycle.shutdown()
         guard plan.actions.contains(.stopSources) else { return }
         desktopApplicationScan?.cancel()
@@ -1754,12 +1759,13 @@ final class IslandModel: ObservableObject {
         let deadline = ShutdownDeadline()
         let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
         let claude = claudeMonitor, deepseek = deepseekMonitor, setup = claudeRemoteSetup, realtime = realtimeMonitor
-        let progressFlag = codexProgressFlagTask
+        let progressFlag = codexProgressFlagTask, deepseekProgress = deepseekProgressTask
         let completed = await ApplicationLifecycleCoordinator.cleanup([
             .codexProgressFlag: { _ = await progressFlag?.value },
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
             .cloud: { await cloud?.stop() }, .claudeActivity: { await claude.shutdown(deadline: deadline) },
-            .deepseekActivity: { await deepseek.shutdown() }, .remoteSetup: { await setup.shutdown() },
+            // Removing DeepSeek's reporter entry is local file work that takes milliseconds.
+            .deepseekActivity: { await deepseekProgress?.value; await deepseek.shutdown() }, .remoteSetup: { await setup.shutdown() },
             .realtime: { await realtime.shutdown(deadline: deadline) }, .balance: { await balance?.stop() }
         ], deadline: deadline)
         if !completed { OwnedProcessTermination.terminateAll() }

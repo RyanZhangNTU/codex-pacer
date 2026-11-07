@@ -338,7 +338,11 @@ struct SettingsView: View {
         }
         if moduleEnabled(provider), provider == .deepseek {
             SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
-                showsTurnCost: $showsDeepSeekTurnCost, showsProgressRing: $deepseekProgressRing,
+                // Like Codex, the switch applies at once, so turning it off and quitting still removes the entry.
+                showsTurnCost: $showsDeepSeekTurnCost, showsProgressRing: Binding(get: { deepseekProgressRing }, set: { value in
+                    deepseekProgressRing = value
+                    model.syncDeepSeekProgressSwitch()
+                }),
                 speedSource: $deepseekSpeedSource, panelStyle: $deepseekPanelStyle,
                 alone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek],
                 ringSlot: model.deepseekValueShowsBudget ? QuotaRingSlot(rawValue: model.compactRingProviders.firstIndex(of: .deepseek) ?? 0) : nil,
