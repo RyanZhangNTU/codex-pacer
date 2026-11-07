@@ -1,6 +1,6 @@
 # DeepSeek Harness 任务状态机与动画
 
-在 **设置 → DeepSeek → 显示 DeepSeek 任务进度** 打开进度环。Pacer 在 Harness 数据目录的 `cordis.patch.yml` 中添加一个本机 MCP 工具，该目录下的所有配置以及 Desktop 和命令行都会加载它。配置完成后新建 Harness 会话；如果当前进程还没加载配置，退出并重新打开 Harness。工具从 0 到 100 接收一个整数，表示 DeepSeek 对当前请求完成度的估算。进度可以回退。关闭开关会撤回 Pacer 管理的配置、删除上报脚本，并让已经启动的上报工具停止接收估算。
+在 **设置 → DeepSeek → 任务进度圆环**（Windows 上为“显示 DeepSeek 任务进度”）打开进度环。Pacer 在 Harness 数据目录的 `cordis.patch.yml` 中添加一个本机 MCP 工具，该目录下的所有配置以及 Desktop 和命令行都会加载它。配置完成后新建 Harness 会话；如果当前进程还没加载配置，退出并重新打开 Harness。工具从 0 到 100 接收一个整数，表示 DeepSeek 对当前请求完成度的估算。进度可以回退。关闭开关会撤回 Pacer 管理的配置、删除上报脚本，并让已经启动的上报工具停止接收估算。
 
 Pacer 的条目夹在两行 `Codex Pacer DeepSeek progress` 标记之间，开始标记带有条目内容的校验和；上报脚本第一行是 Pacer 的所有权标记。新版 Pacer 会原地替换旧版写入的条目和脚本，但不会改动校验和不符的条目或没有标记的脚本，这时显示冲突并提供重试。关闭开关时移除失败，即使开关已经关闭，也会显示提示和重试。Windows 卸载会清理这些文件；macOS 上请先关闭开关再删除 Pacer。如果 Pacer 已经删除，请手动删掉两行标记及其之间的全部内容，以及 `pacer/deepseek-progress` 文件夹。
 

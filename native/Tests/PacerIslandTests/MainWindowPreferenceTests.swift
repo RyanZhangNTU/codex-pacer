@@ -1,15 +1,16 @@
 import XCTest
 @testable import PacerIsland
+import PacerTestSupport
 
 final class MainWindowPreferenceTests: XCTestCase {
     private func defaults() -> (UserDefaults, String) {
-        let name = "MainWindowPreferenceTests-\(UUID().uuidString)"
+        let name = testDefaultsName("main-window-preferences")
         return (UserDefaults(suiteName: name)!, name)
     }
 
     func testStoredPagesFromTheSettingsWindowOpenWhereTheirContentMoved() {
         let (defaults, name) = defaults()
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         XCTAssertEqual(SettingsPane.load(from: defaults), .overview, "A first open lands on Overview")
         let moved: [String: SettingsPane] = ["connections": .remote, "reminders": .notifications,
                                              "whatsNew": .about, "help": .about]
@@ -29,7 +30,7 @@ final class MainWindowPreferenceTests: XCTestCase {
 
     func testAboutKeepsTheHelpTabForAnOldHelpPage() {
         let (defaults, name) = defaults()
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         XCTAssertEqual(AboutTab.load(from: defaults), .whatsNew)
         defaults.set("help", forKey: SettingsPane.defaultsKey)
         XCTAssertEqual(AboutTab.load(from: defaults), .help, "The old Help page opens on its tab")
@@ -39,7 +40,7 @@ final class MainWindowPreferenceTests: XCTestCase {
 
     func testDockIconFollowsTheWindowOnlyByDefault() {
         let (defaults, name) = defaults()
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         XCTAssertEqual(DockIconPreference.load(from: defaults), .whileOpen)
         XCTAssertEqual(DockIconPreference.allCases.map { [$0.showsIcon(windowOpen: false), $0.showsIcon(windowOpen: true)] },
                        [[false, true], [true, true], [false, false]])

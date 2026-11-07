@@ -103,7 +103,7 @@ DeepSeek 没有额度窗口，按余额扣费。**余额**模式（默认）下�
 
 ## Codex
 
-**任务进度。** 打开“设置 → Codex → 任务进度圆环”。Pacer 会为新开的本地 Codex 会话配置上报工具。在 Codex 给出估计前，任务图标外会显示虚线环。[任务进度说明](codex-progress-setup.md)
+**任务进度。** 打开“设置 → Codex → 任务进度圆环”（Windows 上为“显示 Codex 任务进度”）。Pacer 会为新开的本地 Codex 会话配置上报工具。在 Codex 给出估计前，任务图标外会显示虚线环。[任务进度说明](codex-progress-setup.md)
 
 Pacer 会在常见位置查找 Codex 应用或 CLI，包括 Homebrew、nvm、fnm、Volta、asdf、mise、pnpm 等 npm 管理工具，以及移动过位置的 Codex.app。“设置 → Codex → 状态”显示找到的结果，悬停可查看具体路径；也可以在“自定义位置”中选择其他 CLI 或数据目录。自定义路径失效时会明确提示，不会悄悄换用别的 CLI。
 
@@ -125,7 +125,7 @@ Pacer 默认使用 `~/.claude`，设置了 `CLAUDE_CONFIG_DIR` 时使用该目�
 
 ## DeepSeek Harness
 
-在 **设置 → DeepSeek → 任务进度圆环** 打开上报，配置完成后新建 Harness 会话。进度环会在收到估算前显示虚线，等待时保留当前数值，任务完成时填满。上报工具添加在 Harness 数据目录的 `cordis.patch.yml` 中，Harness 的所有配置和命令行都会使用。关闭开关即可移除；Windows 卸载也会移除。macOS 上请先关闭开关，再把 Pacer 移到废纸篓。如果 Pacer 已经删除，请删掉 `cordis.patch.yml` 中两行 `Codex Pacer DeepSeek progress` 标记及其之间的全部内容，以及 `pacer/deepseek-progress` 文件夹。详见 [DeepSeek 任务状态与动画](deepseek-task-state-animation.zh-CN.md)。
+在 **设置 → DeepSeek → 任务进度圆环**（Windows 上为“显示 DeepSeek 任务进度”）打开上报，配置完成后新建 Harness 会话。进度环会在收到估算前显示虚线，等待时保留当前数值，任务完成时填满。上报工具添加在 Harness 数据目录的 `cordis.patch.yml` 中，Harness 的所有配置和命令行都会使用。关闭开关即可移除；Windows 卸载也会移除。macOS 上请先关闭开关，再把 Pacer 移到废纸篓。如果 Pacer 已经删除，请删掉 `cordis.patch.yml` 中两行 `Codex Pacer DeepSeek progress` 标记及其之间的全部内容，以及 `pacer/deepseek-progress` 文件夹。详见 [DeepSeek 任务状态与动画](deepseek-task-state-animation.zh-CN.md)。
 
 Pacer 读取 DeepSeek Harness 保存在 `~/.dsh`（设置了 `DSH_HOME` 时用它）的会话日志；也可以在“设置 → DeepSeek → 自定义位置”中选择其他目录。它只根据 token 数和时间，追踪每一轮的阶段、速度和首输出时间、审批、等你回复的提问，以及这一轮如何结束。Harness 在每一步结束时才保存回复，所以速度和花费按步骤更新，而不是随文字逐字变化。暂不追踪 SSH 主机上的 Harness 会话。
 
