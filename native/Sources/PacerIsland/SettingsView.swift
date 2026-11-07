@@ -359,7 +359,10 @@ struct SettingsView: View {
         Section(L10n.text("provider.section.local")) {
             if provider == .codex {
                 codexCLIRow; embeddedSessionsToggle(.codex)
-                Toggle(isOn: $codexProgressRing) {
+                Toggle(isOn: Binding(get: { codexProgressRing }, set: { value in
+                    codexProgressRing = value
+                    model.syncCodexProgressSwitch()
+                })) {
                     Text(L10n.text("codex.progress_ring"))
                     Text(L10n.text("codex.progress_ring_help"))
                 }

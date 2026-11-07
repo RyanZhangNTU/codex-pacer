@@ -257,6 +257,7 @@ actor EngineRuntime {
     private let codexProgressPaths: WindowsCodexProgressPaths
     private var codexProgressQueue = ProgressSetupQueue<CodexProgressSetup.Target>()
     private var codexProgressSetup: CodexProgressSetupStatus?
+    private let codexProgressGate = CodexProgressSwitchGate()
     private var progressRingProviders: Set<AgentProvider> {
         var providers: Set<AgentProvider> = []
         if claudeProgressRing { providers.insert(.claude) }
@@ -1138,15 +1139,20 @@ actor EngineRuntime {
     private func scheduleCodexProgressSetup(force: Bool = false) {
         guard managesCodexProgress, let ticket = codexProgressQueue.request(
             .init(home: codexHome, executable: codexExecutable, enabled: codexProgressRing && enabled.contains(.codex)), force: force) else { return }
-        let paths = codexProgressPaths
-        codexProgressSetup = ticket.target.enabled ? .settingUp : nil
+        let paths = codexProgressPaths, target = ticket.target
+        // Turning reporting off, or leaving a home, takes effect at once: an
+        // earlier setup may still be waiting for Codex, and Pacer may exit
+        // before the registration itself is removed.
+        let gate = codexProgressGate
+        let generation = gate.change(home: target.home, wanted: target.enabled, previous: ticket.previous?.home, storage: WindowsLocalProfileStorage())
+        codexProgressSetup = target.enabled ? .settingUp : nil
         codexProgressQueue.track(Task { [weak self] in
             await ticket.waitForPrevious()
-            if let previous = ticket.previous, previous.home != ticket.target.home {
+            if let previous = ticket.previous, previous.home != target.home {
                 _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, enabled: false, paths: paths)
             }
-            let target = ticket.target
-            let status = await Self.configureCodexReporter(home: target.home, executable: target.executable, enabled: target.enabled, paths: paths)
+            let status = await Self.configureCodexReporter(home: target.home, executable: target.executable, enabled: target.enabled, paths: paths,
+                                                           gate: gate, request: generation)
             await self?.receiveCodexProgressSetup(status, ticket: ticket)
         })
     }
@@ -1157,8 +1163,8 @@ actor EngineRuntime {
         if initialized { publish(notices: []) }
     }
 
-    private static func configureCodexReporter(home: URL, executable: String, enabled: Bool,
-                                              paths: WindowsCodexProgressPaths) async -> CodexProgressSetupStatus? {
+    private static func configureCodexReporter(home: URL, executable: String, enabled: Bool, paths: WindowsCodexProgressPaths,
+                                              gate: CodexProgressSwitchGate? = nil, request: Int = 0) async -> CodexProgressSetupStatus? {
         guard enabled || CodexProgressSetup.wasConfigured(in: home) else { return nil }
         let reporter: CodexProgressCommand?
         if enabled {
@@ -1173,7 +1179,8 @@ actor EngineRuntime {
                   paths.owns(command, home: home) else { return .failed }
             reporter = command
         } else { reporter = nil }
-        return await CodexProgressSetup.apply(home: home, reporter: reporter, storage: WindowsLocalProfileStorage(), owns: {
+        return await CodexProgressSetup.apply(home: home, reporter: reporter, storage: WindowsLocalProfileStorage(),
+                                              gate: gate, request: request, owns: {
             paths.owns($0, home: home) || $0.isNative(named: "PacerEngine.exe", home: home)
         }) {
             CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 3) }
