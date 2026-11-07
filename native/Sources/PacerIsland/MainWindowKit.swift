@@ -335,24 +335,33 @@ struct CardDisclosure: View {
 /// The drafts' small gray button.
 struct MainButtonStyle: ButtonStyle {
     var prominent = false
-    /// 24 in rows; a card's own call to action is taller.
+    /// 24 in rows; a card's own call to action is taller, and a window's
+    /// main button (32 or more) is larger still.
     var height: CGFloat = 24
+    /// A prominent button in another color, such as a service's own.
+    var fill: Color? = nil
+    var label: Color? = nil
     func makeBody(configuration: Configuration) -> some View {
-        MainButtonBody(configuration: configuration, prominent: prominent, height: height)
+        MainButtonBody(configuration: configuration, prominent: prominent, height: height, fill: fill, label: label)
     }
 
     private struct MainButtonBody: View {
         let configuration: ButtonStyleConfiguration
         let prominent: Bool
         let height: CGFloat
+        let fill: Color?
+        let label: Color?
         @Environment(\.isEnabled) private var enabled
         var body: some View {
-            configuration.label.font(.system(size: height > 24 ? 12.5 : 12, weight: .medium)).lineLimit(1)
-                .foregroundStyle(prominent ? Color.white : Color.primary)
-                .padding(.horizontal, 11).frame(height: height)
-                .background(prominent ? Color.accentColor : MainPalette.button, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            let large = height >= 32
+            let shape = RoundedRectangle(cornerRadius: large ? 9 : 7, style: .continuous)
+            configuration.label
+                .font(.system(size: large ? 13.5 : height > 24 ? 12.5 : 12, weight: large && prominent ? .semibold : .medium)).lineLimit(1)
+                .foregroundStyle(label ?? (prominent ? Color.white : Color.primary))
+                .padding(.horizontal, large ? 16 : 11).frame(height: height)
+                .background(fill ?? (prominent ? Color.accentColor : MainPalette.button), in: shape)
                 .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
-                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .contentShape(shape)
         }
     }
 }

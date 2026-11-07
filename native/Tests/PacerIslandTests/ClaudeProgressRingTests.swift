@@ -45,16 +45,18 @@ final class ClaudeProgressRingTests: XCTestCase {
     }
     private func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
 
-    func testRowsDrawEachProvidersRingOnlyWhileItsOwnSettingIsOn() throws {
+    func testEveryProvidersRingIsOnUntilItsOwnSettingTurnsItOff() throws {
         let fixture = try fixture()
         func providers() -> Set<AgentProvider> { fixture.model.taskPresentationOptions(for: []).progressRingProviders }
+        XCTAssertEqual(providers(), [.claude, .codex, .deepseek], "A user who never chose sees every ring")
+        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
+        XCTAssertEqual(providers(), [.codex, .deepseek])
+        fixture.defaults.set(false, forKey: IslandModel.deepseekProgressRingKey)
+        XCTAssertEqual(providers(), [.codex])
+        fixture.defaults.set(false, forKey: IslandModel.codexProgressRingKey)
         XCTAssertEqual(providers(), [])
         fixture.defaults.set(true, forKey: IslandModel.claudeProgressRingKey)
-        XCTAssertEqual(providers(), [.claude])
-        fixture.defaults.set(true, forKey: IslandModel.codexProgressRingKey)
-        XCTAssertEqual(providers(), [.claude, .codex])
-        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
-        XCTAssertEqual(providers(), [.codex])
+        XCTAssertEqual(providers(), [.claude], "A stored choice wins over the default either way")
     }
 
     /// Registration runs Codex against a real profile, so a demo or a model
@@ -65,7 +67,7 @@ final class ClaudeProgressRingTests: XCTestCase {
             let fixture = try fixture(demoArguments: demo ? ["--demo"] : nil, demo: demo, codex: .enabled)
             fixture.defaults.set(true, forKey: IslandModel.codexProgressRingKey)
             XCTAssertTrue(fixture.model.isModuleEnabled(.codex))
-            XCTAssertEqual(fixture.model.taskPresentationOptions(for: []).progressRingProviders, [.codex])
+            XCTAssertTrue(fixture.model.taskPresentationOptions(for: []).progressRingProviders.contains(.codex))
             fixture.model.syncCodexProgressSwitch(force: true)
             XCTAssertNil(fixture.model.codexProgressSetup, "Setup would report settingUp at once")
             XCTAssertFalse(exists(fixture.root.appendingPathComponent("pacer/codex-progress")))
@@ -76,8 +78,10 @@ final class ClaudeProgressRingTests: XCTestCase {
         let fixture = try fixture(demoArguments: ["--demo", "--demo-claude", "--demo-cloud"], demo: true), model = fixture.model
         func rows() -> [ActivityTaskRowPresentation] { model.taskPresentation.rows.filter { $0.activity.provider == .claude } }
         func local() throws -> TaskProgressRing? { try XCTUnwrap(rows().first { $0.activity.claudeCloud == nil }).progressRing }
+        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
+        model.applySettings(sourceChanged: false)
         model.setDemoStage(.tool)
-        XCTAssertTrue(rows().allSatisfy { $0.progressRing == nil }, "The switch is off by default")
+        XCTAssertTrue(rows().allSatisfy { $0.progressRing == nil }, "A switch turned off draws no ring")
         fixture.defaults.set(true, forKey: IslandModel.claudeProgressRingKey)
         model.applySettings(sourceChanged: false)
         model.setDemoStage(.thinking)
@@ -123,6 +127,7 @@ final class ClaudeProgressRingTests: XCTestCase {
             try FileManager.default.createDirectory(at: folder.appendingPathComponent("pacer"), withIntermediateDirectories: true)
         }
         let flag = ClaudeProgressRingSwitch.flagURL(home: home), otherFlag = ClaudeProgressRingSwitch.flagURL(home: other)
+        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
         // A leftover from another run stays until setup confirms that Pacer manages this home.
         try Data("tool\n".utf8).write(to: flag)
         XCTAssertFalse(model.applyClaudeProgressSwitch(home: home))
