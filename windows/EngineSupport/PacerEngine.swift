@@ -6,16 +6,6 @@ import CWindowsSupport
 
 public enum PacerEngine {
     public static func run() async {
-        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == CodexProgressReporter.argument {
-            let input = EngineInput()
-            var reporter = CodexProgressReporter(home: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true))
-            do {
-                while let bytes = try await input.next() {
-                    for reply in try reporter.receive(bytes) { try FileHandle.standardOutput.write(contentsOf: reply) }
-                }
-            } catch { }
-            return
-        }
         WindowsResources.configure()
         #if os(Windows)
         if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--ssh-terminal" {
@@ -114,6 +104,11 @@ public enum PacerEngine {
                 hookServices = .live(root: URL(fileURLWithPath: path, isDirectory: true))
             }
         }
+        var progressRoot = WindowsCodexProgressPaths.defaultRoot
+        if let index = CommandLine.arguments.firstIndex(of: "--codex-progress-runtime-root") {
+            guard CommandLine.arguments.indices.contains(index + 1), WindowsCodexExecutableDiscovery.absolute(CommandLine.arguments[index + 1]) else { return }
+            progressRoot = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+        }
         let ssh: WindowsSSHServices? = demo || readOnly ? nil : WindowsSSHServices()
         let wsl: WindowsWSLServices? = demo || readOnly ? nil : WindowsWSLServices()
         let runtime = EngineRuntime(demo: demo, now: clock,
@@ -125,7 +120,7 @@ public enum PacerEngine {
             wslServices: wsl,
             sshServices: ssh, claudeRemoteServices: .live(ssh: ssh, wsl: wsl),
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices,
-            managesCodexProgress: !demo && !readOnly, allowsStorageRecovery: !readOnly)
+            managesCodexProgress: !demo && !readOnly, codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -254,6 +249,7 @@ actor EngineRuntime {
     private var claudeProgressRing = false
     private var codexProgressRing = false
     private let managesCodexProgress: Bool
+    private let codexProgressPaths: WindowsCodexProgressPaths
     private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
     private var codexProgressSetup: CodexProgressSetupStatus?
     private var codexProgressTask: Task<Void, Never>?
@@ -422,6 +418,7 @@ actor EngineRuntime {
          claudeWebReference: Bool = false,
          claudeHookServices: EngineClaudeHookServices? = nil,
          managesCodexProgress: Bool = false,
+         codexProgressPaths: WindowsCodexProgressPaths = .init(root: WindowsCodexProgressPaths.defaultRoot),
          allowsStorageRecovery: Bool = true,
          sourceSettings: CodexSourceSettingsServices = .live,
          installationDetection: @escaping @Sendable () async -> ProviderInstallationDetection = {
@@ -442,7 +439,7 @@ actor EngineRuntime {
         self.activityHostServices = activityHostServices
         self.claudeWebReference = claudeWebReference && demo
         self.claudeHookServices = claudeHookServices
-        self.managesCodexProgress = managesCodexProgress
+        self.managesCodexProgress = managesCodexProgress; self.codexProgressPaths = codexProgressPaths
         self.detectInstallation = installationDetection
         self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
         self.notificationRegistry = .init(store: notificationStore, now: now())
@@ -1107,16 +1104,16 @@ actor EngineRuntime {
         let previous = codexProgressTarget
         guard force || previous?.home != home || previous?.executable != executable || previous?.enabled != wanted else { return }
         codexProgressTarget = (home, executable, wanted)
-        let pending = codexProgressTask, request = UUID()
+        let pending = codexProgressTask, request = UUID(), paths = codexProgressPaths
         codexProgressRequest = request
         codexProgressSetup = wanted ? .settingUp : nil
         codexProgressTask = Task { [weak self] in
             await pending?.value
             guard !Task.isCancelled else { return }
             if let previous, previous.home != home {
-                _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, enabled: false)
+                _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, enabled: false, paths: paths)
             }
-            let status = await Self.configureCodexReporter(home: home, executable: executable, enabled: wanted)
+            let status = await Self.configureCodexReporter(home: home, executable: executable, enabled: wanted, paths: paths)
             await self?.receiveCodexProgressSetup(status, request: request)
         }
     }
@@ -1127,11 +1124,26 @@ actor EngineRuntime {
         if initialized { publish(notices: []) }
     }
 
-    private static func configureCodexReporter(home: URL, executable: String, enabled: Bool) async -> CodexProgressSetupStatus? {
+    private static func configureCodexReporter(home: URL, executable: String, enabled: Bool,
+                                              paths: WindowsCodexProgressPaths) async -> CodexProgressSetupStatus? {
         guard enabled || CodexProgressSetup.wasConfigured(in: home) else { return nil }
-        let reporter = URL(fileURLWithPath: CommandLine.arguments[0])
-        return await CodexProgressSetup.apply(enabled: enabled, home: home, reporter: reporter, storage: WindowsLocalProfileStorage()) {
-            CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 2) }
+        let reporter: CodexProgressCommand?
+        if enabled {
+            let engine = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+            let install = engine.deletingLastPathComponent().deletingLastPathComponent().path.lowercased()
+            let root = paths.root.path.lowercased()
+            guard root != install, !root.hasPrefix(install + "/") else { return .failed }
+            let helper = engine.deletingLastPathComponent().appendingPathComponent("PacerInstallerHooks.exe")
+            guard let data = await WindowsSubprocess.capture(executable: helper,
+                    arguments: ["--prepare-codex-progress", paths.root.path, home.path], timeout: 8, limit: 8192),
+                  let command = try? JSONDecoder().decode(CodexProgressCommand.self, from: data),
+                  paths.owns(command, home: home) else { return .failed }
+            reporter = command
+        } else { reporter = nil }
+        return await CodexProgressSetup.apply(home: home, reporter: reporter, storage: WindowsLocalProfileStorage(), owns: {
+            paths.owns($0, home: home) || $0.isNative(named: "PacerEngine.exe", home: home)
+        }) {
+            CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 3) }
         }
     }
     /// Only an engine that manages the hooks writes the switch; demo and

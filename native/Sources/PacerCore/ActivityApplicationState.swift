@@ -166,7 +166,7 @@ public struct ActivityApplicationState: Sendable {
         let previous = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         let streamed = pendingCodexEndings.isEmpty ? remoteActivities : ActivitySourceMerger.merge(logged: Array(pendingCodexEndings.values), streamed: remoteActivities)
         let merged = (ActivitySourceMerger.merge(logged: localActivities, streamed: streamed) + claudeActivities + deepseekActivities)
-            .filter { !ignored.contains($0.id) }.map { value in
+            .filter { !ignored.contains($0.id) && !$0.codexGoalExpired(at: now) }.map { value in
                 var value = value
                 if let old = previous[value.id] { value.mergeDisplayMetadata(from: old) }
                 return value
@@ -221,11 +221,13 @@ public struct ActivityApplicationState: Sendable {
     public mutating func prune(at now: Date, retention: TimeInterval) {
         inbox.prune(at: now, retention: retention)
         let retained = Set(inbox.activities.map(\.id)).union(taskGroups().filter(\.isRunning).map { $0.primary.id })
-        replaceActivities(activities.filter { ![.completed, .interrupted].contains($0.phase) || retained.contains($0.id) }, at: now)
+        replaceActivities(activities.filter {
+            !$0.codexGoalExpired(at: now) && (![.completed, .interrupted].contains($0.phase) || retained.contains($0.id))
+        }, at: now)
     }
     /// Display-only wake-ups never request collection or reset a notice baseline.
     public func nextDisplayDeadline(at now: Date, retention: TimeInterval, progressRingProviders: Set<AgentProvider> = []) -> Date? {
-        var dates = activities.compactMap(\.rateExpiresAt)
+        var dates = activities.compactMap(\.rateExpiresAt) + activities.compactMap(\.codexGoalDeadline)
         dates += activities.filter { ![.running, .waitingForInput, .completed, .interrupted].contains($0.phase) }
             .compactMap { $0.lastObserved?.addingTimeInterval(900) }
         if retention > 0 { dates += inbox.activities.compactMap { $0.phaseChangedAt?.addingTimeInterval(retention) } }

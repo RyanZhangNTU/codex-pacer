@@ -116,35 +116,3 @@ struct CodexGoalEvidence: Equatable, Sendable {
     let updatedAt: Double
     let observedAt: Date
 }
-
-/// The opt-in setup command owns the Codex configuration. The app can only
-/// silence or enable that installed hook; it never writes hook trust or TOML.
-public enum CodexProgressRingSwitch {
-    @discardableResult public static func apply(enabled: Bool, home: URL, fileManager: FileManager = .default) -> Bool {
-        let pacer = home.appendingPathComponent("pacer", isDirectory: true)
-        let folder = pacer.appendingPathComponent("codex-progress", isDirectory: true)
-        let ledger = folder.appendingPathComponent("installation.json")
-        let script = folder.appendingPathComponent("reporter.py")
-        func kind(_ url: URL) -> FileAttributeType? {
-            (try? fileManager.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType
-        }
-        guard [home, pacer, folder].allSatisfy({ kind($0) == .typeDirectory }),
-              kind(ledger) == .typeRegular, kind(script) == .typeRegular,
-              let properties = try? fileManager.attributesOfItem(atPath: ledger.path),
-              let size = properties[.size] as? NSNumber, size.intValue <= 64 * 1024,
-              let data = try? Data(contentsOf: ledger), data.count <= 64 * 1024,
-              let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              record["owner"] as? String == "codex-pacer-progress-v1",
-              record["removed"] as? Bool != true else { return false }
-        let flag = folder.appendingPathComponent("enabled"), on = Data("on\n".utf8)
-        if let attributes = try? fileManager.attributesOfItem(atPath: flag.path) {
-            guard attributes[.type] as? FileAttributeType == .typeRegular,
-                  (attributes[.size] as? NSNumber)?.intValue == on.count,
-                  (try? Data(contentsOf: flag)) == on else { return false }
-            if enabled { return true }
-            do { try fileManager.removeItem(at: flag); return true } catch { return false }
-        }
-        guard enabled else { return true }
-        do { try on.write(to: flag, options: [.withoutOverwriting]); return true } catch { return false }
-    }
-}

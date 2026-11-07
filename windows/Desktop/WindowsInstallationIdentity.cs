@@ -17,6 +17,17 @@ internal sealed record WindowsInstallationIdentity(string Root, Guid? QaScope)
     internal string DataRoot => QaScope == null
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexPacer")
         : Path.Combine(Path.GetDirectoryName(Root)!, "CodexPacer-QA-" + Scope);
+    internal string CodexProgressRuntimeRoot
+    {
+        get
+        {
+            const string name = "CodexProgressRuntime";
+            string runtime = Path.Combine(DataRoot, name);
+            string prefix = Path.TrimEndingDirectorySeparator(Root) + Path.DirectorySeparatorChar;
+            return string.Equals(runtime, Root, StringComparison.OrdinalIgnoreCase) || runtime.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                ? Path.Combine(Path.GetDirectoryName(Root)!, "CodexPacer-Progress", name) : runtime;
+        }
+    }
     internal string Shortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), DisplayName, "Codex Pacer.lnk");
     // Tests point this at a fixture so they never touch the real desktop.
     internal string? DesktopFolder { get; init; }

@@ -152,6 +152,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var codexHeldEnding: Date?
     public var codexGoalPause: String? { codexHeldEnding == nil ? nil : codexGoal?.status.pauseLabel }
     var awaitsCodexGoal: Bool { codexHeldEnding != nil }
+    /// A goal can hold an ended turn for a continuation. Snapshots of the same
+    /// goal do not extend that window.
+    var codexGoalDeadline: Date? { codexHeldEnding?.addingTimeInterval(15 * 60) }
+    func codexGoalExpired(at date: Date) -> Bool { codexGoalDeadline.map { date >= $0 } ?? false }
     /// A later estimate replaces an earlier one, including a lower one.
     mutating func reportProgress(_ percent: Int, at date: Date, turnID: String) {
         guard turnID == self.turnID, let value = SelfReportedProgress(percent: percent, reportedAt: date, turnID: turnID) else { return }
@@ -758,7 +762,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         let previous = currentProgress
         let goal = codexGoal
         let sameTurn = id != nil && id == turnID
-        let continues = !sameTurn && id != nil && verifiedRoot != nil && verifiedRoot == codexRootTurnID &&
+        let continues = !sameTurn && id != nil && verifiedRoot != nil && verifiedRoot == codexRootTurnID && !codexGoalExpired(at: date) &&
             [.running, .waitingForInput].contains(phase)
         let root = verifiedRoot ?? (sameTurn ? codexRootTurnID : id)
         beginTurn(id, at: date, observed: observed)
@@ -1020,12 +1024,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let eventTurn = event["turnId"] as? String, !eventTurn.isEmpty else { return }
         guard !retiredTurns.contains(eventTurn) else { return }
         if method == "turn/completed" {
-            guard let status = event["status"] as? String, ["completed", "failed", "interrupted"].contains(status),
-                  turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }
+            guard turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }
+            let status = event["status"] as? String
             isHistoricalCompletion = false
             identifyTurn(eventTurn); liveStatusOnly = false
             retireTurn(eventTurn)
-            phase = status == "completed" ? .completed : .interrupted
+            // Older streams omit status. The owned terminal event still ends
+            // the turn, with explicit failure and interruption kept distinct.
+            phase = status == "failed" || status == "interrupted" ? .interrupted : .completed
             turnFailed = status == "failed"; waitingForApproval = false
             codexSteps = CodexTurnSteps()
             phaseChangedAt = date; lastObserved = date; hasLiveEvidence = true

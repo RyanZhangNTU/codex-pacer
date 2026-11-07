@@ -390,7 +390,17 @@ try:
     moved = fixture/'移动 安装'/'Engine'
     moved.parent.mkdir()
     assert app.resolve().is_relative_to(fixture.resolve()) and moved.resolve().is_relative_to(fixture.resolve())
-    app.rename(moved)
+    # Windows can briefly keep the exited helper's image or a scanner handle
+    # open. A persistent lock still fails the real move.
+    move_deadline = time.monotonic() + 3
+    while True:
+        try:
+            app.rename(moved)
+            break
+        except PermissionError as error:
+            if error.winerror not in (5, 32, 33) or time.monotonic() >= move_deadline:
+                raise
+            time.sleep(0.1)
     app = moved
     assert json.loads(helper('--ensure', homes[0], runtime))['state']=='ready'
     assert [(home/'settings.json').read_bytes() for home in homes]==before

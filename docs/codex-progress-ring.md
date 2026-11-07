@@ -46,7 +46,7 @@ A newly typed request that starts independent work resets its estimate. A steer,
 | Sleeping or awaiting dependent work | An active sleep item, a blocking agent-wait operation, or verified same-request continuation evidence | `waiting` only while there is no foreground generation or ordinary tool execution. Preserve the estimate; resume on matching wake/work evidence. |
 | Retrying | A correlated retryable error, including `willRetry: true` | Keep the request active and its estimate intact. Resume on activity; only a terminal outcome can fail it. |
 | Compacting | Context-compaction item or correlated compact hooks | Keep the same request and estimate. Show the observed work/wait stage; compaction is not an ending. |
-| Goal paused, blocked or limited | A verified goal belonging to the displayed request, after any active foreground turn settles | Static ring with the last estimate and an explicit status. A new `paused` ring mode distinguishes this from an automatic wake or a failed turn. While foreground work continues, retain its execution stage and annotate the goal status. Resume requires newer goal evidence. |
+| Goal paused, blocked or limited | A verified goal belonging to the displayed request, after any active foreground turn settles | Static ring with the last estimate and an explicit status. A new `paused` ring mode distinguishes this from an automatic wake or a failed turn. While foreground work continues, retain its execution stage and annotate the goal status. A held goal leaves the list 15 minutes after the turn ends. A continuation after that deadline starts fresh. |
 | Completed | An owned successful terminal turn with no verified continuation, or completion of the bound goal after its active work settles | `done`, sweep to 100%, publish one request completion. The estimate never delays a verified ending. |
 | Interrupted or failed | Explicit `interrupted`/`turn_aborted`, or `failed`/valid terminal log error, ending the displayed request scope | Keep the last estimate, stop looping motion and retain the existing ending card behavior. Without an estimate, keep the status icon. A physical attempt ending inside an active bound goal updates that attempt without declaring the goal ended. |
 
@@ -93,11 +93,10 @@ This diagram shows execution transitions. Pending async questions overlay any ac
 
 The optional `pacer_progress` stdio MCP server exposes one `report_progress` tool. It accepts an integer `percent` from 0 to 100. Booleans, fractions, strings, values outside the range and extra properties are rejected.
 
-The reporting path is:
+The reporting path is shown below.
 
 ```text
-UserPromptSubmit hook -> concise additional context
-                         -> report_progress(percent)
+MCP tool description  -> report_progress(percent)
 Completed MCP item      -> exact server/tool and success check
                          -> source/thread/turn validation
 Core progress update    -> owning request reducer
@@ -105,17 +104,19 @@ Core progress update    -> owning request reducer
                          -> Windows ring / macOS ring
 ```
 
-The [UserPromptSubmit hook](https://learn.chatgpt.com/docs/hooks#userpromptsubmit) asks for an estimate with the first useful tool batch, after meaningful progress and before waiting. It asks Codex to skip the call for a short reply. A compact `SessionStart` restores the instruction without resetting progress. The reporter only acknowledges the tool call. It needs no spool, model-supplied identifier or external MCP turn metadata.
+The tool description and MCP initialization response ask for an estimate with the first useful tool batch, after meaningful progress and before a long wait. Short replies can skip the call. The reporter acknowledges the estimate. Pacer associates the call with its source, thread and turn using Codex's own events.
 
 Pacer takes a successful report from a matching completed MCP item, or pairs the exact namespaced legacy function call with the successful tool result. It recognizes both paginated `event_msg.item_completed` and legacy `response_item` shapes. The successful result was verified in real Codex rollouts. A call that is rejected, lacks turn ownership or has a bad argument never becomes an estimate. The reporting call does not count as an ordinary tool step. Pacer's progress projection keeps only bounded identifiers, timestamps and the integer estimate.
 
-Codex's [Stop contract](https://learn.chatgpt.com/docs/hooks#stop) does not provide Claude's background-task snapshot. The implementation observes explicit sleeps, agent waits and bound goal status; it installs no Stop hook.
+Pacer uses explicit sleeps, agent waits and bound goal status to recognize Codex background work.
 
 `turn/plan/updated` may support a separate `N of M checklist steps` detail later. It should neither supply this ring's number nor be confused with plan-mode text. A leading text marker would require a verified display-removal facility; do not introduce one into Codex's visible answers as the default reporting channel.
 
 ### Setup and source support
 
 The `codexProgressRing` preference is off by default and independent of `claudeProgressRing`. Enabling it registers Pacer's bundled stdio MCP server in the selected local home. The MCP tool description tells Codex when to report. Pacer uses Codex's versioned config API to update or remove the entry it owns. Setup status and retry are in the Codex settings pane. [Codex task progress](codex-progress-setup.md)
+
+Windows deploys the reporter and its pinned Python interpreter to a separate user-data cache. An open Codex session can hold that interpreter while Pacer's installer replaces the application. Uninstall disables cached reporters and removes the owned MCP entry from each recorded profile.
 
 Pacer's observer remains passive: it must not start a turn, answer an approval or replace the user's Desktop app-server connection to inject a tool. A new app-server child would observe its own runtime, not automatically the existing Desktop task. Keep quota RPC separate.
 

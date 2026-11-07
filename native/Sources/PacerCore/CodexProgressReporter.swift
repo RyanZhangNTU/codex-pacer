@@ -81,106 +81,70 @@ public enum CodexProgressSetup {
     static func flag(_ home: URL) -> URL { native(home).appendingPathComponent("enabled") }
 
     public static func wasConfigured(in home: URL) -> Bool {
-        FileManager.default.fileExists(atPath: native(home).path) ||
-            FileManager.default.fileExists(atPath: folder(home).appendingPathComponent("installation.json").path)
+        FileManager.default.fileExists(atPath: native(home).path)
     }
 
     /// Same owned-file checks as the local Claude setup. The profile must
     /// already exist, and a failed setup can never enable a cached server.
-    public static func apply(enabled: Bool, home: URL, reporter: URL, storage: any ClaudeHookStorage,
+    public static func apply(home: URL, reporter: CodexProgressCommand?, storage: any ClaudeHookStorage, checkOnly: Bool = false,
+                             owns: @Sendable (CodexProgressCommand) -> Bool,
                              client: @Sendable () -> CodexClient?) async -> CodexProgressSetupStatus? {
         do {
+            let enabled = reporter != nil
             let folder = folder(home), directory = native(home), flag = flag(home)
             let config = home.appendingPathComponent("config.toml")
-            for path in [home, home.appendingPathComponent("pacer"), folder, directory, flag, config] { try storage.validate(path) }
+            for path in [home, home.appendingPathComponent("pacer"), folder, directory, flag] { try storage.validate(path) }
             guard storage.isDirectory(home) else { return enabled ? .failed : nil }
-            let legacy = try CodexProgressLegacy(home: home, storage: storage)
             if storage.exists(flag), try storage.read(flag) != on { return .failed }
-            guard enabled || storage.exists(directory) || legacy != nil else { return nil }
-            if !enabled, storage.exists(flag) { try storage.remove(flag) }
-            if legacy != nil { _ = CodexProgressRingSwitch.apply(enabled: false, home: home) }
+            guard enabled || storage.exists(directory) else { return nil }
+            if !checkOnly, !enabled, storage.exists(flag) { try storage.remove(flag) }
+            try storage.validate(config)
+            guard enabled || storage.exists(config) else { return nil }
             guard let client = client() else { return .missingCLI }
             // Record that this profile may contain a registration before the
             // RPC, so a later disable can clean up after an interrupted setup.
-            if enabled, !storage.exists(directory) { try storage.createDirectory(directory, permissions: 0o700) }
+            if !checkOnly, enabled, !storage.exists(directory) { try storage.createDirectory(directory, permissions: 0o700) }
             let status: CodexProgressSetupStatus
             do {
-                status = try await client.setProgressReporter(reporter: reporter, enabled: enabled, legacy: legacy?.command)
+                status = try await client.setProgressReporter(reporter, checkOnly: checkOnly, owns: owns)
             } catch {
                 await client.shutdown()
                 throw error
             }
             await client.shutdown()
             if status != .ready {
-                if storage.exists(flag), try storage.read(flag) == on { try storage.remove(flag) }
+                if !checkOnly, storage.exists(flag), try storage.read(flag) == on { try storage.remove(flag) }
                 return status
             }
-            try legacy?.removeHooks(home: home, storage: storage)
-            if enabled, !storage.exists(flag) { try storage.replace(flag, with: on, permissions: 0o600) }
+            if !checkOnly, enabled, !storage.exists(flag) { try storage.replace(flag, with: on, permissions: 0o600) }
             return enabled ? .ready : nil
         } catch { return .failed }
     }
 }
 
-/// A beta install used a script and prompt hooks. Its exact registered
-/// command and hook groups are the only legacy entries we can migrate.
-private struct CodexProgressLegacy {
-    let command: CodexProgressCommand
-    let groups: [String: Any]
+public struct CodexProgressCommand: Codable, Equatable, Sendable {
+    public let executable: String
+    public let arguments: [String]
+    private static let owner = ["PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"]
 
-    init?(home: URL, storage: any ClaudeHookStorage) throws {
-        let folder = CodexProgressSetup.folder(home), ledger = folder.appendingPathComponent("installation.json")
-        try storage.validate(ledger)
-        guard storage.exists(ledger) else { return nil }
-        let data = try storage.read(ledger)
-        guard data.count <= 64 * 1024, let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              value["owner"] as? String == "codex-pacer-progress-v1", value["removed"] as? Bool != true,
-              let server = value["server"] as? [String: Any], let transport = server["transport"] as? [String: Any],
-              let executable = transport["command"] as? String, let arguments = transport["args"] as? [String],
-              arguments.count == 2, arguments[0] == "-S",
-              URL(fileURLWithPath: arguments[1]).standardizedFileURL == folder.appendingPathComponent("reporter.py").standardizedFileURL,
-              let groups = value["groups"] as? [String: Any] else { return nil }
-        command = .init(executable: executable, arguments: arguments)
-        self.groups = groups
+    public init(executable: URL, arguments: [String]) {
+        self.executable = executable.path; self.arguments = arguments
     }
 
-    func removeHooks(home: URL, storage: any ClaudeHookStorage) throws {
-        let path = home.appendingPathComponent("hooks.json")
-        try storage.validate(path)
-        guard storage.exists(path) else { return }
-        let before = try storage.read(path)
-        guard before.count <= 1024 * 1024, var config = try JSONSerialization.jsonObject(with: before) as? [String: Any],
-              var hooks = config["hooks"] as? [String: Any] else { return }
-        var changed = false
-        for event in ["UserPromptSubmit", "SessionStart"] {
-            guard let group = groups[event] as? NSDictionary, var rows = hooks[event] as? [[String: Any]],
-                  let index = rows.firstIndex(where: { group.isEqual(to: $0) }) else { continue }
-            rows.remove(at: index)
-            hooks[event] = rows.isEmpty ? nil : rows
-            changed = true
-        }
-        guard changed else { return }
-        config["hooks"] = hooks
-        guard try storage.read(path) == before else { throw CocoaError(.fileWriteUnknown) }
-        try storage.replace(path, with: JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) + Data([10]), permissions: 0o600)
-    }
-}
-
-struct CodexProgressCommand: Sendable {
-    let executable: String
-    let arguments: [String]
-    var value: [String: Any] { ["command": executable, "args": arguments] }
-
-    static func registration(reporter: URL, home: URL) -> [String: Any] {
-        let command = Self(executable: reporter.path, arguments: [CodexProgressReporter.argument, home.path])
-        return command.value.merging(["env": ["PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"]]) { old, _ in old }
+    public static func native(executable: URL, home: URL) -> Self {
+        .init(executable: executable, arguments: [CodexProgressReporter.argument, home.path])
     }
 
-    static func owns(_ existing: [String: Any], registration: [String: Any], legacy: Self?) -> Bool {
-        if let legacy, NSDictionary(dictionary: existing).isEqual(to: legacy.value) { return true }
-        guard let path = existing["command"] as? String, let expected = registration["command"] as? String,
-              URL(fileURLWithPath: path).lastPathComponent.caseInsensitiveCompare(URL(fileURLWithPath: expected).lastPathComponent) == .orderedSame else { return false }
-        var current = registration; current["command"] = path
-        return NSDictionary(dictionary: current).isEqual(to: existing)
+    public func isNative(named name: String, home: URL) -> Bool {
+        URL(fileURLWithPath: executable).lastPathComponent.caseInsensitiveCompare(name) == .orderedSame &&
+            arguments == [CodexProgressReporter.argument, home.path]
+    }
+
+    var value: [String: Any] { ["command": executable, "args": arguments, "env": Self.owner] }
+
+    init?(ownedEntry: Any) {
+        guard let entry = ownedEntry as? [String: Any], entry.count == 3, entry["env"] as? [String: String] == Self.owner,
+              let command = entry["command"] as? String, !command.isEmpty, let arguments = entry["args"] as? [String] else { return nil }
+        executable = command; self.arguments = arguments
     }
 }

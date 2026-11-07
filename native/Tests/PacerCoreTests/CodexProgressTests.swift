@@ -179,24 +179,46 @@ final class CodexProgressTests: XCTestCase {
         XCTAssertEqual(merged?.currentProgress?.percent, 41)
     }
 
-    func testLegacySwitchOnlyControlsAnOwnedReporter() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        XCTAssertFalse(CodexProgressRingSwitch.apply(enabled: true, home: directory))
-        let folder = directory.appendingPathComponent("pacer/codex-progress", isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let flag = folder.appendingPathComponent("enabled")
-        let ledger = folder.appendingPathComponent("installation.json")
-        try Data().write(to: folder.appendingPathComponent("reporter.py"))
-        try Data(#"{"owner":"codex-pacer-progress-v1"}"#.utf8).write(to: ledger)
-        XCTAssertTrue(CodexProgressRingSwitch.apply(enabled: true, home: directory))
-        XCTAssertEqual(try Data(contentsOf: flag), Data("on\n".utf8))
-        XCTAssertTrue(CodexProgressRingSwitch.apply(enabled: false, home: directory))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: flag.path))
-        try Data(#"{"owner":"codex-pacer-progress-v1","removed":true}"#.utf8).write(to: ledger)
-        XCTAssertFalse(CodexProgressRingSwitch.apply(enabled: true, home: directory))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: flag.path))
+    func testOwnedTerminalEventWithoutKnownStatusStillEndsTheTurn() {
+        for fields in [[:], ["status": "future-terminal-status"]] {
+            var value = activity()
+            runtime(&value, "turn/started", at: 0)
+            runtime(&value, "turn/completed", at: 1, turn: "unrelated", fields: fields)
+            XCTAssertEqual(value.phase, .running)
+            runtime(&value, "turn/completed", at: 2, fields: fields)
+            XCTAssertEqual(value.phase, .completed)
+            XCTAssertFalse(value.turnFailed)
+            XCTAssertEqual(ring(value, at: 2)?.mode, .done)
+        }
+    }
+
+    func testHeldGoalLeavesTheListAtItsDeadlineAndLateContinuationStartsFresh() {
+        for status in ["active", "paused"] {
+            var value = activity()
+            runtime(&value, "turn/started", at: 0, fields: ["rootTurnId": "turn-1"])
+            runtime(&value, "progress/reported", at: 1, fields: ["percent": 41])
+            let goal: [String: Any] = ["goalStatus": status, "goalCreatedAt": start.timeIntervalSince1970,
+                                       "goalUpdatedAt": start.timeIntervalSince1970 + 2]
+            runtime(&value, "thread/goal/updated", at: 2, fields: goal)
+            runtime(&value, "turn/completed", at: 3)
+            runtime(&value, "thread/goal/updated", at: 900, fields: goal)
+            let before = start.addingTimeInterval(902), deadline = start.addingTimeInterval(903)
+            var application = ActivityApplicationState(inbox: .init(dismissalStore: nil))
+            application.remoteActivities = [value]
+            application.reconcile(at: before, retention: 1800, visibility: .init())
+            XCTAssertEqual(application.presentation(at: before).rows.count, 1)
+            XCTAssertEqual(application.taskGroups().first?.isRunning, status == "active")
+            XCTAssertEqual(application.nextDisplayDeadline(at: before, retention: 1800), deadline)
+            application.prune(at: deadline, retention: 1800)
+            XCTAssertTrue(application.presentation(at: deadline).rows.isEmpty)
+            let replay = application.reconcile(at: deadline, retention: 1800, visibility: .init())
+            XCTAssertTrue(replay.activities.isEmpty)
+            XCTAssertTrue(replay.notices.isEmpty)
+            XCTAssertTrue(application.inbox.activities.isEmpty)
+            runtime(&value, "turn/started", at: 904, turn: "turn-2", fields: ["rootTurnId": "turn-1"])
+            XCTAssertNil(value.currentProgress)
+            XCTAssertNil(value.codexGoalDeadline)
+        }
     }
 
     func testCachedMCPConnectionStopsReportingWhenDisabled() throws {

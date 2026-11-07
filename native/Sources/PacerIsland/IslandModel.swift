@@ -355,7 +355,10 @@ final class IslandModel: ObservableObject {
     }
 
     private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool) async -> CodexProgressSetupStatus? {
-        await CodexProgressSetup.apply(enabled: enabled, home: home, reporter: reporter, storage: MacClaudeHookStorage()) {
+        let command: CodexProgressCommand? = enabled ? .native(executable: reporter, home: home) : nil
+        return await CodexProgressSetup.apply(home: home, reporter: command, storage: MacClaudeHookStorage(), owns: {
+            $0.isNative(named: reporter.lastPathComponent, home: home)
+        }) {
             CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 2) }
         }
     }

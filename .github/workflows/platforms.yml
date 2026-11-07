@@ -71,6 +71,12 @@ jobs:
         run: |
           set -o pipefail
           python3 -u scripts/native/ci-test.py --timeout-seconds 1200 --diagnostics-prefix "$RUNNER_TEMP/pacer-test" 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
+      - name: Build the Mac app and smoke-test its reporter
+        run: |
+          set -o pipefail
+          make build 2>&1 | tee "$RUNNER_TEMP/pacer-build.log"
+          app="$(sed -n 's/^App: //p' "$RUNNER_TEMP/pacer-build.log")"
+          python3 -u scripts/diagnostics/test-codex-progress.py --mac-reporter "$app/Contents/MacOS/CodexPacerIsland" --output "$RUNNER_TEMP/pacer-progress"
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -78,6 +84,7 @@ jobs:
           name: macos-arm64-tests
           path: |
             ${{ runner.temp }}/pacer-tests.log
+            ${{ runner.temp }}/pacer-build.log
             ${{ runner.temp }}/pacer-test-sample-*.txt
           retention-days: 7
 

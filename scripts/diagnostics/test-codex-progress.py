@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import tomllib
+import uuid
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,12 +43,14 @@ class Lines:
         self.process.stdin.write(json.dumps(message) + "\n")
         self.process.stdin.flush()
 
-    def rpc(self, method, params=None, engine=False):
+    def rpc(self, method, params=None, engine=False, mcp=False):
         self.sequence += 1
         request_id = str(self.sequence) if engine else self.sequence
         message = {"id": request_id, "method": method}
         if engine:
             message["protocolVersion"] = 1
+        if mcp:
+            message["jsonrpc"] = "2.0"
         if params is not None:
             message["params"] = params
         self.send(message)
@@ -79,7 +82,7 @@ class Lines:
 
 
 def wait_setup(engine, predicate):
-    deadline = time.monotonic() + 12
+    deadline = time.monotonic() + 20
     status = None
     while time.monotonic() < deadline:
         engine.rpc("refresh", {"discover": False}, engine=True)
@@ -90,13 +93,16 @@ def wait_setup(engine, predicate):
     raise RuntimeError("Unexpected reporter setup status: " + str(status))
 
 
+def configuration(codex_executable, profile, enabled):
+    return {"enabledProviders": ["codex"], "codexHome": str(profile), "codexExecutable": str(codex_executable),
+            "codexProgressRing": enabled, "monitorRemoteControl": False, "monitorSSH": False, "monitorWSL": False}
+
+
 def configure_from_engine(executable, codex_executable, profile, work, env):
     config = profile / "config.toml"
     flag = profile / "pacer/codex-progress/native/enabled"
-    configuration = {"enabledProviders": ["codex"], "codexHome": str(profile), "codexExecutable": codex_executable,
-                     "codexProgressRing": False, "monitorRemoteControl": False, "monitorSSH": False, "monitorWSL": False}
     with Lines([str(executable)], work, env) as engine:
-        engine.rpc("initialize", configuration, engine=True)
+        engine.rpc("initialize", configuration(codex_executable, profile, False), engine=True)
         engine.rpc("configure", {"codexProgressRing": True}, engine=True)
         wait_setup(engine, lambda status: status == "ready")
         if (profile / "hooks.json").exists() or flag.read_bytes() != b"on\n":
@@ -310,17 +316,73 @@ stream_max_retries = 0
     print("PASS " + args.client + ": automatic MCP setup, model guidance, " + args.terminal + ", cleanup and ownership")
 
 
+def installer_fixture(engine, codex):
+    app = engine.parent.parent
+    identity = json.loads((app / "installation-identity.json").read_bytes())
+    scope = uuid.UUID(identity["qaScope"]).hex
+    if not app.parent.parent.name.startswith("pacer-install-check-"):
+        raise RuntimeError("The reporter fixture requires an isolated QA installation")
+    data = app.parent / ("CodexPacer-QA-" + scope)
+    runtime = data / "CodexProgressRuntime"
+    for name in ("codex", "Codex secondary profile"):
+        profile = data / name
+        profile.mkdir()
+        config = profile / "config.toml"
+        config.write_text('[mcp_servers.unrelated_fixture]\ncommand = "preserve"\nenabled = false\n', encoding="utf-8")
+        env = dict(os.environ, CODEX_HOME=str(profile), APPDATA=str(data), LOCALAPPDATA=str(data))
+        with Lines([str(engine), "--codex-progress-runtime-root", str(runtime)], profile, env) as host:
+            host.rpc("initialize", configuration(codex, profile, True), engine=True)
+            wait_setup(host, lambda status: status == "ready")
+            host.rpc("shutdown", engine=True)
+        entry = tomllib.loads(config.read_text(encoding="utf-8"))["mcp_servers"]["pacer_progress"]
+        if not Path(entry["command"]).resolve().is_relative_to(runtime.resolve()):
+            raise RuntimeError("The installed reporter executable must live outside the application payload")
+        if name == "codex":
+            primary = entry
+    print(json.dumps(primary))
+
+
+def check_mac_reporter(executable, home):
+    flag = home / "pacer/codex-progress/native/enabled"
+    flag.parent.mkdir(parents=True)
+    flag.write_bytes(b"on\n")
+    with Lines([str(executable), "--codex-progress-mcp", str(home)], home, os.environ) as reporter:
+        initialized = reporter.rpc("initialize", {"protocolVersion": "2025-06-18"}, mcp=True)
+        tools = reporter.rpc("tools/list", mcp=True)["tools"]
+        if initialized["serverInfo"]["name"] != "pacer_progress" or tools[0]["name"] != "report_progress":
+            raise RuntimeError("The bundled macOS reporter did not initialize")
+        args = {"name": "report_progress", "arguments": {"percent": 41}}
+        if reporter.rpc("tools/call", args, mcp=True)["isError"]:
+            raise RuntimeError("The bundled macOS reporter rejected a valid estimate")
+        flag.unlink()
+        if not reporter.rpc("tools/call", args, mcp=True)["isError"]:
+            raise RuntimeError("The bundled macOS reporter kept reporting after disable")
+    print("PASS macOS app bundle: stdio reporter starts, reports and respects disable")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--codex", required=True, type=Path)
-    parser.add_argument("--engine", required=True, type=Path)
+    parser.add_argument("--codex", type=Path)
+    parser.add_argument("--engine", type=Path)
+    parser.add_argument("--installer-fixture", action="store_true")
+    parser.add_argument("--mac-reporter", type=Path)
     parser.add_argument("--terminal", choices=("done", "failed"), default="done")
     parser.add_argument("--client", choices=("cli", "app-server"), default="cli")
     parser.add_argument("--output", type=Path, default=ROOT / "output/codex-progress-tests")
     args = parser.parse_args()
+    if not args.mac_reporter and not (args.codex and args.engine):
+        parser.error("Provide --mac-reporter or both --codex and --engine.")
+    if args.installer_fixture:
+        if args.mac_reporter:
+            parser.error("The installer fixture needs a Windows engine and Codex CLI.")
+        installer_fixture(args.engine.resolve(), args.codex.resolve())
+        return
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="fixture-", dir=args.output.resolve()) as workspace:
-        run(args, Path(workspace))
+        if args.mac_reporter:
+            check_mac_reporter(args.mac_reporter.resolve(), Path(workspace))
+        else:
+            run(args, Path(workspace))
 
 
 if __name__ == "__main__":

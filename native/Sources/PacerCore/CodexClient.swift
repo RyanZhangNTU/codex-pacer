@@ -200,7 +200,8 @@ public actor CodexClient {
         }
     }
 
-    func setProgressReporter(reporter: URL, enabled: Bool, legacy: CodexProgressCommand?) async throws -> CodexProgressSetupStatus {
+    func setProgressReporter(_ wanted: CodexProgressCommand?, checkOnly: Bool,
+                             owns: @Sendable (CodexProgressCommand) -> Bool) async throws -> CodexProgressSetupStatus {
         try await prepareReadConnection()
         let data = try await request("config/read", params: ["includeLayers": true])
         let path = home.appendingPathComponent("config.toml").standardizedFileURL
@@ -211,19 +212,19 @@ public actor CodexClient {
               }), let version = layers[user]["version"] as? String, !version.isEmpty,
               let config = layers[user]["config"] as? [String: Any] else { return .failed }
         let name = CodexProgressEvidence.server
-        if enabled, layers.indices.contains(where: { index in
+        if wanted != nil, layers.indices.contains(where: { index in
             let layer = layers[index]
             guard index != user, !(layer["disabledReason"] is String),
                   let other = layer["config"] as? [String: Any] else { return false }
             return (other["mcp_servers"] as? [String: Any])?[name] != nil
         }) { return .conflict }
-        let wanted = CodexProgressCommand.registration(reporter: reporter, home: home)
         if let value = (config["mcp_servers"] as? [String: Any])?[name] {
-            guard let existing = value as? [String: Any], CodexProgressCommand.owns(existing, registration: wanted, legacy: legacy) else { return .conflict }
-            if enabled, NSDictionary(dictionary: wanted).isEqual(to: existing) { return .ready }
-        } else if !enabled { return .ready }
+            guard let existing = CodexProgressCommand(ownedEntry: value), owns(existing) else { return wanted == nil ? .ready : .conflict }
+            if existing == wanted { return .ready }
+        } else if wanted == nil { return .ready }
+        guard !checkOnly else { return .ready }
         try Task.checkCancellation()
-        let edit: [String: Any] = ["keyPath": "mcp_servers." + name, "value": enabled ? wanted : NSNull(), "mergeStrategy": "replace"]
+        let edit: [String: Any] = ["keyPath": "mcp_servers." + name, "value": wanted.map { $0.value as Any } ?? NSNull(), "mergeStrategy": "replace"]
         _ = try await request("config/batchWrite", params: ["edits": [edit], "filePath": path.path, "expectedVersion": version])
         return .ready
     }
