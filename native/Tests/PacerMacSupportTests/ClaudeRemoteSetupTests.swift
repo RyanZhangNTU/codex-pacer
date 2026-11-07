@@ -22,10 +22,20 @@ final class ClaudeRemoteSetupTests: XCTestCase {
         try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
     }
 
-    private func runInstaller(home: URL, environment: [String: String]? = nil, requireHome: Bool = false) throws -> (value: [String: Any], bytes: Data, status: Int32) {
-        let resources = try ClaudeRemoteSetup.resources()
-        var request: [String: Any] = ["home": home.path, "hook": resources.hook.base64EncodedString()]
+    private func runInstaller(home: URL, environment: [String: String]? = nil, requireHome: Bool = false,
+                              progressRing: Bool = false) throws -> (value: [String: Any], bytes: Data, status: Int32) {
+        var request: [String: Any] = ["home": home.path, "hook": try ClaudeRemoteSetup.resources().hook.base64EncodedString()]
         if requireHome { request["requireHome"] = true }
+        if progressRing { request["progressRing"] = true; request["progressServer"] = try ClaudeRemoteSetup.progressServer().base64EncodedString() }
+        return try runSetup(request, environment: environment)
+    }
+
+    private func runRemoval(home: URL, extra: [String: Any] = [:]) throws -> (value: [String: Any], bytes: Data, status: Int32) {
+        try runSetup(["operation": "uninstall", "home": home.path].merging(extra) { _, value in value })
+    }
+
+    private func runSetup(_ request: [String: Any], environment: [String: String]? = nil) throws -> (value: [String: Any], bytes: Data, status: Int32) {
+        let resources = try ClaudeRemoteSetup.resources()
         let payload = try JSONSerialization.data(withJSONObject: request)
         let process = Process(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -163,6 +173,91 @@ final class ClaudeRemoteSetupTests: XCTestCase {
         XCTAssertEqual(result.value["error"] as? String, "unsafePath")
         XCTAssertEqual(try Data(contentsOf: external), original)
         XCTAssertFalse(String(decoding: result.bytes, as: UTF8.self).contains("PRIVATE"))
+    }
+
+    /// Removal undoes a ring-on install as the local uninstall does: the
+    /// user's hooks, renderer, environment and permissions come back as they
+    /// were, Pacer's switch and record go, and a second run changes nothing.
+    func testRemovalRestoresOriginalSettingsAndIsIdempotent() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = fixture.home.appendingPathComponent("settings.json"), pacer = fixture.home.appendingPathComponent("pacer")
+        let line: [String: Any] = ["type": "command", "command": "printf existing-renderer", "padding": 4]
+        let original: [String: Any] = ["hooks": ["PreToolUse": [["matcher": "Bash", "hooks": [["type": "command", "command": "printf existing-hook"]]]]],
+            "env": ["USER_SETTING": "PRIVATE fixture value"], "statusLine": line, "permissions": ["allow": ["Read"]], "custom": ["enabled": true]]
+        try write(original, to: file)
+        XCTAssertEqual(try runInstaller(home: fixture.home, progressRing: true).status, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pacer.appendingPathComponent("progress-ring").path))
+        XCTAssertFalse(NSDictionary(dictionary: try read(file)).isEqual(to: original))
+
+        let removed = try runRemoval(home: fixture.home)
+        XCTAssertTrue(try ClaudeRemoteSetup.removal(data: removed.bytes, exitStatus: removed.status))
+        XCTAssertFalse(String(decoding: removed.bytes, as: UTF8.self).contains(fixture.home.path))
+        XCTAssertTrue(NSDictionary(dictionary: try read(file)).isEqual(to: original))
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        for name in ["installation.json", "progress-ring"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: pacer.appendingPathComponent(name).path), name)
+        }
+        let settled = try Data(contentsOf: file)
+        let again = try runRemoval(home: fixture.home)
+        XCTAssertFalse(try ClaudeRemoteSetup.removal(data: again.bytes, exitStatus: again.status))
+        XCTAssertEqual(try Data(contentsOf: file), settled)
+
+        // A home Pacer never set up is neither read nor created.
+        let absent = fixture.root.appendingPathComponent("absent/.claude")
+        let skipped = try runRemoval(home: absent)
+        XCTAssertFalse(try ClaudeRemoteSetup.removal(data: skipped.bytes, exitStatus: skipped.status))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: absent.deletingLastPathComponent().path))
+    }
+
+    /// Entries the user changed after setup stay, Pacer's own renderer leaves
+    /// when it had none to restore, and settings Pacer cannot read stay as
+    /// they are with the record kept for a retry.
+    func testRemovalKeepsUserChangesAndRefusesUnreadableSettings() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = fixture.home.appendingPathComponent("settings.json")
+        let manifest = fixture.home.appendingPathComponent("pacer/installation.json")
+        try write(["custom": ["enabled": true]], to: file)
+        XCTAssertEqual(try runInstaller(home: fixture.home).status, 0)
+        let added = try XCTUnwrap(try read(manifest)["addedEnvironment"] as? [String: String])
+        let changedKey = try XCTUnwrap(added.keys.sorted().first)
+        var edited = try read(file)
+        var env = try XCTUnwrap(edited["env"] as? [String: String]); env[changedKey] = "user value"; edited["env"] = env
+        try write(edited, to: file)
+
+        let removed = try runRemoval(home: fixture.home)
+        XCTAssertTrue(try ClaudeRemoteSetup.removal(data: removed.bytes, exitStatus: removed.status))
+        let after = try read(file)
+        XCTAssertEqual(after["env"] as? [String: String], [changedKey: "user value"])
+        XCTAssertNil(after["statusLine"]); XCTAssertNil(after["hooks"])
+        XCTAssertTrue(NSDictionary(dictionary: after["custom"] as? [String: Any] ?? [:]).isEqual(to: ["enabled": true]))
+
+        XCTAssertEqual(try runInstaller(home: fixture.home).status, 0)
+        let record = try Data(contentsOf: manifest)
+        for text in ["{broken", #"{"hooks":[]}"#, #"{"env":{"X":1}}"#] {
+            try Data(text.utf8).write(to: file)
+            let refused = try runRemoval(home: fixture.home)
+            XCTAssertThrowsError(try ClaudeRemoteSetup.removal(data: refused.bytes, exitStatus: refused.status)) { error in
+                XCTAssertEqual(error as? ClaudeRemoteSetup.Failure, .invalidSettings, text)
+            }
+            XCTAssertEqual(try Data(contentsOf: file), Data(text.utf8))
+            XCTAssertEqual(try Data(contentsOf: manifest), record)
+        }
+        for extra in [["hook": "unexpected"], ["operation": "rename"]] {
+            XCTAssertEqual(try runRemoval(home: fixture.home, extra: extra).value["error"] as? String, "invalidPayload")
+        }
+    }
+
+    func testRealSubprocessRemovalSendsOnlyTheRemovalRequest() async throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = try executable(in: fixture.root, code: """
+            import base64, json, sys
+            request = json.loads(base64.b64decode(sys.argv[-1].split()[-1]))
+            print(json.dumps({'removed': request == {'operation': 'uninstall', 'home': '~/.claude'}}))
+            """ + "\n")
+        let setup = ClaudeRemoteSetup(executable: file, timeout: 1)
+        let removed = try await setup.uninstall(target: target)
+        XCTAssertTrue(removed)
+        await setup.shutdown()
     }
 
     private func executable(in root: URL, code: String) throws -> URL {

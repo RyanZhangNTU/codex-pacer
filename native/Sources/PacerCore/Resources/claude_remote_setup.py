@@ -403,6 +403,85 @@ def install(payload):
             'statusLineConfigured': True, 'telemetryConflict': conflict}
 
 
+def uninstall(payload):
+    # Mirrors ClaudeHookInstaller.uninstall: only entries recorded or owned by
+    # Pacer leave settings.json, and the ring's switch goes with them. Without
+    # an installation record nothing is guessed or changed. The hook script and
+    # sanitized spool stay behind, no longer referenced.
+    path = payload.get('home')
+    if not isinstance(path, str) or len(path) > 4096 or set(payload) - {'operation', 'home'}:
+        raise Failure('invalidPayload')
+    home = pathlib.Path(path).expanduser()
+    if not home.is_dir():
+        return {'removed': False}
+    safe(home, directory=True)
+    safe(home.parent, directory=True)
+    directory = home / 'pacer'
+    if not directory.exists():
+        return {'removed': False}
+    safe(directory, directory=True)
+    settings_path = home / 'settings.json'
+    manifest_path = directory / 'installation.json'
+    script_path = directory / 'hook.py'
+    original_manifest = read_bytes(manifest_path)
+    if original_manifest is None:
+        return {'removed': False}
+    manifest = object_bytes(original_manifest)
+    original_settings = read_bytes(settings_path)
+    value = object_bytes(original_settings)
+    hooks = value.get('hooks', {})
+    env = value.get('env', {})
+    added = manifest.get('addedEnvironment', {})
+    if (not isinstance(hooks, dict) or not isinstance(env, dict) or not isinstance(added, dict) or
+            any(not isinstance(k, str) or not isinstance(v, str) for k, v in list(env.items()) + list(added.items()))):
+        raise Failure('invalidSettings')
+    commands = ('python3 -S ' + quote(str(script_path)) + ' hook ' + quote(str(home)),
+                'python3 ' + quote(str(script_path)) + ' hook ' + quote(str(home)))
+    line_commands = ('python3 -S ' + quote(str(script_path)) + ' statusline ' + quote(str(home)),
+                     'python3 ' + quote(str(script_path)) + ' statusline ' + quote(str(home)))
+
+    def owned(entry):
+        return entry.get('type') == 'command' and entry.get('command') in commands
+    for event in EVENTS + (DISPLAY_EVENT,):
+        groups = hooks.get(event)
+        if groups is None:
+            continue
+        if not isinstance(groups, list) or any(not isinstance(group, dict) or not isinstance(group.get('hooks'), list) or
+                any(not isinstance(item, dict) for item in group['hooks']) for group in groups):
+            raise Failure('invalidSettings')
+        remaining = removing_owned(groups, owned)
+        if remaining:
+            hooks[event] = remaining
+        else:
+            hooks.pop(event, None)
+    if hooks:
+        value['hooks'] = hooks
+    else:
+        value.pop('hooks', None)
+    set_plugin(value, manifest, False, directory / 'plugin')
+    for key, setting in added.items():
+        if env.get(key) == setting:
+            env.pop(key)
+    if env:
+        value['env'] = env
+    else:
+        value.pop('env', None)
+    line = value.get('statusLine')
+    if isinstance(line, dict) and line.get('command') in line_commands:
+        previous = manifest.get('previousStatusLine')
+        if previous is None:
+            value.pop('statusLine', None)
+        else:
+            value['statusLine'] = previous
+    if read_bytes(settings_path) != original_settings or read_bytes(manifest_path) != original_manifest:
+        raise Failure('changedSettings')
+    if original_settings is not None and value != object_bytes(original_settings):
+        atomic_bytes(settings_path, encoded(value))
+    apply_progress_ring(home, directory, False, b'')
+    manifest_path.unlink()
+    return {'removed': True}
+
+
 def main():
     if sys.version_info < (3, 6):
         raise Failure('unsupportedPython')
@@ -414,6 +493,10 @@ def main():
     except (ValueError, UnicodeError):
         raise Failure('invalidPayload')
     if len(raw) > LIMIT or not isinstance(payload, dict):
+        raise Failure('invalidPayload')
+    if payload.get('operation') == 'uninstall':
+        return uninstall(payload)
+    if 'operation' in payload:
         raise Failure('invalidPayload')
     return install(payload)
 

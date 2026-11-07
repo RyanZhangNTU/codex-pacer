@@ -190,9 +190,15 @@ Codex Remote Control 任务通过 Codex 桌面端获取。请保持 Codex 开启
 
 ## 卸载
 
-1. 在“设置 → Claude”中关闭 Claude 模块，移除 Pacer 在本机 Claude 设置中添加的 hooks。
-2. 在“设置 → DeepSeek”中退出登录或移除 API Key，清除 Pacer 的 DeepSeek 会话和钥匙串条目。
-3. 在“设置 → 通用”中关闭“登录时打开”，通过“设置 → 退出 Codex Pacer”退出，然后把应用从“应用程序”移到废纸篓。
-4. 如需清除数据，删除 `~/Library/Application Support/CodexPacerIsland`，并执行 `defaults delete com.codexpacer.app` 删除偏好设置。
+打开任务标题右侧的 ⋯ 菜单，选择“卸载 Codex Pacer…”。Pacer 会先停止运行，然后：
 
-Pacer 在 SSH 主机上添加的条目会保留，它们指向各主机上的 `~/.claude/pacer`。不再使用 Pacer 时，可以从该主机的 Claude 设置中删除。
+- 移除它在本机和已设置的各 SSH 主机上为 Claude 添加的 hooks、状态栏和插件；
+- 移除它在 Codex 中添加的进度上报；
+- 删除保存的 DeepSeek Key 和登录信息；
+- 不再登录时打开，并把自己移到废纸篓。
+
+你自己的 Claude 和 Codex 设置保持原样。勾选“同时删除 Pacer 的设置和历史记录”会一并删除偏好、历史，以及 Pacer 在 Claude 和 Codex 旁保留的 `pacer` 文件夹；不勾选则保留，便于以后重新安装。SSH 主机上的 `~/.claude/pacer` 文件夹会保留，可以自行删除。
+
+如果有地方没能清理，例如离线的 SSH 主机，Pacer 会列出来。可以选择“重试”，或选择“继续卸载”，之后再从该主机的 `~/.claude/settings.json` 中删除 Pacer 的条目。选择“取消”会保留 Pacer 并重新启动。
+
+如果之前没有用这个命令就把 Pacer 移到了废纸篓，请再打开一次，然后选择“卸载 Codex Pacer…”。

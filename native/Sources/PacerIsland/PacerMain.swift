@@ -250,6 +250,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     private var demoConversationWindow: NSWindow?
     private var reopenObserver: NSObjectProtocol?
+    private var uninstaller: PacerUninstallController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         PreferencesMigration.migrate(to: .standard, from:
@@ -269,6 +270,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             }
         model.onSettings = { [weak self] in self?.showSettings() }
         model.onQuit = { [weak self] in self?.quit() }
+        model.onUninstall = { [weak self] in self?.uninstall() }
         model.onRelaunch = { [weak self] in self?.relaunchForLanguage() }
         model.onClaudeLogin = { [weak self] in
             self?.model.close()
@@ -309,6 +311,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             }
         }
         applicationMenu.addItem(.separator())
+        if !model.isDemo {
+            let uninstallItem = NSMenuItem(title: L10n.text("uninstall.menu"), action: #selector(uninstall), keyEquivalent: "")
+            uninstallItem.target = self
+            applicationMenu.addItem(uninstallItem)
+        }
         let quitItem = NSMenuItem(title: L10n.text("common.quit"), action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         applicationMenu.addItem(quitItem)
@@ -353,6 +360,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         menuItem.action == #selector(checkForUpdates) ? updater.canCheck : true
     }
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func uninstall() {
+        model.close()
+        if uninstaller == nil {
+            uninstaller = PacerUninstallController(model: model) { [weak self] in _ = self?.relaunchForLanguage() }
+        }
+        uninstaller?.begin()
+    }
     private func relaunchForLanguage() -> String? {
         guard let helper = Bundle.main.url(forAuxiliaryExecutable: "PacerRelaunch") else {
             return L10n.text("language.missing_helper")

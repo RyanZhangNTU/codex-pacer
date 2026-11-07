@@ -362,6 +362,14 @@ final class IslandModel: ObservableObject {
             CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 2) }
         }
     }
+    /// Where an uninstall looks, read before monitoring stops.
+    func uninstallPlan() -> PacerUninstall.Plan {
+        PacerUninstall.plan(claudeHome: claudeHome, codexHome: home, codexExecutable: defaults.string(forKey: "codexExecutable") ?? "",
+            configuredHosts: Array(ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults).keys),
+            // The targets setup used carry their destination, port and key.
+            knownTargets: claudeRemoteTargets + RemoteActivityTarget.claudeCodexTargets(home: home),
+            environment: ProcessInfo.processInfo.environment, userHome: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true))
+    }
     private var progressRingProviders: Set<AgentProvider> {
         var providers: Set<AgentProvider> = []
         if showsClaudeProgressRing { providers.insert(.claude) }
@@ -465,6 +473,8 @@ final class IslandModel: ObservableObject {
         onSettings?()
     }
     var onQuit: (() -> Void)?
+    /// Asks before removing Pacer's entries everywhere and moving it to the Trash.
+    var onUninstall: (() -> Void)?
     var onRelaunch: (() -> String?)?
     var onOpenActivity: ((SessionActivity) async -> ActivityOpenOutcome)?
     /// The expanded task header offers each enabled module's desktop app,

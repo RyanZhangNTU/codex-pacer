@@ -198,6 +198,7 @@ struct IslandPanelControls: View {
                     .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
                 Divider()
                 Button(L10n.text("common.quit")) { model.onQuit?() }
+                if !model.isDemo { Button(L10n.text("uninstall.menu")) { model.onUninstall?() } }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 12, weight: .medium))

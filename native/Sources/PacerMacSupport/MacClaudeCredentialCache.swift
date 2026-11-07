@@ -87,6 +87,14 @@ extension ClaudeQuotaCredentialCache {
             _ = SecItemDelete(query as CFDictionary)
         }
     }
+
+    /// Every cached connection Pacer created, whichever Claude location it served.
+    public static func removeAll() {
+        try? ClaudeKeychainAccess.perform(allowInteraction: false) {
+            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
+            _ = SecItemDelete(query as CFDictionary)
+        }
+    }
 }
 
 /// Explicit diagnostic fixture only: no Claude item, account, token or file is

@@ -22,6 +22,13 @@ public enum ClaudeRemoteAutoSetup {
         defaults.set(Dictionary(uniqueKeysWithValues: digests.sorted { $0.key < $1.key }.suffix(32).map { ($0.key, $0.value) }), forKey: digestsKey)
     }
 
+    /// After removal a host must be set up again, so its record goes too.
+    public static func forget(alias: String, defaults: UserDefaults = .standard) {
+        var digests = configuredDigests(defaults: defaults)
+        guard digests.removeValue(forKey: alias) != nil else { return }
+        if digests.isEmpty { defaults.removeObject(forKey: digestsKey) } else { defaults.set(digests, forKey: digestsKey) }
+    }
+
     public static func pending(targets: [RemoteActivityTarget], statuses: [String: RuntimeStreamStatus], configured: [String: String],
                                digest: String, failures: [String: Date], inFlight: Set<String>, now: Date) -> [RemoteActivityTarget] {
         targets.filter { target in

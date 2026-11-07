@@ -192,9 +192,15 @@ Everything that needs attention already shows on the collapsed bar. Turn on **Se
 
 ## Uninstall
 
-1. In **Settings → Claude**, turn the Claude module off to remove Pacer's hooks from your local Claude settings.
-2. In **Settings → DeepSeek**, sign out or remove the API key to clear Pacer's DeepSeek session and keychain item.
-3. Turn off **Open at Login** in **Settings → General**, quit Pacer from **Settings → Quit Codex Pacer** and move it from Applications to the Trash.
-4. Optionally remove its data: `~/Library/Application Support/CodexPacerIsland` and the preferences (`defaults delete com.codexpacer.app`).
+Open the ⋯ menu in the task header and choose **Uninstall Codex Pacer…**. Pacer stops, then:
 
-Entries Pacer added on SSH hosts stay there and point to `~/.claude/pacer` on each host. Remove them from that host's Claude settings if you no longer use Pacer.
+- removes the hooks, status line and plugin it added to Claude, on this Mac and on each SSH host it set up;
+- removes its progress reporter from Codex;
+- deletes its saved DeepSeek key and sign-ins;
+- stops opening at login and moves itself to the Trash.
+
+Your own Claude and Codex settings stay as they were. Select **Also delete Pacer's settings and history** to remove its preferences, history and the `pacer` folders it kept beside Claude and Codex as well; otherwise they stay for a later install. On SSH hosts the `~/.claude/pacer` folder stays; delete it if you like.
+
+If a place can't be cleaned, for example an SSH host that is offline, Pacer lists it. Choose **Retry**, or **Uninstall Anyway** and remove Pacer's entries from that host's `~/.claude/settings.json` later. **Cancel** keeps Pacer and restarts it.
+
+If you already moved Pacer to the Trash without this command, open it once more and choose **Uninstall Codex Pacer…**.

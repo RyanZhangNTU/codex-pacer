@@ -55,6 +55,20 @@ public actor ClaudeRemoteSetup {
         let arguments: [String]
         if let argumentBuilder { arguments = try argumentBuilder(target, requireHome, progressRing) }
         else { arguments = try Self.arguments(target: target, requireHome: requireHome, progressRing: progressRing, validDestination: validDestination, validIdentityFile: validIdentityFile) }
+        let result = try await run(arguments)
+        return try Self.status(data: result.data, exitStatus: result.exitStatus)
+    }
+
+    /// Removes what setup added on the host, as the local uninstall does. True
+    /// when an installation record was found and removed; a host Pacer never
+    /// configured answers false and keeps its files.
+    public func uninstall(target: RemoteActivityTarget) async throws -> Bool {
+        guard let ssh = target.sshArguments(validDestination: validDestination, validIdentityFile: validIdentityFile) else { throw Failure.invalidTarget }
+        let result = try await run(ssh + [try Self.removalCommand()])
+        return try Self.removal(data: result.data, exitStatus: result.exitStatus)
+    }
+
+    private func run(_ arguments: [String]) async throws -> (data: Data, exitStatus: Int32) {
         let identifier = UUID()
         let operation = makeOperation(executable, arguments)
         operations[identifier] = operation
@@ -66,7 +80,7 @@ public actor ClaudeRemoteSetup {
             while true {
                 if Task.isCancelled { throw Failure.cancelled }
                 if let failure = operation.failure { throw failure }
-                if let result = try operation.result() { return try Self.status(data: result.data, exitStatus: result.exitStatus) }
+                if let result = try operation.result() { return result }
                 if ProcessInfo.processInfo.systemUptime >= deadline {
                     operation.abort(.timedOut)
                     throw Failure.timedOut
@@ -107,6 +121,14 @@ public actor ClaudeRemoteSetup {
         return command
     }
 
+    /// The same program in its removal mode; it needs neither the hook nor the plugin.
+    public static func removalCommand(home: String = "~/.claude") throws -> String {
+        guard !home.isEmpty, home.utf8.count <= 4096, !home.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Failure.invalidTarget }
+        let installer = try resources().installer
+        let payload = try JSONSerialization.data(withJSONObject: ["operation": "uninstall", "home": home], options: [.sortedKeys])
+        return "python3 -u -c 'import base64;exec(base64.b64decode(\"\(installer.base64EncodedString())\").decode())' \(payload.base64EncodedString())"
+    }
+
     /// Identifies the shipped installer and hook, and whether the progress ring
     /// is on. A host configured with another digest is brought current
     /// automatically after an update or when the ring is switched.
@@ -131,7 +153,8 @@ public actor ClaudeRemoteSetup {
         return (installer, hook)
     }
 
-    static func status(data: Data, exitStatus: Int32) throws -> ClaudeHookInstaller.Status {
+    /// The host's answer as an object, with its allowlisted error code thrown.
+    private static func reply(data: Data, exitStatus: Int32) throws -> [String: Any] {
         guard data.count <= 4096 else { throw Failure.invalidResponse }
         guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw exitStatus == 0 ? Failure.invalidResponse : Failure.connectionFailed
@@ -146,6 +169,19 @@ public actor ClaudeRemoteSetup {
             }
         }
         guard exitStatus == 0 else { throw Failure.connectionFailed }
+        return value
+    }
+
+    static func removal(data: Data, exitStatus: Int32) throws -> Bool {
+        let value = try reply(data: data, exitStatus: exitStatus)
+        guard Set(value.keys) == ["removed"], let removed = try? JSONFieldView.document(data).fields(["removed"])["removed"]?.boolean() else {
+            throw Failure.invalidResponse
+        }
+        return removed
+    }
+
+    static func status(data: Data, exitStatus: Int32) throws -> ClaudeHookInstaller.Status {
+        let value = try reply(data: data, exitStatus: exitStatus)
         let keys = ["hooksConfigured", "telemetryConfigured", "statusLineConfigured", "telemetryConflict"]
         let fields = try? JSONFieldView.document(data).fields(Set(keys))
         guard Set(value.keys) == Set(keys),

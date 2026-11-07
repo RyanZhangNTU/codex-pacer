@@ -69,4 +69,42 @@ final class ClaudeRemoteSetupContractTests: XCTestCase {
         }
     }
 
+    /// Removal sends only the operation and home, and accepts only a strict
+    /// boolean answer; a removed host's record goes so a return sets it up again.
+    func testRemovalCommandReplyAndForgottenHost() throws {
+        let command = try ClaudeRemoteSetup.removalCommand()
+        let encoded = try XCTUnwrap(command.split(separator: " ").last.map(String.init))
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(Data(base64Encoded: encoded))) as? [String: String])
+        XCTAssertEqual(payload, ["operation": "uninstall", "home": "~/.claude"])
+        XCTAssertTrue(command.hasPrefix("python3 -u -c 'import base64;exec(base64.b64decode(\""))
+        XCTAssertThrowsError(try ClaudeRemoteSetup.removalCommand(home: "host\nhome"))
+        XCTAssertThrowsError(try ClaudeRemoteSetup.removalCommand(home: ""))
+
+        XCTAssertTrue(try ClaudeRemoteSetup.removal(data: Data(#"{"removed":true}"#.utf8), exitStatus: 0))
+        XCTAssertFalse(try ClaudeRemoteSetup.removal(data: Data(#"{"removed":false}"#.utf8), exitStatus: 0))
+        for text in [#"{"removed":1}"#, #"{"removed":true,"path":"PRIVATE"}"#, "{}", success] {
+            XCTAssertThrowsError(try ClaudeRemoteSetup.removal(data: Data(text.utf8), exitStatus: 0)) { error in
+                XCTAssertEqual(error as? ClaudeRemoteSetup.Failure, .invalidResponse, text)
+            }
+        }
+        for (text, failure) in [(#"{"error":"invalidSettings"}"#, ClaudeRemoteSetup.Failure.invalidSettings),
+                                (#"{"error":"changedSettings"}"#, .changedSettings), (#"{"error":"invalidPayload"}"#, .setupFailed)] {
+            XCTAssertThrowsError(try ClaudeRemoteSetup.removal(data: Data(text.utf8), exitStatus: 1)) { error in
+                XCTAssertEqual(error as? ClaudeRemoteSetup.Failure, failure, text)
+            }
+        }
+        XCTAssertThrowsError(try ClaudeRemoteSetup.removal(data: Data(), exitStatus: 255)) { error in
+            XCTAssertEqual(error as? ClaudeRemoteSetup.Failure, .connectionFailed)
+        }
+
+        let suite = "pacer-claude-forget-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)); defer { defaults.removePersistentDomain(forName: suite) }
+        ClaudeRemoteAutoSetup.recordConfigured(alias: "kept", digest: "digest", defaults: defaults)
+        ClaudeRemoteAutoSetup.recordConfigured(alias: "removed", digest: "digest", defaults: defaults)
+        ClaudeRemoteAutoSetup.forget(alias: "removed", defaults: defaults)
+        ClaudeRemoteAutoSetup.forget(alias: "never-configured", defaults: defaults)
+        XCTAssertEqual(ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults), ["kept": "digest"])
+        ClaudeRemoteAutoSetup.forget(alias: "kept", defaults: defaults)
+        XCTAssertNil(defaults.object(forKey: ClaudeRemoteAutoSetup.digestsKey), "The last record takes its key with it")
+    }
 }
