@@ -33,8 +33,8 @@ internal static class CollapsedLayoutChecks
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
             await Pump(); await island.WaitForPresentationAsync();
             var editor = SelfAndDescendants(window).OfType<CompactLayoutEditorView>().Single();
-            Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600 && editor.ActualWidth <= 510,
-                "The inline editor must fit the existing Settings canvas");
+            Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5 && editor.ActualWidth <= SettingsWindow.ColumnWidth,
+                "The inline editor must fit the main window's page column");
             Check(engine.LatestSnapshot!.CompactContext != null, "The engine must provide a sanitized compact context");
             string[] everyProvider = ["codex", "claude", "deepseek"];
             var context = engine.LatestSnapshot!.CompactContext!.Value;

@@ -24,9 +24,9 @@ internal static class AccessibilitySettingsChecks
         {
             window.Show(); await Drain();
             appearance.Set(appearance.Current with { Dark = false }); await Drain();
-            Check(ColorOf(window.Resources["SettingsBackground"]) == Colors.White, "An injected light theme immediately repaints settings");
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(244, 244, 246), "An injected light theme immediately repaints settings");
             appearance.Set(appearance.Current with { Dark = true }); await Drain();
-            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(31, 31, 31), "An injected dark theme immediately repaints settings");
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(27, 27, 30), "An injected dark theme immediately repaints settings");
             appearance.Set(appearance.Current with { HighContrast = true }); await Drain();
             Check(ColorOf(window.Resources["SettingsBackground"]) == appearance.Current.Colors.Window
                 && ColorOf(window.Resources["SettingsAccent"]) == appearance.Current.Colors.Highlight
@@ -55,19 +55,21 @@ internal static class AccessibilitySettingsChecks
             languageChoice.IsDropDownOpen = false; await Drain();
             Check(saves == 0 && configurations == 0, "Inspecting and closing the current choice does not commit a preference");
             appearance.Set(appearance.Current with { HighContrast = false }); await Drain();
-            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(31, 31, 31), "Leaving high contrast restores the selected system theme");
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(27, 27, 30), "Leaving high contrast restores the selected system theme");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");
             window.Activate(); Check(privacy.Focus(), "A settings switch accepts keyboard focus");
             CheckFocusOrder(window, privacy); privacy.Focus();
             PostKey(window, Key.Space); await PresentationWait.UntilAsync(() => session.Current.HideProjects, "Space toggles a focused settings choice");
             await session.WaitForChangesAsync();
-            foreach (string pane in new[] { "appearance", "collapsed", "reminders", "codex", "claude", "deepseek", "whatsNew", "help", "support", "general" })
+            foreach (string page in new[] { "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "whatsNew", "help", "support", "general" })
             {
-                await window.NavigateAsync(pane); await ShellProjection.WhenIdleAsync(); await Drain(); window.UpdateLayout();
-                if (pane is "whatsNew" or "help" or "support")
+                // What's New and Help are tabs of Help & Updates.
+                string pane = SettingsWindow.CanonicalPane(page);
+                await window.NavigateAsync(page); await ShellProjection.WhenIdleAsync(); await Drain(); window.UpdateLayout();
+                if (pane is "about" or "support")
                     await PresentationWait.UntilAsync(() => Descendants(window).OfType<GuideContent>().Any(value => value.Children.Count > 1), "The guide pane publishes its local catalog");
                 Check(Find<RadioButton>(window, "settings.pane." + pane).IsChecked == true, "Keyboard-accessible navigation selects " + pane);
-                await Audit(window, "settings." + pane);
+                await Audit(window, "settings." + page);
                 var choice = Find<RadioButton>(window, "settings.pane." + pane); window.Activate(); choice.Focus();
                 int beforeTheme = saves;
                 appearance.Set(appearance.Current with { HighContrast = true }); await Drain();

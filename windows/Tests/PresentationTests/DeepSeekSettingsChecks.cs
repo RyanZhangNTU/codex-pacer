@@ -43,7 +43,7 @@ internal static class DeepSeekSettingsChecks
             var progress = Find<CheckBox>(window, "settings.deepseek.progress_ring");
             var budget = Find<RadioButton>(window, "settings.deepseek.mode.budget"); var balance = Find<RadioButton>(window, "settings.deepseek.mode.balance");
             var simple = Find<RadioButton>(window, "settings.deepseek.panel.simple"); var detailed = Find<RadioButton>(window, "settings.deepseek.panel.detailed");
-            Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600 && module.IsChecked == true,
+            Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5 && module.IsChecked == true,
                 "DeepSeek must retain the original settings canvas and acknowledged module state");
             Check(!Find<Button>(window, "settings.deepseek.sign_in").IsEnabled, "The page must keep the unsupported account connection action disabled");
             Check(Descendants(island).OfType<CompactQuotaGlyph>().All(value => value.RingCount == 0 && value.ShowsPriceClock), "DeepSeek without budgets must show its actual price clock in the header and strip");

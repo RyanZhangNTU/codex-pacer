@@ -44,16 +44,36 @@ internal static class SettingsPresentationChecks
             window.Show(); await Dispatcher.Yield(DispatcherPriority.ContextIdle); window.UpdateLayout();
             Check(WindowRendering.Mode(window) == "SoftwareOnly", "Opaque Settings must use software rendering in multi-adapter and virtual-display sessions");
             TypographyChecks.Check(window.FontFamily, FontWeights.Normal);
-            Check(window.ClientContent.ActualWidth == 780
-                && window.ClientContent.ActualHeight == 600, "Settings must retain the original native client dimensions");
+            Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5
+                && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5, "The main window opens at the Mac's default size");
+            Check(window.ResizeMode == ResizeMode.CanResize && window.MinWidth >= SettingsWindow.MinimumWidth && window.MinHeight >= SettingsWindow.MinimumHeight,
+                "The main window resizes down to the Mac's minimum client size");
+            Check(!Find<RadioButton>(window, "settings.pane.overview").IsEnabled && !Find<RadioButton>(window, "settings.pane.history").IsEnabled,
+                "Overview and History stay visible but closed until they are ported");
+            await window.NavigateAsync("about"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             Check(window.Title == ui.Text("menu.settings_title"), "The system window title must use the shared catalog");
             var update = Find<Button>(window, "settings.update.check");
             var automatic = Find<CheckBox>(window, "settings.update.automatic");
             Check(!update.IsEnabled && !automatic.IsEnabled, "The preview cannot expose unimplemented update actions");
+            Check(Find<TextBlock>(window, "settings.about.version").Text.Length > 0, "Help & Updates shows the installed version in the sidebar");
+            await window.NavigateAsync("general"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            // Opening Help & Updates and returning to General each saved the page.
+            int navigationSaves = saved.Count;
             Check(Find<RadioButton>(window, "settings.pane.general").IsEnabled
                 && Find<RadioButton>(window, "settings.pane.appearance").IsEnabled
-                && Find<RadioButton>(window, "settings.pane.reminders").IsEnabled
-                && Find<RadioButton>(window, "settings.pane.connections").IsEnabled, "Implemented settings and connection panes are available");
+                && Find<RadioButton>(window, "settings.pane.notifications").IsEnabled
+                && Find<RadioButton>(window, "settings.pane.remote").IsEnabled, "Implemented settings and connection panes are available");
+            var search = Find<TextBox>(window, "settings.search");
+            search.Text = ui.Text("main.search.remote").Split(' ')[0]; window.UpdateLayout();
+            Check(window.SearchMatches().Contains("remote") && Find<Button>(window, "settings.search.result.remote").IsVisible
+                && !Find<RadioButton>(window, "settings.pane.general").IsVisible, "Search lists pages by their shared search words in place of the groups");
+            search.Text = ui.Text("main.pane.overview"); window.UpdateLayout();
+            Check(!window.SearchMatches().Contains("overview"), "Search leaves out pages that cannot open yet");
+            search.Text = "␀"; window.UpdateLayout();
+            Check(window.SearchMatches().Count == 0 && Find<TextBlock>(window, "settings.search.empty").IsVisible, "Search says when nothing matches");
+            search.Clear(); window.UpdateLayout();
+            Check(Find<RadioButton>(window, "settings.pane.general").IsVisible && Find<RadioButton>(window, "settings.pane.general").IsChecked == true,
+                "Clearing the search restores the grouped pages and keeps the current one");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");
             var apps = Find<CheckBox>(window, "settings.app_buttons");
             var login = Find<CheckBox>(window, "settings.startup");
@@ -113,7 +133,7 @@ internal static class SettingsPresentationChecks
             rejectSave = true; Toggle(privacy);
             await Until(() => configureCalls >= 3 && privacy.IsEnabled, "A failed disk write must finish its engine rollback");
             Check(session.Current.HideProjects && privacy.IsChecked == true && latest!.Tasks.All(value => value.Title == (language == "en" ? "Local task" : "本地任务"))
-                && saved.Count == 3, "A failed save must leave both visible privacy state and persisted choices at their previous values");
+                && saved.Count == navigationSaves + 3, "A failed save must leave both visible privacy state and persisted choices at their previous values");
             Select(Find<RadioButton>(window, "settings.pane.appearance"));
             await Until(() => session.Current.LastSettingsPane == "appearance" && Find<RadioButton>(window, "appearance.mode.notch").IsEnabled,
                 "Appearance navigation must persist and expose the real position controls");
@@ -149,7 +169,7 @@ internal static class SettingsPresentationChecks
             if (scrolling.VerticallyScrollable) scrolling.SetScrollPercent(ScrollPatternIdentifiers.NoScroll, 100);
             await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             var fullscreen = Find<CheckBox>(window, "appearance.fullscreen");
-            Check(fullscreen.TranslatePoint(new Point(0, fullscreen.ActualHeight), window.ClientContent).Y <= 600.01,
+            Check(fullscreen.TranslatePoint(new Point(0, fullscreen.ActualHeight), window.ClientContent).Y <= SettingsWindow.DefaultHeight + 0.01,
                 "The overlay scroller must make the bottom setting reachable without narrowing the cards");
             if (scrolling.VerticallyScrollable) scrolling.SetScrollPercent(ScrollPatternIdentifiers.NoScroll, 0);
             Select(Find<RadioButton>(window, "appearance.mode.notch"));
@@ -173,8 +193,8 @@ internal static class SettingsPresentationChecks
             await Until(() => session.Current.IslandPlacement == null && resetPosition.IsEnabled, "Reset returns to the untouched center");
             Check(session.Current.Position == "center" && configureCalls == 3,
                 "Appearance choices and navigation cannot restart data collectors");
-            Select(Find<RadioButton>(window, "settings.pane.connections"));
-            await Until(() => session.Current.LastSettingsPane == "connections" && Descendants(window).OfType<FrameworkElement>().Any(value =>
+            Select(Find<RadioButton>(window, "settings.pane.remote"));
+            await Until(() => session.Current.LastSettingsPane == "remote" && Descendants(window).OfType<FrameworkElement>().Any(value =>
                 AutomationProperties.GetAutomationId(value) == "settings.connections.summary"), "Connections opens with its live summary");
             string connectionsImage = Path.Combine(output, "settings-" + scenario + "-connections.png");
             window.CapturePreview(connectionsImage); CheckOpaque(connectionsImage, window);

@@ -216,9 +216,9 @@ internal sealed partial class SettingsWindow
     private static string Tone(string? tone) => tone switch { "warning" => "SettingsWarning", "success" => "SettingsSuccess", _ => "SettingsSecondary" };
     private async Task RunConnectionAction(Func<Task> action)
     {
-        if (sourceClosed || providerConnectionClosed || busy || connectionBusy || session.RequiresRestart || activePane != "connections") return;
+        if (sourceClosed || providerConnectionClosed || busy || connectionBusy || session.RequiresRestart || activePane != "remote") return;
         connectionBusy = true; RefreshConnections();
-        try { await sourceReady; if (!sourceClosed && !providerConnectionClosed && activePane == "connections" && !session.RequiresRestart) await action(); }
+        try { await sourceReady; if (!sourceClosed && !providerConnectionClosed && activePane == "remote" && !session.RequiresRestart) await action(); }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { if (!sourceClosed) ShowIssue("windows.connection.refresh_failed"); }
         finally { connectionBusy = false; if (!sourceClosed) RefreshConnections(); }
     }

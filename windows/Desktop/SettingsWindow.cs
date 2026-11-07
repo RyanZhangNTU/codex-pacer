@@ -16,7 +16,8 @@ using Microsoft.Win32;
 
 namespace CodexPacer.Windows;
 
-/// The native settings content geometry, with Windows system window controls.
+/// Pacer's main window, which grew out of Settings: a resizable window with the
+/// Mac's sidebar and one centered column of cards per page, under Windows system window controls.
 internal sealed partial class SettingsWindow : Window
 {
     private readonly UiText ui;
@@ -39,15 +40,16 @@ internal sealed partial class SettingsWindow : Window
     private readonly Func<Uri, bool>? guideLinkLauncher;
     private readonly Action<string>? guideCopyLink;
     private readonly Func<Uri, bool>? systemSettingsLauncher;
-    private readonly Grid client = new() { Width = 780, Height = 600 };
-    private readonly StackPanel form = new() { Margin = new Thickness(20, 9, 20, 16) };
+    private readonly Grid client = new() { Width = DefaultWidth, Height = DefaultHeight };
+    private readonly StackPanel form = new() { Margin = new Thickness(32, 4, 32, 32), MaxWidth = ColumnWidth };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
     private readonly Button recoveryRestart = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(10, 0, 10, 10) };
     private readonly List<FrameworkElement> editors = [];
     private readonly Dictionary<string, RadioButton> navigation = new();
     private readonly TextBlock paneTitle;
     private readonly ScrollViewer paneScroller;
-    private string activePane = "general";
+    private string activePane = "general", aboutTab = "whatsNew";
+    internal const double DefaultWidth = 980, DefaultHeight = 660, MinimumWidth = 860, MinimumHeight = 560, ColumnWidth = 640, SidebarWidth = 220;
     private CheckBox? login, hideProjects, appButtons, monitorSSH;
     private TextBlock? startupStatus;
     private ComboBox? language;
@@ -83,7 +85,9 @@ internal sealed partial class SettingsWindow : Window
         this.openNotificationSettings = openNotificationSettings ?? (() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true }));
         this.sourceReady = sourceReady ?? Task.CompletedTask;
         Title = ui.Text("menu.settings_title"); WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        ResizeMode = ResizeMode.NoResize; SizeToContent = SizeToContent.WidthAndHeight;
+        // The first layout sizes the client exactly; then the window resizes freely down to the Mac's minimum.
+        ResizeMode = ResizeMode.CanResize; SizeToContent = SizeToContent.WidthAndHeight;
+        ContentRendered += (_, _) => ReleaseInitialSize();
         FontFamily = PacerFonts.Interface;
         Language = PacerFonts.RenderingLanguage(ui);
         TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
@@ -94,15 +98,17 @@ internal sealed partial class SettingsWindow : Window
         SetResourceReference(BackgroundProperty, "SettingsBackground");
         Content = client;
         client.SetResourceReference(Panel.BackgroundProperty, "SettingsBackground");
-        client.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
+        client.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(SidebarWidth) });
         client.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
         client.ColumnDefinitions.Add(new ColumnDefinition());
         client.Children.Add(BuildSidebar());
         var divider = new Border(); divider.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
         Grid.SetColumn(divider, 1); client.Children.Add(divider);
         var pane = new DockPanel(); Grid.SetColumn(pane, 2); client.Children.Add(pane);
-        paneTitle = Label(ui.Text("settings.pane.general"), 20, FontWeights.SemiBold); paneTitle.Margin = new Thickness(28, 20, 28, 0);
-        var paneHeader = new Border { Child = paneTitle, Padding = new Thickness(0, 0, 0, 10), BorderThickness = new Thickness(0, 0, 0, 1), BorderBrush = Brushes.Transparent };
+        paneTitle = Label(ui.Text("settings.pane.general"), 22, FontWeights.Bold);
+        AutomationProperties.SetHeadingLevel(paneTitle, AutomationHeadingLevel.Level1);
+        var headerColumn = new Grid { MaxWidth = ColumnWidth }; headerColumn.Children.Add(paneTitle);
+        var paneHeader = new Border { Child = headerColumn, Padding = new Thickness(32, 22, 32, 12), BorderThickness = new Thickness(0, 0, 0, 1), BorderBrush = Brushes.Transparent };
         DockPanel.SetDock(paneHeader, Dock.Top); pane.Children.Add(paneHeader);
         InitializeStorageRecovery(pane, preferencesStore);
         paneScroller = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = form };
@@ -158,55 +164,19 @@ internal sealed partial class SettingsWindow : Window
     { AutomationProperties.SetAutomationId(control, id); AutomationProperties.SetName(control, name); }
     private Image AppIcon(double size)
         => new() { Width = size, Height = size, Source = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))), Stretch = Stretch.Uniform };
-    private UIElement BuildSidebar()
+    private void ReleaseInitialSize()
     {
-        var surface = new Border(); surface.SetResourceReference(Border.BackgroundProperty, "SettingsSidebar");
-        var stack = new DockPanel { Margin = new Thickness(10, 0, 10, 0), LastChildFill = true }; surface.Child = stack;
-        var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 16, 8, 16) };
-        brand.Children.Add(AppIcon(32)); var names = new StackPanel { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        names.Children.Add(Label("Codex Pacer", 13, FontWeights.SemiBold)); names.Children.Add(Detail(Version)); brand.Children.Add(names);
-        DockPanel.SetDock(brand, Dock.Top); stack.Children.Add(brand);
-        var bottom = new StackPanel(); DockPanel.SetDock(bottom, Dock.Bottom); stack.Children.Add(bottom);
-        bottom.Children.Add(Navigation("whatsNew", "whats_new.window_title", "sparkle", Color.FromRgb(237, 74, 153), enabled: true));
-        bottom.Children.Add(Navigation("help", "settings.pane.help", "questionmark", Color.FromRgb(133, 133, 133), enabled: true));
-        bottom.Children.Add(Navigation("support", "settings.pane.support", "heart", Color.FromRgb(245, 92, 107), enabled: true));
-        var quit = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Height = 26, Margin = new Thickness(0, 0, 0, 10) };
-        var quitLabel = new StackPanel { Orientation = Orientation.Horizontal };
-        var power = new IconGlyph { Symbol = "power", Width = 14, Height = 14, Margin = new Thickness(0, 0, 8, 0) };
-        power.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary"); quitLabel.Children.Add(power);
-        var quitText = Label(ui.Text("common.quit"), 12); quitText.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); quitLabel.Children.Add(quitText);
-        quit.Content = quitLabel; Identify(quit, "settings.quit", ui.Text("common.quit")); quit.Click += (_, _) => QuitRequested?.Invoke(); bottom.Children.Add(quit);
-        var top = new StackPanel(); stack.Children.Add(top);
-        top.Children.Add(Navigation("general", "settings.pane.general", "gearshape", Color.FromRgb(133, 133, 133), enabled: true));
-        top.Children.Add(Navigation("appearance", "settings.pane.appearance", "paintpalette", Color.FromRgb(112, 102, 245), enabled: true));
-        top.Children.Add(Navigation("collapsed", "settings.pane.collapsed", "rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), enabled: true));
-        top.Children.Add(Navigation("reminders", "settings.reminders", "bell.badge", Color.FromRgb(255, 77, 74), enabled: engine != null));
-        var modules = Detail(ui.Text("provider.modules")); modules.FontWeight = FontWeights.SemiBold; modules.Margin = new Thickness(8, 14, 8, 6); top.Children.Add(modules);
-        top.Children.Add(Navigation("codex", null, "chevron.left.forwardslash.chevron.right", Color.FromRgb(102, 205, 187), "Codex", enabled: engine != null, darkGlyph: true));
-        top.Children.Add(Navigation("claude", null, "asterisk", Color.FromRgb(255, 164, 119), "Claude", enabled: engine != null, darkGlyph: true));
-        top.Children.Add(Navigation("deepseek", null, "water.waves", Color.FromRgb(126, 150, 255), "DeepSeek", enabled: engine != null, darkGlyph: true));
-        top.Children.Add(Navigation("connections", "settings.pane.connections", "point.3.connected.trianglepath.dotted", Color.FromRgb(41, 128, 255), enabled: engine != null));
-        return surface;
-    }
-    private RadioButton Navigation(string id, string? key, string symbol, Color color, string? literal = null, bool enabled = false, bool darkGlyph = false)
-    {
-        string name = literal ?? ui.Text(key!);
-        var button = new RadioButton { Style = (Style)FindResource("SettingsSidebarChoice"), GroupName = "settings.panes", Margin = new Thickness(0, 0, 0, 2), IsEnabled = enabled };
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
-        // Native sidebar tiles use a tinted gradient; this is limited to the tile, not a glass substitute.
-        Color lighter = Color.FromRgb((byte)Math.Min(255, color.R + 10), (byte)Math.Min(255, color.G + 10), (byte)Math.Min(255, color.B + 10));
-        var tile = new Border { Width = 22, Height = 22, CornerRadius = new CornerRadius(5.72), Background = new LinearGradientBrush(lighter, color, 90), Margin = new Thickness(0, 0, 9, 0) };
-        tile.Child = new IconGlyph { Symbol = symbol, Width = 16, Height = 16, Ink = darkGlyph ? new SolidColorBrush(Color.FromArgb(194, 0, 0, 0)) : Brushes.White }; row.Children.Add(tile);
-        var label = Label(name); label.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = button }); row.Children.Add(label); button.Content = row;
-        Identify(button, "settings.pane." + id, name);
-        if (!enabled) { button.ToolTip = ui.Text("windows.settings.pane_pending"); ToolTipService.SetShowOnDisabled(button, true); }
-        button.Checked += async (_, _) => { if (!synchronizing && button.IsChecked == true) await NavigateAsync(id); };
-        navigation[id] = button; return button;
+        if (SizeToContent == SizeToContent.Manual) return;
+        double chromeWidth = Math.Max(0, ActualWidth - client.ActualWidth), chromeHeight = Math.Max(0, ActualHeight - client.ActualHeight);
+        MinWidth = MinimumWidth + chromeWidth; MinHeight = MinimumHeight + chromeHeight;
+        double width = ActualWidth, height = ActualHeight;
+        SizeToContent = SizeToContent.Manual; Width = width; Height = height;
+        client.Width = client.Height = double.NaN;
     }
     private Border Card(params UIElement[] rows)
     {
-        var card = new Border { CornerRadius = new CornerRadius(13), Margin = new Thickness(0, 0, 0, 10) };
-        card.SetResourceReference(Border.BackgroundProperty, "SettingsCard");
+        var card = new Border { CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 0, 0, 12), BorderThickness = new Thickness(1) };
+        card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         var content = new StackPanel();
         for (int i = 0; i < rows.Length; i++)
         {
@@ -230,7 +200,8 @@ internal sealed partial class SettingsWindow : Window
         Identify(check, id, ui.Text(key)); if (detailKey != null) AutomationProperties.SetHelpText(check, ui.Text(detailKey));
         return Row(text, check);
     }
-    private void BuildGeneral()
+    /// The installed version, its check and automatic checks; Help & Updates heads with it.
+    private void BuildUpdateCard()
     {
         var version = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         version.Children.Add(AppIcon(34)); var labels = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -244,6 +215,9 @@ internal sealed partial class SettingsWindow : Window
         Identify(updateNotesButton, "settings.update.notes", ui.Text("windows.updates.view_notes")); updateNotesButton.Click += ReadUpdateNotes;
         RefreshUpdates();
         form.Children.Add(Card(Row(version, update, 54), automatic, updateNotesButton));
+    }
+    private void BuildGeneral()
+    {
         var loginRow = Toggle("settings.open_at_login", "windows.settings.open_at_login_detail", "settings.startup", out var loginSwitch); login = loginSwitch;
         loginRow.MinHeight = 52;
         RoutedEventHandler changeStartup = (_, _) =>
@@ -360,19 +334,28 @@ internal sealed partial class SettingsWindow : Window
         foreach (var editor in editors) editor.IsEnabled = enabled;
         RefreshUpdates();
         codexHistory?.SetInteractionEnabled(enabled);
-        foreach (var item in navigation) item.Value.IsEnabled = enabled && (item.Key is "general" or "appearance" or "collapsed" or "whatsNew" or "help" or "support" || (item.Key is "codex" or "claude" or "deepseek" or "reminders" or "connections") && engine != null);
+        foreach (var item in navigation) item.Value.IsEnabled = enabled && PaneAvailable(item.Key);
         RefreshConnections();
     }
     private void OnPreferencesChanged(DesktopPreferences value)
     { if (!ReadOnlyGuidePane(activePane) && ResolvePane(value.LastSettingsPane) != activePane) RebuildPane(value.LastSettingsPane); RefreshValues(); }
-    private string ResolvePane(string value) => value is "appearance" or "collapsed" or "whatsNew" or "help" or "support" || (value is "codex" or "claude" or "deepseek" or "reminders" or "connections") && engine != null ? value : "general";
+    private string ResolvePane(string value)
+    {
+        value = CanonicalPane(value);
+        return value is "general" or "appearance" or "collapsed" or "about" or "support" || EnginePane(value) && engine != null ? value : "general";
+    }
+    /// Opens a page; What's New and Help open as tabs of Help & Updates.
     internal async System.Threading.Tasks.Task NavigateAsync(string pane)
     {
-        if (sourceClosed || ResolvePane(pane) != pane) return;
+        string tab = pane is "help" or "whatsNew" ? pane : aboutTab;
+        pane = CanonicalPane(pane);
+        if (sourceClosed || ResolvePane(pane) != pane || PendingPane(pane)) return;
+        bool switchesTab = pane == "about" && activePane == "about" && tab != aboutTab;
+        aboutTab = tab;
         if (ReadOnlyGuidePane(pane)) RebuildPane(pane);
         else
         {
-            bool wasReadOnly = ReadOnlyGuidePane(activePane); if (wasReadOnly) RebuildPane(pane);
+            bool wasReadOnly = ReadOnlyGuidePane(activePane); if (wasReadOnly || switchesTab) RebuildPane(pane);
             if (await Change(p => p with { LastSettingsPane = pane }) != PreferencesApplyResult.Applied && wasReadOnly) RebuildPane(session.Current.LastSettingsPane);
         }
     }
@@ -381,6 +364,7 @@ internal sealed partial class SettingsWindow : Window
         synchronizing = true;
         try
         {
+            if (value is "help" or "whatsNew") aboutTab = value;
             activePane = ResolvePane(value);
             foreach (UIElement child in form.Children)
                 if (child != issue && child != recoveryRestart) PageAccessibility.Retire(child);
@@ -396,10 +380,21 @@ internal sealed partial class SettingsWindow : Window
             ClearCollapsed();
             ClearGuidePages();
             ClearConnections();
-            paneTitle.Text = activePane == "codex" ? "Codex" : activePane == "claude" ? "Claude" : activePane == "deepseek" ? "DeepSeek" : ui.Text(activePane == "reminders" ? "settings.reminders" : activePane == "whatsNew" ? "whats_new.window_title" : "settings.pane." + activePane);
+            paneTitle.Text = PaneTitle(activePane);
             AutomationProperties.SetName(paneScroller, paneTitle.Text);
-            if (activePane is "help" or "support" or "whatsNew") BuildGuidePage();
-            else if (activePane == "general") BuildGeneral(); else if (activePane == "appearance") BuildAppearance(); else if (activePane == "codex") BuildCodex(); else if (activePane == "claude") BuildClaude(); else if (activePane == "reminders") BuildReminders(); else if (activePane == "collapsed") BuildCollapsed(); else if (activePane == "connections") BuildConnections(); else BuildDeepSeek();
+            switch (activePane)
+            {
+                case "about": BuildAbout(); break;
+                case "support": BuildGuidePage("support"); break;
+                case "appearance": BuildAppearance(); break;
+                case "codex": BuildCodex(); break;
+                case "claude": BuildClaude(); break;
+                case "deepseek": BuildDeepSeek(); break;
+                case "notifications": BuildReminders(); break;
+                case "collapsed": BuildCollapsed(); break;
+                case "remote": BuildConnections(); break;
+                default: BuildGeneral(); break;
+            }
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
             paneScroller.ScrollToTop(); SetEditors(!busy && !session.RequiresRestart);
         }
@@ -448,6 +443,7 @@ internal sealed partial class SettingsWindow : Window
             RefreshReminders();
             RefreshCollapsed();
             RefreshConnections();
+            RefreshSidebar();
             recoveryRestart.Visibility = session.RequiresRestart && activePane != "general" ? Visibility.Visible : Visibility.Collapsed;
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
         }
@@ -460,7 +456,7 @@ internal sealed partial class SettingsWindow : Window
     private void RefreshTheme()
     {
         var state = appearance.Current; DesktopAppearance.Apply(this, state);
-        semanticPaint.Apply(state); bool dark = darkOverride ?? state.Dark; SettingsPalette.Apply(Resources, dark, IsActive, state);
+        semanticPaint.Apply(state); bool dark = darkOverride ?? state.Dark; SettingsPalette.Apply(Resources, dark, IsActive, state, main: true);
         RefreshSurfaceStatus();
     }
     internal static bool IsSystemDark()

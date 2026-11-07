@@ -1069,6 +1069,7 @@
     "windows.engine.start_failed": "Codex Pacer 未能启动，请重新打开应用。",
     "windows.instance.already_running": "Codex Pacer 已在运行。请从托盘打开它，或先退出再启动此版本。",
     "windows.language.system": "跟随 Windows",
+    "windows.main.pane_later": "将在重构的下一步加入。",
     "windows.open.claude": "打开 Claude",
     "windows.open.codex": "打开 Codex",
     "windows.open.deepseek": "打开 DeepSeek Harness",

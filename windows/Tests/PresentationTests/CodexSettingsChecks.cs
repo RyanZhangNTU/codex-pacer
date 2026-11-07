@@ -38,7 +38,7 @@ internal static class CodexSettingsChecks
                 preferences.EngineConfiguration(), referenceFixture: true);
             ready.TrySetResult();
             await Until(() => Find<TextBlock>(window, "settings.codex.cli.status").Text == ui.Text("provider.state.found"), "The provider page must inspect its saved CLI source");
-            Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600,
+            Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5,
                 "The provider page must keep the original Mac client and sidebar dimensions");
             var module = Find<CheckBox>(window, "settings.codex.enabled");
             Check(module.IsChecked == true && module.ActualWidth == 36 && module.ActualHeight == 18,
@@ -71,7 +71,7 @@ internal static class CodexSettingsChecks
             Check(Find<RadioButton>(window, "settings.pane.codex").IsChecked == true
                 && Find<RadioButton>(window, "settings.pane.claude").IsEnabled
                 && Find<RadioButton>(window, "settings.pane.deepseek").IsEnabled
-                && Find<RadioButton>(window, "settings.pane.connections").IsEnabled,
+                && Find<RadioButton>(window, "settings.pane.remote").IsEnabled,
                 "Implemented provider and connection panes must be reachable");
             window.CapturePreview(Path.Combine(output, "settings-" + name + "-codex.png"));
             var expander = Find<Expander>(window, "settings.codex.locations");

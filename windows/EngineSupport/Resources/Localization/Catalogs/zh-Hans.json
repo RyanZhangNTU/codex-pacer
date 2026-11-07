@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "5bbd6236c95d03358b1ca725b7733c968bc0c8c3cf1076bd953ebd106660e326",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "8dc552a8181303b1ac1d8d47c938bec0c4d47b37930f90a1c685e5b2bcc829a5"
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "98a252b85bca9a791ab59d47bc80d386ba230d0d1483822c0456951a989a79fa"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -1073,6 +1073,7 @@
     "windows.engine.start_failed": "Codex Pacer \u672a\u80fd\u542f\u52a8\uff0c\u8bf7\u91cd\u65b0\u6253\u5f00\u5e94\u7528\u3002",
     "windows.instance.already_running": "Codex Pacer \u5df2\u5728\u8fd0\u884c\u3002\u8bf7\u4ece\u6258\u76d8\u6253\u5f00\u5b83\uff0c\u6216\u5148\u9000\u51fa\u518d\u542f\u52a8\u6b64\u7248\u672c\u3002",
     "windows.language.system": "\u8ddf\u968f Windows",
+    "windows.main.pane_later": "\u5c06\u5728\u91cd\u6784\u7684\u4e0b\u4e00\u6b65\u52a0\u5165\u3002",
     "windows.open.claude": "\u6253\u5f00 Claude",
     "windows.open.codex": "\u6253\u5f00 Codex",
     "windows.open.deepseek": "\u6253\u5f00 DeepSeek Harness",

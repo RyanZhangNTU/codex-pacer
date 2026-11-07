@@ -33,6 +33,12 @@ The unsigned ZIP and SHA-256 file are written under `output/windows`; the `windo
 
 For local toolchains outside the worktree, set `PACER_SWIFT_ROOT`, `PACER_WINDOWS_SDK_ROOT` and `PACER_DOTNET_ROOT` before running the scripts. They identify existing installations; build outputs, NuGet packages and source snapshots stay under the worktree or its configured temporary directory. Generated UI strings and DeepSeek scripts come from Core resources; `python scripts/windows/build-shell-resources.py --check` checks them.
 
+## Main window
+
+Settings is Pacer's main window, as on the Mac. It opens at 980 by 660 and resizes down to 860 by 560. Each page is one centered column of cards, at most 640 wide. The sidebar has a search field, then Overview and History, then the services (Codex, Claude, DeepSeek, Remote) and the preferences (Appearance, Collapsed Bar, Notifications, General). Help & Updates and Support & Feedback sit in its footer, with Quit, because Windows has no app menu. A service that is turned off shows Off, and a found update replaces the installed version under Help & Updates.
+
+Search matches page titles and the shared `main.search.*` words, and lists only pages that can open. Return opens the first match, and Escape clears the query before it can close the window. Overview and History stay visible but disabled until they are ported. The page id is stored in `settingsPane`. Older values open where their content moved: `reminders` opens Notifications, `connections` opens Remote, and `whatsNew` or `help` opens the matching tab of Help & Updates.
+
 ## Presentation and request handling
 
 Snapshots supply task labels, counts, rates, quota and wallet projections. The additive read-only methods `projectCompactBar` and `layoutQuotaChart` call `CompactBarPresentation` and `QuotaCycleChartPresentation` in Core. WPF handles drawing and input. `PacerWindowsBridge` supplies UI geometry, finite motion and native application activation; it does not calculate quotas, billing or compact component rules.

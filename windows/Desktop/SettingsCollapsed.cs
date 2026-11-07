@@ -30,7 +30,7 @@ internal sealed partial class SettingsWindow
         _ = Dispatcher.InvokeAsync(() =>
         {
             if (!IsVisible) return;
-            if (activePane is "reminders" or "deepseek") { RefreshValues(); return; }
+            if (activePane is "notifications" or "deepseek") { RefreshValues(); return; }
             if (activePane != "collapsed") return;
             if (compactEditor == null || compactRows.Count == 0) { RebuildPane("collapsed"); RefreshValues(); }
             else RefreshValues();
@@ -130,7 +130,7 @@ internal sealed partial class SettingsWindow
         else if (id == "warnings")
         {
             var choose = new Button { Content = ui.Text("layout.warnings_choose"), Style = (Style)FindResource("SettingsLink"), FontSize = 12, HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = engine != null };
-            Identify(choose, "compact.warnings.choose", ui.Text("layout.warnings_choose")); choose.Click += async (_, _) => { if (choose.IsVisible && activePane == "collapsed") await NavigateAsync("reminders"); }; host.Children.Add(choose);
+            Identify(choose, "compact.warnings.choose", ui.Text("layout.warnings_choose")); choose.Click += async (_, _) => { if (choose.IsVisible && activePane == "collapsed") await NavigateAsync("notifications"); }; host.Children.Add(choose);
         }
         else if (id == "quotaGauge")
         {

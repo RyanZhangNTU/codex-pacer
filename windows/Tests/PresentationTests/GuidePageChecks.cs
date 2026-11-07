@@ -114,8 +114,11 @@ internal static class GuidePageChecks
         settings.WelcomeRequested += () => welcomeActions++;
         try
         {
-            settings.Show(); await Pump(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
-            Select(Find<RadioButton>(settings, "settings.pane.help")); await Until(() => Has(settings, "help.module.codex"));
+            settings.Show(); await Pump();
+            // Help & Updates is a remembered page; its tabs, links and Support write nothing more.
+            Select(Find<RadioButton>(settings, "settings.pane.about")); await Until(() => session.Current.LastSettingsPane == "about" && Has(settings, "settings.about.help"));
+            await session.WaitForChangesAsync(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
+            Select(Find<RadioButton>(settings, "settings.about.help")); await Until(() => Has(settings, "help.module.codex"));
             Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
             Check(Has(settings, "help.move"), "Help explains dragging, snapping and reset");
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
@@ -142,7 +145,8 @@ internal static class GuidePageChecks
             Check(!support.SupportCodePopup.IsOpen && settings.IsVisible, "Escape belongs to the QR layer before the settings window");
             Check(saved == beforeReadOnly && JsonSerializer.Serialize(session.Current) == beforeBytes, "Help tabs, public links and Support never write any preferences");
             settings.CapturePreview(Path.Combine(output, "pages-support-" + language + (dark ? "-dark" : "-light") + ".png"));
-            Select(Find<RadioButton>(settings, "settings.pane.whatsNew")); await Until(() => SelfAndDescendants(settings).OfType<GuideContent>().Any(value => SelfAndDescendants(value).OfType<TextBlock>().Count(text => note.History.Any(release => release.Title == text.Text)) == note.History.Count));
+            Select(Find<RadioButton>(settings, "settings.pane.about")); await Until(() => Has(settings, "settings.about.whatsNew"));
+            Select(Find<RadioButton>(settings, "settings.about.whatsNew")); await Until(() => SelfAndDescendants(settings).OfType<GuideContent>().Any(value => SelfAndDescendants(value).OfType<TextBlock>().Count(text => note.History.Any(release => release.Title == text.Text)) == note.History.Count));
             Check(session.Current.WhatsNewVersion == null, "Settings lists all release history without marking it seen");
             Check(links.Count == 7 && links.All(uri => uri.Scheme == "https"), "All seven requested public links dispatch once without page network access");
             Escape(settings); Check(!settings.IsVisible, "Escape closes the auxiliary settings pages");

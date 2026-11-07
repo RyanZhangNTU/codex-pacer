@@ -1069,6 +1069,7 @@
     "windows.engine.start_failed": "Codex Pacer couldn't start. Restart the app and try again.",
     "windows.instance.already_running": "Codex Pacer is already running. Open it from the tray, or quit it before starting this copy.",
     "windows.language.system": "Follow Windows",
+    "windows.main.pane_later": "Arrives with the next step of the redesign.",
     "windows.open.claude": "Open Claude",
     "windows.open.codex": "Open Codex",
     "windows.open.deepseek": "Open DeepSeek Harness",

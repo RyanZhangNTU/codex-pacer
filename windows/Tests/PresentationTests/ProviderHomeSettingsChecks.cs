@@ -39,7 +39,7 @@ internal static class ProviderHomeSettingsChecks
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, configuration: preferences.EngineConfiguration(), referenceFixture: true);
             ready.SetResult(); await window.WaitForSourceInspectionAsync(); await Pump();
             var module = Find<CheckBox>(window, prefix + ".enabled");
-            Check(module.IsEnabled && module.IsChecked == true && window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600,
+            Check(module.IsEnabled && module.IsChecked == true && Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5,
                 "The provider page must retain native canvas geometry and acknowledged module state");
             if (provider == "claude")
             {

@@ -82,7 +82,7 @@ internal sealed partial class SettingsWindow
         deepseekBudgetRows.Children.Add(deepseekRingRow);
         deepseekBudgetRows.Children.Add(DeepSeekCaption(ui.Text("windows.deepseek.budget_help")));
         var reminders = new Button { Content = ui.Text("settings.reminders"), Style = (Style)FindResource("SettingsLink"), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(10, 0, 10, 8) };
-        Identify(reminders, "settings.deepseek.reminders", ui.Text("settings.reminders")); reminders.Click += async (_, _) => await NavigateAsync("reminders"); deepseekBudgetRows.Children.Add(reminders);
+        Identify(reminders, "settings.deepseek.reminders", ui.Text("settings.reminders")); reminders.Click += async (_, _) => await NavigateAsync("notifications"); deepseekBudgetRows.Children.Add(reminders);
         deepseekBudgetIssue = Detail(""); deepseekBudgetIssue.Margin = new Thickness(10, 0, 10, 8); deepseekBudgetIssue.Visibility = Visibility.Collapsed; Identify(deepseekBudgetIssue, "settings.deepseek.budget.issue", ""); deepseekBudgetRows.Children.Add(deepseekBudgetIssue);
         deepseekBudgetIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
         deepseekBalanceHelp = DeepSeekCaption(ui.Text("deepseek.mode.balance_help"));

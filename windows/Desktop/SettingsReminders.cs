@@ -128,7 +128,7 @@ internal sealed partial class SettingsWindow
     }
     private async Task CommitReminderAmount(bool low, TextBox field)
     {
-        if (synchronizing || sourceClosed || activePane != "reminders") return;
+        if (synchronizing || sourceClosed || activePane != "notifications") return;
         string text = field.Text.Trim(); int index = low ? 0 : 1;
         if (reminderPendingAmount[index] == text) return;
         double? value = null;
@@ -147,7 +147,7 @@ internal sealed partial class SettingsWindow
         try
         {
             var result = await Change(p => low ? p with { DeepSeekLowBalanceLine = value } : p with { DeepSeekSpikeLimit = value });
-            if (!sourceClosed && activePane == "reminders" && ReferenceEquals(field, low ? reminderLow : reminderSpike) && result != PreferencesApplyResult.Applied)
+            if (!sourceClosed && activePane == "notifications" && ReferenceEquals(field, low ? reminderLow : reminderSpike) && result != PreferencesApplyResult.Applied)
                 field.Text = DeepSeekBudgetText(low ? session.Current.DeepSeekLowBalanceLine : session.Current.DeepSeekSpikeLimit);
         }
         finally { if (reminderPendingAmount[index] == text) reminderPendingAmount[index] = null; }

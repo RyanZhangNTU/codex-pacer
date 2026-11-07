@@ -114,8 +114,8 @@
     <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
    </Border>
    <ControlTemplate.Triggers>
-    <Trigger Property="IsChecked" Value="True"><Setter Property="Background" Value="{DynamicResource SettingsAccent}"/><Setter Property="Foreground" Value="{DynamicResource SettingsSelectionText}"/></Trigger>
-    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.82"/></Trigger>
+    <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource SettingsSearchFill}"/></Trigger>
+    <Trigger Property="IsChecked" Value="True"><Setter Property="Background" Value="{DynamicResource SettingsSidebarSelection}"/><Setter Property="Foreground" Value="{DynamicResource SettingsSidebarSelectionText}"/></Trigger>
     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
     <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger>
    </ControlTemplate.Triggers>
@@ -203,6 +203,12 @@
   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox"><Border x:Name="Surface" Background="{DynamicResource SettingsInput}" BorderBrush="{DynamicResource SettingsSeparator}" BorderThickness="1" CornerRadius="5" Padding="7,4"><ScrollViewer x:Name="PART_ContentHost"/></Border>
    <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger></ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <!-- The sidebar search draws its own rounded fill; the field itself is bare text. -->
+ <Style x:Key="SettingsSearchInput" TargetType="TextBox">
+  <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/><Setter Property="FontSize" Value="13"/>
+  <Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/><Setter Property="CaretBrush" Value="{DynamicResource SettingsPrimary}"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox"><Border Background="Transparent"><ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/></Border></ControlTemplate></Setter.Value></Setter>
  </Style>
  <Style x:Key="SettingsScrollBar" TargetType="ScrollBar">
   <Setter Property="local:ScrollAccessibility.Action" Value="position"/>
