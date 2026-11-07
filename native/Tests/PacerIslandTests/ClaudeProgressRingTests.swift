@@ -14,7 +14,7 @@ final class ClaudeProgressRingTests: XCTestCase {
         let home: URL
         let root: URL
     }
-    private func fixture(demoArguments: [String]? = nil, demo: Bool = false) throws -> Fixture {
+    private func fixture(demoArguments: [String]? = nil, demo: Bool = false, codex: ProviderModuleMode = .disabled) throws -> Fixture {
         let root = URL(fileURLWithPath: "/private/tmp/pacer-progress-ring-" + UUID().uuidString)
         let home = root.appendingPathComponent("claude-home")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -23,7 +23,7 @@ final class ClaudeProgressRingTests: XCTestCase {
         defaults.set(root.path, forKey: "codexHome")
         defaults.set(home.path, forKey: "claudeHome")
         defaults.set(false, forKey: "monitorSSH")
-        ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
+        ProviderModules(codexMode: codex, claudeMode: .enabled).save(to: defaults)
         let clock = Date(timeIntervalSince1970: 1_800_000_000)
         let model = IslandModel(demo: demo, demoClock: { clock }, demoArguments: demoArguments, defaults: defaults,
             installation: demo ? nil : ProviderInstallationDetection(codexInstalled: false, claudeInstalled: true),
@@ -44,11 +44,31 @@ final class ClaudeProgressRingTests: XCTestCase {
     }
     private func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
 
-    func testRowsDrawTheRingForClaudeOnlyWhileTheSettingIsOn() throws {
+    func testRowsDrawEachProvidersRingOnlyWhileItsOwnSettingIsOn() throws {
         let fixture = try fixture()
-        XCTAssertEqual(fixture.model.taskPresentationOptions(for: []).progressRingProviders, [])
+        func providers() -> Set<AgentProvider> { fixture.model.taskPresentationOptions(for: []).progressRingProviders }
+        XCTAssertEqual(providers(), [])
         fixture.defaults.set(true, forKey: IslandModel.claudeProgressRingKey)
-        XCTAssertEqual(fixture.model.taskPresentationOptions(for: []).progressRingProviders, [.claude])
+        XCTAssertEqual(providers(), [.claude])
+        fixture.defaults.set(true, forKey: IslandModel.codexProgressRingKey)
+        XCTAssertEqual(providers(), [.claude, .codex])
+        fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
+        XCTAssertEqual(providers(), [.codex])
+    }
+
+    /// Registration runs Codex against a real profile, so a demo or a model
+    /// with injected installation state must never start it. Codex and its
+    /// switch are on, so only those guards keep setup from starting.
+    func testDemoAndInjectedModelsNeverRegisterTheCodexReporter() throws {
+        for demo in [false, true] {
+            let fixture = try fixture(demoArguments: demo ? ["--demo"] : nil, demo: demo, codex: .enabled)
+            fixture.defaults.set(true, forKey: IslandModel.codexProgressRingKey)
+            XCTAssertTrue(fixture.model.isModuleEnabled(.codex))
+            XCTAssertEqual(fixture.model.taskPresentationOptions(for: []).progressRingProviders, [.codex])
+            fixture.model.syncCodexProgressSwitch(force: true)
+            XCTAssertNil(fixture.model.codexProgressSetup, "Setup would report settingUp at once")
+            XCTAssertFalse(exists(fixture.root.appendingPathComponent("pacer/codex-progress")))
+        }
     }
 
     func testDemoClaudeTaskGoesFromDashedToItsEstimateToFullWhileCloudRowsStayDashed() throws {
@@ -170,8 +190,9 @@ final class TaskProgressRingViewTests: XCTestCase {
         return view
     }
     private func input(_ id: String, _ state: TaskProgressRing.State?, _ mode: TaskProgressRing.Mode = .working,
-                       _ fraction: Double = 0, stale: Bool = false, animates: Bool = true) -> Ring.Input {
-        .init(id: id, state: state, mode: mode, fraction: fraction, stale: stale, color: ink, animates: animates)
+                       _ fraction: Double = 0, stale: Bool = false, animates: Bool = true, codex: Bool = false) -> Ring.Input {
+        .init(id: id, state: state, mode: mode, fraction: fraction, stale: stale, color: ink, animates: animates,
+              completionPulseOnly: codex)
     }
     private func running(_ view: Ring) -> Set<String> { view.animationKeys.intersection(loops) }
 
@@ -265,6 +286,9 @@ final class TaskProgressRingViewTests: XCTestCase {
             (.reported, .attention, 0.5, false, []),
             (.reported, .done, 1, false, []),
             (.reported, .interrupted, 0.4, false, []),
+            // A paused or limited Codex goal keeps still with or without an estimate.
+            (.pending, .paused, 0, false, []),
+            (.reported, .paused, 0.5, false, []),
         ]
         for (state, mode, fraction, stale, expected) in cases {
             let view = shown()
@@ -283,6 +307,47 @@ final class TaskProgressRingViewTests: XCTestCase {
         view.update(input(id, .reported, .done, 1))
         XCTAssertEqual(running(view), [])
         XCTAssertTrue(view.animationKeys.contains("container.pulse"), "Reaching 100% settles with one pulse")
+    }
+
+    /// Codex pulses only on a confirmed ending: a working 100% fills the arc
+    /// quietly, and neither a rebuilt row nor a first sight replays it.
+    func testCodexPulsesOnceWhenTheRequestEndsRatherThanWhenItReportsFull() throws {
+        let pulse = "container.pulse"
+        let id = UUID().uuidString, view = shown()
+        view.update(input(id, .reported, .working, 0.4, codex: true))
+        view.update(input(id, .reported, .working, 1, codex: true))
+        XCTAssertEqual(view.restingFraction, 1, accuracy: 0.0001)
+        XCTAssertFalse(view.animationKeys.contains(pulse), "A working estimate of 100% is not an ending")
+        view.update(input(id, .reported, .done, 1, codex: true))
+        XCTAssertTrue(view.animationKeys.contains(pulse), "The confirmed ending pulses even after a full estimate")
+        let rebuilt = shown()
+        view.removeFromSuperview()
+        rebuilt.update(input(id, .reported, .done, 1, codex: true))
+        XCTAssertFalse(rebuilt.animationKeys.contains(pulse), "A rebuilt row of the same ending stays still")
+
+        // The next request in the same chat drops a pulse that has yet to play.
+        let next = UUID().uuidString, row = shown()
+        row.update(input(next, .reported, .working, 0.8, codex: true))
+        row.update(input(next, .reported, .done, 1, codex: true))
+        XCTAssertTrue(row.animationKeys.contains(pulse))
+        row.update(input(next, .pending, .working, codex: true))
+        XCTAssertFalse(row.animationKeys.contains(pulse))
+        row.update(input(next, .reported, .done, 1, codex: true))
+        XCTAssertTrue(row.animationKeys.contains(pulse), "Each request's ending pulses once")
+
+        // A request that never reported closes its dashes, fills and pulses.
+        let unreported = UUID().uuidString, dashed = shown()
+        dashed.update(input(unreported, .pending, .working, codex: true))
+        dashed.update(input(unreported, .reported, .done, 1, codex: true))
+        XCTAssertTrue(dashed.animationKeys.isSuperset(of: ["pending.opacity", "arc.sweep", pulse]))
+
+        let seen = shown()
+        seen.update(input(UUID().uuidString, .reported, .done, 1, codex: true))
+        XCTAssertFalse(seen.animationKeys.contains(pulse), "An ending seen for the first time draws without replaying")
+        let quiet = UUID().uuidString, reduced = shown()
+        reduced.update(input(quiet, .reported, .working, 0.4, animates: false, codex: true))
+        reduced.update(input(quiet, .reported, .done, 1, animates: false, codex: true))
+        XCTAssertTrue(reduced.animationKeys.isEmpty, "Reduced motion fills without a pulse")
     }
 
     func testReducedMotionAndAHiddenPanelSettleAtFinalValuesWithoutClocks() async throws {

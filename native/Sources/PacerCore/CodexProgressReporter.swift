@@ -74,6 +74,49 @@ public enum CodexProgressSetupStatus: String, Codable, Sendable {
     case settingUp, ready, missingCLI, conflict, failed
 }
 
+/// Orders the enabled flag between a switch that was turned off and a setup
+/// still waiting for Codex. Turning off revokes the flag at once, so connected
+/// reporters stop even if the host quits before the registration is removed,
+/// and an older setup can no longer write the flag back.
+public final class CodexProgressSwitchGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = 0
+
+    public init() {}
+
+    /// Starts a setup request. Earlier requests can no longer enable reporting.
+    public func begin() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        current += 1
+        return current
+    }
+
+    /// Starts a request and removes the enabled flag from `homes` before any
+    /// setup still in flight can finish.
+    public func revoke(_ homes: [URL], storage: any ClaudeHookStorage) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        current += 1
+        for home in homes { CodexProgressSetup.removeFlag(home: home, storage: storage) }
+        return current
+    }
+
+    /// Starts the request for a switch change. Reporting stops at once in a
+    /// profile the switch leaves: turned off, or replaced by another home.
+    public func change(home: URL, wanted: Bool, previous: URL?, storage: any ClaudeHookStorage) -> Int {
+        var homes = wanted ? [] : [home]
+        if let previous, previous != home { homes.append(previous) }
+        return homes.isEmpty ? begin() : revoke(homes, storage: storage)
+    }
+
+    /// Runs `write` only while `request` is the latest one.
+    func enable(_ request: Int, _ write: () throws -> Void) rethrows -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard request == current else { return false }
+        try write()
+        return true
+    }
+}
+
 public enum CodexProgressSetup {
     static let on = Data("on\n".utf8)
     static func folder(_ home: URL) -> URL { home.appendingPathComponent("pacer/codex-progress", isDirectory: true) }
@@ -84,9 +127,21 @@ public enum CodexProgressSetup {
         FileManager.default.fileExists(atPath: native(home).path)
     }
 
+    /// Removes this profile's enabled flag when it is Pacer's, with the same
+    /// path checks as setup. Reporters already connected stop accepting estimates.
+    static func removeFlag(home: URL, storage: any ClaudeHookStorage) {
+        let flag = flag(home)
+        do {
+            for path in [home, home.appendingPathComponent("pacer"), folder(home), native(home), flag] { try storage.validate(path) }
+            if storage.exists(flag), try storage.read(flag) == on { try storage.remove(flag) }
+        } catch {}
+    }
+
     /// Same owned-file checks as the local Claude setup. The profile must
     /// already exist, and a failed setup can never enable a cached server.
+    /// With a `gate`, the flag is written only while `request` is its latest.
     public static func apply(home: URL, reporter: CodexProgressCommand?, storage: any ClaudeHookStorage, checkOnly: Bool = false,
+                             gate: CodexProgressSwitchGate? = nil, request: Int = 0,
                              owns: @Sendable (CodexProgressCommand) -> Bool,
                              client: @Sendable () -> CodexClient?) async -> CodexProgressSetupStatus? {
         do {
@@ -116,7 +171,11 @@ public enum CodexProgressSetup {
                 if !checkOnly, storage.exists(flag), try storage.read(flag) == on { try storage.remove(flag) }
                 return status
             }
-            if !checkOnly, enabled, !storage.exists(flag) { try storage.replace(flag, with: on, permissions: 0o600) }
+            if !checkOnly, enabled, !storage.exists(flag) {
+                let write = { try storage.replace(flag, with: on, permissions: 0o600) }
+                // The switch was turned off meanwhile and revoked reporting: keep it off.
+                if let gate { guard try gate.enable(request, write) else { return nil } } else { try write() }
+            }
             return enabled ? .ready : nil
         } catch { return .failed }
     }
