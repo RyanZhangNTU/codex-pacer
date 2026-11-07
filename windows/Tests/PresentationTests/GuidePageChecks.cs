@@ -127,16 +127,28 @@ internal static class GuidePageChecks
             Select(Find<RadioButton>(settings, "settings.pane.about")); await Until(() => session.Current.LastSettingsPane == "about" && Has(settings, "settings.about.help"));
             await session.WaitForChangesAsync(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
             Select(Find<RadioButton>(settings, "settings.about.help")); await Until(() => Has(settings, "help.module.codex"));
-            Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
-            Check(Has(settings, "help.move"), "Help explains dragging, snapping and reset");
+            // Help opens on the collapsed bar's marks, one topic at a time, as on the Mac.
+            Check(Find<RadioButton>(settings, "help.topic.collapsed").IsChecked == true && Has(settings, "help.move") && Has(settings, "help.services") && !Has(settings, "help.hover"),
+                "Help opens on the collapsed topic and explains dragging, snapping and reset");
+            var enable = SelfAndDescendants(settings).OfType<TextBlock>().Single(text => text.Text == ui.Text("help.enable.detail"));
+            Check(enable.Visibility != Visibility.Visible, "The module footer stays hidden on the bar topics");
+            Check(new[] { "help.welcome", "guide.link.manual", "guide.link.issues" }.All(id => Find<Button>(settings, id).Focusable && AutomationProperties.GetHelpText(Find<Button>(settings, id)).Length > 0),
+                "Help's three ways in are keyboard buttons that say where they lead");
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
+            Select(Find<RadioButton>(settings, "help.topic.expanded")); await Pump();
+            Check(Has(settings, "help.hover") && !Has(settings, "help.move"), "The expanded topic replaces the collapsed marks");
             foreach (string provider in new[] { "claude", "deepseek", "codex" })
-            { Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump(); Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")), "Module legend selection replaces only local samples"); }
+            {
+                Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump();
+                Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")) && !Has(settings, "help.hover") && enable.Visibility == Visibility.Visible,
+                    "Module topics show only their own samples and how to turn modules on or off");
+            }
+            Select(Find<RadioButton>(settings, "help.topic.collapsed")); await Pump();
             appearance.Set(appearance.Current with { HighContrast = true }); await Pump(); settings.UpdateLayout();
             CheckHelpProviderText(settings, appearance.Current.Colors.Text);
             appearance.Set(appearance.Current with { HighContrast = false }); await Pump(); settings.UpdateLayout();
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
-            Invoke(Find<Button>(settings, "help.welcome")); await Pump(); Check(welcomeActions == 1, "Help can reopen the two-step guide");
+            Invoke(Find<Button>(settings, "help.welcome")); await Pump(); Check(welcomeActions == 1, "Help can reopen the welcome guide");
             foreach (string action in new[] { "manual", "issues" }) { Invoke(Find<Button>(settings, "guide.link." + action)); await Pump(); }
             settings.CapturePreview(Path.Combine(output, "pages-help-" + language + (dark ? "-dark" : "-light") + ".png"));
             Find<Button>(settings, "guide.link.issues").BringIntoView(); await Pump();
@@ -145,7 +157,17 @@ internal static class GuidePageChecks
             foreach (string action in new[] { "star", "feature", "bug", "donate" }) { var button = Find<Button>(settings, "guide.link." + action); Check(button.Focusable, "Support links remain keyboard reachable"); Invoke(button); await Pump(); }
             var copy = Find<Button>(settings, "support.copy"); Invoke(copy); await Pump();
             Check(copied == note.Links["repository"] && copy.Content!.ToString() == ui.Text("support.share.copied"), "Copy dispatches the public project URL and shows localized feedback without reading the clipboard");
-            var support = SelfAndDescendants(settings).OfType<GuideContent>().Single(); Invoke(Find<Button>(settings, "support.wechat")); await Pump();
+            // The QQ group sits under the bug report: its number, a copy and its code on request.
+            Check(note.QqGroup is { Length: > 0 } && SelfAndDescendants(settings).OfType<TextBlock>().Any(text => text.Text == ui.Text("support.qq.number").Replace("%@", note.QqGroup, StringComparison.Ordinal)),
+                "Support shows the QQ group's number from the shared catalog");
+            var qqCopy = Find<Button>(settings, "support.qq.copy"); Invoke(qqCopy); await Pump();
+            Check(copied == note.QqGroup && qqCopy.Content!.ToString() == ui.Text("support.share.copied"), "Copy Number dispatches only the group number and confirms it");
+            var support = SelfAndDescendants(settings).OfType<GuideContent>().Single(); Invoke(Find<Button>(settings, "support.qq.code")); await Pump();
+            Check(support.QqCodePopup?.IsOpen == true && SelfAndDescendants(support.QqCodePopup.Child).OfType<Image>().Single().ActualWidth == 220
+                && SelfAndDescendants(support.QqCodePopup.Child).OfType<TextBlock>().Any(text => text.Text == ui.Text("support.qq.hint")), "The packaged QQ group code opens only on request");
+            Escape(Find<Button>(support.QqCodePopup!.Child, "support.qq.close")); await Pump();
+            Check(!support.QqCodePopup.IsOpen && settings.IsVisible, "Escape closes the QQ code before the settings window");
+            Invoke(Find<Button>(settings, "support.wechat")); await Pump();
             Check(support.SupportCodePopup?.IsOpen == true && SelfAndDescendants(support.SupportCodePopup.Child).OfType<Image>().Single().ActualWidth == 220, "The packaged WeChat QR code opens only on request");
             var qrClose = Find<Button>(support.SupportCodePopup!.Child, "support.wechat.close"); Space(qrClose); await Pump();
             Check(support.SupportCodePopup.IsOpen == false && settings.IsVisible, "Keyboard closes the QR layer while preserving Settings");
@@ -154,9 +176,28 @@ internal static class GuidePageChecks
             Check(saved == beforeReadOnly && JsonSerializer.Serialize(session.Current) == beforeBytes, "Help tabs, public links and Support never write any preferences");
             settings.CapturePreview(Path.Combine(output, "pages-support-" + language + (dark ? "-dark" : "-light") + ".png"));
             Select(Find<RadioButton>(settings, "settings.pane.about")); await Until(() => Has(settings, "settings.about.whatsNew"));
-            Select(Find<RadioButton>(settings, "settings.about.whatsNew")); await Until(() => SelfAndDescendants(settings).OfType<GuideContent>().Any(value => SelfAndDescendants(value).OfType<TextBlock>().Count(text => note.History.Any(release => release.Title == text.Text)) == note.History.Count));
+            // What's New: the newest version in full, every earlier one folded to a line of its highlights.
+            Select(Find<RadioButton>(settings, "settings.about.whatsNew")); await Until(() => Has(settings, "guide.releaseNotes"));
+            string Version(string value) => ui.Text("whats_new.version").Replace("%@", value, StringComparison.Ordinal);
+            // Settings lists history up to the running build, so compare with the same request.
+            var shown = await engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest(typeof(SettingsWindow).Assembly.GetName().Version!.ToString(3), null, 4, language, true, true, false, false) } }, TimeSpan.FromSeconds(3));
+            Check(shown.History.Count > 1 && SelfAndDescendants(settings).OfType<TextBlock>().Any(text => text.Text == Version(shown.History[0].Version)), "What's New heads the newest note with its version");
+            var folds = shown.History.Skip(1).Select(release => Find<Expander>(settings, "whats_new.release." + release.Version)).ToList();
+            Check(SelfAndDescendants(settings).OfType<Expander>().Count(fold => AutomationProperties.GetAutomationId(fold).StartsWith("whats_new.release.", StringComparison.Ordinal)) == shown.History.Count - 1
+                && folds.All(fold => !fold.IsExpanded && AutomationProperties.GetName(fold) == Version((string)fold.Header)
+                && (string)fold.Tag == string.Join(" · ", shown.History.Single(release => release.Version == (string)fold.Header).Items.Select(item => item.Title))), "Earlier versions start folded to their highlights");
+            {
+                var item = shown.History[1].Items.First(value => value.Control != "openAtLogin"); folds[0].IsExpanded = true; await Pump(); settings.UpdateLayout();
+                bool Shown() => SelfAndDescendants(folds[0]).OfType<TextBlock>().Any(text => text.Text == item.Detail && text.IsVisible);
+                var info = Find<Button>(folds[0], "guide.info." + item.Title.GetHashCode().ToString("x"));
+                Check(SelfAndDescendants(folds[0]).OfType<TextBlock>().Any(text => text.Text == item.Title && text.IsVisible) && !Shown(), "A highlight's explanation waits behind its info button");
+                Invoke(info); await Pump(); settings.UpdateLayout();
+                Check(Shown() && AutomationProperties.GetItemStatus(info) == ui.Text("main.info_shown"), "The info button opens the explanation in place");
+                folds[0].IsExpanded = false; await Pump();
+            }
+            Invoke(Find<Button>(settings, "guide.releaseNotes")); await Pump();
             Check(session.Current.WhatsNewVersion == null, "Settings lists all release history without marking it seen");
-            Check(links.Count == 7 && links.All(uri => uri.Scheme == "https"), "All seven requested public links dispatch once without page network access");
+            Check(links.Count == 8 && links.All(uri => uri.Scheme == "https"), "All eight requested public links dispatch once without page network access");
             Escape(settings); Check(!settings.IsVisible, "Escape closes the auxiliary settings pages");
         }
         finally { settings.AllowClose = true; settings.Close(); }

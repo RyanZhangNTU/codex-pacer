@@ -18,12 +18,12 @@ internal sealed partial class SettingsWindow
     private void BuildAbout()
     {
         BuildUpdateCard();
-        var tabs = new Grid();
+        // A compact segmented choice, left-aligned, as on the Mac.
+        var tabs = new StackPanel { Orientation = Orientation.Horizontal };
         foreach (string tab in new[] { "whatsNew", "help" })
         {
             string name = ui.Text(tab == "whatsNew" ? "whats_new.window_title" : "settings.pane.help");
             var choice = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), Content = name, GroupName = "settings.about", IsChecked = aboutTab == tab };
-            tabs.ColumnDefinitions.Add(new ColumnDefinition()); Grid.SetColumn(choice, tabs.Children.Count);
             Identify(choice, "settings.about." + tab, name);
             choice.Checked += (_, _) =>
             {
@@ -34,7 +34,7 @@ internal sealed partial class SettingsWindow
             };
             tabs.Children.Add(choice);
         }
-        var segments = new Border { Child = tabs, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), Margin = new Thickness(0, 2, 0, 14) };
+        var segments = new Border { Child = tabs, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), Margin = new Thickness(0, 2, 0, 14), HorizontalAlignment = HorizontalAlignment.Left };
         segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
         AutomationProperties.SetAutomationId(segments, "settings.about.tabs"); form.Children.Add(segments);
         BuildGuidePage(aboutTab);
@@ -57,7 +57,7 @@ internal sealed partial class SettingsWindow
                 form.Children.Remove(pending);
                 guideContent = new(ui, session, startup, catalog, value => _ = NavigateAsync(value), () => WelcomeRequested?.Invoke(), client, notifications, guideLinkLauncher, copyLink: guideCopyLink);
                 form.Children.Add(guideContent);
-                if (kind == "help") guideContent.Help(); else if (kind == "support") guideContent.Support(); else guideContent.Releases(catalog.History);
+                if (kind == "help") guideContent.Help(); else if (kind == "support") guideContent.Support(); else guideContent.SettingsReleases(catalog.History);
             }
             catch (Exception error) when (error is IOException or OperationCanceledException or EngineCommandException or TimeoutException)
             { if (!sourceClosed && revision == guideRevision) pending.Text = ui.Text("windows.settings.apply_failed"); }

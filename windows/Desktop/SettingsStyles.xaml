@@ -93,6 +93,30 @@
    <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Details" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
  </Style>
+ <!-- An earlier version on one line: its number, then its highlights until opened, as on the Mac. -->
+ <Style x:Key="SettingsReleaseFold" TargetType="Expander">
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Expander">
+   <StackPanel>
+    <ToggleButton AutomationProperties.Name="{Binding (AutomationProperties.Name), RelativeSource={RelativeSource TemplatedParent}}" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0">
+     <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+      <Border x:Name="Surface" Background="Transparent" Padding="14,0" MinHeight="40" BorderThickness="1" BorderBrush="Transparent" CornerRadius="12">
+       <Grid VerticalAlignment="Center"><Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="Auto" MinWidth="52"/><ColumnDefinition/></Grid.ColumnDefinitions>
+        <Path x:Name="Chevron" Data="M 2,1 L 6,5 L 2,9" Stroke="{DynamicResource SettingsSecondary}" StrokeThickness="1.6" Width="8" Height="10" HorizontalAlignment="Left" RenderTransformOrigin="0.5,0.5" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="1" Text="{Binding Header, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsPrimary}" FontWeight="Medium" Margin="0,0,10,0" VerticalAlignment="Center"/>
+        <TextBlock x:Name="Summary" Grid.Column="2" Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=Expander}}" Foreground="{DynamicResource SettingsSecondary}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+       </Grid>
+      </Border>
+      <ControlTemplate.Triggers>
+       <Trigger Property="IsChecked" Value="True"><Setter TargetName="Chevron" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90"/></Setter.Value></Setter><Setter TargetName="Summary" Property="Visibility" Value="Hidden"/></Trigger>
+       <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
+      </ControlTemplate.Triggers>
+     </ControlTemplate></ToggleButton.Template>
+    </ToggleButton>
+    <ContentPresenter x:Name="Details" Visibility="Collapsed"/>
+   </StackPanel>
+   <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Details" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
  <!-- The Notifications matrix's small checkbox, as on the Mac. -->
  <Style x:Key="SettingsCheck" TargetType="CheckBox">
   <Setter Property="Width" Value="18"/><Setter Property="Height" Value="18"/><Setter Property="Focusable" Value="True"/>
@@ -136,6 +160,34 @@
     <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsSearchFill}"/></Trigger>
     <Trigger Property="Tag" Value="selected"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/><Setter TargetName="Surface" Property="BorderThickness" Value="1.5"/></Trigger>
     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.85"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
+    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <!-- Help's topic capsules: the chosen one filled with the accent, as on the Mac. -->
+ <Style x:Key="SettingsTopicChip" TargetType="RadioButton">
+  <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/>
+  <Setter Property="FontSize" Value="12"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/><Setter Property="Height" Value="26"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+   <Border x:Name="Surface" CornerRadius="13" Padding="12,0" Background="{DynamicResource SettingsSearchFill}" BorderThickness="1" BorderBrush="Transparent">
+    <ContentPresenter VerticalAlignment="Center"/>
+   </Border>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource SettingsAccent}"/><Setter Property="Foreground" Value="{DynamicResource SettingsSelectionText}"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsPrimary}"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <!-- Help's ways in: equal cards that brighten a little under the pointer. -->
+ <Style x:Key="SettingsQuickTile" TargetType="Button">
+  <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/><Setter Property="Foreground" Value="{DynamicResource SettingsPrimary}"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+   <Border x:Name="Surface" CornerRadius="12" Padding="14" Background="{DynamicResource SettingsCard}" BorderThickness="1" BorderBrush="{DynamicResource SettingsCardBorder}">
+    <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Top"/>
+   </Border>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsPickerHover}"/></Trigger>
     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource SettingsAccent}"/></Trigger>
     <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger>
    </ControlTemplate.Triggers>
