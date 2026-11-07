@@ -338,6 +338,8 @@ internal sealed partial class SettingsWindow
             content.Children.Add(empty);
         }
         int index = 0;
+        // The rows move as the island's do, unless Windows turns animations off, as on the Mac.
+        bool motion = appearance.Current.Animations;
         foreach (var value in rows.Take(8))
         {
             if (index++ > 0) content.Children.Add(new Border { Height = 1, Margin = new Thickness(9, 4, 9, 4), Background = new SolidColorBrush(Color.FromArgb(15, 255, 255, 255)) });
@@ -346,9 +348,9 @@ internal sealed partial class SettingsWindow
             if (surfaceWindow?.CanOpenFromWindow(value) == true)
             {
                 var island = surfaceWindow;
-                row.SetOpenAction(() => _ = island.OpenFromWindowAsync(value), state.AccessibleName + "\n" + ui.Text("common.open_chat"), false);
+                row.SetOpenAction(() => _ = island.OpenFromWindowAsync(value), state.AccessibleName + "\n" + ui.Text("common.open_chat"), motion);
             }
-            else row.SetOpenAction(null, ui.Text("activity.no_link"), false);
+            else row.SetOpenAction(null, ui.Text("activity.no_link"), motion);
             content.Children.Add(row);
         }
         var card = IslandCard(content, new Thickness(4, 14, 4, 14)); Identify(card, "settings.overview.tasks", ui.Text("main.overview.running")); return card;
