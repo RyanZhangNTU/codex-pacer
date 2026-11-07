@@ -120,7 +120,8 @@ public enum PacerEngine {
             wslServices: wsl,
             sshServices: ssh, claudeRemoteServices: .live(ssh: ssh, wsl: wsl),
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices,
-            managesCodexProgress: !demo && !readOnly, codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
+            managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly,
+            codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
         var framer = EngineFramer()
@@ -248,6 +249,10 @@ actor EngineRuntime {
     /// Claude's self-reported progress ring; off until the desktop turns it on.
     private var claudeProgressRing = false
     private var codexProgressRing = false
+    private var deepseekProgressRing = false
+    private let managesDeepSeekProgress: Bool
+    private var deepseekProgressTarget: (home: URL, enabled: Bool)?
+    private var deepseekProgressSetup: DeepSeekProgressSetupStatus?
     private let managesCodexProgress: Bool
     private let codexProgressPaths: WindowsCodexProgressPaths
     private var codexProgressTarget: (home: URL, executable: String, enabled: Bool)?
@@ -258,6 +263,7 @@ actor EngineRuntime {
         var providers: Set<AgentProvider> = []
         if claudeProgressRing { providers.insert(.claude) }
         if codexProgressRing { providers.insert(.codex) }
+        if deepseekProgressRing { providers.insert(.deepseek) }
         return providers
     }
     /// The Claude home where this engine switched the ring on.
@@ -418,6 +424,7 @@ actor EngineRuntime {
          claudeWebReference: Bool = false,
          claudeHookServices: EngineClaudeHookServices? = nil,
          managesCodexProgress: Bool = false,
+         managesDeepSeekProgress: Bool = false,
          codexProgressPaths: WindowsCodexProgressPaths = .init(root: WindowsCodexProgressPaths.defaultRoot),
          allowsStorageRecovery: Bool = true,
          sourceSettings: CodexSourceSettingsServices = .live,
@@ -440,6 +447,7 @@ actor EngineRuntime {
         self.claudeWebReference = claudeWebReference && demo
         self.claudeHookServices = claudeHookServices
         self.managesCodexProgress = managesCodexProgress; self.codexProgressPaths = codexProgressPaths
+        self.managesDeepSeekProgress = managesDeepSeekProgress
         self.detectInstallation = installationDetection
         self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
         self.notificationRegistry = .init(store: notificationStore, now: now())
@@ -756,6 +764,10 @@ actor EngineRuntime {
             guard managesCodexProgress, codexProgressRing, enabled.contains(.codex) else { failure(id: command.id, code: "codexProgressSetupUnavailable"); return true }
             scheduleCodexProgressSetup(force: true)
             publish(notices: [])
+        case "retryDeepSeekProgressSetup":
+            guard managesDeepSeekProgress, deepseekProgressRing, enabled.contains(.deepseek) else { failure(id: command.id, code: "deepseekProgressSetupUnavailable"); return true }
+            syncDeepSeekProgressSetup(force: true)
+            publish(notices: [])
         case "initialize", "configure":
             let plan: ApplicationLifecycleCoordinator.Plan
             do { plan = try await configure(command.params) }
@@ -964,6 +976,7 @@ actor EngineRuntime {
         if let executable = parameters.codexExecutable { codexExecutable = executable }
         if let value = parameters.claudeProgressRing { claudeProgressRing = value }
         if let value = parameters.codexProgressRing { codexProgressRing = value }
+        if let value = parameters.deepseekProgressRing { deepseekProgressRing = value }
         moduleSettings = updatedSettings; installation = detected
         if parameters.providerModes != nil { moduleConfigurationActive = true }
         else if explicitProviders != nil { moduleConfigurationActive = false }
@@ -1008,6 +1021,7 @@ actor EngineRuntime {
         }
         applyClaudeProgressSwitch()
         scheduleCodexProgressSetup()
+        syncDeepSeekProgressSetup()
         bindCodexCompletionSources()
         bindWSLCompletionSources(.claude)
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
@@ -1098,6 +1112,19 @@ actor EngineRuntime {
         applyClaudeProgressSwitch(setupConfirmed: report.state == .ready)
         publish(notices: [])
     }
+    private func syncDeepSeekProgressSetup(force: Bool = false) {
+        guard managesDeepSeekProgress else { return }
+        let home = deepseekHome, wanted = deepseekProgressRing && enabled.contains(.deepseek)
+        let previous = deepseekProgressTarget
+        guard force || previous?.home != home || previous?.enabled != wanted else { return }
+        deepseekProgressTarget = (home, wanted)
+        let storage = WindowsLocalProfileStorage()
+        if let previous, previous.home != home {
+            _ = DeepSeekProgressSetup.apply(home: previous.home, enabled: false, storage: storage)
+        }
+        deepseekProgressSetup = DeepSeekProgressSetup.apply(home: home, enabled: wanted, storage: storage)
+    }
+
     private func scheduleCodexProgressSetup(force: Bool = false) {
         guard managesCodexProgress else { return }
         let home = codexHome, executable = codexExecutable, wanted = codexProgressRing && enabled.contains(.codex)
@@ -2111,7 +2138,8 @@ actor EngineRuntime {
             claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [],
             notificationProjections: notificationProjections,
             navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup,
-            claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation(), codexProgressSetup: codexProgressSetup)
+            claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation(), codexProgressSetup: codexProgressSetup,
+            deepseekProgressSetup: deepseekProgressSetup)
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return
         }

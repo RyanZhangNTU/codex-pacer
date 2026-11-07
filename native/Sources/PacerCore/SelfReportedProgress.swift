@@ -81,7 +81,7 @@ public struct TaskProgressRing: Equatable, Sendable {
         let progress = cloud ? nil : activity.currentProgress, mode: Mode
         switch phase {
         case .running, .waitingForInput:
-            if codex && (hasAttention || phase == .waitingForInput) { mode = .attention }
+            if (codex || activity.provider == .deepseek) && (hasAttention || phase == .waitingForInput) { mode = .attention }
             else if codex && activity.codexGoalPause != nil { mode = .paused }
             else if activity.currentBackgroundWait != nil || codex && waitingForDependents { mode = .waiting }
             else if phase == .waitingForInput { mode = .attention }

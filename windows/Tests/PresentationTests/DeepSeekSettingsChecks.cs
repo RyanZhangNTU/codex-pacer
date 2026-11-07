@@ -40,12 +40,20 @@ internal static class DeepSeekSettingsChecks
                 "The settings fixture must receive the completed demo wallet before using its budget suggestions");
             island.Reveal(); await island.WaitForPresentationAsync(); await Pump();
             var module = Find<CheckBox>(window, "settings.deepseek.enabled"); var daily = Find<TextBox>(window, "settings.deepseek.budget.daily"); var weekly = Find<TextBox>(window, "settings.deepseek.budget.weekly");
+            var progress = Find<CheckBox>(window, "settings.deepseek.progress_ring");
             var budget = Find<RadioButton>(window, "settings.deepseek.mode.budget"); var balance = Find<RadioButton>(window, "settings.deepseek.mode.balance");
             var simple = Find<RadioButton>(window, "settings.deepseek.panel.simple"); var detailed = Find<RadioButton>(window, "settings.deepseek.panel.detailed");
             Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600 && module.IsChecked == true,
                 "DeepSeek must retain the original settings canvas and acknowledged module state");
             Check(!Find<Button>(window, "settings.deepseek.sign_in").IsEnabled, "The page must keep the unsupported account connection action disabled");
             Check(Descendants(island).OfType<CompactQuotaGlyph>().All(value => value.RingCount == 0 && value.ShowsPriceClock), "DeepSeek without budgets must show its actual price clock in the header and strip");
+            Check(progress.IsChecked == false && engine.LatestSnapshot?.Presentation?.Rows.All(row => row.ProgressMode == null) == true,
+                "DeepSeek progress is off until the switch is enabled");
+            Toggle(progress); await Until(() => session.Current.DeepSeekProgressRing && progress.IsEnabled);
+            await island.WaitForPresentationAsync();
+            Check(engine.LatestSnapshot?.Presentation?.Rows.Any(row => row.Provider == "deepseek" && row.ProgressState == "pending") == true,
+                "The enabled setting reaches the shared ring projection for a DeepSeek task");
+            Toggle(progress); await Until(() => !session.Current.DeepSeekProgressRing && progress.IsEnabled);
             window.CapturePreview(Path.Combine(output, "settings-" + scenario + "-deepseek.png"));
             var suggestion = engine.LatestSnapshot!.Wallet!.Settings!;
             Select(budget); await Until(() => session.Current.DeepSeekMode == "budget" && budget.IsEnabled);

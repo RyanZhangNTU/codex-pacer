@@ -31,12 +31,18 @@ enum DeepSeekLogEvent: Equatable, Sendable {
     case response(Response)
     case toolCall(turn: Int, call: String, kind: ToolKind)
     case toolResult(call: String)
+    case progressCall(turn: Int, step: Int, call: String, percent: Int?)
+    case progressAccepted(turn: Int, step: Int, call: String)
+    case nestedProgress(rootCall: String, percent: Int)
+    case nestedQuestion(rootCall: String, call: String, opening: Bool)
+    case jobStarted(id: String, owner: String, rootCall: String)
+    case jobSettled(id: String, owner: String)
     case approvalAsked(id: String, call: String?)
     case approvalDecided(id: String)
     case turnEnd(turn: Int, outcome: Outcome)
 
     /// A search or fetch call is billed per call; `name` is kept only for its price.
-    enum ToolKind: Equatable, Sendable { case other, question, search(String) }
+    enum ToolKind: Equatable, Sendable { case other, program, question, search(String) }
     enum Outcome: Equatable, Sendable { case completed, failed, interrupted }
 }
 
@@ -50,7 +56,12 @@ enum DeepSeekSessionLog {
     static let maximumLineBytes = 4 << 20
     /// Large bodies that carry no lifecycle evidence are skipped before parsing.
     private static let wanted: Set<String> = ["session", "session/title", "model/selection", "request/context", "request/header", "turn/start", "step/start",
-        "assistant/message", "tool/call", "tool/result", "approval/asked", "approval/decided", "turn/end"]
+        "assistant/message", "tool/call", "tool/result", "tool/ptc-dispatch", "tool/ptc-dispatch-start",
+        "job/registered", "job/settled", "approval/asked", "approval/decided", "turn/end"]
+    private static let progressName = Data(CodexProgressEvidence.qualified.utf8)
+    private static let progressAck = Data(CodexProgressEvidence.acknowledgment.utf8)
+    private static let questionNames: Set<String> = ["ask_user_question", "ask_user", "question"]
+    private static let questionMarkers = questionNames.map { Data("\"name\":\"\($0)\"".utf8) }
 
     static func identifier(_ value: Any?) -> String? {
         guard let raw = value as? String, !raw.isEmpty, raw.utf8.count <= 128,
@@ -75,7 +86,14 @@ enum DeepSeekSessionLog {
     /// text-bearing stream. A truncated line can still yield a light response.
     static func parse(_ line: Data, truncated: Bool = false, light: Bool = false) -> DeepSeekLogRecord? {
         guard let type = type(of: line), wanted.contains(type) else { return nil }
-        if type == "tool/result" { return lightToolResult(line) }
+        if type == "tool/result" {
+            return (!truncated ? progressResult(line, nested: false) : nil) ?? lightToolResult(line)
+        }
+        if type == "tool/ptc-dispatch" || type == "tool/ptc-dispatch-start" {
+            guard !truncated else { return nil }
+            let opening = type == "tool/ptc-dispatch-start"
+            return (opening ? nil : progressResult(line, nested: true)) ?? nestedQuestion(line, opening: opening)
+        }
         if type == "request/header" { return lightConfiguration(line) }
         if type == "assistant/message", light || truncated { return lightResponse(line) }
         guard !truncated, let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return nil }
@@ -106,10 +124,18 @@ enum DeepSeekSessionLog {
             return record(.response(response(data, turn: turn, step: step)))
         case "tool/call":
             guard let turn, let call = identifier(data["callId"]) else { return nil }
+            if data["name"] as? String == CodexProgressEvidence.qualified, let step = data["step"] as? Int {
+                return record(.progressCall(turn: turn, step: step, call: call, percent: CodexProgressEvidence.percent(data["arguments"])))
+            }
             let name = (data["name"] as? String ?? "").lowercased()
-            let kind: DeepSeekLogEvent.ToolKind = ["ask_user_question", "ask_user", "question"].contains(name) ? .question
-                : DeepSeekPricing.searchTools.contains(name) ? .search(name) : .other
+            let kind: DeepSeekLogEvent.ToolKind = questionNames.contains(name) ? .question
+                : name == "run_code" ? .program : DeepSeekPricing.searchTools.contains(name) ? .search(name) : .other
             return record(.toolCall(turn: turn, call: call, kind: kind))
+        case "job/registered", "job/settled":
+            guard let id = identifier(data["jobId"]), let owner = sessionID(data["owner"]) else { return nil }
+            if type == "job/settled" { return record(.jobSettled(id: id, owner: owner)) }
+            guard let call = data["toolCall"] as? [String: Any], let root = identifier(call["rootCallId"]) else { return nil }
+            return record(.jobStarted(id: id, owner: owner, rootCall: root))
         case "approval/asked":
             return identifier(data["id"]).map { record(.approvalAsked(id: $0, call: identifier(data["callId"]))) }
         case "approval/decided":
@@ -188,6 +214,41 @@ enum DeepSeekSessionLog {
         guard let head = envelope(line, before: #","message":"#),
               let call = identifier(string(after: #""toolCallId":""#, in: line.prefix(1024), within: 160)) else { return nil }
         return DeepSeekLogRecord(seq: head.seq, at: head.at, event: .toolResult(call: call))
+    }
+    private static func progressResult(_ line: Data, nested: Bool) -> DeepSeekLogRecord? {
+        // A valid progress result contains a tiny, exact acknowledgment. Skip
+        // every other result without decoding its content or arguments.
+        guard line.count <= 4096, line.range(of: progressAck) != nil,
+              !nested || line.range(of: progressName) != nil,
+              let root = try? JSONFieldView.document(line, maximumBytes: 4096).fields(["time", "seq", "data", "surfaceOp"]),
+              let seq = root["seq"]?.integer(), seq >= 0,
+              let time = root["time"]?.integer(), let at = milliseconds(time),
+              let data = root["data"], let fields = try? data.fields(["turn", "step", "message", "rootCallId", "subCallId", "name", "arguments", "isError", "error"]),
+              fields["error"] == nil else { return nil }
+        if nested {
+            guard fields["name"]?.matchesStringLiteral(CodexProgressEvidence.qualified) == true, fields["isError"]?.boolean() == false,
+                  let call = identifier(fields["rootCallId"]?.string(limit: 129)),
+                  identifier(fields["subCallId"]?.string(limit: 129)) != nil,
+                  let percent = CodexProgressEvidence.percent(fields["arguments"]), CodexProgressEvidence.resultAccepted(data) else { return nil }
+            return DeepSeekLogRecord(seq: seq, at: at, event: .nestedProgress(rootCall: call, percent: percent))
+        }
+        guard root["surfaceOp"]?.matchesStringLiteral("append") == true,
+              let turn = fields["turn"]?.integer(), let step = fields["step"]?.integer(),
+              let message = fields["message"], CodexProgressEvidence.resultAccepted(message),
+              let envelope = try? message.fields(["role", "toolCallId", "isError"]), envelope["role"]?.matchesStringLiteral("tool") == true,
+              envelope["isError"] == nil || envelope["isError"]?.boolean() == false,
+              let call = identifier(envelope["toolCallId"]?.string(limit: 129)) else { return nil }
+        return DeepSeekLogRecord(seq: seq, at: at, event: .progressAccepted(turn: turn, step: step, call: call))
+    }
+    private static func nestedQuestion(_ line: Data, opening: Bool) -> DeepSeekLogRecord? {
+        guard questionMarkers.contains(where: { line.prefix(1024).range(of: $0) != nil }),
+              let root = try? JSONFieldView.document(line, maximumBytes: maximumLineBytes).fields(["time", "seq", "data"]),
+              let seq = root["seq"]?.integer(), seq >= 0, let time = root["time"]?.integer(), let at = milliseconds(time),
+              let fields = try? root["data"]?.fields(["name", "rootCallId", "subCallId"]),
+              let name = fields["name"]?.string(limit: 64), questionNames.contains(name),
+              let rootCall = identifier(fields["rootCallId"]?.string(limit: 129)),
+              let call = identifier(fields["subCallId"]?.string(limit: 129)) else { return nil }
+        return DeepSeekLogRecord(seq: seq, at: at, event: .nestedQuestion(rootCall: rootCall, call: call, opening: opening))
     }
     private static func lightResponse(_ line: Data) -> DeepSeekLogRecord? {
         guard let head = envelope(line, before: #","message":"#), let turn = head.data["turn"] as? Int, turn > 0,

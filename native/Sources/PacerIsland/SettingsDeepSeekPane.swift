@@ -76,6 +76,7 @@ struct SettingsDeepSeekSections: View {
     @Binding var balanceSource: DeepSeekBalanceSource
     @Binding var budgets: DeepSeekBudgetSettings
     @Binding var showsTurnCost: Bool
+    @Binding var showsProgressRing: Bool
     @Binding var speedSource: String
     @Binding var panelStyle: DeepSeekPanelStyle
     /// DeepSeek is the only module, so the expanded panel is its own dashboard.
@@ -158,6 +159,18 @@ struct SettingsDeepSeekSections: View {
             Toggle(isOn: $showsTurnCost) {
                 Text(L10n.text("deepseek.turn_cost"))
                 Text(L10n.text("deepseek.turn_cost_help"))
+            }
+            Toggle(isOn: $showsProgressRing) {
+                Text(L10n.text("deepseek.progress_ring"))
+                Text(L10n.text("deepseek.progress_ring_help"))
+            }
+            if showsProgressRing, let setup = model.deepseekProgressSetup {
+                HStack {
+                    Text(L10n.text("deepseek.progress_setup." + setup.rawValue)).foregroundStyle(.secondary)
+                    if setup == .failed || setup == .conflict {
+                        Button(L10n.text("connections.retry")) { model.syncDeepSeekProgressSwitch(force: true) }
+                    }
+                }.font(.system(size: 11))
             }
         } header: {
             Text(L10n.text("deepseek.section.display"))

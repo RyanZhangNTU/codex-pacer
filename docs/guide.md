@@ -127,6 +127,8 @@ Pacer uses `~/.claude`, or `CLAUDE_CONFIG_DIR` when set; choose another folder u
 
 ## DeepSeek Harness
 
+Turn on **Settings → DeepSeek → Show DeepSeek Task Progress** to let Harness report its estimate for the current request. Start a new Harness session after Pacer configures the reporting tool. The ring stays dashed until an estimate arrives, keeps its value while the request waits, and fills when the request completes. See the [task states and animations](deepseek-task-state-animation.zh-CN.md).
+
 Pacer reads DeepSeek Harness's session logs in `~/.dsh`, or `DSH_HOME` when set; choose another folder under **Settings → DeepSeek → Custom locations**. It follows the stage of each turn, its speed and time to first output, approvals, questions that wait for your reply, and how the turn ended, from the token counts and timing only. Harness saves each reply when its step finishes, so speed and cost update step by step rather than while text streams. Harness sessions on SSH hosts are not followed yet.
 
 **Turn cost.** Pacer estimates each turn's cost from its tokens and DeepSeek's published prices, doubled at peak times, and shows it before the model name. An amber dot means part of the turn was billed at peak; screen readers also announce the task's spend today. A sub-agent's spend counts toward the task that started it, and web searches and fetches add ¥0.005 each from 1 November 2026. Weekends and China's 2026 public holidays are off-peak; holidays of later years are not known yet. Only DeepSeek's own channels are priced, so a third-party provider gets no estimate. The platform bill is authoritative. Turn the estimate off with **Settings → DeepSeek → Show each turn's estimated cost**.

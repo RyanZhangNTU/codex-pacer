@@ -138,6 +138,104 @@ final class DeepSeekActivityTests: XCTestCase {
         XCTAssertTrue(done.activities.first?.isHistoricalCompletion == true)
     }
 
+    private func reportCall(_ percent: Int, seq: Int, call: String = "report") -> Data {
+        line("tool/call", seq: seq, at: Double(seq), ["turn": 1, "step": 1, "callId": call,
+            "name": CodexProgressEvidence.qualified, "arguments": "{\"percent\":\(percent)}"])
+    }
+
+    private func reportResult(_ seq: Int, turn: Int = 1, step: Int = 1, call: String = "report", error: Bool = false) -> Data {
+        let row = line("tool/result", seq: seq, at: Double(seq), ["turn": turn, "step": step,
+            "message": ["role": "tool", "toolCallId": call, "content": [["type": "text", "text": CodexProgressEvidence.acknowledgment]],
+                        "isError": error] as KeyValuePairs<String, Any>])
+        return Data(row.dropLast()) + Data(#", "surfaceOp":"append"}"#.utf8)
+    }
+
+    func testDeepSeekProgressUsesAcknowledgedCurrentTurnCallsAndCanGoBackward() throws {
+        var state = DeepSeekActivityState()
+        feed(&state, [header, line("turn/start", seq: 1, at: 1, ["turn": 1]), reportCall(62, seq: 2)])
+        XCTAssertNil(state.activities.first?.currentProgress)
+        feed(&state, [reportResult(3)])
+        let activity = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(activity.currentProgress?.percent, 62)
+        XCTAssertEqual(activity.lastObserved, peak.addingTimeInterval(1))
+        feed(&state, [reportCall(80, seq: 4), reportResult(5, error: true), reportCall(101, seq: 6), reportResult(7),
+                      reportCall(99, seq: 8), reportResult(9, turn: 2)])
+        XCTAssertEqual(state.activities.first?.currentProgress?.percent, 62)
+        let nested = line("tool/ptc-dispatch", seq: 11, at: 11, ["rootCallId": "program", "subCallId": "program:ptc:0",
+            "name": CodexProgressEvidence.qualified, "arguments": ["percent": 41], "isError": false,
+            "content": [["type": "text", "text": CodexProgressEvidence.acknowledgment]]])
+        feed(&state, [nested])
+        XCTAssertEqual(state.activities.first?.currentProgress?.percent, 62)
+        feed(&state, [line("tool/call", seq: 10, at: 10, ["turn": 1, "step": 1, "callId": "program", "name": "run_code"]), nested])
+        XCTAssertEqual(state.activities.first?.currentProgress?.percent, 41)
+        feed(&state, [line("tool/ptc-dispatch-start", seq: 12, at: 12,
+            ["rootCallId": "program", "subCallId": "program:ptc:1", "name": "ask_user_question", "arguments": ["question": "PRIVATE"]])])
+        let attention = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(TaskProgressRing.make(attention, phase: attention.phase, enabled: true, at: peak.addingTimeInterval(12))?.mode, .attention)
+        feed(&state, [line("tool/result", seq: 13, at: 13, ["turn": 1, "step": 1, "message": ["toolCallId": "program"] as KeyValuePairs<String, Any>])])
+        XCTAssertTrue(state.attention.isEmpty, "The enclosing tool must also clear an abandoned question")
+        feed(&state, [line("turn/end", seq: 14, at: 14, ["turn": 1, "reason": ["kind": "aborted"]])])
+        let interrupted = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(TaskProgressRing.make(interrupted, phase: interrupted.phase, enabled: true, at: peak.addingTimeInterval(14))?.mode, .interrupted)
+        XCTAssertEqual(interrupted.currentProgress?.percent, 41)
+        feed(&state, [line("turn/start", seq: 15, at: 15, ["turn": 2]), reportResult(16)])
+        XCTAssertNil(state.activities.first?.currentProgress)
+    }
+
+    func testDeepSeekProgressWaitsForOwnedBackgroundWorkAndContinuesTheRequest() throws {
+        var state = DeepSeekActivityState()
+        let owner = "session-" + session, job = "bash-fixture"
+        feed(&state, [header, line("turn/start", seq: 1, at: 1, ["turn": 1]), reportCall(44, seq: 2), reportResult(3),
+                      line("tool/call", seq: 4, at: 4, ["turn": 1, "step": 1, "callId": "background", "name": "bash"]),
+                      line("job/registered", seq: 5, at: 5, ["owner": owner, "jobId": job, "toolCall": ["rootCallId": "background"]]),
+                      line("tool/result", seq: 6, at: 6, ["turn": 1, "step": 1, "message": ["toolCallId": "background"] as KeyValuePairs<String, Any>]),
+                      line("turn/end", seq: 7, at: 7, ["turn": 1, "reason": ["kind": "completed"]])])
+        let waiting = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(waiting.phase, .running)
+        XCTAssertEqual(TaskProgressRing.make(waiting, phase: waiting.phase, enabled: true, at: peak.addingTimeInterval(8))?.mode, .waiting)
+        XCTAssertEqual(waiting.lastObserved, peak.addingTimeInterval(6))
+        feed(&state, [line("job/settled", seq: 8, at: 8, ["owner": owner, "jobId": job])])
+        var quiet = state
+        quiet.finishSettledWaits(now: peak.addingTimeInterval(12.9)); XCTAssertEqual(quiet.activities.first?.phase, .running)
+        quiet.finishSettledWaits(now: peak.addingTimeInterval(13)); XCTAssertEqual(quiet.activities.first?.phase, .completed)
+        feed(&state, [line("turn/start", seq: 9, at: 9, ["turn": 2])])
+        XCTAssertEqual(state.activities.first?.currentProgress?.percent, 44)
+        XCTAssertNil(state.activities.first?.currentBackgroundWait)
+        feed(&state, [line("turn/end", seq: 10, at: 10, ["turn": 2, "reason": ["kind": "completed"]])])
+        let done = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(TaskProgressRing.make(done, phase: done.phase, enabled: true, at: peak.addingTimeInterval(10))?.percent, 100)
+        feed(&state, [line("turn/start", seq: 11, at: 11, ["turn": 3])])
+        XCTAssertNil(state.activities.first?.currentProgress)
+    }
+
+    func testDeepSeekProgressSetupRestoresOwnedPatchAndRevokesEditedRegistration() throws {
+        #if os(Windows)
+        let storage = WindowsLocalProfileStorage()
+        #else
+        let storage = MacClaudeHookStorage()
+        #endif
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dsh-progress-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: home.appendingPathComponent("profiles"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let patch = home.appendingPathComponent("cordis.patch.yml")
+        let flag = home.appendingPathComponent("pacer/deepseek-progress/enabled")
+        for original in [Data("[]\r\n".utf8), Data("# local overrides\n- id: other\n  config: {}".utf8)] {
+            try storage.replace(patch, with: original, permissions: 0o600)
+            XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: true, storage: storage), .ready)
+            let installed = try storage.read(patch)
+            XCTAssertTrue(String(decoding: installed, as: UTF8.self).contains("serverName: pacer_progress"))
+            XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: true, storage: storage), .ready)
+            XCTAssertEqual(try storage.read(patch), installed)
+            XCTAssertNil(DeepSeekProgressSetup.apply(home: home, enabled: false, storage: storage))
+            XCTAssertEqual(try storage.read(patch), original); XCTAssertFalse(storage.exists(flag))
+        }
+        XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: true, storage: storage), .ready)
+        let edited = Data(String(decoding: try storage.read(patch), as: UTF8.self).replacingOccurrences(of: "process.execPath", with: "'user-node'").utf8)
+        try storage.replace(patch, with: edited, permissions: 0o600)
+        XCTAssertEqual(DeepSeekProgressSetup.apply(home: home, enabled: false, storage: storage), .conflict)
+        XCTAssertEqual(try storage.read(patch), edited); XCTAssertFalse(storage.exists(flag))
+    }
+
     func testPeakScheduleAndPrices() throws {
         XCTAssertTrue(DeepSeekPricing.isPeak(at: peak))
         XCTAssertFalse(DeepSeekPricing.isPeak(at: peak.addingTimeInterval(2.5 * 3600))) // 12:30
