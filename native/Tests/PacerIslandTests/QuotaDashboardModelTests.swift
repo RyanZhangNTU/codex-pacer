@@ -1,14 +1,15 @@
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class QuotaDashboardModelTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private func fixture(_ initialPeriod: String? = nil) throws -> (IslandModel, UserDefaults) {
-        let domain = "com.codexpacer.dashboard-model-tests." + UUID().uuidString
+        let domain = testDefaultsName("dashboard-model-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        addTeardownBlock { defaults.removePersistentDomain(forName: domain) }
+        addTeardownBlock { removeTestDefaults(domain) }
         ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
         if let initialPeriod { defaults.set(initialPeriod, forKey: "quotaDashboardPeriod") }
         let clock = now

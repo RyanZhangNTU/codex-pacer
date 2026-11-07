@@ -267,9 +267,9 @@ final class DeepSeekHistoryCredentialTests: XCTestCase {
     }
 
     func testMacHistoryDefaultsKeyAndNumericJSONRemainIntactWhenSaltIsCreated() throws {
-        let name = "pacer-history-credential-test-" + UUID().uuidString
+        let name = testDefaultsName("pacer-history-credential-test")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         var history = DeepSeekBalanceHistory()
         history.record(total: 100, at: start, source: "apiKey")
         history.record(total: 90, at: start.addingTimeInterval(60), source: "apiKey")

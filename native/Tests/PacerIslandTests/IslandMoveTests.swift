@@ -2,13 +2,14 @@ import PacerMacSupport
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class IslandMoveTests: XCTestCase {
     private func fixture() throws -> (IslandModel, UserDefaults, String, URL) {
-        let name = "com.codexpacer.island-move-tests." + UUID().uuidString
+        let name = testDefaultsName("island-move-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-island-move-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.path, forKey: "claudeHome")
@@ -28,8 +29,8 @@ final class IslandMoveTests: XCTestCase {
     }
 
     func testAMoveHoldsHoverAndTheClickThatEndsItDoesNotPin() async throws {
-        let (model, defaults, name, directory) = try fixture()
-        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        let (model, _, name, directory) = try fixture()
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
         model.hover(true)
         XCTAssertTrue(model.expanded)
         model.setIslandMoving(true)
@@ -52,7 +53,7 @@ final class IslandMoveTests: XCTestCase {
 
     func testOnlyAFloatingIslandMovesAndReturnToTopCenterForgetsThePlace() async throws {
         let (model, defaults, name, directory) = try fixture()
-        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
         model.isAttached = true
         XCTAssertFalse(model.canMoveIsland, "The notch island stays put")
         model.isAttached = false
@@ -75,7 +76,7 @@ final class IslandMoveTests: XCTestCase {
 
     func testADragIsCancelledOnlyWhenItsMouseUpStaysLost() async throws {
         let (model, defaults, name, directory) = try fixture()
-        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
         let restore = floatTheStandardIsland()
         defer { restore() }
         let controller = PanelController(model: model)

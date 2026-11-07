@@ -64,11 +64,16 @@
         "Sparkle"
       ]
     },
+    "PacerTestSupport": {
+      "kind": "target",
+      "dependencies": []
+    },
     "PacerCoreTests": {
       "kind": "testTarget",
       "dependencies": [
         "PacerCore",
-        "PacerMacSupport"
+        "PacerMacSupport",
+        "PacerTestSupport"
       ]
     },
     "PacerIslandTests": {
@@ -76,7 +81,8 @@
       "dependencies": [
         "PacerIsland",
         "PacerCore",
-        "PacerMacSupport"
+        "PacerMacSupport",
+        "PacerTestSupport"
       ]
     },
     "CGzip": {

@@ -3,13 +3,14 @@ import XCTest
 import PacerCore
 import PacerMacSupport
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class QuotaCoordinationIslandTests: XCTestCase {
     func testOrganizationAndSignInRevokeTheCloudOwnerBeforeReturning() async throws {
-        let domain = "com.codexpacer.quota-coordination-tests." + UUID().uuidString
+        let domain = testDefaultsName("quota-coordination-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        defer { defaults.removePersistentDomain(forName: domain) }
+        defer { removeTestDefaults(domain) }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-quota-coordination-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

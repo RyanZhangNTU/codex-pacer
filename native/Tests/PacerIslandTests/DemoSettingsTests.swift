@@ -1,6 +1,7 @@
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class DemoSettingsTests: XCTestCase {
@@ -8,9 +9,9 @@ final class DemoSettingsTests: XCTestCase {
     private let arguments = ["--demo", "--demo-claude", "--demo-deepseek", "--demo-cloud"]
 
     private func defaults() throws -> UserDefaults {
-        let domain = "DemoSettingsTests-" + UUID().uuidString
+        let domain = testDefaultsName("DemoSettingsTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        addTeardownBlock { defaults.removePersistentDomain(forName: domain) }
+        addTeardownBlock { removeTestDefaults(domain) }
         defaults.set("/synthetic/demo/codex", forKey: "codexHome")
         defaults.set("/synthetic/demo/claude", forKey: "claudeHome")
         defaults.set("/synthetic/demo/deepseek", forKey: "deepseekHome")

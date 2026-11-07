@@ -3,9 +3,9 @@ import XCTest
 
 final class IslandDisplayModeTests: XCTestCase {
     func testOldPreferencesKeepTheirBehaviorAndExplicitModeTakesPrecedence() throws {
-        let name = "pacer-display-mode-test-\(UUID().uuidString)"
+        let name = testDefaultsName("pacer-display-mode-test")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         XCTAssertEqual(IslandDisplayMode.load(from: defaults), .automatic)
         defaults.set(true, forKey: "floatingIsland")
         XCTAssertEqual(IslandDisplayMode.load(from: defaults), .floating)

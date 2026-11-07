@@ -1,6 +1,7 @@
 import XCTest
 import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class ProviderDisplayTests: XCTestCase {
@@ -28,7 +29,7 @@ final class ProviderDisplayTests: XCTestCase {
     }
 
     private func fixture() throws -> Fixture {
-        let domain = "com.codexpacer.provider-display-tests." + UUID().uuidString
+        let domain = testDefaultsName("provider-display-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defaults.set(true, forKey: "monitorSSH")
         defaults.set(0, forKey: "completedRetentionMinutes")
@@ -93,7 +94,7 @@ final class ProviderDisplayTests: XCTestCase {
 
     func testNewSignInDropsOldOrganizationWhileRetryKeepsExplicitChoice() async throws {
         let fixture = try fixture(), model = fixture.model
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let organization = "c211bf81-dc2a-4a19-b75d-9e03e47490e7"
         model.selectProvider(.claude)
         model.retryClaudeWebConnection(organizationID: organization)
@@ -107,9 +108,9 @@ final class ProviderDisplayTests: XCTestCase {
     }
 
     func testClaudeConnectionActionsDistinguishSignInAndWorkspaceSelection() async throws {
-        let domain = "com.codexpacer.provider-connection-actions-tests." + UUID().uuidString
+        let domain = testDefaultsName("provider-connection-actions-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        defer { defaults.removePersistentDomain(forName: domain) }
+        defer { removeTestDefaults(domain) }
         defaults.set("/private/tmp/pacer-connection-actions-" + UUID().uuidString, forKey: "claudeHome")
         defaults.set(false, forKey: "monitorSSH")
         ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
@@ -156,7 +157,7 @@ final class ProviderDisplayTests: XCTestCase {
 
     func testVerifiedLocalMirrorRemovalPreservesRealRemoteAndOtherProviderEndings() async throws {
         let fixture = try fixture(), model = fixture.model, now = Date()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let session = "019a0000-0000-7000-8000-000000000025"
         let mirror = activity(.claude, session: session, at: now, completed: true)
         let remote = activity(.claude, session: session, at: now, completed: true, hostID: "remote-ssh-discovered:synthetic")
@@ -176,7 +177,7 @@ final class ProviderDisplayTests: XCTestCase {
 
     func testQuotaTabKeepsProviderWindowsHistoryAndErrorsIndependent() async throws {
         let fixture = try fixture(), model = fixture.model, now = Date()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         model.now = now
         let codex = try quota(.codex, used: 20, at: now), claude = try quota(.claude, used: 60, at: now)
         fixture.defaults.set("codex/primary", forKey: "quotaWindowID")
@@ -213,7 +214,7 @@ final class ProviderDisplayTests: XCTestCase {
 
     func testQuotaTabsKeepMixedTasksAndAggregatedThroughputForMatchingSessionIDs() async throws {
         let fixture = try fixture(), model = fixture.model, now = Date()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let session = "019a0000-0000-7000-8000-000000000021"
         let codex = activity(.codex, session: session, at: now, tokens: 100)
         let claude = activity(.claude, session: session, at: now, tokens: 50)
@@ -238,7 +239,7 @@ final class ProviderDisplayTests: XCTestCase {
 
     func testRepeatedTaskPresentationReusesGroupingButExactClockStillChangesFreshness() async throws {
         let fixture = try fixture(), model = fixture.model
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let session = "019a0000-0000-7000-8000-000000000028"
         let running = activity(.codex, session: session, at: now, tokens: 100)
@@ -274,9 +275,9 @@ final class ProviderDisplayTests: XCTestCase {
         for outcome in [ActivityOpenOutcome.dispatchedTerminal, .openedConversation, .failed("Synthetic open failure")] {
             let acknowledges: Bool
             if case .openedConversation = outcome { acknowledges = true } else { acknowledges = false }
-            let domain = "com.codexpacer.provider-terminal-tests." + UUID().uuidString
+            let domain = testDefaultsName("provider-terminal-tests")
             let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-            defer { defaults.removePersistentDomain(forName: domain) }
+            defer { removeTestDefaults(domain) }
             ProviderModules(codexMode: .disabled, claudeMode: .enabled).save(to: defaults)
             defaults.set(0, forKey: "completedRetentionMinutes")
             // This non-demo fixture's own defaults leave system notifications
@@ -313,7 +314,7 @@ final class ProviderDisplayTests: XCTestCase {
 
     func testQueuedClaudeOpenDoesNotUseAReplacedProfile() async throws {
         let fixture = try fixture(), model = fixture.model, now = Date()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         let completed = activity(.claude, session: "019a0000-0000-7000-8000-000000000027", at: now, completed: true)
         model.receiveClaudeUpdate([completed], statuses: ["local": connected], requests: [])
         var launches = 0
@@ -331,10 +332,10 @@ final class ProviderDisplayTests: XCTestCase {
         enum ReadBoundary: CaseIterable, Equatable { case passive, cookie, quota }
         for changesHome in [false, true] {
             for boundary in ReadBoundary.allCases {
-                let domain = "com.codexpacer.provider-source-race-tests." + UUID().uuidString
+                let domain = testDefaultsName("provider-source-race-tests")
                 let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
                 let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-quota-race-" + UUID().uuidString)
-                defer { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: root) }
+                defer { removeTestDefaults(domain); try? FileManager.default.removeItem(at: root) }
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
                 defaults.set(root.appendingPathComponent("old-home").path, forKey: "claudeHome")
                 defaults.set(false, forKey: "monitorSSH")
@@ -389,7 +390,7 @@ final class ProviderDisplayTests: XCTestCase {
     func testCodexHomeEditResetsClaudeOnlyWhenItsSSHDiscoveryUsesThatHome() async throws {
         for monitorsSSH in [false, true] {
             let fixture = try fixture(), model = fixture.model, now = Date()
-            defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+            defer { removeTestDefaults(fixture.domain) }
             fixture.defaults.set(monitorsSSH, forKey: "monitorSSH")
             model.applySettings(sourceChanged: false)
             let completion = activity(.claude, session: "019a0000-0000-7000-8000-000000000026", at: now, completed: true)
@@ -417,7 +418,7 @@ final class ProviderDisplayTests: XCTestCase {
     func testDisablingEitherModulePreservesOtherQuotaAndUnreadCompletion() async throws {
         for disabled in [AgentProvider.codex, .claude] {
             let fixture = try fixture(), model = fixture.model, now = Date()
-            defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+            defer { removeTestDefaults(fixture.domain) }
             let session = "019a0000-0000-7000-8000-000000000022"
             let codex = activity(.codex, session: session, at: now, completed: true)
             let claude = activity(.claude, session: session, at: now, completed: true)
@@ -503,7 +504,7 @@ final class ProviderDisplayTests: XCTestCase {
 
     func testDisablingBothModulesLeavesNoQuotaOrTaskComponentsAndRejectsTabSelection() async throws {
         let fixture = try fixture(), model = fixture.model
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         ProviderModules(codexMode: .disabled, claudeMode: .disabled).save(to: fixture.defaults)
         model.applySettings(sourceChanged: false)
         await Task.yield()
@@ -524,7 +525,7 @@ final class ProviderDisplayTests: XCTestCase {
 
     func testCompactQuotaAndSourceWarningsIncludeTheUnselectedProvider() async throws {
         let fixture = try fixture(), model = fixture.model, now = Date()
-        defer { fixture.defaults.removePersistentDomain(forName: fixture.domain) }
+        defer { removeTestDefaults(fixture.domain) }
         model.now = now
         model.quota = try quota(.codex, used: 30, at: now)
         model.selectProvider(.claude); model.quota = try quota(.claude, used: 90, at: now)
