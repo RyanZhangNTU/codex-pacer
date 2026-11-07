@@ -234,17 +234,55 @@ struct ProgressRingToggle: View {
 }
 
 /// A menu choice at the row's end.
-struct CardPicker<Value: Hashable, Options: View>: View {
+struct CardPicker<Value: Hashable>: View {
     let title: String
     var info: String? = nil
     @Binding var selection: Value
-    @ViewBuilder let options: Options
+    /// Each choice and what it shows, in menu order.
+    let options: [(Value, String)]
 
     var body: some View {
         CardRow(title: title, info: info) {
-            Picker(title, selection: $selection) { options }
-                .labelsHidden().pickerStyle(.menu).fixedSize()
+            OutlineMenu(title: title, selection: $selection, options: options)
         }
+    }
+}
+
+/// A menu drawn as a line: the current choice and a chevron in a hairline
+/// frame instead of the filled pop-up button. The menu itself stays the
+/// system's, with a check by the current choice.
+struct OutlineMenu<Value: Hashable>: View {
+    let title: String
+    @Binding var selection: Value
+    let options: [(Value, String)]
+    @State private var hovering = false
+
+    private var current: String { options.first { $0.0 == selection }?.1 ?? "—" }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        Menu {
+            // One checkable item per choice. The menu takes the card's switch
+            // style unless reset, which split each item in three and greyed it.
+            ForEach(options.indices, id: \.self) { index in
+                let value = options[index].0
+                Toggle(options[index].1, isOn: Binding(get: { selection == value }, set: { if $0 { selection = value } }))
+            }
+            .toggleStyle(.automatic)
+        } label: {
+            HStack(spacing: 6) {
+                Text(current).font(.system(size: 12.5)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10).frame(height: 26)
+            .background(shape.fill(Color.primary.opacity(hovering ? 0.05 : 0)))
+            .overlay(shape.strokeBorder(Color.primary.opacity(hovering ? 0.28 : 0.16)))
+            .contentShape(shape)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .onHover { hovering = $0 }
+        .accessibilityLabel(title)
+        .accessibilityValue(current)
     }
 }
 
@@ -352,6 +390,7 @@ struct MainButtonStyle: ButtonStyle {
         let fill: Color?
         let label: Color?
         @Environment(\.isEnabled) private var enabled
+        @Environment(\.pacerAccent) private var accent
         var body: some View {
             let large = height >= 32
             let shape = RoundedRectangle(cornerRadius: large ? 9 : 7, style: .continuous)
@@ -359,7 +398,7 @@ struct MainButtonStyle: ButtonStyle {
                 .font(.system(size: large ? 13.5 : height > 24 ? 12.5 : 12, weight: large && prominent ? .semibold : .medium)).lineLimit(1)
                 .foregroundStyle(label ?? (prominent ? Color.white : Color.primary))
                 .padding(.horizontal, large ? 16 : 11).frame(height: height)
-                .background(fill ?? (prominent ? Color.accentColor : MainPalette.button), in: shape)
+                .background(fill ?? (prominent ? accent : MainPalette.button), in: shape)
                 .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
                 .contentShape(shape)
         }

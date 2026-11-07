@@ -34,6 +34,8 @@ struct SettingsView: View {
     @State private var position = IslandPosition.saved()
     @State private var compactLayout = CompactIslandLayout.load()
     @State private var appearance = IslandAppearance.stored
+    @State private var theme = AppTheme(defaults: .standard)
+    @State private var accent = PacerAccent(defaults: .standard)
     @State private var quotaStyle = ExpandedQuotaStyle.load()
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
@@ -74,7 +76,9 @@ struct SettingsView: View {
     @State private var pane = SettingsPane.load()
     /// A row a link elsewhere asked for, scrolled into view when its pane opens.
     @State private var scrollTarget: String?
-    private static let gaugeAnchor = "quotaGauge"
+    private static let gaugeAnchor = SettingsCollapsedBarPane.inspectorAnchor
+    /// The component whose settings the Collapsed Bar page shows.
+    @State private var collapsedSelection: CompactIslandLayout.Component?
     private var languageChanges: Bool { language.resolved() != L10n.language }
 
     var body: some View {
@@ -88,6 +92,7 @@ struct SettingsView: View {
         .ignoresSafeArea(.container, edges: .top)
         .frame(minWidth: 860, idealWidth: 980, minHeight: 560, idealHeight: 660)
         .environment(\.locale, L10n.locale)
+        .pacerAccent(accent)
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
             launchAtLogin.refresh()
@@ -104,6 +109,7 @@ struct SettingsView: View {
         .onChange(of: pane) { _, value in UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey) }
         // Settings apply as they change, like System Settings; there is no Save.
         .onChange(of: liveSettings) { _, _ in scheduleApply() }
+        .onChange(of: theme) { _, value in value.apply() }
         // A drag or Return to Top Center saved the display and position itself.
         .onChange(of: model.placementRevision) { _, _ in
             displayMode = IslandDisplayMode.load()
@@ -153,7 +159,7 @@ struct SettingsView: View {
             switch pane {
             case .remote: PageHeader(title: pane.title, subtitle: SettingsConnectionsPane.summaryText(model))
             case .notifications: PageHeader(title: pane.title, subtitle: L10n.text("main.subtitle.notifications"))
-            case .collapsedBar: PageHeader(title: pane.title, subtitle: L10n.text("layout.help")) {
+            case .collapsedBar: PageHeader(title: pane.title, subtitle: L10n.text("main.collapsed.subtitle")) {
                 Button(L10n.text("common.restore_defaults")) { compactLayout = .standard }.buttonStyle(.main)
             }
             default: PageHeader(title: pane.title)
@@ -236,14 +242,12 @@ struct SettingsView: View {
                     .foregroundStyle(MainPalette.attention)
                 }
                 if let failure = launchAtLogin.failure { warning(failure) }
-                CardPicker(title: L10n.text("main.dock"), info: L10n.text("main.dock_info"), selection: $dockIcon) {
-                    ForEach(DockIconPreference.allCases) { Text($0.label).tag($0) }
-                }
+                CardPicker(title: L10n.text("main.dock"), info: L10n.text("main.dock_info"), selection: $dockIcon,
+                           options: DockIconPreference.allCases.map { ($0, $0.label) })
             }
             MainCard(title: L10n.text("main.section.language")) {
-                CardPicker(title: L10n.text("language.label"), selection: $language) {
-                    ForEach(LanguagePreference.allCases, id: \.rawValue) { Text($0.label).tag($0) }
-                }
+                CardPicker(title: L10n.text("language.label"), selection: $language,
+                           options: LanguagePreference.allCases.map { ($0, $0.label) })
                 if languageChanges {
                     CardRow(title: L10n.text("language.restart_hint")) {
                         Button(L10n.text("language.restart_now")) { relaunchForLanguage() }.buttonStyle(.mainProminent)
@@ -255,19 +259,15 @@ struct SettingsView: View {
                 CardToggle(title: L10n.text("settings.hide_projects"), info: L10n.text("settings.hide_projects_help"), isOn: $hideProjects)
             }
         case .appearance:
-            SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, position: $position,
+            SettingsAppearancePane(model: model, theme: $theme, appearance: $appearance, accent: $accent, displayMode: $displayMode, position: $position,
                 displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle, deepseekPanelStyle: $deepseekPanelStyle,
                 showsAppButtons: $showsAppButtons,
                 deepseekAlone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek])
         case .collapsedBar:
-            let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
-            MainCard(padding: 16) {
-                CompactLayoutEditor(model: model, layout: $compactLayout, providers: Set(enabled))
-            }
-            componentCard(.tasks, enabled: enabled)
-            componentCard(.performance, enabled: enabled)
-            componentCard(.quota, enabled: enabled)
-            componentCard(.warnings, enabled: enabled)
+            SettingsCollapsedBarPane(model: model, layout: $compactLayout, selection: $collapsedSelection, singleTask: $singleTask,
+                metric: $metric, windowID: $windowID, claudeWindowID: $claudeWindowID, quotaRings: $quotaRings,
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, deepseekHasBudget: !deepseekBudgets.isEmpty,
+                openNotifications: { pane = .notifications })
         case .notifications:
             SettingsNotificationsPane(model: model, notificationPreference: notificationPreference, layout: $compactLayout,
                 retention: $completedRetention, lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
@@ -302,6 +302,7 @@ struct SettingsView: View {
                 speedSource: $deepseekSpeedSource,
                 ringSlot: model.deepseekValueShowsBudget ? QuotaRingSlot(rawValue: model.compactRingProviders.firstIndex(of: .deepseek) ?? 0) : nil,
                 openCollapsedBar: {
+                    collapsedSelection = .quotaGauge
                     scrollTarget = Self.gaugeAnchor
                     pane = .collapsedBar
                 }, openHistory: { pane = .history }, home: $deepseekHome, homeIssue: textIssues[.deepseekHome],
@@ -434,110 +435,8 @@ struct SettingsView: View {
 
     /// One card per component category. Options that only matter while a
     /// component is shown sit in its row, under its title.
-    private func componentCard(_ group: CompactIslandLayout.Group, enabled: [AgentProvider]) -> some View {
-        MainCard(title: group.label) {
-            ForEach(group.components.filter { $0.isAvailable(for: Set(enabled)) }) { component in
-                VStack(alignment: .leading, spacing: 8) {
-                    CompactComponentToggle(component: component, layout: $compactLayout)
-                    componentOptions(component, enabled: enabled)
-                }
-                .id(component == .quotaGauge ? Self.gaugeAnchor : component.rawValue)
-            }
-            if group == .quota {
-                if enabled.isEmpty {
-                    CardRow(title: L10n.text("layout.no_quota_providers"))
-                } else if compactLayout.components.contains(where: { group.components.contains($0) }) {
-                    if enabled.contains(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
-                    if enabled.contains(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
-                }
-            }
-        }
-    }
-
-    /// The value choice follows the quota value, or its label when the value is hidden;
-    /// the ring choices sit under the rings.
-    @ViewBuilder private func componentOptions(_ component: CompactIslandLayout.Component, enabled: [AgentProvider]) -> some View {
-        let shown = compactLayout.components
-        if component == .warnings, shown.contains(.warnings) {
-            Button(L10n.text("main.layout.warnings_choose")) { pane = .notifications }
-                .buttonStyle(.link).font(.system(size: 12))
-                .padding(.leading, CompactComponentToggle.optionInset)
-        } else if component == .activity, shown.contains(.activity) {
-            optionPicker(L10n.text("layout.single_task"), selection: $singleTask) {
-                ForEach(ActivityBadgeSingleTask.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-        } else if (component == .quota && shown.contains(.quota)) ||
-                    (component == .quotaLabel && shown.contains(.quotaLabel) && !shown.contains(.quota)) {
-            optionPicker(L10n.text("settings.compact_metric"), selection: $metric) {
-                Text(L10n.text("settings.remaining_quota")).tag("remaining")
-                Text(L10n.text("settings.pace_percentage")).tag("pace")
-            }
-        } else if component == .quotaGauge, shown.contains(.quotaGauge), !enabled.isEmpty {
-            ringPickers(enabled)
-        }
-    }
-
-    private func optionPicker<Value: Hashable, Options: View>(_ title: String, selection: Binding<Value>,
-                                                              @ViewBuilder options: () -> Options) -> some View {
-        HStack(spacing: 8) {
-            Text(title).font(.system(size: 12.5)).foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            Picker(title, selection: selection, content: options).labelsHidden().pickerStyle(.menu).fixedSize()
-        }
-        .padding(.leading, CompactComponentToggle.optionInset)
-    }
-
-    /// Which module each collapsed ring shows. Unset follows the modules.
-    @ViewBuilder private func ringPickers(_ enabled: [AgentProvider]) -> some View {
-        let automatic: [AgentProvider] = {
-            var result = Array(enabled.filter { $0 != .deepseek }.prefix(2))
-            if result.count == 1, enabled.contains(.deepseek) { result.append(.deepseek) }
-            return result
-        }()
-        let current = QuotaRingSlot.allCases.map { slot -> String in
-            let saved = quotaRings[slot.rawValue]
-            if saved.isEmpty, quotaRings.allSatisfy(\.isEmpty) { return slot.rawValue < automatic.count ? automatic[slot.rawValue].rawValue : "none" }
-            return saved.isEmpty ? "none" : saved
-        }
-        ForEach(QuotaRingSlot.allCases, id: \.self) { slot in
-            optionPicker(L10n.text(slot == .outer ? "layout.ring_outer" : "layout.ring_inner"), selection: Binding(get: { current[slot.rawValue] }, set: { value in
-                quotaRings = current; quotaRings[slot.rawValue] = value
-            })) {
-                ForEach(enabled, id: \.self) { Text($0.displayName).tag($0.rawValue) }
-                Text(L10n.text("layout.ring_none")).tag("none")
-            }
-        }
-        if current.contains(AgentProvider.deepseek.rawValue), enabled.contains(.deepseek) {
-            caption(L10n.text(deepseekBudgets.isEmpty ? "layout.ring_deepseek_needs_budget" : "layout.ring_deepseek"))
-                .padding(.leading, CompactComponentToggle.optionInset)
-        }
-        if quotaRings.contains(where: { !$0.isEmpty }) {
-            Button(L10n.text("layout.ring_automatic")) { quotaRings = QuotaRingSlot.allCases.map { _ in "" } }
-                .buttonStyle(.link).font(.system(size: 12)).padding(.leading, CompactComponentToggle.optionInset)
-        }
-    }
-
-    private func caption(_ text: String) -> some View {
-        Text(text).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-    }
-
     private func warning(_ text: String) -> some View {
         Text(text).font(.system(size: 12)).foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// An earlier saved window id shows as its period and is kept until a new choice.
-    /// A weekly-only account has nothing to choose, so it shows 7 days as a value.
-    @ViewBuilder private func quotaWindowPicker(_ provider: AgentProvider, selection: Binding<String>) -> some View {
-        let title = L10n.text("provider.window_selection", provider.displayName)
-        if model.providerIsWeeklyOnly(provider) {
-            CardRow(title: title) { Text(QuotaWindowSelection.weekly.label).font(.system(size: 12.5)).foregroundStyle(.secondary) }
-        } else {
-            CardPicker(title: title, selection: Binding(
-                get: { QuotaWindowSelection(saved: selection.wrappedValue, snapshot: model.providerQuota(provider)) },
-                set: { selection.wrappedValue = $0.rawValue })) {
-                ForEach(QuotaWindowSelection.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-        }
     }
 
     private func moduleMode(_ provider: AgentProvider) -> ProviderModuleMode { modules.mode(for: provider) }
@@ -585,7 +484,7 @@ struct SettingsView: View {
     /// Every non-text setting; any change is written and applied shortly
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
-        LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance,
+        LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance, theme: theme, accent: accent,
             quotaStyle: quotaStyle, deepseekPanelStyle: deepseekPanelStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
@@ -621,6 +520,8 @@ struct SettingsView: View {
             defaults.removeObject(forKey: key)
         }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
+        defaults.set(theme.rawValue, forKey: AppTheme.defaultsKey)
+        defaults.set(accent.rawValue, forKey: PacerAccent.defaultsKey)
         quotaStyle.save(to: defaults)
         deepseekPanelStyle.save(to: defaults)
         defaults.set(fullscreen, forKey: "showInFullscreen")
@@ -704,6 +605,8 @@ private struct LiveSettings: Equatable {
     var position: IslandPosition?
     var layout: CompactIslandLayout
     var appearance: IslandAppearance
+    var theme: AppTheme
+    var accent: PacerAccent
     var quotaStyle: ExpandedQuotaStyle
     var deepseekPanelStyle: DeepSeekPanelStyle
     var fullscreen: Bool

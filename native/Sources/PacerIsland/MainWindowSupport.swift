@@ -95,7 +95,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var tint: Color {
         switch self {
-        case .codex, .claude, .deepseek: provider?.tint ?? .gray
+        case .codex, .claude, .deepseek: provider?.brand ?? .gray
         case .appearance: Color(red: 0.44, green: 0.4, blue: 0.96)
         case .collapsedBar: Color(red: 0.2, green: 0.22, blue: 0.27)
         case .notifications: Color(red: 1, green: 0.3, blue: 0.29)
@@ -157,6 +157,7 @@ struct SidebarMaterial: NSViewRepresentable {
 /// a neutral fill: color in the sidebar only says which service a row is, and
 /// amber only that something needs the user.
 struct MainWindowSidebar: View {
+    @Environment(\.pacerAccent) private var accent
     @Binding var selection: SettingsPane
     let isDisabled: (SettingsPane) -> Bool
     let needsAttention: (SettingsPane) -> Bool
@@ -278,7 +279,7 @@ struct MainWindowSidebar: View {
                         Text(SettingsPane.about.title).font(.system(size: 13))
                         if let updateVersion {
                             Text(L10n.text("main.update.sidebar", updateVersion)).font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Color.accentColor).monospacedDigit()
+                                .foregroundStyle(accent).monospacedDigit()
                         } else {
                             Text(Self.version ?? L10n.text("build.development")).font(.system(size: 11))
                                 .foregroundStyle(.secondary).monospacedDigit()
@@ -286,7 +287,7 @@ struct MainWindowSidebar: View {
                     }
                     Spacer(minLength: 4)
                     if updateVersion != nil {
-                        Circle().fill(Color.accentColor).frame(width: 7, height: 7).accessibilityHidden(true)
+                        Circle().fill(accent).frame(width: 7, height: 7).accessibilityHidden(true)
                     }
                 }
                 .padding(.horizontal, 8).padding(.vertical, 4)

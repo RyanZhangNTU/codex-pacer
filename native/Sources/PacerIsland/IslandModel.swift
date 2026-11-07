@@ -1642,6 +1642,7 @@ final class IslandModel: ObservableObject {
         installation = installationOverride ?? (demo && demoArguments != nil
             ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         modules = .load(from: defaults)
+        PacerAccent.current = PacerAccent(defaults: defaults)
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         syncCodexProgressSwitch()
         syncDeepSeekProgressSwitch()

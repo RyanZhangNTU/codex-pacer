@@ -36,6 +36,7 @@ struct WhatsNewView: View {
         .fixedSize(horizontal: false, vertical: true)
         .background(MainPalette.page)
         .environment(\.locale, L10n.locale)
+        .modifier(SavedPacerAccent())
         .onChange(of: [showsEmbeddedClaudeSessions, showsEmbeddedCodexSessions]) { _, _ in onSettingsChange() }
         .onChange(of: showsAppButtons) { _, _ in onSettingsChange() }
     }
@@ -136,9 +137,12 @@ struct WhatsNewItemRow: View {
 struct FeatureSymbol: View {
     let symbol: String
     var size: CGFloat = 40
-    var tint: Color = .accentColor
+    /// Nil draws in the window's accent.
+    var tint: Color? = nil
+    @Environment(\.pacerAccent) private var accent
 
     var body: some View {
+        let tint = tint ?? accent
         Image(systemName: symbol).font(.system(size: size * 0.46, weight: .medium)).foregroundStyle(tint)
             .frame(width: size, height: size)
             .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))

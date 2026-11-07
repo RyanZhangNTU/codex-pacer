@@ -6,6 +6,7 @@ import SwiftUI
 /// a large title. The island's parts, its mode, the services to follow and a
 /// few choices. Settings → Help & Updates keeps the full legend of badges.
 struct WelcomeView: View {
+    @Environment(\.pacerAccent) private var accent
     static let size = CGSize(width: 640, height: 500)
     /// The guide's pages, in order.
     enum Step: Int, CaseIterable { case welcome, mode, services, finish }
@@ -130,7 +131,7 @@ struct WelcomeView: View {
                     Text(title).font(.system(size: 14, weight: .semibold))
                     Spacer(minLength: 4)
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.system(size: 17))
-                        .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.5))
+                        .foregroundStyle(selected ? accent : Color.secondary.opacity(0.5))
                         .accessibilityHidden(true)
                 }
                 .padding(.top, 12)
@@ -140,7 +141,7 @@ struct WelcomeView: View {
             .padding(Self.modePadding).padding(.bottom, 2)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(MainPalette.card, in: shape)
-            .overlay(shape.strokeBorder(selected ? Color.accentColor : MainPalette.cardBorder, lineWidth: selected ? 2 : 1))
+            .overlay(shape.strokeBorder(selected ? accent : MainPalette.cardBorder, lineWidth: selected ? 2 : 1))
             .contentShape(shape)
         }
         .buttonStyle(.plain)
@@ -524,7 +525,7 @@ private enum WelcomeScreen {
 /// Island mode: the island's own spring, scaled down. The pointer arrives and
 /// the bar opens from the notch, then it leaves and the bar closes. Reduce
 /// Motion shows it open.
-private struct WelcomeHoverScene: View {
+struct WelcomeHoverScene: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let width: CGFloat
     private static let screen = WelcomeScreen.size
@@ -603,7 +604,7 @@ private struct WelcomeHoverScene: View {
 
 /// Free Move: the pointer grabs the floating bar and drags it toward the
 /// right edge, where it snaps into a strip. Reduce Motion shows it mid-drag.
-private struct WelcomeDragScene: View {
+struct WelcomeDragScene: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let width: CGFloat
     private static let screen = WelcomeScreen.size
@@ -652,7 +653,7 @@ private struct WelcomeDragScene: View {
             }
             .stroke(Color.white.opacity(0.4 * (1 - snap)), style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [2, 12]))
             RoundedRectangle(cornerRadius: min(frame.width, frame.height) / 2, style: .continuous)
-                .fill(Color(red: 0.045, green: 0.047, blue: 0.056))
+                .fill(Color.black)
                 .overlay(barContent.opacity(1 - snap))
                 .overlay(RoundedRectangle(cornerRadius: min(frame.width, frame.height) / 2, style: .continuous)
                     .strokeBorder(AgentProvider.codex.tint.opacity(snap), lineWidth: 3))
