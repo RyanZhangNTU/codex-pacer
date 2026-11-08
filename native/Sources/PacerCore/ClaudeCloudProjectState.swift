@@ -63,6 +63,8 @@ public struct ClaudeCloudProjectState: Sendable {
         let projectID: String
         var activity: SessionActivity?
         var mark: Date?
+        /// When `mark` last advanced, so an older row can be told from a stale snapshot.
+        var markAt: Date?
         var lastEndKey: String?
         var sawUnread = false
         var lastUnread: Bool?
@@ -258,6 +260,10 @@ public struct ClaudeCloudProjectState: Sendable {
 
     private mutating func applyThread(_ thread: ClaudeCloudThread, project: ClaudeCloudProject, sessions: [ClaudeCloudSession], at now: Date) {
         var entry = tracked[thread.id] ?? Tracked(projectID: project.id)
+        // A row older than a reply Pacer saw in the last five minutes is a stale snapshot and changes
+        // nothing, read flags included. Past that, an older reply is taken as the thread's state.
+        if let reply = datedReply(thread, at: now), let mark = entry.mark, reply < mark,
+           now.timeIntervalSince(entry.markAt ?? .distantPast) < Self.settlingTime { return }
         let isNew = tracked[thread.id] == nil
         let pending = sessions.lazy.compactMap(\.pending).first
         let attention: PendingAttentionRequest.Kind? = thread.openDecisions > 0 ? .decision : pending
@@ -317,6 +323,7 @@ public struct ClaudeCloudProjectState: Sendable {
             entry.resultLooks = 0
             entry.resultSession = sessions.max { ($0.lastEventAt ?? .distantPast) < ($1.lastEventAt ?? .distantPast) }?.id ?? thread.sessionIDs.first
         }
+        if let reply = thread.lastReplyAt, reply > (entry.mark ?? .distantPast) { entry.markAt = now }
         entry.mark = [entry.mark, thread.lastReplyAt].compactMap { $0 }.max()
         update(&entry, id: thread.id, project: project, title: thread.title, session: sessions.first, role: .thread, status: thread.status,
                workers: sessions.isEmpty ? thread.workingSessions : sessions.filter(\.isRunning).count, unread: thread.hasUnread, at: now)
@@ -334,12 +341,12 @@ public struct ClaudeCloudProjectState: Sendable {
 
     private mutating func applyPlainQuestion(_ thread: ClaudeCloudThread, project: ClaudeCloudProject, entry: inout Tracked, at now: Date) {
         let reply = datedReply(thread, at: now)
-        // A snapshot older than a reply Pacer already saw can neither reopen nor settle a question.
-        if let reply, let mark = entry.mark, reply < mark { return }
         let previous = entry.plainQuestion
         // `idle` can come before `needs_input` for the same run, so the run just seen ending can still ask.
-        let justEnded = entry.liveEndingAt.map { now.timeIntervalSince($0) < Self.settlingTime } == true
-            && reply.map { reply in entry.liveEndingReply.map { reply >= $0 } ?? false } == true
+        // Without a reply time the two cannot be matched yet, so the ending stands until it arrives.
+        let recentEnding = entry.liveEndingAt.map { now.timeIntervalSince($0) < Self.settlingTime } == true
+        if recentEnding, reply == nil { return }
+        let justEnded = recentEnding && reply.map { reply in entry.liveEndingReply.map { reply >= $0 } ?? false } == true
         let fresh = entry.activity?.phase == .running || justEnded || hasFreshReply(thread, entry, at: now)
         let evidence = max(previous?.evidenceAt ?? .distantPast, min(reply ?? .distantPast, now), fresh ? now : .distantPast)
         let read = previous.map { !thread.hasUnread && ($0.sawUnread || now.timeIntervalSince($0.detectedAt) >= Self.readGrace) } ?? false
@@ -359,7 +366,8 @@ public struct ClaudeCloudProjectState: Sendable {
     }
 
     private mutating func rememberSettled(_ thread: ClaudeCloudThread, at now: Date) {
-        let through = datedReply(thread, at: now) ?? now
+        // An undated question cannot be told from a later one, so it leaves no record.
+        guard let through = datedReply(thread, at: now) else { return }
         if let old = settledQuestions[thread.id], through <= old.through { return }
         settledQuestions[thread.id] = SettledQuestion(through: through, settledAt: now)
         if settledQuestions.count > Self.maximumSettledQuestions,

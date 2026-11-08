@@ -520,6 +520,41 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertTrue(policy.requestNotices(state.attention).isEmpty)
     }
 
+    func testAQuestionWithoutAReplyTimeYetWaitsForIt() {
+        var state = ClaudeCloudProjectState(), policy = AttentionPolicy()
+        state.apply(snapshot([thread(.working, working: true, reply: -60)]), at: at(0))
+        _ = policy.requestNotices(state.attention)
+        state.apply(snapshot([thread(.idle, reply: 18)], sessions: [worker(.reviewReady)]), at: at(20))
+        let undated = ClaudeCloudThread(id: "cmsg_thread1", projectID: project.id, status: .needsInput, sessionIDs: ["cse_worker1"])
+        state.apply(snapshot([undated]), at: at(40))
+        XCTAssertEqual(row(state)?.phase, .completed, "the ending stands until the question's reply time arrives")
+        state.apply(snapshot([thread(.needsInput, unread: true, reply: 18)]), at: at(60))
+        XCTAssertEqual(row(state)?.phase, .waitingForInput)
+        XCTAssertEqual(policy.requestNotices(state.attention).count, 1)
+    }
+
+    func testAStaleRowChangesNeitherANewerEndingNorANewerQuestion() {
+        var ending = ClaudeCloudProjectState()
+        ending.apply(snapshot([thread(.working, working: true, reply: -60)]), at: at(0))
+        ending.apply(snapshot([thread(.resolved, unread: true, reply: 18)], sessions: [worker(.reviewReady)]), at: at(20))
+        XCTAssertEqual(row(ending)?.phase, .completed)
+        ending.apply(snapshot([thread(.needsInput, reply: -30 * 86_400)]), at: at(40))
+        XCTAssertNotEqual(row(ending)?.claudeCloud?.readInClaude, true, "an older row cannot mark the new ending read")
+        ending.apply(snapshot([thread(.resolved, unread: true, reply: 18)]), at: at(60))
+        XCTAssertEqual(row(ending)?.phase, .completed)
+        XCTAssertNotEqual(row(ending)?.claudeCloud?.readInClaude, true)
+
+        var asking = ClaudeCloudProjectState()
+        asking.apply(snapshot([thread(.working, working: true, reply: -60)]), at: at(0))
+        asking.apply(snapshot([thread(.needsInput, unread: true, reply: 18)]), at: at(20))
+        XCTAssertEqual(row(asking)?.phase, .waitingForInput)
+        asking.apply(snapshot([thread(.idle, reply: -60)], sessions: [worker(.reviewReady)]), at: at(40))
+        XCTAssertEqual(row(asking)?.phase, .waitingForInput, "an older idle row cannot clear a newer question")
+        XCTAssertEqual(asking.attention.map(\.kind), [.input])
+        asking.apply(snapshot([thread(.idle, reply: -60)], sessions: [worker(.reviewReady)]), at: at(400))
+        XCTAssertNotEqual(row(asking)?.phase, .waitingForInput, "after five minutes the older reply is the thread's state")
+    }
+
     func testFirstLookAfterStartupDoesNotRaiseAnOldOrUndatedQuestion() {
         var state = ClaudeCloudProjectState()
         state.apply(snapshot([]), at: at(0))
