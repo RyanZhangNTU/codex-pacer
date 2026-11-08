@@ -449,6 +449,40 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertEqual(policy.requestNotices(state.attention).count, 1, "a new reply can still ask")
     }
 
+    func testAWaitingThreadIsReadAgainAfterAFailedSessionReadSoItsApprovalAppears() {
+        var state = ClaudeCloudProjectState()
+        let waiting = thread(.needsInput, reply: -2 * 86_400)
+        func reads(_ seconds: TimeInterval) -> [String] {
+            state.sessionsToRead(projects: [project], threads: [project.id: [waiting]], at: at(seconds))
+        }
+        XCTAssertTrue(reads(0).contains("cse_worker1"))
+        state.apply(snapshot([waiting]), at: at(0))
+        XCTAssertTrue(state.attention.isEmpty, "the session read failed")
+        XCTAssertTrue(reads(600).contains("cse_worker1"), "a failed read is tried again")
+        state.apply(snapshot([waiting], sessions: [ClaudeCloudSession(id: "cse_worker1", worker: .requiresAction)]), at: at(600))
+        XCTAssertEqual(state.attention.map(\.kind), [.approval])
+
+        var quiet = ClaudeCloudProjectState()
+        _ = quiet.sessionsToRead(projects: [project], threads: [project.id: [waiting]], at: at(0))
+        quiet.apply(snapshot([waiting], sessions: [worker(.blocked, category: .needInput)]), at: at(0))
+        XCTAssertFalse(quiet.sessionsToRead(projects: [project], threads: [project.id: [waiting]], at: at(600)).contains("cse_worker1"),
+                       "once read, an old unchanged question is not read every pass")
+    }
+
+    func testAQuestionThatArrivesJustAfterTheTurnEndedStillAsks() {
+        var state = ClaudeCloudProjectState(), policy = AttentionPolicy()
+        state.apply(snapshot([thread(.working, working: true, reply: -60)]), at: at(0))
+        _ = policy.requestNotices(state.attention)
+        state.apply(snapshot([thread(.idle, reply: 18)], sessions: [worker(.reviewReady)]), at: at(20))
+        XCTAssertEqual(row(state)?.phase, .completed)
+        state.apply(snapshot([thread(.needsInput, reply: 18)]), at: at(40))
+        XCTAssertEqual(row(state)?.phase, .waitingForInput, "idle can come before needs_input for the same run")
+        XCTAssertEqual(policy.requestNotices(state.attention).count, 1)
+        state.apply(snapshot([thread(.needsInput, unread: true, reply: 18)]), at: at(70))
+        XCTAssertEqual(row(state)?.phase, .waitingForInput, "the unread flag arrives later")
+        XCTAssertEqual(state.attention.map(\.kind), [.input])
+    }
+
     func testFirstLookAfterStartupDoesNotRaiseAnOldOrUndatedQuestion() {
         var state = ClaudeCloudProjectState()
         state.apply(snapshot([]), at: at(0))

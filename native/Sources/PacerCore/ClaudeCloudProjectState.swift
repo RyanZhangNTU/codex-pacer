@@ -69,6 +69,10 @@ public struct ClaudeCloudProjectState: Sendable {
         var request: PendingAttentionRequest?
         var signature: String?
         var sessionReadAt: Date?
+        /// The thread state for which every bound session was read.
+        var detailsSignature: String?
+        /// When Pacer saw this thread's last run end, not a historical ending.
+        var liveEndingAt: Date?
         var confirmedAt: Date?
         var observedRun = false
         var awaitsReply = false
@@ -131,10 +135,12 @@ public struct ClaudeCloudProjectState: Sendable {
         for project in projects {
             for thread in threads[project.id] ?? [] where thread.status != .archived && !isLocal(thread, local) {
                 let entry = tracked[thread.id]
-                let firstLook = entry == nil && thread.status == .needsInput
+                // A request can hide behind a plain question, so a waiting thread is read
+                // until a pass reads all its sessions, even after a failed first read.
+                let unreadDetails = thread.status == .needsInput && entry?.detailsSignature != thread.signature
                 if hintedThreads.contains(thread.id) {
                     hinted += thread.sessionIDs
-                } else if isOpen(entry?.activity) || entry?.activity?.phase == .unknown || thread.isActive || thread.openDecisions > 0 || firstLook {
+                } else if isOpen(entry?.activity) || entry?.activity?.phase == .unknown || thread.isActive || thread.openDecisions > 0 || unreadDetails {
                     urgent += thread.sessionIDs
                 } else if isRecent(thread, at: now), entry?.signature != thread.signature || wantsAnotherLook(entry, thread, at: now) {
                     later += thread.sessionIDs
@@ -263,6 +269,7 @@ public struct ClaudeCloudProjectState: Sendable {
         let sessionWait = entry.request.map { $0.kind != .decision } == true && entry.plainQuestion == nil
         let unconfirmed = missingSession && (idleWork || (thread.status == .needsInput && sessionWait))
         if !sessions.isEmpty { entry.sessionReadAt = now; entry.signature = thread.signature }
+        if !missingSession { entry.detailsSignature = thread.signature }
         else if !isRecent(thread, at: now) { entry.signature = thread.signature }
         if thread.status != .idle { entry.awaitsReply = false }
         else if !sessions.isEmpty { entry.awaitsReply = sessions.contains(where: \.awaitsReply) }
@@ -322,7 +329,9 @@ public struct ClaudeCloudProjectState: Sendable {
 
     private mutating func applyPlainQuestion(_ thread: ClaudeCloudThread, project: ClaudeCloudProject, entry: inout Tracked, at now: Date) {
         let previous = entry.plainQuestion
-        let fresh = entry.activity?.phase == .running || hasFreshReply(thread, entry, at: now)
+        // `idle` can come before `needs_input` for the same run, so a turn just seen ending can still ask.
+        let justEnded = entry.liveEndingAt.map { now.timeIntervalSince($0) < Self.settlingTime } ?? false
+        let fresh = entry.activity?.phase == .running || justEnded || hasFreshReply(thread, entry, at: now)
         let reply = datedReply(thread, at: now)
         let evidence = max(previous?.evidenceAt ?? .distantPast, min(reply ?? .distantPast, now), fresh ? now : .distantPast)
         let read = previous.map { !thread.hasUnread && ($0.sawUnread || now.timeIntervalSince($0.detectedAt) >= Self.readGrace) } ?? false
@@ -353,7 +362,7 @@ public struct ClaudeCloudProjectState: Sendable {
 
     private func clearWork(_ entry: inout Tracked) {
         entry.activity = nil; entry.request = nil; entry.plainQuestion = nil
-        entry.confirmedAt = nil; entry.observedRun = false; entry.resultSession = nil
+        entry.confirmedAt = nil; entry.observedRun = false; entry.resultSession = nil; entry.liveEndingAt = nil
     }
 
     private func settling(_ entry: Tracked, into status: ClaudeCloudThreadStatus, at now: Date) -> Bool {
@@ -438,7 +447,7 @@ public struct ClaudeCloudProjectState: Sendable {
         activity.applyRuntime(["method": "turn/completed", "threadId": id, "turnId": key, "status": failed ? "failed" : "completed",
                                "at": ended.timeIntervalSince1970])
         if historical { activity.suppressHistoricalCompletionNotifications() }
-        entry.plainQuestion = nil; entry.observedRun = false; entry.confirmedAt = nil
+        entry.plainQuestion = nil; entry.observedRun = false; entry.confirmedAt = nil; entry.liveEndingAt = historical ? nil : now
         entry.lastEndKey = key; entry.sawUnread = false; entry.request = nil; entry.activity = activity
     }
 
