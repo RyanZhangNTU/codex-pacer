@@ -1,3 +1,4 @@
+import Darwin
 import PacerMacSupport
 import XCTest
 @testable import PacerCore
@@ -176,6 +177,87 @@ final class NativeDesktopSocketTests: XCTestCase {
         for atomic in [true, false] {
             try await verifyMonitorEnding(host: "remote-control:env_fixture", atomic: atomic, routing: true)
         }
+    }
+    func testRepeatedRoutingUpdatesReleaseFileBuffersWhileSocketStaysOpen() async throws {
+        let home = URL(fileURLWithPath: "/private/tmp/pacer-native-memory-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let host = "remote-control:env_fixture"
+        let script = Self.serverHandshake + "\n" + #"""
+        host = sys.argv[2]
+        index = root / '.codex-global-state.json'
+        temporary = root / 'routing.tmp'
+        filler = 'x' * (4 * 1024 * 1024)
+
+        def expect_follow(thread, following):
+            message = read()
+            assert message['method'] == 'thread-stream-following-changed'
+            assert message['params'] == {'hostId': host, 'conversationId': thread, 'following': following}
+
+        for update in range(36):
+            if update == 4:
+                (root / 'warmed').touch()
+                assert sys.stdin.readline() == 'reload\n'
+            thread = f'00000000-0000-4000-8000-{update:012x}'
+            data = json.dumps({'thread-project-membership-host-ids': {thread: host}, 'padding': filler})
+            if update % 2:
+                index.write_text(data)
+            else:
+                temporary.write_text(data)
+                os.replace(temporary, index)
+            # Only the file introduces this thread. Wait for its follow before
+            # writing again, so filesystem event coalescing cannot mask reads.
+            expect_follow(thread, True)
+            send({'type': 'broadcast', 'method': 'thread-stream-state-changed', 'version': 11, 'sourceClientId': owner,
+                  'params': {'hostId': host, 'conversationId': thread,
+                             'change': {'type': 'snapshot', 'revision': 0, 'conversationState': {'ephemeral': True}}}})
+            expect_follow(thread, False)
+        (root / 'reloaded').touch()
+        try:
+            while True:
+                read()
+        except (EOFError, ConnectionResetError):
+            pass
+        """#
+        let child = Process(), commands = Pipe(), stderr = Pipe()
+        let ended = expectation(description: "routing fixture exited"), closed = expectation(description: "collector closed")
+        child.terminationHandler = { _ in ended.fulfill() }
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-u", "-c", script, home.path, host]
+        child.standardInput = commands
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = stderr
+        try child.run()
+        defer { if child.isRunning { child.terminate() } }
+        let socket = home.appendingPathComponent("ipc/ipc.sock")
+        let listening = try await TestWait.until { FileManager.default.fileExists(atPath: socket.path) }
+        guard listening else { XCTFail("Routing fixture never listened"); return }
+        let collector = NativeDesktopCollector(home: home, hosts: [host], onFrame: { _ in }, onClosed: { closed.fulfill() })
+        try collector.start()
+        defer { collector.stop() }
+        func waitFor(_ marker: String) async throws -> Bool {
+            let path = home.appendingPathComponent(marker).path
+            _ = try await TestWait.until { FileManager.default.fileExists(atPath: path) || !child.isRunning }
+            return FileManager.default.fileExists(atPath: path) && child.isRunning
+        }
+        func heapBytesInUse() -> Int {
+            var stats = malloc_statistics_t()
+            malloc_zone_statistics(nil, &stats)
+            return stats.size_in_use
+        }
+        guard try await waitFor("warmed") else { XCTFail("Routing fixture did not complete warmup"); return }
+        let before = heapBytesInUse()
+        try commands.fileHandleForWriting.write(contentsOf: Data("reload\n".utf8))
+        guard try await waitFor("reloaded") else { XCTFail("Routing fixture did not confirm every reload"); return }
+        let after = heapBytesInUse()
+        // The old loop kept over 128 MiB of file buffers live. Allow headroom
+        // for allocator and test activity while the collector is still running.
+        print("Routing reload heap in use: \(before >> 20) MiB → \(after >> 20) MiB")
+        XCTAssertLessThan(after - before, 32 * 1024 * 1024)
+        collector.stop()
+        await fulfillment(of: [closed, ended], timeout: TestWait.limit)
+        guard !child.isRunning else { XCTFail("Routing fixture did not exit"); return }
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
     func testRemoteControlOwnerRecoveryPreservesAttentionAndRequiresLiveUsageBeforeCompletion() async throws {
         final class Recovery: @unchecked Sendable {
@@ -605,7 +687,7 @@ final class NativeDesktopSocketTests: XCTestCase {
         let diagnostic = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         XCTAssertEqual(child.terminationStatus, 0, diagnostic)
     }
-    private static let server = #"""
+    private static let serverHandshake = #"""
     import socket,struct,json,pathlib,sys,os,time
     root=pathlib.Path(sys.argv[1]);directory=root/'ipc';directory.mkdir(mode=0o700)
     server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);server.bind(str(directory/'ipc.sock'));os.chmod(directory/'ipc.sock',0o600);server.listen(1)
@@ -623,6 +705,8 @@ final class NativeDesktopSocketTests: XCTestCase {
         data=json.dumps(v,separators=(',',':')).encode();connection.sendall(struct.pack('<I',len(data))+data)
     tid='019a0000-0000-7000-8000-000000000001';owner='019a0000-0000-7000-8000-000000000020';client='019a0000-0000-7000-8000-000000000010'
     initialize=read();send({'type':'response','method':'initialize','resultType':'success','result':{'clientId':client}})
+    """#
+    private static let server = serverHandshake + "\n" + #"""
     send({'type':'broadcast','method':'thread-stream-following-status-requested','version':1,'params':{'hostId':'local','conversationId':tid}})
     follow=read();assert follow['params']['following'] is True
     def change(value):send({'type':'broadcast','method':'thread-stream-state-changed','version':11,'sourceClientId':owner,'params':{'hostId':'local','conversationId':tid,'change':value}})

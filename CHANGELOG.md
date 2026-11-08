@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.3.1
+
+- Mac: fix a memory leak that kept growing while Pacer followed tasks in the Codex desktop app.
+
 ## 4.3.0
 
 - A new main window on Mac and Windows. Settings becomes Pacer's main window, with a sidebar, an Overview of every service and a History page. Updates download and install in place, Appearance adds a theme and an accent color, the Collapsed Bar is arranged on a live preview, and the welcome guide has four short pages.
