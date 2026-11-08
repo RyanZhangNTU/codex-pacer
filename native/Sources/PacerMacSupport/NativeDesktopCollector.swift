@@ -164,41 +164,45 @@ public final class NativeDesktopCollector: @unchecked Sendable {
             try reopenRoutingWatch()
             var routing = DesktopRouteHints(files: MacFileSystem(), owned: Self.owned), routingDirty = true, reopenRouting = false, nextRoutingRead = Date.distantPast
             while !stopped {
-                let now = Date()
-                let batch = batchUpdate()
-                if let hosts = batch.hosts {
-                    try session.setHosts(hosts, resetting: batch.resetHosts, at: now)
-                    routing = DesktopRouteHints(files: MacFileSystem(), owned: Self.owned); routingDirty = true
-                }
-                try session.setBatchInterval(batch.interval, at: now)
-                var discovered: [NativeDesktopSession.Key] = []
-                if routingDirty && now >= nextRoutingRead {
-                    if reopenRouting { try reopenRoutingWatch(); reopenRouting = false }
-                    discovered = routing.changed(home: home, hosts: session.hosts)
-                    routingDirty = false; nextRoutingRead = now.addingTimeInterval(0.25)
-                }
-                try session.service(at: now, discovering: discovered, flushPending: batch.flush)
-                for frame in session.takeFrames() { onFrame(frame) }
-                var delay = min(15, max(0.01, session.nextServiceDate.timeIntervalSinceNow))
-                if routingDirty { delay = min(delay, max(0.01, nextRoutingRead.timeIntervalSinceNow)) }
-                var timeout = timespec(tv_sec: Int(delay), tv_nsec: Int((delay - floor(delay)) * 1_000_000_000))
-                var changed = [kevent64_s](repeating: kevent64_s(), count: 3)
-                let result = Darwin.kevent64(queue, nil, 0, &changed, Int32(changed.count), 0, &timeout)
-                if result < 0 && errno == EINTR { continue }
-                guard result >= 0 else { throw POSIXError(.EIO) }
-                let filesystem = changed.prefix(Int(result)).filter { $0.filter == Int16(EVFILT_VNODE) }
-                if !filesystem.isEmpty {
-                    // The directory catches atomic replacement; the file itself
-                    // catches in-place writes, which do not alter its directory.
-                    if !routingDirty { nextRoutingRead = max(nextRoutingRead, Date().addingTimeInterval(0.025)) }
-                    routingDirty = true
-                    if filesystem.contains(where: { (directory >= 0 && $0.ident == UInt64(directory)) || $0.fflags & UInt32(NOTE_RENAME | NOTE_DELETE) != 0 }) { reopenRouting = true }
-                }
-                if changed.prefix(Int(result)).contains(where: { $0.filter == Int16(EVFILT_READ) }) {
-                    try session.receive(receive(fd, observedTurnIDs: session.observedTurnIDs))
-                    // Pending questions and approvals are delivered immediately,
-                    // independently of the ordinary token/activity batch.
+                // This dispatch block lives as long as the socket. Release
+                // temporary Foundation objects, including file buffers, each pass.
+                try autoreleasepool {
+                    let now = Date()
+                    let batch = batchUpdate()
+                    if let hosts = batch.hosts {
+                        try session.setHosts(hosts, resetting: batch.resetHosts, at: now)
+                        routing = DesktopRouteHints(files: MacFileSystem(), owned: Self.owned); routingDirty = true
+                    }
+                    try session.setBatchInterval(batch.interval, at: now)
+                    var discovered: [NativeDesktopSession.Key] = []
+                    if routingDirty && now >= nextRoutingRead {
+                        if reopenRouting { try reopenRoutingWatch(); reopenRouting = false }
+                        discovered = routing.changed(home: home, hosts: session.hosts)
+                        routingDirty = false; nextRoutingRead = now.addingTimeInterval(0.25)
+                    }
+                    try session.service(at: now, discovering: discovered, flushPending: batch.flush)
                     for frame in session.takeFrames() { onFrame(frame) }
+                    var delay = min(15, max(0.01, session.nextServiceDate.timeIntervalSinceNow))
+                    if routingDirty { delay = min(delay, max(0.01, nextRoutingRead.timeIntervalSinceNow)) }
+                    var timeout = timespec(tv_sec: Int(delay), tv_nsec: Int((delay - floor(delay)) * 1_000_000_000))
+                    var changed = [kevent64_s](repeating: kevent64_s(), count: 3)
+                    let result = Darwin.kevent64(queue, nil, 0, &changed, Int32(changed.count), 0, &timeout)
+                    if result < 0 && errno == EINTR { return }
+                    guard result >= 0 else { throw POSIXError(.EIO) }
+                    let filesystem = changed.prefix(Int(result)).filter { $0.filter == Int16(EVFILT_VNODE) }
+                    if !filesystem.isEmpty {
+                        // The directory catches atomic replacement; the file itself
+                        // catches in-place writes, which do not alter its directory.
+                        if !routingDirty { nextRoutingRead = max(nextRoutingRead, Date().addingTimeInterval(0.025)) }
+                        routingDirty = true
+                        if filesystem.contains(where: { (directory >= 0 && $0.ident == UInt64(directory)) || $0.fflags & UInt32(NOTE_RENAME | NOTE_DELETE) != 0 }) { reopenRouting = true }
+                    }
+                    if changed.prefix(Int(result)).contains(where: { $0.filter == Int16(EVFILT_READ) }) {
+                        try session.receive(receive(fd, observedTurnIDs: session.observedTurnIDs))
+                        // Pending questions and approvals are delivered immediately,
+                        // independently of the ordinary token/activity batch.
+                        for frame in session.takeFrames() { onFrame(frame) }
+                    }
                 }
             }
         } catch { /* Only availability is reported; wire content is never logged. */ }
