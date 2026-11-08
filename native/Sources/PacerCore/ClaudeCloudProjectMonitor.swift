@@ -35,7 +35,11 @@ public actor ClaudeCloudProjectMonitor {
     private var state = ClaudeCloudProjectState()
     private var lastStatus: RuntimeStreamStatus?
     private var speedPublish: Task<Void, Never>?
-    private var pollRequested = false
+    /// What brings the next look forward: a stream signal, or the panel opening.
+    private enum PollRequest { case none, signal, opened }
+    private var pollRequest = PollRequest.none
+    /// Claude itself asked Pacer to wait: `Retry-After`, a denial or a challenge.
+    private var serverBackoff = false
     private var threadHints: [String: String] = [:]
     private var scope: String?
     private var revision: UInt64 = 0
@@ -92,8 +96,7 @@ public actor ClaudeCloudProjectMonitor {
     private func wait(_ delay: TimeInterval) async {
         let regular = now().addingTimeInterval(max(1, delay)), waitingRevision = revision
         while !Task.isCancelled {
-            let deadline = pollRequested && failures == 0 && retryAt == nil
-                ? min(regular, lastPoll.addingTimeInterval(Self.soonestPoll)) : regular
+            let deadline = soonRequested ? min(regular, lastPoll.addingTimeInterval(Self.soonestPoll)) : regular
             let seconds = deadline.timeIntervalSince(now())
             guard seconds > 0 else { return }
             let task = Task<Void, Never> { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
@@ -105,7 +108,7 @@ public actor ClaudeCloudProjectMonitor {
     public func setExpanded(_ value: Bool) {
         let opened = value && !expanded
         expanded = value
-        if opened { pollSoon() }
+        if opened { pollSoon(.opened) }
     }
     public func refresh() async {
         revision &+= 1; activeBinding = nil; retryAt = nil
@@ -128,7 +131,7 @@ public actor ClaudeCloudProjectMonitor {
     /// Returns the delay before the next look.
     @discardableResult func pollOnce() async -> TimeInterval {
         let date = now(); lastPoll = date
-        pollRequested = false
+        pollRequest = .none
         let startedRevision = revision
         guard let cookies = await cookieProvider(), ClaudeWebQuotaDecoder.sessionKey(cookies) != nil else {
             guard revision == startedRevision, !Task.isCancelled else { return 1 }
@@ -165,7 +168,7 @@ public actor ClaudeCloudProjectMonitor {
         do {
             let snapshot = try await read(binding: binding, at: date, hints: hints)
             try await checkBinding(binding)
-            state.apply(snapshot, at: date); failures = 0
+            state.apply(snapshot, at: date); failures = 0; serverBackoff = false
             await readTurnResults(binding, at: date)
             try await checkBinding(binding)
             await followStreams(snapshot, binding: binding, at: date)
@@ -199,6 +202,7 @@ public actor ClaudeCloudProjectMonitor {
         default: break
         }
         failures += 1
+        if case .throttled = failure { serverBackoff = true } else { serverBackoff = failure == .denied || failure == .challenge }
         var status = RuntimeStreamStatus(); status.connected = false
         if failures >= 3 { state.markUnavailable() }
         await publish(status: status)
@@ -211,7 +215,7 @@ public actor ClaudeCloudProjectMonitor {
     @discardableResult private func reset() async -> UInt64 {
         revision &+= 1; activeBinding = nil; retryAt = nil
         let cleared = revision
-        state = ClaudeCloudProjectState(); scope = nil; failures = 0; localIDs = []; localIDsReadAt = .distantPast; threadsReadAt = [:]
+        state = ClaudeCloudProjectState(); scope = nil; failures = 0; serverBackoff = false; localIDs = []; localIDsReadAt = .distantPast; threadsReadAt = [:]
         speedPublish?.cancel(); speedPublish = nil; clearPollHints()
         await streams?.stop()
         return cleared
@@ -285,16 +289,26 @@ public actor ClaudeCloudProjectMonitor {
     private func requestThreadRead(_ thread: String, project: String) {
         guard failures == 0, retryAt == nil else { return }
         if threadHints.count < 16 { threadHints[thread] = project }
-        pollSoon()
+        pollSoon(.signal)
     }
 
     /// Keep a signal that arrived mid-read for the next pass, even if there is no sleeper yet.
-    private func pollSoon() {
-        guard loop != nil, failures == 0, retryAt == nil, !pollRequested else { return }
-        pollRequested = true
+    /// Opening the panel also looks during Pacer's own failure backoff, but not when Claude asked it to wait.
+    private func pollSoon(_ request: PollRequest) {
+        guard loop != nil, retryAt == nil, request == .opened || failures == 0,
+              pollRequest != .opened, pollRequest != request else { return }
+        pollRequest = request
         sleeper?.cancel()
     }
-    private func clearPollHints() { pollRequested = false; threadHints.removeAll() }
+    private var soonRequested: Bool {
+        guard retryAt == nil else { return false }
+        switch pollRequest {
+        case .none: return false
+        case .signal: return failures == 0
+        case .opened: return !serverBackoff
+        }
+    }
+    private func clearPollHints() { pollRequest = .none; threadHints.removeAll() }
     private static let soonestPoll: TimeInterval = 5
 
     /// The same pace as local rows: one second with the panel open, five otherwise.

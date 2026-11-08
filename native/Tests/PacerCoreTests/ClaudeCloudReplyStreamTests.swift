@@ -458,4 +458,35 @@ final class ClaudeCloudReplyStreamTests: XCTestCase {
         await hub.stop()
         try await eventually("all closed") { streams.openPaths.isEmpty }
     }
+
+    func testOpeningThePanelLooksAgainDuringPacersBackoffButNotWhenClaudeAskedToWait() async throws {
+        actor Looks {
+            var lists = 0, failures = 0
+            func list() -> Int { lists += 1; return lists }
+            func failed() { failures += 1 }
+        }
+        for (code, looksAgain) in [(503, true), (429, false)] {
+            let looks = Looks(), clock = Box(base)
+            let monitor = ClaudeCloudProjectMonitor(cookieProvider: { Self.cookies() }, transport: { request in
+                let url = try XCTUnwrap(request.url)
+                guard url.path == "/v1/code/channels" else { throw ClaudeCloudFailure.invalidReply }
+                let first = await looks.list() == 1
+                let body = try JSONSerialization.data(withJSONObject: ["channels": [[String: Any]]()])
+                return (body, HTTPURLResponse(url: url, statusCode: first ? code : 200, httpVersion: nil,
+                                              headerFields: first && code == 429 ? ["Retry-After": "600"] : [:])!)
+            }, now: { clock.date })
+            await monitor.start(expanded: false) { _, status, _ in if status?.connected == false { await looks.failed() } }
+            try await eventually("the first look failed") { await looks.failures == 1 }
+            clock.date = at(10)
+            await monitor.setExpanded(true)
+            if looksAgain {
+                try await eventually("opening the panel looked again within the 30-second backoff") { await looks.lists == 2 }
+            } else {
+                try await Task.sleep(nanoseconds: 300_000_000)
+                let lists = await looks.lists
+                XCTAssertEqual(lists, 1, "Claude's Retry-After still holds")
+            }
+            await monitor.shutdown()
+        }
+    }
 }

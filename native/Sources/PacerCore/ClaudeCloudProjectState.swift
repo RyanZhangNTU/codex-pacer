@@ -368,7 +368,8 @@ public struct ClaudeCloudProjectState: Sendable {
         // Not read this time: a quiet project keeps what is known.
         guard let session else { tracked[id] = entry; return }
         entry.awaitsReply = session.awaitsReply
-        let attention = session.pending
+        // A coordinator asks only while its worker waits; a request list alone can outlive the action.
+        let attention = session.worker == .requiresAction ? session.pending : nil
         if session.isRunning || attention != nil {
             open(&entry, id: id, project: project, role: .coordinator, attention: attention, at: now)
         } else if isOpen(entry.activity) || entry.activity?.phase == .unknown {

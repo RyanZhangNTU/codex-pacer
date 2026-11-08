@@ -552,6 +552,18 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertEqual(row(state)?.phase, .running)
     }
 
+    func testACoordinatorAsksOnlyWhileItsWorkerWaits() {
+        var state = ClaudeCloudProjectState()
+        state.apply(snapshot([], sessions: [coordinator(.idle)]), at: at(0))
+        let listed = ClaudeCloudSession(id: "cse_coordinator1", worker: .running, lastEventAt: at(18), pending: .approval)
+        state.apply(snapshot([], sessions: [listed]), at: at(20))
+        XCTAssertTrue(state.attention.isEmpty, "a request list alone can outlive the action")
+        XCTAssertEqual(row(state, "cse_coordinator1")?.phase, .running)
+        let asking = ClaudeCloudSession(id: "cse_coordinator1", worker: .requiresAction, lastEventAt: at(38), pending: .input)
+        state.apply(snapshot([], sessions: [asking]), at: at(40))
+        XCTAssertEqual(state.attention.map(\.kind), [.input])
+    }
+
     func testACoordinatorAskingForItsThreadStaysQuietButAskingItselfDoesNot() throws {
         let asking = ClaudeCloudSession(id: "cse_coordinator1", worker: .idle, bucket: .blocked, turnCategory: .needInput, hasUnread: true, lastEventAt: at(38))
         var state = ClaudeCloudProjectState()
