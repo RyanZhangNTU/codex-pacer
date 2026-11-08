@@ -4,13 +4,14 @@ import SwiftUI
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class CompactLayoutEditorTests: XCTestCase {
     private func fixture() throws -> (IslandModel, UserDefaults, String, URL) {
-        let name = "com.codexpacer.compact-editor-tests." + UUID().uuidString
+        let name = testDefaultsName("compact-editor-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-compact-editor-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.path, forKey: "claudeHome")
@@ -23,14 +24,14 @@ final class CompactLayoutEditorTests: XCTestCase {
 
     func testChoosingAScreenPositionLeavesAutomaticModeAcrossDisplayChanges() async throws {
         let (model, defaults, name, directory) = try fixture()
-        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
         var mode = IslandDisplayMode.automatic
         var position: IslandPosition?
-        let pane = SettingsAppearancePane(model: model, appearance: .constant(.classic),
+        let pane = SettingsAppearancePane(model: model, theme: .constant(.auto), appearance: .constant(.classic), accent: .constant(.multicolor),
             displayMode: Binding(get: { mode }, set: { mode = $0 }),
             position: Binding(get: { position }, set: { position = $0 }),
             displayID: .constant(0), fullscreen: .constant(false), quotaStyle: .constant(.split),
-            deepseekAlone: false)
+            deepseekPanelStyle: .constant(.detailed), showsAppButtons: .constant(false), deepseekAlone: false)
         model.screenNotchSize = .zero
         XCTAssertEqual(pane.customBinding.wrappedValue, .center)
         XCTAssertNil(position, "Showing the legacy Automatic choice must not save a position")
@@ -51,7 +52,7 @@ final class CompactLayoutEditorTests: XCTestCase {
 
     func testQuotaComponentsFollowEnabledProvidersWithoutDiscardingLayout() async throws {
         let (model, defaults, name, directory) = try fixture()
-        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
         let layout = CompactIslandLayout(leading: [.quota, .tps], trailing: [.quotaGauge, .activity])
         layout.save(to: defaults)
         let configurations: [Set<AgentProvider>] = [[], [.codex], [.claude], [.codex, .claude]]
@@ -72,7 +73,7 @@ final class CompactLayoutEditorTests: XCTestCase {
 
     func testUnsavedQuotaMetricAndWindowPreviewDoesNotChangeSavedSelectionOrInventPace() async throws {
         let (model, defaults, name, directory) = try fixture()
-        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
         let now = Date(timeIntervalSince1970: 1_800_000_000); model.now = now
         let data = try JSONSerialization.data(withJSONObject: ["rateLimits": [
             "primary": ["usedPercent": 20, "windowDurationMins": 300, "resetsAt": now.addingTimeInterval(9000).timeIntervalSince1970],
@@ -94,7 +95,7 @@ final class CompactLayoutEditorTests: XCTestCase {
 
     func testInlineEditorFitsSettingsPaneAndFollowsProvidersWithoutSaving() async throws {
         let (model, defaults, name, directory) = try fixture()
-        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: directory) }
+        defer { removeTestDefaults(name); try? FileManager.default.removeItem(at: directory) }
         var draft = CompactIslandLayout(leading: [.activity], trailing: [.quotaGauge, .quota])
         let binding = Binding(get: { draft }, set: { draft = $0 })
         func render(_ providers: [AgentProvider], name: String) async throws -> Data {

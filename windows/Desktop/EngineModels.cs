@@ -14,7 +14,8 @@ internal sealed record EngineSnapshot(
     JsonElement? CompactContext = null, DeepSeekConnection? DeepseekConnection = null, ClaudeConnection? ClaudeConnection = null,
     ClaudeCloudConnection? ClaudeCloudConnection = null, IReadOnlyList<EngineActivityLink>? ActivityLinks = null,
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
-    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null);
+    IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
+    string? DeepSeekProgressSetup = null);
 internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
     bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
 internal sealed record ConnectionSourceRow(string Id, string Key, string Provider, string Name, string Kind, ConnectionModule Module);
@@ -95,9 +96,12 @@ internal sealed record EnginePresentation(IReadOnlyList<EngineTaskRow> Rows, int
 internal sealed record EngineTaskRow(string Id, string Provider, string Title, string Status,
     string? Source, string? SourceLabel, string? SourceKind, string Phase, string Symbol, string? Attention,
     string Model, string? Effort, double? TokensPerSecond, bool RateIsFresh, string? RatePlaceholder,
-    string? TurnTime, int Subagents, bool Unread, bool Failed, bool Dimmed, string? Cost, bool PeakCost, string? RateText = null, string? SubagentText = null);
+    string? TurnTime, int Subagents, bool Unread, bool Failed, bool Dimmed, string? Cost, bool PeakCost, string? RateText = null, string? SubagentText = null,
+    string? ProgressState = null, double? ProgressFraction = null, bool? ProgressStale = null, string? ProgressText = null,
+    string? ProgressMode = null);
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
-    string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null);
+    string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
+    double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null);
 internal sealed record WalletSpan(double Start, double End);
 internal sealed record EngineWallet(string State, double? Balance, string Whole, string Cents, string Subtitle,
     string? Compact, IReadOnlyList<double> Hourly, IReadOnlyList<WalletSpan> Peak, double Angle, bool PeakNow,

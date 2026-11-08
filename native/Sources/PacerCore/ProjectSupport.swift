@@ -26,6 +26,15 @@ public enum ProjectSupport {
     public static let donationLinks = [DonationLink(title: "Buy Me a Coffee", url: URL(string: "https://buymeacoffee.com/codexpacer")!)]
     private static let codeResources = [(resource: "support-wechat", titleKey: "support.code.wechat", hintKey: "support.code.wechat_hint")]
 
+    /// The QQ group: a number to copy and, when its image ships, a code to scan
+    /// (it opens https://qm.qq.com/q/5AieQJsCWY).
+    public static let qqGroupNumber = "1131553244"
+
+    public static func qqGroupCode(in bundle: Bundle = L10n.resourceBundle) -> Code? {
+        bundle.url(forResource: "support-qq-group", withExtension: "png")
+            .map { Code(titleKey: "support.qq.code", hintKey: "support.qq.hint", image: $0) }
+    }
+
     /// A QR code is offered only when its image ships with the app.
     public static func codes(in bundle: Bundle = L10n.resourceBundle) -> [Code] {
         codeResources.compactMap { code in

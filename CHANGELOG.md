@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.3.0
+
+- A new main window on Mac and Windows. Settings becomes Pacer's main window, with a sidebar, an Overview of every service and a History page. Updates download and install in place, Appearance adds a theme and an accent color, the Collapsed Bar is arranged on a live preview, and the welcome guide has four short pages.
+- Task progress rings for Codex, Claude Code and DeepSeek Harness, on by default. Each service reports how much of your request is done, drawn around the task's icon. The ring waits while background work runs and fills when the request ends. Claude sessions on SSH hosts, and in WSL on Windows, get it too. Turn it off per service in its settings.
+- New task icons. A comet circles until the first estimate, light runs along the arc while the task works, and a task that needs you or has ended fills a solid disc. When one task reports progress, the collapsed badge shows it.
+- Windows: the engine no longer keeps a processor core busy while Pacer is signed in to Claude.
+
 ## 4.2.5
 
 - Windows: fix opening Claude tasks from the island after a recent Claude update.

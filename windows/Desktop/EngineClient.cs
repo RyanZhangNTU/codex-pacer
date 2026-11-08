@@ -47,7 +47,7 @@ internal sealed class EngineClient : IAsyncDisposable
 
     internal EngineClient(TimeSpan? commandTimeout = null) => this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
 
-    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null)
+    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null)
     {
         if (process != null) throw new InvalidOperationException("Engine already started.");
         callbacks = SynchronizationContext.Current;
@@ -72,6 +72,11 @@ internal sealed class EngineClient : IAsyncDisposable
         {
             start.ArgumentList.Add("--manage-claude-hooks");
             start.ArgumentList.Add("--claude-runtime-root"); start.ArgumentList.Add(Path.GetFullPath(claudeRuntimeRoot));
+        }
+        if (!demo && !readOnlyDiagnostics && codexProgressRuntimeRoot != null)
+        {
+            start.ArgumentList.Add("--codex-progress-runtime-root");
+            start.ArgumentList.Add(Path.GetFullPath(codexProgressRuntimeRoot));
         }
         start.ArgumentList.Add("--language"); start.ArgumentList.Add(language);
         // Swift Foundation on Windows reports GMT as the current zone, so local

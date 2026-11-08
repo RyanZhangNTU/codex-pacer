@@ -22,7 +22,7 @@
  <Border CornerRadius="12" Padding="9,8" Background="Transparent">
   <Grid VerticalAlignment="Center">
    <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-   <local:IconGlyph Symbol="{Binding Value.Symbol}" Ink="{Binding StatusInk}" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+   <local:TaskStatusIcon x:Name="Icon" HorizontalAlignment="Center" VerticalAlignment="Center"/>
    <Grid Grid.Column="2">
     <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="3"/><RowDefinition Height="15"/></Grid.RowDefinitions>
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

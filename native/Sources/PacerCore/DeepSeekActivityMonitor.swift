@@ -16,6 +16,8 @@ public actor DeepSeekActivityMonitor {
     private var catchup: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var pendingPublish: Task<Void, Never>?
+    private var wake: Task<Void, Never>?
+    private var wakeDeadline: Date?
     private var policy: ActivityRefreshPolicy = .collapsed
     private let files: any PlatformFileSystem
     private let fileEvents: any ActivityFileEvents
@@ -56,6 +58,7 @@ public actor DeepSeekActivityMonitor {
         generation = UUID()
         discovery?.cancel(); discovery = nil; catchup?.cancel(); catchup = nil; retry?.cancel(); retry = nil
         pendingPublish?.cancel(); pendingPublish = nil; watcher?.stop(); watcher = nil
+        wake?.cancel(); wake = nil; wakeDeadline = nil
     }
     private func fileChanged(discover: Bool, generation: UUID) async {
         guard self.generation == generation else { return }
@@ -69,10 +72,12 @@ public actor DeepSeekActivityMonitor {
         if !quiet.isEmpty { state.expire(candidates: quiet, live: liveSessions(reader.lockURLs(sessions: quiet))) }
         await publish()
     }
-    private func read(discover: Bool) async {
+    private func read(discover: Bool, publishNow: Bool = false) async {
         guard let home else { return }
         let date = clock(), result = reader.read(home: home, discover: discover, now: clock())
         for line in result.lines { state.consume(line.record, session: line.session, attaching: line.attaching, now: date) }
+        var finished = false
+        if result.caughtUp { finished = state.finishSettledWaits(now: date) }
         state.setAvailable(result.available, watching: !result.watchURLs.isEmpty)
         if baselinePending, result.caughtUp {
             baselinePending = false
@@ -94,7 +99,28 @@ public actor DeepSeekActivityMonitor {
                 await self?.retryDiscovery()
             }
         }
-        if result.caughtUp { await schedulePublish(immediate: result.lines.contains { Self.urgent($0.record.event) }) }
+        if result.caughtUp {
+            scheduleWake(state.nextWakeDeadline)
+            await schedulePublish(immediate: publishNow || finished || result.lines.contains { Self.urgent($0.record.event) })
+        }
+    }
+    private func scheduleWake(_ deadline: Date?) {
+        guard wakeDeadline != deadline else { return }
+        wake?.cancel(); wake = nil; wakeDeadline = deadline
+        guard let deadline else { return }
+        let delay = max(0, deadline.timeIntervalSince(clock())), generation = generation
+        wake = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await self?.wakeDue(generation: generation, deadline: deadline)
+        }
+    }
+    private func wakeDue(generation: UUID, deadline: Date) async {
+        guard self.generation == generation, wakeDeadline == deadline else { return }
+        wake = nil; wakeDeadline = nil
+        // Read a wake already in the log before committing the deferred ending;
+        // the caught-up read publishes the result once.
+        await read(discover: false, publishNow: true)
     }
     private func continueRead() async { catchup = nil; await read(discover: false) }
     private func retryDiscovery() async { retry = nil; await read(discover: true) }
@@ -116,7 +142,7 @@ public actor DeepSeekActivityMonitor {
     }
     private static func urgent(_ event: DeepSeekLogEvent) -> Bool {
         switch event {
-        case .turnStart, .turnEnd, .toolCall, .toolResult, .approvalAsked, .approvalDecided: true
+        case .turnStart, .turnEnd, .toolCall, .toolResult, .progressAccepted, .nestedProgress, .nestedQuestion, .approvalAsked, .approvalDecided: true
         default: false
         }
     }

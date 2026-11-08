@@ -20,7 +20,7 @@ internal static class PreferencesChecks
                 Language = "zh-Hans", Position = "topRight", DisplayMode = "notch", IslandAppearance = "classic", ExpandedQuotaStyle = "classic", PositionChosen = true, LastSettingsPane = "appearance", HideProjects = true, ShowAppButtons = false, ShowEmbeddedCodexSessions = false, RetentionMinutes = 60,
                 CodexHome = @"C:\中文 space\.codex", CodexExecutable = @"C:\tools 中文\codex.exe",
                 DeepSeekPanelStyle = "simple", DeepSeekMode = "budget", DeepSeekDailyBudget = 12.5, DeepSeekWeeklyBudget = 70,
-                DeepSeekRingPeriod = "week", DeepSeekSpeedSource = "account", DeepSeekShowsTurnCost = false, DeepSeekBalanceSource = "apiKey",
+                DeepSeekRingPeriod = "week", DeepSeekSpeedSource = "account", DeepSeekShowsTurnCost = false, DeepSeekBalanceSource = "apiKey", DeepSeekProgressRing = false,
                 CompactLayout = "{\"version\":9,\"leading\":[\"firstOutput\",\"activity\"],\"trailing\":[\"quota\"]}",
                 CompactSingleTask = "count", CompactMetric = "pace", CodexQuotaWindow = "5h", ClaudeQuotaWindow = "7d", QuotaRingOuter = "claude", QuotaRingInner = "none",
                 ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "automatic", ["deepseek"] = "disabled" }
@@ -32,7 +32,8 @@ internal static class PreferencesChecks
                 && restored.Value.CodexHome == original.CodexHome && restored.Value.CodexExecutable == original.CodexExecutable
                 && restored.Value.DeepSeekPanelStyle == "simple" && restored.Value.DeepSeekMode == "budget" && restored.Value.DeepSeekDailyBudget == 12.5
                 && restored.Value.DeepSeekWeeklyBudget == 70 && restored.Value.DeepSeekRingPeriod == "week" && restored.Value.DeepSeekSpeedSource == "account" && !restored.Value.DeepSeekShowsTurnCost
-                && restored.Value.DeepSeekBalanceSource == "apiKey"
+                && restored.Value.DeepSeekBalanceSource == "apiKey" && !restored.Value.DeepSeekProgressRing
+                && File.ReadAllText(file).Contains("\"deepseekProgressRing\": false") && !File.ReadAllText(file).Contains("deepSeekProgressRing")
                 && restored.Value.CompactLayout == original.CompactLayout && restored.Value.CompactSingleTask == "count" && restored.Value.CompactMetric == "pace"
                 && restored.Value.CodexQuotaWindow == "5h" && restored.Value.ClaudeQuotaWindow == "7d" && restored.Value.QuotaRingOuter == "claude" && restored.Value.QuotaRingInner == "none"
                 && restored.Value.ProviderModes["codex"] == "disabled" && restored.Value.ProviderModes["claude"] == "automatic"
@@ -44,6 +45,14 @@ internal static class PreferencesChecks
             using (var config = JsonDocument.Parse(JsonSerializer.Serialize(independentlyHidden.EngineConfiguration())))
                 Check(config.RootElement.GetProperty("showEmbeddedCodexSessions").GetBoolean() && !config.RootElement.GetProperty("showEmbeddedClaudeSessions").GetBoolean(),
                     "The acknowledged engine configuration carries both Mac preference keys independently");
+            // Every main-window page reopens where it was; older names are kept for the window to map.
+            foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
+                Check(store.Save(original with { LastSettingsPane = pane }) && store.Load().Value.LastSettingsPane == pane, "The settings page survives a save: " + pane);
+            Check(store.Save(original with { LastSettingsPane = "future-page" }) && store.Load().Value.LastSettingsPane == "overview", "An unknown page opens Overview, as on the Mac");
+            Check(store.Save(original with { AppTheme = "dark", AccentColor = "graphite" }) && store.Load().Value is { AppTheme: "dark", AccentColor: "graphite" }
+                && File.ReadAllText(file).Contains("\"appTheme\": \"dark\"") && File.ReadAllText(file).Contains("\"accentColor\": \"graphite\""),
+                "Theme and accent save under the Mac's keys");
+            Check(!store.Save(original with { AccentColor = "teal" }) && !store.Save(original with { AppTheme = "dim" }), "Unknown themes and accents cannot be saved");
             Check(store.Save(original), "Restore the original saved fixture before rejected-write assertions");
             Check(restored.Value.IslandAppearance == "classic" && JsonDocument.Parse(before).RootElement.GetProperty("islandAppearance").GetString() == "classic",
                 "The original appearance key and value survive relaunch");
@@ -63,9 +72,11 @@ internal static class PreferencesChecks
             File.WriteAllText(file, "{\"schemaVersion\":1,\"position\":\"bottomRight\"}");
             var legacy = store.Load();
             Check(legacy.Value.ShowEmbeddedClaudeSessions, "An older profile without the Claude embedding key keeps sessions visible");
+            Check(legacy.Value.ClaudeProgressRing && legacy.Value.CodexProgressRing && legacy.Value.DeepSeekProgressRing,
+                "A profile that never saved a progress ring choice turns all three rings on, as on the Mac");
             Check(legacy.Value.IslandAppearance == "liquidGlass", "A missing appearance uses Liquid Glass without rewriting the profile");
             Check(!legacy.Unavailable && legacy.Value.HasChosenPosition && legacy.Value.DisplayMode == "automatic"
-                && legacy.Value.LastSettingsPane == "general" && legacy.Value.ShowEmbeddedCodexSessions && legacy.Value.ExpandedQuotaStyle == "split"
+                && legacy.Value.LastSettingsPane == "overview" && legacy.Value.ShowEmbeddedCodexSessions && legacy.Value.ExpandedQuotaStyle == "split"
                 && legacy.Value.DeepSeekMode == "balance" && legacy.Value.DeepSeekPanelStyle == "detailed" && legacy.Value.DeepSeekDailyBudget == null && legacy.Value.DeepSeekShowsTurnCost
                 && legacy.Value.DeepSeekBalanceSource == "automatic", "Older corner choices must remain explicit while new optional settings use defaults");
             File.WriteAllText(file, "{\"schemaVersion\":1,\"position\":\"bottomRight\",\"expandedQuotaStyle\":\"future-style\"}");

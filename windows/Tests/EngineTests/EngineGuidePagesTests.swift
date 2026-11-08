@@ -84,6 +84,8 @@ final class EngineGuidePagesTests: XCTestCase {
         XCTAssertEqual(english.links["donate"], ProjectSupport.donationLinks.first?.url.absoluteString)
         XCTAssertTrue(chinese.links["manual"]!.hasSuffix("guide.zh-CN.md"))
         XCTAssertEqual(english.supportCode, "support-wechat.png")
+        XCTAssertEqual(english.qqGroup, ProjectSupport.qqGroupNumber)
+        XCTAssertEqual(english.qqCode, "support-qq-group.png")
         XCTAssertFalse(String(data: try JSONEncoder().encode(english), encoding: .utf8)!.contains(NSHomeDirectory()))
     }
     func testReadOnlyWireAndMalformedRequests() throws {

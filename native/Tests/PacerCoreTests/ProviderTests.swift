@@ -209,9 +209,9 @@ final class ProviderTests: XCTestCase {
     }
 
     func testModuleOverridesPersistAndAutomaticDoesNotWriteOrOverrideChoices() throws {
-        let name = "ProviderTests." + UUID().uuidString
+        let name = testDefaultsName("ProviderTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         let onlyClaude = ProviderInstallationDetection(codexInstalled: false, claudeInstalled: true)
         var modules = ProviderModules.load(from: defaults)
         XCTAssertEqual(modules.enabledProviders(detection: onlyClaude), [.claude])

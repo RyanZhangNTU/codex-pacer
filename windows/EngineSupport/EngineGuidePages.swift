@@ -33,6 +33,9 @@ enum EngineGuidePages {
         let releases: [Release], history: [Release]
         let links: [String: String]
         let supportCode: String?
+        /// The QQ group's number and code image, kept apart from the donation codes as on the Mac.
+        let qqGroup: String
+        let qqCode: String?
     }
     static func project(_ input: Request) -> Value? {
         guard let language = AppLanguage(rawValue: input.language), input.welcomed >= 0,
@@ -70,7 +73,8 @@ enum EngineGuidePages {
                 "donate": ProjectSupport.donationLinks.first?.url.absoluteString ?? repository,
                 "manual": repository + (language == .simplifiedChinese ? "/blob/main/docs/guide.zh-CN.md" : "/blob/main/docs/guide.md"),
                 "issues": repository + "/issues", "releaseNotes": repository + "/releases/tag/v" + input.current],
-            supportCode: ProjectSupport.codes().first?.image.lastPathComponent)
+            supportCode: ProjectSupport.codes().first?.image.lastPathComponent,
+            qqGroup: ProjectSupport.qqGroupNumber, qqCode: ProjectSupport.qqGroupCode()?.image.lastPathComponent)
     }
     private static func validVersion(_ value: String) -> Bool {
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "protectedFiles": {
-    "native/Info.plist": "a990d2a1d585516ce14b9e6a6ecfae2534dfe78f44f087bab09968999c13a0a7",
+    "native/Info.plist": "22be8ecf061e2f4c36ab65f6cb26de56b55b33e0dad127ef455c9c5a7afd97ec",
     "native/Package.resolved": "7658c033856118a55e157006b40a447836b2a8811568f40e30e353e60c7afdff",
     "native/Resources/Pacer.icns": "d195e227e260c69536a27356e7d0f507d93b9b643b142ab2ba659ff33eb3db8e",
     "native/Resources/Pacer.png": "57c0513b4526deed07f9bb3e43446856e6873500d30c56b1736dff2818f81f49",
@@ -64,11 +64,16 @@
         "Sparkle"
       ]
     },
+    "PacerTestSupport": {
+      "kind": "target",
+      "dependencies": []
+    },
     "PacerCoreTests": {
       "kind": "testTarget",
       "dependencies": [
         "PacerCore",
-        "PacerMacSupport"
+        "PacerMacSupport",
+        "PacerTestSupport"
       ]
     },
     "PacerIslandTests": {
@@ -76,7 +81,8 @@
       "dependencies": [
         "PacerIsland",
         "PacerCore",
-        "PacerMacSupport"
+        "PacerMacSupport",
+        "PacerTestSupport"
       ]
     },
     "CGzip": {

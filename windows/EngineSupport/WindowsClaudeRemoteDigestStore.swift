@@ -46,7 +46,8 @@ final class WindowsClaudeRemoteDigestStore: @unchecked Sendable {
 
 extension EngineClaudeRemoteServices {
     static func live(ssh: WindowsSSHServices? = nil, wsl: WindowsWSLServices? = nil) -> Self? {
-        guard ssh != nil || wsl != nil, let digest = try? ClaudeRemoteSetup.adapterDigest() else { return nil }
+        guard ssh != nil || wsl != nil, let digest = try? ClaudeRemoteSetup.adapterDigest(),
+              let ringDigest = try? ClaudeRemoteSetup.adapterDigest(progressRing: true) else { return nil }
         let home = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacer/ClaudeRemote/setup-v1.json")
         let store = WindowsClaudeRemoteDigestStore(file: home)
@@ -54,15 +55,16 @@ extension EngineClaudeRemoteServices {
             WindowsClaudeSetupOperation(executable: executable, arguments: args,
                 environment: ssh?.environment ?? ProcessInfo.processInfo.environment, wsl: wsl)
         }, validDestination: { ClaudeSSHRouteResolver.validDestination($0) }, validIdentityFile: { WindowsSSHServices.validIdentity($0) },
-            argumentBuilder: { target, requireHome in
+            argumentBuilder: { target, requireHome, progressRing in
                 if target.id.hasPrefix(ConnectionSource.wslPrefix) {
                     guard let wsl else { throw ClaudeRemoteSetup.Failure.invalidTarget }
-                    return try wsl.setupArguments(target, requireHome: requireHome)
+                    return try wsl.setupArguments(target, requireHome: requireHome, progressRing: progressRing)
                 }
-                return try ClaudeRemoteSetup.arguments(target: target, requireHome: requireHome,
+                return try ClaudeRemoteSetup.arguments(target: target, requireHome: requireHome, progressRing: progressRing,
                     validDestination: { ClaudeSSHRouteResolver.validDestination($0) }, validIdentityFile: { WindowsSSHServices.validIdentity($0) })
             })
-        return .init(digest: digest, install: { try await setup.install(target: $0, requireHome: true) }, shutdown: { await setup.shutdown() },
+        return .init(digest: { $0 ? ringDigest : digest }, install: { try await setup.install(target: $0, requireHome: true, progressRing: $1) },
+            shutdown: { await setup.shutdown() },
             loadDigests: { store.load() }, saveDigests: { store.save($0) })
     }
 }

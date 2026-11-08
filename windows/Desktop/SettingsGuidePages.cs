@@ -1,6 +1,9 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
 
 namespace CodexPacer.Windows;
 
@@ -9,9 +12,34 @@ internal sealed partial class SettingsWindow
     private int guideRevision;
     private GuideContent? guideContent;
     internal event Action? WelcomeRequested;
-    private static bool ReadOnlyGuidePane(string pane) => pane is "help" or "support";
+    private static bool ReadOnlyGuidePane(string pane) => pane is "support";
     private void ClearGuidePages() { guideRevision++; guideContent = null; }
-    private void BuildGuidePage()
+    /// Help & Updates: the update card, then What's New or Help under one segmented choice.
+    private void BuildAbout()
+    {
+        BuildUpdateCard();
+        // A compact segmented choice, left-aligned, as on the Mac.
+        var tabs = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (string tab in new[] { "whatsNew", "help" })
+        {
+            string name = ui.Text(tab == "whatsNew" ? "whats_new.window_title" : "settings.pane.help");
+            var choice = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), Content = name, GroupName = "settings.about", IsChecked = aboutTab == tab };
+            Identify(choice, "settings.about." + tab, name);
+            choice.Checked += (_, _) =>
+            {
+                if (synchronizing || aboutTab == tab) return;
+                aboutTab = tab;
+                // Rebuild after the click finishes; the choice itself is replaced.
+                Dispatcher.BeginInvoke(() => { if (!sourceClosed && activePane == "about" && aboutTab == tab) RebuildPane("about"); });
+            };
+            tabs.Children.Add(choice);
+        }
+        var segments = new Border { Child = tabs, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 0, 0, 22), HorizontalAlignment = HorizontalAlignment.Left };
+        segments.SetResourceReference(Border.BackgroundProperty, "SettingsFill");
+        AutomationProperties.SetAutomationId(segments, "settings.about.tabs"); form.Children.Add(segments);
+        BuildGuidePage(aboutTab);
+    }
+    private void BuildGuidePage(string kind)
     {
         int revision = ++guideRevision; string pane = activePane;
         var pending = Detail(ui.Text("claude.account.checking")); form.Children.Add(pending);
@@ -29,7 +57,7 @@ internal sealed partial class SettingsWindow
                 form.Children.Remove(pending);
                 guideContent = new(ui, session, startup, catalog, value => _ = NavigateAsync(value), () => WelcomeRequested?.Invoke(), client, notifications, guideLinkLauncher, copyLink: guideCopyLink);
                 form.Children.Add(guideContent);
-                if (pane == "help") guideContent.Help(); else if (pane == "support") guideContent.Support(); else guideContent.Releases(catalog.History);
+                if (kind == "help") guideContent.Help(); else if (kind == "support") guideContent.Support(); else guideContent.SettingsReleases(catalog.History);
             }
             catch (Exception error) when (error is IOException or OperationCanceledException or EngineCommandException or TimeoutException)
             { if (!sourceClosed && revision == guideRevision) pending.Text = ui.Text("windows.settings.apply_failed"); }

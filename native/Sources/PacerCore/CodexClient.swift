@@ -55,7 +55,8 @@ public enum CodexClientError: Error, LocalizedError {
     }
 }
 
-/// A dedicated read-only app-server connection. It never starts or resumes a turn.
+/// A dedicated app-server connection. It never starts or resumes a turn.
+/// Only local progress setup uses the versioned config write below.
 public actor CodexClient {
     private var process: (any ChildProcessConnection)?
     private var closingProcesses: [any ChildProcessConnection] = []
@@ -197,6 +198,35 @@ public actor CodexClient {
             try write(["method": "initialized", "params": [:]])
             ready = true
         }
+    }
+
+    func setProgressReporter(_ wanted: CodexProgressCommand?, checkOnly: Bool,
+                             owns: @Sendable (CodexProgressCommand) -> Bool) async throws -> CodexProgressSetupStatus {
+        try await prepareReadConnection()
+        let data = try await request("config/read", params: ["includeLayers": true])
+        let path = home.appendingPathComponent("config.toml").standardizedFileURL
+        guard let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let layers = reply["layers"] as? [[String: Any]], let user = layers.firstIndex(where: { layer in
+                  guard let name = layer["name"] as? [String: Any], name["type"] as? String == "user", let file = name["file"] as? String else { return false }
+                  return URL(fileURLWithPath: file).standardizedFileURL == path
+              }), let version = layers[user]["version"] as? String, !version.isEmpty,
+              let config = layers[user]["config"] as? [String: Any] else { return .failed }
+        let name = CodexProgressEvidence.server
+        if wanted != nil, layers.indices.contains(where: { index in
+            let layer = layers[index]
+            guard index != user, !(layer["disabledReason"] is String),
+                  let other = layer["config"] as? [String: Any] else { return false }
+            return (other["mcp_servers"] as? [String: Any])?[name] != nil
+        }) { return .conflict }
+        if let value = (config["mcp_servers"] as? [String: Any])?[name] {
+            guard let existing = CodexProgressCommand(ownedEntry: value), owns(existing) else { return wanted == nil ? .ready : .conflict }
+            if existing == wanted { return .ready }
+        } else if wanted == nil { return .ready }
+        guard !checkOnly else { return .ready }
+        try Task.checkCancellation()
+        let edit: [String: Any] = ["keyPath": "mcp_servers." + name, "value": wanted.map { $0.value as Any } ?? NSNull(), "mergeStrategy": "replace"]
+        _ = try await request("config/batchWrite", params: ["edits": [edit], "filePath": path.path, "expectedVersion": version])
+        return .ready
     }
     /// Short-lived authorization for the paired-device metadata GET only.
     /// No authentication material is cached by the catalog or exposed to UI.

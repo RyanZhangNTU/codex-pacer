@@ -18,7 +18,7 @@ public sealed class IconGlyph : FrameworkElement
 
     private static readonly IReadOnlyDictionary<string, Geometry> Paths = CreatePaths();
     public IconGlyph() { IsHitTestVisible = false; Focusable = false; }
-    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble";
+    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble" or "xmark.circle.fill";
     protected override void OnRender(DrawingContext drawing)
     {
         base.OnRender(drawing);
@@ -31,6 +31,13 @@ public sealed class IconGlyph : FrameworkElement
         if (symbol.EndsWith(".circle", StringComparison.Ordinal)) drawing.DrawEllipse(null, pen, new Point(12, 12), 9.3, 9.3);
         bool filled = symbol is "pin.fill" or "sparkle" or "flame.fill" or "smallcircle.filled.circle" or "star.fill";
         if (Paths.TryGetValue(symbol, out Geometry? path)) drawing.DrawGeometry(filled ? ink : null, filled ? null : pen, path);
+        // A filled circle with the mark cut out, as the system's clear button.
+        if (symbol == "xmark.circle.fill")
+        {
+            var disc = new EllipseGeometry(new Point(12, 12), 10, 10);
+            var cross = Geometry.Parse("M8.4,8.4 L15.6,15.6 M15.6,8.4 L8.4,15.6").GetWidenedPathGeometry(new Pen(Brushes.Black, 2.2) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
+            drawing.DrawGeometry(ink, null, new CombinedGeometry(GeometryCombineMode.Exclude, disc, cross));
+        }
         if (symbol is "ellipsis" or "ellipsis.bubble")
             foreach (double x in new[] { 7.5, 12.0, 16.5 }) drawing.DrawEllipse(ink, null, new Point(x, symbol == "ellipsis" ? 12 : 10.8), 1, 1);
         drawing.Pop();
@@ -58,6 +65,11 @@ public sealed class IconGlyph : FrameworkElement
             ["tag"] = "M3,3 H11 L21,13 Q22,14 21,15 L15,21 Q14,22 13,21 L3,11 Z M8,7 A1,1 0 1 1 6,7 A1,1 0 1 1 8,7 Z",
             ["exclamationmark.triangle"] = "M11,3 Q12,1 13,3 L22,19 Q23,21 21,21 H3 Q1,21 2,19 Z M12,8 V14 M12,17.5 V17.7",
             ["cloud"] = "M6,18.5 C-0.5,18.5 0,9.5 6,9 C6.4,2.5 15,1.5 17.3,8.5 C24,7.5 25,18.5 18,18.5 Z",
+            // Waiting on background work until it wakes the request: three rising z, large to small.
+            // Waiting on background work: a moon with two z's, as the Mac's moon.zzz.
+            ["moon.zzz"] = "M11.8,6.2 A6.6,6.6 0 1 0 18.7,15.1 A5.2,5.2 0 0 1 11.8,6.2 Z M14.6,3.6 H17.5 L14.6,6.5 H17.5 M18.4,8.4 H20.6 L18.4,10.6 H20.6",
+            // Asking the user: a speech bubble with a question mark.
+            ["questionmark.bubble"] = "M5,3.5 H19 Q21,3.5 21,5.5 V15 Q21,17 19,17 H10 L5,21 V17 Q3,17 3,15 V5.5 Q3,3.5 5,3.5 Z M9.6,8.3 C9.6,5.6 14.4,5.6 14.4,8.3 C14.4,10 12,10.2 12,12 M12,14.4 V14.6",
             ["arrow.triangle.branch"] = "M12,21 V13 M12,13 L4,3 M12,13 L20,3 M3,3 H7 M3,3 V7 M21,3 H17 M21,3 V7",
             ["moon"] = "M18.9,16.5 C10.6,18 6,11 9,3.3 C0,6.2 2,20.7 12,20.7 C15.2,20.7 17.5,19.2 18.9,16.5 Z",
             ["hand.raised"] = "M7.5,13 V6.5 Q7.5,4.5 9,4.5 Q10.5,4.5 10.5,6.5 V11 M10.5,7 V3.5 Q10.5,1.5 12,1.5 Q13.5,1.5 13.5,3.5 V11 M13.5,7 V4.7 Q13.5,2.7 15,2.7 Q16.5,2.7 16.5,4.7 V12 M16.5,8 Q16.5,6 18,6 Q19.5,6 19.5,8 V15 C19.5,23 9,24 6,18 L3,12.5 Q2,10.5 3.5,10 Q5,9.5 7.5,13 Z",
@@ -102,7 +114,18 @@ public sealed class IconGlyph : FrameworkElement
             ["book"] = "M12,6.5 C9.5,4.5 5.5,4 2.5,5 V19.5 C5.5,18.5 9.5,19 12,21 C14.5,19 18.5,18.5 21.5,19.5 V5 C18.5,4 14.5,4.5 12,6.5 Z M12,6.5 V21",
             ["exclamationmark.bubble"] = "M5,3.5 H19 Q21,3.5 21,5.5 V15 Q21,17 19,17 H10 L5,21 V17 Q3,17 3,15 V5.5 Q3,3.5 5,3.5 Z M12,6.5 V11 M12,13.8 V14",
             ["square.on.square"] = "M10,8 H19 Q21,8 21,10 V19 Q21,21 19,21 H10 Q8,21 8,19 V10 Q8,8 10,8 Z M16,8 V5 Q16,3 14,3 H5 Q3,3 3,5 V14 Q3,16 5,16 H8",
-            ["chart.pie"] = "M10.5,4.5 A8.5,8.5 0 1 0 19.5,13.5 H10.5 Z M13.5,2.5 A8,8 0 0 1 21.5,10.5 H13.5 Z"
+            ["chart.pie"] = "M10.5,4.5 A8.5,8.5 0 1 0 19.5,13.5 H10.5 Z M13.5,2.5 A8,8 0 0 1 21.5,10.5 H13.5 Z",
+            ["square.grid.2x2"] = "M4,3.5 H9.5 Q10.5,3.5 10.5,4.5 V9.5 Q10.5,10.5 9.5,10.5 H4.5 Q3.5,10.5 3.5,9.5 V4.5 Q3.5,3.5 4.5,3.5 Z M14.5,3.5 H19.5 Q20.5,3.5 20.5,4.5 V9.5 Q20.5,10.5 19.5,10.5 H14.5 Q13.5,10.5 13.5,9.5 V4.5 Q13.5,3.5 14.5,3.5 Z M4.5,13.5 H9.5 Q10.5,13.5 10.5,14.5 V19.5 Q10.5,20.5 9.5,20.5 H4.5 Q3.5,20.5 3.5,19.5 V14.5 Q3.5,13.5 4.5,13.5 Z M14.5,13.5 H19.5 Q20.5,13.5 20.5,14.5 V19.5 Q20.5,20.5 19.5,20.5 H14.5 Q13.5,20.5 13.5,19.5 V14.5 Q13.5,13.5 14.5,13.5 Z",
+            ["chart.xyaxis.line"] = "M3.5,3 V20.5 H21 M6.5,16 L10.5,10.5 L14,13.5 L19.5,6",
+            ["circle.lefthalf.filled"] = "M21,12 A9,9 0 1 1 3,12 A9,9 0 1 1 21,12 Z M12,3 V21 M12,3 A9,9 0 0 0 12,21 M5.5,8 H12 M4,12 H12 M5.5,16 H12",
+            ["bell"] = "M5,16.5 H19 L17,12.5 V9.5 C17,2.5 7,2.5 7,9.5 V12.5 Z M9.5,19.5 Q12,22.5 14.5,19.5",
+            ["lightbulb"] = "M9,18 H15 M10,21 H14 M9,15.5 C6.5,14 5.5,11.8 5.5,9.5 A6.5,6.5 0 0 1 18.5,9.5 C18.5,11.8 17.5,14 15,15.5 Z",
+            ["ladybug"] = "M12,6 C16.5,6 19,9.5 19,13.5 C19,18 15.8,21 12,21 C8.2,21 5,18 5,13.5 C5,9.5 7.5,6 12,6 Z M12,6 V21 M9,4 L10.5,6.2 M15,4 L13.5,6.2 M5.5,11 H8.5 M15.5,11 H18.5 M5.5,16 H8.5 M15.5,16 H18.5",
+            ["plus"] = "M12,4.5 V19.5 M4.5,12 H19.5",
+            ["arrow.up.right"] = "M7,17 L17,7 M9,7 H17 V15",
+            ["star"] = "M12,2.5 L14.9,8.6 L21.5,9.4 L16.6,13.9 L17.9,20.5 L12,17.2 L6.1,20.5 L7.4,13.9 L2.5,9.4 L9.1,8.6 Z",
+            ["link"] = "M10,13.5 A4,4 0 0 0 15.7,13.7 L18.6,10.8 A4,4 0 0 0 13,5.1 L11.4,6.7 M14,10.5 A4,4 0 0 0 8.3,10.3 L5.4,13.2 A4,4 0 0 0 11,18.9 L12.6,17.3",
+            ["magnifyingglass"] = "M17,10.5 A6.5,6.5 0 1 1 4,10.5 A6.5,6.5 0 1 1 17,10.5 Z M15.3,15.3 L20.5,20.5"
         };
         var result = new Dictionary<string, Geometry>();
         foreach (var entry in paths) { Geometry geometry = Geometry.Parse(entry.Value); geometry.Freeze(); result[entry.Key] = geometry; }

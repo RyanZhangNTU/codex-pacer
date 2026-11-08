@@ -13,6 +13,7 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private TextBox? providerHomeField;
+    private Expander? providerHomeLocations;
     private TextBlock? providerHomeIssue;
     private Button? providerHomeChoose;
     private string? homeProvider, homeSaved, homePending, homeInspectionKey;
@@ -21,7 +22,7 @@ internal sealed partial class SettingsWindow
     private void ClearProviderHome()
     {
         homePaneRevision++; homeFieldRevision++; homeProvider = homeSaved = homePending = homeInspectionKey = null;
-        providerHomeField = null; providerHomeIssue = null; providerHomeChoose = null; homeInspection = Task.CompletedTask;
+        providerHomeField = null; providerHomeLocations = null; providerHomeIssue = null; providerHomeChoose = null; homeInspection = Task.CompletedTask;
     }
     private string SavedHome(string provider) => provider == "claude" ? session.Current.ClaudeHome : session.Current.DeepseekHome;
     private bool CanEditHome(string provider) => !sourceClosed && !providerConnectionClosed && !busy && !session.RequiresRestart &&
@@ -30,16 +31,16 @@ internal sealed partial class SettingsWindow
     private FrameworkElement ProviderHomeEditor(string provider)
     {
         homeProvider = provider;
-        var locations = new Expander { Header = ui.Text("provider.custom_locations"), Style = (Style)FindResource("SettingsDisclosure"), IsExpanded = SavedHome(provider).Length > 0 };
-        Identify(locations, "settings." + provider + ".locations", ui.Text("provider.custom_locations"));
-        var body = new StackPanel { Margin = new Thickness(10, 6, 10, 10) };
-        var grid = new Grid(); grid.ColumnDefinitions.Add(new()); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var body = new StackPanel { Margin = new Thickness(14, 0, 14, 0) };
+        body.Children.Add(Hairline(0, 0));
+        var locations = Disclosure(ui.Text("provider.custom_locations"), body, SavedHome(provider).Length > 0, "settings." + provider + ".locations");
+        providerHomeLocations = locations;
         string label = ui.Text(provider == "claude" ? "provider.claude_home" : "deepseek.home");
-        var field = new TextBox { Style = (Style)FindResource("SettingsPathInput"), Tag = label, MaxLength = 32768, VerticalContentAlignment = VerticalAlignment.Center };
+        // The default folder is the prompt, as the Mac shows ~/.claude.
+        var field = new TextBox { Style = (Style)FindResource("SettingsPathInput"), Tag = provider == "claude" ? @"~\.claude" : label, MaxLength = 32768, VerticalContentAlignment = VerticalAlignment.Center };
         providerHomeField = field; Identify(field, "settings." + provider + ".home", label); editors.Add(field);
         field.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await CommitProviderHome(provider, field); } };
         field.LostKeyboardFocus += async (_, _) => { if (!synchronizing && !composing) await CommitProviderHome(provider, field); };
-        grid.Children.Add(field);
         var choose = new Button { Content = ui.Text("common.choose"), Margin = new Thickness(8,0,0,0) };
         providerHomeChoose = choose;
         Identify(choose, "settings." + provider + ".choose_home", label); editors.Add(choose);
@@ -49,10 +50,16 @@ internal sealed partial class SettingsWindow
             var dialog = new OpenFolderDialog { Title = label };
             if (dialog.ShowDialog(this) == true && CanEditHome(provider)) { field.Text = dialog.FolderName; await CommitProviderHome(provider, field); }
         };
-        Grid.SetColumn(choose,1); grid.Children.Add(choose); body.Children.Add(grid);
-        var hint = Detail(ui.Text("windows.settings.default_location")); hint.Margin = new Thickness(0, 6, 0, 0); body.Children.Add(hint);
-        providerHomeIssue = SourceIssue("settings." + provider + ".home.issue"); body.Children.Add(providerHomeIssue); locations.Content = body;
+        body.Children.Add(LocationRow(label, field, choose));
+        var hint = Detail(ui.Text("windows.settings.default_location")); hint.Margin = new Thickness(0, 0, 0, 10); body.Children.Add(hint);
+        providerHomeIssue = SourceIssue("settings." + provider + ".home.issue"); body.Children.Add(providerHomeIssue);
         return locations;
+    }
+    /// A folder under the user's profile written from ~, as the Mac abbreviates its home folder.
+    private static string ShortHome(string path)
+    {
+        string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return profile.Length > 0 && path.StartsWith(profile, StringComparison.OrdinalIgnoreCase) ? "~" + path[profile.Length..] : path;
     }
     private void RefreshProviderHome()
     {
@@ -62,6 +69,8 @@ internal sealed partial class SettingsWindow
             engine.LatestSnapshot?.Modules?.Any(value => value.Provider == homeProvider && value.Enabled) == true;
         providerHomeField.IsEnabled = enabled; if (providerHomeChoose != null) providerHomeChoose.IsEnabled = enabled;
         if (homeSaved != saved) { homeSaved = saved; providerHomeField.Text = saved; SetSourceIssue(providerHomeIssue, null); }
+        // DeepSeek's summary reports its state (RefreshDeepSeek sets it); Claude's shows the folder in use, home shortened to ~.
+        if (providerHomeLocations != null && homeProvider == "claude") providerHomeLocations.Tag = saved.Length > 0 ? ui.Text("main.location.custom") : ShortHome(providerHomeField.ToolTip as string ?? "");
         string key = homeProvider + "\0" + saved;
         if (homeInspectionKey != key) homeInspection = InspectProviderHome(homeProvider, saved, homePaneRevision);
     }
@@ -76,6 +85,7 @@ internal sealed partial class SettingsWindow
             var report = await engine.QueryAsync<ProviderHomeReport>("inspectProviderHome", new { provider, sourceHome = saved });
             if (sourceClosed || pane != homePaneRevision || SavedHome(provider) != saved || providerHomeField == null) return;
             providerHomeField.ToolTip = report.EffectiveHome;
+            if (providerHomeLocations != null && saved.Length == 0 && provider == "claude") providerHomeLocations.Tag = ShortHome(report.EffectiveHome);
             if (providerHomeField.Text == saved && saved.Length > 0 && report.Issue != null) SetSourceIssue(providerHomeIssue, report.Issue);
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or InvalidOperationException)

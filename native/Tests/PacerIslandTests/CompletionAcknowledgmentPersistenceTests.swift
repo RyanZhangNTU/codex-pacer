@@ -2,6 +2,7 @@ import PacerMacSupport
 import XCTest
 import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
@@ -18,9 +19,9 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
     }
     private func familyFixture(remote: Bool = false) throws -> FamilyFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-family-ack-" + UUID().uuidString)
-        let domain = "com.codexpacer.family-ack-tests." + UUID().uuidString
+        let domain = testDefaultsName("family-ack-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        addTeardownBlock { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: directory) }
+        addTeardownBlock { removeTestDefaults(domain); try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
@@ -106,9 +107,9 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
 
     private func controlCatalogFixture(savedRoute: Bool = false) throws -> FamilyFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-catalog-ack-" + UUID().uuidString)
-        let domain = "com.codexpacer.catalog-ack-tests." + UUID().uuidString
+        let domain = testDefaultsName("catalog-ack-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        addTeardownBlock { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: directory) }
+        addTeardownBlock { removeTestDefaults(domain); try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
@@ -198,9 +199,9 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                 where (provider == .codex || sourceHostID?.hasPrefix("remote-control:") != true) && (provider != .deepseek || sourceHostID == nil) {
                 for outcome in [ActivityOpenOutcome.openedConversation, .dispatchedTerminal, .failed("Synthetic failure")] {
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-model-ack-" + UUID().uuidString)
-                    let domain = "com.codexpacer.ack-tests." + UUID().uuidString
+                    let domain = testDefaultsName("ack-tests")
                     let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-                    defer { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: directory) }
+                    defer { removeTestDefaults(domain); try? FileManager.default.removeItem(at: directory) }
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     defaults.set(directory.path, forKey: "codexHome")
                     defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
@@ -258,9 +259,9 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             for replaceHome in [false, true] {
                 for waiting in [false, true] {
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-open-scope-" + UUID().uuidString)
-                    let domain = "com.codexpacer.open-scope-tests." + UUID().uuidString
+                    let domain = testDefaultsName("open-scope-tests")
                     let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-                    defer { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: directory) }
+                    defer { removeTestDefaults(domain); try? FileManager.default.removeItem(at: directory) }
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     defaults.set(directory.path, forKey: "codexHome")
                     defaults.set(0, forKey: "completedRetentionMinutes")
@@ -462,9 +463,9 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
     func testRemoteControlOpenBarrierPreservesReplacementScopeAndClaudeStateAfterRouteOrSettingsChanges() async throws {
         for change in ["host-removed", "owner-home", "control-off"] {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-control-ack-" + UUID().uuidString)
-            let domain = "com.codexpacer.control-ack-tests." + UUID().uuidString
+            let domain = testDefaultsName("control-ack-tests")
             let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-            defer { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: directory) }
+            defer { removeTestDefaults(domain); try? FileManager.default.removeItem(at: directory) }
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defaults.set(directory.path, forKey: "codexHome")
             defaults.set(directory.appendingPathComponent("claude-profile").path, forKey: "claudeHome")

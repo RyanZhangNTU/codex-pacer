@@ -124,7 +124,7 @@ public partial class App : Application
         int paneIndex = Array.IndexOf(e.Args, "--settings-pane");
         if (paneIndex >= 0)
         {
-            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("general" or "appearance" or "collapsed" or "codex" or "claude" or "deepseek" or "reminders"))
+            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "codex" or "claude" or "deepseek" or "notifications" or "reminders" or "remote" or "about" or "support"))
                 throw new ArgumentException("Settings pane fixtures require a supported demo preview.");
             preferences = preferences with { LastSettingsPane = e.Args[paneIndex + 1] };
         }
@@ -288,11 +288,17 @@ public partial class App : Application
         engineExecutable = executable;
         try
         {
-            string? runtimeRoot = null;
+            string? runtimeRoot = null, codexProgressRuntimeRoot = null;
             if (!demo)
-                try { runtimeRoot = Path.Combine(WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory).DataRoot, "ClaudeRuntime"); }
+                try
+                {
+                    var identity = WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory);
+                    runtimeRoot = Path.Combine(identity.DataRoot, "ClaudeRuntime");
+                    codexProgressRuntimeRoot = identity.CodexProgressRuntimeRoot;
+                }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
-            await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture, claudeRuntimeRoot: runtimeRoot);
+            await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture,
+                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             await webConnection.StartAsync();

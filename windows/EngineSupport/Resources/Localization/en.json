@@ -125,5 +125,6 @@
   "windows.updates.error_title": "The update couldn’t finish",
   "windows.updates.error_detail": "Pacer couldn’t check for or download the update. Check your connection and try again.",
   "windows.updates.try_again": "Try Again",
-  "windows.updates.notes_empty": "This version has no release notes."
+  "windows.updates.notes_empty": "This version has no release notes.",
+  "windows.main.pane_later": "Arrives with the next step of the redesign."
 }

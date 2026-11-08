@@ -4,6 +4,9 @@ import Foundation
 public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public enum Component: String, CaseIterable, Codable, Sendable, Identifiable {
         case activity, status, tps, firstOutput
+        /// The quota label is retired: words beside the value added nothing.
+        /// It is never offered and saved layouts drop it; the case stays only
+        /// until the Windows shell stops reading its text.
         case quota, quotaGauge, quotaLabel, timeRemaining
         /// DeepSeek's day: amber peak hours outside, hours with spend inside, a hand for now.
         case priceClock
@@ -15,12 +18,13 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var detail: String { L10n.text("layout.detail." + rawValue) }
         /// Quota components combine every enabled provider, so they need at
         /// least one. DeepSeek joins the rings with a budget; a balance has no
-        /// window, so the label and time remaining need Codex or Claude.
+        /// window, so time remaining needs Codex or Claude.
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
             switch self {
             case .quota, .quotaGauge: return !providers.isEmpty
             case .priceClock: return providers.contains(.deepseek)
-            case .quotaLabel, .timeRemaining: return !providers.subtracting([.deepseek]).isEmpty
+            case .timeRemaining: return !providers.subtracting([.deepseek]).isEmpty
+            case .quotaLabel: return false
             default: return true
             }
         }
@@ -51,6 +55,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         fileprivate static func saved(_ value: String) -> [Self] {
             switch value {
             case "statusIcon", "taskCount": [.activity]
+            case "quotaLabel": []
             case _ where Warning(legacyComponent: value) != nil: [.warnings]
             default: Self(rawValue: value).map { [$0] } ?? []
             }
@@ -74,7 +79,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
             switch self {
             case .tasks: [.activity, .status]
             case .performance: [.tps, .firstOutput]
-            case .quota: [.quota, .quotaGauge, .priceClock, .quotaLabel, .timeRemaining]
+            case .quota: [.quota, .quotaGauge, .priceClock, .timeRemaining]
             case .warnings: [.warnings]
             }
         }

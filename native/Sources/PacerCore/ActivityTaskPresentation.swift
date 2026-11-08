@@ -1,10 +1,12 @@
 import Foundation
 
 public enum TaskSymbol: String, Sendable {
-    case thinking, tool, responding, starting, working, coordinating, approval, input, completed, interrupted, failed, unknown
+    /// `background`: the turn stopped while its background work runs; it resumes on the wake.
+    case thinking, tool, responding, starting, working, coordinating, background, approval, input, completed, interrupted, failed, unknown
     public static func symbol(for activity: SessionActivity, attention: PendingAttentionRequest.Kind? = nil,
                               groupIsRunning: Bool = false) -> Self {
         if let attention { return attention == .approval ? .approval : .input }
+        if activity.codexGoalPause != nil, !groupIsRunning { return .interrupted }
         if groupIsRunning && activity.phase != .running { return .thinking }
         switch activity.phase {
         case .waitingForInput: return activity.waitingForApproval ? .approval : .input
@@ -12,6 +14,7 @@ public enum TaskSymbol: String, Sendable {
         case .interrupted: return activity.turnFailed ? .failed : .interrupted
         case .unknown: return .unknown
         case .running:
+            if activity.currentBackgroundWait != nil { return .background }
             switch activity.stage {
             case .thinking: return .thinking
             case .tool: return .tool
@@ -38,8 +41,13 @@ public struct HeaderActivity: Equatable, Sendable {
     public var orbit: [AgentProvider: Int]
     public var attention: PendingAttentionRequest.Kind?
     public var ending: Ending?
-    public init(core: Core, activeCount: Int, orbit: [AgentProvider: Int], attention: PendingAttentionRequest.Kind? = nil, ending: Ending? = nil) {
+    /// The only active task's reported estimate while it works; the badge
+    /// draws it in place of the orbit.
+    public var progress: TaskProgressRing?
+    public init(core: Core, activeCount: Int, orbit: [AgentProvider: Int], attention: PendingAttentionRequest.Kind? = nil, ending: Ending? = nil,
+                progress: TaskProgressRing? = nil) {
         self.core = core; self.activeCount = activeCount; self.orbit = orbit; self.attention = attention; self.ending = ending
+        self.progress = progress
     }
     public var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
     public var showsEndingMark: Bool { ending != nil && !endingIsCore }
@@ -68,10 +76,12 @@ public struct TaskPresentationOptions: Equatable, Sendable {
     public var hostApplications: [String: TaskHostLabel]
     public var sourceNames: [String: String]
     public var showsDeepSeekTurnCost: Bool
+    /// Providers whose rows draw the self-reported progress ring.
+    public var progressRingProviders: Set<AgentProvider>
     public init(hideProjects: Bool = false, hostApplications: [String: TaskHostLabel] = [:], sourceNames: [String: String] = [:],
-                showsDeepSeekTurnCost: Bool = true) {
+                showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = []) {
         self.hideProjects = hideProjects; self.hostApplications = hostApplications; self.sourceNames = sourceNames
-        self.showsDeepSeekTurnCost = showsDeepSeekTurnCost
+        self.showsDeepSeekTurnCost = showsDeepSeekTurnCost; self.progressRingProviders = progressRingProviders
     }
 }
 
@@ -95,6 +105,7 @@ public struct ActivityTaskRowPresentation: Sendable {
     public let ratePlaceholder: String?
     public let cost: String?
     public let peakCost: Bool
+    public let progressRing: TaskProgressRing?
     public var rateText: String? { rate.map { String(format: "%.1f", $0.value) } }
     public var subagentText: String { String(subagents) }
     public init(activity: SessionActivity, group: ActivityTaskGroup? = nil, attention: PendingAttentionRequest.Kind? = nil,
@@ -128,6 +139,8 @@ public struct ActivityTaskRowPresentation: Sendable {
         ratePlaceholder = activity.claudeCloud == nil ? L10n.text("performance.awaiting_usage") : nil
         cost = activity.provider == .deepseek && options.showsDeepSeekTurnCost ? activity.turnCost.map(DeepSeekWallet.turnAmount) : nil
         peakCost = (activity.turnPeakCost ?? 0) >= 0.005
+        progressRing = TaskProgressRing.make(activity, phase: phase, enabled: options.progressRingProviders.contains(activity.provider), at: now,
+            hasAttention: attention != nil, waitingForDependents: group?.isRunning == true && [.completed, .interrupted].contains(activity.phase))
     }
     public static func title(_ activity: SessionActivity, hideProjects: Bool) -> String {
         hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project
@@ -178,7 +191,7 @@ public struct ActivityTaskPresentation: Sendable {
         self.overview = overview ?? ActivityOverview(groups: groups, at: now)
         func attention(_ activity: SessionActivity) -> PendingAttentionRequest.Kind? { Self.attentionKind(activity, groups: groups, requests: requests) }
         var displayed = groups.filter {
-            $0.isRunning || $0.isWaiting || [.completed, .interrupted].contains($0.primary.phase) ||
+            $0.isRunning || $0.isWaiting || $0.primary.codexGoalPause != nil || [.completed, .interrupted].contains($0.primary.phase) ||
                 now.timeIntervalSince($0.primary.lastObserved ?? .distantPast) < 900
         }.map(\.primary)
         let known = Set(groups.flatMap { $0.members.map(\.id) }), roots = Set(groups.filter { !$0.isRunning }.map { $0.primary.id })
@@ -225,13 +238,20 @@ public struct ActivityTaskPresentation: Sendable {
         for task in overview.running { orbit[task.provider, default: 0] += 1 }
         let prompt = attention.map { symbol($0 == .approval ? .approval : .input) }
         let core: HeaderActivity.Core
-        if active == 0 { core = (prompt ?? ending.map { symbol($0.kind) }).map(HeaderActivity.Core.symbol) ?? .idle }
+        if active == 0 {
+            let paused = groups.contains { $0.primary.codexGoalPause != nil } ? symbol(.interrupted) : nil
+            core = (prompt ?? ending.map { symbol($0.kind) } ?? paused).map(HeaderActivity.Core.symbol) ?? .idle
+        }
         else if active == 1, singleTask == .stage, let glyph = prompt ?? overview.running.max(by: {
             let left = $0.lastObserved ?? .distantPast, right = $1.lastObserved ?? .distantPast
             return left == right ? $0.id < $1.id : left < right
         }).map({ activity in symbol(TaskSymbol.symbol(for: activity, groupIsRunning: groups.first { $0.primary.id == activity.id }?.isRunning == true)) }) {
             core = .symbol(glyph)
         } else { core = .count(active) }
-        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending)
+        // One task working with a reported estimate shows it, whatever the core shows.
+        let progress = active == 1 && attention == nil ? overview.running.first.flatMap { running in
+            rows.first { $0.activity.id == running.id }?.progressRing
+        }.flatMap { ring in ring.state == .reported && [.working, .longStep].contains(ring.mode) ? ring : nil } : nil
+        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress)
     }
 }

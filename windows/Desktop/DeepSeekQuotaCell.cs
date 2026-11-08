@@ -11,7 +11,8 @@ namespace CodexPacer.Windows;
 internal sealed class DeepSeekQuotaCell : StackPanel
 {
     internal Grid Face { get; }
-    internal DeepSeekQuotaCell(EngineWallet? wallet, UiText ui, double size = 104, Action? connectAction = null, string? connectUnavailable = null, FrameworkElement? balanceStatus = null)
+    /// <param name="showsName">Overview's card already names the service, so its dial leaves the name out, as on the Mac.</param>
+    internal DeepSeekQuotaCell(EngineWallet? wallet, UiText ui, double size = 104, Action? connectAction = null, string? connectUnavailable = null, FrameworkElement? balanceStatus = null, bool showsName = true)
     {
         var budget = wallet?.Solo?.Budgets;
         var dial = new QuotaDial("deepseek", null, wallet, dialSize: size) { Width = size, Height = size };
@@ -29,11 +30,11 @@ internal sealed class DeepSeekQuotaCell : StackPanel
         var caption = new QuotaReadingHost { Orientation = Orientation.Horizontal, Height = 15, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 8, 0, 6) };
         AutomationProperties.SetName(caption, budget?.Count > 0 ? "DeepSeek" + (budget[0].Verdict == "fast" ? ", " + budget[0].VerdictText : "")
             : wallet?.Dial?.StaleCaption == true ? "DeepSeek, " + ui.Text("common.not_updated") : "DeepSeek" + (wallet?.Dial?.PeakText is string peak ? ", " + peak : ""));
-        caption.Children.Add(new TextBlock { Text = "DeepSeek", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, VerticalAlignment = VerticalAlignment.Center });
+        if (showsName) caption.Children.Add(new TextBlock { Text = "DeepSeek", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, VerticalAlignment = VerticalAlignment.Center });
         if (budget?.Count > 0)
         {
             if (budget[0].Verdict == "fast")
-            { var chip = DeepSeekBudgetDetails.Chip(budget[0], ui); chip.Margin = new Thickness(5, 0, 0, 0); caption.Children.Add(chip); }
+            { var chip = DeepSeekBudgetDetails.Chip(budget[0], ui); chip.Margin = new Thickness(showsName ? 5 : 0, 0, 0, 0); caption.Children.Add(chip); }
         }
         else if (wallet?.Dial?.StaleCaption == true)
         {

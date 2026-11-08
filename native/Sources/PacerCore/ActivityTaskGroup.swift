@@ -7,7 +7,7 @@ public struct ActivityTaskGroup: Sendable {
     public var runningSubagentCount: Int {
         members.filter { $0.id != primary.id && $0.phase == .running }.count
     }
-    public var isRunning: Bool { members.contains { $0.phase == .running } }
+    public var isRunning: Bool { members.contains { $0.phase == .running && $0.codexGoalPause == nil } }
     public var isWaiting: Bool { !isRunning && members.contains { $0.phase == .waitingForInput } }
     public func displayedRate(at now: Date) -> OutputEstimate? {
         let active = members.filter { $0.phase == .running }

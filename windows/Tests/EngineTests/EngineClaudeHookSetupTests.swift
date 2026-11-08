@@ -60,6 +60,29 @@ final class EngineClaudeHookSetupTests: XCTestCase {
         XCTAssertTrue(ready)
         await runtime.stop()
     }
+    func testProgressSwitchFollowsTheManagedHomeAndNeverTouchesAnotherOne() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-progress-switch-" + UUID().uuidString)
+        let passed = root.appendingPathComponent("passed"), managed = root.appendingPathComponent("managed")
+        for home in [passed, managed] { try FileManager.default.createDirectory(at: home.appendingPathComponent("pacer"), withIntermediateDirectories: true) }
+        defer { try? FileManager.default.removeItem(at: root) }
+        // A switch the engine did not write, in a home it only passes through.
+        let foreign = ClaudeProgressRingSwitch.flagURL(home: passed); try Data("on\n".utf8).write(to: foreign)
+        let gate = Gate(), frames = Frames()
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, claudeHookServices: .init { action, home in await gate.run(action, home) },
+            installationDetection: { .init(codexInstalled: false, claudeInstalled: true, deepseekInstalled: false) }, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["claude"], "claudeHome": EngineCodexSourceReport.path(passed),
+            "codexHome": EngineCodexSourceReport.path(root), "deepseekHome": EngineCodexSourceReport.path(root)]))
+        _ = await runtime.receive(try command("configure", ["claudeHome": EngineCodexSourceReport.path(managed)]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: foreign.path), "Passing through a home never removes its switch")
+        _ = await runtime.receive(try command("configure", ["claudeProgressRing": true]))
+        let flag = ClaudeProgressRingSwitch.flagURL(home: managed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: flag.path))
+        _ = await runtime.receive(try command("configure", ["claudeProgressRing": false]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: flag.path), "The engine removes the switch it wrote")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: foreign.path))
+        for index in 0..<(await gate.calls) { await gate.complete(index, .failed) }
+        _ = await runtime.receive(try command("shutdown"))
+    }
     func testUnresponsiveNativeHelperHasBoundedAsyncDeadline() async throws {
         let source = try XCTUnwrap(ProcessInfo.processInfo.environment["PACER_CLAUDE_PYTHON_PACKAGE"])
         let start = Date()

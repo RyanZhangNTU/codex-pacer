@@ -19,7 +19,7 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pro
     zstd, gzip,
     .systemLibrary(name: "SQLite3", path: "windows/Native/SQLite3"),
     .target(name: "CWindowsSupport", path: "windows/Native/CWindowsSupport", linkerSettings:
-        ["bcrypt", "advapi32", "version", "rstrtmgr", "user32", "ws2_32", "shell32", "ole32"].map { .linkedLibrary($0) }),
+        ["bcrypt", "advapi32", "version", "rstrtmgr", "user32", "ws2_32", "shell32", "ole32", "winhttp"].map { .linkedLibrary($0) }),
     .target(name: "CryptoKit", dependencies: ["CWindowsSupport"], path: "windows/Native/CryptoKit"),
     .target(name: "PacerCore", dependencies: ["CZstd", "CGzip", "SQLite3", "CryptoKit"],
         path: "native/Sources/PacerCore", resources: [.process("Resources")]),
@@ -46,7 +46,8 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pla
         .target(name: "PacerCore", dependencies: ["CZstd", "CGzip"], path: "native/Sources/PacerCore",
             resources: [.process("Resources")], linkerSettings: [.linkedLibrary("sqlite3")]),
         .target(name: "PacerMacSupport", dependencies: ["PacerCore"], path: "native/Sources/PacerMacSupport"),
-        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport"], path: "native/Tests/PacerCoreTests"),
+        .target(name: "PacerTestSupport", path: "native/Tests/PacerTestSupport"),
+        .testTarget(name: "PacerCoreTests", dependencies: ["PacerCore", "PacerMacSupport", "PacerTestSupport"], path: "native/Tests/PacerCoreTests"),
         .testTarget(name: "PacerMacSupportTests", dependencies: ["PacerCore", "PacerMacSupport"], path: "native/Tests/PacerMacSupportTests")
     ])
 #endif

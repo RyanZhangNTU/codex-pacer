@@ -80,7 +80,11 @@ public struct ClaudeHookInstaller {
         var status = Status(hooksConfigured: configured, telemetryConfigured: telemetry,
             statusLineConfigured: ownsStatusLine(lineCommand, home: home),
             telemetryConflict: conflict)
-        status.updateAvailable = configured && (migrated(value, home: home) != nil || installedScriptOutdated(home: home))
+        let needsMigration: Bool
+        do { needsMigration = try migrated(value, home: home) != nil }
+        catch { needsMigration = true }
+        status.updateAvailable = configured && (needsMigration || installedScriptOutdated(home: home) ||
+            progressMode(home: home) == .tool && pluginOutdated(home: home))
         return status
     }
     @discardableResult public func install(home: URL) throws -> Status {
@@ -100,8 +104,10 @@ public struct ClaudeHookInstaller {
         var added = manifest["addedEnvironment"] as? [String: String] ?? [:]
         if !conflict { for (key, setting) in environment where env[key] == nil { env[key] = setting; added[key] = setting }; value["env"] = env }
         manifest["addedEnvironment"] = added
-        setDisplayObserver(&hooks, wanted: !environment.allSatisfy { env[$0.key] == $0.value }, home: home)
+        setDisplayObserver(&hooks, wanted: !environment.allSatisfy { env[$0.key] == $0.value } || progressMode(home: home) == .marker, home: home)
         value["hooks"] = hooks
+        let wantsPlugin = progressMode(home: home) == .tool
+        try setPlugin(&value, manifest: &manifest, wanted: wantsPlugin, home: home)
         let previousLine = value["statusLine"]
         if let previousLine, !(previousLine is [String: Any]) { throw Failure.invalidSettings }
         let previousCommand = (previousLine as? [String: Any])?["command"] as? String
@@ -117,15 +123,8 @@ public struct ClaudeHookInstaller {
         try storage.createDirectory(directory, permissions: 0o700)
         try safe(directory); try safe(home.appendingPathComponent("settings.json")); try safe(manifestURL)
         try writeScript(home: home)
-        guard try settings(home: home).bytes == existing.bytes else { throw Failure.changedSettings }
-        let previousManifest = try? storage.read(manifestURL)
-        try write(manifest, to: manifestURL)
-        do { try write(value, to: home.appendingPathComponent("settings.json")) }
-        catch {
-            if let previousManifest { try? storage.replace(manifestURL, with: previousManifest, permissions: 0o600) }
-            else { try? storage.remove(manifestURL) }
-            throw error
-        }
+        if wantsPlugin { try writePlugin(home: home) }
+        try writeInstallation(value, manifest: manifest, home: home, expected: existing.bytes)
         return details(home: home)
     }
     /// Upgrade an existing installation in place: refresh Pacer's adapter and
@@ -136,15 +135,18 @@ public struct ClaudeHookInstaller {
               let existing = try? settings(home: home) else { return false }
         var changed = false
         if installedScriptOutdated(home: home), (try? writeScript(home: home)) != nil { changed = true }
-        guard let updated = migrated(existing.value, home: home) else { return changed }
-        guard (try? settings(home: home).bytes) == existing.bytes,
-              (try? write(updated, to: home.appendingPathComponent("settings.json"))) != nil else { return changed }
+        if progressMode(home: home) == .tool, pluginOutdated(home: home) {
+            guard (try? writePlugin(home: home)) != nil else { return changed }
+            changed = true
+        }
+        guard let updated = try? migrated(existing.value, home: home),
+              (try? writeInstallation(updated.value, manifest: updated.manifest, home: home, expected: existing.bytes)) != nil else { return changed }
         return true
     }
     public func uninstall(home: URL) throws {
         try safe(home)
         let existing = try settings(home: home), directory = home.appendingPathComponent("pacer"), manifestURL = directory.appendingPathComponent("installation.json")
-        guard let manifest = try? readObject(manifestURL) else { return }
+        guard var manifest = try? readObject(manifestURL) else { return }
         var value = existing.value, hooks = value["hooks"] as? [String: Any] ?? [:]
         for event in events + [displayEvent] {
             guard let groups = hooks[event] as? [[String: Any]] else { continue }
@@ -152,6 +154,7 @@ public struct ClaudeHookInstaller {
             if remaining.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = remaining }
         }
         if hooks.isEmpty { value.removeValue(forKey: "hooks") } else { value["hooks"] = hooks }
+        try setPlugin(&value, manifest: &manifest, wanted: false, home: home)
         var env = value["env"] as? [String: String] ?? [:]
         for (key, setting) in manifest["addedEnvironment"] as? [String: String] ?? [:] where env[key] == setting { env.removeValue(forKey: key) }
         if env.isEmpty { value.removeValue(forKey: "env") } else { value["env"] = env }
@@ -167,23 +170,44 @@ public struct ClaudeHookInstaller {
     }
     /// Settings with only Pacer-owned entries brought current, or nil when
     /// nothing differs. Missing events, environment or wrappers stay absent.
-    private func migrated(_ value: [String: Any], home: URL) -> [String: Any]? {
+    private func migrated(_ value: [String: Any], home: URL) throws -> (value: [String: Any], manifest: [String: Any])? {
         guard var hooks = value["hooks"] as? [String: Any] else { return nil }
         var result = value
+        let previousManifest = (try? readObject(home.appendingPathComponent("pacer/installation.json"))) ?? [:]
+        var manifest = previousManifest
         for event in events {
             guard let groups = hooks[event] as? [[String: Any]], groups.contains(where: { containsOwned($0, home: home) }) else { continue }
             hooks[event] = ensureOwned(groups, home: home, background: false)
         }
         let env = value["env"] as? [String: String] ?? [:]
+        let mode = progressMode(home: home)
+        let wantsDisplay = !environment.allSatisfy { env[$0.key] == $0.value } || mode == .marker
         if let groups = hooks[displayEvent] as? [[String: Any]], groups.contains(where: { containsOwned($0, home: home) }) {
-            setDisplayObserver(&hooks, wanted: !environment.allSatisfy { env[$0.key] == $0.value }, home: home)
+            setDisplayObserver(&hooks, wanted: wantsDisplay, home: home)
+        } else if mode == .marker {
+            // Leading markers are read from each message's first displayed
+            // lines: that switch adds the background observer and removing it drops it.
+            setDisplayObserver(&hooks, wanted: true, home: home)
         }
         result["hooks"] = hooks
+        try setPlugin(&result, manifest: &manifest, wanted: mode == .tool, home: home)
         if var line = value["statusLine"] as? [String: Any], line["command"] as? String != statusLineCommand(home: home),
            ownsStatusLine(line["command"] as? String, home: home) {
             line["command"] = statusLineCommand(home: home); result["statusLine"] = line
         }
-        return NSDictionary(dictionary: result).isEqual(to: value) ? nil : result
+        return NSDictionary(dictionary: result).isEqual(to: value) && NSDictionary(dictionary: manifest).isEqual(to: previousManifest)
+            ? nil : (result, manifest)
+    }
+    private func writeInstallation(_ value: [String: Any], manifest: [String: Any], home: URL, expected: Data?) throws {
+        guard try settings(home: home).bytes == expected else { throw Failure.changedSettings }
+        let url = home.appendingPathComponent("pacer/installation.json"), previous = try? storage.read(url)
+        try write(manifest, to: url)
+        do { try write(value, to: home.appendingPathComponent("settings.json")) }
+        catch {
+            if let previous { try? storage.replace(url, with: previous, permissions: 0o600) }
+            else { try? storage.remove(url) }
+            throw error
+        }
     }
     private func ownedEntry(home: URL, background: Bool) -> [String: Any] {
         var entry: [String: Any] = ["type": "command", "command": hookCommand(home: home), "timeout": 5]
@@ -224,6 +248,95 @@ public struct ClaudeHookInstaller {
             var group = group; let kept = entries.filter { !owned($0, home: home) }
             if kept.isEmpty { return nil }; group["hooks"] = kept; return group
         }
+    }
+    /// How the progress ring asks for estimates: its switch file holds `tool`
+    /// (Pacer's plugin tool) or another word (a leading marker in each message).
+    private enum ProgressMode { case marker, tool }
+    private func progressMode(home: URL) -> ProgressMode? {
+        let flag = ClaudeProgressRingSwitch.flagURL(home: home)
+        guard storage.exists(flag) else { return nil }
+        let text = (try? storage.read(flag)).map { String(decoding: $0.prefix(16), as: UTF8.self) } ?? ""
+        return text.split(whereSeparator: \.isWhitespace).first == "tool" ? .tool : .marker
+    }
+    /// Pacer's Claude Code plugin is a local marketplace in Pacer's hook folder
+    /// whose one plugin serves `report_progress`. While the ring asks for the
+    /// tool, settings list that marketplace, enable the plugin and pre-approve
+    /// its one tool; otherwise exactly those entries are removed.
+    public static let progressTool = "mcp__plugin_pacer_pacer__report_progress"
+    private static let marketplace = "pacer", pluginKey = "pacer@pacer"
+    private func pluginRoot(home: URL) -> URL { home.appendingPathComponent("pacer/plugin") }
+    private func setPlugin(_ value: inout [String: Any], manifest: inout [String: Any], wanted: Bool, home: URL) throws {
+        guard value["extraKnownMarketplaces"] == nil || value["extraKnownMarketplaces"] is [String: Any],
+              value["enabledPlugins"] == nil || value["enabledPlugins"] is [String: Any],
+              value["permissions"] == nil || value["permissions"] is [String: Any] else {
+            if wanted { throw Failure.invalidSettings }; return
+        }
+        var markets = value["extraKnownMarketplaces"] as? [String: Any] ?? [:], enabled = value["enabledPlugins"] as? [String: Any] ?? [:]
+        var permissions = value["permissions"] as? [String: Any] ?? [:]
+        guard permissions["allow"] == nil || permissions["allow"] is [String] else {
+            if wanted { throw Failure.invalidSettings }; return
+        }
+        var allow = permissions["allow"] as? [String] ?? []
+        let source: [String: Any] = ["source": ["source": "directory", "path": pluginRoot(home: home).path]]
+        let ours = (markets[Self.marketplace] as? [String: Any]).map { NSDictionary(dictionary: $0).isEqual(to: source) } ?? false
+        var owned = manifest["progressPlugin"] as? [String: Any] ?? [:]
+        if wanted {
+            // A name alone does not establish ownership of a marketplace.
+            guard markets[Self.marketplace] == nil || ours else { throw Failure.invalidSettings }
+            guard enabled[Self.pluginKey] == nil || enabled[Self.pluginKey] is Bool else { throw Failure.invalidSettings }
+            if markets[Self.marketplace] == nil, owned["marketplaceAdded"] == nil {
+                markets[Self.marketplace] = source; owned["marketplaceAdded"] = true
+            }
+            if enabled[Self.pluginKey] as? Bool != true, owned["enabledPrevious"] == nil {
+                owned["enabledPrevious"] = enabled[Self.pluginKey] ?? NSNull(); enabled[Self.pluginKey] = true
+            }
+            if !allow.contains(Self.progressTool), owned["permissionAdded"] == nil {
+                allow.append(Self.progressTool); owned["permissionAdded"] = true
+            }
+            if !owned.isEmpty { manifest["progressPlugin"] = owned }
+        } else {
+            guard !owned.isEmpty else { return }
+            // A user who repointed the namespace now owns its dependent entries.
+            if markets[Self.marketplace] == nil || ours {
+                if ours, owned["marketplaceAdded"] as? Bool == true { markets.removeValue(forKey: Self.marketplace) }
+                if let previous = owned["enabledPrevious"], enabled[Self.pluginKey] as? Bool == true {
+                    if previous is NSNull { enabled.removeValue(forKey: Self.pluginKey) } else { enabled[Self.pluginKey] = previous }
+                }
+                if owned["permissionAdded"] as? Bool == true, let index = allow.firstIndex(of: Self.progressTool) { allow.remove(at: index) }
+            }
+            manifest.removeValue(forKey: "progressPlugin")
+        }
+        func place(_ key: String, _ dictionary: [String: Any], in target: inout [String: Any]) {
+            if dictionary.isEmpty { target.removeValue(forKey: key) } else { target[key] = dictionary }
+        }
+        place("extraKnownMarketplaces", markets, in: &value); place("enabledPlugins", enabled, in: &value)
+        if allow.isEmpty { permissions.removeValue(forKey: "allow") } else { permissions["allow"] = allow }
+        place("permissions", permissions, in: &value)
+    }
+    private func pluginFiles(home: URL) -> [(url: URL, data: Data)]? {
+        guard let resource = L10n.sharedResourceBundle.url(forResource: "claude_progress_mcp", withExtension: "py"),
+              let server = try? Data(contentsOf: resource) else { return nil }
+        let root = pluginRoot(home: home), plugin = root.appendingPathComponent("pacer"), script = plugin.appendingPathComponent("progress_mcp.py")
+        let catalog: [String: Any] = ["name": Self.marketplace, "owner": ["name": "Codex Pacer"],
+            "plugins": [["name": "pacer", "source": "./pacer", "description": "Reports progress to Pacer's progress ring."]]]
+        let manifest: [String: Any] = ["name": "pacer", "version": "1.0.0", "description": "Reports progress to Pacer's progress ring.",
+            "mcpServers": ["pacer": ["command": python, "args": ["-S", script.path, "--home", home.path]]]]
+        guard let catalogData = try? JSONSerialization.data(withJSONObject: catalog, options: [.prettyPrinted, .sortedKeys]),
+              let manifestData = try? JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]) else { return nil }
+        return [(root.appendingPathComponent(".claude-plugin/marketplace.json"), catalogData),
+                (plugin.appendingPathComponent(".claude-plugin/plugin.json"), manifestData), (script, server)]
+    }
+    private func writePlugin(home: URL) throws {
+        guard let files = pluginFiles(home: home) else { throw Failure.invalidSettings }
+        let root = pluginRoot(home: home), plugin = root.appendingPathComponent("pacer")
+        for folder in [root, root.appendingPathComponent(".claude-plugin"), plugin, plugin.appendingPathComponent(".claude-plugin")] {
+            try safe(folder); if !storage.isDirectory(folder) { try storage.createDirectory(folder, permissions: 0o700) }
+        }
+        for file in files where (try? storage.read(file.url)) != file.data { try safe(file.url); try storage.replace(file.url, with: file.data, permissions: 0o600) }
+    }
+    private func pluginOutdated(home: URL) -> Bool {
+        guard let files = pluginFiles(home: home) else { return false }
+        return files.contains { (try? storage.read($0.url)) != $0.data }
     }
     private func setDisplayObserver(_ hooks: inout [String: Any], wanted: Bool, home: URL) {
         let groups = hooks[displayEvent] as? [[String: Any]] ?? []

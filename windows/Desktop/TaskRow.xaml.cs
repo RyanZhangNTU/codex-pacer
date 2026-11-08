@@ -30,11 +30,21 @@ public partial class TaskRow : Button
         MouseEnter += (_, _) => { hovered = true; UpdateHover(); };
         MouseLeave += (_, _) => { hovered = false; UpdateHover(); };
         Unloaded += (_, _) => { hovered = false; hoverRevision++; hover?.Dispose(); hover = null; HoverProgress = 0; };
-        Loaded += (_, _) => ApplyAppearance();
+        Loaded += (_, _) => { ApplyAppearance(); if (!progressShown) { progressShown = true; ShowProgress(); } };
     }
+    private bool progressShown;
+    /// The ring and the state share one 28-pt icon, as on the Mac.
+    private void ShowProgress()
+    {
+        var state = (TaskRowState)DataContext;
+        var color = state.StatusInk is SolidColorBrush solid ? solid.Color : Colors.White;
+        Icon.Show(state.Value, color, animations && IsVisible);
+    }
+    /// The row's status icon; read by the presentation checks.
+    internal TaskStatusIcon StatusIcon => Icon;
     internal void SetOpenAction(Action? action, string help, bool animate)
-    { open = action; IsEnabled = action != null; Focusable = IsEnabled; AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); }
-    internal void SetAnimations(bool value) { animations = value; if (!value) UpdateHover(); }
+    { open = action; IsEnabled = action != null; Focusable = IsEnabled; AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Icon.SetMotion(animate); }
+    internal void SetAnimations(bool value) { animations = value; Icon.SetMotion(value); if (!value) UpdateHover(); }
     internal void ApplyAppearance() => UpdateHover();
     private void UpdateHover()
     {
@@ -74,7 +84,7 @@ internal sealed class TaskRowState(EngineTaskRow value)
         : Value.Failed ? PacerPalette.Danger : PacerPalette.Secondary;
     public Brush StatusInk => Value.Attention != null || Value.Phase == "waitingForInput" ? PacerPalette.Attention
         : Value.Failed ? PacerPalette.Danger : Value.Dimmed ? PacerPalette.Secondary
-        : Value.Phase == "interrupted" ? PacerPalette.Paused : Value.Phase is "running" or "completed" ? ProviderInk : PacerPalette.Secondary;
+        : Value.Phase == "interrupted" || Value.Symbol == "pause.circle" ? PacerPalette.Paused : Value.Phase is "running" or "completed" ? ProviderInk : PacerPalette.Secondary;
     public Brush RateInk => Value.RateIsFresh && !Value.Dimmed ? PacerPalette.Primary : PacerPalette.Secondary;
     public Brush DurationInk => Value.Phase == "running" ? PacerPalette.Ink(245, 245, 245, 199) : PacerPalette.Secondary;
     public string? RateText => Value.RateText ?? Value.RatePlaceholder;
@@ -89,7 +99,8 @@ internal sealed class TaskRowState(EngineTaskRow value)
     public Visibility PeakVisible => Visible(Value.PeakCost);
     public Visibility EffortVisible => Visible(Value.Effort != null);
     public string SourceSymbol => Value.SourceKind == "cloud" ? "cloud" : "server.rack";
-    public string AccessibleName => string.Join(", ", new[] { Value.Provider, Value.Title, Value.Status, Value.Source,
+
+    public string AccessibleName => string.Join(", ", new[] { Value.Provider, Value.Title, Value.Status, Value.ProgressText, Value.Source,
         Value.Model, Value.Effort, RateText + RateUnit, Value.TurnTime, Value.Cost }.Where(s => !string.IsNullOrEmpty(s)));
     private static Visibility Visible(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 }

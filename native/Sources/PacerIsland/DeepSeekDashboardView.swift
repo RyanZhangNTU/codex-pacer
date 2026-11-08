@@ -272,6 +272,8 @@ private struct DeepSeekBudgetRing: View {
 struct DeepSeekDialCell: View {
     @ObservedObject var model: IslandModel
     let size: CGFloat
+    /// Overview's card already names the service above the dial.
+    var showsName = true
 
     var body: some View {
         let wallet = model.deepseekWallet
@@ -281,7 +283,9 @@ struct DeepSeekDialCell: View {
                 if budget { DeepSeekBudgetDial(wallet: wallet, now: model.now, size: size) }
                 else { DeepSeekDayDial(model: model, wallet: wallet, size: size) }
                 HStack(spacing: 5) {
-                    Text(AgentProvider.deepseek.displayName).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.primary)
+                    if showsName {
+                        Text(AgentProvider.deepseek.displayName).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.primary)
+                    }
                     if budget {
                         let reading = (wallet.daily ?? wallet.weekly).map { DeepSeekBudgetReading(period: $0, now: model.now) }
                         if let verdict = reading?.verdict, verdict == .fast { QuotaVerdictChip(verdict: verdict) }

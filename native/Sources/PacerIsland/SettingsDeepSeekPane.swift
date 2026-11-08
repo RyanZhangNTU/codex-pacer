@@ -40,49 +40,21 @@ struct DeepSeekBudgetSettings: Equatable {
     }
 }
 
-/// The balance and how long it lasts beside the module switch, with the price clock.
-struct DeepSeekSettingsSummary: View {
-    @ObservedObject var model: IslandModel
-
-    var body: some View {
-        let wallet = model.deepseekWallet
-        HStack(spacing: 8) {
-            PriceClockGlyph(hourly: wallet.hourly, peaks: wallet.peakToday.map { wallet.angle(of: $0.start)...wallet.angle(of: $0.end) },
-                now: wallet.angle(of: model.now), dimmed: model.deepseekWalletDimmed, side: 24)
-                .padding(4).background(Color.black, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            if let balance = wallet.balance {
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text(DeepSeekDayDial.amount(balance.total)).font(.system(size: 14, weight: .semibold, design: .rounded))
-                    if let days = wallet.runwayDays {
-                        Text(days >= 365 ? L10n.text("deepseek.runway_year") : L10n.text("deepseek.runway_short", max(1, Int(days.rounded(.down)))))
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }.monospacedDigit()
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// DeepSeek's module page below the shared header: the balance connection,
-/// balance or budget mode, the expanded panel's content when DeepSeek is the
-/// only module, how spending shows, the price list and sessions
-/// found on this Mac. The mode is always offered; the budget amounts appear in
-/// budget mode, filled in from recent spend. The balance source sits in the
-/// connection's menu. A connected wallet shows only its state and time, never
-/// the account.
+/// DeepSeek's page below the shared header, as the draft lays it out: the
+/// balance and its connection, the dial's mode and budgets, what task rows
+/// show, prices, then where sessions are read from. A connected wallet shows
+/// only its state and time, never the account.
 struct SettingsDeepSeekSections: View {
     @ObservedObject var model: IslandModel
     @Binding var balanceSource: DeepSeekBalanceSource
     @Binding var budgets: DeepSeekBudgetSettings
     @Binding var showsTurnCost: Bool
+    @Binding var showsProgressRing: Bool
     @Binding var speedSource: String
-    @Binding var panelStyle: DeepSeekPanelStyle
-    /// DeepSeek is the only module, so the expanded panel is its own dashboard.
-    let alone: Bool
     /// The collapsed ring showing DeepSeek's budget, if any, and the way to choose one.
     let ringSlot: QuotaRingSlot?
     let openCollapsedBar: () -> Void
+    let openHistory: () -> Void
     @Binding var home: String
     let homeIssue: String?
     let commitHome: () -> Void
@@ -92,117 +64,104 @@ struct SettingsDeepSeekSections: View {
     @State private var showsLocation = !(UserDefaults.standard.string(forKey: "deepseekHome") ?? "").isEmpty
 
     var body: some View {
-        balanceSection
-        Section {
-            let average = model.deepseekWallet.averageDaily.flatMap { $0 >= 0.01 ? $0 : nil }
-            Picker(L10n.text("deepseek.mode"), selection: Binding(get: { budgets.budgetMode }, set: {
-                budgets.setBudgetMode($0, suggestion: DeepSeekBudgets.suggested(averageDaily: average))
-            })) {
-                Text(L10n.text("deepseek.mode.balance")).tag(false)
-                Text(L10n.text("deepseek.mode.budget")).tag(true)
+        balanceCard
+        modeCard
+        MainCard(title: L10n.text("deepseek.section.display"), footer: L10n.text("main.deepseek.estimate_note")) {
+            CardRow(title: L10n.text("main.deepseek.speed_basis"), info: L10n.text("main.info.speed")) {
+                MainSegmented(options: [(DeepSeekSpeedSource.local.rawValue, L10n.text("deepseek.speed_source.local")),
+                                        (DeepSeekSpeedSource.account.rawValue, L10n.text("deepseek.speed_source.account"))],
+                              selection: $speedSource, label: L10n.text("main.deepseek.speed_basis"))
             }
-            .pickerStyle(.segmented)
-            if budgets.budgetMode {
-                HStack(spacing: 4) {
-                    Text(L10n.text(ringSlot == .outer ? "deepseek.ring_hint.outer" : ringSlot == .inner ? "deepseek.ring_hint.inner" : "deepseek.ring_hint.none"))
-                        .foregroundStyle(.secondary)
-                    Button(L10n.text(ringSlot == nil ? "deepseek.ring_hint.choose" : "deepseek.ring_hint.change"), action: openCollapsedBar)
-                        .buttonStyle(.link)
-                }
-                .font(.system(size: 11))
-                // The recent average beside each field shows where the filled-in amounts came from.
-                LabeledContent(L10n.text("deepseek.budget.daily")) {
-                    budgetField($budgets.daily, label: L10n.text("deepseek.budget.daily"),
-                        reference: average.map { L10n.text("deepseek.budget.average_day", DeepSeekWallet.compactSpend($0)) })
-                }
-                LabeledContent(L10n.text("deepseek.budget.weekly")) {
-                    budgetField($budgets.weekly, label: L10n.text("deepseek.budget.weekly"),
-                        reference: average.map { L10n.text("deepseek.budget.average_week", DeepSeekWallet.compactSpend($0 * 7)) })
-                }
-                if budgets.daily != nil, budgets.weekly != nil {
-                    Picker(L10n.text("deepseek.budget.ring"), selection: $budgets.ringPeriod) {
-                        Text(L10n.text("deepseek.budget.day")).tag(DeepSeekBudgetPeriod.Kind.day)
-                        Text(L10n.text("deepseek.budget.week")).tag(DeepSeekBudgetPeriod.Kind.week)
-                    }
-                    .pickerStyle(.segmented)
-                }
-                caption(L10n.text("deepseek.budget.help"))
-            } else {
-                caption(L10n.text("deepseek.mode.balance_help"))
-            }
-        } header: {
-            Text(L10n.text("deepseek.section.mode"))
+            CardToggle(title: L10n.text("deepseek.turn_cost"), info: L10n.text("deepseek.turn_cost_help"), isOn: $showsTurnCost)
+            // A failed removal stays visible after the switch is off, with Retry.
+            let setup = model.deepseekProgressSetup.flatMap { showsProgressRing || $0 == .failed || $0 == .conflict ? $0 : nil }
+            ProgressRingToggle(info: L10n.text("deepseek.progress_ring_help"), isOn: $showsProgressRing,
+                status: setup.map { L10n.text((showsProgressRing ? "deepseek.progress_setup." : "deepseek.progress_cleanup.") + $0.rawValue) },
+                canRetry: setup == .failed || setup == .conflict, retry: { model.syncDeepSeekProgressSwitch(force: true) })
         }
-        if alone {
-            Section {
-                Picker(L10n.text("deepseek.panel_style"), selection: $panelStyle) {
-                    ForEach([DeepSeekPanelStyle.simple, .detailed]) { style in Text(style.label).tag(style) }
-                }
-                .pickerStyle(.segmented)
-                caption(L10n.text("deepseek.panel_style_help"))
-            } header: {
-                Text(L10n.text("deepseek.section.panel"))
+        MainCard(title: L10n.text("deepseek.section.pricing")) {
+            DeepSeekPeakTimeline(now: model.now).padding(.vertical, 4)
+            CardRow(title: L10n.text("main.deepseek.estimate"), info: L10n.text("deepseek.pricing_note")) {
+                Link(L10n.text("deepseek.price_list"), destination: IslandModel.deepseekPricingURL).font(.system(size: 12.5))
             }
         }
-        Section {
-            Picker(L10n.text("deepseek.speed_basis"), selection: $speedSource) {
-                Text(L10n.text("deepseek.speed_source.local")).tag(DeepSeekSpeedSource.local.rawValue)
-                Text(L10n.text("deepseek.speed_source.account")).tag(DeepSeekSpeedSource.account.rawValue)
-            }
-            .pickerStyle(.segmented)
-            caption(L10n.text("deepseek.speed_basis_help"))
-        } header: {
-            Text(L10n.text("deepseek.speed"))
-        }
-        Section {
-            Toggle(isOn: $showsTurnCost) {
-                Text(L10n.text("deepseek.turn_cost"))
-                Text(L10n.text("deepseek.turn_cost_help"))
-            }
-        } header: {
-            Text(L10n.text("deepseek.section.display"))
-        }
-        Section {
-            DeepSeekPeakTimeline(now: model.now)
-            caption(L10n.text("deepseek.pricing_note"))
-            Link(L10n.text("deepseek.price_list"), destination: IslandModel.deepseekPricingURL).font(.system(size: 12))
-        } header: {
-            Text(L10n.text("deepseek.section.pricing"))
-        }
-        Section(L10n.text("provider.section.local")) {
+        MainCard {
             let status = model.providerStreamStatuses(.deepseek)["local"]
-            row(L10n.text("deepseek.sessions"), state: L10n.text(status?.connected == true ? "provider.state.found" : "provider.state.no_home"),
-                tint: status?.connected == true ? .green : .secondary)
-            DisclosureGroup(L10n.text("provider.custom_locations"), isExpanded: $showsLocation) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        TextField(L10n.text("deepseek.home"), text: $home, prompt: Text("~/.dsh")).onSubmit(commitHome)
-                        Button(L10n.text("common.choose"), action: chooseHome)
-                    }
-                    if let homeIssue { caption(homeIssue).foregroundStyle(.orange) }
-                }.padding(.top, 6)
+            CardDisclosure(title: L10n.text("provider.custom_locations"),
+                summary: home.isEmpty ? L10n.text(status?.connected == true ? "provider.state.found" : "provider.state.no_home") : L10n.text("main.location.custom"),
+                isExpanded: $showsLocation)
+            if showsLocation {
+                CardStatusRow(title: L10n.text("deepseek.sessions"),
+                    state: L10n.text(status?.connected == true ? "provider.state.found" : "provider.state.no_home"),
+                    tint: status?.connected == true ? MainPalette.positive : .secondary)
+                CardPathField(title: L10n.text("deepseek.home"), text: $home, prompt: "~/.dsh", issue: homeIssue,
+                    commit: commitHome, choose: chooseHome)
             }
         }
     }
 
-    @ViewBuilder private var balanceSection: some View {
-        Section {
+    private var balanceCard: some View {
+        MainCard(title: L10n.text("deepseek.section.balance")) {
+            if let balance = model.deepseekWallet.balance {
+                CardRow(title: L10n.text("deepseek.section.balance")) {
+                    Text(DeepSeekDayDial.amount(balance.total)).font(.system(size: 15, weight: .semibold, design: .rounded)).monospacedDigit()
+                    if let days = model.deepseekWallet.runwayDays {
+                        Text(days >= 365 ? L10n.text("deepseek.runway_year") : L10n.text("deepseek.runway_short", max(1, Int(days.rounded(.down)))))
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                    Button(L10n.text("main.quota.trend"), action: openHistory).buttonStyle(.link).font(.system(size: 12.5))
+                }
+            }
             connectionRow
             // How the source was found matters while signing in or after choosing one by hand.
-            if connection.showDetection { caption(connection.detectedText) }
+            if connection.showDetection { CardRow(title: connection.detectedText) }
             if connection.keyEditor { keyEditor }
-        } header: {
-            Text(L10n.text("deepseek.section.balance"))
+        }
+    }
+
+    private var modeCard: some View {
+        let average = model.deepseekWallet.averageDaily.flatMap { $0 >= 0.01 ? $0 : nil }
+        return MainCard(title: L10n.text("deepseek.section.mode"),
+                        footer: L10n.text(budgets.budgetMode ? "main.deepseek.budget_note" : "main.deepseek.balance_note")) {
+            CardRow(title: L10n.text("deepseek.mode")) {
+                MainSegmented(options: [(false, L10n.text("deepseek.mode.balance")), (true, L10n.text("deepseek.mode.budget"))],
+                    selection: Binding(get: { budgets.budgetMode }, set: {
+                        budgets.setBudgetMode($0, suggestion: DeepSeekBudgets.suggested(averageDaily: average))
+                    }), label: L10n.text("deepseek.mode"))
+            }
+            if budgets.budgetMode {
+                // The recent average beside each field shows where the filled-in amounts came from.
+                CardRow(title: L10n.text("deepseek.budget.daily")) {
+                    budgetField($budgets.daily, label: L10n.text("deepseek.budget.daily"),
+                        reference: average.map { L10n.text("deepseek.budget.average_day", DeepSeekWallet.compactSpend($0)) })
+                }
+                CardRow(title: L10n.text("deepseek.budget.weekly")) {
+                    budgetField($budgets.weekly, label: L10n.text("deepseek.budget.weekly"),
+                        reference: average.map { L10n.text("deepseek.budget.average_week", DeepSeekWallet.compactSpend($0 * 7)) })
+                }
+                if budgets.daily != nil, budgets.weekly != nil {
+                    CardRow(title: L10n.text("deepseek.budget.ring")) {
+                        MainSegmented(options: [(DeepSeekBudgetPeriod.Kind.day, L10n.text("deepseek.budget.day")),
+                                                (.week, L10n.text("deepseek.budget.week"))],
+                                      selection: $budgets.ringPeriod, label: L10n.text("deepseek.budget.ring"))
+                    }
+                }
+                CardRow(title: L10n.text(ringSlot == .outer ? "deepseek.ring_hint.outer" : ringSlot == .inner ? "deepseek.ring_hint.inner" : "deepseek.ring_hint.none")) {
+                    Button(L10n.text(ringSlot == nil ? "deepseek.ring_hint.choose" : "deepseek.ring_hint.change"), action: openCollapsedBar)
+                        .buttonStyle(.link).font(.system(size: 12.5))
+                }
+            }
         }
     }
 
     private func budgetField(_ value: Binding<Double?>, label: String, reference: String?) -> some View {
         HStack(spacing: 4) {
-            if let reference { Text(reference).font(.system(size: 11)).foregroundStyle(.secondary).padding(.trailing, 6) }
+            if let reference { Text(reference).font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.trailing, 6) }
             Text("¥").foregroundStyle(.secondary)
             TextField(label, value: value, format: .number.precision(.fractionLength(0...2)), prompt: Text(L10n.text("deepseek.budget.off")))
-                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 64).labelsHidden()
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 72).labelsHidden()
         }
+        .font(.system(size: 12.5))
     }
 
     private var connection: DeepSeekConnectionPresentation {
@@ -213,16 +172,17 @@ struct SettingsDeepSeekSections: View {
     @ViewBuilder private var connectionRow: some View {
         let presentation = connection
         let tint: Color = switch presentation.color {
-        case .green: .green
-        case .orange: .orange
+        case .green: MainPalette.positive
+        case .orange: MainPalette.attention
         case .secondary: .secondary
         }
-        row(presentation.title, state: presentation.text, tint: tint) {
+        CardStatusRow(title: presentation.title, state: presentation.text, tint: tint) {
             switch presentation.action {
             case .signIn:
-                Button(presentation.actionLabel ?? "") { model.connectDeepSeek() }
+                Button(presentation.actionLabel ?? "") { model.connectDeepSeek() }.buttonStyle(.mainProminent)
             case .refresh:
-                Button(presentation.actionLabel ?? "") { model.refreshDeepSeekBalance(force: true) }.disabled(model.deepseekRefreshing)
+                Button(presentation.actionLabel ?? "") { model.refreshDeepSeekBalance(force: true) }.buttonStyle(.main)
+                    .disabled(model.deepseekRefreshing)
             case nil: EmptyView()
             }
             Menu {
@@ -244,30 +204,23 @@ struct SettingsDeepSeekSections: View {
     }
 
     @ViewBuilder private var keyEditor: some View {
-        HStack {
-            SecureField(L10n.text("deepseek.paste_key"), text: $key, prompt: Text("sk-…")).onSubmit(saveKey)
-            Button(L10n.text("common.save"), action: saveKey).disabled(key.isEmpty)
-            if DeepSeekAPIKeyStore.exists { Button(L10n.text("deepseek.remove_key")) { model.removeDeepSeekConnection() } }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                SecureField(L10n.text("deepseek.paste_key"), text: $key, prompt: Text("sk-…")).textFieldStyle(.roundedBorder)
+                    .labelsHidden().onSubmit(saveKey)
+                Button(L10n.text("common.save"), action: saveKey).buttonStyle(.mainProminent).disabled(key.isEmpty)
+                if DeepSeekAPIKeyStore.exists {
+                    Button(L10n.text("deepseek.remove_key")) { model.removeDeepSeekConnection() }.buttonStyle(.main)
+                }
+            }
+            Text(keyIssue ?? L10n.text("deepseek.key_help")).font(.system(size: 11.5))
+                .foregroundStyle(keyIssue == nil ? Color.secondary : MainPalette.attention).fixedSize(horizontal: false, vertical: true)
         }
-        caption(keyIssue ?? L10n.text("deepseek.key_help")).foregroundStyle(keyIssue == nil ? Color.secondary : Color.orange)
     }
     private func saveKey() {
         // The field clears either way; a key never stays in view state.
         defer { key = "" }
         keyIssue = model.saveDeepSeekAPIKey(key) ? nil : L10n.text("deepseek.key_invalid")
-    }
-
-    private func row<Action: View>(_ title: String, state: String, tint: Color, @ViewBuilder action: () -> Action = { EmptyView() }) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-            Spacer(minLength: 8)
-            Circle().fill(tint).frame(width: 6, height: 6).accessibilityHidden(true)
-            Text(state).foregroundStyle(tint == .orange ? Color.orange : Color.secondary)
-            action()
-        }
-    }
-    private func caption(_ text: String) -> some View {
-        Text(text).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
 

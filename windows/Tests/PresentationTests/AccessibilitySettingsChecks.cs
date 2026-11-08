@@ -17,21 +17,23 @@ internal static class AccessibilitySettingsChecks
     internal static async Task Run(string language, AppearanceFixture appearance, EngineClient engine, IslandWindow island)
     {
         int saves = 0, configurations = 0, subscribers = appearance.Subscribers;
-        var session = new PreferencesSession(new(), _ => { configurations++; return Task.CompletedTask; }, _ => { saves++; return true; });
+        // General holds the switches and picker this audit drives; Overview is checked with the other pages below.
+        var session = new PreferencesSession(new() { LastSettingsPane = "general" }, _ => { configurations++; return Task.CompletedTask; }, _ => { saves++; return true; });
         var window = new SettingsWindow(UiText.For(language == "zh-Hans"), session, new Startup(), true, engine: engine,
             surfaceWindow: island, appearanceSource: appearance) { ShowActivated = false, IsHitTestVisible = false };
         try
         {
             window.Show(); await Drain();
             appearance.Set(appearance.Current with { Dark = false }); await Drain();
-            Check(ColorOf(window.Resources["SettingsBackground"]) == Colors.White, "An injected light theme immediately repaints settings");
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(244, 244, 246), "An injected light theme immediately repaints settings");
             appearance.Set(appearance.Current with { Dark = true }); await Drain();
-            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(31, 31, 31), "An injected dark theme immediately repaints settings");
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(27, 27, 30), "An injected dark theme immediately repaints settings");
             appearance.Set(appearance.Current with { HighContrast = true }); await Drain();
             Check(ColorOf(window.Resources["SettingsBackground"]) == appearance.Current.Colors.Window
                 && ColorOf(window.Resources["SettingsAccent"]) == appearance.Current.Colors.Highlight
                 && ColorOf(window.Resources["SettingsDisabled"]) == appearance.Current.Colors.Disabled,
-                "High contrast uses semantic background, selection and disabled colors");
+                "High contrast uses semantic background, selection and disabled colors: " + ColorOf(window.Resources["SettingsBackground"]) + "/" + appearance.Current.Colors.Window
+                + " " + ColorOf(window.Resources["SettingsAccent"]) + "/" + appearance.Current.Colors.Highlight + " " + ColorOf(window.Resources["SettingsDisabled"]) + "/" + appearance.Current.Colors.Disabled);
             var selected = Find<RadioButton>(window, "settings.pane.general");
             Check(ColorOf(selected.Foreground) == appearance.Current.Colors.HighlightText, "The selected navigation choice uses semantic selection text");
             Check(saves == 0 && configurations == 0, "System appearance changes do not save preferences or configure collectors");
@@ -54,20 +56,41 @@ internal static class AccessibilitySettingsChecks
             await AuditHandle(((HwndSource)PresentationSource.FromVisual(selectedItem)!).Handle, "settings.language.popup");
             languageChoice.IsDropDownOpen = false; await Drain();
             Check(saves == 0 && configurations == 0, "Inspecting and closing the current choice does not commit a preference");
+            // The window theme overrides Windows, and a single accent tints controls and shades the services, as on the Mac.
+            appearance.Set(appearance.Current with { Dark = false, HighContrast = false }); await Drain();
+            await session.ChangeAsync(p => p with { AppTheme = "dark", AccentColor = "purple" }); await Drain();
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(27, 27, 30) && ColorOf(window.Resources["SettingsAccent"]) == Color.FromRgb(0xBF, 0x5A, 0xF2),
+                "The dark theme overrides a light Windows and the accent tints the controls");
+            Check(((SolidColorBrush)PacerPalette.Codex).Color == Color.FromRgb(0xBF, 0x5A, 0xF2) && ((SolidColorBrush)PacerPalette.Claude).Color == AccentPalette.Lighten(Color.FromRgb(0xBF, 0x5A, 0xF2), .42),
+                "A single accent turns the services into its shades");
+            await session.ChangeAsync(p => p with { AppTheme = "light" }); await Drain();
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(244, 244, 246), "The light theme applies at once");
+            Check(SettingsPalette.Contrast(ColorOf(window.Resources["SettingsLinkText"]), ColorOf(window.Resources["SettingsCard"])) >= 4.5, "Links keep readable contrast on light cards");
+            // A dim Windows accent (a dark warm gray) still gives links readable text on dark cards, without changing the control fill.
+            var dim = Color.FromRgb(0x58, 0x4B, 0x46); var probe = new ResourceDictionary();
+            SettingsPalette.Apply(probe, true, true, main: true, accent: dim);
+            Check(ColorOf(probe["SettingsAccent"]) == dim && SettingsPalette.Contrast(ColorOf(probe["SettingsLinkText"]), ColorOf(probe["SettingsCard"])) >= 4.5
+                && SettingsPalette.Contrast(ColorOf(probe["SettingsLinkText"]), Colors.Black) >= 4.5, "A dim accent's links are lightened until readable on dark and island cards");
+            await session.ChangeAsync(p => p with { AppTheme = "auto", AccentColor = "multicolor" }); await Drain();
+            Check(ColorOf(window.Resources["SettingsAccent"]) == Color.FromRgb(0, 122, 255) && ((SolidColorBrush)PacerPalette.Codex).Color == ((SolidColorBrush)PacerPalette.BrandCodex).Color,
+                "Multicolor restores the brand colors, and checks keep the classic blue");
+            appearance.Set(appearance.Current with { Dark = true }); await Drain();
             appearance.Set(appearance.Current with { HighContrast = false }); await Drain();
-            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(31, 31, 31), "Leaving high contrast restores the selected system theme");
+            Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(27, 27, 30), "Leaving high contrast restores the selected system theme");
             var privacy = Find<CheckBox>(window, "settings.hide_projects");
             window.Activate(); Check(privacy.Focus(), "A settings switch accepts keyboard focus");
             CheckFocusOrder(window, privacy); privacy.Focus();
             PostKey(window, Key.Space); await PresentationWait.UntilAsync(() => session.Current.HideProjects, "Space toggles a focused settings choice");
             await session.WaitForChangesAsync();
-            foreach (string pane in new[] { "appearance", "collapsed", "reminders", "codex", "claude", "deepseek", "whatsNew", "help", "support", "general" })
+            foreach (string page in new[] { "overview", "history", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "whatsNew", "help", "support", "general" })
             {
-                await window.NavigateAsync(pane); await ShellProjection.WhenIdleAsync(); await Drain(); window.UpdateLayout();
-                if (pane is "whatsNew" or "help" or "support")
+                // What's New and Help are tabs of Help & Updates.
+                string pane = SettingsWindow.CanonicalPane(page);
+                await window.NavigateAsync(page); await ShellProjection.WhenIdleAsync(); await Drain(); window.UpdateLayout();
+                if (pane is "about" or "support")
                     await PresentationWait.UntilAsync(() => Descendants(window).OfType<GuideContent>().Any(value => value.Children.Count > 1), "The guide pane publishes its local catalog");
                 Check(Find<RadioButton>(window, "settings.pane." + pane).IsChecked == true, "Keyboard-accessible navigation selects " + pane);
-                await Audit(window, "settings." + pane);
+                await Audit(window, "settings." + page);
                 var choice = Find<RadioButton>(window, "settings.pane." + pane); window.Activate(); choice.Focus();
                 int beforeTheme = saves;
                 appearance.Set(appearance.Current with { HighContrast = true }); await Drain();

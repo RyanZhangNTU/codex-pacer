@@ -105,9 +105,9 @@ final class IslandPlacementTests: XCTestCase {
     }
 
     func testAPlacementSurvivesReloadAndADamagedOneFallsBackToTheOldPosition() throws {
-        let name = "pacer-island-placement-test-\(UUID().uuidString)"
+        let name = testDefaultsName("pacer-island-placement-test")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         XCTAssertNil(IslandPlacement.load(from: defaults))
         let side = IslandPlacement(edge: .left, x: 0, y: 0.55)
         side.save(to: defaults)

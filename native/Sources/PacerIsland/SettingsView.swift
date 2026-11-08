@@ -10,6 +10,9 @@ struct SettingsView: View {
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     let onClose: () -> Void
     var onShowWelcome: () -> Void = {}
+    /// The app delegate shows or hides the Dock icon as this changes.
+    var onDockIconChange: (DockIconPreference) -> Void = { _ in }
+    @State private var dockIcon = DockIconPreference.load()
     @State private var executable = UserDefaults.standard.string(forKey: "codexExecutable") ?? ""
     @State private var home = UserDefaults.standard.string(forKey: "codexHome") ?? ""
     @State private var modules = ProviderModules.load()
@@ -31,6 +34,8 @@ struct SettingsView: View {
     @State private var position = IslandPosition.saved()
     @State private var compactLayout = CompactIslandLayout.load()
     @State private var appearance = IslandAppearance.stored
+    @State private var theme = AppTheme(defaults: .standard)
+    @State private var accent = PacerAccent(defaults: .standard)
     @State private var quotaStyle = ExpandedQuotaStyle.load()
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
@@ -46,6 +51,9 @@ struct SettingsView: View {
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
     @AppStorage(IslandModel.showsClaudeCloudProjectsKey) private var showClaudeCloudProjects = true
+    @AppStorage(IslandModel.claudeProgressRingKey) private var claudeProgressRing = true
+    @AppStorage(IslandModel.codexProgressRingKey) private var codexProgressRing = true
+    @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekProgressRing = true
     @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
@@ -65,37 +73,26 @@ struct SettingsView: View {
         if !(defaults.string(forKey: "claudeHome") ?? "").isEmpty { result.insert(.claude) }
         return result
     }()
-    @State private var pane = UserDefaults.standard.string(forKey: SettingsPane.defaultsKey).flatMap(SettingsPane.init(rawValue:)) ?? .general
+    @State private var pane = SettingsPane.load()
     /// A row a link elsewhere asked for, scrolled into view when its pane opens.
     @State private var scrollTarget: String?
-    private static let gaugeAnchor = "quotaGauge"
+    private static let gaugeAnchor = SettingsCollapsedBarPane.inspectorAnchor
+    /// The component whose settings the Collapsed Bar page shows.
+    @State private var collapsedSelection: CompactIslandLayout.Component?
     private var languageChanges: Bool { language.resolved() != L10n.language }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                sidebar
-                Divider()
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(pane.title).font(.system(size: 20, weight: .semibold))
-                        .padding(.horizontal, 28).padding(.top, 20)
-                    ScrollViewReader { proxy in
-                        Form { paneContent }
-                            .formStyle(.grouped)
-                            .task {
-                                guard let target = scrollTarget else { return }
-                                scrollTarget = nil
-                                try? await Task.sleep(nanoseconds: 150_000_000)
-                                withAnimation { proxy.scrollTo(target, anchor: .center) }
-                            }
-                    }
-                    .id(pane)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
+        HStack(spacing: 0) {
+            MainWindowSidebar(selection: $pane, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
+                needsAttention: needsAttention, updateVersion: updater.flow.available?.version)
+                .background(SidebarMaterial())
+            Rectangle().fill(Color.black.opacity(0.25)).frame(width: 1)
+            detail.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: 780, height: 600)
+        .ignoresSafeArea(.container, edges: .top)
+        .frame(minWidth: 860, idealWidth: 980, minHeight: 560, idealHeight: 660)
         .environment(\.locale, L10n.locale)
+        .pacerAccent(accent)
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
             launchAtLogin.refresh()
@@ -112,6 +109,7 @@ struct SettingsView: View {
         .onChange(of: pane) { _, value in UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey) }
         // Settings apply as they change, like System Settings; there is no Save.
         .onChange(of: liveSettings) { _, _ in scheduleApply() }
+        .onChange(of: theme) { _, value in value.apply() }
         // A drag or Return to Top Center saved the display and position itself.
         .onChange(of: model.placementRevision) { _, _ in
             displayMode = IslandDisplayMode.load()
@@ -121,299 +119,259 @@ struct SettingsView: View {
         .onChange(of: focusedText) { previous, _ in if let previous { commit(previous) } }
         .onChange(of: automaticUpdateChecks) { _, value in updater.setAutomaticallyChecks(value) }
         .onChange(of: language) { _, value in value.save(to: .standard); languageError = nil }
+        .onChange(of: dockIcon) { _, value in value.save(); onDockIconChange(value) }
         .onDisappear {
             if let focusedText { commit(focusedText) }
             if applyTask != nil { applyNow() }
         }
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 10) {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 32, height: 32).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Codex Pacer").font(.system(size: 13, weight: .semibold))
-                    Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? L10n.text("build.development"))
-                        .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+    /// Overview and History lay out their own cards; every other page is one
+    /// centered column of cards under its header.
+    private var detail: some View {
+        Group {
+            switch pane {
+            case .overview: OverviewPane(model: model, updater: updater, attention: attentionItems, open: { pane = $0 })
+            case .history: HistoryPane(model: model)
+            default:
+                ScrollViewReader { proxy in
+                    MainPage {
+                        pageHeader
+                        paneContent
+                    }
+                    .task {
+                        guard let target = scrollTarget else { return }
+                        scrollTarget = nil
+                        try? await Task.sleep(nanoseconds: 150_000_000)
+                        withAnimation { proxy.scrollTo(target, anchor: .center) }
+                    }
                 }
             }
-            .padding(.horizontal, 8).padding(.top, 16).padding(.bottom, 14)
-            ForEach([SettingsPane.general, .appearance, .collapsedBar, .reminders]) { sidebarRow($0) }
-            Text(L10n.text("provider.modules")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
-            ForEach([SettingsPane.codex, .claude, .deepseek, .connections]) { sidebarRow($0) }
-            Spacer(minLength: 0)
-            sidebarRow(.whatsNew)
-            sidebarRow(.help)
-            sidebarRow(.support)
-            Button { model.onQuit?() } label: {
-                Label(L10n.text("common.quit"), systemImage: "power").font(.system(size: 12)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 8).frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).padding(.bottom, 10)
         }
-        .padding(.horizontal, 10)
-        .frame(width: 210)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.primary.opacity(0.03))
+        .id(pane)
+        .background(MainPalette.page)
     }
 
-    private func sidebarRow(_ item: SettingsPane) -> some View {
-        let selected = pane == item
-        let disabledModule = item.provider.map { !moduleEnabled($0) } ?? false
-        return Button { pane = item } label: {
-            HStack(spacing: 9) {
-                SettingsIconTile(symbol: item.symbol, tint: item.tint, glyph: item.glyphColor)
-                Text(item.title).font(.system(size: 13)).foregroundStyle(selected ? Color.white : Color.primary)
-                Spacer(minLength: 4)
-                if disabledModule {
-                    Text(L10n.text("settings.module_off")).font(.system(size: 11))
-                        .foregroundStyle(selected ? Color.white.opacity(0.8) : Color.secondary)
-                }
+    @ViewBuilder private var pageHeader: some View {
+        if let provider = pane.provider {
+            providerHeader(provider)
+        } else {
+            switch pane {
+            case .remote: PageHeader(title: pane.title, subtitle: SettingsConnectionsPane.summaryText(model))
+            case .notifications: PageHeader(title: pane.title, subtitle: L10n.text("main.subtitle.notifications"))
+            case .collapsedBar: PageHeader(title: pane.title, subtitle: L10n.text("main.collapsed.subtitle")) {
+                Button(L10n.text("common.restore_defaults")) { compactLayout = .standard }.buttonStyle(.main)
             }
-            .padding(.horizontal, 8).frame(height: 30)
-            .background(selected ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .contentShape(Rectangle())
+            default: PageHeader(title: pane.title)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func providerHeader(_ provider: AgentProvider) -> some View {
+        HStack(spacing: 14) {
+            SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72), size: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(provider.displayName).font(.system(size: 22, weight: .bold)).accessibilityAddTraits(.isHeader)
+                HStack(spacing: 6) {
+                    Text(L10n.text(model.providerDetected(provider) ? "provider.detected" : "provider.not_detected") +
+                        (moduleMode(provider) == .automatic ? " · " + L10n.text("provider.automatic") : ""))
+                    if moduleMode(provider) != .automatic {
+                        Button(L10n.text("provider.restore_automatic")) { modules.setMode(.automatic, for: provider) }
+                            .buttonStyle(.link)
+                    }
+                }
+                .font(.system(size: 12.5)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Toggle(provider.displayName, isOn: moduleBinding(provider)).labelsHidden().toggleStyle(.switch)
+        }
+    }
+
+    /// What Claude needs from the user, if anything, as its state's text key.
+    private var claudeAttentionKey: String? {
+        guard moduleEnabled(.claude) else { return nil }
+        if model.claudeLocalSetup == .failed { return "provider.state.failed" }
+        if model.claudeNeedsOrganizationSelection { return "claude.account.workspace_needed" }
+        if model.claudeConnectionNeeded { return "claude.account.signed_out" }
+        return nil
+    }
+
+    private func needsAttention(_ pane: SettingsPane) -> Bool {
+        switch pane {
+        case .claude: claudeAttentionKey != nil
+        case .codex: moduleEnabled(.codex) && cliReport.map { $0.selected == nil } == true
+        case .remote: SettingsConnectionsPane.problemCount(model) > 0
+        default: false
+        }
+    }
+
+    private var attentionItems: [OverviewAttention] {
+        var items: [OverviewAttention] = []
+        if let key = claudeAttentionKey {
+            let (action, perform): (String, () -> Void) = switch key {
+            case "provider.state.failed": (L10n.text("connections.retry"), { model.retryClaudeLocalSetup() })
+            case "claude.account.workspace_needed": (L10n.text("claude.quota.choose_workspace"), { model.chooseClaudeOrganization() })
+            default: (L10n.text("claude.quota.connect"), { model.signInClaudeQuota() })
+            }
+            items.append(.init(id: "claude", title: AgentProvider.claude.displayName + " · " + L10n.text(key),
+                detail: L10n.text("main.attention.quota_waits"), action: action, perform: perform))
+        }
+        if needsAttention(.codex) {
+            items.append(.init(id: "codex", title: "Codex CLI · " + L10n.text("provider.state.not_found"),
+                detail: L10n.text("main.attention.codex_cli"), action: L10n.text("main.overview.open"), perform: { pane = .codex }))
+        }
+        let problems = SettingsConnectionsPane.problemCount(model)
+        if problems > 0 {
+            items.append(.init(id: "remote", title: L10n.text("main.pane.remote"),
+                detail: L10n.text(problems == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying", problems),
+                action: L10n.text("main.overview.open"), perform: { pane = .remote }))
+        }
+        return items
     }
 
     @ViewBuilder private var paneContent: some View {
         switch pane {
         case .general:
-            UpdateSettingsView(updater: updater, automaticallyChecks: $automaticUpdateChecks)
-            Section {
-                Toggle(isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) })) {
-                    Text(L10n.text("settings.open_at_login"))
-                    Text(L10n.text("settings.open_at_login_detail"))
-                }
+            MainCard(title: L10n.text("main.section.startup")) {
+                CardToggle(title: L10n.text("settings.open_at_login"),
+                    isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) }))
                 if launchAtLogin.needsApproval {
-                    HStack(spacing: 8) {
-                        caption(L10n.text("settings.login_item_approval")).foregroundStyle(.orange)
-                        Spacer(minLength: 8)
-                        Button(L10n.text("settings.login_item_open")) { launchAtLogin.openSystemSettings() }
+                    CardRow(title: L10n.text("settings.login_item_approval")) {
+                        Button(L10n.text("settings.login_item_open")) { launchAtLogin.openSystemSettings() }.buttonStyle(.main)
                     }
+                    .foregroundStyle(MainPalette.attention)
                 }
-                if let failure = launchAtLogin.failure { caption(failure).foregroundStyle(.orange) }
+                if let failure = launchAtLogin.failure { warning(failure) }
+                CardPicker(title: L10n.text("main.dock"), info: L10n.text("main.dock_info"), selection: $dockIcon,
+                           options: DockIconPreference.allCases.map { ($0, $0.label) })
             }
-            Section {
-                Picker(L10n.text("language.label"), selection: $language) {
-                    ForEach(LanguagePreference.allCases, id: \.rawValue) { preference in
-                        Text(preference.label).tag(preference)
-                    }
-                }
+            MainCard(title: L10n.text("main.section.language")) {
+                CardPicker(title: L10n.text("language.label"), selection: $language,
+                           options: LanguagePreference.allCases.map { ($0, $0.label) })
                 if languageChanges {
-                    HStack(spacing: 8) {
-                        caption(L10n.text("language.restart_hint"))
-                        Spacer(minLength: 8)
-                        Button(L10n.text("language.restart_now")) { relaunchForLanguage() }
+                    CardRow(title: L10n.text("language.restart_hint")) {
+                        Button(L10n.text("language.restart_now")) { relaunchForLanguage() }.buttonStyle(.mainProminent)
                     }
                 }
-                if let languageError { caption(languageError).foregroundStyle(.orange) }
+                if let languageError { warning(languageError) }
             }
-            Section {
-                Toggle(isOn: $hideProjects) {
-                    Text(L10n.text("settings.hide_projects"))
-                    Text(L10n.text("settings.hide_projects_help"))
-                }
-                Toggle(isOn: $showsAppButtons) {
-                    Text(L10n.text("settings.app_buttons"))
-                    Text(L10n.text("settings.app_buttons_help"))
-                }
+            MainCard(title: L10n.text("main.privacy")) {
+                CardToggle(title: L10n.text("settings.hide_projects"), info: L10n.text("settings.hide_projects_help"), isOn: $hideProjects)
             }
         case .appearance:
-            SettingsAppearancePane(model: model, appearance: $appearance, displayMode: $displayMode, position: $position,
-                displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle,
+            SettingsAppearancePane(model: model, theme: $theme, appearance: $appearance, accent: $accent, displayMode: $displayMode, position: $position,
+                displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle, deepseekPanelStyle: $deepseekPanelStyle,
+                showsAppButtons: $showsAppButtons,
                 deepseekAlone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek])
         case .collapsedBar:
-            let enabled = AgentProvider.allCases.filter { moduleEnabled($0) }
-            Section {
-                CompactLayoutEditor(model: model, layout: $compactLayout, providers: Set(enabled))
-            }
-            componentSection(.tasks, enabled: enabled)
-            componentSection(.performance, enabled: enabled)
-            componentSection(.quota, enabled: enabled)
-            componentSection(.warnings, enabled: enabled)
-        case .reminders:
-            // The collapsed bar already shows replies, approvals, endings and
-            // quota; only warnings and the system notification are chosen here.
-            // With DeepSeek alone, the quota-window and SSH kinds never apply.
-            Section {
-                if AgentProvider.allCases.contains(where: { $0 != .deepseek && moduleEnabled($0) }) {
-                    warningRow(.fiveHour) { FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint) }
-                    warningRow(.ssh) { Image(systemName: StatusSymbols.sshWarning).font(.system(size: 11, weight: .semibold)) }
-                    warningRow(.quotaDelay) { Image(systemName: StatusSymbols.freshness).font(.system(size: 11, weight: .semibold)) }
-                }
-                if moduleEnabled(.deepseek) {
-                    deepseekWarningRow(.lowBalance, detail: L10n.text("reminders.low_balance_detail"), samples: [.lowBalance, .exhausted]) {
-                        Text(L10n.text("reminders.low_balance"))
-                        amountField($deepseekLowBalance, label: L10n.text("reminders.low_balance"), automatic: model.deepseekAutomaticLowLine)
-                    }
-                    deepseekWarningRow(.spendSpike, detail: L10n.text("reminders.spike_detail"), samples: [.spike]) {
-                        Text(L10n.text("reminders.spike"))
-                        amountField($deepseekSpikeLimit, label: L10n.text("reminders.spike"), automatic: model.deepseekAutomaticSpikeLimit)
-                    }
-                    deepseekWarningRow(.budget, detail: L10n.text("reminders.budget_detail"), samples: [.nearingBudget(.day), .overBudget(.week)]) {
-                        Text(L10n.text("reminders.budget"))
-                    }
-                }
-            } header: {
-                Text(L10n.text("reminders.section.warnings"))
-            } footer: {
-                if moduleEnabled(.deepseek) {
-                    HStack(spacing: 4) {
-                        Text(L10n.text("reminders.one_at_a_time")).foregroundStyle(.secondary)
-                        Button(L10n.text("reminders.budget_link")) { pane = .deepseek }.buttonStyle(.link)
-                    }.font(.system(size: 11))
-                }
-            }
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 12) {
-                        IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth) {
-                            Image(systemName: "bell.badge").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
-                        }
-                        Toggle(isOn: Binding(get: { notificationPreference.enabled }, set: { notificationPreference.setEnabled($0) })) {
-                            Text(L10n.text("settings.system_notifications"))
-                            Text(L10n.text("settings.system_notifications_detail"))
-                        }
-                    }
-                    if notificationPreference.denied {
-                        caption(L10n.text("settings.notification_denied")).foregroundStyle(.orange)
-                            .padding(.leading, IslandSampleSwatch<EmptyView>.compactWidth + 12)
-                    }
-                }
-            }
-            Section {
-                Picker(L10n.text("reminders.retention"), selection: $completedRetention) {
-                    Text(L10n.text("settings.five_minutes")).tag(5)
-                    Text(L10n.text("settings.fifteen_minutes")).tag(15)
-                    Text(L10n.text("settings.thirty_minutes")).tag(30)
-                    Text(L10n.text("settings.one_hour")).tag(60)
-                    Text(L10n.text("settings.four_hours")).tag(240)
-                    Text(L10n.text("settings.until_clicked")).tag(0)
-                }
-            }
+            SettingsCollapsedBarPane(model: model, layout: $compactLayout, selection: $collapsedSelection, singleTask: $singleTask,
+                metric: $metric, windowID: $windowID, claudeWindowID: $claudeWindowID, quotaRings: $quotaRings,
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, deepseekHasBudget: !deepseekBudgets.isEmpty,
+                openNotifications: { pane = .notifications })
+        case .notifications:
+            SettingsNotificationsPane(model: model, notificationPreference: notificationPreference, layout: $compactLayout,
+                retention: $completedRetention, lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek })
         case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
-        case .whatsNew:
-            SettingsWhatsNewPane(launchAtLogin: launchAtLogin)
-        case .help:
-            SettingsHelpPane(module: AgentProvider.allCases.first(where: moduleEnabled) ?? .codex, onShowWelcome: onShowWelcome)
-        case .support:
-            SettingsSupportPane()
-        case .connections:
+        case .remote:
             SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
+        case .about:
+            SettingsAboutPane(updater: updater, automaticallyChecks: $automaticUpdateChecks, launchAtLogin: launchAtLogin,
+                onShowWelcome: onShowWelcome)
+        case .support:
+            SettingsSupportPane()
+        case .overview, .history:
+            EmptyView()
         }
     }
 
+    /// A service page: its state, then what it shows, with file locations
+    /// folded away. The quota trend lives on History.
     @ViewBuilder private func providerPane(_ provider: AgentProvider) -> some View {
-        Section {
-            HStack(spacing: 12) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72), size: 38)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(provider.displayName).font(.system(size: 14, weight: .semibold))
-                    Text(L10n.text(model.providerDetected(provider) ? "provider.detected" : "provider.not_detected") +
-                        (moduleMode(provider) == .automatic ? " · " + L10n.text("provider.automatic") : ""))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                if provider == .deepseek, moduleEnabled(.deepseek) { DeepSeekSettingsSummary(model: model) }
-                Toggle(provider.displayName, isOn: moduleBinding(provider)).labelsHidden().toggleStyle(.switch)
-            }
-            .padding(.vertical, 2)
-        } footer: {
-            if moduleMode(provider) != .automatic {
-                HStack {
-                    Spacer()
-                    Button(L10n.text("provider.restore_automatic")) { modules.setMode(.automatic, for: provider) }
-                        .font(.system(size: 11)).buttonStyle(.link)
-                }
-            }
-        }
-        if moduleEnabled(provider), provider == .deepseek {
+        if !moduleEnabled(provider) {
+            MainCard { CardRow(title: L10n.text("main.module_off_hint")) }
+        } else if provider == .deepseek {
             SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
-                showsTurnCost: $showsDeepSeekTurnCost, speedSource: $deepseekSpeedSource, panelStyle: $deepseekPanelStyle,
-                alone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek],
+                // Like Codex, the switch applies at once, so turning it off and quitting still removes the entry.
+                showsTurnCost: $showsDeepSeekTurnCost, showsProgressRing: Binding(get: { deepseekProgressRing }, set: { value in
+                    deepseekProgressRing = value
+                    model.syncDeepSeekProgressSwitch()
+                }),
+                speedSource: $deepseekSpeedSource,
                 ringSlot: model.deepseekValueShowsBudget ? QuotaRingSlot(rawValue: model.compactRingProviders.firstIndex(of: .deepseek) ?? 0) : nil,
                 openCollapsedBar: {
+                    collapsedSelection = .quotaGauge
                     scrollTarget = Self.gaugeAnchor
                     pane = .collapsedBar
-                }, home: $deepseekHome, homeIssue: textIssues[.deepseekHome],
+                }, openHistory: { pane = .history }, home: $deepseekHome, homeIssue: textIssues[.deepseekHome],
                 commitHome: { commit(.deepseekHome) }, chooseHome: chooseDeepSeekHome)
-        } else if moduleEnabled(provider) {
-            localSection(provider)
-            if model.enabledProviders.contains(provider) { quotaHistorySection(provider) }
-        }
-    }
-
-    /// Both modules read the same way: what was found on this Mac, a button only
-    /// when something needs the user, and path overrides folded away.
-    private func localSection(_ provider: AgentProvider) -> some View {
-        Section(L10n.text("provider.section.local")) {
-            if provider == .codex { codexCLIRow; embeddedSessionsToggle(.codex) } else {
-                claudeMonitoringRow; claudeAccountRow
-                Toggle(isOn: $showClaudeCloudProjects) {
-                    Text(L10n.text("claude.cloud_projects"))
-                    Text(L10n.text("claude.cloud_projects_help"))
+        } else {
+            MainCard(title: L10n.text("main.section.status")) {
+                if provider == .codex { codexCLIRow } else { claudeMonitoringRow; claudeAccountRow }
+                if model.enabledProviders.contains(provider) {
+                    ProviderQuotaRow(model: model, provider: provider, openHistory: { pane = .history })
                 }
-                embeddedSessionsToggle(.claude)
             }
-            DisclosureGroup(L10n.text("provider.custom_locations"), isExpanded: Binding(
-                get: { expandedLocations.contains(provider) },
-                set: { if $0 { expandedLocations.insert(provider) } else { expandedLocations.remove(provider) } })) {
-                VStack(alignment: .leading, spacing: 10) {
+            MainCard(title: L10n.text("main.section.display")) {
+                if provider == .codex {
+                    CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.codex_embedded"), isOn: $showEmbeddedCodexSessions)
+                    let setup = codexProgressRing ? model.codexProgressSetup : nil
+                    ProgressRingToggle(info: L10n.text("codex.progress_ring_help"), isOn: Binding(get: { codexProgressRing }, set: { value in
+                            codexProgressRing = value
+                            model.syncCodexProgressSwitch()
+                        }),
+                        status: setup.map { L10n.text("codex.progress_setup." + $0.rawValue) },
+                        canRetry: setup == .failed || setup == .missingCLI || setup == .conflict,
+                        retry: { model.syncCodexProgressSwitch(force: true) })
+                } else {
+                    CardToggle(title: L10n.text("main.claude.cloud"), info: L10n.text("main.info.claude_cloud"), isOn: $showClaudeCloudProjects)
+                    CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.claude_embedded"), isOn: $showEmbeddedClaudeSessions)
+                    CardToggle(title: L10n.text("main.claude.ring"), info: L10n.text("main.info.claude_ring"), isOn: $claudeProgressRing)
+                }
+            }
+            MainCard {
+                CardDisclosure(title: L10n.text("provider.custom_locations"), summary: locationSummary(provider),
+                    isExpanded: Binding(get: { expandedLocations.contains(provider) },
+                        set: { if $0 { expandedLocations.insert(provider) } else { expandedLocations.remove(provider) } }))
+                if expandedLocations.contains(provider) {
                     if provider == .codex { codexLocations } else { claudeLocations }
-                }.padding(.top, 6)
+                }
             }
-        }
-    }
-    private func embeddedSessionsToggle(_ provider: AgentProvider) -> some View {
-        Toggle(isOn: provider == .codex ? $showEmbeddedCodexSessions : $showEmbeddedClaudeSessions) {
-            Text(L10n.text(provider.rawValue + ".embedded_sessions"))
-            Text(L10n.text(provider.rawValue + ".embedded_sessions_help"))
         }
     }
 
-    private func statusRow<Action: View>(_ title: String, state: String, tint: Color, help: String? = nil,
-                                         @ViewBuilder action: () -> Action) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-            Spacer(minLength: 8)
-            Circle().fill(tint).frame(width: 6, height: 6).accessibilityHidden(true)
-            Text(state).foregroundStyle(tint == .orange ? Color.orange : Color.secondary)
-            action()
+    private func locationSummary(_ provider: AgentProvider) -> String {
+        if provider == .codex {
+            return executable.isEmpty && home.isEmpty ? L10n.text("settings.auto_discovery") : L10n.text("main.location.custom")
         }
-        .help(help ?? "")
+        return claudeHome.isEmpty ? (resolvedClaudeHome as NSString).abbreviatingWithTildeInPath : L10n.text("main.location.custom")
     }
 
     private var codexCLIRow: some View {
         let report = cliReport
         let (tint, state): (Color, String) = report == nil ? (.secondary, L10n.text("provider.state.searching")) :
-            report?.selected != nil ? (.green, L10n.text("provider.state.found")) : (.orange, L10n.text("provider.state.not_found"))
-        return VStack(alignment: .leading, spacing: 4) {
-            statusRow("Codex CLI", state: state, tint: tint, help: report?.selected?.url.path) {
-                if report != nil, report?.selected == nil {
-                    Button(L10n.text("settings.rescan")) { cliScanRevision += 1 }
-                }
+            report?.selected != nil ? (MainPalette.positive, L10n.text("provider.state.found")) : (MainPalette.attention, L10n.text("provider.state.not_found"))
+        return CardStatusRow(title: "Codex CLI", state: state, tint: tint, help: report?.selected?.url.path,
+                             detail: report?.selected == nil ? report?.issue : nil) {
+            if report != nil, report?.selected == nil {
+                Button(L10n.text("settings.rescan")) { cliScanRevision += 1 }.buttonStyle(.main)
             }
-            if let issue = report?.issue, report?.selected == nil { caption(issue) }
         }
     }
 
     private var claudeMonitoringRow: some View {
         let (tint, state): (Color, String) = switch model.claudeLocalSetup {
-        case .ready: (.green, L10n.text("provider.state.ready"))
+        case .ready: (MainPalette.positive, L10n.text("provider.state.ready"))
         case .checking, .configuring: (.secondary, L10n.text("provider.state.configuring"))
         case .missingHome: (.secondary, L10n.text("provider.state.no_home"))
-        case .failed: (.orange, L10n.text("provider.state.failed"))
+        case .failed: (MainPalette.attention, L10n.text("provider.state.failed"))
         }
-        return statusRow(L10n.text("provider.monitoring"), state: state, tint: tint,
-                         help: model.claudeLocalSetup == .failed ? L10n.text("claude.monitoring_setup_failed") : nil) {
+        return CardStatusRow(title: L10n.text("provider.monitoring"), state: state, tint: tint,
+                             help: model.claudeLocalSetup == .failed ? L10n.text("claude.monitoring_setup_failed") : nil) {
             if model.claudeLocalSetup == .failed {
-                Button(L10n.text("connections.retry")) { model.retryClaudeLocalSetup() }
+                Button(L10n.text("connections.retry")) { model.retryClaudeLocalSetup() }.buttonStyle(.main)
             }
         }
     }
@@ -424,20 +382,20 @@ struct SettingsView: View {
         let workspace = model.claudeNeedsOrganizationSelection, signedOut = model.claudeConnectionNeeded && !workspace
         let signedIn = !model.claudeConnectionNeeded && model.claudeQuotaSource != nil
         let (tint, key): (Color, String) =
-            workspace ? (.orange, "claude.account.workspace_needed") :
-            signedOut ? (.orange, "claude.account.signed_out") :
-            signedIn ? (.green, "claude.account.signed_in") :
+            workspace ? (MainPalette.attention, "claude.account.workspace_needed") :
+            signedOut ? (MainPalette.attention, "claude.account.signed_out") :
+            signedIn ? (MainPalette.positive, "claude.account.signed_in") :
             model.providerRefreshing(.claude) ? (.secondary, "claude.account.checking") : (.secondary, "claude.account.unavailable")
         let unavailable = model.providerRefreshing(.claude) || resolvedClaudeHome != model.claudeHome.path || !model.isModuleEnabled(.claude)
-        return statusRow(L10n.text("claude.account"), state: L10n.text(key), tint: tint,
-                         help: signedIn ? model.claudeQuotaSource?.label : nil) {
+        return CardStatusRow(title: L10n.text("claude.account"), state: L10n.text(key), tint: tint,
+                             help: signedIn ? model.claudeQuotaSource?.label : nil) {
             Group {
                 if workspace {
                     Button(L10n.text("claude.quota.choose_workspace")) { model.chooseClaudeOrganization() }
-                        .help(L10n.text("claude.quota.choose_workspace_help"))
+                        .buttonStyle(.main).help(L10n.text("claude.quota.choose_workspace_help"))
                 } else if signedOut {
                     Button(L10n.text("claude.quota.connect")) { model.signInClaudeQuota() }
-                        .help(L10n.text("claude.quota.connect_help"))
+                        .buttonStyle(.mainProminent).help(L10n.text("claude.quota.connect_help"))
                 } else {
                     Menu {
                         Button(L10n.text(signedIn ? "claude.account.switch" : "claude.quota.connect")) { model.signInClaudeQuota() }
@@ -453,240 +411,32 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var codexLocations: some View {
-        HStack {
-            TextField(L10n.text("settings.cli_path"), text: $executable, prompt: Text(L10n.text("settings.auto_discovery")))
-                .focused($focusedText, equals: .cli).onSubmit { commit(.cli) }
-            if let report = cliReport, report.candidates.count > 1 {
-                Menu(L10n.text("settings.other_locations")) {
+        CardPathField(title: L10n.text("settings.cli_path"), text: $executable, prompt: L10n.text("settings.auto_discovery"),
+            issue: textIssues[.cli], focus: $focusedText, field: .cli, commit: { commit(.cli) }, choose: { choose(directory: false) },
+            extra: cliReport.flatMap { report in
+                report.candidates.count > 1 ? AnyView(Menu(L10n.text("settings.other_locations")) {
                     ForEach(report.candidates) { candidate in
                         Button(L10n.text("settings.cli_candidate", candidate.source, candidate.url.path)) {
                             executable = candidate.url.path; commit(.cli)
                         }
                     }
-                }.fixedSize()
-            }
-            Button(L10n.text("common.choose")) { choose(directory: false) }
-        }
-        if let issue = textIssues[.cli] { caption(issue).foregroundStyle(.orange) }
-        HStack {
-            TextField(L10n.text("settings.codex_home"), text: $home, prompt: Text(L10n.text("settings.home_placeholder")))
-                .focused($focusedText, equals: .codexHome).onSubmit { commit(.codexHome) }
-            Button(L10n.text("common.choose")) { choose(directory: true) }
-        }
-        if let issue = textIssues[.codexHome] { caption(issue).foregroundStyle(.orange) }
+                }.fixedSize()) : nil
+            })
+        CardPathField(title: L10n.text("settings.codex_home"), text: $home, prompt: L10n.text("settings.home_placeholder"),
+            issue: textIssues[.codexHome], focus: $focusedText, field: .codexHome, commit: { commit(.codexHome) },
+            choose: { choose(directory: true) })
     }
 
     @ViewBuilder private var claudeLocations: some View {
-        HStack {
-            TextField(L10n.text("provider.claude_home"), text: $claudeHome, prompt: Text("~/.claude"))
-                .focused($focusedText, equals: .claudeHome).onSubmit { commit(.claudeHome) }
-            Button(L10n.text("common.choose")) { chooseClaudeHome() }
-        }
-        if let issue = textIssues[.claudeHome] { caption(issue).foregroundStyle(.orange) }
+        CardPathField(title: L10n.text("provider.claude_home"), text: $claudeHome, prompt: "~/.claude",
+            issue: textIssues[.claudeHome], focus: $focusedText, field: .claudeHome, commit: { commit(.claudeHome) },
+            choose: chooseClaudeHome)
     }
 
-    /// One grouped section per component category. Each component is a single
-    /// row (a stable row count keeps the table-backed Form valid); options that
-    /// only matter while it is shown sit inside that row, under its title.
-    private func componentSection(_ group: CompactIslandLayout.Group, enabled: [AgentProvider]) -> some View {
-        Section {
-            ForEach(group.components.filter { $0.isAvailable(for: Set(enabled)) }) { component in
-                VStack(alignment: .leading, spacing: 8) {
-                    CompactComponentToggle(component: component, layout: $compactLayout)
-                    componentOptions(component, enabled: enabled)
-                }
-                .id(component == .quotaGauge ? Self.gaugeAnchor : component.rawValue)
-            }
-            if group == .quota {
-                if enabled.isEmpty {
-                    caption(L10n.text("layout.no_quota_providers"))
-                } else if compactLayout.components.contains(where: { group.components.contains($0) }) {
-                    if enabled.contains(.codex) { quotaWindowPicker(.codex, selection: $windowID) }
-                    if enabled.contains(.claude) { quotaWindowPicker(.claude, selection: $claudeWindowID) }
-                }
-            }
-        } header: {
-            Text(group.label)
-        }
-    }
-    /// The value choice follows the quota value, or its label when the value is hidden;
-    /// the ring choices sit under the rings.
-    @ViewBuilder private func componentOptions(_ component: CompactIslandLayout.Component, enabled: [AgentProvider]) -> some View {
-        let shown = compactLayout.components
-        if component == .warnings, shown.contains(.warnings) {
-            Button(L10n.text("layout.warnings_choose")) { pane = .reminders }
-                .buttonStyle(.link).font(.system(size: 12))
-                .padding(.leading, CompactComponentToggle.optionInset)
-        } else if component == .activity, shown.contains(.activity) {
-            Picker(L10n.text("layout.single_task"), selection: $singleTask) {
-                ForEach(ActivityBadgeSingleTask.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            .padding(.leading, CompactComponentToggle.optionInset)
-        } else if (component == .quota && shown.contains(.quota)) ||
-                    (component == .quotaLabel && shown.contains(.quotaLabel) && !shown.contains(.quota)) {
-            Picker(L10n.text("settings.compact_metric"), selection: $metric) {
-                Text(L10n.text("settings.remaining_quota")).tag("remaining")
-                Text(L10n.text("settings.pace_percentage")).tag("pace")
-            }
-            .padding(.leading, CompactComponentToggle.optionInset)
-        } else if component == .quotaGauge, shown.contains(.quotaGauge), !enabled.isEmpty {
-            ringPickers(enabled)
-        }
-    }
-
-    /// Turning a warning on also brings the warnings slot back if it was removed
-    /// from the bar, so this switch alone decides what shows.
-    private func warningRow<Sample: View>(_ warning: CompactIslandLayout.Warning, @ViewBuilder sample: () -> Sample) -> some View {
-        HStack(spacing: 12) {
-            IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth, content: sample)
-            Toggle(warning.label, isOn: warningBinding(warning))
-        }
-    }
-    private func warningBinding(_ warning: CompactIslandLayout.Warning) -> Binding<Bool> {
-        Binding(get: { compactLayout.warnings.contains(warning) && compactLayout.components.contains(.warnings) },
-            set: { on in
-                if on, !compactLayout.components.contains(.warnings) {
-                    // A removed slot comes back with only the warning just chosen.
-                    compactLayout.warnings = [warning]
-                    compactLayout.move(.warnings, to: .trailing, before: compactLayout.trailing.first)
-                } else if on { compactLayout.warnings.insert(warning) }
-                else { compactLayout.warnings.remove(warning) }
-            })
-    }
-    /// DeepSeek's reminders carry their line in the title and both capsule states in the sample.
-    private func deepseekWarningRow<Title: View>(_ warning: CompactIslandLayout.Warning, detail: String, samples: [DeepSeekAlert],
-                                                 @ViewBuilder title: () -> Title) -> some View {
-        HStack(spacing: 12) {
-            IslandSampleSwatch(width: IslandSampleSwatch<EmptyView>.compactWidth) {
-                HStack(spacing: 3) { ForEach(Array(samples.enumerated()), id: \.offset) { DeepSeekAlertGlyph(alert: $0.element) } }
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) { title() }
-                caption(detail)
-            }
-            Spacer(minLength: 8)
-            Toggle(warning.label, isOn: warningBinding(warning)).labelsHidden().toggleStyle(.switch)
-        }
-    }
-    /// An empty field follows the rules; its placeholder shows the amount they give now.
-    private func amountField(_ value: Binding<Double?>, label: String, automatic: Double) -> some View {
-        let shown = automatic.rounded() == automatic || automatic >= 100 ? String(Int(automatic.rounded())) : String(format: "%.1f", automatic)
-        return HStack(spacing: 3) {
-            Text("¥").foregroundStyle(.secondary)
-            TextField(label, value: Binding(get: { value.wrappedValue }, set: { value.wrappedValue = $0.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } }),
-                      format: .number.precision(.fractionLength(0...2)), prompt: Text(L10n.text("reminders.amount_auto", shown)))
-                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 64).labelsHidden()
-        }
-    }
-    /// Which module each collapsed ring shows. Unset follows the modules.
-    @ViewBuilder private func ringPickers(_ enabled: [AgentProvider]) -> some View {
-        let automatic: [AgentProvider] = {
-            var result = Array(enabled.filter { $0 != .deepseek }.prefix(2))
-            if result.count == 1, enabled.contains(.deepseek) { result.append(.deepseek) }
-            return result
-        }()
-        let current = QuotaRingSlot.allCases.map { slot -> String in
-            let saved = quotaRings[slot.rawValue]
-            if saved.isEmpty, quotaRings.allSatisfy(\.isEmpty) { return slot.rawValue < automatic.count ? automatic[slot.rawValue].rawValue : "none" }
-            return saved.isEmpty ? "none" : saved
-        }
-        ForEach(QuotaRingSlot.allCases, id: \.self) { slot in
-            Picker(L10n.text(slot == .outer ? "layout.ring_outer" : "layout.ring_inner"), selection: Binding(get: { current[slot.rawValue] }, set: { value in
-                quotaRings = current; quotaRings[slot.rawValue] = value
-            })) {
-                ForEach(enabled, id: \.self) { Text($0.displayName).tag($0.rawValue) }
-                Text(L10n.text("layout.ring_none")).tag("none")
-            }
-            .padding(.leading, CompactComponentToggle.optionInset)
-        }
-        if current.contains(AgentProvider.deepseek.rawValue), enabled.contains(.deepseek) {
-            caption(L10n.text(deepseekBudgets.isEmpty ? "layout.ring_deepseek_needs_budget" : "layout.ring_deepseek"))
-                .padding(.leading, CompactComponentToggle.optionInset)
-        }
-        if quotaRings.contains(where: { !$0.isEmpty }) {
-            Button(L10n.text("layout.ring_automatic")) { quotaRings = QuotaRingSlot.allCases.map { _ in "" } }
-                .buttonStyle(.link).font(.system(size: 12)).padding(.leading, CompactComponentToggle.optionInset)
-        }
-    }
-
-    private func caption(_ text: String) -> some View {
-        Text(text).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func quotaHistorySection(_ provider: AgentProvider) -> some View {
-        let presentation = model.quotaHistoryPresentation(provider)
-        return Section(presentation.title) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                if let source = presentation.sourceText { Text(source).foregroundStyle(.secondary) }
-                Spacer(minLength: 8)
-                Text(presentation.freshnessText).foregroundStyle(.secondary)
-            }
-            .font(.system(size: 11))
-            if presentation.notUpdated {
-                Label(L10n.text("common.not_updated"), systemImage: StatusSymbols.freshness)
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            if let error = presentation.errorText {
-                Text(error).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let snapshot = model.providerQuota(provider) {
-                if let cycle = model.providerCurrentCycle(provider) {
-                    QuotaCycleChart(data: QuotaChartData(cycle: cycle, resetCredits: snapshot.resetCredits, now: model.now),
-                        accent: provider.tint, referenceColor: .primary).equatable().padding(.vertical, 8)
-                } else if let placeholder = presentation.placeholder {
-                    Text(placeholder).font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-                if !presentation.buckets.isEmpty {
-                    DisclosureGroup(L10n.text("settings.quota_details")) {
-                        ForEach(presentation.buckets, id: \.id) { bucket in
-                            VStack(alignment: .leading, spacing: 12) {
-                                if let title = bucket.title {
-                                    Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                                }
-                                ForEach(bucket.windows, id: \.id) { window in
-                                    QuotaWindowView(reading: window,
-                                        accent: provider.tint, secondary: .secondary, referenceColor: .primary)
-                                }
-                            }.padding(.vertical, 8)
-                        }
-                    }
-                    .disclosureGroupStyle(FullRowDisclosureStyle())
-                }
-                if presentation.account != nil {
-                    AccountUsageView(snapshot: snapshot, now: model.now, showsExpiryDetails: Binding(
-                        get: { showsResetExpiryDetails.contains(provider) },
-                        set: { if $0 { showsResetExpiryDetails.insert(provider) } else { showsResetExpiryDetails.remove(provider) } }))
-                }
-            } else {
-                Text(presentation.placeholder ?? "")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            if let warning = presentation.warning {
-                Label(L10n.text("quota.chart_warning"), systemImage: "exclamationmark.circle")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).help(warning)
-            }
-            HStack(spacing: 12) {
-                Button(presentation.refreshTitle) {
-                    model.retryQuotaConnection(for: provider)
-                }
-            }.font(.system(size: 11)).disabled(presentation.refreshing)
-        }
-    }
-
-    /// An earlier saved window id shows as its period and is kept until a new choice.
-    /// A weekly-only account has nothing to choose, so it shows 7 days as a value.
-    @ViewBuilder private func quotaWindowPicker(_ provider: AgentProvider, selection: Binding<String>) -> some View {
-        let title = L10n.text("provider.window_selection", provider.displayName)
-        if model.providerIsWeeklyOnly(provider) {
-            LabeledContent(title) { Text(QuotaWindowSelection.weekly.label).foregroundStyle(.secondary) }
-        } else {
-            Picker(title, selection: Binding(
-                get: { QuotaWindowSelection(saved: selection.wrappedValue, snapshot: model.providerQuota(provider)) },
-                set: { selection.wrappedValue = $0.rawValue })) {
-                ForEach(QuotaWindowSelection.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-        }
+    /// One card per component category. Options that only matter while a
+    /// component is shown sit in its row, under its title.
+    private func warning(_ text: String) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
     }
 
     private func moduleMode(_ provider: AgentProvider) -> ProviderModuleMode { modules.mode(for: provider) }
@@ -734,11 +484,12 @@ struct SettingsView: View {
     /// Every non-text setting; any change is written and applied shortly
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
-        LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance,
+        LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance, theme: theme, accent: accent,
             quotaStyle: quotaStyle, deepseekPanelStyle: deepseekPanelStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
-            showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
+            showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
+            codexProgressRing: codexProgressRing, deepseekProgressRing: deepseekProgressRing,
             showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
             quotaRings: quotaRings)
     }
@@ -769,6 +520,8 @@ struct SettingsView: View {
             defaults.removeObject(forKey: key)
         }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
+        defaults.set(theme.rawValue, forKey: AppTheme.defaultsKey)
+        defaults.set(accent.rawValue, forKey: PacerAccent.defaultsKey)
         quotaStyle.save(to: defaults)
         deepseekPanelStyle.save(to: defaults)
         defaults.set(fullscreen, forKey: "showInFullscreen")
@@ -852,6 +605,8 @@ private struct LiveSettings: Equatable {
     var position: IslandPosition?
     var layout: CompactIslandLayout
     var appearance: IslandAppearance
+    var theme: AppTheme
+    var accent: PacerAccent
     var quotaStyle: ExpandedQuotaStyle
     var deepseekPanelStyle: DeepSeekPanelStyle
     var fullscreen: Bool
@@ -868,80 +623,16 @@ private struct LiveSettings: Equatable {
     var showEmbeddedClaudeSessions: Bool
     var showEmbeddedCodexSessions: Bool
     var showClaudeCloudProjects: Bool
+    var claudeProgressRing: Bool
     var deepseekSource: DeepSeekBalanceSource
     var deepseekLowBalance: Double?
+    var codexProgressRing: Bool
+    var deepseekProgressRing: Bool
     var showsDeepSeekTurnCost: Bool
     var deepseekSpeedSource: String
     var deepseekSpikeLimit: Double?
     var deepseekBudgets: DeepSeekBudgetSettings
     var quotaRings: [String]
-}
-
-enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, appearance, collapsedBar, reminders, codex, claude, deepseek, connections, whatsNew, help, support
-    static let defaultsKey = "settingsPane"
-    var id: String { rawValue }
-    init(provider: AgentProvider) {
-        switch provider {
-        case .codex: self = .codex
-        case .claude: self = .claude
-        case .deepseek: self = .deepseek
-        }
-    }
-    var provider: AgentProvider? {
-        switch self {
-        case .codex: .codex
-        case .claude: .claude
-        case .deepseek: .deepseek
-        default: nil
-        }
-    }
-    var title: String {
-        switch self {
-        case .general: return L10n.text("settings.pane.general")
-        case .appearance: return L10n.text("settings.pane.appearance")
-        case .collapsedBar: return L10n.text("settings.pane.collapsed")
-        case .reminders: return L10n.text("settings.reminders")
-        case .codex: return AgentProvider.codex.displayName
-        case .claude: return AgentProvider.claude.displayName
-        case .deepseek: return AgentProvider.deepseek.displayName
-        case .connections: return L10n.text("settings.pane.connections")
-        case .whatsNew: return L10n.text("whats_new.window_title")
-        case .help: return L10n.text("settings.pane.help")
-        case .support: return L10n.text("settings.pane.support")
-        }
-    }
-    var symbol: String {
-        switch self {
-        case .general: return "gearshape.fill"
-        case .appearance: return "paintpalette.fill"
-        case .collapsedBar: return "rectangle.topthird.inset.filled"
-        case .reminders: return "bell.badge.fill"
-        case .codex: return AgentProvider.codex.glyph
-        case .claude: return AgentProvider.claude.glyph
-        case .deepseek: return AgentProvider.deepseek.glyph
-        case .connections: return "point.3.connected.trianglepath.dotted"
-        case .whatsNew: return "sparkles"
-        case .help: return "questionmark"
-        case .support: return "heart.fill"
-        }
-    }
-    var tint: Color {
-        switch self {
-        case .general: return Color(white: 0.52)
-        case .appearance: return Color(red: 0.44, green: 0.4, blue: 0.96)
-        case .collapsedBar: return Color(red: 0.2, green: 0.22, blue: 0.27)
-        case .reminders: return Color(red: 1, green: 0.3, blue: 0.29)
-        case .codex: return AgentProvider.codex.tint
-        case .claude: return AgentProvider.claude.tint
-        case .deepseek: return AgentProvider.deepseek.tint
-        case .connections: return Color(red: 0.16, green: 0.5, blue: 1)
-        case .whatsNew: return Color(red: 0.93, green: 0.29, blue: 0.6)
-        case .help: return Color(white: 0.52)
-        case .support: return Color(red: 0.96, green: 0.36, blue: 0.42)
-        }
-    }
-    var glyphColor: Color { provider == nil ? .white : Color.black.opacity(0.72) }
 }
 
 /// System Settings style navigation tile.

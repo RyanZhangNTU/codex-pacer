@@ -38,10 +38,10 @@ internal static class CodexSettingsChecks
                 preferences.EngineConfiguration(), referenceFixture: true);
             ready.TrySetResult();
             await Until(() => Find<TextBlock>(window, "settings.codex.cli.status").Text == ui.Text("provider.state.found"), "The provider page must inspect its saved CLI source");
-            Check(window.ClientContent.ActualWidth == 780 && window.ClientContent.ActualHeight == 600,
+            Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5,
                 "The provider page must keep the original Mac client and sidebar dimensions");
             var module = Find<CheckBox>(window, "settings.codex.enabled");
-            Check(module.IsChecked == true && module.ActualWidth == 36 && module.ActualHeight == 18,
+            Check(module.IsChecked == true && module.ActualWidth == 38 && module.ActualHeight == 22,
                 "The module switch must use the original settings geometry and actual module state");
             var embedded = Find<CheckBox>(window, "settings.codex.embedded");
             Check(embedded.IsEnabled && embedded.IsChecked == true, "The source page must expose the acknowledged embedded-session preference");
@@ -49,19 +49,33 @@ internal static class CodexSettingsChecks
             await Until(() => !session.Current.ShowEmbeddedCodexSessions && embedded.IsEnabled, "Hiding embedded sessions must await the real engine configuration");
             Toggle(embedded);
             await Until(() => session.Current.ShowEmbeddedCodexSessions && embedded.IsEnabled, "The embedded-session choice must restore immediately");
-            var remote = Find<CheckBox>(window, "settings.codex.remote_control");
+            var progress = Find<CheckBox>(window, "settings.codex.progress_ring");
+            Check(progress.IsEnabled && progress.IsChecked == true, "Codex progress is on by default, as on the Mac");
+            Toggle(progress);
+            await Until(() => !session.Current.CodexProgressRing && session.Current.ClaudeProgressRing && progress.IsEnabled &&
+                engine.LatestSnapshot?.Presentation?.Rows.All(row => row.Provider != "codex" || row.ProgressState == null) == true,
+                "Disabling Codex progress must remove only its rings after acknowledgement");
+            Toggle(progress);
+            await Until(() => session.Current.CodexProgressRing && session.Current.ClaudeProgressRing &&
+                engine.LatestSnapshot?.Presentation?.Rows.Any(row => row.Provider == "codex" && row.ProgressState == "pending") == true,
+                "Enabling Codex progress must reach the engine and show the dashed ring");
+            Toggle(progress);
+            await Until(() => !session.Current.CodexProgressRing && progress.IsEnabled, "Codex progress can be turned off again");
+            // Remote Control lives on Remote, as on the Mac.
+            await window.NavigateAsync("remote"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            var remote = Find<CheckBox>(window, "settings.connections.remote_control");
             Check(remote.IsEnabled && remote.IsChecked == true, "Remote Control defaults to the Mac preference's enabled state");
             Toggle(remote);
             await Until(() => !session.Current.MonitorRemoteControl && remote.IsEnabled, "Remote Control changes must await engine acknowledgement");
-            Check(!Find<Button>(window, "settings.codex.remote_retry").IsEnabled, "A disabled Remote Control connection cannot be retried");
             Toggle(remote);
-            await Until(() => session.Current.MonitorRemoteControl && remote.IsEnabled && Find<Button>(window, "settings.codex.remote_retry").IsEnabled,
-                "Re-enabling restores the independently retryable connection");
+            await Until(() => session.Current.MonitorRemoteControl && remote.IsEnabled, "Re-enabling Remote Control restores monitoring");
+            await window.NavigateAsync("codex"); await window.WaitForSourceInspectionAsync(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            module = Find<CheckBox>(window, "settings.codex.enabled");
             int sourceConfigurations = configurations;
             Check(Find<RadioButton>(window, "settings.pane.codex").IsChecked == true
                 && Find<RadioButton>(window, "settings.pane.claude").IsEnabled
                 && Find<RadioButton>(window, "settings.pane.deepseek").IsEnabled
-                && Find<RadioButton>(window, "settings.pane.connections").IsEnabled,
+                && Find<RadioButton>(window, "settings.pane.remote").IsEnabled,
                 "Implemented provider and connection panes must be reachable");
             window.CapturePreview(Path.Combine(output, "settings-" + name + "-codex.png"));
             var expander = Find<Expander>(window, "settings.codex.locations");

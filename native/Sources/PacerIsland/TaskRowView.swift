@@ -33,12 +33,6 @@ struct TaskRowView: View {
     }
     private var rate: OutputEstimate? { presentation.rate }
     private var turnTime: String? { presentation.turnTime }
-    static func turnTimeText(_ activity: SessionActivity, phase: ActivityPhase, now: Date) -> String? {
-        ActivityTaskRowPresentation.turnTimeText(activity, phase: phase, now: now)
-    }
-    static func isDimmed(phase: ActivityPhase, unread: Bool, attention: Bool, failed: Bool) -> Bool {
-        ActivityTaskRowPresentation.isDimmed(phase: phase, unread: unread, attention: attention, failed: failed)
-    }
     private var dimmed: Bool { presentation.dimmed }
     private var modelLabel: String { presentation.model }
     private var effortLabel: String? { presentation.effort }
@@ -53,6 +47,7 @@ struct TaskRowView: View {
     private var color: Color {
         if attention != nil { return PacerPalette.attention }
         if activity.turnFailed { return PacerPalette.danger }
+        if activity.codexGoalPause != nil { return PacerPalette.paused }
         if dimmed { return PacerPalette.secondary }
         switch phase {
         case .waitingForInput: return PacerPalette.attention
@@ -65,7 +60,17 @@ struct TaskRowView: View {
         if attention != nil || phase == .waitingForInput { return PacerPalette.attention }
         return activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
     }
-    private var symbol: String { StatusSymbols.symbol(presentation.symbol) }
+    /// A working stage shows its glyph over an orb; a request for the user or
+    /// an ending fills a disc, greyed once read; an unknown state draws a moon.
+    private var face: TaskStatusIconNSView.Face {
+        let symbol = presentation.symbol
+        switch symbol {
+        case .approval, .input, .completed, .interrupted, .failed: return .solid(symbol, read: dimmed)
+        case .unknown: return .plain(symbol)
+        default: return .working(symbol)
+        }
+    }
+    private var progressRing: TaskProgressRing? { presentation.progressRing }
 
     var body: some View {
         Button(action: action) {
@@ -95,7 +100,8 @@ struct TaskRowView: View {
     }
 
     private var accessibilityText: String {
-        let state = [unread ? L10n.text("common.not_viewed") : nil, status, turnTime, subagents > 0 ? subagentText : nil]
+        let state = [unread ? L10n.text("common.not_viewed") : nil, status, progressRing?.accessibilityText, turnTime,
+                     subagents > 0 ? subagentText : nil]
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + (activity.claudeCloud == nil || rate != nil ? ", " + performanceText : "")
@@ -104,7 +110,7 @@ struct TaskRowView: View {
 
     private func rowContent(measuring: Bool) -> some View {
         HStack(spacing: 10) {
-            StatusGlyph(symbol: symbol, tint: color)
+            statusIcon(measuring: measuring)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 16) {
                     Text(name).font(.system(size: 13, weight: .semibold))
@@ -119,6 +125,19 @@ struct TaskRowView: View {
             }
         }
         .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
+    }
+
+    /// The ring and the state share one 28 pt icon. The width probe draws
+    /// nothing, so only the shown row keeps a task's motion.
+    @ViewBuilder private func statusIcon(measuring: Bool) -> some View {
+        if measuring {
+            Color.clear.frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
+        } else {
+            TaskStatusIconView(id: activity.id, ring: progressRing, face: face, color: color, animates: !reduceMotion,
+                completionPulseOnly: activity.provider == .codex)
+                .frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
+                .accessibilityHidden(true)
+        }
     }
 
     /// Local SDK/ACP rows name the app that started their session.
@@ -147,7 +166,7 @@ struct TaskRowView: View {
                     if activity.sourceHostID != nil {
                         Image(systemName: activity.claudeCloud != nil ? "cloud" : "server.rack").font(.system(size: 9, weight: .semibold))
                     }
-                    Text(Self.middleTruncated(source, limit: 16))
+                    Text(ActivityTaskRowPresentation.middleTruncated(source, limit: 16))
                 }
                 .foregroundStyle(PacerPalette.secondary).lineLimit(1).fixedSize()
             }
@@ -193,9 +212,6 @@ struct TaskRowView: View {
         .font(.system(size: 11, weight: .medium)).foregroundStyle(activity.provider.tint)
         .opacity(dimmed ? 0.7 : 1).lineLimit(1).fixedSize()
     }
-
-    static func shortened(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.shortened(text, limit: limit) }
-    static func middleTruncated(_ text: String, limit: Int) -> String { ActivityTaskRowPresentation.middleTruncated(text, limit: limit) }
 }
 
 struct ExpandedContentIdealWidth: PreferenceKey {

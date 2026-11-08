@@ -2,6 +2,7 @@ import PacerMacSupport
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class CodexEmbeddedSessionTests: XCTestCase {
@@ -97,11 +98,11 @@ final class CodexEmbeddedSessionTests: XCTestCase {
     }
 
     private func fixture(demo: Bool = false) throws -> (IslandModel, UserDefaults, URL) {
-        let domain = "com.codexpacer.codex-embedded." + UUID().uuidString
+        let domain = testDefaultsName("codex-embedded")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-embedded-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        addTeardownBlock { defaults.removePersistentDomain(forName: domain); try? FileManager.default.removeItem(at: root) }
+        addTeardownBlock { removeTestDefaults(domain); try? FileManager.default.removeItem(at: root) }
         defaults.set(root.path, forKey: "codexHome"); defaults.set(false, forKey: "monitorSSH")
         ProviderModules(codexMode: .enabled, claudeMode: .disabled).save(to: defaults)
         let model = IslandModel(demo: demo, defaults: defaults,

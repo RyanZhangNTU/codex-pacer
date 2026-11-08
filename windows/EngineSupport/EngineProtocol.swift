@@ -39,6 +39,9 @@ struct EngineCommand: Decodable {
         var monitorSSH: Bool?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
+        var claudeProgressRing: Bool?
+        var codexProgressRing: Bool?
+        var deepseekProgressRing: Bool?
         var retentionMinutes: Int?
         var enabledProviders: [String]?
         var providerModes: [String: String]?
@@ -277,6 +280,8 @@ struct EngineSnapshot: Codable, Equatable {
     let claudeCloudConnection: EngineClaudeCloudConnection?
     let activityLinks: [EngineActivityLink]?
     let claudeSetup: EngineClaudeHookSetup?
+    let codexProgressSetup: CodexProgressSetupStatus?
+    let deepseekProgressSetup: DeepSeekProgressSetupStatus?
     let claudeRemoteSetups: [EngineClaudeRemoteSetup]?
     let connections: ConnectionPagePresentation?
     let navigationError: EngineNavigationFailure?
@@ -285,13 +290,15 @@ struct EngineSnapshot: Codable, Equatable {
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,
          hideProjects: Bool, now: Date, wallet: EngineWallet? = nil, modules: [EngineModule]? = nil, quotaDashboard: EngineQuotaDashboard? = nil,
-         showsDeepSeekTurnCost: Bool = true, compactWarnings: [CompactWarningPresentation.Item]? = nil, compactContext: CompactBarContext? = nil,
+         showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = [],
+         compactWarnings: [CompactWarningPresentation.Item]? = nil, compactContext: CompactBarContext? = nil,
          taskPresentation: ActivityTaskPresentation? = nil,
          deepseekConnection: EngineDeepSeekConnection? = nil, claudeConnection: EngineClaudeConnection? = nil,
          claudeCloudConnection: EngineClaudeCloudConnection? = nil, activityLinks: [EngineActivityLink]? = nil,
          notificationProjections: [EngineNotice]? = nil,
          navigationError: EngineNavigationFailure? = nil, openingActivityIDs: [String]? = nil, claudeSetup: EngineClaudeHookSetup? = nil,
-         claudeRemoteSetups: [EngineClaudeRemoteSetup]? = nil, connections: ConnectionPagePresentation? = nil) {
+         claudeRemoteSetups: [EngineClaudeRemoteSetup]? = nil, connections: ConnectionPagePresentation? = nil,
+         codexProgressSetup: CodexProgressSetupStatus? = nil, deepseekProgressSetup: DeepSeekProgressSetupStatus? = nil) {
         protocolVersion = EngineProtocol.version; type = "snapshot"; self.sequence = sequence
         self.demo = demo; capturedAt = now.timeIntervalSince1970
         tasks = activities.sorted { $0.id < $1.id }.map { EngineTask($0, unread: inbox.isUnread($0), hideProjects: hideProjects, at: now) }
@@ -300,7 +307,8 @@ struct EngineSnapshot: Codable, Equatable {
         let overview = taskPresentation?.overview ?? ActivityOverview(activities: activities, at: now)
         runningCount = overview.running.count; waitingCount = overview.waiting.count
         totalTokensPerSecond = overview.displayedRate; rateIsFresh = overview.rateIsFresh
-        presentation = taskPresentation.map(EnginePresentation.init) ?? EnginePresentation(activities: activities, requests: requests, inbox: inbox, hideProjects: hideProjects, at: now, showsDeepSeekTurnCost: showsDeepSeekTurnCost)
+        presentation = taskPresentation.map(EnginePresentation.init) ?? EnginePresentation(activities: activities, requests: requests, inbox: inbox, hideProjects: hideProjects, at: now,
+            showsDeepSeekTurnCost: showsDeepSeekTurnCost, progressRingProviders: progressRingProviders)
         self.wallet = wallet
         self.modules = modules
         self.quotaDashboard = quotaDashboard
@@ -311,6 +319,8 @@ struct EngineSnapshot: Codable, Equatable {
         self.claudeCloudConnection = claudeCloudConnection
         self.activityLinks = activityLinks
         self.claudeSetup = claudeSetup
+        self.codexProgressSetup = codexProgressSetup
+        self.deepseekProgressSetup = deepseekProgressSetup
         self.claudeRemoteSetups = claudeRemoteSetups
         self.connections = connections
         self.navigationError = navigationError; self.openingActivityIDs = openingActivityIDs

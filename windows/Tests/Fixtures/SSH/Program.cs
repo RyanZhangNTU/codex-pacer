@@ -81,7 +81,13 @@ def fixture_select(readers,writers,errors,timeout=None):
 select.select=fixture_select
 
 """;
-File.WriteAllText(source, shim + "\n" + code, new UTF8Encoding(false));
+// A real remote runs the command in its own shell, where one argument can be
+// 128 KiB. This Windows stand-in hands the arguments over in a file instead,
+// so CreateProcess's 32,767-character command line does not cap the payload.
+string argumentsFile = Path.Combine(root, "arguments-" + Guid.NewGuid().ToString("N") + ".txt");
+File.WriteAllText(argumentsFile, string.Join('\n', tail), new UTF8Encoding(false));
+string readArguments = "sys.argv[1:]=open(" + JsonSerializer.Serialize(argumentsFile) + ",encoding='utf-8').read().split('\\n')\n";
+File.WriteAllText(source, shim + readArguments + "\n" + code, new UTF8Encoding(false));
 try
 {
     var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("PACER_TEST_PYTHON")!)
@@ -91,11 +97,11 @@ try
         start.Environment["USERPROFILE"] = root; start.Environment["HOME"] = root;
         foreach (string key in start.Environment.Keys.Where(key => key.StartsWith("OTEL_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("CLAUDE_", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
     }
-    foreach (string argument in new[] { "-S", "-u", source }.Concat(tail)) start.ArgumentList.Add(argument);
+    foreach (string argument in new[] { "-S", "-u", source }) start.ArgumentList.Add(argument);
     using var process = Process.Start(start)!;
     _ = Task.Run(async () => { try { await input.CopyToAsync(process.StandardInput.BaseStream); process.StandardInput.Close(); } catch (IOException) { } });
     Task output = process.StandardOutput.BaseStream.CopyToAsync(Console.OpenStandardOutput());
     Task error = process.StandardError.BaseStream.CopyToAsync(Console.OpenStandardError());
     await process.WaitForExitAsync(); await Task.WhenAll(output, error); return process.ExitCode;
 }
-finally { File.Delete(source); }
+finally { File.Delete(source); File.Delete(argumentsFile); }

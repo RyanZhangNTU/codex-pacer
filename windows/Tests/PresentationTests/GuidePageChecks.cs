@@ -34,25 +34,24 @@ internal static class GuidePageChecks
         try
         {
             window.Show(); await Pump();
-            Check(window.Title == ui.Text("welcome.window_title") && AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[0], "Welcome title and first step are localized and accessible");
+            Check(window.Title == ui.Text("welcome.window_title") && AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(0), "Welcome title and first page are localized and announced");
             var highlights = Find<ScrollViewer>(window, "guide.highlights");
             var highlightsPeer = UIElementAutomationPeer.CreatePeerForElement(highlights);
-            Check(highlightsPeer.GetName() == catalog.Steps[0], "The welcome content UIA name identifies the first step");
-            Check(SelfAndDescendants(body).OfType<ActivityBadge>().Count() == 4 && SelfAndDescendants(body).OfType<CompactQuotaGlyph>().Any()
-                && SelfAndDescendants(body).OfType<WarningMark>().Any(), "The island map and three badge states use production components");
-            Check(Find<Button>(window, "welcome.next").IsDefault && Find<Button>(window, "welcome.allMarks").Focusable, "Welcome actions participate in keyboard navigation");
-            Check(Has(window, "welcome.gesture.drag") && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any()
-                && SelfAndDescendants(body).OfType<TextBlock>().Any(text => text.Text == ui.Text("welcome.gesture.snap")),
-                "The first welcome step teaches dragging and edge snapping beside an illustration");
-            var gestureLines = new[] { "welcome.gesture.hover", "welcome.gesture.leave", "welcome.gesture.drag" }
-                .Select(id => (FrameworkElement)SelfAndDescendants(body).OfType<FrameworkElement>().First(item => AutomationProperties.GetAutomationId(item) == id)).ToArray();
-            Check(gestureLines.All(line => line is StackPanel panel && panel.Children[0] is TextBlock first && first.Text.Contains(" → ")),
-                "All three gestures share one action → result style");
-            Invoke(Find<Button>(window, "welcome.allMarks")); await Pump(); Check(settingsActions.SequenceEqual(new[] { "help" }) && saved == 0, "All Marks opens Help without saving page state");
+            Check(highlightsPeer.GetName() == window.StepName(0), "The welcome content UIA name identifies the first page");
+            Check(SelfAndDescendants(body).OfType<ActivityBadge>().Any() && SelfAndDescendants(body).OfType<CompactQuotaGlyph>().Any()
+                && SelfAndDescendants(body).OfType<WarningMark>().Any(), "The island map uses production components");
+            Check(Find<Button>(window, "welcome.next").IsDefault && !Has(window, "welcome.back"), "The first page offers only Continue");
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-1-" + language + (dark ? "-dark" : "-light") + ".png"));
             Space(Find<Button>(window, "welcome.next")); await Pump();
-            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[1], "Space on the focused Next action reaches the second step");
-            Check(highlightsPeer.GetName() == catalog.Steps[1], "The same content UIA peer updates to the second step");
+            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(1) && highlightsPeer.GetName() == window.StepName(1),
+                "Space on the focused Continue reaches the display mode page on the same content peer");
+            Check(SelfAndDescendants(body).OfType<WelcomeGestureScene>().Any() && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any(), "Both display modes are shown moving");
+            Select(Find<RadioButton>(window, "welcome.mode.notch")); await Until(() => session.Current.DisplayMode == "notch");
+            Check(Find<RadioButton>(window, "welcome.mode.notch").IsChecked == true && Find<RadioButton>(window, "welcome.mode.free").IsChecked == false, "Choosing the island mode saves at once");
+            Select(Find<RadioButton>(window, "welcome.mode.free")); await Until(() => session.Current.DisplayMode == "floating");
+            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Invoke(Find<Button>(window, "welcome.next")); await Pump();
+            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(2), "Continue reaches the services page");
             foreach (string provider in new[] { "codex", "claude", "deepseek" })
             {
                 var toggle = Find<CheckBox>(window, "welcome.module." + provider); Toggle(toggle);
@@ -63,11 +62,6 @@ internal static class GuidePageChecks
             var codex = Find<CheckBox>(window, "welcome.module.codex"); var beforeRejected = session.Current;
             reject = true; Toggle(codex); await Until(() => !reject && codex.IsEnabled);
             Check(session.Current == beforeRejected && Find<TextBlock>(body, "guide.issue").Text == ui.Text("windows.settings.save_failed"), "Rejected module changes restore the acknowledged profile and show an accessible error");
-            Toggle(Find<CheckBox>(window, "welcome.notifications")); await Until(() => notifications.DesiredEnabled && !notifications.IsChanging);
-            Check(session.Current.SystemNotifications, "The welcome notification switch uses the existing permission and preference coordinator");
-            Toggle(Find<CheckBox>(window, "welcome.startup")); Check(startup.Enabled && startup.Calls == 1, "Open at Login uses the injected OS registration without an invented preference");
-            startup.Blocked = true; body.Refresh(); Check(Find<TextBlock>(window, "welcome.system.status").Text == ui.Text("windows.settings.startup_disabled"), "Blocked OS startup state remains visible");
-            Invoke(Find<Button>(window, "welcome.collapsed")); await Pump(); Check(settingsActions.Last() == "collapsed", "The collapsed-bar shortcut navigates to its settings pane");
             await session.ChangeAsync(p => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = "enabled", ["claude"] = "enabled", ["deepseek"] = "enabled" } });
             snapshot = engine.LatestSnapshot! with { Modules = new[] { new EngineModule("codex", "enabled", false, true), new EngineModule("claude", "enabled", true, true), new EngineModule("deepseek", "enabled", true, true) },
                 ClaudeConnection = new("qa-context", true, false, false, true, "workspaceNeeded", null), Wallet = null };
@@ -75,9 +69,23 @@ internal static class GuidePageChecks
             Check(Find<TextBlock>(window, "welcome.module.codex.status").Text == ui.Text("welcome.module.codex_missing")
                 && Find<Button>(window, "welcome.module.claude.action").Content!.ToString() == ui.Text("claude.quota.choose_workspace"), "Missing installation and workspace states each show the matching single action");
             Invoke(Find<Button>(window, "welcome.module.claude.action")); await Pump(); Check(settingsActions.Last() == "claude", "Workspace actions dispatch to the provider coordinator boundary");
-            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
-            Invoke(Find<Button>(window, "welcome.back")); await Pump(); Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == catalog.Steps[0], "Back restores the first step");
-            Check(highlightsPeer.GetName() == catalog.Steps[0], "Returning restores the first-step UIA name on the retained peer");
+            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-3-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Invoke(Find<Button>(window, "welcome.next")); await Pump();
+            Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(3) && Has(window, "guide.done") && !Has(window, "welcome.next"),
+                "The last page finishes with Done");
+            var rings = Find<CheckBox>(window, "welcome.rings"); Toggle(rings);
+            await Until(() => !session.Current.ClaudeProgressRing && !session.Current.CodexProgressRing && !session.Current.DeepSeekProgressRing && rings.IsEnabled);
+            Toggle(rings);
+            await Until(() => session.Current.ClaudeProgressRing && session.Current.CodexProgressRing && session.Current.DeepSeekProgressRing && rings.IsEnabled);
+            Check(rings.IsChecked == true, "One switch turns every service's progress ring on or off");
+            Toggle(Find<CheckBox>(window, "welcome.notifications")); await Until(() => notifications.DesiredEnabled && !notifications.IsChanging);
+            Check(session.Current.SystemNotifications, "The welcome notification switch uses the existing permission and preference coordinator");
+            Toggle(Find<CheckBox>(window, "welcome.startup")); Check(startup.Enabled && startup.Calls == 1, "Open at Login uses the injected OS registration without an invented preference");
+            startup.Blocked = true; body.Refresh(); Check(Find<TextBlock>(window, "welcome.system.status").Text == ui.Text("windows.settings.startup_disabled"), "Blocked OS startup state remains visible");
+            Invoke(Find<Button>(window, "welcome.collapsed")); await Pump(); Check(settingsActions.Last() == "collapsed", "The collapsed-bar shortcut navigates to its settings pane");
+            Capture(window.ClientContent, Path.Combine(output, "pages-welcome-4-" + language + (dark ? "-dark" : "-light") + ".png"));
+            Invoke(Find<Button>(window, "welcome.back")); await Pump(); Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(2), "Back returns one page");
+            Check(highlightsPeer.GetName() == window.StepName(2), "Returning updates the retained content peer");
             Invoke(Find<Button>(window, "welcome.next")); await Pump();
             Invoke(Find<Button>(window, "guide.done")); await Pump(); Check(!window.IsVisible, "The default Done action closes the guide");
         }
@@ -114,18 +122,35 @@ internal static class GuidePageChecks
         settings.WelcomeRequested += () => welcomeActions++;
         try
         {
-            settings.Show(); await Pump(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
-            Select(Find<RadioButton>(settings, "settings.pane.help")); await Until(() => Has(settings, "help.module.codex"));
-            Check(Find<RadioButton>(settings, "help.module.codex").IsChecked == true, "Help opens with the common legend and Codex details");
-            Check(Has(settings, "help.move"), "Help explains dragging, snapping and reset");
+            settings.Show(); await Pump();
+            // Help & Updates is a remembered page; its tabs, links and Support write nothing more.
+            Select(Find<RadioButton>(settings, "settings.pane.about")); await Until(() => session.Current.LastSettingsPane == "about" && Has(settings, "settings.about.help"));
+            await session.WaitForChangesAsync(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
+            Select(Find<RadioButton>(settings, "settings.about.help")); await Until(() => Has(settings, "help.module.codex"));
+            // Help opens on the collapsed bar's marks, one topic at a time, as on the Mac.
+            Check(Find<RadioButton>(settings, "help.topic.collapsed").IsChecked == true && Has(settings, "help.move") && Has(settings, "help.services") && !Has(settings, "help.hover"),
+                "Help opens on the collapsed topic and explains dragging, snapping and reset");
+            var enable = SelfAndDescendants(settings).OfType<TextBlock>().Single(text => text.Text == ui.Text("help.enable.detail"));
+            Check(enable.Visibility != Visibility.Visible, "The module footer stays hidden on the bar topics");
+            Check(new[] { "help.welcome", "guide.link.manual", "guide.link.issues" }.All(id => Find<Button>(settings, id).Focusable && AutomationProperties.GetHelpText(Find<Button>(settings, id)).Length > 0),
+                "Help's three ways in are keyboard buttons that say where they lead");
+            // Help may already be open from the remembered tab, so let its chips lay out first.
+            await Pump(); settings.UpdateLayout();
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
+            Select(Find<RadioButton>(settings, "help.topic.expanded")); await Pump();
+            Check(Has(settings, "help.hover") && !Has(settings, "help.move"), "The expanded topic replaces the collapsed marks");
             foreach (string provider in new[] { "claude", "deepseek", "codex" })
-            { Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump(); Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")), "Module legend selection replaces only local samples"); }
+            {
+                Select(Find<RadioButton>(settings, "help.module." + provider)); await Pump();
+                Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")) && !Has(settings, "help.hover") && enable.Visibility == Visibility.Visible,
+                    "Module topics show only their own samples and how to turn modules on or off");
+            }
+            Select(Find<RadioButton>(settings, "help.topic.collapsed")); await Pump();
             appearance.Set(appearance.Current with { HighContrast = true }); await Pump(); settings.UpdateLayout();
             CheckHelpProviderText(settings, appearance.Current.Colors.Text);
             appearance.Set(appearance.Current with { HighContrast = false }); await Pump(); settings.UpdateLayout();
             CheckHelpProviderText(settings, ((SolidColorBrush)settings.Resources["SettingsPrimary"]).Color);
-            Invoke(Find<Button>(settings, "help.welcome")); await Pump(); Check(welcomeActions == 1, "Help can reopen the two-step guide");
+            Invoke(Find<Button>(settings, "help.welcome")); await Pump(); Check(welcomeActions == 1, "Help can reopen the welcome guide");
             foreach (string action in new[] { "manual", "issues" }) { Invoke(Find<Button>(settings, "guide.link." + action)); await Pump(); }
             settings.CapturePreview(Path.Combine(output, "pages-help-" + language + (dark ? "-dark" : "-light") + ".png"));
             Find<Button>(settings, "guide.link.issues").BringIntoView(); await Pump();
@@ -133,18 +158,49 @@ internal static class GuidePageChecks
             Select(Find<RadioButton>(settings, "settings.pane.support")); await Until(() => Has(settings, "guide.link.star"));
             foreach (string action in new[] { "star", "feature", "bug", "donate" }) { var button = Find<Button>(settings, "guide.link." + action); Check(button.Focusable, "Support links remain keyboard reachable"); Invoke(button); await Pump(); }
             var copy = Find<Button>(settings, "support.copy"); Invoke(copy); await Pump();
-            Check(copied == note.Links["repository"] && copy.Content!.ToString() == ui.Text("support.share.copied"), "Copy dispatches the public project URL and shows localized feedback without reading the clipboard");
-            var support = SelfAndDescendants(settings).OfType<GuideContent>().Single(); Invoke(Find<Button>(settings, "support.wechat")); await Pump();
+            Check(copied == note.Links["repository"] && AutomationProperties.GetName(copy) == ui.Text("support.share.copied"), "Copy dispatches the public project URL and shows localized feedback without reading the clipboard");
+            // The QQ group sits under the bug report: its number, a copy and its code on request.
+            Check(note.QqGroup is { Length: > 0 } && SelfAndDescendants(settings).OfType<TextBlock>().Any(text => text.Text == ui.Text("support.qq.number").Replace("%@", note.QqGroup, StringComparison.Ordinal)),
+                "Support shows the QQ group's number from the shared catalog");
+            var qqCopy = Find<Button>(settings, "support.qq.copy"); Invoke(qqCopy); await Pump();
+            Check(copied == note.QqGroup && qqCopy.Content!.ToString() == ui.Text("support.share.copied"), "Copy Number dispatches only the group number and confirms it");
+            var support = SelfAndDescendants(settings).OfType<GuideContent>().Single(); Invoke(Find<Button>(settings, "support.qq.code")); await Pump();
+            Check(support.QqCodePopup?.IsOpen == true && SelfAndDescendants(support.QqCodePopup.Child).OfType<Image>().Single().ActualWidth == 220
+                && SelfAndDescendants(support.QqCodePopup.Child).OfType<TextBlock>().Any(text => text.Text == ui.Text("support.qq.hint")), "The packaged QQ group code opens only on request");
+            Check(Find<Border>(support.QqCodePopup!.Child, "support.qq.panel").Focusable, "The QQ code card can take focus, so Escape reaches it");
+            Escape(Find<Border>(support.QqCodePopup!.Child, "support.qq.panel")); await Pump();
+            Check(!support.QqCodePopup.IsOpen && settings.IsVisible, "Escape closes the QQ code before the settings window");
+            Invoke(Find<Button>(settings, "support.wechat")); await Pump();
             Check(support.SupportCodePopup?.IsOpen == true && SelfAndDescendants(support.SupportCodePopup.Child).OfType<Image>().Single().ActualWidth == 220, "The packaged WeChat QR code opens only on request");
-            var qrClose = Find<Button>(support.SupportCodePopup!.Child, "support.wechat.close"); Space(qrClose); await Pump();
+            var qrPanel = Find<Border>(support.SupportCodePopup!.Child, "support.wechat.panel"); Escape(qrPanel); await Pump();
             Check(support.SupportCodePopup.IsOpen == false && settings.IsVisible, "Keyboard closes the QR layer while preserving Settings");
-            Invoke(Find<Button>(settings, "support.wechat")); await Pump(); Escape(Find<Button>(support.SupportCodePopup.Child, "support.wechat.close")); await Pump();
+            Invoke(Find<Button>(settings, "support.wechat")); await Pump(); Escape(Find<Border>(support.SupportCodePopup.Child, "support.wechat.panel")); await Pump();
             Check(!support.SupportCodePopup.IsOpen && settings.IsVisible, "Escape belongs to the QR layer before the settings window");
             Check(saved == beforeReadOnly && JsonSerializer.Serialize(session.Current) == beforeBytes, "Help tabs, public links and Support never write any preferences");
             settings.CapturePreview(Path.Combine(output, "pages-support-" + language + (dark ? "-dark" : "-light") + ".png"));
-            Select(Find<RadioButton>(settings, "settings.pane.whatsNew")); await Until(() => SelfAndDescendants(settings).OfType<GuideContent>().Any(value => SelfAndDescendants(value).OfType<TextBlock>().Count(text => note.History.Any(release => release.Title == text.Text)) == note.History.Count));
+            Select(Find<RadioButton>(settings, "settings.pane.about")); await Until(() => Has(settings, "settings.about.whatsNew"));
+            // What's New: the newest version in full, every earlier one folded to a line of its highlights.
+            Select(Find<RadioButton>(settings, "settings.about.whatsNew")); await Until(() => Has(settings, "guide.releaseNotes"));
+            string Version(string value) => ui.Text("whats_new.version").Replace("%@", value, StringComparison.Ordinal);
+            // Settings lists history up to the running build, so compare with the same request.
+            var shown = await engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest(typeof(SettingsWindow).Assembly.GetName().Version!.ToString(3), null, 4, language, true, true, false, false) } }, TimeSpan.FromSeconds(3));
+            Check(shown.History.Count > 1 && SelfAndDescendants(settings).OfType<TextBlock>().Any(text => text.Text == Version(shown.History[0].Version)), "What's New heads the newest note with its version");
+            var folds = shown.History.Skip(1).Select(release => Find<Expander>(settings, "whats_new.release." + release.Version)).ToList();
+            Check(SelfAndDescendants(settings).OfType<Expander>().Count(fold => AutomationProperties.GetAutomationId(fold).StartsWith("whats_new.release.", StringComparison.Ordinal)) == shown.History.Count - 1
+                && folds.All(fold => !fold.IsExpanded && AutomationProperties.GetName(fold) == Version((string)fold.Header)
+                && (string)fold.Tag == string.Join(" · ", shown.History.Single(release => release.Version == (string)fold.Header).Items.Select(item => item.Title))), "Earlier versions start folded to their highlights");
+            {
+                var item = shown.History[1].Items.First(value => value.Control != "openAtLogin"); folds[0].IsExpanded = true; await Pump(); settings.UpdateLayout();
+                bool Shown() => SelfAndDescendants(folds[0]).OfType<TextBlock>().Any(text => text.Text == item.Detail && text.IsVisible);
+                var info = Find<Button>(folds[0], "guide.info." + item.Title.GetHashCode().ToString("x"));
+                Check(SelfAndDescendants(folds[0]).OfType<TextBlock>().Any(text => text.Text == item.Title && text.IsVisible) && !Shown(), "A highlight's explanation waits behind its info button");
+                Invoke(info); await Pump(); settings.UpdateLayout();
+                Check(Shown() && AutomationProperties.GetItemStatus(info) == ui.Text("main.info_shown"), "The info button opens the explanation in place");
+                folds[0].IsExpanded = false; await Pump();
+            }
+            Invoke(Find<Button>(settings, "guide.releaseNotes")); await Pump();
             Check(session.Current.WhatsNewVersion == null, "Settings lists all release history without marking it seen");
-            Check(links.Count == 7 && links.All(uri => uri.Scheme == "https"), "All seven requested public links dispatch once without page network access");
+            Check(links.Count == 8 && links.All(uri => uri.Scheme == "https"), "All eight requested public links dispatch once without page network access");
             Escape(settings); Check(!settings.IsVisible, "Escape closes the auxiliary settings pages");
         }
         finally { settings.AllowClose = true; settings.Close(); }
@@ -152,6 +208,8 @@ internal static class GuidePageChecks
     }
     private static void CheckHelpProviderText(SettingsWindow window, Color expected)
     {
+        // The chips may have been built in this same pass; read them laid out.
+        window.UpdateLayout();
         var background = ((SolidColorBrush)window.Resources["SettingsBackground"]).Color;
         foreach (string provider in new[] { "codex", "claude", "deepseek" })
         {

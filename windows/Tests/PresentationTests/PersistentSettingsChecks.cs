@@ -38,13 +38,17 @@ internal static class PersistentSettingsChecks
         try
         {
             first.Show(); await Pump();
+            // The main window opens on Overview; privacy lives on General and app buttons on Appearance.
+            await first.NavigateAsync("general"); await Pump();
             Toggle(Find<CheckBox>(first, "settings.hide_projects"));
             await Until(() => session.Current.HideProjects && Find<CheckBox>(first, "settings.hide_projects").IsEnabled);
             second = new SettingsWindow(ui, session, new DemoStartupRegistration(), true, dark, engine) { ShowActivated = false, IsHitTestVisible = false };
-            second.Show(); await Pump(); Toggle(Find<CheckBox>(second, "settings.app_buttons"));
+            second.Show(); await Pump(); await second.NavigateAsync("appearance"); await Pump(); Toggle(Find<CheckBox>(second, "settings.app_buttons"));
             await Until(() => !session.Current.ShowAppButtons && Find<CheckBox>(second, "settings.app_buttons").IsEnabled);
             Check(Find<CheckBox>(first, "settings.app_buttons").IsChecked == false && session.Current.HideProjects,
                 "Two settings windows share acknowledged edits without losing privacy");
+            // Both windows follow the shared page; the language picker is on General.
+            await first.NavigateAsync("general"); await Pump();
             var languagePicker = Find<ComboBox>(first, "settings.language");
             languagePicker.SelectedValue = language;
             await Until(() => session.Current.Language == language && languagePicker.IsEnabled);
@@ -54,10 +58,13 @@ internal static class PersistentSettingsChecks
             Select(Find<RadioButton>(first, "appearance.mode.notch"));
             await Until(() => session.Current.DisplayMode == "notch" && Find<RadioButton>(first, "appearance.mode.notch").IsEnabled);
             Select(Find<RadioButton>(first, "appearance.mode.free"));
-            await Until(() => session.Current.DisplayMode == "floating" && Find<Button>(first, "appearance.position.reset").IsEnabled);
+            // Already at the top center there is nothing to return to, as on the Mac; a saved placement enables the reset.
+            await Until(() => session.Current.DisplayMode == "floating" && Find<RadioButton>(first, "appearance.mode.free").IsEnabled
+                && Find<Button>(first, "appearance.position.reset").IsEnabled == (session.Current.IslandPlacement != null || session.Current.Position != "center"));
             var placement = new IslandPlacement(IslandEdge.Bottom, .43, 1);
             Check(await session.ChangeAsync(p => p with { IslandPlacement = placement }) == PreferencesApplyResult.Applied,
                 "A placement saves through the same session as settings");
+            await Until(() => Find<Button>(first, "appearance.position.reset").IsEnabled);
             await first.NavigateAsync("general"); await Pump();
             byte[] saved = File.ReadAllBytes(file);
             const string damaged = "{synthetic damaged preferences";
@@ -100,7 +107,8 @@ internal static class PersistentSettingsChecks
             Directory.Delete(root); CultureInfo.CurrentUICulture = previous;
         }
     }
-    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
+    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().SingleOrDefault(value => AutomationProperties.GetAutomationId(value) == id)
+        ?? throw new InvalidOperationException("Missing element: " + id);
     private static void Toggle(CheckBox check) => ((IToggleProvider)new CheckBoxAutomationPeer(check).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Select(RadioButton value) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(value).GetPattern(PatternInterface.SelectionItem)).Select();
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);

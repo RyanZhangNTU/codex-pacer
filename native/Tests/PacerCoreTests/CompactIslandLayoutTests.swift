@@ -25,9 +25,9 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertTrue(layout.components.contains(.tps))
     }
     func testDefaultsAndCustomLayoutPersistWithoutChangingOtherPreferences() throws {
-        let name = "CompactLayoutTests." + UUID().uuidString
+        let name = testDefaultsName("CompactLayoutTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         defaults.set("floating", forKey: "islandDisplayMode")
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), .standard)
         XCTAssertNil(defaults.data(forKey: CompactIslandLayout.defaultsKey), "A new or upgraded profile must not write settings on load")
@@ -48,9 +48,9 @@ final class CompactIslandLayoutTests: XCTestCase {
         let layout = try JSONDecoder().decode(CompactIslandLayout.self, from: data).normalized
         XCTAssertEqual(layout.leading, [.tps, .status, .firstOutput])
         XCTAssertTrue(layout.trailing.isEmpty)
-        let name = "CompactLayoutMigrationTests." + UUID().uuidString
+        let name = testDefaultsName("CompactLayoutMigrationTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         defaults.set(data, forKey: CompactIslandLayout.defaultsKey)
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), layout)
         XCTAssertEqual(defaults.data(forKey: CompactIslandLayout.defaultsKey), data)
@@ -73,7 +73,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         let data = Data(#"{"version":2,"leading":["statusIcon","subagentCount","taskCount","settings"],"trailing":["pace","quotaMetric","quotaWindow","quotaLabel","resetCountdown","quotaWarning","freshness","pin","refresh","quit","collapse"]}"#.utf8)
         let layout = try JSONDecoder().decode(CompactIslandLayout.self, from: data).normalized
         XCTAssertEqual(layout.leading, [.activity], "The merged badge replaces both former task components once")
-        XCTAssertEqual(layout.trailing, [.quotaGauge, .quota, .quotaLabel, .timeRemaining, .warnings])
+        XCTAssertEqual(layout.trailing, [.quotaGauge, .quota, .timeRemaining, .warnings], "The retired quota label drops")
         XCTAssertEqual(layout.warnings, [.fiveHour, .quotaDelay, .lowBalance, .spendSpike, .budget],
             "Only the warnings that were shown stay enabled, plus DeepSeek's kinds, which no earlier schema offered")
         let standard = Data(#"{"version":2,"leading":["statusIcon","status","tps"],"trailing":["quotaWarning","quotaMetric","quotaWindow","freshness"]}"#.utf8)
@@ -127,7 +127,12 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertEqual(try decode(["codexQuota", "tps"], ["claudeQuota"], version: 5),
             CompactIslandLayout(leading: [.quotaGauge, .quota, .tps]), "Values split across lanes merge at the first position")
         XCTAssertTrue(try decode(["codexQuota"], [], version: 6).components.isEmpty, "Current layouts never reinterpret provider names")
-        XCTAssertEqual(CompactIslandLayout.Group.quota.components, [.quota, .quotaGauge, .priceClock, .quotaLabel, .timeRemaining])
+        XCTAssertEqual(CompactIslandLayout.Group.quota.components, [.quota, .quotaGauge, .priceClock, .timeRemaining])
+        let labelled = try decode(["activity"], ["quota", "quotaLabel", "timeRemaining"], version: 9)
+        XCTAssertEqual(labelled, CompactIslandLayout(leading: [.activity], trailing: [.quota, .timeRemaining]),
+            "A saved quota label drops on load and its neighbors keep their order")
+        XCTAssertFalse(CompactIslandLayout.Component.quotaLabel.isAvailable(for: Set(AgentProvider.allCases)),
+            "The retired label never shows, even in a layout built in code")
         XCTAssertTrue(CompactIslandLayout.standard.components.isSuperset(of: [.quotaGauge, .quota, .warnings]),
             "Rings, the alternating value and the warnings slot are on by default")
         XCTAssertEqual(CompactIslandLayout.standard.warnings, Set(CompactIslandLayout.Warning.allCases))
@@ -170,9 +175,9 @@ final class CompactIslandLayoutTests: XCTestCase {
     }
 
     func testQuotaComponentsFollowEnabledModulesAndChoicesSurviveSaveAndReload() throws {
-        let name = "CompactProviderLayoutTests." + UUID().uuidString
+        let name = testDefaultsName("CompactProviderLayoutTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         let legacy = Data(#"{"version":3,"leading":["quotaMetric","tps"],"trailing":["taskCount"]}"#.utf8)
         defaults.set(legacy, forKey: CompactIslandLayout.defaultsKey)
         var layout = CompactIslandLayout.load(from: defaults)

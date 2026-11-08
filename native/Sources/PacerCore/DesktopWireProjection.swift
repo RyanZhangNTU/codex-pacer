@@ -101,6 +101,7 @@ struct DesktopWireProjection {
     private(set) var revision: Int?
     private var previousTurn: DesktopValue?
     private var previousItems: [String: DesktopValue] = [:]
+    private var activeProgressCalls: Set<String> = []
     private var firstTextSeen = false
     private var previousUsage: Int?
     private(set) var requests: [DesktopRequestDescriptor] = []
@@ -187,13 +188,23 @@ struct DesktopWireProjection {
     }
     private static func item(_ view: JSONFieldView, attentionOnly: Bool = false) throws -> DesktopValue {
         guard view.isObject else { return .object([:]) }
-        let fields = try view.fields(["id", "type", "status", "questions", "receiverThreadIds", "agentThreadId", "kind"])
+        let fields = try view.fields(["id", "type", "status", "questions", "receiverThreadIds", "agentThreadId", "kind", "server", "tool", "arguments", "result", "completedAtMs"])
         let questions = try questionMarkers(fields["questions"])
         if attentionOnly, !["userMessage", "steeringUserMessage", "agentMessage"].contains(fields["type"]?.string() ?? "") { return .object([:]) }
         var values = fields.filter { ["id", "type", "status"].contains($0.key) }.reduce(into: [String: DesktopValue]()) {
             $0[$1.key] = Self.string($1.value, limit: $1.key == "id" ? 256 : 80)
         }
         values["questions"] = questions
+        if !attentionOnly, fields["type"]?.string() == "mcpToolCall" {
+            let server = fields["server"]?.string(limit: 48) == CodexProgressEvidence.server
+            let tool = fields["tool"]?.string(limit: 48) == CodexProgressEvidence.tool
+            values["server"] = .boolean(server); values["tool"] = .boolean(tool)
+            if server && tool {
+                values["arguments"] = CodexProgressEvidence.percent(fields["arguments"]).map(DesktopValue.integer) ?? .null
+                values["result"] = .boolean(CodexProgressEvidence.resultAccepted(fields["result"]))
+                values["completedAtMs"] = fields["completedAtMs"]?.number().map(DesktopValue.number) ?? .null
+            }
+        }
         if fields["type"]?.string() == "subAgentActivity" {
             values["agentThreadId"] = try relationship(fields["agentThreadId"])
             let kind = fields["kind"]?.string(limit: 32)
@@ -201,6 +212,7 @@ struct DesktopWireProjection {
         }
         if ["collabAgentToolCall", "collabToolCall"].contains(fields["type"]?.string() ?? "") {
             values["receiverThreadIds"] = try threadIDs(fields["receiverThreadIds"])
+            values["tool"] = .boolean(["wait", "waitAgent"].contains(fields["tool"]?.string(limit: 32) ?? ""))
         }
         if !attentionOnly, Self.models.contains(fields["type"]?.string() ?? "") {
             values["hasGeneratedText"] = .boolean(try view.containsTextMetadata())
@@ -241,8 +253,8 @@ struct DesktopWireProjection {
     }
     private static func turn(_ view: JSONFieldView, hydrate: Bool, attentionOnly: Bool = false) throws -> DesktopValue {
         guard view.isObject else { return .object([:]) }
-        let fields = try view.fields(["turnId", "status", "turnStartedAtMs", "items"])
-        var values = fields.filter { ["turnId", "status"].contains($0.key) }.compactMapValues { Self.string($0) }
+        let fields = try view.fields(["turnId", "rootTurnId", "status", "turnStartedAtMs", "items"])
+        var values = fields.filter { ["turnId", "rootTurnId", "status"].contains($0.key) }.compactMapValues { Self.string($0) }
         if let started = fields["turnStartedAtMs"]?.number() { values["turnStartedAtMs"] = .number(started) }
         values["items"] = try Self.items(fields["items"], hydrate: hydrate, attentionOnly: attentionOnly)
         return .object(values)
@@ -402,10 +414,10 @@ struct DesktopWireProjection {
                 let start = root == "turns" ? 2 : 4
                 if path.count <= start { return .null }
                 let suffix = Array(path.dropFirst(start))
-                if suffix.count == 1, case .key(let key) = suffix[0], ["turnId", "status", "turnStartedAtMs"].contains(key) { return .null }
+                if suffix.count == 1, case .key(let key) = suffix[0], ["turnId", "rootTurnId", "status", "turnStartedAtMs"].contains(key) { return .null }
                 if case .key("items") = suffix[0] {
                     if suffix.count <= 2 { return .null }
-                    if suffix.count == 3, case .key(let key) = suffix[2], ["id", "type", "status", "questions"].contains(key) { return .null }
+                    if suffix.count == 3, case .key(let key) = suffix[2], ["id", "type", "status", "questions", "server", "tool", "arguments", "result", "completedAtMs"].contains(key) { return .null }
                     if suffix.count == 4, suffix[2] == .key("questions") { return .null }
                 }
             }
@@ -471,7 +483,7 @@ struct DesktopWireProjection {
             let suffix = Array(path.dropFirst(start))
             if suffix.count == 1 {
                 if case .key(let key) = suffix[0] {
-                    if ["turnId", "status"].contains(key) { return Self.string(view) ?? .null }
+                    if ["turnId", "rootTurnId", "status"].contains(key) { return Self.string(view) ?? .null }
                     if key == "turnStartedAtMs" { return view?.number().map(DesktopValue.number) ?? .null }
                     if key == "items" { return try Self.items(view, hydrate: Array(path.prefix(start)) == currentPath(), attentionOnly: attentionOnly) }
                 }
@@ -480,6 +492,21 @@ struct DesktopWireProjection {
                 guard case .index(let index) = suffix[1], index < 8192 else { throw JSONFieldView.Failure.limit }
                 if suffix.count == 2, let view { return try Self.item(view, attentionOnly: attentionOnly) }
                 if suffix.count == 3, case .key(let key) = suffix[2], ["id", "type", "status"].contains(key) { return Self.string(view) ?? .null }
+                if suffix.count == 3, !attentionOnly, case .key(let key) = suffix[2],
+                   let item = tree.at(path.dropLast()[...]) {
+                    let kind = item["type"]?.text
+                    if kind == "mcpToolCall" {
+                        if key == "server" { return .boolean(view?.string(limit: 48) == CodexProgressEvidence.server) }
+                        if key == "tool" { return .boolean(view?.string(limit: 48) == CodexProgressEvidence.tool) }
+                        if item["server"] == .boolean(true), item["tool"] == .boolean(true) {
+                            if key == "arguments" { return CodexProgressEvidence.percent(view).map(DesktopValue.integer) ?? .null }
+                            if key == "result" { return .boolean(CodexProgressEvidence.resultAccepted(view)) }
+                            if key == "completedAtMs" { return view?.number().map(DesktopValue.number) ?? .null }
+                        }
+                    } else if ["collabAgentToolCall", "collabToolCall"].contains(kind ?? ""), key == "tool" {
+                        return .boolean(["wait", "waitAgent"].contains(view?.string(limit: 32) ?? ""))
+                    }
+                }
                 if suffix.count == 3, suffix[2] == .key("agentThreadId") { return try Self.relationship(view) }
                 if suffix.count == 3, suffix[2] == .key("kind") { return Self.string(view, limit: 32) }
                 if suffix.count == 3, suffix[2] == .key("receiverThreadIds") { return try Self.threadIDs(view) }
@@ -589,6 +616,7 @@ struct DesktopWireProjection {
             (current?["status"]?.text != "inProgress" || runtimeType == "active" || (runtimeType == "idle" && observedTurn)))
         if !staged.runtimeAvailable {
             staged.previousTurn = nil; staged.previousUsage = nil; staged.previousItems = [:]; staged.firstTextSeen = false
+            staged.activeProgressCalls.removeAll()
         }
         // Completed turns intentionally keep only item counts. Bookkeeping
         // patches after completion do not require those discarded item bodies.
@@ -628,9 +656,12 @@ struct DesktopWireProjection {
                     if status == "inProgress" {
                         let milliseconds = current["turnStartedAtMs"]?.number ?? 0
                         let started = milliseconds > 0 && milliseconds <= now.timeIntervalSince1970 * 1000 + 5000 ? milliseconds / 1000 : now.timeIntervalSince1970
-                        events.append(event(snapshot || reconnecting ? "turn/attached" : "turn/started", ["turnId": turn, "startedAt": started]))
+                        var data: [String: Any] = ["turnId": turn, "startedAt": started]
+                        data["rootTurnId"] = current["rootTurnId"]?.text
+                        events.append(event(snapshot || reconnecting ? "turn/attached" : "turn/started", data))
                     }
                 }
+                if changed || snapshot || reconnecting { staged.activeProgressCalls.removeAll() }
                 let ending = previousTurn?["status"]?.text == "inProgress" && Self.terminal.contains(status)
                 let items = Dictionary(current["items"]?.list.compactMap { item -> (String, DesktopValue)? in
                     item["id"]?.text.map { ($0, item) }
@@ -639,9 +670,30 @@ struct DesktopWireProjection {
                     for item in current["items"]?.list ?? [] {
                         guard let id = item["id"]?.text, let kind = item["type"]?.text else { continue }
                         let old = staged.previousItems[id]
+                        if kind == "mcpToolCall", item["server"] == .boolean(true), item["tool"] == .boolean(true) {
+                            if item["status"]?.text == "inProgress", staged.activeProgressCalls.count < 128 {
+                                staged.activeProgressCalls.insert(id)
+                            }
+                            if item != old, item["status"]?.text == "completed", item["result"] == .boolean(true),
+                               let percent = item["arguments"]?.integer {
+                                let stamp = item["completedAtMs"]?.number
+                                let time = stamp.flatMap { $0.isFinite && $0 > 0 && $0 <= now.timeIntervalSince1970 * 1000 + 5000 ? $0 / 1000 : nil }
+                                if let time {
+                                    events.append(event("progress/reported", ["turnId": turn, "percent": percent, "at": time]))
+                                } else if !snapshot, !reconnecting, staged.activeProgressCalls.contains(id) {
+                                    events.append(event("progress/reported", ["turnId": turn, "percent": percent]))
+                                }
+                                staged.activeProgressCalls.remove(id)
+                            }
+                            continue
+                        }
                         if RuntimeItemKind.isTool(kind) {
-                            if item["status"]?.text == "inProgress" && old?["status"]?.text != "inProgress" { events.append(event("item/started", ["turnId": turn, "itemId": id, "itemType": RuntimeItemKind.normalized(kind)])) }
-                            else if old?["status"]?.text == "inProgress", Self.terminal.contains(item["status"]?.text ?? "") { events.append(event("item/completed", ["turnId": turn, "itemId": id, "itemType": RuntimeItemKind.normalized(kind)])) }
+                            if item["status"]?.text == "inProgress" && old?["status"]?.text != "inProgress" {
+                                var data: [String: Any] = ["turnId": turn, "itemId": id, "itemType": RuntimeItemKind.normalized(kind)]
+                                if item["tool"] == .boolean(true) { data["waitingForAgents"] = true }
+                                events.append(event("item/started", data))
+                            }
+                            else if old?["status"]?.text == "inProgress", Self.terminal.contains(item["status"]?.text ?? "") || item["status"]?.text == "declined" { events.append(event("item/completed", ["turnId": turn, "itemId": id, "itemType": RuntimeItemKind.normalized(kind)])) }
                         } else if Self.models.contains(kind), Self.terminal.contains(item["status"]?.text ?? ""), old?["status"]?.text == "inProgress" {
                             events.append(event("item/completed", ["turnId": turn, "itemId": id, "itemType": kind]))
                         }

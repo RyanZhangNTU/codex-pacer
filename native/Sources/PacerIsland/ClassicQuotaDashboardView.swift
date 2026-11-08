@@ -13,8 +13,10 @@ enum ClassicQuotaDashboardLayout {
 
 struct ClassicQuotaDashboardView: View {
     @ObservedObject var model: IslandModel
+    var providers: [AgentProvider]? = nil
+    private var shown: [AgentProvider] { providers ?? model.enabledProviders }
     private var slots: [ClassicQuotaDashboardSlot] {
-        ClassicQuotaDashboardLayout.slots(providers: model.enabledProviders)
+        ClassicQuotaDashboardLayout.slots(providers: shown)
     }
 
     var body: some View { rings }
@@ -37,7 +39,7 @@ struct ClassicQuotaDashboardView: View {
                     }
                 }
             }
-            if model.enabledProviders.count == 1, let provider = model.enabledProviders.first {
+            if shown.count == 1, let provider = shown.first {
                 QuotaProviderStatusView(model: model, provider: provider)
                     .frame(maxWidth: .infinity)
             }

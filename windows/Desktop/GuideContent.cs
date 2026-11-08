@@ -45,11 +45,22 @@ internal sealed class GuideContent : StackPanel
         this.copyLink = copyLink ?? Clipboard.SetText;
         issue = Text("", 11); Identify(issue, "guide.issue", ""); AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive);
         issue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+        issue.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(TextBlock.Text)) { Source = issue, Converter = EmptyCollapses.Instance });
         Loaded += (_, _) => { session.Changed += PreferencesChanged; if (engine != null) engine.Snapshot += SnapshotChanged; if (notifications != null) notifications.Changed += Refresh; Refresh(); };
         Unloaded += (_, _) => { copyRevision++; session.Changed -= PreferencesChanged; if (engine != null) engine.Snapshot -= SnapshotChanged; if (notifications != null) notifications.Changed -= Refresh; if (code != null) code.IsOpen = false; share?.Dispose(); share = null; };
-        PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape && code?.IsOpen == true) { code.IsOpen = false; args.Handled = true; } };
+        PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key != Key.Escape) return;
+            if (code?.IsOpen == true) { code.IsOpen = false; args.Handled = true; }
+            else if (qqCode?.IsOpen == true) { qqCode.IsOpen = false; args.Handled = true; }
+        };
     }
-    private void PreferencesChanged(DesktopPreferences _) => Refresh();
+    private void PreferencesChanged(DesktopPreferences value)
+    {
+        string next = value.AppTheme + "/" + value.AccentColor;
+        if (next != look) { look = next; LookChanged?.Invoke(); }
+        Refresh();
+    }
     private void SnapshotChanged(EngineSnapshot _) => Dispatcher.InvokeAsync(Refresh);
     internal void Refresh()
     {
@@ -61,10 +72,14 @@ internal sealed class GuideContent : StackPanel
     private void Reset()
     {
         if (code != null) code.IsOpen = false;
+        if (qqCode != null) qqCode.IsOpen = false; qqCode = null;
         share?.Dispose(); share = null;
         foreach (UIElement child in Children) if (child != issue) PageAccessibility.Retire(child);
         Children.Clear(); refresh.Clear(); editors.Clear(); Children.Add(issue); issue.Text = "";
     }
+    internal DesktopPreferences Preferences => session.Current;
+    internal event Action? LookChanged;
+    private string look = "";
     internal static void Identify(DependencyObject value, string id, string name)
     { AutomationProperties.SetAutomationId(value, id); AutomationProperties.SetName(value, name); }
     private TextBlock Text(string text, double size = 13, bool bold = false)
@@ -79,11 +94,11 @@ internal sealed class GuideContent : StackPanel
         var content = new StackPanel();
         for (int i = 0; i < rows.Length; i++)
         {
-            if (i > 0) { var line = new Border { Height = 1, Margin = new Thickness(inset, 0, 0, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); content.Children.Add(line); }
+            if (i > 0) { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); content.Children.Add(line); }
             content.Children.Add(rows[i]);
         }
-        var group = new Border { Child = content, CornerRadius = new CornerRadius(10) };
-        group.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); return group;
+        var group = new Border { Child = content, CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1) };
+        group.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); group.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder"); return group;
     }
     private StackPanel Column(string key, UIElement content)
     {
@@ -234,56 +249,138 @@ internal sealed class GuideContent : StackPanel
     }
     private static WarningMark Warning(string kind, bool solid = false, string provider = "codex") => new(new(kind == "lowBalance" ? "balance" : "fiveHour", kind == "lowBalance" ? "deepseek" : provider, solid,
         kind == "lowBalance" ? null : solid ? "0" : "12", kind == "lowBalance" ? "exclamationmark.circle" : null, ""));
+    /// The four welcome pages, as on the Mac: what the island shows, how it
+    /// appears, which services it watches, and a last few choices.
+    internal static readonly string[] WelcomePages = ["main.welcome.title", "main.welcome.mode_title", "main.welcome.services_title", "main.welcome.finish_title"];
+    private StackPanel PageHeader(string title, string subtitle)
+    {
+        var header = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
+        var heading = Text(title, 24, true); heading.FontWeight = FontWeights.Bold; heading.TextAlignment = TextAlignment.Center; heading.TextWrapping = TextWrapping.Wrap;
+        AutomationProperties.SetHeadingLevel(heading, AutomationHeadingLevel.Level1); header.Children.Add(heading);
+        var detail = Text(subtitle, 13); detail.TextAlignment = TextAlignment.Center; detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 6, 0, 0);
+        detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); header.Children.Add(detail);
+        return header;
+    }
     internal void WelcomeStep(int step)
     {
-        Reset(); Heading(step == 0 ? "welcome.step.island" : "welcome.step.start");
-        if (step == 0)
+        Reset();
+        switch (step)
         {
-            var map = new WelcomeIslandMap(ui, Badge, Rings(("codex", 58), ("claude", 81)), Warning("codex5hLow"));
-            Identify(map, "welcome.bar", ui.Text("welcome.step.island")); Children.Add(map);
-            var legends = new Grid { Margin = new Thickness(0, 14, 0, 0) };
-            legends.ColumnDefinitions.Add(new ColumnDefinition()); legends.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) }); legends.ColumnDefinitions.Add(new ColumnDefinition());
-            legends.Children.Add(Column("welcome.badges", Group(52, BadgeRow(0, ui.Text("welcome.badge.running")),
-                BadgeRow(1, ui.Text("welcome.badge.waiting"), tint: PacerPalette.Attention), BadgeRow(2, ui.Text("welcome.badge.ended"), ui.Text("welcome.badge.ended_hint")))));
-            var gestures = Column("welcome.gestures", Gestures()); Grid.SetColumn(gestures, 2); legends.Children.Add(gestures); Children.Add(legends);
-        }
-        else
-        {
-            var modules = new Grid();
-            string[] providers = ["codex", "claude", "deepseek"];
-            for (int i = 0; i < providers.Length; i++)
-            {
-                if (i > 0) modules.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
-                modules.ColumnDefinitions.Add(new ColumnDefinition());
-                var card = Module(providers[i]); Grid.SetColumn(card, i * 2); modules.Children.Add(card);
-            }
-            Children.Add(modules);
-            var note = Text(ui.Text("welcome.modules_note"), 11); note.Margin = new Thickness(10, 8, 10, 0); Children.Add(note);
-            Heading("welcome.section.personalize");
-            var notification = Switch(ui.Text("settings.system_notifications"), "welcome.notifications", () => notifications?.DesiredEnabled == true,
-                async value => notifications != null && await notifications.SetEnabledAsync(value) == NotificationChangeResult.Applied);
-            refresh.Add(() => notification.IsEnabled = !changing && !session.RequiresRestart && notifications != null);
-            var notificationDetail = Text("", 11);
-            refresh.Add(() =>
-            {
-                bool denied = notifications?.Availability == NotificationAvailability.Denied;
-                notificationDetail.Text = ui.Text(denied ? "windows.settings.notification_denied" : "welcome.notifications_detail");
-                notificationDetail.SetResourceReference(TextBlock.ForegroundProperty, denied ? "SettingsWarning" : "SettingsSecondary");
-            });
-            var loginDetail = Text("", 11); Identify(loginDetail, "welcome.system.status", "");
-            refresh.Add(() =>
-            {
-                string blocked = StartupDetail();
-                loginDetail.Text = blocked.Length > 0 ? blocked : ui.Text("windows.settings.open_at_login_detail"); AutomationProperties.SetName(loginDetail, loginDetail.Text);
-                loginDetail.SetResourceReference(TextBlock.ForegroundProperty, blocked.Length > 0 ? "SettingsWarning" : "SettingsSecondary");
-            });
-            var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
-            Children.Add(Group(50,
-                TileRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 26), ui.Text("welcome.layout.title"), Text(ui.Text("welcome.layout.detail"), 11), layout),
-                TileRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 26), ui.Text("settings.system_notifications"), notificationDetail, notification),
-                TileRow(GuideArt.Tile("gearshape", Color.FromRgb(133, 133, 133), 26), ui.Text("settings.open_at_login"), loginDetail, Login(ui.Text("settings.open_at_login"), "welcome.startup"))));
+            case 0:
+                var icon = new DecorativeImage { Width = 84, Height = 84, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center,
+                    Source = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))) };
+                Children.Add(icon);
+                var intro = PageHeader(ui.Text("main.welcome.title"), ui.Text("welcome.subtitle")); intro.Margin = new Thickness(0, 8, 0, 26); Children.Add(intro);
+                var map = new WelcomeIslandMap(ui, Badge, Rings(("codex", 58), ("claude", 81)), Warning("codex5hLow"));
+                Identify(map, "welcome.bar", ui.Text("welcome.step.island")); Children.Add(map);
+                break;
+            case 1:
+                var mode = PageHeader(ui.Text("main.welcome.mode_title"), ui.Text("main.welcome.mode_subtitle")); mode.Margin = new Thickness(0, 4, 0, 24); Children.Add(mode);
+                var cards = new Grid();
+                cards.ColumnDefinitions.Add(new ColumnDefinition()); cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) }); cards.ColumnDefinitions.Add(new ColumnDefinition());
+                var island = ModeCard(true, ui.Text("main.welcome.mode_island"), ui.Text("main.welcome.mode_island_detail"), new WelcomeGestureScene());
+                var free = ModeCard(false, ui.Text("main.welcome.mode_free"), ui.Text("appearance.free_move_detail"), new WelcomeMoveScene());
+                cards.Children.Add(island); Grid.SetColumn(free, 2); cards.Children.Add(free); Children.Add(cards);
+                break;
+            case 2:
+                var services = PageHeader(ui.Text("main.welcome.services_title"), ui.Text("welcome.modules_note")); services.Margin = new Thickness(0, 4, 0, 24); Children.Add(services);
+                var modules = new Grid();
+                string[] providers = ["codex", "claude", "deepseek"];
+                for (int i = 0; i < providers.Length; i++)
+                {
+                    if (i > 0) modules.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+                    modules.ColumnDefinitions.Add(new ColumnDefinition());
+                    var card = Module(providers[i]); Grid.SetColumn(card, i * 2); modules.Children.Add(card);
+                }
+                Children.Add(modules);
+                break;
+            default:
+                var finish = PageHeader(ui.Text("main.welcome.finish_title"), ui.Text("main.welcome.finish_subtitle")); finish.Margin = new Thickness(24, 4, 24, 24); Children.Add(finish);
+                // One switch for every service's ring; Settings keeps one per service.
+                var rings = Switch(ui.Text("main.claude.ring"), "welcome.rings", () => session.Current.ClaudeProgressRing || session.Current.CodexProgressRing || session.Current.DeepSeekProgressRing,
+                    value => Preference(p => p with { ClaudeProgressRing = value, CodexProgressRing = value, DeepSeekProgressRing = value }));
+                var notification = Switch(ui.Text("settings.system_notifications"), "welcome.notifications", () => notifications?.DesiredEnabled == true,
+                    async value => notifications != null && await notifications.SetEnabledAsync(value) == NotificationChangeResult.Applied);
+                refresh.Add(() => notification.IsEnabled = !changing && !session.RequiresRestart && notifications != null);
+                var notificationProblem = Text("", 11.5); notificationProblem.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+                refresh.Add(() =>
+                {
+                    bool denied = notifications?.Availability == NotificationAvailability.Denied;
+                    notificationProblem.Text = denied ? ui.Text("windows.settings.notification_denied") : "";
+                    notificationProblem.Visibility = denied ? Visibility.Visible : Visibility.Collapsed;
+                });
+                var loginProblem = Text("", 11.5); Identify(loginProblem, "welcome.system.status", ""); loginProblem.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+                refresh.Add(() =>
+                {
+                    string blocked = StartupDetail();
+                    loginProblem.Text = blocked; AutomationProperties.SetName(loginProblem, blocked);
+                    loginProblem.Visibility = blocked.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+                });
+                var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
+                var choices = Group(54,
+                    ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings),
+                    ChoiceRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 28), ui.Text("settings.system_notifications"), ui.Text("main.welcome.notifications_info"), notificationProblem, notification),
+                    ChoiceRow(GuideArt.Tile("power", Color.FromRgb(51, 189, 102), 28), ui.Text("settings.open_at_login"), ui.Text("main.welcome.login_info"), loginProblem, Login(ui.Text("settings.open_at_login"), "welcome.startup")),
+                    ChoiceRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 28), ui.Text("welcome.layout.title"), ui.Text("main.welcome.layout_info"), null, layout));
+                choices.Margin = new Thickness(24, 0, 24, 0); Children.Add(choices);
+                break;
         }
         Refresh();
+    }
+    /// One way the island appears, shown moving. Choosing it moves the real island
+    /// at once, the same choice as Appearance > Position.
+    private RadioButton ModeCard(bool attached, string title, string detail, FrameworkElement art)
+    {
+        var card = new RadioButton { Style = (Style)FindResource("SettingsArtChoice"), GroupName = "welcome.mode", Height = double.NaN, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        var content = new StackPanel { Margin = new Thickness(12, 12, 12, 14) };
+        var frame = new Border { Height = 118, CornerRadius = new CornerRadius(8), ClipToBounds = true, Background = new SolidColorBrush(Color.FromRgb(40, 44, 58)),
+            Child = new Viewbox { Child = art, Stretch = Stretch.Uniform, Margin = new Thickness(10) } };
+        content.Children.Add(frame);
+        var heading = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
+        var mark = new IconGlyph { Width = 17, Height = 17, VerticalAlignment = VerticalAlignment.Center }; DockPanel.SetDock(mark, Dock.Right); heading.Children.Add(mark);
+        heading.Children.Add(Text(title, 14, true)); content.Children.Add(heading);
+        var text = Text(detail, 11.5); text.Margin = new Thickness(0, 3, 0, 0); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); content.Children.Add(text);
+        card.Content = content; Identify(card, attached ? "welcome.mode.notch" : "welcome.mode.free", title);
+        refresh.Add(() =>
+        {
+            bool selected = (session.Current.DisplayMode == "notch") == attached;
+            card.IsChecked = selected;
+            mark.Symbol = selected ? "checkmark.circle" : "empty.circle";
+            mark.SetResourceReference(IconGlyph.InkProperty, selected ? "SettingsAccent" : "SettingsSecondary");
+        });
+        editors.Add(card);
+        card.Checked += async (_, _) => { if (!syncing && (session.Current.DisplayMode == "notch") != attached) await Edit(() => Preference(p => p with { DisplayMode = attached ? "notch" : "floating" })); };
+        return card;
+    }
+    /// A row of the last page: a tile, the title with an info button, then its control.
+    /// A problem shows under the title in amber; the explanation opens under the row.
+    private StackPanel ChoiceRow(Border tile, string title, string info, TextBlock? problem, UIElement control)
+    {
+        var row = new Grid { Margin = new Thickness(12, 10, 12, 10) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        tile.Margin = new Thickness(0, 0, 12, 0); row.Children.Add(tile);
+        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+        var heading = new StackPanel { Orientation = Orientation.Horizontal }; heading.Children.Add(Text(title));
+        var box = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(11, 9, 11, 9), Margin = new Thickness(52, 0, 12, 10), Visibility = Visibility.Collapsed };
+        box.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");
+        var body = Text(info, 12); body.LineHeight = 17; body.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); box.Child = body;
+        var glyph = new IconGlyph { Symbol = "info.circle", Width = 14, Height = 14 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        var button = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 22, Height = 22, Padding = new Thickness(0), Margin = new Thickness(3, -2, 0, -2), Content = glyph, VerticalAlignment = VerticalAlignment.Center };
+        Identify(button, "welcome.info." + (AutomationProperties.GetAutomationId(control) is { Length: > 0 } id ? id : title), ui.Text("main.info").Replace("%@", title, StringComparison.Ordinal));
+        button.Click += (_, _) =>
+        {
+            bool show = box.Visibility != Visibility.Visible; box.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            glyph.SetResourceReference(IconGlyph.InkProperty, show ? "SettingsPrimary" : "SettingsSecondary");
+            AutomationProperties.SetItemStatus(button, ui.Text(show ? "main.info_shown" : "main.info_hidden"));
+        };
+        AutomationProperties.SetItemStatus(button, ui.Text("main.info_hidden"));
+        heading.Children.Add(button); labels.Children.Add(heading);
+        if (problem != null) { problem.Margin = new Thickness(0, 2, 0, 0); labels.Children.Add(problem); }
+        Grid.SetColumn(labels, 1); row.Children.Add(labels);
+        if (control is FrameworkElement end) end.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(control, 2); row.Children.Add(control);
+        AutomationProperties.SetHelpText(control, info);
+        var host = new StackPanel(); host.Children.Add(row); host.Children.Add(box); return host;
     }
     private string StartupDetail()
     {
@@ -340,7 +437,16 @@ internal sealed class GuideContent : StackPanel
         });
         var card = new Border { Child = layout, CornerRadius = new CornerRadius(10) }; card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); return card;
     }
-    internal void Releases(IEnumerable<GuideRelease> releases)
+    /// A highlight's symbol in the accent color on a soft tile of the same hue, as on the Mac.
+    private static Border FeatureSymbol(string symbol, double size)
+    {
+        var glyph = new IconGlyph { Symbol = GuideArt.Symbol(symbol), Width = size * 0.52, Height = size * 0.52 };
+        glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsAccent");
+        var tile = new Border { Width = size, Height = size, CornerRadius = new CornerRadius(size * 0.26), Child = glyph };
+        tile.SetResourceReference(Border.BackgroundProperty, "SettingsAccentSoft"); return tile;
+    }
+    /// The update note draws each highlight larger, as a feature list without cards.
+    internal void Releases(IEnumerable<GuideRelease> releases, bool large = false)
     {
         Reset(); var list = releases.ToList();
         foreach (var release in list)
@@ -349,7 +455,7 @@ internal sealed class GuideContent : StackPanel
             if (list.Count > 1)
             {
                 var heading = Text(release.Title, 12); heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-                heading.Margin = new Thickness(10, release == list[0] ? 0 : 14, 0, 6); Children.Add(heading);
+                heading.Margin = new Thickness(large ? 0 : 10, release == list[0] ? 0 : large ? 22 : 14, 0, large ? 16 : 6); if (large) heading.FontWeight = FontWeights.SemiBold; Children.Add(heading);
             }
             var rows = new List<UIElement>();
             foreach (var item in release.Items)
@@ -362,12 +468,115 @@ internal sealed class GuideContent : StackPanel
                     _ => null
                 };
                 string detail = item.Control == "openAtLogin" ? ui.Text("windows.settings.open_at_login_detail") : item.Detail;
-                var tile = GuideArt.Tile(GuideArt.Symbol(item.Symbol), Colors.White, 26); tile.SetResourceReference(Border.BackgroundProperty, "SettingsAccent");
-                rows.Add(TileRow(tile, item.Title, Text(detail, 11), control));
+                if (large) { Children.Add(FeatureRow(item.Symbol, item.Title, detail, control)); continue; }
+                rows.Add(TileRow(FeatureSymbol(item.Symbol, 28), item.Title, Text(detail, 11.5), control));
             }
-            Children.Add(Group(50, rows.ToArray()));
+            if (!large) Children.Add(Group(50, rows.ToArray()));
         }
         Refresh();
+    }
+    /// Help & Updates' What's New, as on the Mac: the newest note as a feature
+    /// list with the release notes one click away, then every earlier version
+    /// folded to one line of its highlights. Explanations wait behind info buttons.
+    internal void SettingsReleases(IEnumerable<GuideRelease> history)
+    {
+        Reset(); var list = history.ToList();
+        if (list.Count == 0) { Refresh(); return; }
+        var latest = new StackPanel();
+        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var notes = new Button { Content = ui.Text("whats_new.release_notes") + " ↗", Style = (Style)FindResource("SettingsLink"), FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center };
+        Identify(notes, "guide.releaseNotes", ui.Text("whats_new.release_notes")); notes.Click += (_, _) => OpenReleaseNotes();
+        DockPanel.SetDock(notes, Dock.Right); header.Children.Add(notes);
+        var title = Text(VersionTitle(list[0]), 15, true); AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level2); header.Children.Add(title);
+        latest.Children.Add(header);
+        foreach (var item in list[0].Items) { var row = InfoFeatureRow(item, true); row.Margin = new Thickness(0, latest.Children.Count > 1 ? 16 : 0, 0, 0); latest.Children.Add(row); }
+        Children.Add(Card(latest, new Thickness(18)));
+        if (list.Count > 1)
+        {
+            var heading = Text(ui.Text("whats_new.earlier"), 12, true); heading.Margin = new Thickness(4, 0, 0, 8); heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+            Children.Add(heading);
+            var earlier = new StackPanel();
+            foreach (var release in list.Skip(1))
+            {
+                var rows = new StackPanel { Margin = new Thickness(34, 0, 14, 12) };
+                foreach (var item in release.Items) { var row = InfoFeatureRow(item, false); row.Margin = new Thickness(0, rows.Children.Count > 0 ? 12 : 0, 0, 0); rows.Children.Add(row); }
+                var fold = new Expander { Header = release.Version, Tag = string.Join(" · ", release.Items.Select(item => item.Title)), Content = rows, Style = (Style)FindResource("SettingsReleaseFold") };
+                Identify(fold, "whats_new.release." + release.Version, VersionTitle(release));
+                if (earlier.Children.Count > 0) { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); earlier.Children.Add(line); }
+                earlier.Children.Add(fold);
+            }
+            Children.Add(Card(earlier, new Thickness(0)));
+        }
+        Refresh();
+    }
+    private string VersionTitle(GuideRelease release) =>
+        ui.Has("whats_new.version") ? ui.Text("whats_new.version").Replace("%@", release.Version, StringComparison.Ordinal) : release.Title;
+    private Border Card(UIElement child, Thickness padding)
+    {
+        var card = new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Padding = padding, Child = child, Margin = new Thickness(0, 0, 0, 22) };
+        card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
+        return card;
+    }
+    /// A highlight with only its title; the explanation opens under it from the info button.
+    /// A blocked sign-in item still says so in place, and the item's own switch stays.
+    private StackPanel InfoFeatureRow(GuideItem item, bool large)
+    {
+        UIElement? control = item.Control switch
+        {
+            "openAtLogin" => Login(item.Title, "guide.control.openAtLogin." + item.Title.GetHashCode().ToString("x")),
+            "showAppButtons" => Switch(item.Title, "guide.control.showAppButtons." + item.Title.GetHashCode().ToString("x"), () => session.Current.ShowAppButtons, value => Preference(p => p with { ShowAppButtons = value })),
+            "showEmbeddedSessions" => EmbeddedControl(item.Title, item.Detail),
+            _ => null
+        };
+        double size = large ? 40 : 28;
+        var host = new StackPanel();
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var tile = FeatureSymbol(item.Symbol, size); tile.Margin = new Thickness(0, 0, large ? 14 : 12, 0); row.Children.Add(tile);
+        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var heading = new WrapPanel();
+        var title = Text(item.Title, large ? 13.5 : 13, large); heading.Children.Add(title);
+        var box = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(11, 9, 11, 9), Margin = new Thickness(size + (large ? 14 : 12), 8, 0, 0), Visibility = Visibility.Collapsed };
+        box.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");
+        string detail = item.Control == "openAtLogin" ? ui.Text("windows.settings.open_at_login_detail") : item.Detail;
+        var body = Text(detail, 12); body.LineHeight = 17; body.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); box.Child = body;
+        heading.Children.Add(InfoToggle(item.Title, box));
+        labels.Children.Add(heading);
+        if (item.Control == "openAtLogin")
+        {
+            var problem = Text("", 11.5); problem.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+            refresh.Add(() => { string blocked = StartupDetail(); problem.Text = blocked; problem.Visibility = blocked.Length > 0 ? Visibility.Visible : Visibility.Collapsed; });
+            labels.Children.Add(problem);
+        }
+        Grid.SetColumn(labels, 1); row.Children.Add(labels);
+        if (control is FrameworkElement end) { end.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(end, 2); row.Children.Add(end); }
+        host.Children.Add(row); host.Children.Add(box); return host;
+    }
+    private Button InfoToggle(string title, Border box)
+    {
+        var glyph = new IconGlyph { Symbol = "info.circle", Width = 14, Height = 14 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        var button = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 22, Height = 22, Padding = new Thickness(0), Margin = new Thickness(3, -2, 0, -2), Content = glyph, VerticalAlignment = VerticalAlignment.Center };
+        Identify(button, "guide.info." + title.GetHashCode().ToString("x"), ui.Text("main.info").Replace("%@", title, StringComparison.Ordinal));
+        AutomationProperties.SetItemStatus(button, ui.Text("main.info_hidden"));
+        button.Click += (_, _) =>
+        {
+            bool show = box.Visibility != Visibility.Visible; box.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            glyph.SetResourceReference(IconGlyph.InkProperty, show ? "SettingsPrimary" : "SettingsSecondary");
+            AutomationProperties.SetItemStatus(button, ui.Text(show ? "main.info_shown" : "main.info_hidden"));
+        };
+        return button;
+    }
+    private Grid FeatureRow(string symbol, string title, string detail, UIElement? control)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 16) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var tile = FeatureSymbol(symbol, 40); tile.Margin = new Thickness(0, 0, 14, 0); tile.VerticalAlignment = VerticalAlignment.Top; row.Children.Add(tile);
+        var labels = new StackPanel { Margin = new Thickness(0, 1, 8, 0) };
+        labels.Children.Add(Text(title, 13.5, true));
+        var text = Text(detail, 12.5); text.Margin = new Thickness(0, 3, 0, 0); text.LineHeight = 18; text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); labels.Children.Add(text);
+        Grid.SetColumn(labels, 1); row.Children.Add(labels);
+        if (control is FrameworkElement end) { end.Margin = new Thickness(0, 9, 0, 0); end.VerticalAlignment = VerticalAlignment.Top; Grid.SetColumn(end, 2); row.Children.Add(end); }
+        return row;
     }
     private CheckBox EmbeddedControl(string title, string detail)
     {
@@ -375,59 +584,109 @@ internal sealed class GuideContent : StackPanel
             value => Preference(p => GuideControls.SetEmbedded(p, value)));
         AutomationProperties.SetHelpText(check, detail); return check;
     }
+    /// Help, as on the Mac: three ways in (the welcome guide, the user guide,
+    /// an issue), then what each mark means, one topic at a time.
     internal void Help()
     {
         Reset(); string[] providers = ["codex", "claude", "deepseek"];
-        HelpSection("help.section.services", HelpRow("help.enable", Mark("switch.2")),
-            HelpRow("help.services", providers.Select(provider => (UIElement)GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), 18, true)).ToArray()));
-        HelpSection("help.section.collapsed",
-            HelpRow("help.tasks", Tasks(1, "codex"), Tasks(2, "codex", "claude"), Tasks(3, providers)),
-            HelpRow("help.attention", Badge(1)),
-            HelpRow("help.endings", Badge(2), Badge(3)),
-            HelpRow("help.quota", Rings(("codex", 58), ("claude", 81)), Figure("58%", PacerPalette.Codex)),
-            HelpRow("help.warnings", Warning("codex5hLow"), Warning("lowBalance"), Mark("clock.arrow.circlepath", PacerPalette.Attention, 11)),
-            HelpRow("help.customize", Mark("slider.horizontal.3")),
-            HelpRow("help.move", MoveSample()));
-        HelpSection("help.section.expanded",
-            HelpRow("help.hover", Mark("cursorarrow.rays")), HelpRow("help.open", Mark("arrow.up.forward.app")),
-            HelpRow("help.app_buttons", providers.Select(provider => (UIElement)Mark(GuideArt.ProviderSymbol(provider), PacerPalette.Provider(provider), 12)).ToArray()),
-            HelpRow("help.read", Mark("checkmark.rectangle.stack")), HelpRow("help.pace", PaceSample()));
-        // One segmented choice heads the chosen module's rows; its template paints the label with the theme text color.
-        var tabs = new Grid(); var details = new StackPanel();
-        foreach (string provider in providers)
+        var quick = new Grid { Margin = new Thickness(0, 0, 0, 22) };
+        var tiles = new[] {
+            QuickTile(Button(ui.Text("help.quick.welcome"), "help.welcome", welcome), "hand.wave", ui.Text("help.quick.welcome"), ui.Text("help.quick.welcome_detail"), false),
+            QuickTile(Link("help.link.guide", "manual"), "book", ui.Text("help.link.guide"), ui.Text("help.quick.guide_detail"), true),
+            QuickTile(Link("help.link.issues", "issues"), "exclamationmark.bubble", ui.Text("help.link.issues"), ui.Text("help.quick.issues_detail"), true) };
+        for (int index = 0; index < tiles.Length; index++)
         {
-            string name = provider == "codex" ? "Codex" : provider == "claude" ? "Claude" : "DeepSeek";
-            var tab = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), Content = name, GroupName = "help.providers" };
-            tabs.ColumnDefinitions.Add(new ColumnDefinition()); Grid.SetColumn(tab, tabs.Children.Count);
-            Identify(tab, "help.module." + provider, name); tab.Checked += (_, _) => ModuleHelp(details, provider); tabs.Children.Add(tab);
+            if (index > 0) quick.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+            quick.ColumnDefinitions.Add(new ColumnDefinition()); Grid.SetColumn(tiles[index], index * 2); quick.Children.Add(tiles[index]);
         }
-        var segments = new Border { Child = tabs, Padding = new Thickness(2), CornerRadius = new CornerRadius(7), Margin = new Thickness(12, 10, 12, 10) };
-        segments.SetResourceReference(Border.BackgroundProperty, "SettingsButton");
-        HelpSection("help.section.modules", segments, details);
-        string initial = SettingsPagePolicy.InitialHelpProvider(NativeCompactBar.Providers(session.Current, snapshot()));
-        ((RadioButton)tabs.Children[Array.IndexOf(providers, initial)]).IsChecked = true;
-        Heading("help.section.more");
-        Children.Add(Group(12, HelpLink(Button(ui.Text("help.show_welcome"), "help.welcome", welcome), "hand.wave"),
-            HelpLink(Link("help.link.guide", "manual"), "book"), HelpLink(Link("help.link.issues", "issues"), "exclamationmark.bubble")));
+        Children.Add(quick);
+        var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) }; var topic = new StackPanel(); var footer = Text(ui.Text("help.enable.detail"), 11.5);
+        footer.Margin = new Thickness(4, 8, 4, 0); footer.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        AutomationProperties.SetName(chips, ui.Text("settings.pane.help"));
+        foreach (string id in new[] { "collapsed", "expanded" }.Concat(providers))
+        {
+            bool module = providers.Contains(id);
+            string name = id switch { "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek", _ => ui.Text("help.section." + id) };
+            var chip = new RadioButton { Style = (Style)FindResource("SettingsTopicChip"), GroupName = "help.topics", Margin = new Thickness(0, 0, 6, 6) };
+            var label = new StackPanel { Orientation = Orientation.Horizontal };
+            if (module)
+            {
+                var glyph = new IconGlyph { Symbol = GuideArt.ProviderSymbol(id), Width = 11, Height = 11, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center, Ink = PacerPalette.Provider(id) };
+                chip.Checked += (_, _) => glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSelectionText"); chip.Unchecked += (_, _) => glyph.Ink = PacerPalette.Provider(id);
+                label.Children.Add(glyph);
+            }
+            var text = new TextBlock { Text = name, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            text.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Control.Foreground)) { Source = chip }); label.Children.Add(text);
+            chip.Content = label; Identify(chip, module ? "help.module." + id : "help.topic." + id, name);
+            chip.Checked += (_, _) => { HelpTopic(topic, id, providers); footer.Visibility = module ? Visibility.Visible : Visibility.Collapsed; };
+            chips.Children.Add(chip);
+        }
+        Children.Add(chips); Children.Add(topic); Children.Add(footer);
+        ((RadioButton)chips.Children[0]).IsChecked = true;
     }
-    private void HelpSection(string key, params UIElement[] rows) { Heading(key); Children.Add(Group(HelpInset, rows)); }
+    /// The chosen topic's marks, each beside what it means, in one card.
+    private void HelpTopic(Panel target, string id, string[] providers)
+    {
+        foreach (UIElement child in target.Children) PageAccessibility.Retire(child);
+        target.Children.Clear();
+        if (id == "collapsed")
+        {
+            // Under one accent the services are its shades, as the tiles draw them.
+            bool shades = PacerPalette.Accent != "multicolor";
+            var services = HelpRow("help.services", providers.Select(provider => (UIElement)GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), 18, true)).ToArray());
+            if (shades && services.Children.OfType<StackPanel>().FirstOrDefault(child => Grid.GetColumn(child) == 1)?.Children[1] is TextBlock detail) detail.Text = ui.Text("help.services.shades");
+            target.Children.Add(Group(HelpInset, services,
+                HelpRow("help.tasks", Tasks(1, "codex"), Tasks(2, "codex", "claude"), Tasks(3, providers)),
+                HelpRow("help.attention", Badge(1)),
+                HelpRow("help.endings", Badge(2), Badge(3)),
+                HelpRow("help.quota", Rings(("codex", 58), ("claude", 81)), Figure("58%", PacerPalette.Codex)),
+                HelpRow("help.warnings", Warning("codex5hLow"), Warning("lowBalance"), Mark("clock.arrow.circlepath", PacerPalette.Attention, 11)),
+                HelpRow("help.customize", Mark("slider.horizontal.3")),
+                HelpRow("help.move", MoveSample())));
+        }
+        else if (id == "expanded")
+            target.Children.Add(Group(HelpInset,
+                HelpRow("help.hover", Mark("cursorarrow.rays")), HelpRow("help.open", Mark("arrow.up.forward.app")),
+                HelpRow("help.app_buttons", providers.Select(provider => (UIElement)Mark(GuideArt.ProviderSymbol(provider), PacerPalette.Provider(provider), 12)).ToArray()),
+                HelpRow("help.read", Mark("checkmark.rectangle.stack")), HelpRow("help.pace", PaceSample())));
+        else
+        {
+            var details = new StackPanel(); ModuleHelp(details, id);
+            target.Children.Add(Group(HelpInset, details.Children.Cast<UIElement>().ToArray().Select(child => { details.Children.Remove(child); return child; }).ToArray()));
+        }
+        Refresh();
+    }
+    /// One way in: its symbol on a soft tile, a title and a sentence, with an arrow when it leaves Pacer.
+    private Button QuickTile(Button button, string symbol, string title, string detail, bool external)
+    {
+        var content = new StackPanel();
+        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+        if (external)
+        {
+            var arrow = new IconGlyph { Symbol = "arrow.up.right", Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Top, Opacity = 0.7 };
+            arrow.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary"); DockPanel.SetDock(arrow, Dock.Right); top.Children.Add(arrow);
+        }
+        var tile = FeatureSymbol(symbol, 30); tile.HorizontalAlignment = HorizontalAlignment.Left; top.Children.Add(tile);
+        content.Children.Add(top);
+        content.Children.Add(Text(title, 13, true));
+        var line = Text(detail, 11.5); line.Margin = new Thickness(0, 2, 0, 0); line.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); content.Children.Add(line);
+        button.Style = (Style)FindResource("SettingsQuickTile"); button.ContentTemplate = null; button.Content = content;
+        button.HorizontalContentAlignment = HorizontalAlignment.Stretch; button.VerticalAlignment = VerticalAlignment.Stretch; button.Margin = new Thickness(0);
+        AutomationProperties.SetName(button, title); AutomationProperties.SetHelpText(button, detail);
+        return button;
+    }
     /// Separators start under the text, past the 84-point swatch.
     private const double HelpInset = 110;
     /// The real marks on a bar-colored swatch, then what they mean.
     private Grid HelpRow(string key, params UIElement[] samples)
     {
         string title = ui.Text(key + ".title");
-        var row = new Grid { Margin = new Thickness(12, 8, 12, 8) };
+        var row = new Grid { Margin = new Thickness(14, 8, 14, 8) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition());
         var swatch = Swatch(samples); swatch.Margin = new Thickness(0, 0, 14, 0); row.Children.Add(swatch);
         var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(Text(title)); var detail = Text(ui.Text(key + ".detail"), 11); detail.Margin = new Thickness(0, 2, 0, 0); labels.Children.Add(detail);
+        labels.Children.Add(Text(title)); var detail = Text(ui.Text(key + ".detail"), 11.5); detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); detail.Margin = new Thickness(0, 2, 0, 0); labels.Children.Add(detail);
         Grid.SetColumn(labels, 1); row.Children.Add(labels); Identify(row, key, title); return row;
-    }
-    private Button HelpLink(Button button, string symbol)
-    {
-        button.Style = (Style)FindResource("SettingsLink"); button.HorizontalAlignment = HorizontalAlignment.Left; button.Margin = new Thickness(12, 6, 12, 6);
-        WithGlyph(button, GuideArt.Symbol(symbol), AutomationProperties.GetName(button)); return button;
     }
     private void ModuleHelp(Panel target, string provider)
     {
@@ -441,7 +700,7 @@ internal sealed class GuideContent : StackPanel
                 "windows" => [Warning("codex5hLow", false, provider), Warning("codex5hExhausted", true, provider)],
                 "cloud" => [Mark("cloud", tint)], "remote" => [Mark("network", tint)], _ => [Mark("square.on.square", tint)]
             };
-            if (target.Children.Count > 0) { var line = new Border { Height = 1, Margin = new Thickness(HelpInset, 0, 0, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); target.Children.Add(line); }
+            if (target.Children.Count > 0) { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); target.Children.Add(line); }
             target.Children.Add(HelpRow("help." + provider + "." + key, samples));
         }
     }
@@ -463,20 +722,30 @@ internal sealed class GuideContent : StackPanel
     internal void Support()
     {
         Reset();
-        var thanks = new DockPanel { Margin = new Thickness(14, 12, 14, 12) };
-        thanks.Children.Add(new DecorativeImage { Width = 48, Height = 48, Margin = new Thickness(0, 0, 14, 0), Stretch = Stretch.Uniform,
-            Source = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))) });
+        // The icon and thanks over a faint wash of the three services' colors, as on the Mac.
+        var thanks = new DockPanel { Margin = new Thickness(20, 18, 20, 18) };
+        thanks.Children.Add(new DecorativeImage { Width = 60, Height = 60, Margin = new Thickness(0, 0, 16, 0), Stretch = Stretch.Uniform,
+            Source = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Direction = 270, Opacity = 0.25 } });
         var thanksText = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        thanksText.Children.Add(Text(ui.Text("support.thanks.title"), 15, true)); var thanksDetail = Text(ui.Text("support.thanks.detail"), 11); thanksDetail.Margin = new Thickness(0, 3, 0, 0); thanksText.Children.Add(thanksDetail);
-        thanks.Children.Add(thanksText); Identify(thanks, "support.thanks", ui.Text("support.thanks.title")); var intro = Group(0, thanks); intro.Margin = new Thickness(0, 0, 0, 14); Children.Add(intro);
-        var star = Link("support.star.action", "star"); Prominent(star, "star.fill");
-        Button? copy = null; copy = Button(ui.Text("support.share.copy"), "support.copy", () => _ = Copy(copy!));
+        thanksText.Children.Add(Text(ui.Text("support.thanks.title"), 17, true)); var thanksDetail = Text(ui.Text("support.thanks.detail"), 12.5); thanksDetail.Margin = new Thickness(0, 5, 0, 0); thanksDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); thanksText.Children.Add(thanksDetail);
+        thanks.Children.Add(thanksText); Identify(thanks, "support.thanks", ui.Text("support.thanks.title"));
+        var wash = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
+        wash.GradientStops.Add(new GradientStop(Color.FromArgb(41, 102, 205, 187), 0)); wash.GradientStops.Add(new GradientStop(Color.FromArgb(31, 255, 164, 119), .5)); wash.GradientStops.Add(new GradientStop(Color.FromArgb(41, 126, 150, 255), 1));
+        var hero = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 0, 12), Child = new Border { CornerRadius = new CornerRadius(13), Background = wash, Child = thanks } };
+        hero.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); hero.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
+        Children.Add(hero);
+        var star = Link("support.star.action", "star"); Prominent(star, "star");
+        Button? copy = null; copy = Button(ui.Text("support.share.copy"), "support.copy", () => _ = Copy(copy!, catalog.Links["repository"], "support.share.copy", "link"));
+        WithGlyph(copy, "link", ui.Text("support.share.copy"));
         var send = Button(ui.Text("support.share.action"), "support.share", () =>
         {
             var window = Window.GetWindow(this);
             if (window == null || !(share ??= new()).Show(new WindowInteropHelper(window).Handle, catalog, ui)) issue.Text = ui.Text("windows.support.share_unavailable");
         });
-        var donate = Link("support.coffee.title", "donate"); WithGlyph(donate, "cup.and.saucer", ui.Text("support.coffee.title"));
+        // The donation platform by its own name, as on the Mac.
+        WithGlyph(send, "square.and.arrow.up", ui.Text("support.share.action"));
+        var donate = Link("support.coffee.title", "donate"); WithGlyph(donate, "cup.and.saucer", "Buy Me a Coffee"); AutomationProperties.SetName(donate, "Buy Me a Coffee");
         var coffeeActions = new List<Button> { donate };
         string? file = catalog.SupportCode;
         if (file != null && file == Path.GetFileName(file))
@@ -486,20 +755,95 @@ internal sealed class GuideContent : StackPanel
             {
                 var button = Button(ui.Text("support.code.wechat"), "support.wechat", () => { if (code != null) code.IsOpen = !code.IsOpen; });
                 WithGlyph(button, "qrcode", ui.Text("support.code.wechat")); coffeeActions.Insert(0, button);
-                var content = new StackPanel { Margin = new Thickness(12) };
-                content.Children.Add(new Image { Source = BitmapFrame.Create(new Uri(imageFile)), Width = 220, Height = 220, Stretch = Stretch.Uniform });
-                var hint = Text(ui.Text("support.code.wechat_hint"), 12); hint.Foreground = Brushes.Black; content.Children.Add(hint);
-                var close = Button(ui.Text("whats_new.done"), "support.wechat.close", () => { if (code != null) code.IsOpen = false; button.Focus(); }); content.Children.Add(close);
-                code = new Popup { PlacementTarget = button, Placement = PlacementMode.Bottom, StaysOpen = false,
-                    Child = new Border { Background = Brushes.White, BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = content } };
+                var content = CodeCard(imageFile, ui.Text("support.code.wechat_hint"), "support.wechat.panel");
+                code = new Popup { PlacementTarget = button, Placement = PlacementMode.Bottom, StaysOpen = false, Child = content };
                 content.PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape) { code.IsOpen = false; button.Focus(); args.Handled = true; } };
-                WindowRendering.Prepare(code); code.Opened += (_, _) => close.Focus();
+                WindowRendering.Prepare(code); code.Opened += (_, _) => content.Focus();
             }
         }
-        Children.Add(Group(50,
-            SupportRow("support.star", "star.fill", Color.FromRgb(245, 173, 28), star, Link("support.star.feature", "feature"), Link("support.star.bug", "bug")),
-            SupportRow("support.share", "square.and.arrow.up", Color.FromRgb(51, 168, 115), send, copy),
-            SupportRow("support.coffee", "cup.and.saucer", Color.FromRgb(158, 107, 69), coffeeActions.ToArray())));
+        // Three ways to help back side by side, their buttons pinned to the bottom so the cards line up.
+        var cards = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+        foreach (var (card, column) in new[] {
+            (SupportCard("support.star", "star.fill", Color.FromRgb(245, 173, 28), star), 0),
+            (SupportCard("support.share", "square.and.arrow.up", Color.FromRgb(51, 168, 115), send, copy), 2),
+            (SupportCard("support.coffee", "cup.and.saucer", Color.FromRgb(158, 107, 69), coffeeActions.ToArray()), 4) })
+        {
+            if (column > 0) cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+            cards.ColumnDefinitions.Add(new ColumnDefinition()); Grid.SetColumn(card, column); cards.Children.Add(card);
+        }
+        Children.Add(cards);
+        var feedbackTitle = Text(ui.Text("main.support.feedback"), 12, true); feedbackTitle.Margin = new Thickness(4, 10, 0, 8); feedbackTitle.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        Children.Add(feedbackTitle);
+        var rows = new List<UIElement> { FeedbackRow(Link("support.star.feature", "feature"), "lightbulb", Color.FromRgb(250, 194, 51)),
+            FeedbackRow(Link("support.star.bug", "bug"), "ladybug", Color.FromRgb(240, 92, 84)) };
+        if (catalog.QqGroup is { Length: > 0 } group && ui.Has("support.qq.title")) rows.Add(QqGroupRow(group, catalog.QqCode));
+        Children.Add(Group(0, rows.ToArray()));
+    }
+    /// One way to help: its tile, name and a sentence, then full-width buttons at the bottom.
+    private Border SupportCard(string key, string symbol, Color tint, params Button[] actions)
+    {
+        var layout = new DockPanel { LastChildFill = false };
+        var top = new StackPanel(); DockPanel.SetDock(top, Dock.Top);
+        var tile = GuideArt.Tile(symbol, tint, 30); tile.HorizontalAlignment = HorizontalAlignment.Left; top.Children.Add(tile);
+        var title = Text(ui.Text(key + ".title"), 13.5, true); title.Margin = new Thickness(0, 12, 0, 0); top.Children.Add(title);
+        var detail = Text(ui.Text(key + ".detail"), 12); detail.Margin = new Thickness(0, 4, 0, 14); detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); top.Children.Add(detail);
+        layout.Children.Add(top);
+        var buttons = new StackPanel(); DockPanel.SetDock(buttons, Dock.Bottom);
+        foreach (var action in actions) { action.Margin = new Thickness(0, 6, 0, 0); action.HorizontalAlignment = HorizontalAlignment.Stretch; action.MinHeight = 28; action.FontSize = 12.5; buttons.Children.Add(action); }
+        layout.Children.Add(buttons);
+        var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(14), Child = layout };
+        card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
+        AutomationProperties.SetName(card, ui.Text(key + ".title")); return card;
+    }
+    /// The QQ group: its number, a copy button and its code on request, as on the Mac.
+    private Grid QqGroupRow(string number, string? file)
+    {
+        var row = new Grid { Margin = new Thickness(14, 8, 14, 8) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var tile = GuideArt.Tile("person.2", Color.FromRgb(0x12, 0xB7, 0xF5), 22); tile.Margin = new Thickness(0, 0, 10, 0); row.Children.Add(tile);
+        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        labels.Children.Add(Text(ui.Text("support.qq.title")));
+        var detail = Text(ui.Text("support.qq.number").Replace("%@", number, StringComparison.Ordinal), 11.5); detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); labels.Children.Add(detail);
+        Grid.SetColumn(labels, 1); row.Children.Add(labels);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        Button? copy = null; copy = Button(ui.Text("support.qq.copy"), "support.qq.copy", () => _ = Copy(copy!, number, "support.qq.copy"));
+        actions.Children.Add(copy);
+        string? image = file != null && file == Path.GetFileName(file) ? Path.Combine(AppContext.BaseDirectory, "CodexPacerPortable_PacerCore.resources", file) : null;
+        if (image != null && File.Exists(image))
+        {
+            Popup? popup = null;
+            var show = Button(ui.Text("support.qq.code"), "support.qq.code", () => { if (popup != null) popup.IsOpen = !popup.IsOpen; }); show.Margin = new Thickness(6, 3, 0, 3);
+            WithGlyph(show, "qrcode", ui.Text("support.qq.code"));
+            var content = CodeCard(image, ui.Text("support.qq.hint"), "support.qq.panel");
+            popup = new Popup { PlacementTarget = show, Placement = PlacementMode.Bottom, StaysOpen = false, Child = content };
+            content.PreviewKeyDown += (_, args) => { if (args.Key == Key.Escape) { popup.IsOpen = false; show.Focus(); args.Handled = true; } };
+            WindowRendering.Prepare(popup); popup.Opened += (_, _) => content.Focus();
+            qqCode = popup; actions.Children.Add(show);
+        }
+        Grid.SetColumn(actions, 2); row.Children.Add(actions);
+        AutomationProperties.SetName(row, ui.Text("support.qq.title") + " " + detail.Text);
+        return row;
+    }
+    /// A QR code on white with its hint under it; the card itself takes focus so Escape closes it.
+    private Border CodeCard(string image, string hint, string id)
+    {
+        var content = new StackPanel { Margin = new Thickness(12) };
+        content.Children.Add(new Image { Source = BitmapFrame.Create(new Uri(image)), Width = 220, Height = 220, Stretch = Stretch.Uniform });
+        var line = Text(hint, 12); line.Foreground = Brushes.Black; line.HorizontalAlignment = HorizontalAlignment.Center; line.Margin = new Thickness(0, 6, 0, 0); content.Children.Add(line);
+        var card = new Border { Background = Brushes.White, CornerRadius = new CornerRadius(10), Child = content, Focusable = true, FocusVisualStyle = null };
+        Identify(card, id, hint); return card;
+    }
+    /// A feedback form opened in the browser: tile, title and a chevron.
+    private Grid FeedbackRow(Button link, string symbol, Color tint)
+    {
+        var line = new Grid();
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); line.ColumnDefinitions.Add(new ColumnDefinition()); line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var tile = GuideArt.Tile(symbol, tint, 22); tile.Margin = new Thickness(0, 0, 10, 0); tile.VerticalAlignment = VerticalAlignment.Center; line.Children.Add(tile);
+        var title = Text(AutomationProperties.GetName(link), 13); Grid.SetColumn(title, 1); line.Children.Add(title);
+        var arrow = new IconGlyph { Symbol = "arrow.up.right", Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Center }; arrow.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        Grid.SetColumn(arrow, 2); line.Children.Add(arrow);
+        link.Style = (Style)FindResource("SettingsRowButton"); link.ContentTemplate = null; link.Content = line;
+        var row = new Grid(); row.Children.Add(link); return row;
     }
     /// A tile, the title over its detail, then the row's actions in one line.
     private Grid SupportRow(string key, string symbol, Color tint, params Button[] actions)
@@ -528,16 +872,31 @@ internal sealed class GuideContent : StackPanel
     {
         button.Style = (Style)FindResource("SettingsProminentButton"); WithGlyph(button, symbol, AutomationProperties.GetName(button));
     }
-    private async Task Copy(Button button)
+    /// Copies, then says so for two seconds; a button with a symbol shows a check meanwhile, as on the Mac.
+    private async Task Copy(Button button, string value, string idleKey, string? symbol = null)
     {
+        void Show(string text, string? glyph)
+        {
+            if (glyph != null) WithGlyph(button, glyph, text); else button.Content = text;
+            AutomationProperties.SetName(button, text);
+        }
         try
         {
-            copyLink(catalog.Links["repository"]); int revision = ++copyRevision;
-            button.Content = ui.Text("support.share.copied"); AutomationProperties.SetName(button, button.Content.ToString());
+            copyLink(value); int revision = ++copyRevision;
+            Show(ui.Text("support.share.copied"), symbol == null ? null : "checkmark");
             await Task.Delay(TimeSpan.FromSeconds(2));
-            if (IsLoaded && revision == copyRevision) { button.Content = ui.Text("support.share.copy"); AutomationProperties.SetName(button, button.Content.ToString()); }
+            if (IsLoaded && revision == copyRevision) Show(ui.Text(idleKey), symbol);
         }
         catch (System.Runtime.InteropServices.COMException) { issue.Text = ui.Text("windows.pages.copy_failed"); }
     }
     internal Popup? SupportCodePopup => code;
+    /// Collapses a text that has nothing to say.
+    private sealed class EmptyCollapses : System.Windows.Data.IValueConverter
+    {
+        internal static readonly EmptyCollapses Instance = new();
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => value is string { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => throw new NotSupportedException();
+    }
+    private Popup? qqCode;
+    internal Popup? QqCodePopup => qqCode;
 }

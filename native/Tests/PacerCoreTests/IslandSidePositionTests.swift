@@ -5,9 +5,9 @@ final class IslandSidePositionTests: XCTestCase {
     private let corners: [IslandPosition] = [.topLeft, .bottomLeft, .topRight, .bottomRight]
 
     func testPositionDefaultsToTheOriginalCenterAndIgnoresUnknownValues() throws {
-        let name = "pacer-island-position-test-\(UUID().uuidString)"
+        let name = testDefaultsName("pacer-island-position-test")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { removeTestDefaults(name) }
         XCTAssertNil(IslandPosition.saved(in: defaults))
         XCTAssertEqual(IslandPosition.load(from: defaults), .center)
         for position in IslandPosition.allCases {

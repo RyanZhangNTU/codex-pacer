@@ -12,9 +12,9 @@ struct EnginePresentation: Codable, Equatable {
     let header: EngineHeader
 
     init(activities: [SessionActivity], requests: [PendingAttentionRequest], inbox: CompletionInbox,
-         hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
+         hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = []) {
         self.init(ActivityTaskPresentation(activities: activities, requests: requests, inbox: inbox,
-            options: .init(hideProjects: hideProjects, showsDeepSeekTurnCost: showsDeepSeekTurnCost), at: now))
+            options: .init(hideProjects: hideProjects, showsDeepSeekTurnCost: showsDeepSeekTurnCost, progressRingProviders: progressRingProviders), at: now))
     }
     init(_ value: ActivityTaskPresentation) {
         rows = value.rows.map(EngineTaskRow.init)
@@ -50,6 +50,14 @@ struct EngineTaskRow: Codable, Equatable {
     let dimmed: Bool
     let cost: String?
     let peakCost: Bool
+    /// Optional protocol-1 additions: absent when the progress ring is off.
+    /// `pending` draws the dashed ring; `reported` draws `progressFraction`.
+    let progressState: String?
+    /// The request's lifecycle mode (`TaskProgressRing.Mode`), which sets the ring's style.
+    let progressMode: String?
+    let progressFraction: Double?
+    let progressStale: Bool?
+    let progressText: String?
 
     init(group: ActivityTaskGroup, attention: PendingAttentionRequest.Kind?, inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
@@ -65,6 +73,9 @@ struct EngineTaskRow: Codable, Equatable {
         rateText = value.rateText; subagentText = value.subagentText
         ratePlaceholder = value.ratePlaceholder; turnTime = value.turnTime; subagents = value.subagents
         unread = value.unread; failed = value.activity.turnFailed; dimmed = value.dimmed; cost = value.cost; peakCost = value.peakCost
+        progressState = value.progressRing?.state.rawValue; progressMode = value.progressRing?.mode.rawValue
+        progressFraction = value.progressRing?.fraction
+        progressStale = value.progressRing?.stale; progressText = value.progressRing?.accessibilityText
     }
     static func symbol(_ activity: SessionActivity, attention: PendingAttentionRequest.Kind?) -> String {
         symbol(TaskSymbol.symbol(for: activity, attention: attention))
@@ -74,12 +85,13 @@ struct EngineTaskRow: Codable, Equatable {
         switch kind {
         case .thinking: return "sparkle"
         case .tool: return "terminal"
-        case .responding: return "text.bubble"
+        case .responding: return "ellipsis.bubble"
         case .starting: return "hourglass"
         case .working: return "cloud"
         case .coordinating: return "arrow.triangle.branch"
+        case .background: return "moon.zzz"
         case .approval: return "hand.raised"
-        case .input: return "ellipsis.bubble"
+        case .input: return "questionmark.bubble"
         case .completed: return "checkmark.circle"
         case .interrupted: return "pause.circle"
         case .failed: return "xmark.circle"
@@ -99,6 +111,10 @@ struct EngineHeader: Codable, Equatable {
     let ending: String?
     let endingProvider: String?
     let endingIsCore: Bool
+    /// The only active task's reported estimate while it works; the badge draws it in place of the orbit.
+    let progressFraction: Double?
+    let progressLongStep: Bool?
+    let progressStale: Bool?
 
     init(groups: [ActivityTaskGroup], requests: [PendingAttentionRequest], inbox: CompletionInbox, at now: Date) {
         self.init(ActivityTaskPresentation(activities: groups.flatMap(\.members), requests: requests, inbox: inbox,
@@ -115,5 +131,8 @@ struct EngineHeader: Codable, Equatable {
         else { endingProvider = suppliedProvider?.rawValue }
         endingIsCore = value.endingIsCore
         if case .symbol(let glyph) = value.core { coreSymbol = glyph } else { coreSymbol = nil }
+        progressFraction = value.progress?.fraction
+        progressLongStep = value.progress.map { $0.mode == .longStep }
+        progressStale = value.progress?.stale
     }
 }
