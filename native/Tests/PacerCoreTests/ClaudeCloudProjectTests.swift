@@ -483,6 +483,43 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertEqual(state.attention.map(\.kind), [.input])
     }
 
+    func testEachSessionOfAWaitingThreadIsReadOnceWhenAddedAndAcrossPasses() {
+        var state = ClaudeCloudProjectState()
+        let old = -2 * 86_400.0
+        let one = thread(.needsInput, reply: old, sessions: ["cse_worker1"])
+        _ = state.sessionsToRead(projects: [project], threads: [project.id: [one]], at: at(0))
+        state.apply(snapshot([one], sessions: [worker(.blocked, category: .needInput)]), at: at(0))
+        let two = thread(.needsInput, reply: old, sessions: ["cse_worker1", "cse_worker2"])
+        let reads = state.sessionsToRead(projects: [project], threads: [project.id: [two]], at: at(600))
+        XCTAssertTrue(reads.contains("cse_worker2"), "a newly bound session is read on an otherwise unchanged thread")
+        XCTAssertFalse(reads.contains("cse_worker1"))
+        state.apply(snapshot([two], sessions: [ClaudeCloudSession(id: "cse_worker2", worker: .requiresAction)]), at: at(600))
+        XCTAssertEqual(state.attention.map(\.kind), [.approval])
+
+        var crowded = ClaudeCloudProjectState(), read: Set<String> = []
+        let ids = (1...17).map { String(format: "cse_many%02d", $0) }
+        let many = thread(.needsInput, reply: old, sessions: ids)
+        for pass in 0..<3 {
+            let selected = crowded.sessionsToRead(projects: [project], threads: [project.id: [many]], at: at(Double(pass) * 600)).filter(ids.contains)
+            if pass == 2 { XCTAssertTrue(selected.isEmpty, "every session was read once, over two passes") }
+            read.formUnion(selected)
+            crowded.apply(snapshot([many], sessions: selected.map { ClaudeCloudSession(id: $0, worker: .idle) }), at: at(Double(pass) * 600))
+        }
+        XCTAssertEqual(read.count, 17)
+    }
+
+    func testAnOlderSnapshotAfterAnEndingNeitherAsksNorClearsTheEnding() {
+        var state = ClaudeCloudProjectState(), policy = AttentionPolicy()
+        state.apply(snapshot([thread(.working, working: true, reply: -60)]), at: at(0))
+        _ = policy.requestNotices(state.attention)
+        state.apply(snapshot([thread(.idle, reply: 18)], sessions: [worker(.reviewReady)]), at: at(20))
+        XCTAssertEqual(row(state)?.phase, .completed)
+        state.apply(snapshot([thread(.needsInput, unread: true, reply: -30 * 86_400)]), at: at(40))
+        XCTAssertEqual(row(state)?.phase, .completed, "an older reply is not the run that just ended")
+        XCTAssertTrue(state.attention.isEmpty)
+        XCTAssertTrue(policy.requestNotices(state.attention).isEmpty)
+    }
+
     func testFirstLookAfterStartupDoesNotRaiseAnOldOrUndatedQuestion() {
         var state = ClaudeCloudProjectState()
         state.apply(snapshot([]), at: at(0))
