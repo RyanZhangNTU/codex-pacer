@@ -82,7 +82,8 @@ public struct ClaudeCloudSession: Equatable, Sendable {
                 pending: PendingAttentionRequest.Kind? = nil) {
         self.id = id; self.worker = worker; self.bucket = bucket; self.turnCategory = turnCategory; self.isConnected = isConnected
         self.isEnded = isEnded; self.isFailed = isFailed; self.hasUnread = hasUnread; self.lastEventAt = lastEventAt
-        self.modelName = modelName; self.effort = effort; self.pending = pending
+        self.modelName = modelName; self.effort = effort
+        self.pending = isConnected && !isEnded && !isFailed ? pending ?? (worker == .requiresAction ? .approval : nil) : nil
     }
     /// A session reported as running on a dropped connection is not doing anything.
     var isRunning: Bool { (worker == .running || bucket == .working) && isConnected && !isEnded }
@@ -190,7 +191,7 @@ enum ClaudeCloudDecoder {
                 let bound = (row["bound_sessions"] as? [[String: Any]]) ?? []
                 return ClaudeCloudThread(id: id, projectID: projectID, status: ClaudeCloudThreadStatus(wire: row["thread_status"] ?? section["status"]),
                     isWorking: row["thread_any_session_working"] as? Bool == true, hasUnread: row["has_unread"] as? Bool == true,
-                    lastReplyAt: date(row["last_reply_at"]) ?? date(row["created_at"]),
+                    lastReplyAt: date(row["last_reply_at"]),
                     title: bound.lazy.compactMap { label($0["title"], limit: 120) }.first,
                     sessionIDs: bound.compactMap { sessionID($0["id"]) }, openDecisions: (row["open_decisions"] as? [Any])?.count ?? 0,
                     workingSessions: bound.filter { $0["status_bucket"] as? String == "working" }.count,
@@ -226,10 +227,12 @@ enum ClaudeCloudDecoder {
             .replacingOccurrences(of: "worker_status_", with: "")) ?? .unknown
         let status = (row["status"] as? String)?.lowercased().replacingOccurrences(of: "session_status_", with: "")
         var requests = (row["requires_action_details_list"] as? [[String: Any]]) ?? []
-        for value in [row["requires_action_details"], metadata?["pending_action"]] { if let value = value as? [String: Any] { requests.append(value) } }
+        if let details = row["requires_action_details"] as? [String: Any] { requests.append(details) }
+        // Metadata can outlive the action. It describes a request only while the worker is asking.
+        if worker == .requiresAction, let details = metadata?["pending_action"] as? [String: Any] { requests.append(details) }
         let pending: PendingAttentionRequest.Kind?
         if requests.contains(where: { $0["tool_name"] as? String == "AskUserQuestion" }) { pending = .input }
-        else { pending = requests.isEmpty && worker != .requiresAction ? nil : .approval }
+        else { pending = requests.isEmpty ? nil : .approval }
         let bucket = ClaudeCloudSession.Category(wire: row["status_bucket"])
         let summary = metadata?["post_turn_summary"] as? [String: Any]
         return ClaudeCloudSession(id: id, worker: worker, bucket: bucket, turnCategory: ClaudeCloudSession.Category(wire: summary?["status_category"]),

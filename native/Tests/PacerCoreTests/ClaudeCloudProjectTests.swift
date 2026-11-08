@@ -10,9 +10,11 @@ final class ClaudeCloudProjectTests: XCTestCase {
     private let project = ClaudeCloudProject(id: "chan_project1", name: "Launch plan", coordinatorSessionID: "cse_coordinator1")
 
     private func thread(_ status: ClaudeCloudThreadStatus, working: Bool = false, unread: Bool = false, reply: TimeInterval = 0,
-                        decisions: Int = 0, sessions: [String] = ["cse_worker1"], workers: Int = 0, id: String = "cmsg_thread1") -> ClaudeCloudThread {
+                        decisions: Int = 0, sessions: [String] = ["cse_worker1"], workers: Int = 0, id: String = "cmsg_thread1",
+                        replies: Int = 0) -> ClaudeCloudThread {
         ClaudeCloudThread(id: id, projectID: project.id, status: status, isWorking: working, hasUnread: unread,
-            lastReplyAt: base.addingTimeInterval(reply), title: "Draft the outline", sessionIDs: sessions, openDecisions: decisions, workingSessions: workers)
+            lastReplyAt: base.addingTimeInterval(reply), title: "Draft the outline", sessionIDs: sessions, openDecisions: decisions, workingSessions: workers,
+            replyCount: replies)
     }
     private func snapshot(_ threads: [ClaudeCloudThread], sessions: [ClaudeCloudSession] = [], local: Set<String> = []) -> ClaudeCloudSnapshot {
         ClaudeCloudSnapshot(projects: [project], threads: [project.id: threads],
@@ -76,6 +78,10 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertEqual(try decode(["external_metadata": ["pending_action": ["tool_name": "Bash"]]]).pending, .approval)
         XCTAssertEqual(try decode([:]).pending, .approval)
         XCTAssertNil(try decode(["worker_status": "idle"]).pending)
+        let oldQuestion = ["pending_action": ["tool_name": "AskUserQuestion"]]
+        XCTAssertNil(try decode(["worker_status": "idle", "external_metadata": oldQuestion]).pending, "metadata alone can describe an old action")
+        XCTAssertNil(try decode(["status": "archived", "external_metadata": oldQuestion]).pending)
+        XCTAssertNil(try decode(["connection_status": "disconnected", "external_metadata": oldQuestion]).pending)
         XCTAssertFalse(try decode(["worker_status": "running", "connection_status": "disconnected"]).isRunning)
         XCTAssertTrue(try decode(["status": "failed"]).isFailed)
         XCTAssertEqual(try decode(["external_metadata": ["model": "claude-opus-5-5", "effort_level": "high"]]).modelName, "claude-opus-5-5")
@@ -198,13 +204,16 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertEqual(row(state)?.phase, .running)
     }
 
-    func testATurnStoppedWithoutFinishingAsksForAReplyAndKeepsItsCard() throws {
+    func testAStoppedTurnCanContinueWithoutShowingAWaitingRequest() throws {
         var state = ClaudeCloudProjectState()
         state.apply(snapshot([thread(.working, working: true)]), at: at(0))
         state.apply(snapshot([thread(.idle)], sessions: [worker(.reviewReady)]), at: at(20))
         let ended = try XCTUnwrap(row(state))
         XCTAssertEqual(ended.phase, .completed)
-        XCTAssertEqual(ended.endingLabel, L10n.text("attention.input"))
+        let card = ActivityTaskRowPresentation(activity: ended, unread: true, at: at(20))
+        XCTAssertEqual(card.status, L10n.text("claude.cloud.turn_can_continue"))
+        XCTAssertEqual(card.symbol, .completed)
+        XCTAssertTrue(state.attention.isEmpty)
         state.apply(snapshot([thread(.idle)], sessions: [worker(.reviewReady)]), at: at(20 + ClaudeCloudProjectState.readGrace + 1))
         XCTAssertEqual(row(state)?.claudeCloud?.readInClaude, false, "an idle thread never turns unread, so silence is not reading")
 
@@ -232,7 +241,7 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertNil(row(state), "looking again at an unchanged thread is not news")
         state.apply(snapshot([thread(.idle, reply: 300)], sessions: [worker(.reviewReady)]), at: at(310))
         XCTAssertEqual(row(state)?.phase, .completed)
-        XCTAssertEqual(row(state)?.endingLabel, L10n.text("attention.input"))
+        XCTAssertEqual(row(state)?.endingLabel, L10n.text("claude.cloud.turn_can_continue"))
     }
 
     func testAWatchedRunEndsOnceAndIdleSettlingIntoResolvedOnlyChangesTheLabel() throws {
@@ -390,8 +399,9 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertTrue(state.attention.isEmpty)
         state.apply(snapshot([thread(.needsInput, reply: 18)], sessions: [asking]), at: at(60))
         XCTAssertNil(row(state), "and it stays settled")
-        state.apply(snapshot([thread(.working, working: true, reply: 18)]), at: at(80))
-        XCTAssertEqual(row(state)?.phase, .running)
+        state.apply(snapshot([thread(.needsInput, reply: 18)], sessions: [worker(.working)]), at: at(80))
+        XCTAssertEqual(row(state)?.phase, .running, "the worker can resume before the thread status changes")
+        XCTAssertTrue(state.attention.isEmpty)
         state.apply(snapshot([thread(.needsInput, reply: 90)], sessions: [asking]), at: at(100))
         XCTAssertEqual(row(state)?.phase, .waitingForInput, "a new question is not settled by the last one's read")
     }
@@ -407,13 +417,94 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertNil(row(state))
     }
 
-    func testBaselineOnlyRaisesRecentUnreadQuestions() {
+    func testBaselineShowsOnlyRecentUnreadPlainQuestionsAndDoesNotAlert() throws {
         var state = ClaudeCloudProjectState()
+        var policy = AttentionPolicy()
         state.apply(snapshot([thread(.needsInput, unread: true, reply: -600), thread(.needsInput, reply: -600, sessions: ["cse_readone1"], id: "cmsg_readthread"),
                               thread(.needsInput, unread: true, reply: -30 * 86_400, sessions: ["cse_oldone1"], id: "cmsg_oldthread")]), at: at(0))
         XCTAssertEqual(row(state)?.phase, .waitingForInput)
         XCTAssertNil(row(state, "cmsg_readthread"))
         XCTAssertNil(row(state, "cmsg_oldthread"))
+        XCTAssertTrue(policy.requestNotices(state.attention).isEmpty)
+        let request = try XCTUnwrap(state.attention.first), activity = try XCTUnwrap(row(state))
+        let task = ActivityTaskRowPresentation(activity: activity, attention: request.kind, unread: false, at: at(0))
+        XCTAssertEqual(task.status, L10n.text("attention.input"))
+        XCTAssertEqual(task.symbol, .input)
+    }
+
+    func testAQuestionSettledInClaudeStaysSettledAfterItFallsOffThePage() {
+        var state = ClaudeCloudProjectState(), policy = AttentionPolicy()
+        state.apply(snapshot([thread(.working, working: true)]), at: at(0))
+        state.apply(snapshot([thread(.needsInput, unread: true, reply: 18)]), at: at(20))
+        XCTAssertEqual(policy.requestNotices(state.attention).count, 1)
+        state.apply(snapshot([thread(.needsInput, reply: 18)]), at: at(40))
+        XCTAssertNil(row(state))
+        XCTAssertTrue(policy.requestNotices(state.attention).isEmpty)
+        state.apply(snapshot([]), at: at(60))
+        state.apply(snapshot([thread(.needsInput, unread: true, reply: 18, replies: 2)]), at: at(80))
+        XCTAssertNil(row(state), "a new unread flag or changed count does not make the same reply new")
+        XCTAssertTrue(policy.requestNotices(state.attention).isEmpty)
+        state.apply(snapshot([thread(.needsInput, unread: true, reply: 98)]), at: at(100))
+        XCTAssertEqual(row(state)?.phase, .waitingForInput)
+        XCTAssertEqual(policy.requestNotices(state.attention).count, 1, "a new reply can still ask")
+    }
+
+    func testFirstLookAfterStartupDoesNotRaiseAnOldOrUndatedQuestion() {
+        var state = ClaudeCloudProjectState()
+        state.apply(snapshot([]), at: at(0))
+        let noReply = ClaudeCloudThread(id: "cmsg_undated1", projectID: project.id, status: .needsInput, hasUnread: true,
+            sessionIDs: [], createdAt: at(1))
+        state.apply(snapshot([thread(.needsInput, unread: true, reply: -30 * 86_400), noReply]), at: at(20))
+        XCTAssertTrue(state.activities.isEmpty)
+        XCTAssertTrue(state.attention.isEmpty)
+    }
+
+    func testMissingSessionPreservesAWaitAndAnUnchangedReplyCannotFinishIt() {
+        var state = ClaudeCloudProjectState()
+        state.apply(snapshot([thread(.working, working: true)]), at: at(-20))
+        state.apply(snapshot([thread(.needsInput, unread: true)]), at: at(0))
+        state.apply(snapshot([thread(.idle)]), at: at(30))
+        XCTAssertEqual(row(state)?.phase, .waitingForInput)
+        XCTAssertEqual(state.attention.first?.detectedAt, at(0))
+        state.apply(snapshot([thread(.idle)]), at: at(301))
+        XCTAssertEqual(row(state)?.phase, .unknown)
+        XCTAssertTrue(state.attention.isEmpty)
+        state.apply(snapshot([thread(.idle)], sessions: [worker(.reviewReady)]), at: at(320))
+        XCTAssertNil(row(state), "the old reply did not finish a new turn")
+    }
+
+    func testAThreadCanClearItsDecisionWhileTheSessionIsUnavailable() {
+        for status in [ClaudeCloudThreadStatus.idle, .needsInput] {
+            var state = ClaudeCloudProjectState()
+            state.apply(snapshot([thread(.working, decisions: 1)]), at: at(0))
+            XCTAssertEqual(state.attention.map(\.kind), [.decision])
+            state.apply(snapshot([thread(status)]), at: at(20))
+            XCTAssertTrue(state.attention.isEmpty)
+            XCTAssertEqual(row(state)?.phase, status == .idle ? .unknown : nil)
+        }
+    }
+
+    func testAnExplicitRequestCanEndWithTheSameReplyTimestamp() {
+        let approval = ClaudeCloudSession(id: "cse_worker1", worker: .requiresAction)
+        for (status, phase) in [(ClaudeCloudThreadStatus.resolved, ActivityPhase.completed), (.failed, .interrupted)] {
+            var state = ClaudeCloudProjectState()
+            state.apply(snapshot([thread(.needsInput)], sessions: [approval]), at: at(0))
+            XCTAssertEqual(state.attention.map(\.kind), [.approval])
+            state.apply(snapshot([thread(status)]), at: at(20))
+            XCTAssertTrue(state.attention.isEmpty)
+            XCTAssertEqual(row(state)?.phase, phase)
+            XCTAssertEqual(row(state)?.turnFailed, status == .failed)
+        }
+    }
+
+    func testAnUnreadPlainQuestionAgesOutWhileItIsTracked() {
+        var state = ClaudeCloudProjectState()
+        let oldQuestion = thread(.needsInput, unread: true, reply: -7 * 86_400 + 1)
+        state.apply(snapshot([oldQuestion]), at: at(0))
+        XCTAssertEqual(row(state)?.phase, .waitingForInput)
+        state.apply(snapshot([oldQuestion]), at: at(2))
+        XCTAssertNil(row(state))
+        XCTAssertTrue(state.attention.isEmpty)
     }
 
     func testAnApprovalStaysUntilAnsweredEvenAfterItWasRead() {
@@ -478,7 +569,7 @@ final class ClaudeCloudProjectTests: XCTestCase {
         direct.apply(snapshot([thread(.resolved, reply: -3600)], sessions: [asking]), at: at(40))
         let ended = try XCTUnwrap(row(direct, "cse_coordinator1"))
         XCTAssertEqual(ended.phase, .completed)
-        XCTAssertEqual(ended.endingLabel, L10n.text("attention.input"))
+        XCTAssertEqual(ended.endingLabel, L10n.text("claude.cloud.turn_can_continue"))
     }
 
     func testACoordinatorWhoseThreadOutlivedThePollStaysQuiet() {
@@ -820,6 +911,39 @@ final class ClaudeCloudProjectTests: XCTestCase {
     }
     private func response(_ url: URL?, _ code: Int, headers: [String: String] = [:]) -> HTTPURLResponse {
         HTTPURLResponse(url: url!, statusCode: code, httpVersion: nil, headerFields: headers)!
+    }
+
+    func testAnUnchangedOldQuestionDoesNotReturnAfterAQuietProjectSkipsItsRead() async throws {
+        let clock = Box(base), requests = Requests()
+        let stamp = ISO8601DateFormatter().string(from: at(-30 * 86_400))
+        let monitor = ClaudeCloudProjectMonitor(cookieProvider: { Self.cookies() }, transport: { [self] request in
+            let path = request.url!.path
+            await requests.add(path)
+            let body: [String: Any]
+            if path == "/v1/code/channels" {
+                body = ["channels": [["id": "chan_project1", "name": "Synthetic project", "last_message_at": stamp]]]
+            } else if path.hasSuffix("/threads") {
+                body = ["sections": [["data": [
+                    ["id": "cmsg_thread1", "thread_status": "needs_input", "last_reply_at": stamp, "has_unread": false],
+                    ["id": "cmsg_thread2", "thread_status": "needs_input", "last_reply_at": stamp, "has_unread": true]
+                ]]]]
+            } else {
+                throw ClaudeCloudFailure.invalidReply
+            }
+            return (try JSONSerialization.data(withJSONObject: body), response(request.url, 200))
+        }, now: { clock.date })
+        await monitor.observe { activities, status, attention in
+            XCTAssertEqual(status?.connected, true)
+            XCTAssertTrue(activities.isEmpty, "an unchanged old question is not a task")
+            XCTAssertTrue(attention.isEmpty)
+        }
+        for (seconds, reads) in [(0.0, 1), (120.0, 1), (600.0, 2), (720.0, 2), (1200.0, 3)] {
+            clock.date = at(seconds)
+            _ = await monitor.pollOnce()
+            let paths = await requests.paths
+            XCTAssertEqual(paths.filter { $0.hasSuffix("/threads") }.count, reads)
+        }
+        await monitor.shutdown()
     }
 
     func testMonitorSendsOnlyReadsWithTheExpectedHeadersAndPublishes() async throws {

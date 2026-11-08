@@ -24,12 +24,14 @@ public struct PendingAttentionRequest: Equatable, Sendable, Identifiable {
     public let questionKey: String?
     /// Lets a waiting cloud Project task open before its row has been listed.
     public let claudeCloud: ClaudeCloudContext?
+    /// A question recovered from an existing cloud snapshot can show without a new alert.
+    public let suppressesNotice: Bool
     public init(id: String, threadID: String, sourceHostID: String?, sourceName: String?, kind: Kind, detectedAt: Date, provider: AgentProvider = .codex,
-                questionKey: String? = nil, claudeCloud: ClaudeCloudContext? = nil) {
+                questionKey: String? = nil, claudeCloud: ClaudeCloudContext? = nil, suppressesNotice: Bool = false) {
         self.id = id; self.threadID = threadID; self.sourceHostID = sourceHostID
         self.provider = provider
         self.sourceName = sourceName; self.kind = kind; self.detectedAt = detectedAt; self.questionKey = questionKey
-        self.claudeCloud = claudeCloud
+        self.claudeCloud = claudeCloud; self.suppressesNotice = suppressesNotice
     }
     public var activity: SessionActivity {
         var value = SessionActivity(id: provider.activityID(sessionID: threadID, sourceHostID: sourceHostID),

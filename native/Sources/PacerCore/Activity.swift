@@ -76,7 +76,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     /// A cloud thread can say more than a turn ending does.
     public var endingLabel: String {
         if claudeCloud?.status == .resolved { return L10n.text("activity.resolved") }
-        return L10n.text(claudeCloud?.awaitsReply == true ? "attention.input" : "activity.turn_finished")
+        return L10n.text(claudeCloud?.awaitsReply == true ? "claude.cloud.turn_can_continue" : "activity.turn_finished")
     }
     mutating func setClaudeCloud(_ context: ClaudeCloudContext) {
         guard provider == .claude, sourceHostID == ClaudeCloudProjectState.sourceID else { return }

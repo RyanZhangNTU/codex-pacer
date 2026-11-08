@@ -932,6 +932,7 @@
 "attention.decision" = "待你决定";
 "claude.cloud.coordinator" = "项目协调";
 "claude.cloud.project" = "项目";
+"claude.cloud.turn_can_continue" = "本轮结束 · 可继续回复";
 "claude.cloud.open_help" = "在 Claude 中打开此云端项目";
 "claude.cloud.workers_help" = "此线程还有 %d 个会话在工作";
 "claude.cloud_projects" = "显示 Claude 云端项目";

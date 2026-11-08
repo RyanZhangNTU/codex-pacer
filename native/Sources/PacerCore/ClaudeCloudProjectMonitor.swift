@@ -6,7 +6,7 @@ import FoundationNetworking
 /// Read-only polling of Claude's cloud Projects with Pacer's own claude.ai
 /// session. These endpoints are private and version sensitive. The account's
 /// session watch is not enabled for web sessions, so a poll decides every state;
-/// the projects' message streams only add a run's early start and estimated speed.
+/// the projects' message streams can bring a read forward and estimate reply speed.
 public actor ClaudeCloudProjectMonitor {
     /// A nil status means this account is not offered Projects, which is nothing to report.
     public typealias Update = @Sendable (_ activities: [SessionActivity], _ status: RuntimeStreamStatus?,
@@ -35,7 +35,8 @@ public actor ClaudeCloudProjectMonitor {
     private var state = ClaudeCloudProjectState()
     private var lastStatus: RuntimeStreamStatus?
     private var speedPublish: Task<Void, Never>?
-    private var signalWake: Task<Void, Never>?
+    private var pollRequested = false
+    private var threadHints: [String: String] = [:]
     private var scope: String?
     private var revision: UInt64 = 0
     private var activeBinding: ReadBinding?
@@ -89,18 +90,26 @@ public actor ClaudeCloudProjectMonitor {
         }
     }
     private func wait(_ delay: TimeInterval) async {
-        let task = Task<Void, Never> { try? await Task.sleep(nanoseconds: UInt64(max(1, delay) * 1_000_000_000)) }
-        sleeper = task
-        await task.value
+        let regular = now().addingTimeInterval(max(1, delay)), waitingRevision = revision
+        while !Task.isCancelled {
+            let deadline = pollRequested && failures == 0 && retryAt == nil
+                ? min(regular, lastPoll.addingTimeInterval(Self.soonestPoll)) : regular
+            let seconds = deadline.timeIntervalSince(now())
+            guard seconds > 0 else { return }
+            let task = Task<Void, Never> { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+            sleeper = task
+            await task.value
+            guard task.isCancelled, revision == waitingRevision else { return }
+        }
     }
     public func setExpanded(_ value: Bool) {
         let opened = value && !expanded
         expanded = value
-        if opened, now().timeIntervalSince(lastPoll) >= 5 { sleeper?.cancel() }
+        if opened { pollSoon() }
     }
     public func refresh() async {
         revision &+= 1; activeBinding = nil; retryAt = nil
-        speedPublish?.cancel(); speedPublish = nil; signalWake?.cancel(); signalWake = nil
+        speedPublish?.cancel(); speedPublish = nil; clearPollHints()
         await streams?.stop()
         sleeper?.cancel()
     }
@@ -108,7 +117,7 @@ public actor ClaudeCloudProjectMonitor {
     public func suspend() async {
         revision &+= 1; activeBinding = nil
         loop?.cancel(); loop = nil; sleeper?.cancel(); sleeper = nil
-        speedPublish?.cancel(); speedPublish = nil; signalWake?.cancel(); signalWake = nil
+        speedPublish?.cancel(); speedPublish = nil; clearPollHints()
         await streams?.stop()
     }
     public func shutdown() async {
@@ -119,6 +128,7 @@ public actor ClaudeCloudProjectMonitor {
     /// Returns the delay before the next look.
     @discardableResult func pollOnce() async -> TimeInterval {
         let date = now(); lastPoll = date
+        pollRequested = false
         let startedRevision = revision
         guard let cookies = await cookieProvider(), ClaudeWebQuotaDecoder.sessionKey(cookies) != nil else {
             guard revision == startedRevision, !Task.isCancelled else { return 1 }
@@ -151,8 +161,9 @@ public actor ClaudeCloudProjectMonitor {
         retryAt = nil
         let binding = ReadBinding(cookies: cookies, organization: organization, revision: revision)
         activeBinding = binding
+        let hints = threadHints; threadHints.removeAll(keepingCapacity: true)
         do {
-            let snapshot = try await read(binding: binding, at: date)
+            let snapshot = try await read(binding: binding, at: date, hints: hints)
             try await checkBinding(binding)
             state.apply(snapshot, at: date); failures = 0
             await readTurnResults(binding, at: date)
@@ -201,7 +212,7 @@ public actor ClaudeCloudProjectMonitor {
         revision &+= 1; activeBinding = nil; retryAt = nil
         let cleared = revision
         state = ClaudeCloudProjectState(); scope = nil; failures = 0; localIDs = []; localIDsReadAt = .distantPast; threadsReadAt = [:]
-        speedPublish?.cancel(); speedPublish = nil; signalWake?.cancel(); signalWake = nil
+        speedPublish?.cancel(); speedPublish = nil; clearPollHints()
         await streams?.stop()
         return cleared
     }
@@ -261,24 +272,29 @@ public actor ClaudeCloudProjectMonitor {
         case let .threadStarting(thread, session):
             // A session Desktop runs here is already a local task, with its speed.
             if let session, localIDs.contains(ClaudeCloudProjectState.bareID(session)) { return }
+            if !state.isRunning(thread: thread) { requestThreadRead(thread, project: project) }
             await streams?.listen(to: thread, in: project)
-            if !state.isRunning(thread: thread) { pollSoon() }
+        case let .threadStopped(thread, session):
+            if let session, localIDs.contains(ClaudeCloudProjectState.bareID(session)) { return }
+            if state.isRunning(thread: thread) { requestThreadRead(thread, project: project) }
         case let .partialReply(thread, block, tokens, sentAt):
             if state.applyReplyProgress(thread: thread, block: block, tokens: tokens, sentAt: sentAt, at: now()) { publishSpeedSoon() }
         }
     }
 
-    /// A run just started, so its row need not wait for the next look.
-    private func pollSoon() {
-        guard loop != nil, failures == 0, signalWake == nil else { return }
-        let wait = Self.soonestPoll - now().timeIntervalSince(lastPoll)
-        guard wait > 0 else { sleeper?.cancel(); return }
-        signalWake = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-            await self?.wakeForSignal()
-        }
+    private func requestThreadRead(_ thread: String, project: String) {
+        guard failures == 0, retryAt == nil else { return }
+        if threadHints.count < 16 { threadHints[thread] = project }
+        pollSoon()
     }
-    private func wakeForSignal() { signalWake = nil; sleeper?.cancel() }
+
+    /// Keep a signal that arrived mid-read for the next pass, even if there is no sleeper yet.
+    private func pollSoon() {
+        guard loop != nil, failures == 0, retryAt == nil, !pollRequested else { return }
+        pollRequested = true
+        sleeper?.cancel()
+    }
+    private func clearPollHints() { pollRequested = false; threadHints.removeAll() }
     private static let soonestPoll: TimeInterval = 5
 
     /// The same pace as local rows: one second with the panel open, five otherwise.
@@ -306,12 +322,13 @@ public actor ClaudeCloudProjectMonitor {
         return date.timeIntervalSince(threadsReadAt[project.id] ?? .distantPast) >= Self.quietProjectInterval
     }
 
-    private func read(binding: ReadBinding, at date: Date) async throws -> ClaudeCloudSnapshot {
+    private func read(binding: ReadBinding, at date: Date, hints: [String: String] = [:]) async throws -> ClaudeCloudSnapshot {
         let projects = try ClaudeCloudDecoder.projects(try await get("/v1/code/channels?limit=50&scope=joined", binding))
             .sorted { ($0.lastActivityAt ?? .distantPast) > ($1.lastActivityAt ?? .distantPast) }
         let selected = Array(projects.prefix(Self.maximumProjects))
+        let hintedProjects = Set(hints.values)
         var threads: [String: [ClaudeCloudThread]] = [:]
-        for project in selected where wantsThreads(project, at: date) {
+        for project in selected where hintedProjects.contains(project.id) || wantsThreads(project, at: date) {
             try Task.checkCancellation()
             do {
                 threads[project.id] = try ClaudeCloudDecoder.threads(try await get("/v1/code/channels/\(project.id)/threads?limit=20", binding), projectID: project.id)
@@ -326,7 +343,7 @@ public actor ClaudeCloudProjectMonitor {
             try await checkBinding(binding)
         }
         var sessions: [String: ClaudeCloudSession] = [:]
-        for id in state.sessionsToRead(projects: selected, threads: threads, at: date, local: localIDs) {
+        for id in state.sessionsToRead(projects: selected, threads: threads, at: date, local: localIDs, hintedThreads: Set(hints.keys)) {
             try Task.checkCancellation()
             do { let value = try ClaudeCloudDecoder.session(try await get("/v1/code/sessions/\(id)", binding)); sessions[id] = value }
             catch ClaudeCloudFailure.denied, ClaudeCloudFailure.notEnabled, ClaudeCloudFailure.invalidReply { continue }
