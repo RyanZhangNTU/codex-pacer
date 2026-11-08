@@ -26,7 +26,7 @@
 3. **选择要追踪的服务**：分别开关 Codex、Claude 与 DeepSeek 模块，查看是否已就绪。
 4. **最后几项设置**：任务进度圆环、系统通知、登录时打开，以及前往自定义折叠栏。
 
-![入门引导第 2 步：Codex、Claude 与 DeepSeek 卡片各有开关，下方是自定义折叠栏、系统通知和登录时打开](assets/welcome-services.zh-CN.png)
+![入门引导的“选择要追踪的服务”：Codex、Claude 和 DeepSeek 三张卡片，各有开关和状态](assets/welcome-services.zh-CN.png)
 
 各模块互不影响。检测到某个服务已安装时，Pacer 会自动开启对应模块；你手动拨动开关后，会一直按你的选择来。之后可在“设置 → Codex”“设置 → Claude”或“设置 → DeepSeek”中修改，也可以在“设置 → 帮助与更新 → 帮助”中再次打开引导。
 

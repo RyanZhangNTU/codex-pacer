@@ -949,6 +949,8 @@
 "whats_new.cloud_projects_detail" = "Threads and coordinators from your Projects now appear in the task list, with a cloud icon and the project’s name. They use your claude.ai sign-in; turn them off in Settings → Claude.";
 "whats_new.cloud_coordination" = "Threads and coordination";
 "whats_new.cloud_coordination_detail" = "Pacer reminds you when a thread needs a decision or a reply and when it is resolved, and a resolved thread you read in Claude clears here. A thread shows an estimated speed while it writes a reply, and the real speed when its turn ends.";
+"whats_new.main_window" = "A new main window";
+"whats_new.main_window_detail" = "Settings is now Pacer's main window, with an overview of every service, quota history and updates that install in place. Appearance adds a theme and an accent color.";
 "whats_new.progress_ring" = "Task progress rings";
 "whats_new.progress_ring_detail" = "Codex, Claude and DeepSeek show how much of your request is done as a ring around the task icon. The ring waits while background work runs and fills when the request is done. Turn it off for any service in its settings.";
 "whats_new.free_move" = "Move the island anywhere";

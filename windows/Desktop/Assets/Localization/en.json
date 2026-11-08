@@ -1044,6 +1044,8 @@
     "whats_new.earlier": "Earlier Versions",
     "whats_new.free_move": "Move the island anywhere",
     "whats_new.free_move_detail": "Drag the status bar to place the island where you want it. Release near a screen edge to snap. Free Move replaces the fixed positions in Appearance.",
+    "whats_new.main_window": "A new main window",
+    "whats_new.main_window_detail": "Settings is now Pacer's main window, with an overview of every service, quota history and updates that install in place. Appearance adds a theme and an accent color.",
     "whats_new.mark_all_read": "Mark all as read",
     "whats_new.mark_all_read_detail": "Clear every ended task at once, on all pages, with the new button next to the pin. Tasks that are running or waiting for your reply or approval stay in the list.",
     "whats_new.open_at_login": "Start Pacer with your Mac. You can change this anytime in Settings > General.",

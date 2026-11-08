@@ -1,8 +1,11 @@
 # Changelog
 
-## 4.3.0 (in development)
+## 4.3.0
 
-- Claude's self-reported progress ring, on Mac and Windows. A switch in Settings → Claude adds Pacer's Claude Code plugin, whose one tool, report_progress, lets Claude report how much of your request is done. The ring follows the whole request: it waits while Claude's own background work runs, continues when Claude resumes, and ends only when nothing is left running. When Claude finishes normally, the ring fills to 100%. Tasks in Claude cloud Projects, which can't run the plugin, keep the dashed ring until they finish. Sessions on SSH hosts, and WSL on Windows, get the ring once Pacer has set them up again.
+- A new main window on Mac and Windows. Settings becomes Pacer's main window, with a sidebar, an Overview of every service and a History page. Updates download and install in place, Appearance adds a theme and an accent color, the Collapsed Bar is arranged on a live preview, and the welcome guide has four short pages.
+- Task progress rings for Codex, Claude Code and DeepSeek Harness, on by default. Each service reports how much of your request is done, drawn around the task's icon. The ring waits while background work runs and fills when the request ends. Claude sessions on SSH hosts, and in WSL on Windows, get it too. Turn it off per service in its settings.
+- New task icons. A comet circles until the first estimate, light runs along the arc while the task works, and a task that needs you or has ended fills a solid disc. When one task reports progress, the collapsed badge shows it.
+- Windows: the engine no longer keeps a processor core busy while Pacer is signed in to Claude.
 
 ## 4.2.5
 

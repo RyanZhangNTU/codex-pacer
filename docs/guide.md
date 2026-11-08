@@ -26,7 +26,7 @@ The first time you open Codex Pacer 4, or the first launch after upgrading from 
 3. **Choose What to Track** turns the Codex, Claude and DeepSeek modules on or off and shows whether each one is ready.
 4. **A Few Choices** covers the task progress rings, system notifications, opening Pacer at login and a shortcut to customize the collapsed bar.
 
-![Step 2 of the welcome guide: Codex, Claude and DeepSeek cards with their own switches, then Customize the Collapsed Bar, System Notifications and Open at Login](assets/welcome-services.png)
+![Choose What to Track in the welcome guide: Codex, Claude and DeepSeek cards, each with its own switch and status](assets/welcome-services.png)
 
 Each module is independent. Pacer turns a module on automatically when it finds that service installed; once you flip a switch, your choice sticks. You can change it any time in **Settings → Codex**, **Settings → Claude** or **Settings → DeepSeek**, and reopen the guide from **Settings → Help & Updates → Help**.
 
