@@ -29,25 +29,25 @@
     <TextBlock Text="{Binding Value.Title}" FontSize="13" FontWeight="SemiBold" Foreground="{Binding TitleInk}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
     <TextBlock Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" TextOptions.TextFormattingMode="Ideal">
      <Run Text="{Binding RateText, Mode=OneWay}" FontSize="{Binding RateSize}" FontWeight="SemiBold" Foreground="{Binding RateInk}"/>
-     <Run Text="{Binding RateUnit, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="#6B6B6B"/>
-     <Run Text="{Binding RateSeparator, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="#6B6B6B"/>
+     <Run Text="{Binding RateUnit, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
+     <Run Text="{Binding RateSeparator, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
      <Run Text="{Binding Value.TurnTime, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{Binding DurationInk}"/>
     </TextBlock>
     <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center">
      <TextBlock Text="{Binding Value.Status}" FontSize="11" FontWeight="Medium" Foreground="{Binding DetailInk}" TextTrimming="CharacterEllipsis"/>
      <StackPanel Orientation="Horizontal" Margin="10,0,0,0" Visibility="{Binding SubagentsVisible}">
-      <local:IconGlyph Symbol="person.2" Ink="#9E9E9E" Width="11" Height="11" VerticalAlignment="Center"/>
-      <TextBlock Text="{Binding Value.SubagentText}" FontSize="11" FontWeight="Medium" Foreground="#9E9E9E" Margin="3,0,0,0"/>
+      <local:IconGlyph Symbol="person.2" Ink="{DynamicResource Island.Secondary}" Width="11" Height="11" VerticalAlignment="Center"/>
+      <TextBlock Text="{Binding Value.SubagentText}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Secondary}" Margin="3,0,0,0"/>
      </StackPanel>
      <StackPanel Orientation="Horizontal" Margin="10,0,0,0" Visibility="{Binding SourceVisible}">
-      <local:IconGlyph Symbol="{Binding SourceSymbol}" Ink="#9E9E9E" Width="11" Height="11" Margin="0,0,3,0" VerticalAlignment="Center" Visibility="{Binding SourceIconVisible}"/>
-      <TextBlock Text="{Binding Value.SourceLabel}" FontSize="11" FontWeight="Medium" Foreground="#9E9E9E"/>
+      <local:IconGlyph Symbol="{Binding SourceSymbol}" Ink="{DynamicResource Island.Secondary}" Width="11" Height="11" Margin="0,0,3,0" VerticalAlignment="Center" Visibility="{Binding SourceIconVisible}"/>
+      <TextBlock Text="{Binding Value.SourceLabel}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Secondary}"/>
      </StackPanel>
     </StackPanel>
     <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="{Binding ModelOpacity}">
      <StackPanel Orientation="Horizontal" Margin="0,0,7,0" Visibility="{Binding CostVisible}">
-      <Ellipse Fill="#FFBD61" Width="5" Height="5" Margin="0,0,4,0" VerticalAlignment="Center" Visibility="{Binding PeakVisible}"/>
-      <TextBlock Text="{Binding Value.Cost}" Foreground="#D3D3D3" FontSize="11" FontWeight="Medium"/>
+      <Ellipse Fill="{DynamicResource Island.Attention}" Width="5" Height="5" Margin="0,0,4,0" VerticalAlignment="Center" Visibility="{Binding PeakVisible}"/>
+      <TextBlock Text="{Binding Value.Cost}" Foreground="{DynamicResource Island.Soft}" FontSize="11" FontWeight="Medium"/>
      </StackPanel>
      <TextBlock Text="{Binding Value.Model}" Foreground="{Binding ProviderInk}" FontSize="11" FontWeight="Medium"/>
      <TextBlock Text="{Binding Value.Effort}" Foreground="{Binding ProviderInk}" Opacity="0.62" FontSize="11" FontWeight="Medium" Margin="4,0,0,0" Visibility="{Binding EffortVisible}"/>

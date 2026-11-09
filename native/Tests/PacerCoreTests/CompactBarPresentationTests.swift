@@ -112,7 +112,8 @@ final class CompactBarPresentationTests: XCTestCase {
         var request = CompactBarPresentation.Request(layout: String(decoding: try JSONEncoder().encode(layout), as: UTF8.self),
             language: "en", providers: [.codex], context: input, attached: true)
         var value = try XCTUnwrap(CompactBarPresentation.project(request))
-        XCTAssertFalse(value.leading.contains("tps")); XCTAssertEqual(try component("firstOutput", in: value).text, "1.25 s")
+        XCTAssertFalse(value.leading.contains("tps")); XCTAssertEqual(try component("firstOutput", in: value).text, "1.25")
+        XCTAssertEqual(try component("firstOutput", in: value).unit, "s")
         XCTAssertTrue(try component("firstOutput", in: value).accessibility.contains("1.25 s"))
         request.strip = true; request.attached = false
         value = try XCTUnwrap(CompactBarPresentation.project(request))

@@ -62,7 +62,7 @@ public partial class IslandWindow : Window
     private double worstRenderMilliseconds, totalRenderMilliseconds, worstFrameIntervalMilliseconds;
     private double boundsMilliseconds, visualsMilliseconds, layoutMilliseconds;
     private MotionFrame lastFrame;
-    internal string PresentationDiagnostics => $"rendering={rendering}, frames={renderedFrames}, sinceLast={Clock() - lastRenderedAt:0.000}, sinceStart={Clock() - transitionStarted:0.000}, renderMeanMs={totalRenderMilliseconds / Math.Max(1, renderedFrames):0.00}, renderWorstMs={worstRenderMilliseconds:0.00}, frameWorstIntervalMs={worstFrameIntervalMilliseconds:0.00}, boundsTotalMs={boundsMilliseconds:0.00}, visualsTotalMs={visualsMilliseconds:0.00}, layoutTotalMs={layoutMilliseconds:0.00}, renderTier={RenderCapability.Tier >> 16}, target={destination}, expanded={expanded}, requested={Width}x{Height}, actual={ActualWidth}x{ActualHeight}, shell={Shell.ActualWidth}x{Shell.ActualHeight}, callback={renderCallback}, dim=[{CompactDimDiagnostics}], last={lastFrame}, interactions=[{string.Join("; ", interactionTrace)}]";
+    internal string PresentationDiagnostics => $"rendering={rendering}, frames={renderedFrames}, sinceLast={Clock() - lastRenderedAt:0.000}, sinceStart={Clock() - transitionStarted:0.000}, renderMeanMs={totalRenderMilliseconds / Math.Max(1, renderedFrames):0.00}, renderWorstMs={worstRenderMilliseconds:0.00}, frameWorstIntervalMs={worstFrameIntervalMilliseconds:0.00}, boundsTotalMs={boundsMilliseconds:0.00}, visualsTotalMs={visualsMilliseconds:0.00}, layoutTotalMs={layoutMilliseconds:0.00}, renderTier={RenderCapability.Tier >> 16}, target={destination}, expanded={expanded}, requested={Width}x{Height}, actual={ActualWidth}x{ActualHeight}, shell={Shell.ActualWidth}x{Shell.ActualHeight}, callback={renderCallback}, last={lastFrame}, interactions=[{string.Join("; ", interactionTrace)}]";
     private EngineSnapshot? latest;
     private IslandLayout layout;
     private MotionBounds destination;
@@ -122,7 +122,7 @@ public partial class IslandWindow : Window
         InitializeMove();
         // Hover and connection errors can expand the HWND before the first
         // engine snapshot. Give every measured lane a real initial value.
-        RatePanel.Visibility = StripRatePanel.Visibility = Visibility.Collapsed;
+        compactRate.Visibility = compactStripRate.Visibility = Visibility.Collapsed;
         InitializeCompactBar();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
         // Closing under the pointer can still raise a leave that starts the timer.
@@ -142,8 +142,8 @@ public partial class IslandWindow : Window
             MoreButton.ContextMenu.IsEnabled = IsVisible;
             if (!IsVisible) MoreButton.ContextMenu.IsOpen = false;
             if (presentationStopped) return;
-            if (!IsVisible) { CancelMove(); StopRendering(); FinishPageTransition(); UpdateCompactBar(); }
-            else { UpdateCompactBar(); StartRendering(); }
+            if (!IsVisible) { CancelMove(); StopRendering(); FinishPageTransition(); UpdateCompactBar(); decoration?.Conceal(); }
+            else { UpdateCompactBar(); StartRendering(); if (lastFrame.Window.Width > 0) UpdateDecoration(lastFrame); }
             RefreshRowMotion();
             SyncBackdrop();
         };
@@ -267,7 +267,7 @@ public partial class IslandWindow : Window
         await ShellProjection.WhenIdleAsync();
         await Dispatcher.Yield(DispatcherPriority.ContextIdle);
         var timeout = Stopwatch.StartNew();
-        while (displayRefreshPending || rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height) || !CompactDimStateMatches())
+        while (displayRefreshPending || rendering || renderCallback || !lastFrame.Finished || !VisibleSizeMatches(destination.Width, destination.Height))
         {
             if (timeout.Elapsed > TimeSpan.FromSeconds(5)) throw new TimeoutException("The synthetic window did not settle.");
             await Task.Delay(25);
@@ -297,6 +297,8 @@ public partial class IslandWindow : Window
             compactPreferences.Position != preferences.Position || compactPreferences.DisplayMode != preferences.DisplayMode;
         if (screenChanged || placementChanged) CancelMove();
         compactPreferences = preferences;
+        // Light Liquid Glass turns the whole island light before its surface changes.
+        bool toneChanged = PacerPalette.ApplyTone(preferences.IslandAppearance == "liquidGlassLight");
         PreferSurface(preferences.IslandAppearance);
         // A new accent repaints the services' colors in the quota views and rows.
         PacerPalette.ApplyAccent(preferences.AccentColor);
@@ -304,7 +306,8 @@ public partial class IslandWindow : Window
         position = Array.IndexOf(new[] { "center", "topLeft", "bottomLeft", "topRight", "bottomRight" }, preferences.Position);
         displayMode = Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode);
         showAppButtons = preferences.ShowAppButtons;
-        if (accentChanged && latest != null) { RenderQuota(latest); BuildPage(false, 0); }
+        if ((accentChanged || toneChanged) && latest != null) { RenderQuota(latest); BuildPage(false, 0); }
+        if (toneChanged) RepaintTone();
         if (expandedQuotaStyle != preferences.ExpandedQuotaStyle || deepseekPanelStyle != preferences.DeepSeekPanelStyle)
         {
             expandedQuotaStyle = preferences.ExpandedQuotaStyle;
@@ -410,7 +413,7 @@ public partial class IslandWindow : Window
         UIElementAutomationPeer.FromElement(this)?.RaisePropertyChangedEvent(ExpandCollapsePatternIdentifiers.ExpandCollapseStateProperty,
             value ? ExpandCollapseState.Collapsed : ExpandCollapseState.Expanded,
             value ? ExpandCollapseState.Expanded : ExpandCollapseState.Collapsed);
-        SetCompactDimState(value, true); Relayout(snap); _ = Send("setExpanded", new { expanded = value });
+        Relayout(snap); _ = Send("setExpanded", new { expanded = value });
     }
     private IslandLayout MeasureLayout(double contentWidth, double contentHeight, double headerWidth, bool open,
         (bool OpensUp, double Y)? anchor = null)
@@ -420,35 +423,26 @@ public partial class IslandWindow : Window
         var preferences = displayedPlacement ?? compactPreferences;
         if (preferences.DisplayMode != "notch" && preferences.IslandPlacement is { } placement)
             return MeasurePlacement(placement, bounds.Item1, bounds.Item2, contentWidth, contentHeight, headerWidth, open, anchor);
-        return geometry.Measure(bounds.Item1, bounds.Item2, displayMode, 0, 0, position, open, contentWidth, contentHeight, headerWidth, measuredStripHeight);
+        return geometry.Measure(bounds.Item1, bounds.Item2, displayMode, 0, 0, position, open, contentWidth, contentHeight, headerWidth, measuredStripHeight, CompactSizeIndex);
     }
     private IslandLayout MeasurePlacement(IslandPlacement placement, MotionBounds screen, MotionBounds work,
         double contentWidth, double contentHeight, double headerWidth, bool open, (bool OpensUp, double Y)? anchor = null)
     {
         int side = placement.Edge == IslandEdge.Left ? 1 : placement.Edge == IslandEdge.Right ? 3 : 0;
-        var measured = geometry.Measure(screen, work, 2, 0, 0, side, false, contentWidth, contentHeight, headerWidth, measuredStripHeight);
+        var measured = geometry.Measure(screen, work, 2, 0, 0, side, false, contentWidth, contentHeight, headerWidth, measuredStripHeight, CompactSizeIndex);
         return placement.Arrange(work, measured, measured.Target.Width, measured.Target.Height, contentHeight, open, anchor);
     }
     private void Relayout(bool snap = false)
     {
         if (move?.Active == true && !snap) return;
-        double Probe(string text, double size, FontWeight weight)
-        {
-            var label = new TextBlock { Text = text, FontFamily = RateLabel.FontFamily, FontSize = size, FontWeight = weight };
-            System.Windows.Documents.Typography.SetNumeralAlignment(label, FontNumeralAlignment.Tabular);
-            label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            return label.DesiredSize.Width;
-        }
         // Never reuse a constrained lane's measured size as its natural width.
-        // The native header also measures a separate, unconstrained copy.
-        RateUnit.Width = Math.Max(NativeTypography.RateUnitWidth, Probe("t/s", 9, FontWeights.Medium));
         double measuredHeader = MeasureCompactBar().Header;
         dragHeaderWidth = measuredHeader;
         double rowsHeight = rows.Count == 0 ? 44 : Math.Min(3, rows.Count) * 54 + (Math.Min(3, rows.Count) - 1) * 2;
         TaskToolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double contentWidth = Math.Max(measuredRowsWidth + 12, TaskToolbar.DesiredSize.Width + 12);
         var widthProbe = MeasureLayout(contentWidth, 0, measuredHeader, expanded);
-        double availableContentWidth = Math.Max(1, widthProbe.CanvasWidth - 12 - (widthProbe.Position != 0 ? 32 : 0));
+        double availableContentWidth = Math.Max(1, widthProbe.CanvasWidth - 12 - (widthProbe.Position != 0 ? widthProbe.StripWidth : 0));
         QuotaSlots.Measure(new Size(availableContentWidth, double.PositiveInfinity));
         double quotaHeight = latest == null ? 133 : Math.Max(0, QuotaSlots.DesiredSize.Height - QuotaSlots.Margin.Top - QuotaSlots.Margin.Bottom);
         double contentHeight = 4 + 24 + 4 + rowsHeight + 21 + 24 + 8 + quotaHeight + 4 + 14;
@@ -513,12 +507,13 @@ public partial class IslandWindow : Window
         Header.Visibility = side ? Visibility.Collapsed : Visibility.Visible;
         Strip.Visibility = side ? Visibility.Visible : Visibility.Collapsed;
         Strip.HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-        Expanded.Width = Math.Max(1, layout.CanvasWidth - 12 - (side ? 32 : 0));
+        Strip.Width = layout.StripWidth;
+        Expanded.Width = Math.Max(1, layout.CanvasWidth - 12 - (side ? layout.StripWidth : 0));
         Expanded.Height = Math.Max(1, layout.CanvasHeight - (side ? 0 : layout.HeaderHeight));
         Expanded.HorizontalAlignment = side ? left ? HorizontalAlignment.Left : HorizontalAlignment.Right : HorizontalAlignment.Center;
         // Content opening upward stays next to the header while the shell grows away from it.
         Expanded.VerticalAlignment = effective is 2 or 4 || (!side && layout.OpensUp) ? VerticalAlignment.Bottom : VerticalAlignment.Top;
-        Expanded.Margin = side ? new Thickness(left ? 38 : 6, 0, left ? 6 : 38, 0)
+        Expanded.Margin = side ? new Thickness(left ? layout.StripWidth + 6 : 6, 0, left ? 6 : layout.StripWidth + 6, 0)
             : layout.OpensUp ? new Thickness(6, 0, 6, layout.HeaderHeight) : new Thickness(6, layout.HeaderHeight, 6, 0);
     }
     private static double Clock() => (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency;
@@ -557,12 +552,15 @@ public partial class IslandWindow : Window
         double started = Clock();
         PlaceShell(frame.Window);
         boundsMilliseconds += (Clock() - started) * 1000; started = Clock();
-        double radius = 19 + 8 * frame.Expansion;
+        // The collapsed corners grow to the expanded panel's 27 as it opens.
+        double collapsed = CollapsedRadius(), radius = collapsed + (27 - collapsed) * frame.Expansion;
         int effective = layout.Position;
         Shell.CornerRadius = effective is 1 or 2 ? new(0, radius, radius, 0) : effective is 3 or 4 ? new(radius, 0, 0, radius)
             : layout.Attached || layout.Dock == IslandEdge.Top ? new(0, 0, radius, radius)
             : layout.Dock == IslandEdge.Bottom ? new(radius, radius, 0, 0) : new(radius);
         Shell.Clip = ClipShape(frame.Window.Width, frame.Window.Height, Shell.CornerRadius);
+        UpdateRim(frame.Window.Width, frame.Window.Height, Shell.CornerRadius);
+        UpdateDecoration(frame);
         Expanded.Opacity = frame.Content;
         RevealOffset.X = effective == 0 ? 0 : (effective is 1 or 2 ? 1 : -1) * (1 - frame.Content) * 8;
         RevealOffset.Y = effective == 0 ? (layout.OpensUp ? -1 : 1) * (1 - frame.Content) * 8 : 0;
@@ -599,8 +597,8 @@ public partial class IslandWindow : Window
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged;
         presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
+        if (decoration != null) { decoration.Close(); decoration = null; }
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
-        foreach (var clock in dimClocks.Values) clock.Dispose(); dimClocks.Clear();
         DisposeAppearance();
         displays.Changed -= DisplayTopologyChanged; displays.Dispose();
     }

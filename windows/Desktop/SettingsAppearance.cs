@@ -14,7 +14,7 @@ internal sealed partial class SettingsWindow
     private FrameworkElement? positionRow;
     private Button? positionReset;
     private readonly Dictionary<string, RadioButton> quotaStyleChoices = new();
-    private readonly Dictionary<string, RadioButton> surfaceChoices = new();
+    private readonly Dictionary<string, RadioButton> surfaceChoices = new(), barSizeChoices = new();
     private TextBlock? surfaceStatus, transparencyMode;
     private FrameworkElement? transparencyRow, expandedQuotaRow, deepseekPanelRow;
     private ComboBox? displayChoice;
@@ -24,7 +24,7 @@ internal sealed partial class SettingsWindow
     private sealed record DisplayOption(string Mode, DisplayMonitor? Monitor);
 
     private void ClearAppearance()
-    { ClearAppearanceTheme(); notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); surfaceStatus = transparencyMode = null;
+    { ClearAppearanceTheme(); notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); barSizeChoices.Clear(); surfaceStatus = transparencyMode = null;
         displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = deepseekPanelRow = null; }
     private TextBlock SectionHeader(string key) => SectionTitle(ui.Text(key));
     /// A picture choice, as on the Mac: the art (64 tall, or its own height when NaN), then its name 7 below.
@@ -51,11 +51,14 @@ internal sealed partial class SettingsWindow
         // Theme, then Material (the island's surface), then Accent, then Position, as on the Mac.
         BuildThemeSection();
         form.Children.Add(ThemeSectionsAvailable && ui.Has("appearance.material") ? SectionTitle(ui.Text("appearance.material")) : SectionHeader("appearance.style"));
-        var solid = ArtChoice("appearance.style.classic", ui.Text("settings.classic"), "appearance.styles", StyleSwatch(false));
-        var glass = ArtChoice("appearance.style.liquidGlass", ui.Text("settings.liquid_glass"), "appearance.styles", StyleSwatch(true));
-        foreach (var choice in new[] { (Name: "classic", Button: solid), (Name: "liquidGlass", Button: glass) })
+        var solid = ArtChoice("appearance.style.classic", ui.Text("settings.classic"), "appearance.styles", StyleSwatch("classic"));
+        var glass = ArtChoice("appearance.style.liquidGlass", ui.Text("settings.liquid_glass"), "appearance.styles", StyleSwatch("liquidGlass"));
+        var lightGlass = ArtChoice("appearance.style.liquidGlassLight", ui.Text("settings.liquid_glass_light"), "appearance.styles", StyleSwatch("liquidGlassLight"));
+        var graphite = ArtChoice("appearance.style.graphite", ui.Text("settings.graphite"), "appearance.styles", StyleSwatch("graphite"));
+        foreach (var choice in new[] { (Name: "classic", Button: solid), (Name: "liquidGlass", Button: glass), (Name: "liquidGlassLight", Button: lightGlass), (Name: "graphite", Button: graphite) })
         {
             surfaceChoices[choice.Name] = choice.Button; editors.Add(choice.Button);
+            if (ui.Has("appearance.material_info." + choice.Name)) choice.Button.ToolTip = ui.Text("appearance.material_info." + choice.Name);
             choice.Button.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { IslandAppearance = choice.Name }); };
         }
         surfaceStatus = Detail(""); surfaceStatus.Margin = new Thickness(14, 8, 14, 12);
@@ -68,7 +71,20 @@ internal sealed partial class SettingsWindow
         transparencyMode.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         transparencyEnd.Children.Add(transparencyMode); transparencyEnd.Children.Add(adjust);
         transparencyRow = InfoRow(ui.Text("appearance.glass_transparency"), transparencyEnd, ui.Text("windows.appearance.surface_available"), id: "appearance.transparency");
-        form.Children.Add(Card(Pair(solid, glass), surfaceStatus, transparencyRow));
+        form.Children.Add(Card(Pair(solid, graphite), Pair(glass, lightGlass), surfaceStatus, transparencyRow));
+        // The collapsed bar's size: every length and type size scales together.
+        var sizeChoices = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        foreach (string size in DesktopPreferences.BarSizes)
+        {
+            string text = ui.Text("appearance.bar_size." + size);
+            var choice = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), Content = text, GroupName = "appearance.barSize", VerticalAlignment = VerticalAlignment.Center };
+            Identify(choice, "appearance.bar_size." + size, text);
+            choice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { CompactBarSize = size }); };
+            barSizeChoices[size] = choice; editors.Add(choice); sizeChoices.Children.Add(choice);
+        }
+        var sizeTrack = new Border { Child = sizeChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center };
+        sizeTrack.SetResourceReference(Border.BackgroundProperty, "SettingsFill"); Identify(sizeTrack, "appearance.bar_size", ui.Text("appearance.bar_size"));
+        form.Children.Add(Card(InfoRow(ui.Text("appearance.bar_size"), sizeTrack, ui.Text("appearance.bar_size_info"), id: "appearance.bar_size.row")));
 
         var quotaChoices = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         foreach (string style in new[] { "split", "classic" })
@@ -120,6 +136,8 @@ internal sealed partial class SettingsWindow
         RefreshDisplayChoices();
         if (fullscreenChoice != null) fullscreenChoice.IsChecked = session.Current.ShowInFullscreen;
         foreach (var item in surfaceChoices) item.Value.IsChecked = item.Key == session.Current.IslandAppearance;
+        // Windows has no camera housing to match, so every size is available.
+        foreach (var item in barSizeChoices) item.Value.IsChecked = item.Key == session.Current.CompactBarSize;
         RefreshSurfaceStatus();
         if (expandedQuotaRow != null) expandedQuotaRow.Visibility = SettingsPagePolicy.ShowExpandedQuotaStyle(CompactProviders()) ? Visibility.Visible : Visibility.Collapsed;
         // DeepSeek alone has its own dashboard, so the panel offers Simple or Detailed instead.
@@ -186,7 +204,8 @@ internal sealed partial class SettingsWindow
         var state = appearance.Current;
         var decision = surfaceWindow?.SurfaceDecision ?? BackdropPolicy.Resolve(session.Current.IslandAppearance,
             new(state.Build, state.Transparency, state.HighContrast, state.Available));
-        if (transparencyRow != null) transparencyRow.Visibility = session.Current.IslandAppearance == "liquidGlass" && state.Build >= 22621 ? Visibility.Visible : Visibility.Collapsed;
+        bool glassChosen = session.Current.IslandAppearance is "liquidGlass" or "liquidGlassLight";
+        if (transparencyRow != null) transparencyRow.Visibility = glassChosen && state.Build >= 22621 ? Visibility.Visible : Visibility.Collapsed;
         string key = decision.Reason switch
         {
             BackdropReason.Classic => "classic", BackdropReason.Available => "available", BackdropReason.OldSystem => "old_system",
@@ -197,23 +216,31 @@ internal sealed partial class SettingsWindow
         // Classic and working glass need no note; a fallback explains itself under the pictures.
         surfaceStatus.Visibility = key is "classic" or "available" ? Visibility.Collapsed : Visibility.Visible;
         if (transparencyMode != null) transparencyMode.Text = ui.Text(key == "transparency_off" ? "appearance.glass_reduced" : "appearance.glass_system");
-        if (surfaceChoices.TryGetValue("liquidGlass", out var choice))
+        foreach (string name in new[] { "liquidGlass", "liquidGlassLight" })
         {
+            if (!surfaceChoices.TryGetValue(name, out var choice)) continue;
             choice.IsEnabled = !busy && !session.RequiresRestart && state.Build >= 22621;
             choice.ToolTip = decision.Glass ? null : surfaceStatus.Text;
             ToolTipService.SetShowOnDisabled(choice, true);
         }
     }
-    private static UIElement StyleSwatch(bool glass)
+    private static UIElement StyleSwatch(string material)
     {
         var art = new Grid { Width = 132, Height = 58, Background = MaterialWallpaper(), Clip = new RectangleGeometry(new Rect(0, 0, 132, 58), 7, 7), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         var capsule = new Grid { Width = 86, Height = 22 };
-        capsule.Children.Add(new Border { CornerRadius = new CornerRadius(11), Background = glass ? new SolidColorBrush(Color.FromArgb(77, 0, 0, 0)) : Brushes.Black,
-            BorderThickness = new Thickness(0.5), BorderBrush = new SolidColorBrush(Color.FromArgb(glass ? (byte)102 : (byte)15, 255, 255, 255)) });
-        capsule.Children.Add(new Border { Width = 20, Height = 4, CornerRadius = new CornerRadius(2), Background = new SolidColorBrush(Color.FromArgb(191, 255, 255, 255)), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(9, 0, 0, 0) });
-        // The ring takes Codex's color, which follows the accent.
+        (Brush Fill, Brush Edge, double Width) look = material switch
+        {
+            "liquidGlass" => (new SolidColorBrush(Color.FromArgb(77, 0, 0, 0)), new SolidColorBrush(Color.FromArgb(102, 255, 255, 255)), 0.5),
+            "liquidGlassLight" => (new SolidColorBrush(Color.FromArgb(214, 248, 248, 250)), new SolidColorBrush(Color.FromArgb(31, 0, 0, 0)), 0.75),
+            "graphite" => (new SolidColorBrush(Color.FromRgb(0x16, 0x17, 0x1B)), new SolidColorBrush(Color.FromRgb(0x30, 0x33, 0x3A)), 1),
+            _ => (Brushes.Black, new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)), 0.75)
+        };
+        capsule.Children.Add(new Border { CornerRadius = new CornerRadius(11), Background = look.Fill, BorderThickness = new Thickness(look.Width), BorderBrush = look.Edge });
+        var mark = material == "liquidGlassLight" ? Color.FromArgb(191, 29, 29, 31) : Color.FromArgb(191, 255, 255, 255);
+        capsule.Children.Add(new Border { Width = 20, Height = 4, CornerRadius = new CornerRadius(2), Background = new SolidColorBrush(mark), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(9, 0, 0, 0) });
+        // The ring takes Codex's color, which follows the accent, in the swatch's own tone.
         var ring = new System.Windows.Shapes.Ellipse { Width = 10, Height = 10, StrokeThickness = 2, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 9, 0) };
-        ring.Stroke = PacerPalette.Codex; capsule.Children.Add(ring);
+        ring.Stroke = PacerPalette.CodexShade(material == "liquidGlassLight"); capsule.Children.Add(ring);
         art.Children.Add(capsule); return art;
     }
     /// A soft desktop so translucency has something to show through, as on the Mac.

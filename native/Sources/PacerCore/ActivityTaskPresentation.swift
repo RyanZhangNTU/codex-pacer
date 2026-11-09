@@ -41,14 +41,49 @@ public struct HeaderActivity: Equatable, Sendable {
     public var orbit: [AgentProvider: Int]
     public var attention: PendingAttentionRequest.Kind?
     public var ending: Ending?
-    /// The only active task's reported estimate while it works; the badge
-    /// draws it in place of the orbit.
+    /// The only active task's reported estimate while it works or waits for
+    /// its background work; the badge draws it in place of the orbit.
     public var progress: TaskProgressRing?
-    public init(core: Core, activeCount: Int, orbit: [AgentProvider: Int], attention: PendingAttentionRequest.Kind? = nil, ending: Ending? = nil,
-                progress: TaskProgressRing? = nil) {
-        self.core = core; self.activeCount = activeCount; self.orbit = orbit; self.attention = attention; self.ending = ending
-        self.progress = progress
+    /// One running task, in the task list's order, for the multi-task rings.
+    public struct TaskShare: Equatable, Sendable {
+        public let provider: AgentProvider
+        /// The estimate the task reported while working or waiting for its
+        /// background work; nil without one.
+        public let fraction: Double?
+        /// The estimate has not changed for `TaskProgressRing.staleInterval`.
+        public let stale: Bool
+        public init(provider: AgentProvider, fraction: Double?, stale: Bool = false) {
+            self.provider = provider; self.fraction = fraction.map { min(1, max(0, $0)) }; self.stale = stale
+        }
     }
+    /// Running tasks only: a task waiting for the user turns the badge amber
+    /// instead, and finished ones have left the ring.
+    public var tasks: [TaskShare]
+    /// Rings with more tasks than this show the average instead of segments.
+    public static let segmentLimit = 4
+    public static let taskLimit = 12
+    public init(core: Core, activeCount: Int, orbit: [AgentProvider: Int], attention: PendingAttentionRequest.Kind? = nil, ending: Ending? = nil,
+                progress: TaskProgressRing? = nil, tasks: [TaskShare] = []) {
+        self.core = core; self.activeCount = activeCount; self.orbit = orbit; self.attention = attention; self.ending = ending
+        self.progress = progress; self.tasks = Array(tasks.prefix(Self.taskLimit))
+    }
+    private var reported: [TaskShare] { tasks.filter { $0.fraction != nil } }
+    /// How many running tasks reported an estimate.
+    public var reportedCount: Int { reported.count }
+    /// The mean of the reported estimates; nil when no running task reported one.
+    public var averageProgress: Double? {
+        let values = reported.compactMap(\.fraction)
+        return values.isEmpty ? nil : values.reduce(0, +) / Double(values.count)
+    }
+    /// The average fades only when every estimate behind it is old.
+    public var averageStale: Bool { !reported.isEmpty && reported.allSatisfy(\.stale) }
+    /// The one provider behind the average, or nil for a mix drawn in white.
+    public var averageProvider: AgentProvider? {
+        let providers = Set(reported.map(\.provider))
+        return providers.count == 1 ? providers.first : nil
+    }
+    /// Segments need several tasks, at most `segmentLimit`, and one estimate.
+    public var showsSegments: Bool { (2...Self.segmentLimit).contains(tasks.count) && !reported.isEmpty }
     public var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
     public var showsEndingMark: Bool { ending != nil && !endingIsCore }
     public static func countText(_ count: Int) -> String { count > 99 ? "99+" : String(count) }
@@ -63,6 +98,28 @@ public enum CompactDuration {
         if days > 0 { return L10n.text("dashboard.countdown_days", days, hours) }
         if hours > 0 { return L10n.text("dashboard.countdown_hours", hours, minutes) }
         return L10n.text("dashboard.countdown_minutes", minutes)
+    }
+
+    /// The collapsed bar's countdown: two units without spaces, e.g. "1h30m".
+    public static func compact(_ seconds: TimeInterval, language: AppLanguage = L10n.language) -> String {
+        guard seconds.isFinite, seconds >= 60 else { return L10n.text("dashboard.countdown_soon", language: language) }
+        let days = Int(seconds) / 86400, hours = Int(seconds) % 86400 / 3600, minutes = Int(seconds) % 3600 / 60
+        if days > 0 { return L10n.text("compact.countdown_days", days, hours, language: language) }
+        if hours > 0 { return L10n.text("compact.countdown_hours", hours, minutes, language: language) }
+        return L10n.text("compact.countdown_minutes", minutes, language: language)
+    }
+
+    /// At most four characters for the strip: "45m", "1.5h", "46h", "3d".
+    public static func short(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds >= 60 else { return "<1m" }
+        let hours = seconds / 3600
+        if hours < 1 { return "\(Int(seconds / 60))m" }
+        if hours < 10 {
+            let tenths = (hours * 10).rounded(.down) / 10
+            return tenths == tenths.rounded(.down) ? "\(Int(tenths))h" : String(format: "%.1fh", tenths)
+        }
+        if hours < 100 { return "\(Int(hours))h" }
+        return "\(Int(hours / 24))d"
     }
 }
 
@@ -248,10 +305,21 @@ public struct ActivityTaskPresentation: Sendable {
         }).map({ activity in symbol(TaskSymbol.symbol(for: activity, groupIsRunning: groups.first { $0.primary.id == activity.id }?.isRunning == true)) }) {
             core = .symbol(glyph)
         } else { core = .count(active) }
-        // One task working with a reported estimate shows it, whatever the core shows.
-        let progress = active == 1 && attention == nil ? overview.running.first.flatMap { running in
+        // One unfinished task with a reported estimate shows it, whatever the core
+        // shows. A turn stopped for its background work has not finished the
+        // request, so its estimate stays, as it does in the task row.
+        func unfinished(_ ring: TaskProgressRing?) -> TaskProgressRing? {
+            ring.flatMap { $0.state == .reported && [.working, .longStep, .waiting].contains($0.mode) ? $0 : nil }
+        }
+        let progress = active == 1 && attention == nil ? unfinished(overview.running.first.flatMap { running in
             rows.first { $0.activity.id == running.id }?.progressRing
-        }.flatMap { ring in ring.state == .reported && [.working, .longStep].contains(ring.mode) ? ring : nil } : nil
-        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress)
+        }) : nil
+        let running = Set(overview.running.map(\.id))
+        let tasks = rows.filter { running.contains($0.activity.id) }.map { row in
+            let ring = unfinished(row.progressRing)
+            return HeaderActivity.TaskShare(provider: row.activity.provider, fraction: ring?.fraction, stale: ring?.stale ?? false)
+        }
+        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress,
+            tasks: tasks)
     }
 }

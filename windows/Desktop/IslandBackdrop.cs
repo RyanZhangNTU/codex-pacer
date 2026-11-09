@@ -34,7 +34,7 @@ public partial class IslandWindow
             if (presentationStopped) return;
             void Post(Action value) => Dispatcher.BeginInvoke(value, DispatcherPriority.ContextIdle);
             var system = backdropSystemFactory?.Invoke() ?? new AppearanceBackdropSource(appearance);
-            backdrop = new(system, () => backdropFactory?.Invoke(this) ?? new NativeCompositionBackdrop(this), Post);
+            backdrop = new(system, () => backdropFactory?.Invoke(this) ?? new NativeCompositionBackdrop(this, light: islandAppearance == "liquidGlassLight"), Post);
             backdrop.Changed += RefreshSurface;
             backdropSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             var hwnd = new WindowInteropHelper(this).Handle;
@@ -51,7 +51,8 @@ public partial class IslandWindow
     }
     private void RefreshSurface()
     {
-        Shell.Background = appearance.Current.HighContrast ? DesktopAppearance.Ink(appearance.Current.Colors.Window) : GlassVisible ? SurfaceInput : SurfaceBlack;
+        Shell.Background = appearance.Current.HighContrast ? DesktopAppearance.Ink(appearance.Current.Colors.Window) : GlassVisible ? SurfaceInput : MaterialFill();
+        if (lastFrame.Window.Width > 0) { UpdateRim(lastFrame.Window.Width, lastFrame.Window.Height, Shell.CornerRadius); UpdateDecoration(lastFrame); }
         double black = GlassVisible && layout.Attached ? Math.Clamp(lastFrame.BlackOpacity, 0, 1) : 0;
         HeaderBand.Background = black > 0 ? PacerPalette.Ink(0, 0, 0, (byte)Math.Round(255 * black)) : Brushes.Transparent;
         var decision = SurfaceDecision;

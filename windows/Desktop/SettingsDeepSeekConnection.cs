@@ -60,7 +60,7 @@ internal sealed partial class SettingsWindow
         var dot = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
         deepseekConnectionDot = dot; connection.Children.Add(dot); connection.Children.Add(deepseekConnection); connection.Children.Add(deepseekSignIn);
         var icon = new IconGlyph { Symbol = "ellipsis.circle", Width = 14, Height = 14 }; icon.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
-        deepseekAccountOptions = new Button { Style = (Style)FindResource("DeepSeekInfoButton"), Width = 16, Height = 16,
+        deepseekAccountOptions = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 16, Height = 16, Padding = new Thickness(0),
             Margin = new Thickness(8, 0, 4, 0), Content = icon };
         Identify(deepseekAccountOptions, "settings.deepseek.account_options", ui.Text("claude.account.options")); editors.Add(deepseekAccountOptions);
         connection.Children.Add(deepseekAccountOptions);

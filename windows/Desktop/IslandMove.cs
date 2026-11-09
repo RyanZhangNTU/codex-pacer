@@ -113,6 +113,8 @@ public partial class IslandWindow
         if (expanded) SetExpanded(false, snap: true); else Relayout(snap: true);
         gesture.Size = new(destination.Width, destination.Height);
         gesture.Active = true;
+        // The shoulders and shadow belong to a settled edge; they return when the island lands.
+        decoration?.Conceal();
     }
 
     private void UpdateMove(MoveGesture gesture, Point cursor, bool retryDpi = true)

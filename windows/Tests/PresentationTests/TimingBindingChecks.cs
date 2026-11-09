@@ -21,7 +21,6 @@ internal static class TimingBindingChecks
         }
         controller.Stop();
         CheckFiniteLease(timing);
-        OpacityProjectionChanges();
         Console.WriteLine("PASS task-row timing: WPF clock follows the shared Swift curve at all 121 samples");
     }
     private static void CheckFiniteLease(NativeTaskRowTiming timing)
@@ -60,29 +59,5 @@ internal static class TimingBindingChecks
         Check(current == null && !value.HasAnimatedProperties && Math.Abs(value.Opacity - .3) < .00001,
             "Disposal releases the property clock while retaining the settled value");
         Console.WriteLine("PASS finite animation lease: first tick, 119 intermediate samples, reversal, completion and clock removal");
-    }
-    private static void OpacityProjectionChanges()
-    {
-        var slot = new Button { Opacity = .3 };
-        var animation = new DoubleAnimation(1, .3, TimeSpan.FromSeconds(1)) { FillBehavior = FillBehavior.Stop };
-        var clock = (AnimationClock)animation.CreateClock(true);
-        slot.ApplyAnimationClock(UIElement.OpacityProperty, clock);
-        var controller = clock.Controller!; controller.Begin();
-        controller.SeekAlignedToLastTick(TimeSpan.FromSeconds(.5), TimeSeekOrigin.BeginTime);
-        double displayed = slot.Opacity;
-        CompactComponentOpacity.Apply(slot, .3, true, false, 1);
-        if (!slot.HasAnimatedProperties || Math.Abs(slot.Opacity - displayed) > .001 || displayed is <= .3 or >= 1)
-            throw new InvalidOperationException("An unchanged projection must preserve its in-flight dim without jumping.");
-        controller.SeekAlignedToLastTick(TimeSpan.FromSeconds(2), TimeSeekOrigin.BeginTime);
-        if (!slot.HasAnimatedProperties || Math.Abs(slot.Opacity - .3) > .001)
-            throw new InvalidOperationException("The fixture must retain a completed Stop clock over its original base target.");
-        // NativeCompactBar's pending projection uses full opacity. A clock
-        // from the previous reading must not keep its old .3 base target.
-        CompactComponentOpacity.Apply(slot, 1, true, false, 0);
-        if (slot.HasAnimatedProperties || Math.Abs(slot.Opacity - 1) > .001)
-            throw new InvalidOperationException("A pending projection must replace the completed clock's stale dim target.");
-        CompactComponentOpacity.Apply(slot, .3, true, false, 0);
-        if (slot.HasAnimatedProperties || Math.Abs(slot.Opacity - .3) > .001)
-            throw new InvalidOperationException("The completed shared projection must restore its own target without retaining the fallback.");
     }
 }

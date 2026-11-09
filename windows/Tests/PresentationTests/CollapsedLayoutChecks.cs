@@ -92,6 +92,13 @@ internal static class CollapsedLayoutChecks
             Check(Find<TextBlock>(window, "compact.window_label.codex").IsVisible && Find<TextBlock>(window, "compact.window_label.claude").IsVisible, "Quota windows follow the components that show a quota");
             Select(Find<RadioButton>(window, "compact.metric.pace")); await Until(() => session.Current.CompactMetric == "pace");
             window.SelectCompactComponent("quotaGauge"); await Pump();
+            // The rings' card can keep both rings lit while the quota value alternates.
+            Select(Find<RadioButton>(window, "compact.option.ringDim.off"));
+            await Until(() => !CompactChoices.Parse(session.Current.CompactComponentOptions).RingDim);
+            await island.WaitForPresentationAsync();
+            Check(SelfAndDescendants(island).OfType<CompactQuotaGlyph>().All(glyph => glyph.Highlighted == null), "With alternate dimming off, no ring dims");
+            Select(Find<RadioButton>(window, "compact.option.ringDim.on"));
+            await Until(() => CompactChoices.Parse(session.Current.CompactComponentOptions).RingDim);
             Select(Find<ComboBox>(window, "compact.ring.0"), "deepseek"); await Until(() => session.Current.QuotaRingOuter == "deepseek");
             Check(configurations == 0, "Readout and ring choices cannot restart sources");
             island.Reveal(); await island.WaitForPresentationAsync();
@@ -104,21 +111,10 @@ internal static class CollapsedLayoutChecks
                 Check(bounds.Left >= -1 && bounds.Right <= surface.ActualWidth + 1, "The actual compact values must fit their measured header");
             }
             island.CapturePreview(Path.Combine(output, "collapsed-all-components-" + name + ".png"));
-            Check(header.Any(value => value.Tag is true) && header.Any(value => value.Tag is false), "The live header must contain both dimmed and full-strength components");
-            Check(header.All(value => Math.Abs(value.Opacity - (value.Tag is true ? .3 : 1)) < .001), "Expansion must quiet only the original quota family");
-            PressKey(island, island, Key.Escape);
-            if (animations)
-            {
-                // With idle clocks removed, the first timing tick may still
-                // sample the starting value. Wait for actual clock progress,
-                // rather than assuming a 30 ms dispatcher delay advanced it.
-                await Pump();
-                await Until(() => header.Where(value => value.Tag is true).All(value => value.Opacity > .3 && value.Opacity <= 1));
-                Check(header.Where(value => value.Tag is true).All(value => value.Opacity > .3 && value.Opacity <= 1), "Collapsed values must ease from their displayed opacity");
-                island.Reveal(); await island.WaitForPresentationAsync();
-                Check(header.All(value => Math.Abs(value.Opacity - (value.Tag is true ? .3 : 1)) < .001), "A reversed dim must settle without changing other components");
-            }
-            else Check(header.All(value => Math.Abs(value.Opacity - 1) < .001), "Reduced motion must restore full strength immediately");
+            // The open panel leaves the bar's own components at full strength.
+            Check(header.All(value => Math.Abs(value.Opacity - 1) < .001), "Expanding keeps every bar component at full strength");
+            PressKey(island, island, Key.Escape); await island.WaitForPresentationAsync();
+            Check(header.All(value => Math.Abs(value.Opacity - 1) < .001), "Collapsing keeps every bar component at full strength");
             var status = Find<CheckBox>(window, "compact.component.status"); bool original = status.IsChecked == true;
             reject = true; Toggle(status); await Until(() => !reject && status.IsEnabled);
             await island.WaitForPresentationAsync();
@@ -149,23 +145,74 @@ internal static class CollapsedLayoutChecks
             await Until(() => warning.IsChecked == false && warning.IsEnabled);
             await window.NavigateAsync("reminders"); await Pump();
             var fiveHour = Find<CheckBox>(window, "settings.reminders.fiveHour");
-            await Until(() => fiveHour.IsEnabled);
-            Check(!fiveHour.IsChecked.GetValueOrDefault(), "Removing the warnings slot must make its reminder switches read off");
-            Toggle(fiveHour);
-            await Until(() => session.Current.WarningKinds.SequenceEqual(new[] { "fiveHour" }));
-            Check((await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"])).EditorTrailing.First() == "warnings",
-                "Choosing one reminder must restore the slot at the start with only that kind");
+            Check(!fiveHour.IsChecked.GetValueOrDefault() && !fiveHour.IsEnabled,
+                "Notifications mirrors the bar's warnings read-only once the slot is removed; Collapsed Bar chooses them");
             await window.NavigateAsync("collapsed"); await Pump();
+            // The warnings' own card chooses the kinds, beside their style and limit.
+            Toggle(Find<CheckBox>(window, "compact.component.warnings"));
+            await Until(() => Find<CheckBox>(window, "compact.component.warnings").IsChecked == true);
+            window.SelectCompactComponent("warnings"); await Pump();
+            var ssh = Find<CheckBox>(window, "compact.warning.ssh");
+            await Until(() => ssh.IsVisible && ssh.IsEnabled);
+            bool hadSSH = session.Current.WarningKinds.Contains("ssh");
+            Toggle(ssh);
+            await Until(() => session.Current.WarningKinds.Contains("ssh") != hadSSH);
+            Check((await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"])).Components.Single(value => value.Id == "warnings").Shown,
+                "Choosing a kind in the warnings card keeps the slot on the bar");
+            var dot = Find<RadioButton>(window, "compact.option.warningStyle.dot"); Select(dot);
+            await Until(() => CompactChoices.Parse(session.Current.CompactComponentOptions).WarningStyle == "dot");
+            Check(CompactChoices.Parse(session.Current.CompactComponentOptions).WarningLimit == 2, "Each choice is saved on its own, keeping the others");
             await session.ChangeAsync(p => p with { Position = "bottomLeft", DisplayMode = "floating" }); await island.WaitForPresentationAsync();
             Check(SelfAndDescendants(island).OfType<Button>().Where(value => AutomationProperties.GetAutomationId(value).StartsWith("compact.strip.", StringComparison.Ordinal)).All(value =>
                 !AutomationProperties.GetAutomationId(value).EndsWith(".status", StringComparison.Ordinal)),
                 "The side strip must retain its saved components while omitting the two word labels");
             island.CapturePreview(Path.Combine(output, "collapsed-strip-" + name + ".png"));
+            // Each size scales the live bar and strip; materials repaint the same bar.
+            island.CollapseForAutomation();
+            foreach (var (size, height, strip, material) in new[] { ("small", 32.0, 28.0, "liquidGlass"), ("large", 42.0, 37.0, "graphite"), ("extraLarge", 48.0, 43.0, "liquidGlassLight"), ("standard", 36.0, 32.0, "classic") })
+            {
+                await session.ChangeAsync(p => p with { CompactBarSize = size, IslandAppearance = material, Position = "center", DisplayMode = "floating", IslandPlacement = null });
+                await island.WaitForPresentationAsync();
+                Check(island.LogicalTarget.Height == height && island.VisibleHeight == height, $"The {size} bar is {height} points high");
+                Check(PacerPalette.Light == (material == "liquidGlassLight"), "Only Light Liquid Glass turns the island's inks light");
+                if (PacerPalette.Light)
+                {
+                    // Every word on the light bar and in the light panel takes a dark ink.
+                    PaleText(island, "The light bar");
+                    Check(SelfAndDescendants(island).OfType<ActivityBadge>().Where(badge => badge.IsVisible).All(badge =>
+                        badge.OrbitCodexShade == ((SolidColorBrush)PacerPalette.Codex).Color), "The badge's orbit redraws in the light shades");
+                    island.Reveal(); await island.WaitForPresentationAsync(); await Pump();
+                    PaleText(island, "The light panel");
+                    island.CapturePreview(Path.Combine(output, "expanded-" + material + "-" + name + ".png"));
+                    island.CollapseForAutomation(); await island.WaitForPresentationAsync();
+                }
+                Check(island.RimSides == "tblr" && island.Decoration.Shadow && island.Decoration.Shoulders.Length == 0,
+                    "A floating bar draws its rim on every side and casts a shadow, with no shoulders");
+                island.CapturePreview(Path.Combine(output, "collapsed-" + size + "-" + material + "-" + name + ".png"));
+                await session.ChangeAsync(p => p with { Position = "topLeft", PositionChosen = true });
+                await island.WaitForPresentationAsync();
+                // Glass cannot be painted outside its window, so only an opaque strip has shoulders.
+                Check(island.VisibleWidth == strip && island.RimSides == "tbr" && island.Decoration.Shoulders == (island.GlassVisible ? "" : "l") && !island.Decoration.Shadow,
+                    $"The {size} strip is {strip} points wide, with shoulders against the screen unless it is glass, and no rim there");
+                await session.ChangeAsync(p => p with { Position = "center" });
+            }
+            await session.ChangeAsync(p => p with { DisplayMode = "notch" }); await island.WaitForPresentationAsync();
+            Check(island.VisibleHeight == 36 && island.RimSides == "blr" && island.Decoration.Shoulders == "t",
+                "An attached bar without a camera housing takes the size's height and flares into the screen top");
+            island.CapturePreview(Path.Combine(output, "collapsed-attached-" + name + ".png"));
         }
         finally
         {
             await engine.DisposeAsync(); window.AllowClose = true; window.Close(); island.AllowClose = true; island.Close();
+            // The inks are shared; a failed case must not leave the next one light.
+            PacerPalette.ApplyTone(false);
         }
+    }
+    private static void PaleText(DependencyObject root, string where)
+    {
+        var pale = SelfAndDescendants(root).OfType<TextBlock>().Where(text => text.IsVisible && !string.IsNullOrWhiteSpace(text.Text)
+            && text.Foreground is SolidColorBrush { Color: { A: > 100, R: > 190, G: > 190, B: > 190 } }).Select(text => text.Text).ToArray();
+        Check(pale.Length == 0, where + " keeps no white text: " + string.Join(" | ", pale));
     }
     private static Point Centre(FrameworkElement element, Visual relative) => element.TranslatePoint(new Point(element.ActualWidth / 2, element.ActualHeight / 2), (UIElement)relative);
     private static T Find<T>(DependencyObject root, string id) where T : DependencyObject

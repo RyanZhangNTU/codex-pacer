@@ -37,7 +37,7 @@ public partial class TaskRow : Button
     private void ShowProgress()
     {
         var state = (TaskRowState)DataContext;
-        var color = state.StatusInk is SolidColorBrush solid ? solid.Color : Colors.White;
+        var color = state.StatusInk is SolidColorBrush solid ? solid.Color : PacerPalette.Neutral;
         Icon.Show(state.Value, color, animations && IsVisible);
     }
     /// The row's status icon; read by the presentation checks.
@@ -86,7 +86,8 @@ internal sealed class TaskRowState(EngineTaskRow value)
         : Value.Failed ? PacerPalette.Danger : Value.Dimmed ? PacerPalette.Secondary
         : Value.Phase == "interrupted" || Value.Symbol == "pause.circle" ? PacerPalette.Paused : Value.Phase is "running" or "completed" ? ProviderInk : PacerPalette.Secondary;
     public Brush RateInk => Value.RateIsFresh && !Value.Dimmed ? PacerPalette.Primary : PacerPalette.Secondary;
-    public Brush DurationInk => Value.Phase == "running" ? PacerPalette.Ink(245, 245, 245, 199) : PacerPalette.Secondary;
+    private static readonly Brush DarkRunning = PacerPalette.Ink(245, 245, 245, 199), LightRunning = PacerPalette.Ink(29, 29, 31, 199);
+    public Brush DurationInk => Value.Phase == "running" ? PacerPalette.Light ? LightRunning : DarkRunning : PacerPalette.Secondary;
     public string? RateText => Value.RateText ?? Value.RatePlaceholder;
     public int RateSize => Value.TokensPerSecond == null ? 11 : 13;
     public string RateUnit => Value.TokensPerSecond == null ? "" : " t/s";

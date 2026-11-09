@@ -36,7 +36,7 @@ internal static class ConversationNavigationChecks
             Check(Math.Abs(completed.ActualHeight - 54) < 0.01, "Conversation actions must preserve the native task row height");
             Invoke(completed); await Until(() => opened.Count == 1 && completed.IsEnabled, "A failed open must finish its single flight");
             await Until(() => engine.LatestSnapshot?.NavigationError != null, "The failed open must publish its shared error");
-            Check(Unread(engine, id) && island.LogicalTarget.Height > 38 && ((TextBlock)island.FindName("StatusLabel")).Text == ui.Text("activity.open_failed"), "Failed navigation must preserve the unread task and show its localized error");
+            Check(Unread(engine, id) && island.LogicalTarget.Height > 36 && ((TextBlock)island.FindName("StatusLabel")).Text == ui.Text("activity.open_failed"), "Failed navigation must preserve the unread task and show its localized error");
 
             dispatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Invoke(completed); await Until(() => opened.Count == 2, "The next explicit click must prepare another scoped open");
@@ -47,7 +47,7 @@ internal static class ConversationNavigationChecks
             await PresentationWait.CommandSnapshotAsync(engine, "retryQuota", new { provider });
             Check(Unread(engine, id), "Unrelated snapshots cannot acknowledge a pending launch");
             dispatch.SetResult(true);
-            await Until(() => !Unread(engine, id) && island.LogicalTarget.Height == 38, "A successful open must acknowledge despite unrelated snapshot sequences");
+            await Until(() => !Unread(engine, id) && island.LogicalTarget.Height == 36, "A successful open must acknowledge despite unrelated snapshot sequences");
             await island.WaitForPresentationAsync(); Invoke(completed); await Pump();
             Check(opened.Count == 2, "A cached control cannot launch while its panel is collapsed");
 
@@ -88,7 +88,7 @@ internal static class ConversationNavigationChecks
             await Until(() => engine.LatestSnapshot?.OpeningActivityIDs?.Contains(id) != true,
                 "The superseded running-task open must release its captured navigation operation");
             await island.WaitForPresentationAsync();
-            Check(Unread(engine, id) && island.LogicalTarget.Height > 38, "An older running-task launch cannot clear a new ending or close its replacement page");
+            Check(Unread(engine, id) && island.LogicalTarget.Height > 36, "An older running-task launch cannot clear a new ending or close its replacement page");
             dispatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var current = Descendants(island).OfType<TaskRow>().First(row => State(row).Id == id);
             Invoke(current); await Until(() => opened == 2, "A fresh ending must expose its new navigation token");
@@ -96,7 +96,7 @@ internal static class ConversationNavigationChecks
             dispatch.SetResult(true); await Pump();
             await PresentationWait.CommandSnapshotAsync(engine, "refresh", new { }, waitForSnapshot: false);
             await island.WaitForPresentationAsync();
-            Check(engine.LatestSnapshot!.Tasks.Count == 0 && island.LogicalTarget.Height > 38, "A disabled source must revoke old launch callbacks");
+            Check(engine.LatestSnapshot!.Tasks.Count == 0 && island.LogicalTarget.Height > 36, "A disabled source must revoke old launch callbacks");
         }
         finally { dispatch.TrySetResult(false); island.StopPresentation(); island.AllowClose = true; island.Close(); }
     }

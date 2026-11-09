@@ -61,7 +61,7 @@ internal static class DeepSeekSoloChecks
             await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = new[] { "codex", "claude", "deepseek" }, hideProjects = false });
             island.ApplyPreferences(new DesktopPreferences { IslandAppearance = "classic" }); await island.WaitForPresentationAsync();
             Check(!Descendants(island).OfType<DeepSeekSoloView>().Any() && Descendants(island).OfType<QuotaDial>().Count() == 3
-                && island.LogicalTarget.Height == 440, "Returning to all providers must restore the original compact quota row without stale solo height");
+                && island.LogicalTarget.Height == 438, "Returning to all providers must restore the original compact quota row without stale solo height");
             Console.WriteLine("PASS DeepSeek solo " + language + (motion ? "-motion" : "-reduced") + ": real engine routing, 132-point dial, charts, privacy, classic exception and multi-provider restore");
         }
         finally { island.StopPresentation(); island.AllowClose = true; island.Close(); CultureInfo.CurrentUICulture = before; }

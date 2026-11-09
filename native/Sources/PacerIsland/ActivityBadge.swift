@@ -49,7 +49,7 @@ struct ActivityBadge: View {
                     ActivityOrbit(segments: AgentProvider.allCases.map { provider in
                         ActivityOrbit.Segment(color: NSColor(provider.tint), weight: activity.orbit[provider] ?? 0)
                     }, progress: activity.progress.map {
-                        ActivityOrbit.Progress(fraction: $0.fraction, longStep: $0.mode == .longStep, stale: $0.stale)
+                        ActivityOrbit.Progress(fraction: $0.fraction, longStep: [.longStep, .waiting].contains($0.mode), stale: $0.stale)
                     }, animates: !reduceMotion && !layoutProbe)
                     .transition(.opacity)
                 }

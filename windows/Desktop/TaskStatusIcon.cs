@@ -20,7 +20,10 @@ namespace CodexPacer.Windows;
 public sealed class TaskStatusIcon : Grid
 {
     internal const double Diameter = 28, GlyphSide = 14, OrbSide = 20, DiscSide = 26, FillDuration = 0.42;
-    private static readonly Color DarkInk = Color.FromArgb(189, 0, 0, 0), ReadDisc = Color.FromArgb(38, 255, 255, 255), ReadInk = Color.FromArgb(158, 255, 255, 255);
+    private static readonly Color DarkInk = Color.FromArgb(189, 0, 0, 0);
+    // A read ending is a faint disc in the island's tone.
+    private static Color ReadDisc => PacerPalette.Light ? Color.FromArgb(31, 0, 0, 0) : Color.FromArgb(38, 255, 255, 255);
+    private static Color ReadInk => PacerPalette.Light ? Color.FromArgb(158, 29, 29, 31) : Color.FromArgb(158, 255, 255, 255);
     private static readonly KeySpline Launch = new(0.22, 1, 0.36, 1);
     /// What each task's face last showed, so a state's arrival plays once.
     private static readonly Dictionary<string, (string Face, double Seen)> Faces = new();

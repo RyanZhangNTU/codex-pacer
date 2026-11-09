@@ -187,7 +187,7 @@ internal sealed class QuotaDial : FrameworkElement
         var a = new Point(centre + (radius - 5 * k) * Math.Cos(radians), centre + (radius - 5 * k) * Math.Sin(radians));
         var b = new Point(centre + (radius + 5 * k) * Math.Cos(radians), centre + (radius + 5 * k) * Math.Sin(radians));
         drawing.DrawLine(new Pen(PacerPalette.Ink(0, 0, 0, 115), Math.Max(1.2, 2.4 * k)) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round }, a, b);
-        drawing.DrawLine(new Pen(Brushes.White, Math.Max(1, 1.7 * k)) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round }, a, b);
+        drawing.DrawLine(new Pen(PacerPalette.Tick, Math.Max(1, 1.7 * k)) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round }, a, b);
         drawing.Pop();
         DrawWalletCentre(drawing, presentation);
     }
@@ -258,7 +258,7 @@ internal sealed class QuotaCell : StackPanel
         {
             Brush ink = provider == "deepseek" || dial.Weekly?.Verdict == "fast" ? PacerPalette.Attention : PacerPalette.Primary;
             caption.Children.Add(new Border { CornerRadius = new CornerRadius(7.5), Height = 15, Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(5, 0, 0, 0),
-                Background = provider == "deepseek" || dial.Weekly?.Verdict == "fast" ? PacerPalette.Ink(255, 189, 97, 36) : PacerPalette.Ink(245, 245, 245, 36),
+                Background = provider == "deepseek" || dial.Weekly?.Verdict == "fast" ? PacerPalette.Ink(255, 189, 97, 36) : PacerPalette.Overlay(36),
                 Child = new TextBlock { Text = verdict, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = ink, VerticalAlignment = VerticalAlignment.Center } });
         }
         Children.Add(caption);
@@ -270,48 +270,125 @@ internal sealed class QuotaCell : StackPanel
     }
 }
 
+/// The collapsed bar's quota rings, the expanded panel's open gauge in small:
+/// 290° from the lower left with the opening at the bottom, a track in the
+/// service's colour, a white tick where the window's time stands, amber when
+/// low and a red track when used up. Two services nest, sit side by side, or
+/// one service splits its 5-hour and weekly windows.
 public sealed class CompactQuotaGlyph : FrameworkElement
 {
-    private sealed record Ring(string Provider, double? Remaining, bool Dimmed);
-    private Ring[] rings = [];
+    private const double Start = 125, Sweep = 290;
+    private CompactRing[] rings = [];
     private EngineWallet? clock;
+    private string layout = "concentric";
+    private bool vertical;
+    private string? focus;
+    private double size = 20;
     internal int RingCount => rings.Length;
     internal bool ShowsPriceClock => clock != null;
-    internal void Update(CompactProjection value, EngineWallet? wallet)
+    /// How the rings are arranged now: single, concentric, side or split.
+    internal string Arrangement => clock != null ? "clock" : rings.Length == 0 ? "none" : Split ? "split" : rings.Length == 1 ? "single" : Side ? "side" : "concentric";
+    private bool Split => rings.Length == 2 && rings.All(ring => ring.Window != null);
+    private bool Side => rings.Length == 2 && !Split && layout == "sideBySide";
+    internal void Update(CompactProjection value, EngineWallet? wallet, bool strip = false)
     {
-        rings = value.Rings.Select(item => new Ring(item.Provider, item.Remaining, item.Dimmed)).ToArray();
-        clock = value.GaugeClock ? wallet : null; InvalidateVisual();
+        rings = value.Rings.ToArray(); clock = value.GaugeClock ? wallet : null;
+        layout = value.Choices.RingLayout; vertical = strip; size = value.Sizes.Gauge;
+        double unit = size / 20;
+        Width = Side && !vertical ? 36 * unit : size; Height = Side && vertical ? 36 * unit : size;
+        InvalidateVisual();
     }
+    /// While the quota value takes turns, the other service's ring steps back.
+    internal string? Highlighted { get => focus; set { if (focus == value) return; focus = value; InvalidateVisual(); } }
     protected override void OnRender(DrawingContext drawing)
     {
-        if (clock != null) { DeepSeekPriceClock.Draw(drawing, clock, 18); return; }
-        for (int index = 0; index < rings.Length; index++)
-        {
-            bool paired = rings.Length > 1;
-            double diameter = paired ? index == 0 ? 15.4 : 7.6 : 14.8, stroke = paired ? 2.2 : 2.6;
-            drawing.PushOpacity(rings[index].Dimmed ? .45 : 1);
-            var track = new Pen(PacerPalette.Ink(255, 255, 255, 36), stroke);
-            if (rings[index].Remaining == null) track.DashStyle = new DashStyle(new[] { 1.5 / stroke, 2 / stroke }, 0);
-            drawing.DrawEllipse(null, track, new Point(9, 9), diameter / 2, diameter / 2);
-            if (rings[index].Remaining is double percent && percent > 0)
-                RingDrawing.Arc(drawing, new Point(9, 9), diameter / 2, -90, Math.Clamp(percent / 100, 0, 1) * 360, PacerPalette.Provider(rings[index].Provider), stroke);
-            drawing.Pop();
-        }
+        double unit = size / 20;
+        drawing.PushTransform(new ScaleTransform(unit, unit));
+        if (clock != null) DeepSeekPriceClock.DrawCompact(drawing, clock, 20);
+        else if (Split) { DrawSplit(drawing, rings[0], 204, 132); DrawSplit(drawing, rings[1], 348, 204); }
+        else if (Side) { Gauge(drawing, rings[0], vertical ? new(10, 8) : new(8, 10), 6.3, 2.1); Gauge(drawing, rings[1], vertical ? new(10, 28) : new(28, 10), 6.3, 2.1); }
+        else if (rings.Length == 1) Gauge(drawing, rings[0], new(10, 10), 8.5, 3);
+        else for (int index = 0; index < rings.Length; index++) Gauge(drawing, rings[index], new(10, 10), index == 0 ? 8.75 : 5.45, 2.1);
+        drawing.Pop();
+    }
+    private double Emphasis(CompactRing ring) => (ring.Dimmed ? 0.5 : 1) * (focus != null && focus != ring.Provider && rings.Length > 1 && !Split ? 0.42 : 1);
+    private static Brush Track(CompactRing ring)
+    {
+        if (ring.Exhausted == true) { var red = PacerPalette.Danger.Clone(); red.Opacity = 0.4; red.Freeze(); return red; }
+        var track = PacerPalette.Provider(ring.Provider).Clone(); track.Opacity = 0.26; track.Freeze(); return track;
+    }
+    private static Brush Fill(CompactRing ring) => ring.Low == true ? PacerPalette.Attention : PacerPalette.Provider(ring.Provider);
+    private void Gauge(DrawingContext drawing, CompactRing ring, Point centre, double radius, double stroke)
+    {
+        drawing.PushOpacity(Emphasis(ring));
+        // A ring without a reading, or with an old one, has a dashed track and no tick.
+        RingDrawing.Arc(drawing, centre, radius, Start, Sweep, Track(ring), stroke, false, ring.Dimmed || ring.Remaining == null);
+        if (ring.Remaining is double percent && percent > 0.5)
+            RingDrawing.Arc(drawing, centre, radius, Start, Sweep * Math.Clamp(percent / 100, 0, 1), Fill(ring), stroke);
+        if (ring.Time is double time && !ring.Dimmed) Tick(drawing, centre, Start + Sweep * Math.Clamp(time, 0, 1), radius - 2, radius + 2);
+        drawing.Pop();
+    }
+    private void DrawSplit(DrawingContext drawing, CompactRing ring, double start, double span)
+    {
+        var centre = new Point(10, 10);
+        drawing.PushOpacity(Emphasis(ring));
+        RingDrawing.Arc(drawing, centre, 8, start, span, Track(ring), 2.1, false, ring.Dimmed || ring.Remaining == null);
+        if (ring.Remaining is double percent && percent > 0.5)
+            RingDrawing.Arc(drawing, centre, 8, start, span * Math.Clamp(percent / 100, 0, 1), Fill(ring), 2.1);
+        if (ring.Time is double time && !ring.Dimmed) Tick(drawing, centre, start + span * Math.Clamp(time, 0, 1), 5.9, 10.1);
+        drawing.Pop();
+    }
+    private static void Tick(DrawingContext drawing, Point centre, double angle, double inner, double outer)
+    {
+        double radians = angle * Math.PI / 180;
+        drawing.DrawLine(new Pen(PacerPalette.Tick, 1.2) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round },
+            new Point(centre.X + inner * Math.Cos(radians), centre.Y + inner * Math.Sin(radians)),
+            new Point(centre.X + outer * Math.Cos(radians), centre.Y + outer * Math.Sin(radians)));
     }
 }
 
-/// Original PriceClockGlyph geometry, used at 18 points in the header and
-/// 24 points in Settings. It draws current wallet inputs rather than an icon.
+/// Original PriceClockGlyph geometry, used in Settings. It draws current
+/// wallet inputs rather than an icon. The collapsed bar uses `Compact`: the
+/// quota rings' drawing, with peak hours outside and today's hourly spend inside.
 internal sealed class DeepSeekPriceClock : FrameworkElement
 {
     private EngineWallet? wallet;
+    internal bool Compact { get; init; }
     internal void Update(EngineWallet? value) { wallet = value; InvalidateVisual(); }
-    protected override void OnRender(DrawingContext drawing) { if (wallet != null) Draw(drawing, wallet, Math.Min(ActualWidth, ActualHeight)); }
+    protected override void OnRender(DrawingContext drawing)
+    {
+        if (wallet == null) return;
+        if (Compact) DrawCompact(drawing, wallet, Math.Min(ActualWidth, ActualHeight)); else Draw(drawing, wallet, Math.Min(ActualWidth, ActualHeight));
+    }
+    /// The bar's clock: a faint dial with peak hours in amber outside, today's
+    /// spend per hour in blue inside, and a hand that turns amber during a peak.
+    internal static void DrawCompact(DrawingContext drawing, EngineWallet value, double side)
+    {
+        double scale = side / 20;
+        var centre = new Point(10, 10);
+        drawing.PushTransform(new ScaleTransform(scale, scale));
+        drawing.PushOpacity(value.State is "stale" or "disconnected" ? .45 : 1);
+        var faint = new Pen(CompactInk.Faint, 2.2);
+        drawing.DrawEllipse(null, faint, centre, 8.75, 8.75); drawing.DrawEllipse(null, faint, centre, 5.45, 5.45);
+        foreach (var span in value.Peak.Where(span => span.End - span.Start > 4))
+            RingDrawing.Arc(drawing, centre, 8.75, span.Start + 2 - 90, span.End - span.Start - 4, PacerPalette.Attention, 2.2);
+        int hourNow = (int)(value.Angle / 15);
+        for (int hour = 0; hour < Math.Min(24, value.Hourly.Count); hour++)
+        {
+            if (value.Hourly[hour] < .0005 || hour > hourNow) continue;
+            double start = hour * 15, end = hour == hourNow ? Math.Max(start + 4, value.Angle) : start + 15;
+            RingDrawing.Arc(drawing, centre, 5.45, start - 90, end - start, PacerPalette.DeepSeek, 2.2, false);
+        }
+        double angle = (value.Angle - 90) * Math.PI / 180;
+        var hand = new Pen(value.PeakNow ? PacerPalette.Attention : PacerPalette.Tick, 1.6) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
+        drawing.DrawLine(hand, new Point(10 + 2.4 * Math.Cos(angle), 10 + 2.4 * Math.Sin(angle)), new Point(10 + 9.6 * Math.Cos(angle), 10 + 9.6 * Math.Sin(angle)));
+        drawing.Pop(); drawing.Pop();
+    }
     internal static void Draw(DrawingContext drawing, EngineWallet value, double side)
     {
         double scale = side / 108, centre = side / 2;
         drawing.PushOpacity(value.State is "stale" or "disconnected" ? .45 : 1);
-        drawing.DrawEllipse(null, new Pen(PacerPalette.Ink(255, 255, 255, 41), 11 * scale), new Point(centre, centre), 38 * scale, 38 * scale);
+        drawing.DrawEllipse(null, new Pen(PacerPalette.Overlay(41), 11 * scale), new Point(centre, centre), 38 * scale, 38 * scale);
         int hourNow = (int)(value.Angle / 15);
         for (int hour = 0; hour < Math.Min(24, value.Hourly.Count); hour++)
         {

@@ -9,8 +9,10 @@ internal static class BackdropPolicy
 {
     internal static BackdropDecision Resolve(string preferred, BackdropSystemState state, bool failed = false, bool lost = false)
     {
-        if (preferred == "classic") return new(preferred, false, BackdropReason.Classic);
-        if (preferred != "liquidGlass") throw new ArgumentException("Unknown island appearance.");
+        // Black and graphite are opaque materials drawn by the island itself.
+        if (preferred is "classic" or "graphite") return new(preferred, false, BackdropReason.Classic);
+        // Light Liquid Glass is the same system material with a light wash.
+        if (preferred is not ("liquidGlass" or "liquidGlassLight")) throw new ArgumentException("Unknown island appearance.");
         if (state.Build < 22621) return new(preferred, false, BackdropReason.OldSystem);
         if (!state.Available) return new(preferred, false, BackdropReason.SystemUnavailable);
         if (state.HighContrast) return new(preferred, false, BackdropReason.HighContrast);

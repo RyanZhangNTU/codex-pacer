@@ -141,17 +141,10 @@ struct CompactIslandComponent: View {
     /// Stacked for the docked strip: values sit above their units, multiple
     /// providers one above another.
     var vertical = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandLayoutProbe) private var layoutProbe
     private var providers: [AgentProvider] { model.enabledProviders }
     /// Time remaining describes quota windows, which DeepSeek's wallet lacks.
     private var percentageProviders: [AgentProvider] { providers.filter { $0 != .deepseek } }
-    /// Expanded rings repeat these values in more detail, so the header quiets
-    /// them instead of moving the row.
-    static func dimsWhenExpanded(_ component: CompactIslandLayout.Component) -> Bool {
-        CompactBarPresentation.dimsWhenExpanded(component)
-    }
-    private var dimmed: Bool { model.expanded && Self.dimsWhenExpanded(component) }
 
     static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
         if component == .tps {
@@ -195,8 +188,6 @@ struct CompactIslandComponent: View {
             .buttonStyle(.plain)
             .lineLimit(1)
             .accessibilityHint(help)
-            .opacity(dimmed ? CompactBarPresentation.expandedOpacity : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: CompactBarPresentation.dimDuration), value: dimmed)
     }
     @ViewBuilder private var content: some View {
         switch component {

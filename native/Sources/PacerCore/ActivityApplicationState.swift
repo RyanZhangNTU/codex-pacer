@@ -42,6 +42,9 @@ public struct ActivityApplicationState: Sendable {
     public private(set) var activities: [SessionActivity] = []
     public private(set) var requests: [PendingAttentionRequest] = []
     public private(set) var latestFirstOutput: (at: Date, seconds: TimeInterval)?
+    /// The last few first-output measurements for the collapsed bar's median.
+    public private(set) var firstOutputHistory = CompactFirstOutputHistory()
+    /// The total rate over the last minute while tasks run.
     public private(set) var taskGroupingComputations = 0
     private var cachedGroups: [ActivityTaskGroup]?
     private var cachedOverview: (at: Date, value: ActivityOverview)?
@@ -99,8 +102,9 @@ public struct ActivityApplicationState: Sendable {
         guard let latency, latency.isFinite, (0...3600).contains(latency), let reportedAt,
               reportedAt <= now, latestFirstOutput.map({ reportedAt > $0.at }) ?? true else { return }
         latestFirstOutput = (reportedAt, latency)
+        firstOutputHistory.record(latency, measuredAt: reportedAt)
     }
-    public mutating func clearFirstOutput() { latestFirstOutput = nil }
+    public mutating func clearFirstOutput() { latestFirstOutput = nil; firstOutputHistory = CompactFirstOutputHistory() }
     public mutating func replacePendingRequests(for provider: AgentProvider, with values: [PendingAttentionRequest]) {
         requests = requests.filter { $0.provider != provider } + values; cachedPresentation = nil
     }

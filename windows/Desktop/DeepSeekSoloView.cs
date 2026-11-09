@@ -152,7 +152,7 @@ internal sealed class DeepSeekDistributionView : StackPanel
         {
             var item = new StackPanel { Orientation = Orientation.Horizontal };
             item.Children.Add(new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(2), VerticalAlignment = VerticalAlignment.Center,
-                Background = part.Elsewhere ? PacerPalette.Ink(255, 255, 255, 102) : DeepSeekElements.Opacity(PacerPalette.DeepSeek, Math.Max(.32, part.Opacity)) });
+                Background = part.Elsewhere ? PacerPalette.Overlay(102) : DeepSeekElements.Opacity(PacerPalette.DeepSeek, Math.Max(.32, part.Opacity)) });
             var title = DeepSeekElements.Text(part.Title, 10.5, PacerPalette.Secondary); title.MaxWidth = 140; title.Margin = new Thickness(4, 0, 0, 0); item.Children.Add(title);
             if (part.Help != null) AutomationProperties.SetHelpText(title, part.Help);
             var amount = DeepSeekElements.Text(part.AmountText, 10.5, PacerPalette.Primary); amount.Margin = new Thickness(4, 0, 0, 0); item.Children.Add(amount);
@@ -221,10 +221,10 @@ internal sealed class DeepSeekSpendSegment(DeepSeekPart part) : FrameworkElement
     protected override void OnRender(DrawingContext drawing)
     {
         var bounds = new Rect(0, 0, ActualWidth, ActualHeight);
-        drawing.DrawRoundedRectangle(part.Elsewhere ? PacerPalette.Ink(255, 255, 255, 31) : DeepSeekElements.Opacity(PacerPalette.DeepSeek, part.Opacity), null, bounds, 3, 3);
+        drawing.DrawRoundedRectangle(part.Elsewhere ? PacerPalette.Overlay(31) : DeepSeekElements.Opacity(PacerPalette.DeepSeek, part.Opacity), null, bounds, 3, 3);
         if (!part.Elsewhere) return;
         drawing.PushClip(new RectangleGeometry(bounds, 3, 3));
-        var pen = new Pen(PacerPalette.Ink(255, 255, 255, 115), 1.4);
+        var pen = new Pen(PacerPalette.Overlay(115), 1.4);
         for (double x = -ActualHeight; x < ActualWidth; x += 4.5) drawing.DrawLine(pen, new Point(x, ActualHeight), new Point(x + ActualHeight, 0));
         drawing.Pop();
     }

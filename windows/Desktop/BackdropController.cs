@@ -32,7 +32,8 @@ internal sealed class BackdropController : IDisposable
     {
         if (disposed || preferred == value) return;
         _ = BackdropPolicy.Resolve(value, system.Current);
-        if (value == "liquidGlass") Drop();
+        // A new glass tone needs a new underlay with its own wash.
+        if (value is "liquidGlass" or "liquidGlassLight") Drop();
         preferred = value; failed = lost = false; revision++; Refresh();
     }
     internal void Apply(BackdropFrame value, bool force = false)

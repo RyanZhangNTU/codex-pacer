@@ -22,6 +22,8 @@ internal sealed class QuotaHistoryChart : Grid
     // Charts axis; its separate date footer keeps a 34-point inset.
     internal const double AxisWidth = 36;
     internal static readonly Brush ExpiryInk = Frozen(Color.FromRgb(232, 191, 122));
+    /// The reset markers' amber in the hosting window's theme.
+    private Brush Expiry => TryFindResource("SettingsExpiry") as Brush ?? ExpiryInk;
     private readonly NativeQuotaChart native = new(Path.Combine(AppContext.BaseDirectory, "Engine"));
     private readonly QuotaHistoryPlot plot;
     private readonly Canvas markers = new(), tooltip = new() { IsHitTestVisible = false };
@@ -90,12 +92,14 @@ internal sealed class QuotaHistoryChart : Grid
         foreach (var marker in layouts)
         {
             var content = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            content.Children.Add(new IconGlyph { Symbol = "clock", Width = 12, Height = 12, Ink = ExpiryInk });
+            var clock = new IconGlyph { Symbol = "clock", Width = 12, Height = 12 }; clock.SetResourceReference(IconGlyph.InkProperty, "SettingsExpiry");
+            content.Children.Add(clock);
             if (marker.CountText != null)
             {
-                var count = Text(marker.CountText, 11, ExpiryInk, FontWeights.Medium); count.Margin = new Thickness(4, 0, 0, 0); content.Children.Add(count);
+                var count = Text(marker.CountText, 11, null, FontWeights.Medium); count.SetResourceReference(TextBlock.ForegroundProperty, "SettingsExpiry");
+                count.Margin = new Thickness(4, 0, 0, 0); content.Children.Add(count);
             }
-            var material = new ChartMaterial(plot, new Rect(marker.X - marker.Width / 2, 1.5, marker.Width, 23), 11.5, WithOpacity(ExpiryInk, 0.3));
+            var material = new ChartMaterial(plot, new Rect(marker.X - marker.Width / 2, 1.5, marker.Width, 23), 11.5, WithOpacity(Expiry, 0.3));
             material.Children.Add(content);
             var button = new Button { Width = marker.Width, Height = 23, Content = material, Style = MarkerStyle() };
             Canvas.SetLeft(button, marker.X - marker.Width / 2); Canvas.SetTop(button, 1.5);
@@ -139,7 +143,7 @@ internal sealed class QuotaHistoryChart : Grid
         if (marker != null)
         {
             var rows = new StackPanel { Width = 174, Margin = new Thickness(11, 9, 11, 9) };
-            rows.Children.Add(Text(marker.Title, 13, ExpiryInk, FontWeights.Medium));
+            rows.Children.Add(Text(marker.Title, 13, Expiry, FontWeights.Medium));
             foreach (var detail in marker.Details)
             {
                 var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
@@ -148,7 +152,7 @@ internal sealed class QuotaHistoryChart : Grid
                 rows.Children.Add(row);
             }
             if (marker.MoreText != null) { var more = ChartText(marker.MoreText, 12); more.Margin = new Thickness(0, 6, 0, 0); rows.Children.Add(more); }
-            ShowTooltip(rows, Math.Max(0, Math.Min(PlotWidth - 196, marker.X - 98)), 30, 196, 9, WithOpacity(ExpiryInk, 0.2));
+            ShowTooltip(rows, Math.Max(0, Math.Min(PlotWidth - 196, marker.X - 98)), 30, 196, 9, WithOpacity(Expiry, 0.2));
         }
         else if (selected != null)
         {
@@ -300,7 +304,7 @@ internal sealed class QuotaHistoryPlot : FrameworkElement
         {
             var guide = new StreamGeometry(); using (var context = guide.Open())
             { context.BeginFigure(new Point(marker.X, 27), false, false); context.LineTo(new Point(marker.DateX, 34), true, false); context.LineTo(new Point(marker.DateX, 118), true, false); }
-            drawing.DrawGeometry(null, new Pen(QuotaHistoryChart.WithOpacity(QuotaHistoryChart.ExpiryInk, 0.25), 1) { DashStyle = new DashStyle(new double[] { 2, 4 }, 0) }, guide);
+            drawing.DrawGeometry(null, new Pen(QuotaHistoryChart.WithOpacity(TryFindResource("SettingsExpiry") as Brush ?? QuotaHistoryChart.ExpiryInk, 0.25), 1) { DashStyle = new DashStyle(new double[] { 2, 4 }, 0) }, guide);
         }
         drawing.Pop();
         if (IsKeyboardFocused) drawing.DrawRoundedRectangle(null, new Pen(Secondary, 0.7), new Rect(0.5, 0.5, ActualWidth - 1, 117), 5, 5);

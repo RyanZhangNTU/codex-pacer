@@ -38,6 +38,28 @@ internal static class PreferencesChecks
                 && restored.Value.CodexQuotaWindow == "5h" && restored.Value.ClaudeQuotaWindow == "7d" && restored.Value.QuotaRingOuter == "claude" && restored.Value.QuotaRingInner == "none"
                 && restored.Value.ProviderModes["codex"] == "disabled" && restored.Value.ProviderModes["claude"] == "automatic"
                 && restored.Value.HideProjects && !restored.Value.ShowAppButtons && !restored.Value.ShowEmbeddedCodexSessions && restored.Value.RetentionMinutes == 60, "Unicode source choices, module modes and display preferences must survive relaunch");
+            // The collapsed bar's size, component choices and the new materials, under the Mac's keys.
+            var choices = new CompactChoices { MultiRing = "average", RingDim = false, WarningLimit = 0 }.ToJson();
+            Check(store.Save(original with { CompactBarSize = "large", CompactComponentOptions = choices, IslandAppearance = "graphite", CompactSingleTask = "percent" }),
+                "The bar size, component choices, graphite and the percent core must save");
+            var sized = store.Load().Value; string saved = File.ReadAllText(file);
+            Check(sized.CompactBarSize == "large" && sized.CompactComponentOptions == choices && sized.IslandAppearance == "graphite" && sized.CompactSingleTask == "percent"
+                && saved.Contains("\"compactBarSize\": \"large\"") && saved.Contains("\"compactComponentOptions\": \"" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(choices)) + "\""),
+                "Component choices are stored as the Mac's data and survive relaunch");
+            Check(CompactChoices.Parse(sized.CompactComponentOptions).MultiRing == "average" && CompactChoices.Parse("broken").MultiRing == "service"
+                && CompactChoices.Parse(new string('x', CompactChoices.ByteLimit + 1)) == CompactChoices.Default, "Choices parse per field and fall back when damaged");
+            Check(!store.Save(original with { IslandAppearance = "tinted" }), "The retired tinted material cannot be saved");
+            Check(store.Save(original with { IslandAppearance = "liquidGlassLight" }) && store.Load().Value.IslandAppearance == "liquidGlassLight", "Light Liquid Glass is a saved material");
+            Check(store.Save(original with { IslandAppearance = "graphite" }) && store.Load().Value.IslandAppearance == "graphite", "Graphite is a saved material");
+            Check(!store.Save(original with { CompactBarSize = "huge" }) && !store.Save(original with { CompactComponentOptions = new string('x', CompactChoices.ByteLimit + 1) }),
+                "Invalid sizes and oversized choices cannot replace saved settings");
+            var damagedChoices = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+            damagedChoices["compactComponentOptions"] = "@@not base64@@"; damagedChoices["compactBarSize"] = "future-size";
+            File.WriteAllText(file, damagedChoices.ToJsonString());
+            var recovered = store.Load();
+            Check(!recovered.Unavailable && recovered.Value.CompactComponentOptions == null && recovered.Value.CompactBarSize == "standard"
+                && recovered.Value.IslandAppearance == "graphite", "Damaged choices and a future size fall back without losing the other settings");
+            Check(store.Save(original), "The original settings save again");
             byte[] before = File.ReadAllBytes(file);
             var independentlyHidden = original with { ShowEmbeddedCodexSessions = true, ShowEmbeddedClaudeSessions = false };
             Check(store.Save(independentlyHidden) && store.Load().Value.ShowEmbeddedCodexSessions && !store.Load().Value.ShowEmbeddedClaudeSessions,

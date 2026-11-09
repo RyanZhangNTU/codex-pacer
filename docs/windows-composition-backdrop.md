@@ -4,7 +4,7 @@ Windows 的 Liquid Glass 使用路线 B：原生 Composition 背景窗口承载�
 
 ## 接入方式
 
-`islandAppearance` 使用与 Mac 相同的 `classic`、`liquidGlass` 值。Windows 设置立即保存选择，不重启引擎、不刷新额度或重建采集器。缺失或未知值采用 Liquid Glass；系统不支持时显示 Black，并保留选择和回退原因。
+`islandAppearance` 使用与 Mac 相同的 `classic`、`liquidGlass`、`liquidGlassLight`、`graphite` 值。石墨是岛自身绘制的不透明材质，不加载原生背景。浅色液态玻璃使用同一原生材质，创建背景后通过 `pacer_surface_tone` 换成近白色洗色（不透明度 0.78，不加亮度层）；不支持时回退为不透明浅色面而不是 Black。深浅两种玻璃之间切换会重建背景，使洗色在创建时确定。整座岛的文字、图形和叠加色随浅色切换，设置窗口本身保持其主题。Windows 设置立即保存选择，不重启引擎、不刷新额度或重建采集器。缺失或未知值采用 Liquid Glass；系统不支持时显示 Black，并保留选择和回退原因。
 
 背景 HWND 使用 `WS_EX_NOREDIRECTIONBITMAP`、`WS_EX_NOACTIVATE` 和工具窗口样式，位于内容 HWND 正下方。`CreateDispatcherQueueController` 接入 WPF 的 UI 线程消息循环；`DesktopWindowTarget` 承载 `CreateHostBackdropBrush()`、18 DIP 高斯模糊、亮度层、深色着色和固定噪点纹理。HostBackdropBrush 没有 Mac regular 材质自带的深色底，因此着色不透明度取 0.72，以便在浅色背景上保留现有浅色文字。纹理生成一次，缩放和动画不重画噪点。
 

@@ -66,7 +66,7 @@ public enum CompactWarningPresentation {
             }
         }
         if warnings.contains(.ssh), sshIssue {
-            result.append(.init(kind: .ssh, provider: nil, solid: false, label: nil, symbol: "network.slash", help: L10n.text("source.ssh_retrying")))
+            result.append(.init(kind: .ssh, provider: nil, solid: false, label: L10n.text("warning.label.ssh"), symbol: nil, help: L10n.text("source.ssh_retrying")))
         }
         if warnings.contains(.quotaDelay) {
             let delayed = ordered.filter { provider in
@@ -77,13 +77,28 @@ public enum CompactWarningPresentation {
                 return failed.contains(provider) || snapshot.isStale(at: now) || selected?.resetsAt.map({ $0 <= now }) == true
             }
             if !delayed.isEmpty {
-                result.append(.init(kind: .quotaDelay, provider: nil, solid: false, label: nil, symbol: "clock.arrow.circlepath",
+                // A failed read needs the user; a late update only needs noticing.
+                result.append(.init(kind: .quotaDelay, provider: nil, solid: delayed.contains { failed.contains($0) },
+                    label: L10n.text("warning.label.quotaDelay"), symbol: nil,
                     help: delayed.map(\.displayName).joined(separator: " · ") + " · " + L10n.text("warning.quotaDelay"), affectedProviders: delayed.map(\.rawValue)))
             }
         }
         if enabled.contains(.deepseek), let wallet {
-            result.append(.init(kind: .init(wallet.kind), provider: "deepseek", solid: wallet.solid, label: wallet.label, symbol: wallet.symbol, help: wallet.help))
+            let label = wallet.kind == .spike ? L10n.text("warning.label.spike") : wallet.label
+            result.append(.init(kind: .init(wallet.kind), provider: "deepseek", solid: wallet.solid, label: label,
+                symbol: label == nil ? wallet.symbol : nil, help: wallet.help))
         }
-        return result
+        return Self.ordered(result)
+    }
+
+    /// Marks that need the user come first; each group keeps its source order.
+    public static func ordered(_ items: [Item]) -> [Item] { items.filter(\.solid) + items.filter { !$0.solid } }
+
+    /// The marks a collapsed bar draws and how many fold into the "+N" mark.
+    /// A limit of zero shows every mark.
+    public static func visible(_ items: [Item], limit: Int) -> (shown: [Item], hidden: Int) {
+        let sorted = ordered(items)
+        guard limit > 0, sorted.count > limit else { return (sorted, 0) }
+        return (Array(sorted.prefix(limit)), sorted.count - limit)
     }
 }

@@ -31,7 +31,7 @@ public sealed class TaskProgressRing : Grid
     public static readonly DependencyProperty GhostFractionProperty = DependencyProperty.Register(nameof(GhostFraction), typeof(double),
         typeof(TaskProgressRing), new PropertyMetadata(0.0, (owner, _) => ((TaskProgressRing)owner).UpdateGhost()));
     public double GhostFraction { get => (double)GetValue(GhostFractionProperty); set => SetValue(GhostFractionProperty, value); }
-    private static readonly Brush TrackInk = PacerPalette.Ink(255, 255, 255, 20);
+    private static Brush TrackInk => PacerPalette.Overlay(20);
     internal static readonly Stopwatch Clock = Stopwatch.StartNew();
     private static readonly Dictionary<string, Memory> Memories = new();
     internal static double Now => Clock.Elapsed.TotalSeconds;

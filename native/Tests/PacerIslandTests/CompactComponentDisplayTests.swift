@@ -14,11 +14,6 @@ final class CompactComponentDisplayTests: XCTestCase {
         }
         return value
     }
-    func testExpandedHeaderQuietsOnlyQuotaValues() {
-        let quieted = CompactIslandLayout.Component.allCases.filter(CompactIslandComponent.dimsWhenExpanded)
-        XCTAssertEqual(Set(quieted), [.quota, .quotaGauge, .priceClock, .quotaLabel, .timeRemaining],
-            "Status, rate and warnings stay at full strength while the rings repeat quota below")
-    }
     func testActivityOrbitSpreadsRunningProvidersEvenlyWithHardEdgedHeads() {
         func stops(_ weights: [Int], animates: Bool = true) -> [String] {
             ActivityOrbit.stops(for: zip(AgentProvider.allCases, weights).map { .init(color: NSColor($0.0.tint), weight: $0.1) },

@@ -67,7 +67,7 @@ Legacy window-mask bits are 1 = 5h, 2 = 7d, 4 = custom 8h, 8 = untyped. For Code
 | Dial ages 0,30,301,601,3600 s × balances 0,2,86.4,1250 | All 20 pairs; freshness just-updated/30 seconds/5 minutes/10 minutes/60 minutes; amounts ¥0.00/¥2.00/¥86.40/¥1.2k; age >600 dims the face and uses stale tones |
 | Connection ages 0,9,10,59,60,601 s | Just-updated through 9 s, seconds through 59 s, minutes from 60 s; a cached balance wins over a transient read failure; invalid key never claims connected |
 | History unread/demo/expired-5h-plus-live-7d | Empty/31-point/single-point projection; empty buckets preserved; only eligible fresh windows have pace; failed reads keep chart values; Codex keeps account details |
-| 5h remaining 20,19.9,0 | No warning / outlined low mark / solid exhausted mark; stale, expired or failed reads replace the live warning with quotaDelay |
+| 5h remaining 20,19.9,0 | No warning / outlined low mark / solid exhausted mark; stale, expired or failed reads replace the live warning with quotaDelay, which is solid when a read failed. Solid marks come first, each group in source order |
 | Balance sequence 20,9,8,0,5(stale),20,5,5,5 | Notice suffixes [],[low],[],[exhausted],[],[],[low],[],[] |
 | Spend sequence 2,9,10.1,11,2,2,9,2,6 | [],[day-near],[day-over],[],[],[],[spike,day-near],[],[spike]; the first three spike crossings are snoozed |
 

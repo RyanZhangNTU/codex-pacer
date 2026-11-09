@@ -32,14 +32,30 @@ final class IslandDisplayModeTests: XCTestCase {
         let floating = IslandDisplayMode.floating.layout(safeAreaTop: 37, hardwareNotchWidth: 185)
         XCTAssertFalse(floating.attached)
         XCTAssertEqual(floating.notchWidth, 0)
-        XCTAssertEqual(floating.topHeight, 38)
+        XCTAssertEqual(floating.topHeight, 36)
+        XCTAssertEqual(floating.stripWidth, 32); XCTAssertTrue(floating.sizeAdjustable)
+    }
+
+    func testEveryBarButOneOnAHardwareNotchFollowsTheSavedSize() {
+        for (size, height, strip) in [(CompactBarSize.small, 32.0, 28.0), (.standard, 36, 32), (.large, 42, 37), (.extraLarge, 48, 43)] {
+            let floating = IslandDisplayMode.floating.layout(safeAreaTop: 37, hardwareNotchWidth: 185, size: size)
+            XCTAssertEqual(floating.topHeight, CGFloat(height)); XCTAssertEqual(floating.stripWidth, CGFloat(strip))
+            let virtual = IslandDisplayMode.notch.layout(safeAreaTop: 0, hardwareNotchWidth: 0, size: size)
+            XCTAssertEqual(virtual.topHeight, CGFloat(height)); XCTAssertTrue(virtual.sizeAdjustable)
+            // The notch fixes the height; the setting is unavailable there.
+            let hardware = IslandDisplayMode.notch.layout(safeAreaTop: 37, hardwareNotchWidth: 185, size: size)
+            XCTAssertEqual(hardware.topHeight, 37); XCTAssertFalse(hardware.sizeAdjustable)
+            XCTAssertEqual(IslandDisplayMode.automatic.layout(safeAreaTop: 37, hardwareNotchWidth: 0, size: size).topHeight, 37)
+            XCTAssertEqual(size.effective(attached: true, hardwareNotch: true), .standard)
+            XCTAssertEqual(size.effective(attached: false, hardwareNotch: true), size)
+        }
     }
 
     func testNotchModeReservesOnlyRealHardwareAndAttachesWithoutIt() {
         let virtual = IslandDisplayMode.notch.layout(safeAreaTop: 0, hardwareNotchWidth: 0)
         XCTAssertTrue(virtual.attached)
         XCTAssertEqual(virtual.notchWidth, 0)
-        XCTAssertEqual(virtual.topHeight, 32)
+        XCTAssertEqual(virtual.topHeight, 36)
         let hardware = IslandDisplayMode.notch.layout(safeAreaTop: 37, hardwareNotchWidth: 185)
         XCTAssertTrue(hardware.attached)
         XCTAssertEqual(hardware.notchWidth, 185)

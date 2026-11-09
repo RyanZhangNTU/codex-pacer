@@ -19,6 +19,7 @@
     <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
     <Compile Include="../../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
     <Compile Include="../../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
+    <Compile Include="../../Desktop/CompactChoices.cs" Link="CompactChoices.cs"/>
     <Compile Include="../../Desktop/PreferencesStore.cs" Link="PreferencesStore.cs"/>
     <Compile Include="../../Desktop/FileQuarantine.cs" Link="FileQuarantine.cs"/>
     <Compile Include="../../Desktop/PreferencesAcknowledgement.cs" Link="PreferencesAcknowledgement.cs"/>

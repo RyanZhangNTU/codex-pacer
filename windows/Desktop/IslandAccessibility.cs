@@ -53,7 +53,7 @@ public partial class IslandWindow
         if (currentPage.RenderTransform is TranslateTransform transform) { transform.ApplyAnimationClock(TranslateTransform.XProperty, null); transform.X = 0; }
         TaskPages.Children.Add(currentPage);
     }
-    internal (int Pages, int PageClocks, int DimClocks) AccessibilityMotionState => (TaskPages.Children.Count, pageClocks.Count(clock => clock.IsActive), dimClocks.Values.Count(clock => clock.IsActive));
+    internal (int Pages, int PageClocks) AccessibilityMotionState => (TaskPages.Children.Count, pageClocks.Count(clock => clock.IsActive));
     internal static bool IsPagingInput(Key key, Key systemKey, ModifierKeys modifiers, bool editing)
         => !editing && (key == Key.System || (modifiers & ModifierKeys.Alt) != 0) && (key == Key.System ? systemKey : key) is Key.Left or Key.Right;
     private static bool IsEditing(DependencyObject? value)

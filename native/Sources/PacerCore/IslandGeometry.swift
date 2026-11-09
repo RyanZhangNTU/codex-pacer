@@ -31,8 +31,9 @@ public enum IslandGeometry {
         }
     }
 
-    /// Width of the collapsed bar turned on its side: the 20-point activity
-    /// badge and the values held to its width keep 6 points on either side.
+    /// Width of the standard collapsed bar turned on its side: the 22-point
+    /// activity badge keeps 5 points on either side. Other sizes scale it
+    /// through `CompactBarMetrics.stripWidth`.
     public static let stripWidth: CGFloat = 32
 
     /// AppKit can round a fractional panel frame outward. An asymptotic spring
@@ -75,8 +76,10 @@ public enum IslandGeometry {
     /// opens toward the screen's center and away from the 10-point top or
     /// bottom margin. `position` must have a side.
     public static func sideFrame(visible: CGRect, position: IslandPosition, stripHeight: CGFloat,
-                                 expanded: Bool, panelWidth: CGFloat, contentHeight: CGFloat) -> CGRect {
+                                 expanded: Bool, panelWidth: CGFloat, contentHeight: CGFloat,
+                                 stripWidth: CGFloat = IslandGeometry.stripWidth) -> CGRect {
         let margin: CGFloat = 10
+        let stripWidth = stripWidth.isFinite ? max(1, stripWidth) : IslandGeometry.stripWidth
         let strip = stripHeight.isFinite ? max(1, stripHeight) : 1
         let panel = panelWidth.isFinite ? max(0, panelWidth) : 0
         let content = contentHeight.isFinite ? max(0, contentHeight) : 0

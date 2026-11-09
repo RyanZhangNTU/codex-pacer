@@ -118,7 +118,7 @@ internal static class SlowEngineChecks
                             "A reply after its deadline cannot overwrite the error placeholder");
                     }
                     window.Reveal(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
-                    Check(window.LogicalTarget.Height > 38, "The panel must remain interactive after an engine timeout or exit");
+                    Check(window.LogicalTarget.Height > 36, "The panel must remain interactive after an engine timeout or exit");
                     Console.WriteLine("PASS UI responsiveness: " + mode + ", dispatcher heartbeat, bounded deadline, placeholder, coalescing and input");
                 }
                 finally { pulse.Stop(); window.StopPresentation(); window.AllowClose = true; window.Close(); }

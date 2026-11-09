@@ -7,7 +7,13 @@ internal static class BackdropChecks
     {
         var good = new BackdropSystemState(22621, true, false);
         Check(BackdropPolicy.Resolve("classic", good) == new BackdropDecision("classic", false, BackdropReason.Classic), "Classic stays Black");
+        Check(BackdropPolicy.Resolve("graphite", good) == new BackdropDecision("graphite", false, BackdropReason.Classic)
+            && BackdropPolicy.Resolve("graphite", good with { Build = 19041 }).Reason == BackdropReason.Classic, "Graphite is opaque on every build");
         Check(BackdropPolicy.Resolve("liquidGlass", good).Glass, "The minimum supported build accepts glass");
+        Check(BackdropPolicy.Resolve("liquidGlassLight", good) == new BackdropDecision("liquidGlassLight", true, BackdropReason.Available)
+            && BackdropPolicy.Resolve("liquidGlassLight", good with { Build = 22620 }).Reason == BackdropReason.OldSystem
+            && BackdropPolicy.Resolve("liquidGlassLight", good with { Transparency = false }).Reason == BackdropReason.TransparencyOff,
+            "Light Liquid Glass is the same system material, with the same fallbacks");
         Check(BackdropPolicy.Resolve("liquidGlass", good with { Build = 22620 }).Reason == BackdropReason.OldSystem, "A preceding build fails closed");
         Check(BackdropPolicy.Resolve("liquidGlass", good with { Available = false }).Reason == BackdropReason.SystemUnavailable, "Missing system settings fail closed");
         Check(BackdropPolicy.Resolve("liquidGlass", good with { Transparency = false }).Reason == BackdropReason.TransparencyOff, "Transparency effects off selects Black");
@@ -50,6 +56,12 @@ internal static class BackdropChecks
         created[3].Remove(); controller.Prefer("classic"); controller.Prefer("liquidGlass");
         Drain();
         Check(controller.Glass && controller.Decision.Reason == BackdropReason.Available, "Stale removal and deferred teardown do not discard a replacement");
+        // The wash is set when an underlay is made, so a new glass tone makes a new one.
+        int made = created.Count;
+        controller.Prefer("liquidGlassLight"); Drain();
+        Check(controller.Glass && created.Count == made + 1 && created[made - 1].Disposed == 1, "Light Liquid Glass replaces the dark underlay");
+        controller.Prefer("liquidGlass"); Drain();
+        Check(controller.Glass && created.Count == made + 2 && created[made].Disposed == 1, "Dark Liquid Glass replaces the light underlay");
         controller.Prefer("classic"); Drain();
         Check(!controller.Glass && created.Last().Disposed == 1 && controller.WindowHandle == IntPtr.Zero, "Classic releases the native window");
         source.Set(good); controller.Dispose(); source.Set(good); Drain();

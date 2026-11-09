@@ -69,7 +69,7 @@ internal static class HarnessNavigationChecks
 
             var errorClock = Stopwatch.StartNew();
             Invoke(row); await Until(() => opened.Count == 1, "A task click must reach the shared launcher"); await Pump();
-            Check(opened.Single() == fixture && island.LogicalTarget.Height > 38
+            Check(opened.Single() == fixture && island.LogicalTarget.Height > 36
                 && engine.LatestSnapshot!.Presentation!.Rows.Single().Unread, "Failed opens must leave the panel and unread completion intact");
             var status = (TextBlock)island.FindName("StatusLabel");
             await Until(() => engine.LatestSnapshot?.NavigationError != null && status.Visibility == Visibility.Visible && row.IsEnabled,
@@ -86,7 +86,7 @@ internal static class HarnessNavigationChecks
             launchSucceeds = true;
             await Until(() => row.IsEnabled, "A failed open must release its shared single flight before another explicit click");
             Invoke(row);
-            await Until(() => !engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 38,
+            await Until(() => !engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 36,
                 "A successful open must acknowledge only that completion before collapsing");
             await island.WaitForPresentationAsync();
             Check(opened.Count == 2 && status.Visibility == Visibility.Collapsed, "The successful row action must open once and remove an old failure");
@@ -98,7 +98,7 @@ internal static class HarnessNavigationChecks
             var currentHarness = buttons.Children.OfType<Button>().Single();
             Invoke(currentHarness); await Until(() => opened.Count == 3, "The toolbar must use the same launcher");
             await island.WaitForPresentationAsync();
-            Check(!engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 38,
+            Check(!engine.LatestSnapshot!.Presentation!.Rows.Any(item => item.Id == value.Id && item.Unread) && island.LogicalTarget.Height == 36,
                 "Opening the desktop alone must collapse the panel without manufacturing an unread event");
             Invoke(currentHarness); await Pump(); Check(opened.Count == 3, "A cached toolbar button cannot launch while its panel is collapsed");
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();

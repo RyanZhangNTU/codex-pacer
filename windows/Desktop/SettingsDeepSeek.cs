@@ -21,7 +21,6 @@ internal sealed partial class SettingsWindow
     private Button? deepseekAutomatic, deepseekSignIn, deepseekRingLink;
     private TextBlock? deepseekDetection, deepseekBalance, deepseekRunway, deepseekDailyReference, deepseekWeeklyReference, deepseekBudgetIssue, deepseekLocalState, deepseekRingHint;
     private StackPanel? deepseekSections, deepseekBudgetRows;
-    private FrameworkElement? deepseekRingRow;
     private Border? deepseekOff;
     private TextBlock? deepseekModeNote;
     private FrameworkElement? deepseekBalanceRow;
@@ -41,7 +40,7 @@ internal sealed partial class SettingsWindow
         deepseekEnabled = deepseekTurnCost = deepseekProgress = null; deepseekAutomatic = deepseekSignIn = deepseekRingLink = null; deepseekConnection = null;
         deepseekProgressState = null; deepseekProgressRetry = null; deepseekProgressStatus = null;
         deepseekDetection = deepseekBalance = deepseekRunway = deepseekDailyReference = deepseekWeeklyReference = deepseekBudgetIssue = deepseekLocalState = deepseekRingHint = null;
-        deepseekSections = deepseekBudgetRows = null; deepseekRingRow = null;
+        deepseekSections = deepseekBudgetRows = null;
         deepseekDaily = deepseekWeekly = null; deepseekOff = null; deepseekModeNote = null; deepseekBalanceRow = null; deepseekLocalDot = null; deepseekClock = null; deepseekPricing = null;
         deepseekDailyValue = deepseekWeeklyValue = null; deepseekChoices.Clear(); Array.Clear(deepseekPendingBudget);
         deepseekAccountHelp = deepseekConnectionDot = null;
@@ -83,10 +82,7 @@ internal sealed partial class SettingsWindow
         });
         deepseekBudgetRows = new StackPanel();
         deepseekBudgetRows.Children.Add(DeepSeekBudgetField(true)); deepseekBudgetRows.Children.Add(Hairline(14)); deepseekBudgetRows.Children.Add(DeepSeekBudgetField(false));
-        deepseekRingRow = new StackPanel();
-        ((StackPanel)deepseekRingRow).Children.Add(Hairline(14));
-        ((StackPanel)deepseekRingRow).Children.Add(Row(Label(ui.Text("deepseek.budget.ring")), DeepSeekSegments("ring", new[] { ("day", "deepseek.budget.day"), ("week", "deepseek.budget.week") }, value => ChangeDeepSeek(p => p with { DeepSeekRingPeriod = value }))));
-        deepseekBudgetRows.Children.Add(deepseekRingRow);
+        // The ring's budget period is chosen with the rings in Collapsed Bar; the hint below links there.
         deepseekRingHint = Label(""); deepseekRingHint.TextWrapping = TextWrapping.Wrap; Identify(deepseekRingHint, "settings.deepseek.ring_hint", "");
         deepseekRingLink = new Button { Style = (Style)FindResource("SettingsLink"), FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center };
         Identify(deepseekRingLink, "settings.deepseek.ring_link", ""); deepseekRingLink.Click += async (_, _) => await NavigateToQuotaGaugeAsync();
@@ -219,7 +215,6 @@ internal sealed partial class SettingsWindow
         deepseekBudgetRows!.Visibility = budget ? Visibility.Visible : Visibility.Collapsed;
         deepseekModeNote!.Text = ui.Text(budget ? "main.deepseek.budget_note" : "main.deepseek.balance_note");
         deepseekBalanceRow!.Visibility = deepseekBalance.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        deepseekRingRow!.Visibility = settings.DeepSeekDailyBudget != null && settings.DeepSeekWeeklyBudget != null ? Visibility.Visible : Visibility.Collapsed;
         var compact = ReadCompact();
         int ringSlot = compact.Components.Any(value => value.Id == "quotaGauge" && value.Shown)
             ? Array.FindIndex(compact.Rings, value => value.Provider == "deepseek") : -1;

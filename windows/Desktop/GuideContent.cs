@@ -163,7 +163,7 @@ internal sealed class GuideContent : StackPanel
     {
         var marks = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         foreach (var sample in samples) { if (sample is FrameworkElement item) { item.Margin = new Thickness(3, 0, 3, 0); item.VerticalAlignment = VerticalAlignment.Center; } marks.Children.Add(sample); }
-        return new Border { Width = 84, Height = 32, Background = Brushes.Black, CornerRadius = new CornerRadius(9), Child = marks, VerticalAlignment = VerticalAlignment.Center, ClipToBounds = true };
+        return new Border { Width = 84, Height = 32, Background = PacerPalette.Surface, CornerRadius = new CornerRadius(9), Child = marks, VerticalAlignment = VerticalAlignment.Center, ClipToBounds = true };
     }
     private static IconGlyph Mark(string symbol, Brush? ink = null, double size = 14) => new() { Symbol = GuideArt.Symbol(symbol), Ink = ink ?? PacerPalette.Primary, Width = size, Height = size };
     private static TextBlock Figure(string text, Brush ink, double size = 12) => new() { Text = text, FontSize = size, FontWeight = FontWeights.SemiBold, Foreground = ink };
@@ -176,9 +176,9 @@ internal sealed class GuideContent : StackPanel
     {
         var sample = new Canvas { Width = 56, Height = 18 };
         void Add(UIElement element, double x, double y) { Canvas.SetLeft(element, x); Canvas.SetTop(element, y); sample.Children.Add(element); }
-        Add(new Border { Width = 20, Height = 8, CornerRadius = new CornerRadius(4), Background = PacerPalette.Ink(255, 255, 255, 64),
-            BorderBrush = PacerPalette.Ink(255, 255, 255, 140), BorderThickness = new Thickness(1) }, 0, 5);
-        Add(new System.Windows.Shapes.Path { Data = Geometry.Parse("M 0 4 L 18 4 M 14 0 L 18 4 L 14 8"), Stroke = Brushes.White, StrokeThickness = 1.4 }, 25, 5);
+        Add(new Border { Width = 20, Height = 8, CornerRadius = new CornerRadius(4), Background = PacerPalette.Overlay(64),
+            BorderBrush = PacerPalette.Overlay(140), BorderThickness = new Thickness(1) }, 0, 5);
+        Add(new System.Windows.Shapes.Path { Data = Geometry.Parse("M 0 4 L 18 4 M 14 0 L 18 4 L 14 8"), Stroke = PacerPalette.Tick, StrokeThickness = 1.4 }, 25, 5);
         Add(new Border { Width = 3, Height = 18, CornerRadius = new CornerRadius(1.5), Background = PacerPalette.Codex }, 50, 0);
         return sample;
     }
@@ -186,15 +186,15 @@ internal sealed class GuideContent : StackPanel
     private static Grid PaceSample()
     {
         var bar = new Grid { Width = 48, Height = 10 };
-        bar.Children.Add(new Border { Height = 4, CornerRadius = new CornerRadius(2), Background = PacerPalette.Ink(255, 255, 255, 46) });
+        bar.Children.Add(new Border { Height = 4, CornerRadius = new CornerRadius(2), Background = PacerPalette.Overlay(46) });
         bar.Children.Add(new Border { Width = 28, Height = 4, CornerRadius = new CornerRadius(2), Background = PacerPalette.Codex, HorizontalAlignment = HorizontalAlignment.Left });
-        bar.Children.Add(new Border { Width = 2, Height = 10, CornerRadius = new CornerRadius(1), Background = Brushes.White, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(21, 0, 0, 0) });
+        bar.Children.Add(new Border { Width = 2, Height = 10, CornerRadius = new CornerRadius(1), Background = PacerPalette.Tick, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(21, 0, 0, 0) });
         return bar;
     }
     private static CompactQuotaGlyph Rings(params (string Provider, double Remaining)[] values)
     {
         var rings = new CompactQuotaGlyph { Width = 20, Height = 20 };
-        rings.Update(new(1, "", [], [], [], [], [], [], [], [], values.Select(value => new CompactRing(value.Provider, value.Remaining, false)).ToArray(), [], false, false, 0, 1), null); return rings;
+        rings.Update(new(1, "", [], [], [], [], [], [], [], [], values.Select(value => new CompactRing(value.Provider, value.Remaining, false)).ToArray(), [], false, false), null); return rings;
     }
     /// Badges sit on a bar-colored swatch, as they appear on the island.
     private Grid BadgeRow(int state, string title, string? hint = null, Brush? tint = null)
@@ -202,7 +202,7 @@ internal sealed class GuideContent : StackPanel
         var row = new Grid { Height = 38, Margin = new Thickness(12, 0, 12, 0) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition());
         var badge = Badge(state); badge.HorizontalAlignment = HorizontalAlignment.Center; badge.VerticalAlignment = VerticalAlignment.Center;
-        row.Children.Add(new Border { Width = 30, Height = 26, CornerRadius = new CornerRadius(7), Background = Brushes.Black, Child = badge, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center });
+        row.Children.Add(new Border { Width = 30, Height = 26, CornerRadius = new CornerRadius(7), Background = PacerPalette.Surface, Child = badge, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center });
         var label = new TextBlock { FontSize = 13, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
         var name = new System.Windows.Documents.Run(title); if (tint != null) name.Foreground = tint; else name.SetResourceReference(TextElement.ForegroundProperty, "SettingsPrimary");
         label.Inlines.Add(name);

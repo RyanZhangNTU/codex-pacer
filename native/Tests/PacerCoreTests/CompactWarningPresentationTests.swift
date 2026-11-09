@@ -28,9 +28,16 @@ final class CompactWarningPresentationTests: XCTestCase {
         let alert = try XCTUnwrap(DeepSeekAlertPresentation(wallet: wallet, lowBalance: false, spike: false, budget: false))
         let items = CompactWarningPresentation.items(enabled: [.codex, .deepseek], warnings: [.fiveHour, .ssh],
             snapshots: [.codex: snapshot(12)], sshIssue: true, wallet: alert, now: now)
-        XCTAssertEqual(items.map(\.kind), [.fiveHour, .ssh, .exhausted])
-        XCTAssertEqual(items.last?.provider, "deepseek"); XCTAssertEqual(items.last?.label, "¥"); XCTAssertEqual(items.last?.solid, true)
-        XCTAssertFalse(items.last?.help.isEmpty ?? true)
+        // Marks that need the user lead; the rest keep their provider order.
+        XCTAssertEqual(items.map(\.kind), [.exhausted, .fiveHour, .ssh])
+        XCTAssertEqual(items.first?.provider, "deepseek"); XCTAssertEqual(items.first?.label, "¥"); XCTAssertEqual(items.first?.solid, true)
+        XCTAssertFalse(items.first?.help.isEmpty ?? true)
+        // Every mark is text in the one capsule family.
+        XCTAssertEqual(items.first { $0.kind == .ssh }?.label, "SSH"); XCTAssertNil(items.first { $0.kind == .ssh }?.symbol)
+        let shown = CompactWarningPresentation.visible(items, limit: 2)
+        XCTAssertEqual(shown.shown.map(\.kind), [.exhausted, .fiveHour]); XCTAssertEqual(shown.hidden, 1)
+        XCTAssertEqual(CompactWarningPresentation.visible(items, limit: 0).hidden, 0)
+        XCTAssertEqual(CompactWarningPresentation.visible(items, limit: 3).shown.count, 3)
     }
     func testWalletProjectionFollowsTheOriginalSingleAlertPriority() {
         var ledger = DeepSeekSpendLedger(); ledger.record(id: "synthetic", at: now.addingTimeInterval(-30), cost: 11)

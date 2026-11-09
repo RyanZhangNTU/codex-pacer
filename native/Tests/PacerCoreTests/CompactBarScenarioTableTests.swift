@@ -24,7 +24,7 @@ final class CompactBarScenarioTableTests: XCTestCase {
     }
     private struct Live: Decodable { let stage: Int, status: String, rate: String }
     private struct Table: Decodable {
-        let modules: [Module], slots: [[CompactBarPresentation.RingChoice]], layouts: [Layout], metrics: [Metric], states: [State], dims: [String], live: [Live]
+        let modules: [Module], slots: [[CompactBarPresentation.RingChoice]], layouts: [Layout], metrics: [Metric], states: [State], live: [Live]
     }
     private func component(_ id: String, _ output: CompactBarPresentation.Output) throws -> CompactBarPresentation.Component {
         try XCTUnwrap(output.components.first { $0.id == id })
@@ -82,7 +82,6 @@ final class CompactBarScenarioTableTests: XCTestCase {
                                 XCTAssertEqual(window.selection, metric.normalized[window.provider.rawValue], label)
                             }
                             XCTAssertEqual(Set(output.components.filter(\.available).map(\.id)), Set(row.available), label)
-                            XCTAssertEqual(Set(output.components.filter(\.dimsExpanded).map(\.id)), Set(table.dims), label)
                             checked += 1
                         }
                     }
