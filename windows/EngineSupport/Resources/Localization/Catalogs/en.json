@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "c6ec5f1a6fc0aa054e32a57490f68088d46af5ce6825e0d59e22e65b5b8a3563",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "4013468f7e94a9b980d40e2da76df855b7c47478a3550142986001caef1b943c",
     "windows/EngineSupport/Resources/Localization/en.json": "23bd4e6629e9a665f4d03692b962b51b2a2f93a20fd1379517367849fa50b31b"
   },
   "strings": {
@@ -156,6 +156,7 @@
     "claude.cloud.coordinator": "Project coordinator",
     "claude.cloud.open_help": "Open this cloud Project in Claude",
     "claude.cloud.project": "Project",
+    "claude.cloud.turn_can_continue": "Turn finished \u00b7 Reply if needed",
     "claude.cloud.workers_help": "%d more sessions working in this thread",
     "claude.cloud_projects": "Show Claude cloud Projects",
     "claude.cloud_projects_help": "Follows each Project\u2019s threads and coordinator and reminds you when they end or wait for you. Needs the claude.ai sign-in above.",

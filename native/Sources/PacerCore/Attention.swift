@@ -39,7 +39,7 @@ public struct AttentionPolicy: Sendable {
         var emitted: Set<String> = []
         return requests.filter { request in
             let identity = key(request)
-            return !pendingRequests.contains(identity) && emitted.insert(identity).inserted
+            return !request.suppressesNotice && !pendingRequests.contains(identity) && emitted.insert(identity).inserted
         }.map { request in
             IslandNotice(id: "request:" + request.id, kind: .waitingForInput,
                 title: request.kind.label,
