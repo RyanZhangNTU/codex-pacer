@@ -70,6 +70,7 @@ internal static class Program
         await Test("guide pages preserve version records, quiet launches and browser actions", () => GuideSessionChecks.Run(engine));
         await Test("legacy guide controls coordinate independent embedded-session preferences", GuideControlChecks.Run);
         await Test("Windows platform capabilities fail closed", () => { WindowsPlatformChecks.Run(); return Task.CompletedTask; });
+        await Test("an engine that stops after ten minutes restarts with the app, an earlier stop does not", () => { EngineRecoveryChecks.Run(); return Task.CompletedTask; });
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
         await Test("occlusion refresh trails location-event bursts with a bounded rate", () => { OcclusionRefreshChecks.Run(); return Task.CompletedTask; });
         await Test("connection actions bind setup retries and quota reads to the current source", () => { ConnectionActionChecks.Run(); return Task.CompletedTask; });

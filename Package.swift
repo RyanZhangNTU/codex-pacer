@@ -15,7 +15,8 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pro
     .executable(name: "PacerEngine", targets: ["PacerEngine"]),
     .executable(name: "PacerInstallerHooks", targets: ["PacerInstallerHooks"]),
     .library(name: "PacerWindowsBridge", type: .dynamic, targets: ["PacerWindowsBridge"])
-], dependencies: [.package(url: "https://github.com/swiftlang/swift-subprocess", exact: "1.0.0")], targets: [
+], dependencies: [.package(url: "https://github.com/swiftlang/swift-subprocess", exact: "1.0.2"),
+    .package(url: "https://github.com/apple/swift-system", exact: "1.8.1")], targets: [
     zstd, gzip,
     .systemLibrary(name: "SQLite3", path: "windows/Native/SQLite3"),
     .target(name: "CWindowsSupport", path: "windows/Native/CWindowsSupport", linkerSettings:
@@ -24,7 +25,7 @@ let package = Package(name: "CodexPacerPortable", defaultLocalization: "en", pro
     .target(name: "PacerCore", dependencies: ["CZstd", "CGzip", "SQLite3", "CryptoKit"],
         path: "native/Sources/PacerCore", resources: [.process("Resources")]),
     .target(name: "PacerEngineSupport", dependencies: ["PacerCore", "CryptoKit", "CWindowsSupport",
-        .product(name: "Subprocess", package: "swift-subprocess")], path: "windows/EngineSupport",
+        .product(name: "Subprocess", package: "swift-subprocess"), .product(name: "SystemPackage", package: "swift-system")], path: "windows/EngineSupport",
         resources: [.copy("Resources/Localization"), .copy("Resources/WSL")]),
     .executableTarget(name: "PacerEngine", dependencies: ["PacerEngineSupport"], path: "windows/Engine", exclude: ["app.manifest"],
         linkerSettings: [.unsafeFlags(["-Xlinker", "/MANIFEST:EMBED", "-Xlinker",
