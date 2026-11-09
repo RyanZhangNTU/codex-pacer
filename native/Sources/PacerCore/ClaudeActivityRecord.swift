@@ -240,7 +240,7 @@ struct ClaudeActivityState: Sendable {
     private struct AgentCompletion: Sendable {
         let parent: String; let item: String; let turn: String; let toolStartedAt: Double; let launchedAt: Double
         let at: Double; let historical: Bool; let status: String
-        var childTurn: String? = nil; var childStartedAt: Double? = nil
+        var childTurn: String? = nil
         /// A background launch, or the ending of one.
         var background = false
     }
@@ -358,9 +358,11 @@ struct ClaudeActivityState: Sendable {
             sourceHostID: sourceID, phaseAwareRate: true, provider: .claude, sessionID: thread)
         // A child's hooks, transcript and telemetry carry its parent's current
         // prompt, which moves on while a background child keeps working. Until
-        // it ends, the child's records belong to the turn its SubagentStart opened.
+        // it ends, the child's records belong to the turn its SubagentStart opened,
+        // also while its source is unavailable: an SSH helper that reconnects
+        // replays them.
         var record = record
-        if kind != "subagentStart", kind != "prompt", value.parentThreadID != nil, [.running, .waitingForInput].contains(value.phase),
+        if kind != "subagentStart", kind != "prompt", value.parentThreadID != nil, ![.completed, .interrupted].contains(value.phase),
            let current = value.turnID, let incoming = ClaudeActivityRecord.identifier(record["promptId"] as? String), incoming != current {
             record["promptId"] = current
         }
@@ -413,7 +415,11 @@ struct ClaudeActivityState: Sendable {
             if let observed = sessions[childKey], [.running, .waitingForInput].contains(observed.phase),
                let bound = boundAgentCompletion(ownership, to: observed) { ownership = bound }
             if status == "async_launched" {
-                if seconds >= (agentLaunches[childKey]?.at ?? 0) { agentLaunches[childKey] = ownership }
+                // Another copy of a launch already bound to its run, from the
+                // transcript or a reconnect replay, keeps that run.
+                let existing = agentLaunches[childKey]
+                let keepsRun = existing.map { $0.item == item && $0.parent == thread && $0.childTurn != nil && ownership.childTurn == nil } ?? false
+                if !keepsRun, seconds >= (existing?.at ?? 0) { agentLaunches[childKey] = ownership }
                 if agentLaunches.count > 128, let oldest = agentLaunches.min(by: { $0.value.at < $1.value.at })?.key { agentLaunches.removeValue(forKey: oldest) }
                 return
             }
@@ -430,7 +436,7 @@ struct ClaudeActivityState: Sendable {
             guard let launch = agentLaunches[childKey], sameTask(launch.parent, thread), launch.item == item, seconds >= launch.launchedAt else { return }
             agentCompletions[childKey] = AgentCompletion(parent: launch.parent, item: item, turn: launch.turn,
                 toolStartedAt: launch.toolStartedAt, launchedAt: launch.launchedAt, at: seconds, historical: attaching, status: status,
-                childTurn: launch.childTurn, childStartedAt: launch.childStartedAt, background: true)
+                childTurn: launch.childTurn, background: true)
             applyAgentCompletion(childKey, now: now); return
         }
         if kind == "request" {
@@ -516,11 +522,16 @@ struct ClaudeActivityState: Sendable {
         // gets its own; the child's records carrying that prompt then map to it.
         // SubagentStart fires only when a run begins, so a later one also opens
         // a new run while the earlier ending is still unread, as when a cold
-        // replay drains the hooks before the transcript notifications.
+        // replay drains the hooks before the transcript notifications. A copy
+        // with the run's own start time, as a reconnecting SSH helper replays,
+        // keeps that run.
         if kind == "subagentStart", let incoming = turn, value.parentThreadID != nil,
-           let earlier = value.turnID, earlier == incoming || earlier.hasPrefix(incoming + ".run"),
-           [.completed, .interrupted].contains(value.phase) || value.turnStartedAt.map({ seconds > $0.timeIntervalSince1970 }) == true {
-            turn = incoming + ".run" + String(Int((seconds * 1000).rounded()))
+           let earlier = value.turnID, earlier == incoming || earlier.hasPrefix(incoming + ".run") {
+            let started = value.turnStartedAt?.timeIntervalSince1970
+            if started == seconds { turn = earlier }
+            else if [.completed, .interrupted].contains(value.phase) || started.map({ seconds > $0 }) == true {
+                turn = incoming + ".run" + String(Int((seconds * 1000).rounded()))
+            }
         }
         guard let turn else { return }
         let observedTerminal = ["stopVerified", "stop", "interrupt", "failure", "subagentStop"].contains(kind) && value.liveTurnStarted && value.hasLiveEvidence
@@ -644,10 +655,12 @@ struct ClaudeActivityState: Sendable {
     private func boundAgentCompletion(_ completion: AgentCompletion, to child: SessionActivity) -> AgentCompletion? {
         guard let parent = child.parentThreadID, sameTask(parent, completion.parent),
               let turn = child.turnID, let start = child.turnStartedAt?.timeIntervalSince1970 else { return nil }
-        if let childTurn = completion.childTurn { return childTurn == turn && completion.childStartedAt == start ? completion : nil }
+        // Every run of a child has its own turn, so a bound launch follows that
+        // turn even when a reconnect resumes it with a later start.
+        if let childTurn = completion.childTurn { return childTurn == turn ? completion : nil }
         guard start >= completion.toolStartedAt,
               start <= completion.launchedAt + (completion.background ? Self.launchStartSkew : 0) else { return nil }
-        var bound = completion; bound.childTurn = turn; bound.childStartedAt = start; return bound
+        var bound = completion; bound.childTurn = turn; return bound
     }
     private mutating func applyAgentCompletion(_ key: String, now: Date) {
         guard let pending = agentCompletions[key], let child = sessions[key],
