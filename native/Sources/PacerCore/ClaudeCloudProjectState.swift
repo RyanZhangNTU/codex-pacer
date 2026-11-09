@@ -260,15 +260,21 @@ public struct ClaudeCloudProjectState: Sendable {
 
     private mutating func applyThread(_ thread: ClaudeCloudThread, project: ClaudeCloudProject, sessions: [ClaudeCloudSession], at now: Date) {
         var entry = tracked[thread.id] ?? Tracked(projectID: project.id)
-        // A row older than a reply Pacer saw in the last five minutes is a stale snapshot and changes
-        // nothing, read flags included. Past that, an older reply is taken as the thread's state.
-        if let reply = datedReply(thread, at: now), let mark = entry.mark, reply < mark,
-           now.timeIntervalSince(entry.markAt ?? .distantPast) < Self.settlingTime { return }
+        let reply = datedReply(thread, at: now)
+        // A row older than a reply Pacer saw in the last five minutes is a stale snapshot: its own state
+        // and read flag change nothing, but the sessions read with it are current. Past that, an older
+        // reply is taken as the thread's state.
+        let stale = reply.map { reply in entry.mark.map { reply < $0 } ?? false } == true
+            && now.timeIntervalSince(entry.markAt ?? .distantPast) < Self.settlingTime
+        // `idle` can come before `needs_input` for the same run. Without a reply time the question cannot be
+        // matched to the run just seen ending, so that ending and its read state stand until the time arrives.
+        let undatedQuestion = thread.status == .needsInput && reply == nil && endedRecently(entry, at: now)
         let isNew = tracked[thread.id] == nil
         let pending = sessions.lazy.compactMap(\.pending).first
-        let attention: PendingAttentionRequest.Kind? = thread.openDecisions > 0 ? .decision : pending
+        let attention: PendingAttentionRequest.Kind? = thread.openDecisions > 0 && !stale ? .decision : pending
         let failed = thread.status == .failed
-        let confirmed = thread.isActive || sessions.contains(where: \.isRunning)
+        let confirmed = (thread.isActive && !stale) || sessions.contains(where: \.isRunning)
+        if stale || undatedQuestion, !confirmed, attention == nil { return }
         if confirmed {
             entry.observedRun = true
             settledQuestions[thread.id] = nil
@@ -325,9 +331,13 @@ public struct ClaudeCloudProjectState: Sendable {
         }
         if let reply = thread.lastReplyAt, reply > (entry.mark ?? .distantPast) { entry.markAt = now }
         entry.mark = [entry.mark, thread.lastReplyAt].compactMap { $0 }.max()
-        update(&entry, id: thread.id, project: project, title: thread.title, session: sessions.first, role: .thread, status: thread.status,
-               workers: sessions.isEmpty ? thread.workingSessions : sessions.filter(\.isRunning).count, unread: thread.hasUnread, at: now)
+        update(&entry, id: thread.id, project: project, title: thread.title, session: sessions.first, role: .thread, status: stale ? nil : thread.status,
+               workers: sessions.isEmpty ? thread.workingSessions : sessions.filter(\.isRunning).count, unread: thread.hasUnread && !stale, at: now)
         tracked[thread.id] = entry
+    }
+
+    private func endedRecently(_ entry: Tracked, at now: Date) -> Bool {
+        entry.liveEndingAt.map { now.timeIntervalSince($0) < Self.settlingTime } == true
     }
 
     private func datedReply(_ thread: ClaudeCloudThread, at now: Date) -> Date? {
@@ -343,10 +353,7 @@ public struct ClaudeCloudProjectState: Sendable {
         let reply = datedReply(thread, at: now)
         let previous = entry.plainQuestion
         // `idle` can come before `needs_input` for the same run, so the run just seen ending can still ask.
-        // Without a reply time the two cannot be matched yet, so the ending stands until it arrives.
-        let recentEnding = entry.liveEndingAt.map { now.timeIntervalSince($0) < Self.settlingTime } == true
-        if recentEnding, reply == nil { return }
-        let justEnded = recentEnding && reply.map { reply in entry.liveEndingReply.map { reply >= $0 } ?? false } == true
+        let justEnded = endedRecently(entry, at: now) && reply.map { reply in entry.liveEndingReply.map { reply >= $0 } ?? false } == true
         let fresh = entry.activity?.phase == .running || justEnded || hasFreshReply(thread, entry, at: now)
         let evidence = max(previous?.evidenceAt ?? .distantPast, min(reply ?? .distantPast, now), fresh ? now : .distantPast)
         let read = previous.map { !thread.hasUnread && ($0.sawUnread || now.timeIntervalSince($0.detectedAt) >= Self.readGrace) } ?? false
