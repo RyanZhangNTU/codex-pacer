@@ -99,7 +99,7 @@ struct OverviewPane: View {
     private func serviceCard(_ provider: AgentProvider) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72))
+                SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72))
                 Text(provider.displayName).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(PacerPalette.primary)
                 Spacer(minLength: 8)
                 Button(L10n.text("main.overview.details")) { open(SettingsPane(provider: provider)) }
@@ -332,11 +332,13 @@ struct SettingsNotificationsPane: View {
     @Binding var spikeLimit: Double?
     let providers: [AgentProvider]
     let openDeepSeek: () -> Void
+    /// Which warnings the bar shows is chosen in Collapsed Bar › Warnings.
+    let openWarnings: () -> Void
     private static let column: CGFloat = 76
 
     private enum Cell {
         case always, none
-        case choice(Binding<Bool>, String)
+        case bar(Bool, String)
         case follows(Bool, String)
     }
 
@@ -366,6 +368,8 @@ struct SettingsNotificationsPane: View {
                 row(CompactIslandLayout.Warning.ssh.label, bar: choice(.ssh), system: .none)
             }
         }
+        Button(L10n.text("main.notify.choose_in_collapsed"), action: openWarnings)
+            .buttonStyle(.link).font(.system(size: 12.5)).padding(.leading, 4)
         if providers.contains(.deepseek) {
             MainCard(title: AgentProvider.deepseek.displayName, footer: L10n.text("main.notify.deepseek_one")) {
                 row(L10n.text("main.notify.low_balance"),
@@ -418,35 +422,29 @@ struct SettingsNotificationsPane: View {
             Text(L10n.text("main.notify.always")).font(.system(size: 12)).foregroundStyle(.secondary)
         case .none:
             Text("—").foregroundStyle(.tertiary).accessibilityLabel(L10n.text("main.notify.unavailable"))
-        case .choice(let binding, let label):
-            Toggle(label, isOn: binding).labelsHidden().toggleStyle(.checkbox)
+        case .bar(let on, let label):
+            Toggle(label, isOn: .constant(on)).labelsHidden().toggleStyle(.checkbox).disabled(true)
+                .help(L10n.text("main.notify.bar_in_collapsed"))
+                .accessibilityHint(L10n.text("main.notify.bar_in_collapsed"))
         case .follows(let on, let label):
             Toggle(label, isOn: .constant(on)).labelsHidden().toggleStyle(.checkbox).disabled(true)
                 .help(L10n.text("main.notify.follows"))
         }
     }
 
+    /// The bar column only mirrors Collapsed Bar › Warnings, where the rest
+    /// of the warnings' settings live.
     private func choice(_ warning: CompactIslandLayout.Warning) -> Cell {
-        .choice(warningBinding(warning), warning.label + " · " + L10n.text("main.notify.bar"))
+        .bar(shows(warning), warning.label + " · " + L10n.text("main.notify.bar"))
     }
 
     /// DeepSeek's notifications go out only while its collapsed-bar warning is on.
     private func follows(_ warning: CompactIslandLayout.Warning) -> Cell {
-        .follows(system && warningBinding(warning).wrappedValue, warning.label + " · " + L10n.text("settings.system_notifications"))
+        .follows(system && shows(warning), warning.label + " · " + L10n.text("settings.system_notifications"))
     }
 
-    /// Turning a warning on also brings the warnings slot back if it was removed
-    /// from the bar, so this checkbox alone decides what shows.
-    private func warningBinding(_ warning: CompactIslandLayout.Warning) -> Binding<Bool> {
-        Binding(get: { layout.warnings.contains(warning) && layout.components.contains(.warnings) },
-            set: { on in
-                if on, !layout.components.contains(.warnings) {
-                    // A removed slot comes back with only the warning just chosen.
-                    layout.warnings = [warning]
-                    layout.move(.warnings, to: .trailing, before: layout.trailing.first)
-                } else if on { layout.warnings.insert(warning) }
-                else { layout.warnings.remove(warning) }
-            })
+    private func shows(_ warning: CompactIslandLayout.Warning) -> Bool {
+        layout.warnings.contains(warning) && layout.components.contains(.warnings)
     }
 
     /// An empty field follows the rules; its placeholder shows the amount they give now.

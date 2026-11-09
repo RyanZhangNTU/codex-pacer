@@ -35,6 +35,7 @@ final class PanelController: NSObject {
     /// While set, the move owns the panel's frame and layout waits.
     private var move: Move?
     private var snapPreview: SnapPreviewPanel?
+    private var decoration: IslandDecorationPanel?
     private var lostMouseUpCheck: DispatchWorkItem?
 
     init(model: IslandModel) {
@@ -125,8 +126,13 @@ final class PanelController: NSObject {
             height: demoNotch ? 36 : screen.safeAreaInsets.top)
         if model.screenNotchSize != screenNotchSize { model.screenNotchSize = screenNotchSize }
         let mode: IslandDisplayMode = demoNotch ? .notch : model.displayMode
-        let layout = mode.layout(safeAreaTop: screenNotchSize.height, hardwareNotchWidth: screenNotchSize.width)
+        let layout = mode.layout(safeAreaTop: screenNotchSize.height, hardwareNotchWidth: screenNotchSize.width,
+            size: CompactBarSize.load(from: model.defaults))
         if model.isAttached != layout.attached { model.isAttached = layout.attached }
+        if model.stripWidth != layout.stripWidth { model.stripWidth = layout.stripWidth }
+        // Light glass forces the light appearance on its system material.
+        let appearance = NSAppearance(named: model.appearance.isLight ? .aqua : .darkAqua)
+        if panel.appearance?.name != appearance?.name { panel.appearance = appearance }
         if model.notchWidth != layout.notchWidth { model.notchWidth = layout.notchWidth }
         if model.baseHeaderHeight != layout.topHeight { model.baseHeaderHeight = layout.topHeight }
         let headerHeight = layout.topHeight
@@ -138,7 +144,7 @@ final class PanelController: NSObject {
             leading: 80, trailing: 65,
             contentWidth: model.measuredContentWidth, headerWidth: model.measuredCompactWidth)
         headerSize = CGSize(width: max(1, min(screen.frame.width - 24, collapsedWidth)), height: model.topHeight)
-        stripSize = CGSize(width: IslandGeometry.stripWidth, height: model.stripHeight)
+        stripSize = CGSize(width: layout.stripWidth, height: model.stripHeight)
         let sidePanelWidth = IslandWidth.sidePanel(contentWidth: model.measuredContentWidth)
         let anchor: IslandGeometry.Anchor, dock: IslandPosition?, opensUp: Bool, edge: IslandPlacement.Edge?
         let islandFrame: (Bool) -> CGRect
@@ -146,7 +152,7 @@ final class PanelController: NSObject {
             // Free Move: the dragged place, opening toward the room it has.
             let vertical = placement.vertical, visible = screen.visibleFrame, content = model.panelContentHeight
             let barSize = vertical ? stripSize : headerSize
-            let width = vertical ? IslandGeometry.stripWidth + sidePanelWidth : expandedWidth
+            let width = vertical ? layout.stripWidth + sidePanelWidth : expandedWidth
             let arranged = { (expanded: Bool) in
                 IslandGeometry.arrange(placement, visible: visible, barSize: barSize, expandedWidth: width,
                     contentHeight: content, expanded: expanded)
@@ -166,7 +172,8 @@ final class PanelController: NSObject {
             islandFrame = { expanded in
                 if let side {
                     return IslandGeometry.sideFrame(visible: screen.visibleFrame, position: side, stripHeight: self.model.stripHeight,
-                        expanded: expanded, panelWidth: sidePanelWidth, contentHeight: self.model.panelContentHeight)
+                        expanded: expanded, panelWidth: sidePanelWidth, contentHeight: self.model.panelContentHeight,
+                        stripWidth: layout.stripWidth)
                 }
                 return IslandGeometry.frame(screen: screen.frame, visible: screen.visibleFrame, notchWidth: layout.notchWidth,
                     topHeight: self.model.topHeight, expanded: expanded, attached: layout.attached,
@@ -181,6 +188,9 @@ final class PanelController: NSObject {
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         let current = presentation.sample
         let hasBlackHeader = layout.attached && model.appearance == .liquidGlass
+        // Only a free capsule casts a shadow; an island against an edge flares into it.
+        let floating = !layout.attached && dock == nil && edge == nil
+        if panel.hasShadow != floating { panel.hasShadow = floating }
         let target = IslandTransition.Sample.resting(at: frame, expanded: model.expanded, hasBlackHeader: hasBlackHeader)
         let from = anchor.point(in: current.frame), to = anchor.point(in: frame)
         // A tall panel that slides inward to fit moves its anchor between the
@@ -243,9 +253,41 @@ final class PanelController: NSObject {
             hosting.layoutSubtreeIfNeeded()
             // A transparent window caches its silhouette. Update it with the
             // shell, not just at rest, which makes the floating shadow pop.
-            panel.invalidateShadow()
+            if panel.hasShadow { panel.invalidateShadow() }
+            updateDecoration(frame, sample: sample)
         }
         CATransaction.commit()
+    }
+
+    /// Shoulders where an island against the screen edge meets it, drawn in a
+    /// child panel that never takes a click. Glass cannot paint outside its
+    /// window, so only the opaque materials and the black header of attached
+    /// dark glass have them; a glass strip has none.
+    private func updateDecoration(_ frame: CGRect, sample: IslandTransition.Sample) {
+        let sides = IslandFreeSides(attached: model.isAttached, flatEdge: model.dockedEdge)
+        let screenSide = IslandFreeSides.all.subtracting(sides)
+        let appearance = model.appearance
+        let glass = appearance.isGlass && IslandAppearance.supportsLiquidGlass && !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        let radius = CGFloat(model.barMetrics.shoulder)
+        let fill: NSColor?
+        if glass {
+            fill = appearance == .liquidGlass && model.isAttached && sample.blackOpacity > 0.01
+                ? NSColor.black.withAlphaComponent(min(1, max(0, sample.blackOpacity))) : nil
+        } else {
+            fill = NSColor(appearance == .graphite ? IslandAppearance.graphiteFace : appearance.isLight ? IslandAppearance.lightFace : .black)
+        }
+        guard move == nil, panel.isVisible, !screenSide.isEmpty, radius > 0, let fill, frame.width > 1, frame.height > 1 else {
+            decoration?.orderOut(nil); return
+        }
+        let rim = glass ? nil : appearance.rim(glassVisible: false)
+        let shoulders = decoration ?? IslandDecorationPanel()
+        if decoration == nil {
+            decoration = shoulders
+            panel.addChildWindow(shoulders, ordered: .below)
+        }
+        shoulders.collectionBehavior = panel.collectionBehavior.union(.ignoresCycle)
+        shoulders.present(island: frame, side: screenSide, radius: radius, fill: fill,
+            rim: rim.map { NSColor($0.ink) }, rimWidth: rim?.width ?? 0)
     }
 
     private func stopMotion() {
@@ -337,6 +379,8 @@ final class PanelController: NSObject {
     func stop() {
         cancelMove()
         snapPreview?.close(); snapPreview = nil
+        if let decoration { panel.removeChildWindow(decoration); decoration.close() }
+        decoration = nil
         stopMotion()
         monitors.forEach { NSEvent.removeMonitor($0) }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
@@ -375,5 +419,90 @@ private final class SnapOutline: NSView {
         let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
         NSColor.controlAccentColor.withAlphaComponent(0.16).setFill(); path.fill()
         NSColor.controlAccentColor.setStroke(); path.lineWidth = line; path.stroke()
+    }
+}
+
+/// The island's shoulders: concave fillets where an island against the screen
+/// edge flares into it, with a sliver reaching under the island so no seam
+/// shows. A child panel that passes every click through.
+private final class IslandDecorationPanel: NSPanel {
+    private let shoulders = IslandShoulderView()
+
+    init() {
+        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        isOpaque = false; backgroundColor = .clear; hasShadow = false; ignoresMouseEvents = true
+        level = .statusBar; hidesOnDeactivate = false; isReleasedWhenClosed = false
+        contentView = shoulders
+    }
+
+    override var canBecomeKey: Bool { false }
+
+    func present(island: CGRect, side: IslandFreeSides, radius: CGFloat, fill: NSColor, rim: NSColor?, rimWidth: CGFloat) {
+        let margin = radius + 2
+        let frame = island.insetBy(dx: -margin, dy: -margin)
+        let shell = CGRect(x: margin, y: margin, width: island.width, height: island.height)
+        let next = IslandShoulderView.Drawing(shell: shell, side: side, radius: radius, fill: fill, rim: rim, rimWidth: rimWidth)
+        if shoulders.drawing != next { shoulders.drawing = next; shoulders.needsDisplay = true }
+        if self.frame != frame { setFrame(frame, display: false) }
+        if !isVisible { orderFront(nil) }
+    }
+}
+
+private final class IslandShoulderView: NSView {
+    struct Drawing: Equatable {
+        var shell: CGRect
+        var side: IslandFreeSides
+        var radius: CGFloat
+        var fill: NSColor
+        var rim: NSColor?
+        var rimWidth: CGFloat
+    }
+    var drawing: Drawing?
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let drawing, let context = NSGraphicsContext.current?.cgContext else { return }
+        let (fills, curves) = Self.shoulders(drawing.shell, side: drawing.side, radius: drawing.radius)
+        context.addPath(fills); context.setFillColor(drawing.fill.cgColor); context.fillPath()
+        if let rim = drawing.rim, drawing.rimWidth > 0 {
+            context.addPath(curves); context.setStrokeColor(rim.cgColor); context.setLineWidth(drawing.rimWidth); context.strokePath()
+        }
+    }
+
+    /// Two quarter circles of `radius` at the island's ends against `side`,
+    /// in this flipped view: the screen edge runs along the island's outer side.
+    static func shoulders(_ shell: CGRect, side: IslandFreeSides, radius r: CGFloat) -> (CGPath, CGPath) {
+        let fills = CGMutablePath(), curves = CGMutablePath(), seam: CGFloat = 1.5
+        func fillet(corner: CGPoint, outer: CGPoint, inner: CGPoint, center: CGPoint, from: CGFloat, to: CGFloat, clockwise: Bool, overlap: CGRect) {
+            fills.move(to: corner); fills.addLine(to: outer)
+            fills.addArc(center: center, radius: r, startAngle: from, endAngle: to, clockwise: clockwise)
+            fills.closeSubpath(); fills.addRect(overlap)
+            curves.move(to: outer); curves.addArc(center: center, radius: r, startAngle: from, endAngle: to, clockwise: clockwise)
+        }
+        let half = CGFloat.pi / 2
+        let left = shell.minX, right = shell.maxX, top = shell.minY, bottom = shell.maxY
+        if side.contains(.top) {
+            fillet(corner: CGPoint(x: left, y: top), outer: CGPoint(x: left - r, y: top), inner: CGPoint(x: left, y: top + r),
+                center: CGPoint(x: left - r, y: top + r), from: -half, to: 0, clockwise: false, overlap: CGRect(x: left, y: top, width: seam, height: r))
+            fillet(corner: CGPoint(x: right, y: top), outer: CGPoint(x: right + r, y: top), inner: CGPoint(x: right, y: top + r),
+                center: CGPoint(x: right + r, y: top + r), from: -half, to: -.pi, clockwise: true, overlap: CGRect(x: right - seam, y: top, width: seam, height: r))
+        } else if side.contains(.bottom) {
+            fillet(corner: CGPoint(x: left, y: bottom), outer: CGPoint(x: left - r, y: bottom), inner: CGPoint(x: left, y: bottom - r),
+                center: CGPoint(x: left - r, y: bottom - r), from: half, to: 0, clockwise: true, overlap: CGRect(x: left, y: bottom - r, width: seam, height: r))
+            fillet(corner: CGPoint(x: right, y: bottom), outer: CGPoint(x: right + r, y: bottom), inner: CGPoint(x: right, y: bottom - r),
+                center: CGPoint(x: right + r, y: bottom - r), from: half, to: .pi, clockwise: false, overlap: CGRect(x: right - seam, y: bottom - r, width: seam, height: r))
+        } else if side.contains(.left) {
+            fillet(corner: CGPoint(x: left, y: top), outer: CGPoint(x: left, y: top - r), inner: CGPoint(x: left + r, y: top),
+                center: CGPoint(x: left + r, y: top - r), from: .pi, to: half, clockwise: true, overlap: CGRect(x: left, y: top, width: r, height: seam))
+            fillet(corner: CGPoint(x: left, y: bottom), outer: CGPoint(x: left, y: bottom + r), inner: CGPoint(x: left + r, y: bottom),
+                center: CGPoint(x: left + r, y: bottom + r), from: .pi, to: 3 * half, clockwise: false, overlap: CGRect(x: left, y: bottom - seam, width: r, height: seam))
+        } else if side.contains(.right) {
+            fillet(corner: CGPoint(x: right, y: top), outer: CGPoint(x: right, y: top - r), inner: CGPoint(x: right - r, y: top),
+                center: CGPoint(x: right - r, y: top - r), from: 0, to: half, clockwise: false, overlap: CGRect(x: right - r, y: top, width: r, height: seam))
+            fillet(corner: CGPoint(x: right, y: bottom), outer: CGPoint(x: right, y: bottom + r), inner: CGPoint(x: right - r, y: bottom),
+                center: CGPoint(x: right - r, y: bottom + r), from: 0, to: -half, clockwise: true, overlap: CGRect(x: right - r, y: bottom - seam, width: r, height: seam))
+        }
+        return (fills, curves)
     }
 }

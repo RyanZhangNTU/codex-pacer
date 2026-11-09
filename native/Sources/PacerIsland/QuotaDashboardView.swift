@@ -253,8 +253,8 @@ private struct QuotaRingGauge: View {
                         .stroke(reading.tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
                 }
                 if let time = reading.timeFraction {
-                    Capsule().fill(Color.white)
-                        .overlay(Capsule().stroke(Color.black.opacity(0.45), lineWidth: 0.5))
+                    Capsule().fill(PacerPalette.tick)
+                        .overlay(Capsule().stroke(PacerPalette.tickEdge, lineWidth: 0.5))
                         .frame(width: 2.5, height: Self.stroke + 6)
                         .offset(y: -min(proxy.size.width, proxy.size.height) / 2)
                         .rotationEffect(.degrees(geometry.angle(at: time) + 90))

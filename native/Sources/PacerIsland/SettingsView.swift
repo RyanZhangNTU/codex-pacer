@@ -33,6 +33,8 @@ struct SettingsView: View {
     /// Nil until chosen, so an unrelated change never stores the center.
     @State private var position = IslandPosition.saved()
     @State private var compactLayout = CompactIslandLayout.load()
+    @State private var componentOptions = CompactComponentOptions.load()
+    @State private var barSize = CompactBarSize.load()
     @State private var appearance = IslandAppearance.stored
     @State private var theme = AppTheme(defaults: .standard)
     @State private var accent = PacerAccent(defaults: .standard)
@@ -169,7 +171,7 @@ struct SettingsView: View {
 
     private func providerHeader(_ provider: AgentProvider) -> some View {
         HStack(spacing: 14) {
-            SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72), size: 40)
+            SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72), size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 Text(provider.displayName).font(.system(size: 22, weight: .bold)).accessibilityAddTraits(.isHeader)
                 HStack(spacing: 6) {
@@ -259,19 +261,24 @@ struct SettingsView: View {
                 CardToggle(title: L10n.text("settings.hide_projects"), info: L10n.text("settings.hide_projects_help"), isOn: $hideProjects)
             }
         case .appearance:
-            SettingsAppearancePane(model: model, theme: $theme, appearance: $appearance, accent: $accent, displayMode: $displayMode, position: $position,
+            SettingsAppearancePane(model: model, theme: $theme, appearance: $appearance, accent: $accent, barSize: $barSize, displayMode: $displayMode, position: $position,
                 displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle, deepseekPanelStyle: $deepseekPanelStyle,
                 showsAppButtons: $showsAppButtons,
                 deepseekAlone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek])
         case .collapsedBar:
             SettingsCollapsedBarPane(model: model, layout: $compactLayout, selection: $collapsedSelection, singleTask: $singleTask,
                 metric: $metric, windowID: $windowID, claudeWindowID: $claudeWindowID, quotaRings: $quotaRings,
-                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, deepseekHasBudget: !deepseekBudgets.isEmpty,
-                openNotifications: { pane = .notifications })
+                options: $componentOptions, deepseekBudgets: $deepseekBudgets,
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) })
         case .notifications:
             SettingsNotificationsPane(model: model, notificationPreference: notificationPreference, layout: $compactLayout,
                 retention: $completedRetention, lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
-                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek })
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek },
+                openWarnings: {
+                    collapsedSelection = .warnings
+                    scrollTarget = Self.gaugeAnchor
+                    pane = .collapsedBar
+                })
         case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
         case .remote:
@@ -484,7 +491,8 @@ struct SettingsView: View {
     /// Every non-text setting; any change is written and applied shortly
     /// after, so a slider drag or quick toggling restarts sources at most once.
     private var liveSettings: LiveSettings {
-        LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, appearance: appearance, theme: theme, accent: accent,
+        LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, componentOptions: componentOptions,
+            barSize: barSize, appearance: appearance, theme: theme, accent: accent,
             quotaStyle: quotaStyle, deepseekPanelStyle: deepseekPanelStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
@@ -512,6 +520,8 @@ struct SettingsView: View {
         displayMode.save(to: defaults)
         position?.save(to: defaults)
         compactLayout.save(to: defaults)
+        componentOptions.save(to: defaults)
+        barSize.save(to: defaults)
         // Retired preferences.
         for key in ["performanceRefreshMode", "quotaDashboardPeriod", "showInMenuBar",
                     "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius",
@@ -604,6 +614,8 @@ private struct LiveSettings: Equatable {
     var displayMode: IslandDisplayMode
     var position: IslandPosition?
     var layout: CompactIslandLayout
+    var componentOptions: CompactComponentOptions
+    var barSize: CompactBarSize
     var appearance: IslandAppearance
     var theme: AppTheme
     var accent: PacerAccent

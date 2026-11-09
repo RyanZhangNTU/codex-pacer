@@ -87,7 +87,7 @@ extension DeepSeekDialPresentation.Tone {
         case .attention: PacerPalette.attention
         case .danger: PacerPalette.danger
         case .provider: AgentProvider.deepseek.tint
-        case .staleSegment: Color(white: 0.36)
+        case .staleSegment: PacerPalette.light ? Color(white: 0.72) : Color(white: 0.36)
         }
     }
 
@@ -127,8 +127,8 @@ struct DeepSeekDialFace: View {
         var tick = Path()
         tick.move(to: CGPoint(x: centre.x + (radius - 5 * k) * cos(radians), y: centre.y + (radius - 5 * k) * sin(radians)))
         tick.addLine(to: CGPoint(x: centre.x + (radius + 5 * k) * cos(radians), y: centre.y + (radius + 5 * k) * sin(radians)))
-        context.stroke(tick, with: .color(.black.opacity(0.45)), style: StrokeStyle(lineWidth: max(1.2, 2.4 * k), lineCap: .round))
-        context.stroke(tick, with: .color(.white), style: StrokeStyle(lineWidth: max(1, 1.7 * k), lineCap: .round))
+        context.stroke(tick, with: .color(PacerPalette.tickEdge), style: StrokeStyle(lineWidth: max(1.2, 2.4 * k), lineCap: .round))
+        context.stroke(tick, with: .color(PacerPalette.tick), style: StrokeStyle(lineWidth: max(1, 1.7 * k), lineCap: .round))
     }
     private func arc(_ centre: CGPoint, _ radius: CGFloat, _ start: Double, _ end: Double) -> Path {
         Path { $0.addArc(center: centre, radius: radius, startAngle: .degrees(start - 90), endAngle: .degrees(end - 90), clockwise: false) }
@@ -256,8 +256,8 @@ private struct DeepSeekBudgetRing: View {
                     path.trim(from: 0, to: reading.fraction).stroke(reading.tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 }
                 if let time = reading.timeFraction {
-                    Capsule().fill(Color.white)
-                        .overlay(Capsule().stroke(Color.black.opacity(0.45), lineWidth: 0.5))
+                    Capsule().fill(PacerPalette.tick)
+                        .overlay(Capsule().stroke(PacerPalette.tickEdge, lineWidth: 0.5))
                         .frame(width: 2.5, height: lineWidth + 6)
                         .offset(y: -(side - lineWidth) / 2)
                         .rotationEffect(.degrees(geometry.angle(at: time) + 90))
@@ -534,12 +534,12 @@ struct DeepSeekWhereItWent: View {
 
     @ViewBuilder private func segment(_ part: Part) -> some View {
         if part.elsewhere {
-            RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.12))
+            RoundedRectangle(cornerRadius: 3).fill(PacerPalette.overlay(0.12))
                 .overlay(Canvas { context, size in
                     var x: CGFloat = -size.height
                     while x < size.width {
                         var line = Path(); line.move(to: CGPoint(x: x, y: size.height)); line.addLine(to: CGPoint(x: x + size.height, y: 0))
-                        context.stroke(line, with: .color(.white.opacity(0.45)), lineWidth: 1.4)
+                        context.stroke(line, with: .color(PacerPalette.overlay(0.45)), lineWidth: 1.4)
                         x += 4.5
                     }
                 }.clipShape(RoundedRectangle(cornerRadius: 3)))
@@ -552,7 +552,7 @@ struct DeepSeekWhereItWent: View {
         FlowRow(spacing: 12, lineSpacing: 4) {
             ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
                 HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 2).fill(part.elsewhere ? Color.white.opacity(0.4) : AgentProvider.deepseek.tint.opacity(max(0.32, part.opacity)))
+                    RoundedRectangle(cornerRadius: 2).fill(part.elsewhere ? PacerPalette.overlay(0.4) : AgentProvider.deepseek.tint.opacity(max(0.32, part.opacity)))
                         .frame(width: 7, height: 7)
                     Text(part.title).lineLimit(1).truncationMode(.tail).frame(maxWidth: 140, alignment: .leading).fixedSize()
                     Text(part.amountText).foregroundStyle(PacerPalette.primary)

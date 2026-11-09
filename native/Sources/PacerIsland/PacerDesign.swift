@@ -1,24 +1,58 @@
 import SwiftUI
 import PacerCore
 
-/// Shared tokens for the always-dark island surface. Settings keep system colors.
+/// Shared tokens for the island surface. The island is dark, except under
+/// Light Liquid Glass, where the neutral inks, the services' shades and every
+/// overlay switch to their light tone together. Settings keep system colors;
+/// only their island previews follow the island's tone.
 enum PacerPalette {
-    static let primary = Color(white: 0.96)
-    static let secondary = Color(white: 0.62)
-    static let tertiary = Color(white: 0.42)
-    static let hairline = Color.white.opacity(0.08)
-    static let track = Color.white.opacity(0.08)
-    static let fill = Color.white.opacity(0.05)
-    static let hover = Color.white.opacity(0.08)
-    static let attention = Color(red: 1.0, green: 0.74, blue: 0.38)
-    static let danger = Color(red: 1.0, green: 0.45, blue: 0.42)
-    static let paused = Color(red: 0.86, green: 0.77, blue: 0.6)
+    /// The island draws its light tone. The model sets it whenever settings
+    /// apply, before the island redraws.
+    static var light = IslandAppearance.stored.isLight
+    static var primary: Color { light ? Color(red: 29 / 255, green: 29 / 255, blue: 31 / 255) : Color(white: 0.96) }
+    static var secondary: Color { light ? Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255).opacity(0.72) : Color(white: 0.62) }
+    static var tertiary: Color { light ? Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255).opacity(0.47) : Color(white: 0.42) }
+    static var hairline: Color { overlay(0.08) }
+    static var track: Color { overlay(0.08) }
+    static var fill: Color { overlay(0.05) }
+    static var hover: Color { overlay(0.08) }
+    static var attention: Color { light ? Color(red: 178 / 255, green: 106 / 255, blue: 0) : Color(red: 1.0, green: 0.74, blue: 0.38) }
+    static var danger: Color { light ? Color(red: 211 / 255, green: 58 / 255, blue: 47 / 255) : Color(red: 1.0, green: 0.45, blue: 0.42) }
+    static var paused: Color { light ? Color(red: 140 / 255, green: 109 / 255, blue: 46 / 255) : Color(red: 0.86, green: 0.77, blue: 0.6) }
+    /// A neutral wash over the island: white on the dark tone, black on the light one.
+    static func overlay(_ opacity: Double) -> Color { (light ? Color.black : Color.white).opacity(opacity) }
+    static func overlayInk(_ opacity: Double) -> NSColor { (light ? NSColor.black : NSColor.white).withAlphaComponent(opacity) }
+    /// Marks drawn over arcs, such as the pace tick and the clock hand.
+    static var tick: Color { light ? primary : .white }
+    static var tickInk: NSColor { light ? NSColor(srgbRed: 29 / 255, green: 29 / 255, blue: 31 / 255, alpha: 1) : .white }
+    /// The fine outline that keeps a tick apart from the arc under it.
+    static var tickEdge: Color { (light ? Color.white : Color.black).opacity(0.45) }
+    /// Units beside a value: 60% of the primary ink.
+    static var unit: Color { light ? Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255).opacity(0.72) : Color(red: 235 / 255, green: 235 / 255, blue: 245 / 255).opacity(0.6) }
+    /// The island's own opaque face, for previews of it elsewhere.
+    static var surface: Color { face(IslandAppearance.stored) }
+    static func face(_ appearance: IslandAppearance) -> Color {
+        appearance == .graphite ? IslandAppearance.graphiteFace : appearance.isLight ? IslandAppearance.lightFace : .black
+    }
 }
 
 extension AgentProvider {
     /// The color the service draws in: its own under Multicolor, otherwise a
-    /// shade of the chosen accent.
-    var tint: Color { PacerAccent.current.tint(for: self) ?? brand }
+    /// shade of the chosen accent. On the light island the brand colors take
+    /// a darker shade, so each service keeps its contrast.
+    var tint: Color { shade(light: PacerPalette.light) }
+    /// The service's shade in either tone: for a preview of a material that is
+    /// not the current one, and dark-tone for window icons that stay the same
+    /// whatever the island's material.
+    func shade(light: Bool) -> Color { PacerAccent.current.tint(for: self) ?? (light ? lightShade : brand) }
+    /// The brand color one shade darker, for light glass.
+    var lightShade: Color {
+        switch self {
+        case .codex: Color(red: 14 / 255, green: 140 / 255, blue: 120 / 255)
+        case .claude: Color(red: 196 / 255, green: 88 / 255, blue: 31 / 255)
+        case .deepseek: Color(red: 62 / 255, green: 91 / 255, blue: 219 / 255)
+        }
+    }
     /// The service's own color, which its icon keeps whatever the accent.
     var brand: Color {
         switch self {
@@ -82,7 +116,7 @@ enum PacerAccent: String, CaseIterable, Identifiable {
 }
 
 /// Pacer's windows in light, dark or the system's appearance. The island
-/// stays dark in every theme.
+/// follows its own material instead: only Light Liquid Glass turns it light.
 enum AppTheme: String, CaseIterable, Identifiable {
     case auto, light, dark
     static let defaultsKey = "appTheme"

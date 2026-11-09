@@ -12,10 +12,11 @@ struct IslandView: View {
         }
         .foregroundStyle(PacerPalette.primary)
         .modifier(IslandSurface(appearance: model.appearance, attached: attached, flatEdge: model.dockedEdge,
-            expanded: model.expanded, progress: presentation.expansion))
+            expanded: model.expanded, progress: presentation.expansion, collapsedRadius: model.collapsedCornerRadius))
         .onHover { model.hover($0) }
         .onExitCommand { model.close() }
-        .preferredColorScheme(.dark)
+        // Light glass turns the whole island light, its system material included.
+        .preferredColorScheme(model.appearance.isLight ? .light : .dark)
         .environment(\.locale, L10n.locale)
     }
 
@@ -54,7 +55,7 @@ struct IslandView: View {
         case (true, .left): .bottomLeading
         case (true, .right): .bottomTrailing
         }
-        let strip = IslandGeometry.stripWidth, inward: CGFloat = side == .left ? 1 : -1
+        let strip = model.stripWidth, inward: CGFloat = side == .left ? 1 : -1
         return CompactIslandStrip(model: model, layout: model.compactLayout)
             .modifier(IslandMoveGesture(model: model))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: corner)

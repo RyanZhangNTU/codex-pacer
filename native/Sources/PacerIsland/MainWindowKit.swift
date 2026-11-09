@@ -135,11 +135,13 @@ extension View {
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(MainPalette.cardBorder))
     }
 
-    /// A dark card for the island's own components.
+    /// A card for the island's own components, in the island's tone: dark,
+    /// or light under Light Liquid Glass.
     func islandSurface(radius: CGFloat = 14) -> some View {
-        background(MainPalette.islandSurface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.white.opacity(0.07)))
-            .environment(\.colorScheme, .dark)
+        let light = PacerPalette.light
+        return background(light ? IslandAppearance.lightFace : MainPalette.islandSurface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(PacerPalette.overlay(light ? 0.1 : 0.07)))
+            .environment(\.colorScheme, light ? .light : .dark)
     }
 }
 

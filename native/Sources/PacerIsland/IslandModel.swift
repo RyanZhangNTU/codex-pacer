@@ -495,9 +495,19 @@ final class IslandModel: ObservableObject {
     @Published var notchWidth: CGFloat = 0
     /// Physical geometry of the screen hosting Pacer, retained even in Floating mode.
     @Published var screenNotchSize: CGSize = .zero
-    @Published var topHeight: CGFloat = 38
-    @Published var baseHeaderHeight: CGFloat = 38
+    @Published var topHeight: CGFloat = 36
+    @Published var baseHeaderHeight: CGFloat = 36
+    /// Width of the bar turned on its side at a docked edge, for the bar size.
+    @Published var stripWidth: CGFloat = IslandGeometry.stripWidth
     var onLayoutChange: (() -> Void)?
+    /// The collapsed bar's corners: an attached or edge-docked bar keeps its
+    /// free corners at the size's radius, a floating one is a full capsule and
+    /// a side strip rounds half its width.
+    var collapsedCornerRadius: CGFloat {
+        if sideDock != nil { return max(1, stripWidth / 2) }
+        let half = max(1, baseHeaderHeight / 2)
+        return isAttached || dockedEdge == .top || dockedEdge == .bottom ? min(CGFloat(barMetrics.radius), baseHeaderHeight) : half
+    }
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
     /// Opens Settings on a module's own page, where its sign-in and locations live.
@@ -876,7 +886,7 @@ final class IslandModel: ObservableObject {
     var displayMode: IslandDisplayMode { .load() }
     var islandPosition: IslandPosition { .load(from: defaults) }
     var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
-    var appearance: IslandAppearance { .stored }
+    var appearance: IslandAppearance { .stored(in: defaults) }
     var expandedQuotaStyle: ExpandedQuotaStyle { .load(from: defaults) }
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
     var hideProjects: Bool { defaults.bool(forKey: "hideProjects") }
@@ -1643,6 +1653,8 @@ final class IslandModel: ObservableObject {
             ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         modules = .load(from: defaults)
         PacerAccent.current = PacerAccent(defaults: defaults)
+        // Light Liquid Glass turns the whole island light before it redraws.
+        PacerPalette.light = appearance.isLight
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         syncCodexProgressSwitch()
         syncDeepSeekProgressSwitch()

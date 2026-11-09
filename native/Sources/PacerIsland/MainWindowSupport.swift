@@ -259,7 +259,7 @@ struct MainWindowSidebar: View {
 
     @ViewBuilder private func icon(_ pane: SettingsPane) -> some View {
         if let provider = pane.provider {
-            SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72))
+            SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72))
         } else {
             Image(systemName: pane.symbol).font(.system(size: 13))
                 .foregroundStyle(pane == .support ? Color(red: 0.96, green: 0.36, blue: 0.42) : Color.secondary)

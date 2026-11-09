@@ -14,9 +14,9 @@ struct SettingsCollapsedBarPane: View {
     @Binding var windowID: String
     @Binding var claudeWindowID: String
     @Binding var quotaRings: [String]
+    @Binding var options: CompactComponentOptions
+    @Binding var deepseekBudgets: DeepSeekBudgetSettings
     let providers: [AgentProvider]
-    let deepseekHasBudget: Bool
-    let openNotifications: () -> Void
     /// Where the DeepSeek page's ring link lands.
     static let inspectorAnchor = "quotaGauge"
 
@@ -38,7 +38,7 @@ struct SettingsCollapsedBarPane: View {
         HStack(alignment: .top, spacing: 14) {
             library.frame(maxWidth: .infinity)
             if let selected {
-                ComponentInspector(component: selected, placed: layout.components.contains(selected), options: { options(selected) },
+                ComponentInspector(component: selected, placed: layout.components.contains(selected), options: { settings(selected) },
                                    toggle: { toggle(selected) })
                     .frame(width: 264)
                     .id(Self.inspectorAnchor)
@@ -112,36 +112,96 @@ struct SettingsCollapsedBarPane: View {
 
     // MARK: Settings of the selected component
 
+    private var deepseekHasBudget: Bool { !deepseekBudgets.isEmpty }
+    private var show: [(Bool, String)] { [(true, L10n.text("layout.option.show")), (false, L10n.text("layout.option.hide"))] }
+
     /// Only what changes the selected component; the quota windows follow
     /// every component that shows a quota.
-    @ViewBuilder private func options(_ component: CompactIslandLayout.Component) -> some View {
+    @ViewBuilder private func settings(_ component: CompactIslandLayout.Component) -> some View {
         switch component {
         case .activity:
-            CardPicker(title: L10n.text("layout.single_task"), selection: $singleTask,
-                       options: ActivityBadgeSingleTask.allCases.map { ($0, $0.label) })
+            CardPicker(title: L10n.text("layout.option.single_core"), selection: $singleTask,
+                       options: ActivityBadgeSingleTask.allCases.map { ($0, L10n.text("layout.option.single_core." + $0.rawValue)) })
+            CardPicker(title: L10n.text("layout.option.multi_ring"), selection: $options.multiRing,
+                       options: CompactComponentOptions.MultiRing.allCases.map { ($0, L10n.text("layout.option.multi_ring." + $0.rawValue)) })
+            // The core's average needs the average ring.
+            OptionSegments(title: L10n.text("layout.option.multi_core"), hint: L10n.text("layout.option.multi_core_hint"),
+                           selection: $options.multiCore,
+                           options: CompactComponentOptions.MultiCore.allCases.map { ($0, L10n.text("layout.option.multi_core." + $0.rawValue)) })
+                .disabled(options.multiRing != .average)
+            OptionSegments(title: L10n.text("layout.option.end_mark"), hint: L10n.text("layout.option.end_mark_hint"),
+                           selection: $options.endMark, options: show)
+        case .status:
+            CardPicker(title: L10n.text("layout.option.status_show"), selection: $options.statusShow,
+                       options: CompactComponentOptions.StatusShow.allCases.map { ($0, L10n.text("layout.option.status_show." + $0.rawValue)) })
+            OptionSegments(title: L10n.text("layout.option.status_width"), selection: $options.statusWidth,
+                           options: CompactComponentOptions.StatusWidth.allCases.map { ($0, L10n.text("layout.option.points", Int($0.points))) })
+        case .tps:
+            OptionSegments(title: L10n.text("layout.option.rate_measure"), selection: $options.rateMeasure,
+                           options: CompactComponentOptions.RateMeasure.allCases.map { ($0, L10n.text("layout.option.rate_measure." + $0.rawValue)) })
+        case .firstOutput:
+            OptionSegments(title: L10n.text("layout.option.first_output"), selection: $options.firstOutput,
+                           options: CompactComponentOptions.FirstOutputValue.allCases.map { ($0, L10n.text("layout.option.first_output." + $0.rawValue)) })
         case .quota:
-            CardRow(title: L10n.text("settings.compact_metric")) {
-                MainSegmented(options: [("remaining", L10n.text("settings.remaining_quota")), ("pace", L10n.text("settings.pace_percentage"))],
-                              selection: $metric, label: L10n.text("settings.compact_metric"))
-            }
+            OptionSegments(title: L10n.text("settings.compact_metric"), selection: $metric,
+                           options: [("remaining", L10n.text("settings.remaining_quota")), ("pace", L10n.text("settings.pace_percentage"))])
+            CardPicker(title: L10n.text("layout.option.quota_multiple"), selection: $options.quotaMultiple,
+                       options: CompactComponentOptions.QuotaMultiple.allCases.map { ($0, L10n.text("layout.option.quota_multiple." + $0.rawValue)) })
             windowPickers
         case .quotaGauge:
+            CardPicker(title: L10n.text("layout.option.ring_layout"), selection: $options.ringLayout,
+                       options: CompactComponentOptions.RingLayout.allCases.map { ($0, L10n.text("layout.option.ring_layout." + $0.rawValue)) })
             ringPickers
+            OptionSegments(title: L10n.text("layout.option.pace_tick"), selection: $options.paceTick, options: show)
+            OptionSegments(title: L10n.text("layout.option.low_color"), hint: L10n.text("layout.option.low_color_hint"),
+                           selection: $options.lowColor,
+                           options: [(true, L10n.text("layout.option.low_color.on")), (false, L10n.text("layout.option.low_color.off"))])
+            OptionSegments(title: L10n.text("layout.option.ring_dim"), hint: L10n.text("layout.option.ring_dim_hint"),
+                           selection: $options.ringDim,
+                           options: [(true, L10n.text("layout.option.ring_dim.on")), (false, L10n.text("layout.option.ring_dim.off"))])
+            // The DeepSeek ring's budget period lives with the rings, as its other settings do.
+            if providers.contains(.deepseek), deepseekBudgets.active.daily != nil, deepseekBudgets.active.weekly != nil {
+                OptionSegments(title: L10n.text("layout.option.deepseek_ring"), selection: $deepseekBudgets.ringPeriod,
+                               options: [(.day, L10n.text("layout.option.deepseek_ring.day")), (.week, L10n.text("layout.option.deepseek_ring.week"))])
+            }
             windowPickers
+        case .priceClock:
+            OptionSegments(title: L10n.text("layout.option.clock_show"), selection: $options.clockShow,
+                           options: CompactComponentOptions.ClockShow.allCases.map { ($0, L10n.text("layout.option.clock_show." + $0.rawValue)) })
         case .timeRemaining:
+            OptionSegments(title: L10n.text("layout.option.time_style"), selection: $options.timeStyle,
+                           options: CompactComponentOptions.TimeStyle.allCases.map { ($0, L10n.text("layout.option.time_style." + $0.rawValue)) })
             windowPickers
         case .warnings:
-            Button(action: openNotifications) {
-                HStack(spacing: 6) {
-                    Text(L10n.text("main.collapsed.warnings_choose")).font(.system(size: 13)).foregroundStyle(Color.primary)
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            warningKinds
+            OptionSegments(title: L10n.text("layout.option.warning_style"), selection: $options.warningStyle,
+                           options: CompactComponentOptions.WarningStyle.allCases.map { ($0, L10n.text("layout.option.warning_style." + $0.rawValue)) })
+            OptionSegments(title: L10n.text("layout.option.warning_limit"), selection: $options.warningLimit,
+                           options: [(2, L10n.text("layout.option.warning_limit.two")), (0, L10n.text("layout.option.warning_limit.all"))])
         default:
             EmptyView()
+        }
+    }
+
+    /// Which warnings the bar shows, chosen here with the rest of the
+    /// warnings' settings; Notifications only mirrors them.
+    private var warningKinds: some View {
+        let quotaModules = providers.contains { $0 != .deepseek }
+        let kinds: [(CompactIslandLayout.Warning, String)] = [
+            (.fiveHour, CompactIslandLayout.Warning.fiveHour.label), (.quotaDelay, CompactIslandLayout.Warning.quotaDelay.label),
+            (.ssh, CompactIslandLayout.Warning.ssh.label), (.lowBalance, L10n.text("main.notify.low_balance")),
+            (.spendSpike, L10n.text("main.notify.spike")), (.budget, L10n.text("main.notify.budget")),
+        ].filter { kind, _ in
+            CompactIslandLayout.Warning.deepseek.contains(kind) ? providers.contains(.deepseek) : quotaModules || kind == .ssh
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.text("layout.option.warning_kinds")).font(.system(size: 13))
+            ForEach(kinds, id: \.0) { kind, title in
+                Toggle(title, isOn: Binding(get: { layout.warnings.contains(kind) }, set: { on in
+                    if on { layout.warnings.insert(kind) } else { layout.warnings.remove(kind) }
+                }))
+                .toggleStyle(.checkbox).font(.system(size: 12.5))
+            }
         }
     }
 
@@ -196,6 +256,29 @@ struct SettingsCollapsedBarPane: View {
                 Button(L10n.text("layout.ring_automatic")) { quotaRings = QuotaRingSlot.allCases.map { _ in "" } }.buttonStyle(.main)
             }
         }
+    }
+}
+
+/// A choice stacked over its segments, so three of them fit the inspector's
+/// width; a hint under the title says when or why it applies.
+private struct OptionSegments<Value: Hashable>: View {
+    let title: String
+    var hint: String?
+    @Binding var selection: Value
+    let options: [(Value, String)]
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13))
+                if let hint {
+                    Text(hint).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            MainSegmented(options: options.map { (value: $0.0, title: $0.1) }, selection: $selection, label: title, expands: true)
+        }
+        .opacity(enabled ? 1 : 0.5)
     }
 }
 

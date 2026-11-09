@@ -5,11 +5,15 @@ import PacerCore
 struct QuotaCycleChart: View, Equatable {
     let data: QuotaChartData
     let accent: Color
-    var referenceColor: Color = .white
+    var referenceColor: Color = PacerPalette.tick
     @State private var selectedDate: Date?
     @State private var selectedExpiryID: Date?
     @StateObject private var presentationCache = QuotaCyclePresentationCache()
-    private let expiryColor = Color(red: 0.91, green: 0.75, blue: 0.48)
+    @Environment(\.colorScheme) private var colorScheme
+    /// Reset markers in a theme amber: lighter on dark windows, deeper on light ones.
+    private var expiryColor: Color {
+        colorScheme == .light ? Color(red: 176 / 255, green: 118 / 255, blue: 24 / 255) : Color(red: 232 / 255, green: 191 / 255, blue: 122 / 255)
+    }
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.data == rhs.data && lhs.accent == rhs.accent && lhs.referenceColor == rhs.referenceColor
     }
