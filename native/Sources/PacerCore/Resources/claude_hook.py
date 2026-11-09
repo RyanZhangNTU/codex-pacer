@@ -55,6 +55,13 @@ WAKE=('<task-notification>','<side-sessions-event>','[SYSTEM NOTIFICATION','<age
 # Background work a stopped turn waits on is any task but long-lived monitors
 # and Claude Code's own memory and scan work; new task kinds count.
 IDLE=('monitor','dream','auto-mode scan','memory import','memory save')
+# Kinds that never run an agent Pacer shows. Any other kind, new or unlabelled
+# ones included, may, so it keeps the main thread's children open.
+TOOLING=IDLE+('shell','local_powershell','MCP task')
+def background_agents(tasks):
+    # Claude Code lists every in-flight background task of the session here,
+    # also agents that subagents launched; foreground agents are left out.
+    return min(sum(1 for task in tasks if not (isinstance(task,dict) and task.get('type') in TOOLING)),64)
 def ring_on(home):
     try:fd=private_open(home/'pacer'/'progress-ring',os.O_RDONLY)
     except OSError:return None
@@ -288,6 +295,10 @@ def hook(home,value):
             if kind=='prompt' and machine_prompt(value):row['wake']=True
             if kind=='toolStart':row['attention']='input' if value.get('tool_name')=='AskUserQuestion' else 'approval' if value.get('tool_name')=='ExitPlanMode' else 'none'
             if kind=='toolStart' and value.get('tool_name') in ('Agent','Skill','SendMessage'):row['agentTool']=True
+            # The main thread's Stop counts the agents still in flight, whether
+            # or not the progress ring is on. With none, every child run begun
+            # before it has ended, also one whose own ending Pacer cannot match.
+            if event=='Stop' and not agent and isinstance(value.get('background_tasks'),list):row['agents']=background_agents(value['background_tasks'])
             rows.append(row)
         response=value.get('tool_response')
         # A forked Skill such as /code-review runs in a sub-agent and reports

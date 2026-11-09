@@ -372,5 +372,24 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         XCTAssertEqual(waits.compactMap { $0["background"] as? [String] }, [["shell"], ["local_powershell"], [], []])
         XCTAssertEqual(waits.suffix(2).compactMap { $0["wakeups"] as? Int }, [0, 0], "A later Stop without work clears an earlier attempted wait")
         XCTAssertFalse(all.contains { String(describing: $0).contains("PRIVATE") && $0["kind"] as? String != "prompt" })
+        // The main thread's Stop counts the agents still in flight, with the ring off too.
+        // Only shells, monitors, MCP tasks and Claude Code's own work run no agent; a subagent's Stop has no count.
+        try FileManager.default.removeItem(at: ClaudeProgressRingSwitch.flagURL(home: home))
+        var agents = stop
+        agents["background_tasks"] = [["id": "a1", "type": "subagent", "status": "running", "description": "PRIVATE"],
+                                      ["id": "w1", "type": "workflow", "status": "running", "description": "PRIVATE"],
+                                      ["id": "t1", "type": "MCP task", "status": "running", "description": "PRIVATE"],
+                                      ["id": "d1", "type": "dream", "status": "running", "description": "PRIVATE"]]
+        XCTAssertEqual(try run(agents), "")
+        let spawned = stop.merging(["hook_event_name": "SubagentStart", "agent_id": "synthetic-child", "agent_type": "PRIVATE"]) { _, new in new }
+        XCTAssertEqual(try run(spawned), "")
+        XCTAssertEqual(try run(agents.merging(["hook_event_name": "SubagentStop", "agent_id": "synthetic-child"]) { _, new in new }), "")
+        var unknown = stop; unknown.removeValue(forKey: "background_tasks")
+        XCTAssertEqual(try run(unknown), "")
+        let stops = try String(contentsOf: pacer.appendingPathComponent("events.jsonl"), encoding: .utf8).split(separator: "\n")
+            .compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }.filter { $0["kind"] as? String == "stopRequested" }
+        XCTAssertEqual(stops.map { $0["agents"] as? Int }, [0, 0, 0, 0, 2, nil, nil])
+        XCTAssertEqual(stops.map { $0["parentId"] as? String }, [nil, nil, nil, nil, nil, "synthetic-ring-session", nil])
+        XCTAssertFalse(stops.contains { String(describing: $0).contains("PRIVATE") })
     }
 }

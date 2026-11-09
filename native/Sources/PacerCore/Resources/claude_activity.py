@@ -183,7 +183,7 @@ def transcript_record(value, owner, parent=None, prompt=None):
     if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and value.get('hookErrors')==[] and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
     return rows
 
-ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded','progress','background','wakeups','wake'}
+ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded','progress','background','wakeups','wake','agents'}
 KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request','progress','waiting'}
 
 def sanitized(raw):
@@ -213,6 +213,8 @@ def sanitized(raw):
         if isinstance(kinds,list) and all(isinstance(k,str) for k in kinds):out['background']=[k[:24] for k in kinds[:16]]
         else:out.pop('background')
     if 'wakeups' in out and (type(out['wakeups']) is not int or not 0<=out['wakeups']<=16):out.pop('wakeups')
+    # How many agents a main-thread Stop still lists in flight; only a count.
+    if 'agents' in out and (type(out['agents']) is not int or not 0<=out['agents']<=64 or out['kind']!='stopRequested' or 'parentId' in out):out.pop('agents')
     if 'wake' in out and out['wake'] is not True:out.pop('wake')
     return [out]
 

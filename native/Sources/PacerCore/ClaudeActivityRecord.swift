@@ -257,6 +257,14 @@ struct ClaudeActivityState: Sendable {
     /// Endings read before their launch, by child and tool item.
     private struct EarlyNotification: Sendable { let thread: String; let at: Double; let historical: Bool; let status: String }
     private var earlyNotifications: [String: EarlyNotification] = [:]
+    /// When each root's latest Stop listed no agent in flight. Claude Code lists
+    /// every background task of the session there, agents that subagents launched
+    /// included, so every child run begun before that Stop has ended.
+    private var agentsIdle: [String: Double] = [:]
+    /// When each root's live turn was last interrupted or failed. Claude Code
+    /// aborts that turn's foreground agents and keeps background ones running,
+    /// so only a child run that no background launch claims ends with it.
+    private var rootInterrupts: [String: Double] = [:]
     private var excludedSessions: Set<String> = []
     private(set) var unmatchedRequests = 0
     private(set) var status = RuntimeStreamStatus()
@@ -289,10 +297,16 @@ struct ClaudeActivityState: Sendable {
         agentEnds = agentEnds.filter { !excludedSessions.contains($0.value.parent) }
         agentLaunches = agentLaunches.filter { !excludedSessions.contains($0.value.parent) }
         earlyNotifications = earlyNotifications.filter { !excludedSessions.contains($0.value.thread) }
+        agentsIdle = agentsIdle.filter { !excludedSessions.contains($0.key) }
+        rootInterrupts = rootInterrupts.filter { !excludedSessions.contains($0.key) }
         requests = requests.filter { !excludedSessions.contains($0.value.threadID) }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
     }
+    /// Runs after every read that caught up, the initial baseline included.
     mutating func finalizeHistoricalBaseline(now: Date = Date()) {
+        // A read takes the hooks before the transcripts. Child runs that their
+        // root outlived end once their records of this read applied.
+        endOutlivedChildren(Array(sessions.keys), now: now, historical: true)
         for id in historicalRunning where [.running, .waitingForInput].contains(sessions[id]?.phase ?? .unknown) {
             guard let observed = sessions[id]?.lastObserved, now.timeIntervalSince(observed) <= 900 else { sessions[id]?.markSourceUnavailable(); continue }
             unconfirmedBaseline[id] = observed
@@ -335,8 +349,15 @@ struct ClaudeActivityState: Sendable {
             return
         }
         if frame["kind"] as? String == "claudeBatch", let rows = frame["records"] as? [[String: Any]], rows.count <= 512 {
-            for row in rows { consumeRecord(row, now: now, attaching: attaching || frame["attaching"] as? Bool == true || row["historical"] as? Bool == true) }
+            var live = false
+            for row in rows {
+                let historical = attaching || frame["attaching"] as? Bool == true || row["historical"] as? Bool == true
+                consumeRecord(row, now: now, attaching: historical); live = live || !historical
+            }
             if frame["baselineFinal"] as? Bool == true { finalizeHistoricalBaseline(now: now) }
+            // A helper batch is one read: the hooks come first, so its child
+            // records apply before the root's ending ends their runs.
+            else if live { endOutlivedChildren(Array(sessions.keys), now: now, historical: false) }
         } else { consumeRecord(frame, now: now, attaching: attaching) }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
         if sessions.count > 128 {
@@ -372,6 +393,12 @@ struct ClaudeActivityState: Sendable {
         if kind != "subagentStart", kind != "prompt", value.parentThreadID != nil, ![.completed, .interrupted].contains(value.phase),
            let current = value.turnID, let incoming = ClaudeActivityRecord.identifier(record["promptId"] as? String), incoming != current {
             record["promptId"] = current
+        }
+        // The main thread's Stop counts the agents still in flight. None left
+        // proves that each child run begun before it has ended, even one whose
+        // own ending can no longer be matched.
+        if kind == "stopRequested", origin == "hook", record["parentId"] == nil, value.parentThreadID == nil, record["agents"] as? Int == 0 {
+            Self.note(&agentsIdle, thread, at: seconds)
         }
         if kind == "discontinuity" {
             observedMeters[key]?.markGap()
@@ -625,7 +652,13 @@ struct ClaudeActivityState: Sendable {
             // A turn paused for its background work keeps running until the
             // wake; an interrupt or an error still ends it.
             if ["stop", "stopVerified"].contains(kind), value.currentBackgroundWait != nil { sessions[key] = value; return }
+            let wasLive = [.running, .waitingForInput].contains(value.phase)
             value.applyRuntime(event("turn/completed", ["status": kind == "failure" ? "failed" : kind == "interrupt" ? "interrupted" : "completed"]))
+            // Interrupting or failing the main thread's turn aborts its
+            // foreground agents; Claude Code keeps the background ones running.
+            if ["interrupt", "failure"].contains(kind), wasLive, value.parentThreadID == nil, value.phase == .interrupted {
+                Self.note(&rootInterrupts, thread, at: seconds)
+            }
             requests = requests.filter { $0.value.threadID != thread }
             // The ended turn's question stays until the next prompt answers it;
             // a baseline replay cannot tell whether it is still open.
@@ -667,6 +700,33 @@ struct ClaudeActivityState: Sendable {
             toolStartedAt: launch.toolStartedAt, launchedAt: launch.launchedAt, at: notice.at, historical: notice.historical, status: notice.status,
             childTurn: launch.childTurn, background: true)
         applyAgentCompletion(childKey, now: now)
+    }
+    private static func note(_ times: inout [String: Double], _ root: String, at seconds: Double) {
+        guard seconds > times[root] ?? 0 else { return }
+        times[root] = seconds
+        if times.count > 128, let oldest = times.min(by: { $0.value < $1.value })?.key { times.removeValue(forKey: oldest) }
+    }
+    /// Ends each child run that its root outlived, at the run's latest evidence:
+    /// a run begun before an agent-free Stop has ended, and one begun before an
+    /// interrupted or failed root turn ended with it unless a background launch
+    /// claims it. Their own endings may never match: a cold replay can lose the
+    /// launch to a rotated spool or an unread transcript head, and an aborted
+    /// foreground agent reports no result. An ended turn is retired, so later
+    /// records of that run cannot reopen it.
+    private mutating func endOutlivedChildren(_ keys: [String], now: Date, historical: Bool) {
+        guard !agentsIdle.isEmpty || !rootInterrupts.isEmpty else { return }
+        for key in keys {
+            guard let child = sessions[key], let parent = child.parentThreadID, let thread = child.threadID,
+                  [.running, .waitingForInput].contains(child.phase), let turn = child.turnID,
+                  let start = child.turnStartedAt?.timeIntervalSince1970 else { continue }
+            let root = rootThread(thread), kind: String
+            if agentsIdle[root].map({ start <= $0 }) == true { kind = "subagentStop" }
+            else if rootInterrupts[root].map({ start <= $0 }) == true,
+                    agentLaunches[key].flatMap({ boundAgentCompletion($0, to: child) }) == nil { kind = "interrupt" }
+            else { continue }
+            consumeRecord(["kind": kind, "origin": "rootEnded", "sessionId": thread, "parentId": parent, "promptId": turn,
+                           "at": max(start, child.lastObserved?.timeIntervalSince1970 ?? start)], now: now, attaching: historical)
+        }
     }
     /// A child's new run supersedes its previous one. Remembering when that one
     /// began keeps any launch made before it from claiming the new run.
