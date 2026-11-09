@@ -231,6 +231,8 @@ final class ClaudeOutlivedChildTests: XCTestCase {
             try JSONSerialization.data(withJSONObject: [main, agent, spool].map { $0.base64EncodedString() }).base64EncodedString()
         }
         let pythonHome = home.appendingPathComponent("python-copy")
+        // Foundation on macOS copies only into an existing folder.
+        try FileManager.default.createDirectory(at: pythonHome, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: home.appendingPathComponent("projects"), to: pythonHome.appendingPathComponent("projects"))
         try FileManager.default.copyItem(at: pacer, to: pythonHome.appendingPathComponent("pacer"))
         let pythonRoot = pythonHome.appendingPathComponent("projects/fixture/" + parent + ".jsonl")
