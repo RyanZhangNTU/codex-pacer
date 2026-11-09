@@ -46,9 +46,11 @@ internal static class GuidePageChecks
             Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(1) && highlightsPeer.GetName() == window.StepName(1),
                 "Space on the focused Continue reaches the display mode page on the same content peer");
             Check(SelfAndDescendants(body).OfType<WelcomeGestureScene>().Any() && SelfAndDescendants(body).OfType<WelcomeMoveScene>().Any(), "Both display modes are shown moving");
-            Select(Find<RadioButton>(window, "welcome.mode.notch")); await Until(() => session.Current.DisplayMode == "notch");
-            Check(Find<RadioButton>(window, "welcome.mode.notch").IsChecked == true && Find<RadioButton>(window, "welcome.mode.free").IsChecked == false, "Choosing the island mode saves at once");
-            Select(Find<RadioButton>(window, "welcome.mode.free")); await Until(() => session.Current.DisplayMode == "floating");
+            // Both cards stay disabled until the save finishes, which can outlast the preference change on a slow runner.
+            var notch = Find<RadioButton>(window, "welcome.mode.notch"); var free = Find<RadioButton>(window, "welcome.mode.free");
+            Select(notch); await Until(() => session.Current.DisplayMode == "notch" && notch.IsEnabled && free.IsEnabled);
+            Check(notch.IsChecked == true && free.IsChecked == false, "Choosing the island mode saves at once");
+            Select(free); await Until(() => session.Current.DisplayMode == "floating" && notch.IsEnabled && free.IsEnabled);
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
             Invoke(Find<Button>(window, "welcome.next")); await Pump();
             Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(2), "Continue reaches the services page");
@@ -78,7 +80,8 @@ internal static class GuidePageChecks
             Toggle(rings);
             await Until(() => session.Current.ClaudeProgressRing && session.Current.CodexProgressRing && session.Current.DeepSeekProgressRing && rings.IsEnabled);
             Check(rings.IsChecked == true, "One switch turns every service's progress ring on or off");
-            Toggle(Find<CheckBox>(window, "welcome.notifications")); await Until(() => notifications.DesiredEnabled && !notifications.IsChanging);
+            var notificationSwitch = Find<CheckBox>(window, "welcome.notifications");
+            Toggle(notificationSwitch); await Until(() => notifications.DesiredEnabled && !notifications.IsChanging && notificationSwitch.IsEnabled);
             Check(session.Current.SystemNotifications, "The welcome notification switch uses the existing permission and preference coordinator");
             Toggle(Find<CheckBox>(window, "welcome.startup")); Check(startup.Enabled && startup.Calls == 1, "Open at Login uses the injected OS registration without an invented preference");
             startup.Blocked = true; body.Refresh(); Check(Find<TextBlock>(window, "welcome.system.status").Text == ui.Text("windows.settings.startup_disabled"), "Blocked OS startup state remains visible");
@@ -98,7 +101,8 @@ internal static class GuidePageChecks
             Capture(noteWindow.ClientContent, Path.Combine(output, "pages-whats-new-" + language + (dark ? "-dark" : "-light") + ".png"));
             var done = Find<Button>(noteWindow, "guide.done"); double footerBefore = done.TranslatePoint(new Point(), noteWindow).Y;
             scroll.ScrollToEnd(); await Pump(); Check(Math.Abs(done.TranslatePoint(new Point(), noteWindow).Y - footerBefore) < .1, "Scrolling highlights cannot move the title or footer");
-            int beforeHostControl = configured; Toggle(Find<CheckBox>(noteWindow, "guide.control.showAppButtons")); await Until(() => !session.Current.ShowAppButtons);
+            int beforeHostControl = configured; var appButtons = Find<CheckBox>(noteWindow, "guide.control.showAppButtons");
+            Toggle(appButtons); await Until(() => !session.Current.ShowAppButtons && appButtons.IsEnabled);
             Check(configured == beforeHostControl && session.Current.WhatsNewVersion == null, "A release control applies its setting without configuring collectors or marking notes as read");
             var embedded = Find<CheckBox>(noteWindow, "guide.control.showEmbeddedSessions");
             Check(embedded.IsEnabled && AutomationProperties.GetName(embedded).Length > 0

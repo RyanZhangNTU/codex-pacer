@@ -220,7 +220,8 @@ public actor CodexClient {
         }) { return .conflict }
         if let value = (config["mcp_servers"] as? [String: Any])?[name] {
             guard let existing = CodexProgressCommand(ownedEntry: value), owns(existing) else { return wanted == nil ? .ready : .conflict }
-            if existing == wanted { return .ready }
+            // An entry Pacer wrote before the current settings is rewritten in place.
+            if wanted?.isRegistered(by: value) == true { return .ready }
         } else if wanted == nil { return .ready }
         guard !checkOnly else { return .ready }
         try Task.checkCancellation()

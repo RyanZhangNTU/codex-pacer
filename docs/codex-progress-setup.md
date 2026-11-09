@@ -2,6 +2,8 @@
 
 **Settings → Codex → Progress Ring** (**Show Codex Task Progress** on Windows) is on by default. Pacer registers its bundled reporting tool in the selected local Codex profile. Start a new local Codex session after Pacer shows that reporting is ready. The tool description tells Codex when to report, and until Codex sends its first estimate the ring only shows that the task is working.
 
+The registration asks Codex to list the tool for every model rather than hold it back for its tool search, so models reached through a third-party API can report too. Pacer adds this to a registration it made earlier; start a new session afterwards.
+
 If setup fails, check the Codex executable and data folder in the same pane, then choose **Retry**. A same-name MCP entry that belongs to another tool takes precedence. Pacer reports the conflict in Settings.
 
 Turning the ring off disables reporting and removes Pacer's registration. The Windows uninstaller also removes it from the profiles Pacer configured. On macOS, turn off the switch before dragging Pacer to the Trash. If Pacer is already gone, remove `pacer_progress` in Codex's MCP settings.

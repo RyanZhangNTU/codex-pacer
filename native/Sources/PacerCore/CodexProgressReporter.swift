@@ -191,6 +191,14 @@ public struct CodexProgressCommand: Codable, Equatable, Sendable {
     public let executable: String
     public let arguments: [String]
     private static let owner = ["PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"]
+    /// Codex defers MCP tools for models whose metadata supports tool search: the
+    /// tool waits behind `tool_search`, and code-mode models are not told about it
+    /// unless an experiment describes deferred tools. A provider that uses an OpenAI
+    /// model name gets that metadata from Codex's bundled catalog, so such models
+    /// never reported. Omitting the deferred surface keeps the tool in the request's
+    /// tool list, or in the list of tools that code-mode scripts can call. Codex
+    /// versions without this setting ignore it.
+    static let omittedSurfaces = ["deferred"]
 
     public init(executable: URL, arguments: [String]) {
         self.executable = executable.path; self.arguments = arguments
@@ -205,11 +213,21 @@ public struct CodexProgressCommand: Codable, Equatable, Sendable {
             arguments == [CodexProgressReporter.argument, home.path]
     }
 
-    var value: [String: Any] { ["command": executable, "args": arguments, "env": Self.owner] }
+    var value: [String: Any] { ["command": executable, "args": arguments, "env": Self.owner, "omit_tools_from": Self.omittedSurfaces] }
 
+    /// Recognizes Pacer's entry, including the earlier shape without
+    /// `omit_tools_from`, so setup can update it in place. Any other change makes
+    /// it someone else's entry.
     init?(ownedEntry: Any) {
-        guard let entry = ownedEntry as? [String: Any], entry.count == 3, entry["env"] as? [String: String] == Self.owner,
+        guard let entry = ownedEntry as? [String: Any], entry["env"] as? [String: String] == Self.owner,
+              entry.count == (entry["omit_tools_from"] == nil ? 3 : 4),
+              entry["omit_tools_from"].map({ $0 as? [String] == Self.omittedSurfaces }) ?? true,
               let command = entry["command"] as? String, !command.isEmpty, let arguments = entry["args"] as? [String] else { return nil }
         executable = command; self.arguments = arguments
+    }
+
+    /// Whether `entry` already registers this command with the current settings.
+    func isRegistered(by entry: Any) -> Bool {
+        CodexProgressCommand(ownedEntry: entry) == self && (entry as? [String: Any])?["omit_tools_from"] != nil
     }
 }
