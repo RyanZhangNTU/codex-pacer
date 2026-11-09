@@ -416,9 +416,12 @@ struct ClaudeActivityState: Sendable {
                let bound = boundAgentCompletion(ownership, to: observed) { ownership = bound }
             if status == "async_launched" {
                 // Another copy of a launch already bound to its run, from the
-                // transcript or a reconnect replay, keeps that run.
+                // transcript or a reconnect replay, keeps that run. Read after
+                // a quick revival's SubagentStart, the copy could otherwise
+                // claim the newer run inside the skew allowance, and the first
+                // run's notification would end it.
                 let existing = agentLaunches[childKey]
-                let keepsRun = existing.map { $0.item == item && $0.parent == thread && $0.childTurn != nil && ownership.childTurn == nil } ?? false
+                let keepsRun = existing.map { $0.item == item && $0.parent == thread && $0.childTurn != nil } ?? false
                 if !keepsRun, seconds >= (existing?.at ?? 0) { agentLaunches[childKey] = ownership }
                 if agentLaunches.count > 128, let oldest = agentLaunches.min(by: { $0.value.at < $1.value.at })?.key { agentLaunches.removeValue(forKey: oldest) }
                 return

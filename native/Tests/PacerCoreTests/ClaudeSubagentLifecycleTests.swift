@@ -647,6 +647,31 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             }
         }
     }
+    /// A run that ends within seconds can be revived inside the skew allowance
+    /// of its own launch. A copy of that launch read after the revival (a cold
+    /// replay reads transcripts after the hooks) keeps the first run, so the
+    /// first run's late notification leaves the revived run working.
+    func testLaunchCopyReadAfterAQuickRevivalKeepsItsFirstRun() throws {
+        for host in [String?.none, "remote-ssh-discovered:fixture"] {
+            var state = ClaudeActivityState(sourceID: host)
+            send("prompt", to: &state, at: 0)
+            send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+            send("subagentStart", to: &state, thread: child, at: 2)
+            send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+            send("toolStart", to: &state, at: 5.5, extra: ["itemId": "send-tool", "agentTool": true])
+            send("subagentStart", to: &state, thread: child, at: 6)
+            let revived = try XCTUnwrap(state.activities.first { $0.threadID == child })
+            XCTAssertEqual(revived.phase, .running); XCTAssertNotEqual(revived.turnID, turn)
+            send("agentResult", to: &state, at: 3.25, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+            send("agentNotification", to: &state, at: 6.5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+            XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running, "The first run's notification cannot end the revived run")
+            send("agentResult", to: &state, at: 7, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "async_launched"])
+            send("agentNotification", to: &state, at: 20, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "completed"])
+            let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
+            XCTAssertEqual(ended.turnID, revived.turnID); XCTAssertEqual(ended.phase, .completed)
+            XCTAssertEqual(ended.phaseChangedAt, now.addingTimeInterval(20))
+        }
+    }
     func testSshColdReplayEstablishesHookEngineTurnBeforeExactStopAndNextHumanAppend() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-child-cold-replay-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
