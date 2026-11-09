@@ -46,6 +46,16 @@ internal static class PreferencesChecks
             Check(sized.CompactBarSize == "large" && sized.CompactComponentOptions == choices && sized.IslandAppearance == "graphite" && sized.CompactSingleTask == "percent"
                 && saved.Contains("\"compactBarSize\": \"large\"") && saved.Contains("\"compactComponentOptions\": \"" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(choices)) + "\""),
                 "Component choices are stored as the Mac's data and survive relaunch");
+            const string damagedField = "{\"version\":1,\"multiRing\":\"segments\",\"paceTick\":\"yes\",\"warningStyle\":\"dot\",\"ringLayout\":\"future\",\"later\":[1,2]}";
+            var readBack = CompactChoices.Parse(damagedField);
+            Check(readBack.MultiRing == "segments" && readBack.WarningStyle == "dot" && readBack.PaceTick && readBack.RingLayout == "concentric",
+                "A damaged or unknown field reads as its default without resetting the other choices");
+            var oneChange = System.Text.Json.Nodes.JsonNode.Parse(CompactChoices.With(damagedField, "lowColor", false))!.AsObject();
+            Check(oneChange["lowColor"]!.GetValue<bool>() == false && oneChange["multiRing"]!.GetValue<string>() == "segments" && oneChange["warningStyle"]!.GetValue<string>() == "dot"
+                && oneChange["paceTick"]!.GetValue<string>() == "yes" && oneChange["ringLayout"]!.GetValue<string>() == "future" && oneChange["later"] is System.Text.Json.Nodes.JsonArray,
+                "Saving one choice keeps every other field as saved, even values this version cannot read");
+            Check(CompactChoices.Parse(CompactChoices.With("broken", "warningLimit", 0)) == CompactChoices.Default with { WarningLimit = 0 },
+                "Unreadable text starts the change from the defaults");
             Check(CompactChoices.Parse(sized.CompactComponentOptions).MultiRing == "average" && CompactChoices.Parse("broken").MultiRing == "service"
                 && CompactChoices.Parse(new string('x', CompactChoices.ByteLimit + 1)) == CompactChoices.Default, "Choices parse per field and fall back when damaged");
             Check(!store.Save(original with { IslandAppearance = "tinted" }), "The retired tinted material cannot be saved");

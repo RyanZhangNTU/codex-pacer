@@ -89,10 +89,10 @@ internal static class PacerPalette
         return true;
     }
     /// Codex's shade in either tone, for a preview of a material that is not the current one.
-    internal static Brush CodexShade(bool light) => AccentPalette.ProviderShade(Accent, "codex") is { } color ? Ink(color.R, color.G, color.B) : light ? LightCodex : BrandCodex;
+    internal static Brush CodexShade(bool light) => AccentPalette.ProviderShade(Accent, "codex", light) is { } color ? Ink(color.R, color.G, color.B) : light ? LightCodex : BrandCodex;
     private static void Shade()
     {
-        Brush Pick(string provider, Brush brand, Brush light) => AccentPalette.ProviderShade(Accent, provider) is { } color ? Ink(color.R, color.G, color.B) : Light ? light : brand;
+        Brush Pick(string provider, Brush brand, Brush light) => AccentPalette.ProviderShade(Accent, provider, Light) is { } color ? Ink(color.R, color.G, color.B) : Light ? light : brand;
         Codex = Pick("codex", BrandCodex, LightCodex); Claude = Pick("claude", BrandClaude, LightClaude); DeepSeek = Pick("deepseek", BrandDeepSeek, LightDeepSeek);
     }
     internal static SolidColorBrush Ink(byte red, byte green, byte blue, byte alpha = 255)
