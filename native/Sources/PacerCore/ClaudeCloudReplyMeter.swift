@@ -5,6 +5,7 @@ import Foundation
 enum ClaudeCloudStreamEvent: Equatable, Sendable {
     /// `session` is set when the event names the thread's own session.
     case threadStarting(thread: String, session: String?)
+    case threadStopped(thread: String, session: String?)
     case partialReply(thread: String, block: String, tokens: Double, sentAt: Date?)
 }
 
@@ -30,8 +31,9 @@ struct ClaudeCloudStreamParser: Sendable {
         case "thread_starting":
             return .threadStarting(thread: id, session: nil)
         case "session_activity":
-            guard row["working"] as? Bool == true else { return nil }
-            return .threadStarting(thread: id, session: ClaudeCloudDecoder.sessionID(row["session_id"]))
+            guard let working = row["working"] as? Bool else { return nil }
+            let session = ClaudeCloudDecoder.sessionID(row["session_id"])
+            return working ? .threadStarting(thread: id, session: session) : .threadStopped(thread: id, session: session)
         default:
             guard let text = row["text"] as? String, let block = row["tool_use_id"] as? String, !block.isEmpty, block.utf8.count <= 128 else { return nil }
             return .partialReply(thread: id, block: block, tokens: ClaudeCloudReplyMeter.tokens(in: text),

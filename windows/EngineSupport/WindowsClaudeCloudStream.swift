@@ -54,13 +54,12 @@ enum WindowsClaudeCloudStream {
                     relay?.close(); continuation.finish(throwing: ClaudeCloudFailure.connection); return
                 }
                 continuation.onTermination = { _ in transport.cancel() }
-                let thread = Thread {
+                let started = WindowsThread.start(name: "Claude cloud stream") {
                     read(url, target: target, headers: fields.headers, agent: fields.agent, proxy: proxy, options: options,
                          transport: transport, continuation: continuation)
                     relay?.close()
                 }
-                thread.name = "Claude cloud stream"
-                thread.start()
+                if !started { relay?.close(); continuation.finish(throwing: ClaudeCloudFailure.connection) }
             }
         }
     }

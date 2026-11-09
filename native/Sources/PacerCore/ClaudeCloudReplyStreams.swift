@@ -6,7 +6,7 @@ import FoundationNetworking
 /// Listens to Claude's message streams for what a poll cannot see. A stream only
 /// carries replies that start after it connects, so each recent project's stream
 /// announces a run early enough to open that thread's stream in time. Polling
-/// still decides every state: losing a stream only loses a speed.
+/// still decides every state: losing a stream returns the monitor to its regular cadence.
 public actor ClaudeCloudReplyStreams {
     public typealias Lines = @Sendable (URLRequest) -> AsyncThrowingStream<Data, Error>
     typealias Requests = @Sendable (String) async -> URLRequest?

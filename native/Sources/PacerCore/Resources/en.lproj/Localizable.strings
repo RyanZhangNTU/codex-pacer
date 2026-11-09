@@ -932,6 +932,7 @@
 "attention.decision" = "Decision needed";
 "claude.cloud.coordinator" = "Project coordinator";
 "claude.cloud.project" = "Project";
+"claude.cloud.turn_can_continue" = "Turn finished · Reply if needed";
 "claude.cloud.open_help" = "Open this cloud Project in Claude";
 "claude.cloud.workers_help" = "%d more sessions working in this thread";
 "claude.cloud_projects" = "Show Claude cloud Projects";

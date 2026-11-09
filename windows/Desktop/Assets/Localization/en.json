@@ -152,6 +152,7 @@
     "claude.cloud.coordinator": "Project coordinator",
     "claude.cloud.open_help": "Open this cloud Project in Claude",
     "claude.cloud.project": "Project",
+    "claude.cloud.turn_can_continue": "Turn finished · Reply if needed",
     "claude.cloud.workers_help": "%d more sessions working in this thread",
     "claude.cloud_projects": "Show Claude cloud Projects",
     "claude.cloud_projects_help": "Follows each Project’s threads and coordinator and reminds you when they end or wait for you. Needs the claude.ai sign-in above.",

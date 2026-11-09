@@ -37,6 +37,8 @@ public partial class App : Application
     private bool? demoDark;
     private string engineExecutable = "";
     private readonly TaskCompletionSource engineReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private long engineReadyTicks;
+    private bool restartingAfterEngineExit;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -301,6 +303,8 @@ public partial class App : Application
                 claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot);
             ShellProjection.Ready();
             engineReady.TrySetResult();
+            engineReadyTicks = Environment.TickCount64;
+            if (capture < 0) engine.Status += RestartAfterEngineExit;
             await webConnection.StartAsync();
             await claudeConnection.StartAsync();
             await island.SynchronizeExpansionAsync();
@@ -392,6 +396,18 @@ public partial class App : Application
         }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
         { island?.SetStatus(ui.Text("windows.restart_failed")); }
+    }
+
+    // An engine that ran for a while and then stopped restarts with the app, as
+    // the user's own restart would. One that stops soon after starting keeps
+    // the stopped status instead of restarting in a loop, and an update in
+    // progress finishes first.
+    private void RestartAfterEngineExit(string status)
+    {
+        if (quitting || restartingAfterEngineExit || status is not ("engineStopped" or "engineProtocolFailed") || updates?.Status.Busy == true
+            || !EngineRecovery.ShouldRestart(TimeSpan.FromMilliseconds(Environment.TickCount64 - engineReadyTicks))) return;
+        restartingAfterEngineExit = true;
+        Restart();
     }
 
     private async void Quit()

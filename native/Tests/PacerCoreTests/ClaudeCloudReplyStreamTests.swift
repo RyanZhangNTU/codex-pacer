@@ -43,7 +43,9 @@ final class ClaudeCloudReplyStreamTests: XCTestCase {
                        .threadStarting(thread: "cmsg_thread1", session: nil), "this event names the coordinator's session, not the thread's")
         XCTAssertEqual(try parse("session_activity", ["session_id": "cse_worker1", "thread_root_id": "cmsg_thread1", "working": true, "reason": "waking"]),
                        .threadStarting(thread: "cmsg_thread1", session: "cse_worker1"))
-        XCTAssertNil(try parse("session_activity", ["session_id": "cse_worker1", "thread_root_id": "cmsg_thread1", "working": false]))
+        XCTAssertEqual(try parse("session_activity", ["session_id": "cse_worker1", "thread_root_id": "cmsg_thread1", "working": false]),
+                       .threadStopped(thread: "cmsg_thread1", session: "cse_worker1"))
+        XCTAssertNil(try parse("session_activity", ["session_id": "cse_worker1", "thread_root_id": "cmsg_thread1"]))
     }
 
     func testMessageBodiesAndOtherLinesAreSkippedUnread() throws {
@@ -260,8 +262,10 @@ final class ClaudeCloudReplyStreamTests: XCTestCase {
         XCTFail("never happened: " + what)
     }
     private final class Box: @unchecked Sendable {
-        var date: Date
-        init(_ date: Date) { self.date = date }
+        private let lock = NSLock()
+        private var value: Date
+        init(_ date: Date) { value = date }
+        var date: Date { get { lock.withLock { value } } set { lock.withLock { value = newValue } } }
     }
     private final class Sink: @unchecked Sendable { var activities: [SessionActivity] = [] }
     private static func cookies() -> ClaudeWebSession {
@@ -336,6 +340,65 @@ final class ClaudeCloudReplyStreamTests: XCTestCase {
         try await eventually("closed") { streams.openPaths.isEmpty }
     }
 
+    func testStartDuringAReadAndStopDuringSleepBothBringTheNextSnapshotForward() async throws {
+        actor Replies {
+            let old: String
+            let fresh: String
+            var sessionReads = 0
+            var waiting = false
+            var firstRead: CheckedContinuation<Void, Never>?
+            var latestPhase: ActivityPhase?
+            init(old: String, fresh: String) { self.old = old; self.fresh = fresh }
+            func endFirstRead() { firstRead?.resume(); firstRead = nil }
+            func askQuestion() { waiting = true }
+            func update(_ activities: [SessionActivity]) { latestPhase = activities.first?.phase }
+            func respond(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+                let url = try XCTUnwrap(request.url)
+                let body: [String: Any]
+                switch url.path {
+                case "/v1/code/channels":
+                    body = ["channels": [["id": "chan_project1", "name": "Synthetic project", "last_message_at": old]]]
+                case "/v1/code/channels/chan_project1/threads":
+                    body = ["sections": [["data": [["id": "cmsg_thread1", "thread_status": waiting ? "needs_input" : "idle",
+                        "last_reply_at": waiting ? fresh : old, "has_unread": waiting,
+                        "bound_sessions": [["id": "cse_worker1"]]]]]]]
+                case "/v1/code/sessions/cse_worker1":
+                    sessionReads += 1
+                    let running = sessionReads > 1 && !waiting
+                    if sessionReads == 1 { await withCheckedContinuation { firstRead = $0 } }
+                    body = ["session": ["id": "cse_worker1", "worker_status": running ? "running" : "idle"]]
+                default:
+                    throw ClaudeCloudFailure.invalidReply
+                }
+                return (try JSONSerialization.data(withJSONObject: body), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        let formatter = ISO8601DateFormatter()
+        let replies = Replies(old: formatter.string(from: at(-60)), fresh: formatter.string(from: at(11)))
+        let streams = FakeStreams(), clock = Box(base)
+        let monitor = ClaudeCloudProjectMonitor(cookieProvider: { Self.cookies() }, transport: { try await replies.respond($0) },
+            streamLines: streams.lines, now: { clock.date })
+        await monitor.start(expanded: false) { activities, _, _ in await replies.update(activities) }
+        defer { Task { await monitor.shutdown() } }
+
+        try await eventually("first session read is suspended") { await replies.firstRead != nil }
+        clock.date = at(6)
+        await monitor.received(.threadStarting(thread: "cmsg_thread1", session: "cse_worker1"), project: project.id)
+        await replies.endFirstRead()
+        try await eventually("the unchanged idle thread was checked again") { await replies.latestPhase == .running }
+        let reads = await replies.sessionReads
+        XCTAssertEqual(reads, 2, "the stream hint bypasses the two-minute interval for this thread")
+
+        try await eventually("project stream opened") { streams.openPaths.contains(projectPath) }
+        clock.date = at(12)
+        await replies.askQuestion()
+        try streams.send(projectPath, "session_activity", ["session_id": "cse_worker1", "thread_root_id": "cmsg_thread1", "working": false])
+        try await eventually("a poll confirms the question") { await replies.latestPhase == .waitingForInput }
+        let finalReads = await replies.sessionReads
+        XCTAssertEqual(finalReads, 3)
+        await monitor.shutdown()
+    }
+
     func testAThreadDesktopRunsHereStaysLocal() async throws {
         let streams = FakeStreams(), clock = Box(base)
         let monitor = monitor(streams: streams, clock: clock, working: false, local: { ["worker2"] })
@@ -394,5 +457,36 @@ final class ClaudeCloudReplyStreamTests: XCTestCase {
         try await eventually("closed") { streams.openPaths.count == 2 }
         await hub.stop()
         try await eventually("all closed") { streams.openPaths.isEmpty }
+    }
+
+    func testOpeningThePanelLooksAgainDuringPacersBackoffButNotWhenClaudeAskedToWait() async throws {
+        actor Looks {
+            var lists = 0, failures = 0
+            func list() -> Int { lists += 1; return lists }
+            func failed() { failures += 1 }
+        }
+        for (code, looksAgain) in [(503, true), (429, false)] {
+            let looks = Looks(), clock = Box(base)
+            let monitor = ClaudeCloudProjectMonitor(cookieProvider: { Self.cookies() }, transport: { request in
+                let url = try XCTUnwrap(request.url)
+                guard url.path == "/v1/code/channels" else { throw ClaudeCloudFailure.invalidReply }
+                let first = await looks.list() == 1
+                let body = try JSONSerialization.data(withJSONObject: ["channels": [[String: Any]]()])
+                return (body, HTTPURLResponse(url: url, statusCode: first ? code : 200, httpVersion: nil,
+                                              headerFields: first && code == 429 ? ["Retry-After": "600"] : [:])!)
+            }, now: { clock.date })
+            await monitor.start(expanded: false) { _, status, _ in if status?.connected == false { await looks.failed() } }
+            try await eventually("the first look failed") { await looks.failures == 1 }
+            clock.date = at(10)
+            await monitor.setExpanded(true)
+            if looksAgain {
+                try await eventually("opening the panel looked again within the 30-second backoff") { await looks.lists == 2 }
+            } else {
+                try await Task.sleep(nanoseconds: 300_000_000)
+                let lists = await looks.lists
+                XCTAssertEqual(lists, 1, "Claude's Retry-After still holds")
+            }
+            await monitor.shutdown()
+        }
     }
 }
