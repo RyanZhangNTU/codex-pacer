@@ -29,7 +29,7 @@ MAC_OWNER = {"PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"}
 # find the tool only through tool_search, and code-mode models never see it.
 OMITTED = ["deferred"]
 QUALIFIED = "mcp__pacer_progress__report_progress"
-MAC_SWITCH = "Show Codex Task Progress"
+MAC_SWITCH = "Progress Ring"
 MAC_SETUP = {"settingUp": "Setting up progress reporting…",
              "ready": "Progress reporting is ready for new local Codex sessions.",
              "conflict": "The Codex MCP configuration already has an entry named pacer_progress."}
@@ -69,23 +69,35 @@ func pressable(_ element: AXUIElement) -> Bool {
         && ((names as? [String]) ?? []).contains(kAXPressAction)
 }
 var pressed = false
-func walk(_ element: AXUIElement, depth: Int) {
+// With "last", the final matching control in reading order is pressed, for a
+// label that several rows share.
+let last = CommandLine.arguments.count > 4 && CommandLine.arguments[4] == "last"
+var found: [AXUIElement] = []
+func walk(_ element: AXUIElement, depth: Int, beside: Bool) {
     guard depth < 40, !pressed else { return }
     let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
     if mode == "press" || mode == "press-and-quit" {
-        // A Settings section is one group: a switch follows its title and help text.
+        // A control that carries the label wins; otherwise a Settings row's switch
+        // follows its title and help text.
         let needle = CommandLine.arguments[3]
         var control = pressable(element) && labels(element).contains(needle) ? element : nil
-        if control == nil, let index = children.firstIndex(where: { labels($0).contains(needle) }), !pressable(children[index]) {
+        if beside, control == nil, let index = children.firstIndex(where: { labels($0).contains(needle) }), !pressable(children[index]) {
             control = children[(index + 1)...].first(where: pressable)
         }
-        if let control { pressed = AXUIElementPerformAction(control, kAXPressAction as CFString) == .success; return }
+        if let control {
+            if last { found.append(control) } else { pressed = AXUIElementPerformAction(control, kAXPressAction as CFString) == .success }
+            return
+        }
     } else {
         for text in labels(element) { print(text.replacingOccurrences(of: "\n", with: " ")) }
     }
-    for child in children { walk(child, depth: depth + 1) }
+    for child in children { walk(child, depth: depth + 1, beside: beside) }
 }
-for window in value(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] { walk(window, depth: 0) }
+for beside in [false, true] where !pressed && found.isEmpty {
+    for window in value(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] { walk(window, depth: 0, beside: beside) }
+    if !(mode == "press" || mode == "press-and-quit") { break }
+}
+if let control = found.last { pressed = AXUIElementPerformAction(control, kAXPressAction as CFString) == .success }
 if mode == "press-and-quit" {
     guard pressed else { exit(1) }
     exit(NSRunningApplication(processIdentifier: pid)?.terminate() == true ? 0 : 2)
@@ -377,6 +389,8 @@ class MacHost:
         subprocess.run(["xcrun", "swiftc", "-O", "-o", str(self.helper), str(workspace / "pacer-ui.swift")],
                        check=True, capture_output=True)
         subprocess.run(["defaults", "delete", MAC_QA_ID], capture_output=True)
+        # Progress rings default on; the check starts from the switch turned off.
+        subprocess.run(["defaults", "write", MAC_QA_ID, "codexProgressRing", "-bool", "false"], check=True)
 
     def __enter__(self):
         return self
@@ -414,11 +428,12 @@ class MacHost:
         result = subprocess.run([str(self.helper), "ax", str(self.process.pid)], capture_output=True, text=True, timeout=15)
         return result.stdout.splitlines()
 
-    def press(self, label, quit_after=False):
+    def press(self, label, quit_after=False, last=False):
         deadline = time.monotonic() + 20
         mode = "press-and-quit" if quit_after else "press"
         while time.monotonic() < deadline:
-            result = subprocess.run([str(self.helper), mode, str(self.process.pid), label], capture_output=True, timeout=15)
+            result = subprocess.run([str(self.helper), mode, str(self.process.pid), label] + (["last"] if last else []),
+                                    capture_output=True, timeout=15)
             if result.returncode == 0:
                 return
             if result.returncode != 1:
@@ -516,7 +531,8 @@ class MacHost:
         if self.config.read_bytes() != conflict or self.flag.exists():
             raise RuntimeError("Setup did not preserve a same-name user entry")
         self.config.write_bytes(clean)
-        self.press("Retry")
+        # The quota card above has its own Retry while the fixture has no account.
+        self.press("Retry", last=True)
         self.wait_setup("ready")
         if not self.registered():
             raise RuntimeError("Retry did not restore the registration")
