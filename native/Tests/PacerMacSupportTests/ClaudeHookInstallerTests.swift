@@ -613,17 +613,26 @@ final class ClaudeHookInstallerTests: XCTestCase {
                                     ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": true, "commandName": "PRIVATE skill", "status": "inline"]],
                                     ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": false, "commandName": "PRIVATE skill", "status": "forked", "agentId": "internal-agent", "result": "PRIVATE result"]],
                                     ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": true, "commandName": "PRIVATE skill", "status": "forked", "background": true, "agentId": "internal-agent", "result": "PRIVATE launch"]],
-                                    ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": true, "commandName": "PRIVATE skill", "status": "forked", "agentId": "internal-agent", "result": "PRIVATE result"]]] {
+                                    ["hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "skill-tool", "tool_response": ["success": true, "commandName": "PRIVATE skill", "status": "forked", "agentId": "internal-agent", "result": "PRIVATE result"]],
+                                    // SendMessage revives a stopped agent with no status; the revived run
+                                    // reports later. Queued, inline, failed and status replies start none.
+                                    ["hook_event_name": "PreToolUse", "tool_name": "SendMessage", "tool_use_id": "send-tool"],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "SendMessage", "tool_use_id": "send-tool", "tool_response": ["success": true, "message": "PRIVATE queued"]],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "SendMessage", "tool_use_id": "send-tool", "tool_response": ["success": true, "message": "PRIVATE report", "inlineHandback": ["content": "PRIVATE report"]]],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "SendMessage", "tool_use_id": "send-tool", "tool_response": ["success": false, "message": "PRIVATE failure", "revivedAgentId": "internal-agent"]],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "SendMessage", "tool_use_id": "send-tool", "tool_response": ["success": true, "status": "PRIVATE status", "revivedAgentId": "internal-agent"]],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "Read", "tool_use_id": "read-tool", "tool_response": ["success": true, "revivedAgentId": "internal-agent"]],
+                                    ["hook_event_name": "PostToolUse", "tool_name": "SendMessage", "tool_use_id": "send-tool", "tool_response": ["success": true, "message": "PRIVATE resuming", "resumedAgentId": "internal-agent", "revivedAgentId": "internal-agent"]]] {
             let result = try runScript(home: fixture.home, mode: "hook", input: common.merging(input) { _, new in new })
             XCTAssertTrue(result.stdout.isEmpty); XCTAssertTrue(result.stderr.isEmpty)
         }
         let bytes = try Data(contentsOf: spool)
         let rows = try bytes.split(separator: 10).map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]) }
         let results = rows.filter { $0["kind"] as? String == "agentResult" }
-        XCTAssertEqual(results.compactMap { $0["agentStatus"] as? String }, ["async_launched", "completed", "async_launched", "completed"])
-        XCTAssertEqual(results.compactMap { $0["itemId"] as? String }, ["agent-tool", "agent-tool", "skill-tool", "skill-tool"])
+        XCTAssertEqual(results.compactMap { $0["agentStatus"] as? String }, ["async_launched", "completed", "async_launched", "completed", "async_launched"])
+        XCTAssertEqual(results.compactMap { $0["itemId"] as? String }, ["agent-tool", "agent-tool", "skill-tool", "skill-tool", "send-tool"])
         XCTAssertTrue(results.allSatisfy { $0["agentId"] as? String == "internal-agent" && $0["promptId"] as? String == "owned-prompt" })
-        XCTAssertEqual(rows.filter { $0["kind"] as? String == "toolStart" && $0["agentTool"] as? Bool == true }.count, 2)
+        XCTAssertEqual(rows.filter { $0["kind"] as? String == "toolStart" && $0["agentTool"] as? Bool == true }.count, 3)
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
     }
 }

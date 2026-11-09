@@ -16,7 +16,7 @@ def ident(value):
     try: return str(uuid.UUID(value))
     except ValueError: return value
 
-AGENT_TOOLS = ('Agent', 'Skill')
+AGENT_TOOLS = ('Agent', 'Skill', 'SendMessage')
 
 def agent_status(response):
     # A forked Skill such as /code-review runs in a sub-agent and reports
@@ -24,6 +24,15 @@ def agent_status(response):
     status = response.get('status')
     if status == 'forked': return 'async_launched' if response.get('background') is True else 'completed' if response.get('success') is True else None
     return status if status in ('completed', 'async_launched') else None
+
+def agent_launch(response):
+    # A SendMessage that revives a stopped agent has no status: it names the
+    # agent in revivedAgentId, usually also resumedAgentId. The revived run
+    # works in the background; its notification names this SendMessage call.
+    status = agent_status(response)
+    if status: return ident(response.get('agentId')), status
+    if 'status' in response or response.get('success') is not True: return None, None
+    return ident(response.get('revivedAgentId', response.get('resumedAgentId'))), 'async_launched'
 
 def number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
@@ -150,9 +159,8 @@ def transcript_record(value, owner, parent=None, prompt=None):
         if prompt: rows.append(dict(base, kind='prompt', promptId=prompt))
     for item in ends: rows.append(dict(base, kind='toolEnd', itemId=item))
     response=value.get('toolUseResult')
-    status=agent_status(response) if isinstance(response,dict) else None
+    child,status=agent_launch(response) if isinstance(response,dict) else (None,None)
     if kind=='user' and len(ends)==1 and status:
-        child=ident(response.get('agentId'))
         if child and child!=owner:rows.append(dict(base,kind='agentResult',itemId=ends[0],agentId=child,agentStatus=status))
     # Claude Desktop's next-step box ends the turn from its tool result; only
     # the engine's boolean is read, never the box's text.

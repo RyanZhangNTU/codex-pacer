@@ -24,13 +24,26 @@ enum ClaudeActivityRecord {
     }
     static func encode(_ value: [String: Any]) -> Data? { try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) }
     /// Tools whose typed result can name the sub-agent they ran.
-    static let agentTools: Set<String> = ["Agent", "Skill"]
+    static let agentTools: Set<String> = ["Agent", "Skill", "SendMessage"]
     /// A forked Skill such as `/code-review` runs in a sub-agent and reports
     /// `forked` (Claude Code 2.1.309). `background` marks a launch whose outcome
     /// arrives later as a task notification; otherwise the fork has ended.
     static func agentStatus(_ status: String?, background: Bool?, success: Bool?) -> String? {
         if status == "forked" { return background == true ? "async_launched" : success == true ? "completed" : nil }
         return status.flatMap { ["completed", "async_launched"].contains($0) ? $0 : nil }
+    }
+    /// The sub-agent a typed tool result started and how it runs. A SendMessage
+    /// that revives a stopped agent has no status (Claude Code 2.1.317): it names
+    /// the agent in `revivedAgentId`, usually also `resumedAgentId`. The revived
+    /// run works in the background, and its task notification names this
+    /// SendMessage call instead of the Agent call that first launched it.
+    static func agentLaunch(_ response: [String: JSONFieldView]) -> (agent: String, status: String)? {
+        if let status = agentStatus(response["status"]?.string(limit: 24), background: response["background"]?.boolean(), success: response["success"]?.boolean()) {
+            return identifier(response["agentId"]?.string()).map { ($0, status) }
+        }
+        guard response["status"] == nil, response["success"]?.boolean() == true,
+              let agent = identifier((response["revivedAgentId"] ?? response["resumedAgentId"])?.string()) else { return nil }
+        return (agent, "async_launched")
     }
 
     static func transcript(_ bytes: Data, sessionID: String, parentID: String? = nil, promptID: String? = nil) -> [Data] {
@@ -144,11 +157,10 @@ enum ClaudeActivityRecord {
         }
         for id in toolEnds { var value = base; value["kind"] = "toolEnd"; value["itemId"] = id; result.append(value) }
         if kind == "user", toolEnds.count == 1,
-           let response = fields["toolUseResult"].flatMap({ try? $0.fields(["status", "agentId", "background", "success"]) }),
-           let status = agentStatus(response["status"]?.string(limit: 24), background: response["background"]?.boolean(), success: response["success"]?.boolean()),
-           let agent = identifier(response["agentId"]?.string()), agent != thread {
+           let response = fields["toolUseResult"].flatMap({ try? $0.fields(["status", "agentId", "background", "success", "revivedAgentId", "resumedAgentId"]) }),
+           let launch = agentLaunch(response), launch.agent != thread {
             var value = base; value["kind"] = "agentResult"; value["itemId"] = toolEnds[0]
-            value["agentId"] = agent; value["agentStatus"] = status; result.append(value)
+            value["agentId"] = launch.agent; value["agentStatus"] = launch.status; result.append(value)
         }
         // Claude Desktop's next-step box can end the turn from its tool result
         // (`claude/endTurn`, Claude Code 2.1.299); no end_turn or stop summary

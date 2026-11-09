@@ -310,6 +310,73 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             }
         }
     }
+    /// Claude Code 2.1.317: SendMessage to a stopped background agent revives it.
+    /// The result names the agent without a status, and the revived run's
+    /// notification names the SendMessage call, not the first Agent call.
+    func testSendMessageRevivalIsABackgroundLaunchEndedOnlyByItsOwnNotification() throws {
+        let start: [String: Any] = ["type": "assistant", "sessionId": parent, "promptId": "revive-turn", "timestamp": "2027-01-15T08:00:11Z",
+            "message": ["content": [["type": "tool_use", "id": "send-tool", "name": "SendMessage", "input": ["to": child, "message": "PRIVATE follow-up"]]]]]
+        let revived: [String: Any] = ["success": true, "message": "PRIVATE resuming", "resumedAgentId": child, "revivedAgentId": child,
+                                      "pin": ["id": child, "name": "PRIVATE name", "ref": "PRIVATE"]]
+        func result(_ response: Any, at: String = "2027-01-15T08:00:13Z") -> [String: Any] {
+            ["type": "user", "sessionId": parent, "promptId": "revive-turn", "timestamp": at,
+             "message": ["content": [["type": "tool_result", "tool_use_id": "send-tool", "content": "PRIVATE result"]]], "toolUseResult": response]
+        }
+        // The owner of another agent's task gets only revivedAgentId.
+        let accepted: [Any] = [revived, ["success": true, "message": "PRIVATE resuming", "revivedAgentId": child], ["success": true, "resumedAgentId": child]]
+        // A message queued for a live agent, an inline report and failures name no new run.
+        let rejected: [Any] = [["success": true, "message": "PRIVATE queued"], revived.merging(["success": false]) { _, new in new },
+                               ["success": true, "message": "PRIVATE report", "inlineHandback": ["content": [["type": "text", "text": "PRIVATE report"]]]],
+                               revived.merging(["status": "PRIVATE status"]) { _, new in new }, ["success": true, "revivedAgentId": "child\n", "resumedAgentId": child],
+                               ["success": true, "revivedAgentId": 5], ["success": true, "revivedAgentId": parent], ["revivedAgentId": child]]
+        let fixtures = [start] + (accepted + rejected).map { result($0) }
+        let native = try fixtures.flatMap { ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode($0)!, sessionID: parent, promptID: turn) }
+            .map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
+        XCTAssertTrue(NSArray(array: try pythonRows(fixtures, owner: parent, parentID: nil)).isEqual(to: native), "Native and SSH parsers agree")
+        XCTAssertEqual(native.first { $0["kind"] as? String == "toolStart" }?["agentTool"] as? Bool, true)
+        let launches = native.filter { $0["kind"] as? String == "agentResult" }
+        XCTAssertEqual(launches.count, accepted.count)
+        XCTAssertTrue(launches.allSatisfy { $0["agentId"] as? String == child && $0["itemId"] as? String == "send-tool" && $0["agentStatus"] as? String == "async_launched" })
+        // Hook clocks race: the child's SubagentStart can follow the PostToolUse
+        // launch by a fraction of a millisecond, and the transcript copy binds it.
+        for childFirst in [false, true] {
+            for host in [String?.none, "remote-ssh-discovered:fixture"] {
+                var state = ClaudeActivityState(sourceID: host)
+                func transcript(_ fixture: [String: Any]) {
+                    for row in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(fixture)!, sessionID: parent, promptID: turn) { state.consume(row, now: now.addingTimeInterval(100)) }
+                }
+                send("prompt", to: &state, at: 0)
+                send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+                send("subagentStart", to: &state, thread: child, at: 2)
+                send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+                send("stopVerified", to: &state, at: 4)
+                send("agentNotification", to: &state, at: 5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .completed)
+                send("prompt", to: &state, at: 10, extra: ["promptId": "revive-turn"])
+                transcript(start)
+                send("toolStart", to: &state, at: 12.273, extra: ["promptId": "revive-turn", "itemId": "send-tool", "agentTool": true])
+                if childFirst { send("subagentStart", to: &state, thread: child, at: 12.43, extra: ["promptId": "revive-turn"]) }
+                send("toolEnd", to: &state, at: 12.438, extra: ["promptId": "revive-turn", "itemId": "send-tool"])
+                send("agentResult", to: &state, at: 12.438, extra: ["promptId": "revive-turn", "itemId": "send-tool", "agentId": child, "agentStatus": "async_launched"])
+                if !childFirst { send("subagentStart", to: &state, thread: child, at: 12.4385, extra: ["promptId": "revive-turn"]) }
+                transcript(result(revived))
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running)
+                // SubagentStop alone is not an ending, and the parent's turn ends first.
+                send("stopRequested", to: &state, thread: child, at: 20, extra: ["promptId": "revive-turn"])
+                send("stopVerified", to: &state, at: 21, extra: ["promptId": "revive-turn"])
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running)
+                // The first run's notification cannot end the revived run.
+                send("agentNotification", to: &state, at: 22, extra: ["origin": "transcript", "promptId": "revive-turn", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running)
+                XCTAssertEqual(ActivityTaskGroup.make(state.activities).first?.runningSubagentCount, 1)
+                send("agentNotification", to: &state, at: 23, extra: ["origin": "transcript", "promptId": "revive-turn", "itemId": "send-tool", "agentId": child, "agentStatus": "completed"])
+                let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
+                XCTAssertEqual(ended.phase, .completed); XCTAssertEqual(ended.turnID, "revive-turn")
+                let group = try XCTUnwrap(ActivityTaskGroup.make(state.activities).first)
+                XCTAssertEqual(group.runningSubagentCount, 0); XCTAssertFalse(group.isRunning, "The ended task no longer reads as running")
+            }
+        }
+    }
     func testSshColdReplayEstablishesHookEngineTurnBeforeExactStopAndNextHumanAppend() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-child-cold-replay-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
