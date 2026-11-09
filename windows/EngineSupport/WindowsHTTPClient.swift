@@ -60,11 +60,10 @@ final class WindowsHTTPClient: @unchecked Sendable {
         let options = options
         let result: Result<(Data, HTTPURLResponse), Error> = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                let thread = Thread {
+                let started = WindowsThread.start(name: "WinHTTP request") {
                     continuation.resume(returning: Self.run(url, target: target, fields: fields, proxy: proxy, options: options, transport: transport))
                 }
-                thread.name = "WinHTTP request"
-                thread.start()
+                if !started { continuation.resume(returning: .failure(URLError(.cannotConnectToHost))) }
             }
         } onCancel: { transport.cancel() }
         if case .failure(let error as URLError) = result, error.code == .cancelled, Task.isCancelled { throw CancellationError() }
