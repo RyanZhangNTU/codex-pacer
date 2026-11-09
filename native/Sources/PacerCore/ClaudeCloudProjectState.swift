@@ -65,6 +65,8 @@ public struct ClaudeCloudProjectState: Sendable {
         var mark: Date?
         /// When `mark` last advanced, so an older row can be told from a stale snapshot.
         var markAt: Date?
+        /// The last row that was not a stale snapshot, which stands in for one.
+        var trustedRow: ClaudeCloudThread?
         var lastEndKey: String?
         var sawUnread = false
         var lastUnread: Bool?
@@ -258,23 +260,24 @@ public struct ClaudeCloudProjectState: Sendable {
         id.replacingOccurrences(of: #"^(?:cse|session)_"#, with: "", options: .regularExpression)
     }
 
-    private mutating func applyThread(_ thread: ClaudeCloudThread, project: ClaudeCloudProject, sessions: [ClaudeCloudSession], at now: Date) {
-        var entry = tracked[thread.id] ?? Tracked(projectID: project.id)
-        let reply = datedReply(thread, at: now)
-        // A row older than a reply Pacer saw in the last five minutes is a stale snapshot: its own state
-        // and read flag change nothing, but the sessions read with it are current. Past that, an older
-        // reply is taken as the thread's state.
-        let stale = reply.map { reply in entry.mark.map { reply < $0 } ?? false } == true
+    private mutating func applyThread(_ listed: ClaudeCloudThread, project: ClaudeCloudProject, sessions: [ClaudeCloudSession], at now: Date) {
+        var entry = tracked[listed.id] ?? Tracked(projectID: project.id)
+        // A row older than a reply Pacer saw in the last five minutes is a stale snapshot, so the thread reads
+        // as unchanged since the last row Pacer trusted, while the sessions read with it are current. Past
+        // that, an older reply is taken as the thread's state.
+        let stale = datedReply(listed, at: now).map { reply in entry.mark.map { reply < $0 } ?? false } == true
             && now.timeIntervalSince(entry.markAt ?? .distantPast) < Self.settlingTime
+        guard let thread = stale ? entry.trustedRow : listed else { return }
         // `idle` can come before `needs_input` for the same run. Without a reply time the question cannot be
-        // matched to the run just seen ending, so that ending and its read state stand until the time arrives.
-        let undatedQuestion = thread.status == .needsInput && reply == nil && endedRecently(entry, at: now)
+        // matched to the ending just shown, so that ending and its read state stand until the time arrives.
+        let showsEnding = entry.activity.map { [.completed, .interrupted].contains($0.phase) } == true
+        let undatedQuestion = thread.status == .needsInput && datedReply(thread, at: now) == nil && showsEnding && endedRecently(entry, at: now)
         let isNew = tracked[thread.id] == nil
         let pending = sessions.lazy.compactMap(\.pending).first
-        let attention: PendingAttentionRequest.Kind? = thread.openDecisions > 0 && !stale ? .decision : pending
+        let attention: PendingAttentionRequest.Kind? = thread.openDecisions > 0 ? .decision : pending
         let failed = thread.status == .failed
-        let confirmed = (thread.isActive && !stale) || sessions.contains(where: \.isRunning)
-        if stale || undatedQuestion, !confirmed, attention == nil { return }
+        let confirmed = thread.isActive || sessions.contains(where: \.isRunning)
+        if undatedQuestion, !confirmed, attention == nil { return }
         if confirmed {
             entry.observedRun = true
             settledQuestions[thread.id] = nil
@@ -331,8 +334,9 @@ public struct ClaudeCloudProjectState: Sendable {
         }
         if let reply = thread.lastReplyAt, reply > (entry.mark ?? .distantPast) { entry.markAt = now }
         entry.mark = [entry.mark, thread.lastReplyAt].compactMap { $0 }.max()
-        update(&entry, id: thread.id, project: project, title: thread.title, session: sessions.first, role: .thread, status: stale ? nil : thread.status,
-               workers: sessions.isEmpty ? thread.workingSessions : sessions.filter(\.isRunning).count, unread: thread.hasUnread && !stale, at: now)
+        entry.trustedRow = thread
+        update(&entry, id: thread.id, project: project, title: thread.title, session: sessions.first, role: .thread, status: thread.status,
+               workers: sessions.isEmpty ? thread.workingSessions : sessions.filter(\.isRunning).count, unread: thread.hasUnread, at: now)
         tracked[thread.id] = entry
     }
 

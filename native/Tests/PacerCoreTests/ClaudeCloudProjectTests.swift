@@ -568,6 +568,52 @@ final class ClaudeCloudProjectTests: XCTestCase {
         XCTAssertTrue(decided.attention.isEmpty)
     }
 
+    func testAStaleRowReadsAsTheLastTrustedRowSoSessionsCanEndWhatTheyStarted() {
+        // A decision the last trusted row showed stays while an older row is listed, so it alerts once.
+        var deciding = ClaudeCloudProjectState(), policy = AttentionPolicy()
+        let running = worker(.working, worker: .running)
+        deciding.apply(snapshot([thread(.working, working: true, reply: -60)]), at: at(0))
+        deciding.apply(snapshot([thread(.working, working: true, reply: 18, decisions: 1)], sessions: [running]), at: at(20))
+        var notices = policy.requestNotices(deciding.attention).count
+        deciding.apply(snapshot([thread(.working, working: true, reply: -60)], sessions: [running]), at: at(40))
+        XCTAssertEqual(deciding.attention.map(\.kind), [.decision])
+        notices += policy.requestNotices(deciding.attention).count
+        deciding.apply(snapshot([thread(.working, working: true, reply: 18, decisions: 1)], sessions: [running]), at: at(60))
+        notices += policy.requestNotices(deciding.attention).count
+        XCTAssertEqual(notices, 1)
+
+        // A full session read can end a run or a request that sessions showed behind an older row.
+        func ended() -> ClaudeCloudProjectState {
+            var state = ClaudeCloudProjectState()
+            state.apply(snapshot([thread(.working, working: true, reply: -60)]), at: at(0))
+            state.apply(snapshot([thread(.resolved, unread: true, reply: 18)], sessions: [worker(.reviewReady)]), at: at(20))
+            return state
+        }
+        let stopped = ClaudeCloudSession(id: "cse_worker1", worker: .idle)
+        var run = ended()
+        run.apply(snapshot([thread(.idle, reply: -60)], sessions: [running]), at: at(40))
+        XCTAssertEqual(row(run)?.phase, .running)
+        run.apply(snapshot([thread(.idle, reply: -60)], sessions: [stopped]), at: at(60))
+        XCTAssertNotEqual(row(run)?.phase, .running)
+        XCTAssertFalse(run.hasRunningWork)
+
+        var approval = ended()
+        let asking = ClaudeCloudSession(id: "cse_worker1", worker: .requiresAction, pending: .approval)
+        approval.apply(snapshot([thread(.needsInput, reply: -60)], sessions: [asking]), at: at(40))
+        XCTAssertEqual(approval.attention.map(\.kind), [.approval])
+        approval.apply(snapshot([thread(.needsInput, reply: -60)], sessions: [stopped]), at: at(60))
+        XCTAssertTrue(approval.attention.isEmpty)
+        XCTAssertNotEqual(row(approval)?.phase, .waitingForInput)
+
+        // The same holds while a question waits for its reply time.
+        var undated = ended()
+        let question = ClaudeCloudThread(id: "cmsg_thread1", projectID: project.id, status: .needsInput, sessionIDs: ["cse_worker1"])
+        undated.apply(snapshot([question], sessions: [asking]), at: at(40))
+        XCTAssertEqual(undated.attention.map(\.kind), [.approval])
+        undated.apply(snapshot([question], sessions: [stopped]), at: at(60))
+        XCTAssertFalse(undated.attention.contains { $0.kind == .approval })
+    }
+
     func testAStaleRowChangesNeitherANewerEndingNorANewerQuestion() {
         var ending = ClaudeCloudProjectState()
         ending.apply(snapshot([thread(.working, working: true, reply: -60)]), at: at(0))
