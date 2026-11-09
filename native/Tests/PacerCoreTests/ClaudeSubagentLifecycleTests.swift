@@ -377,6 +377,119 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             }
         }
     }
+    /// A background agent can finish while its chat is mid-turn, and the chat
+    /// can revive it before its prompt changes: every SubagentStart then
+    /// carries the prompt that already names the ended run.
+    func testRevivalInsideTheSameParentPromptRunsAgainAndEndsOnItsOwnNotification() throws {
+        for host in [String?.none, "remote-ssh-discovered:fixture"] {
+            var state = ClaudeActivityState(sourceID: host)
+            send("prompt", to: &state, at: 0)
+            send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+            send("subagentStart", to: &state, thread: child, at: 2)
+            send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+            send("agentNotification", to: &state, at: 5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+            XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .completed)
+            for (index, item) in ["send-tool", "send-again"].enumerated() {
+                let offset = Double(index) * 20
+                send("toolStart", to: &state, at: 11 + offset, extra: ["itemId": item, "agentTool": true])
+                send("subagentStart", to: &state, thread: child, at: 12 + offset)
+                send("toolStart", to: &state, thread: child, at: 12.5 + offset, extra: ["itemId": "child-tool-\(index)"])
+                send("agentResult", to: &state, at: 13 + offset, extra: ["itemId": item, "agentId": child, "agentStatus": "async_launched"])
+                let revived = try XCTUnwrap(state.activities.first { $0.threadID == child })
+                XCTAssertEqual(revived.phase, .running); XCTAssertEqual(revived.turnStartedAt, now.addingTimeInterval(12 + offset))
+                XCTAssertNotEqual(revived.turnID, turn, "The revived run cannot reuse the retired turn")
+                XCTAssertEqual(revived.lastObserved, now.addingTimeInterval(12.5 + offset), "Records carrying the parent prompt follow the new run")
+                XCTAssertEqual(ActivityTaskGroup.make(state.activities).first?.runningSubagentCount, 1)
+                send("agentNotification", to: &state, at: 20 + offset, extra: ["origin": "transcript", "itemId": item, "agentId": child, "agentStatus": "completed"])
+                let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
+                XCTAssertEqual(ended.phase, .completed); XCTAssertEqual(ended.phaseChangedAt, now.addingTimeInterval(20 + offset))
+            }
+            XCTAssertEqual(state.activities.first { $0.threadID == parent }?.turnID, turn)
+            XCTAssertEqual(state.activities.first { $0.threadID == parent }?.phase, .running)
+        }
+    }
+    /// A hook reads its clock after its interpreter starts, so a background
+    /// child's SubagentStart can be stamped after both copies of its launch.
+    func testBackgroundChildStampedJustAfterItsLaunchStillBindsAndForegroundStaysStrict() throws {
+        for revival in [false, true] {
+            for (lag, binds) in [(0.0005, true), (4.0, true), (6.0, false)] {
+                for childFirst in [false, true] {
+                    var state = ClaudeActivityState()
+                    send("prompt", to: &state, at: 0)
+                    let item = revival ? "send-tool" : "agent-tool"
+                    if revival {
+                        send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+                        send("subagentStart", to: &state, thread: child, at: 2)
+                        send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+                        send("agentNotification", to: &state, at: 5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+                        send("prompt", to: &state, at: 10, extra: ["promptId": "revive-turn"])
+                    }
+                    let prompt = revival ? "revive-turn" : turn, launch = revival ? 12.438 : 2.0
+                    send("toolStart", to: &state, at: launch - 1, extra: ["promptId": prompt, "itemId": item, "agentTool": true])
+                    if childFirst { send("subagentStart", to: &state, thread: child, at: launch + lag, extra: ["promptId": prompt]) }
+                    send("agentResult", to: &state, at: launch, extra: ["promptId": prompt, "itemId": item, "agentId": child, "agentStatus": "async_launched"])
+                    send("agentResult", to: &state, at: launch, extra: ["origin": "transcript", "promptId": prompt, "itemId": item, "agentId": child, "agentStatus": "async_launched"])
+                    if !childFirst { send("subagentStart", to: &state, thread: child, at: launch + lag, extra: ["promptId": prompt]) }
+                    XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running)
+                    send("agentNotification", to: &state, at: 30, extra: ["origin": "transcript", "itemId": item, "agentId": child, "agentStatus": "completed"])
+                    XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, binds ? .completed : .running,
+                                   "revival \(revival), SubagentStart \(lag) s after the launch, child first \(childFirst)")
+                }
+            }
+        }
+        // A foreground result reports a run that already ended: a run starting
+        // after it is a later one.
+        var state = ClaudeActivityState()
+        send("prompt", to: &state, at: 0)
+        send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+        send("agentResult", to: &state, at: 2, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+        send("subagentStart", to: &state, thread: child, at: 2.0005)
+        XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running)
+    }
+    /// Hooks file every subagent under the root session, while Claude Code
+    /// reports an agent launched or revived by a subagent to that subagent, as
+    /// a queued attachment in its own file.
+    func testAgentLaunchedOrRevivedByAnotherSubagentEndsOnTheNotificationThatSubagentGets() throws {
+        let sender = "fixture-sender"
+        for revival in [false, true] {
+            let item = revival ? "send-tool" : "nested-tool"
+            let delivered = queuedNotificationFixture(notification(item: item), at: "2027-01-15T08:00:20Z")
+            let native = try ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(delivered)!, sessionID: sender, parentID: parent, promptID: turn)
+                .map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
+            XCTAssertTrue(NSArray(array: try pythonRows([delivered], owner: sender, parentID: parent)).isEqual(to: native), "Native and SSH parsers agree")
+            let notices = native.filter { $0["kind"] as? String == "agentNotification" }
+            XCTAssertEqual(notices.count, 1)
+            XCTAssertEqual(notices.first?["sessionId"] as? String, sender); XCTAssertEqual(notices.first?["parentId"] as? String, parent)
+            for host in [String?.none, "remote-ssh-discovered:fixture"] {
+                var state = ClaudeActivityState(sourceID: host)
+                send("prompt", to: &state, at: 0)
+                if revival {
+                    send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+                    send("subagentStart", to: &state, thread: child, at: 2)
+                    send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+                    send("agentNotification", to: &state, at: 5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+                    send("prompt", to: &state, at: 9, extra: ["promptId": "next-turn"])
+                }
+                let prompt = revival ? "next-turn" : turn
+                send("subagentStart", to: &state, thread: sender, at: 10, extra: ["promptId": prompt])
+                send("toolStart", to: &state, thread: sender, at: 11, extra: ["promptId": prompt, "itemId": item, "agentTool": true])
+                send("subagentStart", to: &state, thread: child, at: 12, extra: ["promptId": prompt])
+                send("agentResult", to: &state, thread: sender, at: 13, extra: ["promptId": prompt, "itemId": item, "agentId": child, "agentStatus": "async_launched"])
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running)
+                // Another task's chat cannot end it.
+                send("agentNotification", to: &state, thread: "other-root", at: 15,
+                     extra: ["origin": "transcript", "parentId": NSNull(), "itemId": item, "agentId": child, "agentStatus": "completed"])
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running)
+                for row in ClaudeActivityRecord.transcript(ClaudeActivityRecord.encode(delivered)!, sessionID: sender, parentID: parent, promptID: prompt) {
+                    state.consume(row, now: now.addingTimeInterval(100))
+                }
+                let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
+                XCTAssertEqual(ended.phase, .completed, "revival \(revival)"); XCTAssertEqual(ended.phaseChangedAt, now.addingTimeInterval(20))
+                XCTAssertEqual(ended.parentThreadID, parent, "The ended child stays filed under the root session")
+                XCTAssertEqual(state.activities.first { $0.threadID == sender }?.phase, .running)
+            }
+        }
+    }
     func testSshColdReplayEstablishesHookEngineTurnBeforeExactStopAndNextHumanAppend() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-child-cold-replay-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

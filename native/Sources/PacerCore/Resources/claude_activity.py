@@ -135,9 +135,10 @@ def transcript_record(value, owner, parent=None, prompt=None):
         return [dict(base,kind='agentNotification',agentId=notification[0],itemId=notification[1],agentStatus=notification[2])] if notification else []
     # While its chat is mid-turn, Claude Code delivers a background agent's
     # notification as a queued attachment inside the running turn instead of a
-    # user record. The notification text is the same.
+    # user record. The notification text is the same. A subagent gets the ones
+    # for the agents it launched or revived in its own file.
     attachment=value.get('attachment') if isinstance(value.get('attachment'),dict) else None
-    if kind=='attachment' and not parent and attachment and attachment.get('type')=='queued_command' and attachment.get('commandMode')=='task-notification':
+    if kind=='attachment' and attachment and attachment.get('type')=='queued_command' and attachment.get('commandMode')=='task-notification':
         source=attachment.get('origin')
         if source is not None and not (isinstance(source,dict) and source.get('kind')=='task-notification' and source.get('producer')=='session-task'):return []
         notification=agent_notification(attachment.get('prompt'))

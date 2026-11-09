@@ -104,8 +104,9 @@ enum ClaudeActivityRecord {
         }
         // While its chat is mid-turn, Claude Code delivers a background agent's
         // notification as a queued attachment inside the running turn instead
-        // of a user record. The notification text is the same.
-        if kind == "attachment", parentID == nil,
+        // of a user record. The notification text is the same. A subagent
+        // gets the ones for the agents it launched or revived in its own file.
+        if kind == "attachment",
            let attachment = fields["attachment"].flatMap({ try? $0.fields(["type", "commandMode", "origin", "prompt"]) }),
            attachment["type"]?.matchesStringLiteral("queued_command") == true,
            attachment["commandMode"]?.matchesStringLiteral("task-notification") == true {
@@ -240,7 +241,13 @@ struct ClaudeActivityState: Sendable {
         let parent: String; let item: String; let turn: String; let toolStartedAt: Double; let launchedAt: Double
         let at: Double; let historical: Bool; let status: String
         var childTurn: String? = nil; var childStartedAt: Double? = nil
+        /// A background launch, or the ending of one.
+        var background = false
     }
+    /// A hook reads its clock only after its interpreter starts, so a
+    /// background child's SubagentStart can be stamped after the launch result
+    /// that started it. Only that run can begin this soon after its launch.
+    private static let launchStartSkew = 5.0
     private var agentCompletions: [String: AgentCompletion] = [:]
     private var agentEnds: [String: AgentCompletion] = [:]
     private var agentLaunches: [String: AgentCompletion] = [:]
@@ -402,7 +409,7 @@ struct ClaudeActivityState: Sendable {
                   let status = record["agentStatus"] as? String, ["completed", "async_launched"].contains(status) else { return }
             let childKey = AgentProvider.claude.activityID(sessionID: child, sourceHostID: sourceID)
             var ownership = AgentCompletion(parent: thread, item: item, turn: turn, toolStartedAt: tool.at, launchedAt: seconds,
-                at: seconds, historical: attaching, status: status)
+                at: seconds, historical: attaching, status: status, background: status == "async_launched")
             if let observed = sessions[childKey], [.running, .waitingForInput].contains(observed.phase),
                let bound = boundAgentCompletion(ownership, to: observed) { ownership = bound }
             if status == "async_launched" {
@@ -420,10 +427,10 @@ struct ClaudeActivityState: Sendable {
                   let item = ClaudeActivityRecord.identifier(record["itemId"] as? String),
                   let status = record["agentStatus"] as? String, ["completed", "failed", "killed"].contains(status) else { return }
             let childKey = AgentProvider.claude.activityID(sessionID: child, sourceHostID: sourceID)
-            guard let launch = agentLaunches[childKey], launch.parent == thread, launch.item == item, seconds >= launch.launchedAt else { return }
-            agentCompletions[childKey] = AgentCompletion(parent: thread, item: item, turn: launch.turn,
+            guard let launch = agentLaunches[childKey], sameTask(launch.parent, thread), launch.item == item, seconds >= launch.launchedAt else { return }
+            agentCompletions[childKey] = AgentCompletion(parent: launch.parent, item: item, turn: launch.turn,
                 toolStartedAt: launch.toolStartedAt, launchedAt: launch.launchedAt, at: seconds, historical: attaching, status: status,
-                childTurn: launch.childTurn, childStartedAt: launch.childStartedAt)
+                childTurn: launch.childTurn, childStartedAt: launch.childStartedAt, background: true)
             applyAgentCompletion(childKey, now: now); return
         }
         if kind == "request" {
@@ -504,6 +511,13 @@ struct ClaudeActivityState: Sendable {
         }
         if kind == "prompt", let prompt = ClaudeActivityRecord.identifier(record["promptId"] as? String) { turn = prompt }
         if turn == nil, ["toolStart", "response", "thinking", "subagentStart"].contains(kind) { turn = "attached-" + String(Int(seconds * 1000)) }
+        // A revived child can start again inside the parent prompt that its
+        // ended run already used. An ended turn is retired, so the new run gets
+        // its own; the child's records carrying that prompt then map to it.
+        if kind == "subagentStart", let incoming = turn, value.parentThreadID != nil, [.completed, .interrupted].contains(value.phase),
+           let ended = value.turnID, ended == incoming || ended.hasPrefix(incoming + ".run") {
+            turn = incoming + ".run" + String(Int((seconds * 1000).rounded()))
+        }
         guard let turn else { return }
         let observedTerminal = ["stopVerified", "stop", "interrupt", "failure", "subagentStop"].contains(kind) && value.liveTurnStarted && value.hasLiveEvidence
         let observedModel = ["thinking", "response"].contains(kind) && value.liveTurnStarted && value.hasLiveEvidence && (record["promptId"] as? String) == value.turnID
@@ -603,16 +617,32 @@ struct ClaudeActivityState: Sendable {
         if ["prompt", "subagentStart", "toolStart", "thinking", "response"].contains(kind) {
             if let launch = agentLaunches[key] {
                 if let bound = boundAgentCompletion(launch, to: value) { agentLaunches[key] = bound }
-                else if value.turnStartedAt.map({ $0.timeIntervalSince1970 > launch.launchedAt }) == true { agentLaunches.removeValue(forKey: key) }
+                else if value.turnStartedAt.map({ $0.timeIntervalSince1970 > launch.launchedAt + Self.launchStartSkew }) == true { agentLaunches.removeValue(forKey: key) }
             }
             applyAgentCompletion(key, now: now)
         }
     }
+    /// The root session of a thread, following observed parents.
+    private func rootThread(_ thread: String) -> String {
+        var current = thread, seen: Set<String> = []
+        while seen.insert(current).inserted, seen.count <= 16,
+              let parent = sessions[AgentProvider.claude.activityID(sessionID: current, sourceHostID: sourceID)]?.parentThreadID {
+            current = parent
+        }
+        return current
+    }
+    /// Hooks file every subagent under the root session, while Claude Code
+    /// reports an agent to whichever agent launched or revived it. Ownership
+    /// therefore holds anywhere within one task.
+    private func sameTask(_ first: String, _ second: String) -> Bool {
+        first == second || rootThread(first) == rootThread(second)
+    }
     private func boundAgentCompletion(_ completion: AgentCompletion, to child: SessionActivity) -> AgentCompletion? {
-        guard child.parentThreadID == completion.parent, let turn = child.turnID, let start = child.turnStartedAt?.timeIntervalSince1970,
-              start >= completion.toolStartedAt, start <= completion.launchedAt,
-              completion.childTurn.map({ $0 == turn }) ?? true,
-              completion.childStartedAt.map({ $0 == start }) ?? true else { return nil }
+        guard let parent = child.parentThreadID, sameTask(parent, completion.parent),
+              let turn = child.turnID, let start = child.turnStartedAt?.timeIntervalSince1970 else { return nil }
+        if let childTurn = completion.childTurn { return childTurn == turn && completion.childStartedAt == start ? completion : nil }
+        guard start >= completion.toolStartedAt,
+              start <= completion.launchedAt + (completion.background ? Self.launchStartSkew : 0) else { return nil }
         var bound = completion; bound.childTurn = turn; bound.childStartedAt = start; return bound
     }
     private mutating func applyAgentCompletion(_ key: String, now: Date) {
@@ -623,7 +653,7 @@ struct ClaudeActivityState: Sendable {
         guard completion.at >= (child.lastObserved?.timeIntervalSince1970 ?? 0) else { return }
         let kind = completion.status == "failed" ? "failure" : completion.status == "killed" ? "interrupt" : "subagentStop"
         consumeRecord(["kind": kind, "origin": "agentResult", "sessionId": thread,
-            "parentId": completion.parent, "promptId": childTurn, "at": completion.at], now: now, attaching: completion.historical)
+            "parentId": child.parentThreadID ?? completion.parent, "promptId": childTurn, "at": completion.at], now: now, attaching: completion.historical)
         if [.completed, .interrupted].contains(sessions[key]?.phase ?? .unknown), sessions[key]?.turnID == childTurn {
             if completion.status == "completed" { agentEnds[key] = completion }
             agentLaunches.removeValue(forKey: key)
