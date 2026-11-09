@@ -24,6 +24,11 @@ CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 REPORTS = [63, 41]
 MAC_QA_ID = "com.codexpacer.app.qa.codex-progress"
 MAC_OWNER = {"PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"}
+# Pacer keeps its tool out of Codex's tool search. Without this, models whose
+# metadata supports tool search (any provider that uses an OpenAI model name)
+# find the tool only through tool_search, and code-mode models never see it.
+OMITTED = ["deferred"]
+QUALIFIED = "mcp__pacer_progress__report_progress"
 MAC_SWITCH = "Show Codex Task Progress"
 MAC_SETUP = {"settingUp": "Setting up progress reporting…",
              "ready": "Progress reporting is ready for new local Codex sessions.",
@@ -170,20 +175,32 @@ def configuration(codex_executable, profile, enabled):
 def configure_from_engine(executable, codex_executable, profile, work, env):
     config = profile / "config.toml"
     flag = profile / "pacer/codex-progress/native/enabled"
+    def servers():
+        return tomllib.loads(config.read_text(encoding="utf-8"))["mcp_servers"]
     with Lines([str(executable)], work, env) as engine:
         engine.rpc("initialize", configuration(codex_executable, profile, False), engine=True)
         engine.rpc("configure", {"codexProgressRing": True}, engine=True)
         wait_setup(engine, lambda status: status == "ready")
         if (profile / "hooks.json").exists() or flag.read_bytes() != b"on\n":
             raise RuntimeError("Unexpected file changes from MCP-only setup")
+        entry = servers()["pacer_progress"]
+        if set(entry) != {"command", "args", "env", "omit_tools_from"} or entry["omit_tools_from"] != OMITTED:
+            raise RuntimeError("The registration lets Codex hide the reporter behind tool search")
         ready = config.read_bytes()
         engine.rpc("retryCodexProgressSetup", engine=True)
         wait_setup(engine, lambda status: status == "ready")
         if config.read_bytes() != ready:
             raise RuntimeError("Retry rewrote the current registration")
+        # Pacer 4.3 wrote the entry without omit_tools_from; setup updates it in place.
+        earlier = re.sub(r"(?m)^omit_tools_from\s*=.*\n", "", config.read_text(encoding="utf-8"))
+        config.write_text(earlier, encoding="utf-8")
+        if "omit_tools_from" in servers()["pacer_progress"]:
+            raise RuntimeError("Could not write the earlier registration")
+        engine.rpc("retryCodexProgressSetup", engine=True)
+        wait_setup(engine, lambda status: status == "ready" and servers()["pacer_progress"].get("omit_tools_from") == OMITTED)
+        if servers()["pacer_progress"] != entry:
+            raise RuntimeError("Setup did not update the earlier registration in place")
         engine.rpc("configure", {"codexProgressRing": False}, engine=True)
-        def servers():
-            return tomllib.loads(config.read_text(encoding="utf-8"))["mcp_servers"]
         wait_setup(engine, lambda _: not flag.exists() and "pacer_progress" not in servers())
         if servers() != {"unrelated_fixture": {"command": "keep-existing-mcp", "enabled": False}}:
             raise RuntimeError("An unrelated MCP entry changed")
@@ -199,6 +216,35 @@ def configure_from_engine(executable, codex_executable, profile, work, env):
         engine.rpc("retryCodexProgressSetup", engine=True)
         wait_setup(engine, lambda status: status == "ready")
         engine.rpc("shutdown", engine=True)
+
+
+def offered_tools(request):
+    """Top-level tools, plus the tools code-mode models receive in additional_tools input items."""
+    tools = list(request.get("tools") or [])
+    for item in request.get("input") or []:
+        if isinstance(item, dict) and item.get("type") == "additional_tools":
+            for tool in item.get("tools") or []:
+                tools.extend((tool.get("tools") or []) if tool.get("name") == "functions" else [tool])
+    return tools
+
+
+def report_call(index, tools, percent):
+    """The model's call through whichever surface Codex offers, or None when the tool is hidden."""
+    namespace = next((tool for tool in tools if tool.get("type") == "namespace"
+                      and tool.get("name") == "mcp__pacer_progress"
+                      and any(t.get("name") == "report_progress" for t in tool.get("tools", []))), None)
+    if namespace or any(tool.get("name") == QUALIFIED for tool in tools):
+        item = {"type": "function_call", "id": "fc_" + str(index), "call_id": "call_" + str(index),
+                "name": "report_progress" if namespace else QUALIFIED,
+                "arguments": json.dumps({"percent": percent}), "status": "completed"}
+        if namespace:
+            item["namespace"] = namespace["name"]
+        return item
+    # Code-mode models call tools from a script, and only see the ones its description lists.
+    if any(tool.get("name") == "exec" and QUALIFIED in (tool.get("description") or "") for tool in tools):
+        return {"type": "custom_tool_call", "id": "ctc_" + str(index), "call_id": "call_" + str(index), "name": "exec",
+                "input": "await tools.%s({percent: %d});" % (QUALIFIED, percent), "status": "completed"}
+    return None
 
 
 class Fixture:
@@ -229,7 +275,7 @@ class Fixture:
                 fixture.requests += 1
                 index = fixture.requests
                 if index == 1:
-                    fixture.guidance_seen = "first useful tool batch" in json.dumps(request.get("tools", []))
+                    fixture.guidance_seen = "first useful tool batch" in json.dumps(offered_tools(request))
                 if 2 <= index <= 3:
                     fixture.received[index - 2].set()
                     if not fixture.resume[index - 2].wait(90):
@@ -241,20 +287,12 @@ class Fixture:
                     }}).encode())
                     return
                 if index <= 2:
-                    tools = request.get("tools", [])
-                    namespace = next((tool for tool in tools if tool.get("type") == "namespace"
-                                      and tool.get("name") == "mcp__pacer_progress"
-                                      and any(t.get("name") == "report_progress" for t in tool.get("tools", []))), None)
-                    name = "report_progress" if namespace else "mcp__pacer_progress__report_progress"
-                    if namespace is None and not any(tool.get("name") == name for tool in tools):
+                    percent = REPORTS[index - 1]
+                    item = report_call(index, offered_tools(request), percent)
+                    if item is None:
                         self.send_error(422)
                         return
-                    percent = REPORTS[index - 1]
                     fixture.sent.append(percent)
-                    item = {"type": "function_call", "id": "fc_" + str(index), "call_id": "call_" + str(index),
-                            "name": name, "arguments": json.dumps({"percent": percent}), "status": "completed"}
-                    if namespace:
-                        item["namespace"] = namespace["name"]
                 else:
                     item = {"id": "msg_" + str(index), "type": "message", "role": "assistant", "status": "completed",
                             "content": [{"type": "output_text", "text": "Synthetic progress check done.", "annotations": []}]}
@@ -442,7 +480,8 @@ class MacHost:
         # Pacer standardizes paths, so /private/tmp may come back as /tmp.
         entry = self.entry() or {}
         args = entry.get("args") or []
-        return (set(entry) == {"command", "args", "env"} and entry["env"] == MAC_OWNER and len(args) == 2
+        return (set(entry) == {"command", "args", "env", "omit_tools_from"} and entry["env"] == MAC_OWNER
+                and entry["omit_tools_from"] == OMITTED and len(args) == 2
                 and args[0] == "--codex-progress-mcp" and Path(args[1]).resolve() == self.profile.resolve()
                 and Path(entry["command"]).resolve() == self.executable.resolve())
 
@@ -528,7 +567,9 @@ def run(args, workspace):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         processes.callback(server.shutdown)
         config = profile / "config.toml"
-        config.write_text("""model = "pacer-fixture"
+        # A custom provider, as with a third-party API. Codex takes tool metadata
+        # from its bundled catalog when the model name is an OpenAI one.
+        config.write_text("""model = "%s"
 model_provider = "pacer_test"
 approval_policy = "never"
 sandbox_mode = "read-only"
@@ -537,8 +578,6 @@ web_search = "disabled"
 command = "keep-existing-mcp"
 enabled = false
 [features]
-tool_search = false
-code_mode = false
 plugins = false
 [model_providers.pacer_test]
 name = "Pacer synthetic model"
@@ -546,7 +585,7 @@ base_url = "http://127.0.0.1:%d/v1"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
-""" % server.server_port, encoding="utf-8")
+""" % (args.model, server.server_port), encoding="utf-8")
         exe = str(args.codex.resolve())
         app = None
         if args.client == "app-server":
@@ -596,8 +635,8 @@ stream_max_retries = 0
                 codex.wait(timeout=5)
         if engine:
             engine.rpc("shutdown", engine=True)
-    print("PASS %s %s: automatic MCP setup, model guidance, %s, cleanup and ownership"
-          % ("macOS app" if args.mac_app else "engine", args.client, args.terminal))
+    print("PASS %s %s %s: automatic MCP setup, model guidance, %s, cleanup and ownership"
+          % ("macOS app" if args.mac_app else "engine", args.client, args.model, args.terminal))
 
 
 def installer_fixture(engine, codex):
@@ -654,6 +693,9 @@ def main():
     parser.add_argument("--screenshots", type=Path, help="with --mac-app, save island and Settings captures here")
     parser.add_argument("--terminal", choices=("done", "failed"), default="done")
     parser.add_argument("--client", choices=("cli", "app-server"), default="cli")
+    parser.add_argument("--model", default="pacer-fixture",
+                        help="model name sent to the fixture; an OpenAI name such as gpt-5.5 uses Codex's bundled "
+                             "tool-search metadata, and a code-mode model such as gpt-5.6-sol calls tools from scripts")
     parser.add_argument("--output", type=Path, default=ROOT / "output/codex-progress-tests")
     args = parser.parse_args()
     if not args.mac_reporter and not (args.codex and (args.engine or args.mac_app)):
