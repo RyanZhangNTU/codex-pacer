@@ -5,16 +5,24 @@ import Foundation
 /// at the same time do not skew it.
 public struct CompactFirstOutputHistory: Equatable, Sendable {
     public static let limit = 5
-    public private(set) var values: [Double] = []
-    private var lastStamp: Date?
+    private struct Sample: Equatable, Sendable {
+        let stamp: Date
+        let seconds: Double
+    }
+    /// The newest measurements by when they were taken, oldest first.
+    private var samples: [Sample] = []
+    public var values: [Double] { samples.map(\.seconds) }
 
     public init() {}
 
+    /// Measurements can arrive out of order, several in one batch; each takes
+    /// its place by when it was taken, and one already kept is not counted twice.
     public mutating func record(_ seconds: Double?, measuredAt stamp: Date?) {
-        guard let seconds, seconds.isFinite, (0...3600).contains(seconds), let stamp, stamp != lastStamp else { return }
-        lastStamp = stamp
-        values.append(seconds)
-        if values.count > Self.limit { values.removeFirst(values.count - Self.limit) }
+        guard let seconds, seconds.isFinite, (0...3600).contains(seconds), let stamp,
+              !samples.contains(where: { $0.stamp == stamp }) else { return }
+        let index = samples.firstIndex { $0.stamp > stamp } ?? samples.endIndex
+        samples.insert(Sample(stamp: stamp, seconds: seconds), at: index)
+        if samples.count > Self.limit { samples.removeFirst(samples.count - Self.limit) }
     }
 
     public var median: Double? { Self.median(values) }

@@ -38,14 +38,36 @@ struct AlternatingQuotaText: NSViewRepresentable {
     var centered = false
     var maxWidth: CGFloat = .infinity
 
+    /// The strip's other numbers shrink to 60% before they clip.
+    static let minimumScale: CGFloat = 0.6
+
     func makeNSView(context: Context) -> AlternatingQuotaView { AlternatingQuotaView() }
     func updateNSView(_ view: AlternatingQuotaView, context: Context) {
-        view.update(strings: entries.map(attributed), animates: animates, font: font, centered: centered, maxWidth: maxWidth)
+        let shown = fitted
+        view.update(strings: entries.map(shown.attributed), animates: animates, font: shown.font, centered: centered, maxWidth: maxWidth)
     }
     /// The widest value reserves the slot, so taking turns never moves its neighbors.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: AlternatingQuotaView, context: Context) -> CGSize? {
-        let width = entries.map { attributed($0).size().width }.max() ?? 0
-        return CGSize(width: min(maxWidth, ceil(width)), height: ceil(font.ascender - font.descender))
+        let shown = fitted
+        return CGSize(width: min(maxWidth, ceil(shown.widest)), height: ceil(shown.font.ascender - shown.font.descender))
+    }
+    var widest: CGFloat { entries.map { attributed($0).size().width }.max() ?? 0 }
+    /// The type shrinks, as the strip's other numbers do, until the widest
+    /// value fits `maxWidth`, so a long reading such as 1000% is not cut off.
+    var fitted: Self {
+        guard maxWidth.isFinite, maxWidth > 0 else { return self }
+        var shown = self
+        // Glyphs widen slightly at smaller optical sizes and the unit's kerning
+        // has a floor, so a few passes settle the last fraction.
+        for _ in 0..<4 {
+            let width = shown.widest
+            guard width > maxWidth else { break }
+            let scale = max(Self.minimumScale, maxWidth / width * shown.font.pointSize / font.pointSize)
+            shown.font = NSFont(descriptor: font.fontDescriptor, size: font.pointSize * scale) ?? font
+            shown.unitSize = unitSize * scale
+            if scale == Self.minimumScale { break }
+        }
+        return shown
     }
     func attributed(_ entry: Entry) -> NSAttributedString {
         let value = NSMutableAttributedString()

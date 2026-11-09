@@ -49,7 +49,7 @@ struct SettingsAppearancePane: View {
     }
     /// The swatches follow the choice at once, before the island applies it,
     /// each in its own tone.
-    private func ringTint(light: Bool) -> Color { accent.tint(for: .codex) ?? (light ? AgentProvider.codex.lightShade : AgentProvider.codex.brand) }
+    private func ringTint(light: Bool) -> Color { accent.tint(for: .codex, light: light) ?? (light ? AgentProvider.codex.lightShade : AgentProvider.codex.brand) }
 
     var body: some View {
         MainCard(title: L10n.text("appearance.theme")) {

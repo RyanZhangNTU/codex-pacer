@@ -56,18 +56,23 @@ public struct HeaderActivity: Equatable, Sendable {
             self.provider = provider; self.fraction = fraction.map { min(1, max(0, $0)) }; self.stale = stale
         }
     }
-    /// Running tasks only: a task waiting for the user turns the badge amber
-    /// instead, and finished ones have left the ring.
-    public var tasks: [TaskShare]
+    /// Every running task: a task waiting for the user turns the badge amber
+    /// instead, and finished ones have left the ring. The average counts all.
+    private var running: [TaskShare]
+    /// The running tasks the rings list, at most `taskLimit`.
+    public var tasks: [TaskShare] {
+        get { Array(running.prefix(Self.taskLimit)) }
+        set { running = newValue }
+    }
     /// Rings with more tasks than this show the average instead of segments.
     public static let segmentLimit = 4
     public static let taskLimit = 12
     public init(core: Core, activeCount: Int, orbit: [AgentProvider: Int], attention: PendingAttentionRequest.Kind? = nil, ending: Ending? = nil,
                 progress: TaskProgressRing? = nil, tasks: [TaskShare] = []) {
         self.core = core; self.activeCount = activeCount; self.orbit = orbit; self.attention = attention; self.ending = ending
-        self.progress = progress; self.tasks = Array(tasks.prefix(Self.taskLimit))
+        self.progress = progress; self.running = tasks
     }
-    private var reported: [TaskShare] { tasks.filter { $0.fraction != nil } }
+    private var reported: [TaskShare] { running.filter { $0.fraction != nil } }
     /// How many running tasks reported an estimate.
     public var reportedCount: Int { reported.count }
     /// The mean of the reported estimates; nil when no running task reported one.
@@ -83,7 +88,7 @@ public struct HeaderActivity: Equatable, Sendable {
         return providers.count == 1 ? providers.first : nil
     }
     /// Segments need several tasks, at most `segmentLimit`, and one estimate.
-    public var showsSegments: Bool { (2...Self.segmentLimit).contains(tasks.count) && !reported.isEmpty }
+    public var showsSegments: Bool { (2...Self.segmentLimit).contains(running.count) && !reported.isEmpty }
     public var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
     public var showsEndingMark: Bool { ending != nil && !endingIsCore }
     public static func countText(_ count: Int) -> String { count > 99 ? "99+" : String(count) }

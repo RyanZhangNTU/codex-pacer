@@ -115,8 +115,33 @@ final class IslandMaterialTests: XCTestCase {
         XCTAssertEqual(try rgb(AgentProvider.claude.shade(light: true)), [196, 88, 31], "A preview can draw the other tone")
 
         PacerAccent.current = .blue
-        PacerPalette.light = true
-        XCTAssertEqual(AgentProvider.codex.tint, PacerAccent.blue.color, "A chosen accent keeps its shades in either tone")
+        PacerPalette.light = false
+        XCTAssertEqual(AgentProvider.codex.tint, PacerAccent.blue.color, "The dark island takes the accent at full strength")
+    }
+
+    /// WCAG relative luminance of an sRGB color.
+    private func luminance(_ color: Color) throws -> Double {
+        let value = try XCTUnwrap(NSColor(color).usingColorSpace(.sRGB))
+        func linear(_ c: CGFloat) -> Double { let v = Double(c); return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linear(value.redComponent) + 0.7152 * linear(value.greenComponent) + 0.0722 * linear(value.blueComponent)
+    }
+
+    func testEveryAccentKeepsReadableShadesOnLightGlass() throws {
+        let face = try luminance(IslandAppearance.lightFace)
+        for accent in PacerAccent.allCases where accent != .multicolor {
+            PacerAccent.current = accent
+            PacerPalette.light = true
+            let shades = try AgentProvider.allCases.map { try luminance($0.tint) }
+            for (provider, shade) in zip(AgentProvider.allCases, shades) {
+                XCTAssertGreaterThanOrEqual((face + 0.05) / (shade + 0.05), 3.5, "\(accent) \(provider) reads on the light face")
+                XCTAssertEqual(shade, PacerAccent.lightLuminance(for: provider), accuracy: 0.004)
+            }
+            XCTAssertEqual(shades, shades.sorted(), "\(accent): Codex, Claude, DeepSeek run strongest first, so the rings stay apart")
+            XCTAssertEqual(AgentProvider.codex.shade(light: false), accent.color, "\(accent): the dark tone is unchanged")
+        }
+        PacerAccent.current = .yellow
+        let yellow = try XCTUnwrap(NSColor(AgentProvider.deepseek.shade(light: true)).usingColorSpace(.sRGB))
+        XCTAssertGreaterThan(yellow.redComponent, yellow.blueComponent * 4, "Scaling keeps the hue: yellow stays a warm olive")
     }
 
     func testAppliedSettingsSetTheIslandTone() async throws {
@@ -158,6 +183,23 @@ final class IslandMaterialTests: XCTestCase {
             XCTAssertEqual(try XCTUnwrap(layer.animation(forKey: "alternate")).beginTime, AlternatingQuotaText.epoch,
                 "and the rotation keeps its running frame")
         }
+    }
+
+    func testRotatingValuesShrinkToFitANarrowStripInsteadOfClipping() {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .semibold)
+        let entries: [AlternatingQuotaText.Entry] = [.init(text: "1000%", color: .white, splitsUnit: false), .init(text: "¥86", color: .white)]
+        let narrow = AlternatingQuotaText(entries: entries, animates: false, font: font, centered: true, maxWidth: 30)
+        XCTAssertGreaterThan(AlternatingQuotaText(entries: entries, animates: false, font: font).widest, 30)
+        let fitted = narrow.fitted
+        XCTAssertLessThanOrEqual(fitted.widest, 30.01, "The longest reading fits its cell")
+        XCTAssertLessThan(fitted.font.pointSize, 11.5)
+        XCTAssertGreaterThanOrEqual(fitted.font.pointSize, 11.5 * AlternatingQuotaText.minimumScale - 0.001)
+        XCTAssertTrue(fitted.font.fontDescriptor.symbolicTraits.contains(.bold) || fitted.font.fontName == font.fontName,
+            "It keeps the same face")
+        let roomy = AlternatingQuotaText(entries: [.init(text: "58%", color: .white, splitsUnit: false)], animates: false, font: font, maxWidth: 30).fitted
+        XCTAssertEqual(roomy.font.pointSize, 11.5, "A value that fits keeps its size")
+        let tiny = AlternatingQuotaText(entries: [.init(text: "100000000%", color: .white)], animates: false, font: font, maxWidth: 10).fitted
+        XCTAssertEqual(tiny.font.pointSize, 11.5 * AlternatingQuotaText.minimumScale, accuracy: 0.001, "It stops at 60%, as the other numbers do")
     }
 
     func testRingsDimInStepWithTheValueOnlyWhenAsked() throws {

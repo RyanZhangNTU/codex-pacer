@@ -98,11 +98,12 @@ public struct ActivityApplicationState: Sendable {
             groups: groups, overview: overview, options: options, at: now)
         cachedPresentation = (now, options, value); return value
     }
+    /// The latest value takes only a newer measurement; the history of recent
+    /// ones also keeps those that arrive after a newer one.
     public mutating func rememberFirstOutput(_ latency: TimeInterval?, reportedAt: Date?, at now: Date) {
-        guard let latency, latency.isFinite, (0...3600).contains(latency), let reportedAt,
-              reportedAt <= now, latestFirstOutput.map({ reportedAt > $0.at }) ?? true else { return }
-        latestFirstOutput = (reportedAt, latency)
+        guard let latency, latency.isFinite, (0...3600).contains(latency), let reportedAt, reportedAt <= now else { return }
         firstOutputHistory.record(latency, measuredAt: reportedAt)
+        if latestFirstOutput.map({ reportedAt > $0.at }) ?? true { latestFirstOutput = (reportedAt, latency) }
     }
     public mutating func clearFirstOutput() { latestFirstOutput = nil; firstOutputHistory = CompactFirstOutputHistory() }
     public mutating func replacePendingRequests(for provider: AgentProvider, with values: [PendingAttentionRequest]) {

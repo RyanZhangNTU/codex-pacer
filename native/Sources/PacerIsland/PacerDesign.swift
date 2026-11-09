@@ -44,7 +44,7 @@ extension AgentProvider {
     /// The service's shade in either tone: for a preview of a material that is
     /// not the current one, and dark-tone for window icons that stay the same
     /// whatever the island's material.
-    func shade(light: Bool) -> Color { PacerAccent.current.tint(for: self) ?? (light ? lightShade : brand) }
+    func shade(light: Bool) -> Color { PacerAccent.current.tint(for: self, light: light) ?? (light ? lightShade : brand) }
     /// The brand color one shade darker, for light glass.
     var lightShade: Color {
         switch self {
@@ -105,13 +105,34 @@ enum PacerAccent: String, CaseIterable, Identifiable {
     var color: Color? { components.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } }
     /// Buttons, switches and selection: the system accent under Multicolor.
     var control: Color { color ?? .accentColor }
-    /// Codex at full strength, Claude and DeepSeek lifted toward white, so the
-    /// outer and inner rings stay apart; nil under Multicolor.
-    func tint(for provider: AgentProvider) -> Color? {
+    /// The services' three shades of the color, strongest first; nil under
+    /// Multicolor. On the dark island Codex takes it at full strength and
+    /// Claude and DeepSeek lift toward white, so the rings stay apart. On light
+    /// glass each is the color scaled to a set luminance instead, so even a
+    /// light color such as yellow keeps at least 3.5:1 against the light face.
+    func tint(for provider: AgentProvider, light: Bool = false) -> Color? {
+        guard let base = light ? lightComponents(for: provider) : components.map({ base in
+            let lift = switch provider { case .codex: 0.0; case .claude: 0.42; case .deepseek: 0.66 }
+            func lifted(_ value: Double) -> Double { value + (1 - value) * lift }
+            return (lifted(base.red), lifted(base.green), lifted(base.blue))
+        }) else { return nil }
+        return Color(red: base.red, green: base.green, blue: base.blue)
+    }
+    /// Relative luminance of each service's shade on light glass: Codex 0.07,
+    /// Claude 0.12 and DeepSeek 0.20, about 7.4, 5.2 and 3.6:1 against #ECECF0.
+    static func lightLuminance(for provider: AgentProvider) -> Double {
+        switch provider { case .codex: 0.07; case .claude: 0.12; case .deepseek: 0.2 }
+    }
+    /// The color's linear light scaled evenly to the service's luminance, which
+    /// keeps its hue and saturation.
+    func lightComponents(for provider: AgentProvider) -> (red: Double, green: Double, blue: Double)? {
         guard let base = components else { return nil }
-        let lift = switch provider { case .codex: 0.0; case .claude: 0.42; case .deepseek: 0.66 }
-        func lifted(_ value: Double) -> Double { value + (1 - value) * lift }
-        return Color(red: lifted(base.red), green: lifted(base.green), blue: lifted(base.blue))
+        func linear(_ value: Double) -> Double { value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4) }
+        func encoded(_ value: Double) -> Double { value <= 0.0031308 ? value * 12.92 : 1.055 * pow(value, 1 / 2.4) - 0.055 }
+        let red = linear(base.red), green = linear(base.green), blue = linear(base.blue)
+        let luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        let scale = luminance > 0 ? Self.lightLuminance(for: provider) / luminance : 0
+        return (encoded(min(1, red * scale)), encoded(min(1, green * scale)), encoded(min(1, blue * scale)))
     }
 }
 

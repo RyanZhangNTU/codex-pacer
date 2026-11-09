@@ -158,6 +158,11 @@ final class CompactComponentOptionsTests: XCTestCase {
         let many = header((0..<5).map { _ in Share(provider: .codex, fraction: 0.5) })
         XCTAssertFalse(many.showsSegments); XCTAssertEqual(many.averageProgress, 0.5)
         XCTAssertEqual(header((0..<20).map { _ in Share(provider: .codex, fraction: 2) }).tasks.count, HeaderActivity.taskLimit)
+        // The rings list at most `taskLimit` tasks, but the average counts every running one.
+        let crowd = header((0..<12).map { _ in Share(provider: .codex, fraction: 0) } + [Share(provider: .claude, fraction: 0.65)])
+        XCTAssertEqual(crowd.tasks.count, HeaderActivity.taskLimit); XCTAssertEqual(crowd.reportedCount, 13)
+        XCTAssertEqual(try XCTUnwrap(crowd.averageProgress), 0.05, accuracy: 0.0001)
+        XCTAssertNil(crowd.averageProvider, "A mix behind the average draws neutral")
         XCTAssertEqual(Share(provider: .codex, fraction: 2).fraction, 1)
     }
 
@@ -168,6 +173,20 @@ final class CompactComponentOptionsTests: XCTestCase {
         for (index, value) in [5.0, 3, 9, 7, 2, 8].enumerated() { history.record(value, measuredAt: now.addingTimeInterval(Double(index + 2))) }
         XCTAssertEqual(history.values, [3, 9, 7, 2, 8]); XCTAssertEqual(history.median, 7)
         XCTAssertEqual(CompactFirstOutputHistory.median([4, 1, 3, 2]), 2.5); XCTAssertNil(CompactFirstOutputHistory.median([]))
+        // Measurements that arrive after a newer one still count, in the order they were taken.
+        var late = CompactFirstOutputHistory()
+        late.record(9, measuredAt: now.addingTimeInterval(10)); late.record(1, measuredAt: now.addingTimeInterval(1))
+        late.record(2, measuredAt: now.addingTimeInterval(2)); late.record(2, measuredAt: now.addingTimeInterval(2))
+        XCTAssertEqual(late.values, [1, 2, 9]); XCTAssertEqual(late.median, 2)
+        for offset in 11...13 { late.record(5, measuredAt: now.addingTimeInterval(Double(offset))) }
+        late.record(0.5, measuredAt: now)
+        XCTAssertEqual(late.values, [2, 9, 5, 5, 5], "One older than the five kept is not recent")
+        var state = ActivityApplicationState()
+        for (seconds, offset) in [(9.0, 10.0), (1, 1), (2, 2)] {
+            state.rememberFirstOutput(seconds, reportedAt: now.addingTimeInterval(offset), at: now.addingTimeInterval(60))
+        }
+        XCTAssertEqual(state.latestFirstOutput?.seconds, 9, "The latest stays the newest measurement")
+        XCTAssertEqual(state.firstOutputHistory.median, 2)
         let idle = CompactBarContext(activities: [], requests: [], completions: [], sources: [], firstOutputs: [1, 2, 3, 4, 5, 6], now: now)
         XCTAssertEqual(idle.firstOutputs, [2, 3, 4, 5, 6]); XCTAssertNil(idle.measuredTasks)
     }
