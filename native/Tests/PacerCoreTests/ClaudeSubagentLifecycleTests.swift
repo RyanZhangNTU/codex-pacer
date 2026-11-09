@@ -649,27 +649,78 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
     }
     /// A run that ends within seconds can be revived inside the skew allowance
     /// of its own launch. A copy of that launch read after the revival (a cold
-    /// replay reads transcripts after the hooks) keeps the first run, so the
-    /// first run's late notification leaves the revived run working.
-    func testLaunchCopyReadAfterAQuickRevivalKeepsItsFirstRun() throws {
-        for host in [String?.none, "remote-ssh-discovered:fixture"] {
-            var state = ClaudeActivityState(sourceID: host)
-            send("prompt", to: &state, at: 0)
-            send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
-            send("subagentStart", to: &state, thread: child, at: 2)
-            send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
-            send("toolStart", to: &state, at: 5.5, extra: ["itemId": "send-tool", "agentTool": true])
-            send("subagentStart", to: &state, thread: child, at: 6)
-            let revived = try XCTUnwrap(state.activities.first { $0.threadID == child })
-            XCTAssertEqual(revived.phase, .running); XCTAssertNotEqual(revived.turnID, turn)
-            send("agentResult", to: &state, at: 3.25, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
-            send("agentNotification", to: &state, at: 6.5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
-            XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running, "The first run's notification cannot end the revived run")
-            send("agentResult", to: &state, at: 7, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "async_launched"])
-            send("agentNotification", to: &state, at: 20, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "completed"])
-            let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
-            XCTAssertEqual(ended.turnID, revived.turnID); XCTAssertEqual(ended.phase, .completed)
-            XCTAssertEqual(ended.phaseChangedAt, now.addingTimeInterval(20))
+    /// replay reads transcripts after the hooks) cannot claim the revived run,
+    /// so the first run's late notification leaves the revived run working.
+    /// At 8.125 s the revival falls outside the hook copy's allowance (3 + 5 s)
+    /// but inside the transcript copy's (3.25 + 5 s).
+    func testLaunchCopyReadAfterAQuickRevivalCannotClaimTheRevivedRun() throws {
+        for revival in [6.0, 7.875, 8.125] {
+            for host in [String?.none, "remote-ssh-discovered:fixture"] {
+                let label = "revival at \(revival) s, host \(host ?? "local")"
+                var state = ClaudeActivityState(sourceID: host)
+                send("prompt", to: &state, at: 0)
+                send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+                send("subagentStart", to: &state, thread: child, at: 2)
+                send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+                send("toolStart", to: &state, at: revival - 0.5, extra: ["itemId": "send-tool", "agentTool": true])
+                send("subagentStart", to: &state, thread: child, at: revival)
+                let revived = try XCTUnwrap(state.activities.first { $0.threadID == child })
+                XCTAssertEqual(revived.phase, .running, label); XCTAssertNotEqual(revived.turnID, turn, label)
+                send("agentResult", to: &state, at: 3.25, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+                send("agentNotification", to: &state, at: revival + 0.5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+                XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running, "The first run's notification cannot end the revived run, " + label)
+                send("agentResult", to: &state, at: revival + 1, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "async_launched"])
+                send("agentNotification", to: &state, at: 20, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "completed"])
+                let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
+                XCTAssertEqual(ended.turnID, revived.turnID, label); XCTAssertEqual(ended.phase, .completed, label)
+                XCTAssertEqual(ended.phaseChangedAt, now.addingTimeInterval(20), label)
+            }
+        }
+    }
+    /// Sweeps the orders in which a quick revival's records can arrive around
+    /// the skew allowance: whether the first run already ended, when the first
+    /// launch's transcript copy is stamped and read, and whether the revival's
+    /// hook copy is missing (an older installed hook) or comes before or after
+    /// its SubagentStart. The first launch never ends the revived run, and the
+    /// revival's own notification always does.
+    func testQuickRevivalOrderingsNeverLetTheFirstLaunchEndTheRevivedRun() throws {
+        for revival in [4.0, 6.0, 7.875, 8.125, 9.0, 12.0] {
+            for copyAt in [3.0, 3.25, 3.875] {
+                for copyAfterRevival in [false, true] {
+                    for sendHook in ["none", "beforeStart", "afterStart"] {
+                        for firstEnded in [false, true] {
+                            let label = "revival \(revival), copy \(copyAt) read after revival \(copyAfterRevival), send hook \(sendHook), first ended \(firstEnded)"
+                            var state = ClaudeActivityState()
+                            send("prompt", to: &state, at: 0)
+                            send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+                            send("subagentStart", to: &state, thread: child, at: 2)
+                            send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+                            func firstCopy() { send("agentResult", to: &state, at: copyAt, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"]) }
+                            func sendLaunch(at offset: Double, origin: String = "hook") {
+                                send("agentResult", to: &state, at: offset, extra: ["origin": origin, "itemId": "send-tool", "agentId": child, "agentStatus": "async_launched"])
+                            }
+                            if firstEnded { send("agentNotification", to: &state, at: 3.5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"]) }
+                            if !copyAfterRevival { firstCopy() }
+                            send("toolStart", to: &state, at: revival - 0.5, extra: ["itemId": "send-tool", "agentTool": true])
+                            if sendHook == "beforeStart" { sendLaunch(at: revival) }
+                            send("subagentStart", to: &state, thread: child, at: revival)
+                            if sendHook == "afterStart" { sendLaunch(at: revival) }
+                            let revived = try XCTUnwrap(state.activities.first { $0.threadID == child })
+                            XCTAssertEqual(revived.phase, .running, label); XCTAssertEqual(revived.turnStartedAt, now.addingTimeInterval(revival), label)
+                            if copyAfterRevival { firstCopy() }
+                            if !firstEnded {
+                                send("agentNotification", to: &state, at: revival + 0.5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+                            }
+                            XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running, label)
+                            sendLaunch(at: revival + 1, origin: "transcript")
+                            send("agentNotification", to: &state, at: 30, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "completed"])
+                            let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
+                            XCTAssertEqual(ended.turnID, revived.turnID, label); XCTAssertEqual(ended.phase, .completed, label)
+                            XCTAssertEqual(ended.phaseChangedAt, now.addingTimeInterval(30), label)
+                        }
+                    }
+                }
+            }
         }
     }
     func testSshColdReplayEstablishesHookEngineTurnBeforeExactStopAndNextHumanAppend() throws {

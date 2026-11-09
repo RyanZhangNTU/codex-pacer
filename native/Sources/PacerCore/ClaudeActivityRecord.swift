@@ -251,6 +251,9 @@ struct ClaudeActivityState: Sendable {
     private var agentCompletions: [String: AgentCompletion] = [:]
     private var agentEnds: [String: AgentCompletion] = [:]
     private var agentLaunches: [String: AgentCompletion] = [:]
+    /// When each child's previous run began. One call starts at most one run,
+    /// so a launch can claim only the first run after its call started.
+    private var previousRunStarts: [String: Double] = [:]
     private var excludedSessions: Set<String> = []
     private(set) var unmatchedRequests = 0
     private(set) var status = RuntimeStreamStatus()
@@ -277,7 +280,7 @@ struct ClaudeActivityState: Sendable {
             sessions.removeValue(forKey: id); hooks.remove(id); historicalRunning.remove(id); metrics.removeValue(forKey: id)
             observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id)
             agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id)
-            agentLaunches.removeValue(forKey: id)
+            agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id)
         }
         agentCompletions = agentCompletions.filter { !excludedSessions.contains($0.value.parent) }
         agentEnds = agentEnds.filter { !excludedSessions.contains($0.value.parent) }
@@ -334,7 +337,7 @@ struct ClaudeActivityState: Sendable {
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
         if sessions.count > 128 {
             for id in sessions.keys.sorted(by: { (sessions[$0]?.lastObserved ?? .distantPast) > (sessions[$1]?.lastObserved ?? .distantPast) }).dropFirst(128) {
-                sessions.removeValue(forKey: id); hooks.remove(id); metrics.removeValue(forKey: id); historicalRunning.remove(id); observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id); agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id); agentLaunches.removeValue(forKey: id)
+                sessions.removeValue(forKey: id); hooks.remove(id); metrics.removeValue(forKey: id); historicalRunning.remove(id); observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id); agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id); agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id)
             }
         }
     }
@@ -549,6 +552,7 @@ struct ClaudeActivityState: Sendable {
             value.applyRuntime(event("metadata", metadata))
         }
         let item = ClaudeActivityRecord.identifier(record["itemId"] as? String) ?? "event-" + String(Int(seconds * 1000))
+        let earlierTurn = value.turnID, earlierStart = value.turnStartedAt
         switch kind {
         case "prompt":
             if value.turnID != turn { agentEnds.removeValue(forKey: key) }
@@ -562,11 +566,13 @@ struct ClaudeActivityState: Sendable {
             if let carried, continuesRequest { value.carryProgress(carried, at: date) }
             if observedMeters[key]?.turnID != turn { observedMeters[key] = ClaudeObservedRequestMeter(turnID: turn, observedStart: attaching ? nil : date) }
             else if !attaching { observedMeters[key]?.confirmStart(date) }
+            noteSupersededRun(key, of: value, earlierTurn: earlierTurn, earlierStart: earlierStart)
         case "subagentStart":
             if value.turnID != turn { agentEnds.removeValue(forKey: key) }
             value.applyRuntime(event(attaching ? "turn/attached" : "turn/started"))
             if observedMeters[key]?.turnID != turn { observedMeters[key] = ClaudeObservedRequestMeter(turnID: turn, observedStart: attaching ? nil : date) }
             else if !attaching { observedMeters[key]?.confirmStart(date) }
+            noteSupersededRun(key, of: value, earlierTurn: earlierTurn, earlierStart: earlierStart)
         case "toolStart":
             value.resumeBackgroundWork(at: date)
             value.applyRuntime(event("item/started", ["itemId": item, "itemType": "commandExecution"]))
@@ -640,6 +646,12 @@ struct ClaudeActivityState: Sendable {
             applyAgentCompletion(key, now: now)
         }
     }
+    /// A child's new run supersedes its previous one. Remembering when that one
+    /// began keeps any launch made before it from claiming the new run.
+    private mutating func noteSupersededRun(_ key: String, of child: SessionActivity, earlierTurn: String?, earlierStart: Date?) {
+        guard child.parentThreadID != nil, child.turnID != earlierTurn, let earlierStart else { return }
+        previousRunStarts[key] = earlierStart.timeIntervalSince1970
+    }
     /// The root session of a thread, following observed parents.
     private func rootThread(_ thread: String) -> String {
         var current = thread, seen: Set<String> = []
@@ -661,7 +673,11 @@ struct ClaudeActivityState: Sendable {
         // Every run of a child has its own turn, so a bound launch follows that
         // turn even when a reconnect resumes it with a later start.
         if let childTurn = completion.childTurn { return childTurn == turn ? completion : nil }
-        guard start >= completion.toolStartedAt,
+        // One call starts at most one run: the launch claims the child's first
+        // run after the call began, never one that follows it, however its
+        // copies' timestamps fall around the skew allowance.
+        let key = AgentProvider.claude.activityID(sessionID: child.threadID ?? "", sourceHostID: sourceID)
+        guard start >= completion.toolStartedAt, previousRunStarts[key].map({ $0 < completion.toolStartedAt }) ?? true,
               start <= completion.launchedAt + (completion.background ? Self.launchStartSkew : 0) else { return nil }
         var bound = completion; bound.childTurn = turn; return bound
     }
