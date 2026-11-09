@@ -490,6 +490,100 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             }
         }
     }
+    /// A cold replay drains the hook spool before the transcript, so a revival's
+    /// SubagentStart arrives while the first run's ending is still unread.
+    func testColdReplayEndsARevivedChildWhoseFirstEndingIsReadAfterItsRevival() throws {
+        let program = """
+        __name__ = 'fixture'
+        import base64, json, pathlib, sys
+        exec(base64.b64decode(sys.argv[1]), globals())
+        transcript, spool = map(pathlib.Path, sys.argv[2:4])
+        reader = Tailer.__new__(Tailer)
+        reader.dirty = {transcript, spool}
+        reader.cursors = {path: {'inode': 0, 'offset': 0, 'fragment': b'', 'session': sys.argv[4], 'parent': None, 'owned': owned, 'historicalEnd': None}
+                          for path, owned in ((transcript, False), (spool, True))}
+        records = reader.read()
+        assert not reader.dirty
+        print(json.dumps(records))
+        """
+        for samePrompt in [true, false] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-revival-replay-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let project = home.appendingPathComponent("projects/fixture"), pacer = home.appendingPathComponent("pacer")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: pacer, withIntermediateDirectories: true)
+            let transcript = project.appendingPathComponent(parent + ".jsonl"), spool = pacer.appendingPathComponent("events.jsonl")
+            let revival = samePrompt ? turn : "next-turn"
+            func raw(_ type: String, _ id: String, _ second: Int, _ prompt: String, _ previous: String?, _ extra: [String: Any]) -> [String: Any] {
+                var record: [String: Any] = ["type": type, "uuid": id, "sessionId": parent, "promptId": prompt, "timestamp": String(format: "2027-01-15T08:00:%02dZ", second)]
+                if let previous { record["parentUuid"] = previous }
+                return record.merging(extra) { _, new in new }
+            }
+            func delivered(_ item: String) -> [String: Any] {
+                ["attachment": ["type": "queued_command", "commandMode": "task-notification", "origin": ["kind": "task-notification", "producer": "session-task"],
+                                "prompt": notification(item: item)]]
+            }
+            func call(_ name: String, _ item: String) -> [String: Any] { ["message": ["content": [["type": "tool_use", "id": item, "name": name]]]] }
+            func result(_ item: String, _ response: [String: Any]) -> [String: Any] {
+                ["message": ["content": [["type": "tool_result", "tool_use_id": item, "content": "PRIVATE result"]]], "toolUseResult": response]
+            }
+            var records = [raw("user", "human", 0, turn, nil, ["origin": ["kind": "human"], "message": ["role": "user", "content": "PRIVATE prompt"]]),
+                           raw("assistant", "agent-call", 1, turn, "human", call("Agent", "agent-tool")),
+                           raw("user", "agent-result", 3, turn, "agent-call", result("agent-tool", ["status": "async_launched", "agentId": child])),
+                           raw("attachment", "first-ending", 5, turn, "agent-result", delivered("agent-tool"))]
+            if !samePrompt { records.append(raw("user", "next-human", 10, revival, "first-ending", ["origin": ["kind": "human"], "message": ["role": "user", "content": "PRIVATE next"]])) }
+            records += [raw("assistant", "send-call", 11, revival, samePrompt ? "first-ending" : "next-human", call("SendMessage", "send-tool")),
+                        raw("user", "send-result", 13, revival, "send-call", result("send-tool", ["success": true, "revivedAgentId": child, "resumedAgentId": child])),
+                        raw("attachment", "revived-ending", 20, revival, "send-result", delivered("send-tool")),
+                        raw("system", "stop", 22, revival, "revived-ending", ["subtype": "stop_hook_summary", "preventedContinuation": false,
+                            "hookErrors": [String](), "hookAdditionalContext": [String]()])]
+            func hook(_ kind: String, _ second: Double, _ prompt: String, _ extra: [String: Any] = [:]) -> [String: Any] {
+                ["kind": kind, "origin": "hook", "sessionId": parent, "promptId": prompt, "at": now.timeIntervalSince1970 + second].merging(extra) { _, new in new }
+            }
+            let childRow: [String: Any] = ["sessionId": child, "parentId": parent]
+            var hooks = [hook("prompt", 0.01, turn), hook("toolStart", 1.01, turn, ["itemId": "agent-tool", "agentTool": true]), hook("subagentStart", 2, turn, childRow),
+                         hook("agentResult", 3.01, turn, ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"]), hook("stopRequested", 4.99, turn, childRow)]
+            if !samePrompt { hooks.append(hook("prompt", 10.01, revival)) }
+            hooks += [hook("toolStart", 11.01, revival, ["itemId": "send-tool", "agentTool": true]), hook("subagentStart", 12, revival, childRow),
+                      hook("agentResult", 13.01, revival, ["itemId": "send-tool", "agentId": child, "agentStatus": "async_launched"]),
+                      hook("stopRequested", 19.99, revival, childRow), hook("stopRequested", 21.99, revival)]
+            func lines(_ rows: [[String: Any]]) throws -> Data { try rows.reduce(into: Data()) { data, row in data += try JSONSerialization.data(withJSONObject: row); data.append(10) } }
+            try lines(records).write(to: transcript); try lines(hooks).write(to: spool)
+            var reader = ClaudeActivityReader()
+            let local = reader.read(home: home, discover: true, now: now.addingTimeInterval(25))
+            XCTAssertTrue(local.caughtUp)
+            let process = Process(), output = Pipe(), errors = Pipe()
+            process.executableURL = PythonFixture.executable
+            process.arguments = ["-c", program, Data(ClaudeActivityProbe.script.utf8).base64EncodedString(), transcript.path, spool.path, parent]
+            process.standardInput = FileHandle.nullDevice; process.standardOutput = output; process.standardError = errors
+            let pythonFixture = try PythonFixture.prepare(process); defer { pythonFixture.remove() }; try process.run()
+            let bytes = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+            XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("PRIVATE"))
+            let remote = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [[String: Any]])
+            for (name, host, frames) in [("local", String?.none, local.records), ("ssh", "remote-ssh-discovered:fixture", [ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": remote])!])] {
+                let label = "\(name), same parent prompt \(samePrompt)"
+                var state = ClaudeActivityState(sourceID: host)
+                for frame in frames { state.consume(frame, now: now.addingTimeInterval(25)) }
+                state.finalizeHistoricalBaseline(now: now.addingTimeInterval(25))
+                XCTAssertEqual(state.activities.first { $0.threadID == parent }?.phase, .completed, label)
+                let ended = try XCTUnwrap(state.activities.first { $0.threadID == child }, label)
+                XCTAssertEqual(ended.turnStartedAt, now.addingTimeInterval(12), label)
+                XCTAssertEqual(ended.phase, .completed, label)
+                XCTAssertEqual(ActivityTaskGroup.make(state.activities).first?.runningSubagentCount, 0, label)
+            }
+        }
+    }
+    /// SubagentStart fires once per run: a copy carrying the same time does not
+    /// open another.
+    func testRepeatedSubagentStartOfTheSameRunKeepsThatRun() throws {
+        var state = ClaudeActivityState()
+        send("prompt", to: &state, at: 0)
+        send("subagentStart", to: &state, thread: child, at: 2)
+        send("subagentStart", to: &state, thread: child, at: 2)
+        let value = try XCTUnwrap(state.activities.first { $0.threadID == child })
+        XCTAssertEqual(value.turnID, turn); XCTAssertEqual(value.turnStartedAt, now.addingTimeInterval(2))
+    }
     func testSshColdReplayEstablishesHookEngineTurnBeforeExactStopAndNextHumanAppend() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-child-cold-replay-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

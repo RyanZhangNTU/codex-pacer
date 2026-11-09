@@ -512,10 +512,14 @@ struct ClaudeActivityState: Sendable {
         if kind == "prompt", let prompt = ClaudeActivityRecord.identifier(record["promptId"] as? String) { turn = prompt }
         if turn == nil, ["toolStart", "response", "thinking", "subagentStart"].contains(kind) { turn = "attached-" + String(Int(seconds * 1000)) }
         // A revived child can start again inside the parent prompt that its
-        // ended run already used. An ended turn is retired, so the new run gets
-        // its own; the child's records carrying that prompt then map to it.
-        if kind == "subagentStart", let incoming = turn, value.parentThreadID != nil, [.completed, .interrupted].contains(value.phase),
-           let ended = value.turnID, ended == incoming || ended.hasPrefix(incoming + ".run") {
+        // earlier run already used. An ended turn is retired, so the new run
+        // gets its own; the child's records carrying that prompt then map to it.
+        // SubagentStart fires only when a run begins, so a later one also opens
+        // a new run while the earlier ending is still unread, as when a cold
+        // replay drains the hooks before the transcript notifications.
+        if kind == "subagentStart", let incoming = turn, value.parentThreadID != nil,
+           let earlier = value.turnID, earlier == incoming || earlier.hasPrefix(incoming + ".run"),
+           [.completed, .interrupted].contains(value.phase) || value.turnStartedAt.map({ seconds > $0.timeIntervalSince1970 }) == true {
             turn = incoming + ".run" + String(Int((seconds * 1000).rounded()))
         }
         guard let turn else { return }
