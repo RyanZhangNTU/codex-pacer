@@ -254,6 +254,9 @@ struct ClaudeActivityState: Sendable {
     /// When each child's previous run began. One call starts at most one run,
     /// so a launch can claim only the first run after its call started.
     private var previousRunStarts: [String: Double] = [:]
+    /// Endings read before their launch, by child and tool item.
+    private struct EarlyNotification: Sendable { let thread: String; let at: Double; let historical: Bool; let status: String }
+    private var earlyNotifications: [String: EarlyNotification] = [:]
     private var excludedSessions: Set<String> = []
     private(set) var unmatchedRequests = 0
     private(set) var status = RuntimeStreamStatus()
@@ -285,6 +288,7 @@ struct ClaudeActivityState: Sendable {
         agentCompletions = agentCompletions.filter { !excludedSessions.contains($0.value.parent) }
         agentEnds = agentEnds.filter { !excludedSessions.contains($0.value.parent) }
         agentLaunches = agentLaunches.filter { !excludedSessions.contains($0.value.parent) }
+        earlyNotifications = earlyNotifications.filter { !excludedSessions.contains($0.value.thread) }
         requests = requests.filter { !excludedSessions.contains($0.value.threadID) }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
     }
@@ -427,6 +431,9 @@ struct ClaudeActivityState: Sendable {
                 let keepsRun = existing.map { $0.item == item && $0.parent == thread && $0.childTurn != nil } ?? false
                 if !keepsRun, seconds >= (existing?.at ?? 0) { agentLaunches[childKey] = ownership }
                 if agentLaunches.count > 128, let oldest = agentLaunches.min(by: { $0.value.at < $1.value.at })?.key { agentLaunches.removeValue(forKey: oldest) }
+                if let launch = agentLaunches[childKey], launch.item == item, let notice = earlyNotifications.removeValue(forKey: childKey + ":" + item) {
+                    settle(notice, of: launch, childKey: childKey, now: now)
+                }
                 return
             }
             agentCompletions[childKey] = ownership
@@ -439,11 +446,17 @@ struct ClaudeActivityState: Sendable {
                   let item = ClaudeActivityRecord.identifier(record["itemId"] as? String),
                   let status = record["agentStatus"] as? String, ["completed", "failed", "killed"].contains(status) else { return }
             let childKey = AgentProvider.claude.activityID(sessionID: child, sourceHostID: sourceID)
-            guard let launch = agentLaunches[childKey], sameTask(launch.parent, thread), launch.item == item, seconds >= launch.launchedAt else { return }
-            agentCompletions[childKey] = AgentCompletion(parent: launch.parent, item: item, turn: launch.turn,
-                toolStartedAt: launch.toolStartedAt, launchedAt: launch.launchedAt, at: seconds, historical: attaching, status: status,
-                childTurn: launch.childTurn, background: true)
-            applyAgentCompletion(childKey, now: now); return
+            let notice = EarlyNotification(thread: thread, at: seconds, historical: attaching, status: status)
+            guard let launch = agentLaunches[childKey], launch.item == item else {
+                // The ending can be read before its launch: Claude Code may keep
+                // a revived agent's notification in another file than the
+                // SendMessage result, and a cold replay reads files in turn. It
+                // waits for that launch, which still has to claim the run.
+                earlyNotifications[childKey + ":" + item] = notice
+                if earlyNotifications.count > 128, let oldest = earlyNotifications.min(by: { $0.value.at < $1.value.at })?.key { earlyNotifications.removeValue(forKey: oldest) }
+                return
+            }
+            settle(notice, of: launch, childKey: childKey, now: now); return
         }
         if kind == "request" {
             // Completed spans only enrich an observed matching turn. They
@@ -645,6 +658,15 @@ struct ClaudeActivityState: Sendable {
             }
             applyAgentCompletion(key, now: now)
         }
+    }
+    /// A background ending settles the run its launch claims, once it comes
+    /// from the same task and after the launch.
+    private mutating func settle(_ notice: EarlyNotification, of launch: AgentCompletion, childKey: String, now: Date) {
+        guard sameTask(launch.parent, notice.thread), notice.at >= launch.launchedAt else { return }
+        agentCompletions[childKey] = AgentCompletion(parent: launch.parent, item: launch.item, turn: launch.turn,
+            toolStartedAt: launch.toolStartedAt, launchedAt: launch.launchedAt, at: notice.at, historical: notice.historical, status: notice.status,
+            childTurn: launch.childTurn, background: true)
+        applyAgentCompletion(childKey, now: now)
     }
     /// A child's new run supersedes its previous one. Remembering when that one
     /// began keeps any launch made before it from claiming the new run.

@@ -723,6 +723,88 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
             }
         }
     }
+    /// Claude Code can keep a revived agent's ending in another file than the
+    /// SendMessage result. Without a hook copy of the launch, the ending can
+    /// be read first; it waits for its launch instead of being dropped.
+    func testEndingReadBeforeItsLaunchWaitsForThatLaunch() throws {
+        let sender = "fixture-sender"
+        for host in [String?.none, "remote-ssh-discovered:fixture"] {
+            var state = ClaudeActivityState(sourceID: host)
+            send("prompt", to: &state, at: 0)
+            send("toolStart", to: &state, at: 1, extra: ["itemId": "agent-tool", "agentTool": true])
+            send("subagentStart", to: &state, thread: child, at: 2)
+            send("agentResult", to: &state, at: 3, extra: ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+            send("subagentStart", to: &state, thread: sender, at: 4)
+            send("agentNotification", to: &state, at: 5, extra: ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "completed"])
+            send("toolStart", to: &state, thread: sender, at: 11, extra: ["origin": "transcript", "itemId": "send-tool", "agentTool": true])
+            send("subagentStart", to: &state, thread: child, at: 12)
+            send("agentNotification", to: &state, at: 20, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "completed"])
+            XCTAssertEqual(state.activities.first { $0.threadID == child }?.phase, .running, "The ending waits for its launch")
+            send("agentResult", to: &state, thread: sender, at: 13, extra: ["origin": "transcript", "itemId": "send-tool", "agentId": child, "agentStatus": "async_launched"])
+            let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
+            XCTAssertEqual(ended.phase, .completed); XCTAssertEqual(ended.phaseChangedAt, now.addingTimeInterval(20))
+            XCTAssertEqual(ended.turnStartedAt, now.addingTimeInterval(12))
+        }
+    }
+    /// The native reader reads the root transcript before a subagent's file.
+    /// With an older hook that records no SendMessage launch, a revival's
+    /// ending kept in the root is read before the sender's SendMessage result.
+    func testColdReplayEndsARevivalWhoseEndingIsReadBeforeTheSendersResult() throws {
+        let sender = "fixture-sender"
+        for noticeInRoot in [false, true] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-revival-files-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let project = home.appendingPathComponent("projects/fixture"), subagents = project.appendingPathComponent(parent + "/subagents")
+            let pacer = home.appendingPathComponent("pacer")
+            for directory in [subagents, pacer] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+            func raw(_ type: String, _ id: String, _ second: Int, _ previous: String?, _ extra: [String: Any]) -> [String: Any] {
+                var record: [String: Any] = ["type": type, "uuid": id, "sessionId": parent, "promptId": turn, "timestamp": String(format: "2027-01-15T08:00:%02dZ", second)]
+                if let previous { record["parentUuid"] = previous }
+                return record.merging(extra) { _, new in new }
+            }
+            func delivered(_ item: String) -> [String: Any] {
+                ["attachment": ["type": "queued_command", "commandMode": "task-notification", "origin": ["kind": "task-notification", "producer": "session-task"],
+                                "prompt": notification(item: item)]]
+            }
+            func lines(_ rows: [[String: Any]]) throws -> Data { try rows.reduce(into: Data()) { data, row in data += try JSONSerialization.data(withJSONObject: row); data.append(10) } }
+            var root = [raw("user", "human", 0, nil, ["origin": ["kind": "human"], "message": ["role": "user", "content": "PRIVATE prompt"]]),
+                        raw("assistant", "agent-call", 1, "human", ["message": ["content": [["type": "tool_use", "id": "agent-tool", "name": "Agent"]]]]),
+                        raw("user", "agent-result", 3, "agent-call", ["message": ["content": [["type": "tool_result", "tool_use_id": "agent-tool", "content": "PRIVATE"]]],
+                            "toolUseResult": ["status": "async_launched", "agentId": child]]),
+                        raw("attachment", "first-ending", 5, "agent-result", delivered("agent-tool"))]
+            var senderFile = [raw("assistant", "send-call", 11, "first-ending", ["agentId": sender, "message": ["content": [["type": "tool_use", "id": "send-tool", "name": "SendMessage"]]]]),
+                              raw("user", "send-result", 13, "send-call", ["agentId": sender, "message": ["content": [["type": "tool_result", "tool_use_id": "send-tool", "content": "PRIVATE"]]],
+                                  "toolUseResult": ["success": true, "revivedAgentId": child]])]
+            let ending = raw("attachment", "revived-ending", 20, "send-result", delivered("send-tool"))
+            if noticeInRoot { root.append(ending) } else { senderFile.append(ending.merging(["agentId": sender]) { _, new in new }) }
+            root.append(raw("system", "stop", 22, "revived-ending", ["subtype": "stop_hook_summary", "preventedContinuation": false,
+                "hookErrors": [String](), "hookAdditionalContext": [String]()]))
+            func hook(_ kind: String, _ second: Double, _ extra: [String: Any] = [:]) -> [String: Any] {
+                ["kind": kind, "origin": "hook", "sessionId": parent, "promptId": turn, "at": now.timeIntervalSince1970 + second].merging(extra) { _, new in new }
+            }
+            // An older hook adds no agent-tool flag or launch for SendMessage.
+            let spool = [hook("prompt", 0.01), hook("toolStart", 1.01, ["itemId": "agent-tool", "agentTool": true]),
+                         hook("subagentStart", 2, ["sessionId": child, "parentId": parent]),
+                         hook("agentResult", 3.01, ["itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"]),
+                         hook("subagentStart", 4, ["sessionId": sender, "parentId": parent]), hook("stopRequested", 4.99, ["sessionId": child, "parentId": parent]),
+                         hook("toolStart", 11.01, ["sessionId": sender, "parentId": parent, "itemId": "send-tool"]),
+                         hook("subagentStart", 12, ["sessionId": child, "parentId": parent]), hook("stopRequested", 19.99, ["sessionId": child, "parentId": parent]),
+                         hook("stopRequested", 21.99)]
+            try lines(root).write(to: project.appendingPathComponent(parent + ".jsonl"))
+            try lines(senderFile).write(to: subagents.appendingPathComponent("agent-" + sender + ".jsonl"))
+            try lines(spool).write(to: pacer.appendingPathComponent("events.jsonl"))
+            var reader = ClaudeActivityReader()
+            let read = reader.read(home: home, discover: true, now: now.addingTimeInterval(25))
+            XCTAssertTrue(read.caughtUp)
+            var state = ClaudeActivityState()
+            for frame in read.records { state.consume(frame, now: now.addingTimeInterval(25)) }
+            state.finalizeHistoricalBaseline(now: now.addingTimeInterval(25))
+            let ended = try XCTUnwrap(state.activities.first { $0.threadID == child })
+            XCTAssertEqual(ended.turnStartedAt, now.addingTimeInterval(12), "ending in the root \(noticeInRoot)")
+            XCTAssertEqual(ended.phase, .completed, "ending in the root \(noticeInRoot)")
+            XCTAssertEqual(ended.phaseChangedAt, now.addingTimeInterval(20), "ending in the root \(noticeInRoot)")
+        }
+    }
     func testSshColdReplayEstablishesHookEngineTurnBeforeExactStopAndNextHumanAppend() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-child-cold-replay-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
