@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.3.2
+
+- Windows: fix the engine stopping after Pacer had run for about 15 hours, which stopped task updates until Pacer was reopened. Short background commands, such as the WSL check every 30 seconds, each left a file descriptor open, and after about 8,000 of them the engine could not start another command and stopped. If the engine stops unexpectedly after running for at least 10 minutes, Pacer now restarts itself.
+- Claude cloud Projects: a question you already answered no longer returns as a new alert after Pacer skips a read or the thread leaves the current page, and recent unread questions appear when Pacer connects without a new notification. A finished turn that you can continue shows **Turn finished · Reply if needed**, and a session starting or stopping brings the next check forward.
+
 ## 4.3.1
 
 - Mac: fix a memory leak that kept growing while Pacer followed tasks in the Codex desktop app.
