@@ -50,12 +50,14 @@ struct OverviewPane: View {
         }
     }
 
-    /// A service with both a 5-hour and a weekly window needs the island's
-    /// full width for its details, so it gets a row of its own; the others
+    /// A service with both a 5-hour and a weekly window and its details shown
+    /// needs the island's full width, so it gets a row of its own; the others
     /// share rows two at a time above them.
     private var serviceRows: [[AgentProvider]] {
+        let options = model.panelOptions
         let wide = model.enabledProviders.filter { provider in
-            guard provider != .deepseek, let snapshot = model.providerQuota(provider) else { return false }
+            guard provider != .deepseek, options.quotaDetails, options.periods(for: provider) == .both,
+                  let snapshot = model.providerQuota(provider) else { return false }
             return [QuotaDashboardPresentation.Period.fiveHour, .weekly].allSatisfy {
                 QuotaDashboardPresentation.window(provider: provider, snapshot: snapshot, period: $0) != nil
             }
@@ -327,11 +329,12 @@ struct SettingsNotificationsPane: View {
     @ObservedObject var model: IslandModel
     @ObservedObject var notificationPreference: SystemNotificationPreference
     @Binding var layout: CompactIslandLayout
-    @Binding var retention: Int
     @Binding var lowBalance: Double?
     @Binding var spikeLimit: Double?
     let providers: [AgentProvider]
     let openDeepSeek: () -> Void
+    /// Keep Ended Tasks moved to the task list's settings.
+    let openTaskList: () -> Void
     private static let column: CGFloat = 76
 
     private enum Cell {
@@ -380,10 +383,9 @@ struct SettingsNotificationsPane: View {
             }
         }
         MainCard {
-            CardPicker(title: L10n.text("reminders.retention"), selection: $retention, options: [
-                (5, L10n.text("settings.five_minutes")), (15, L10n.text("settings.fifteen_minutes")),
-                (30, L10n.text("settings.thirty_minutes")), (60, L10n.text("settings.one_hour")),
-                (240, L10n.text("settings.four_hours")), (0, L10n.text("settings.until_clicked"))])
+            CardRow(title: L10n.text("main.notifications.retention_moved")) {
+                Button(L10n.text("main.panel.open"), action: openTaskList).buttonStyle(.main)
+            }
         }
     }
 

@@ -17,12 +17,6 @@ struct SettingsAppearancePane: View {
     @Binding var displayID: Int
     @Binding var fullscreen: Bool
     @Binding var positionPerDisplay: Bool
-    @Binding var quotaStyle: ExpandedQuotaStyle
-    @Binding var deepseekPanelStyle: DeepSeekPanelStyle
-    @Binding var showsAppButtons: Bool
-    /// DeepSeek alone has its own dashboard, where ring styles do not apply,
-    /// so the expanded panel offers its Simple or Detailed choice instead.
-    let deepseekAlone: Bool
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.pacerAccent) private var controlAccent
@@ -122,20 +116,6 @@ struct SettingsAppearancePane: View {
             CardToggle(title: L10n.text("appearance.position_per_display"), info: L10n.text("appearance.position_per_display_info"),
                        isOn: $positionPerDisplay)
             CardToggle(title: L10n.text("settings.fullscreen"), isOn: $fullscreen)
-        }
-        MainCard(title: L10n.text("main.appearance.panel")) {
-            if deepseekAlone {
-                CardRow(title: L10n.text("main.appearance.deepseek_panel")) {
-                    MainSegmented(options: [DeepSeekPanelStyle.simple, .detailed].map { ($0, $0.label) }, selection: $deepseekPanelStyle,
-                                  label: L10n.text("main.appearance.deepseek_panel"))
-                }
-            } else {
-                CardRow(title: L10n.text("main.appearance.quota_style")) {
-                    MainSegmented(options: ExpandedQuotaStyle.allCases.map { ($0, $0.label) }, selection: $quotaStyle,
-                                  label: L10n.text("main.appearance.quota_style"))
-                }
-            }
-            CardToggle(title: L10n.text("settings.app_buttons"), info: L10n.text("main.info.app_buttons"), isOn: $showsAppButtons)
         }
     }
 

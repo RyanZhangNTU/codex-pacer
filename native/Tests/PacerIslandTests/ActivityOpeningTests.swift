@@ -187,9 +187,14 @@ final class ActivityOpeningTests: XCTestCase {
         XCTAssertNil(both.navigationError)
         defaults.set(false, forKey: IslandModel.showsAppButtonsKey)
         XCTAssertEqual(both.appButtonProviders, [], "The setting hides every app button")
+        XCTAssertEqual(both.desktopAppProviders, [.codex], "The More menu still offers the app")
+        let fromMenu = expectation(description: "Codex opened from the menu")
+        both.onOpenDesktopApplication = { provider, url in
+            opened.append((provider, url)); fromMenu.fulfill(); return .openedConversation
+        }
         both.openDesktopApplication(.codex)
-        await Task.yield()
-        XCTAssertEqual(opened.count, 1)
+        await fulfillment(of: [fromMenu], timeout: TestWait.limit)
+        XCTAssertEqual(opened.count, 2)
         defaults.removeObject(forKey: IslandModel.showsAppButtonsKey)
 
         // A disabled module is not looked up, even with its app installed.

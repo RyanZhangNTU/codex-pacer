@@ -5,10 +5,12 @@ import PacerCore
 struct TaskPagerView: View {
     @ObservedObject var model: IslandModel
     var language: AppLanguage = L10n.language
+    /// The task list opens the panel and carries its buttons after the page controls.
+    var actions = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
     @State private var direction: CGFloat = 1
-    private let rowHeight: CGFloat = 54
+    private var rowHeight: CGFloat { TaskRowView.height(model.panelOptions.rowStyle) }
     private let rowSpacing: CGFloat = 2
 
     private var tasks: [SessionActivity] { model.taskPresentation.visibleActivities }
@@ -30,9 +32,11 @@ struct TaskPagerView: View {
                         .accessibilityLabel(L10n.text("activity.page_number", currentPage + 1, pagination.pageCount))
                     pageButton(delta: 1, symbol: "chevron.right", title: L10n.text("activity.next_page"))
                 }
-                Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
+                if actions {
+                    Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
+                }
             }
-            IslandPanelControls(model: model, language: language)
+            if actions { IslandPanelControls(model: model, language: language) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L10n.text(tasks.count == 1 ? "activity.task_count_singular" : "activity.task_count", tasks.count))
@@ -47,7 +51,7 @@ struct TaskPagerView: View {
                         let activity = row.activity
                         TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
                             enabled: model.canOpen(activity), accent: model.taskAccent,
-                            costDetail: model.deepseekCostDetail(activity)) {
+                            costDetail: model.deepseekCostDetail(activity), options: model.panelOptions) {
                                 model.open(activity)
                             }
                             .frame(height: rowHeight)

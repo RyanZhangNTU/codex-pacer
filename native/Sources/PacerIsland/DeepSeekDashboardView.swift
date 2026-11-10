@@ -292,7 +292,7 @@ struct DeepSeekDialCell: View {
                     } else if wallet.state == .stale, wallet.balance != nil {
                         Image(systemName: StatusSymbols.freshness).font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(PacerPalette.attention).accessibilityLabel(L10n.text("common.not_updated"))
-                    } else {
+                    } else if model.panelOptions.deepseekPeak {
                         DeepSeekPeakChip(wallet: wallet, now: model.now, compact: true)
                     }
                 }.frame(height: 15)
@@ -328,36 +328,31 @@ struct DeepSeekBalanceStatusView: View {
     }
 }
 
-/// DeepSeek alone: the time or budget dial with today or the budgets and speed
-/// beside it. Detailed adds where today's money went and the week; each block
-/// shows only with something to say, so a quiet day makes a short panel.
+/// DeepSeek's block on its own: the time or budget dial, with today or the
+/// budgets and the speed beside it. Where the money went and the week are
+/// blocks of their own; only a day dial followed by the spend block draws
+/// the spend in its own short column, as the panel did before blocks.
 struct DeepSeekSoloDashboard: View {
     @ObservedObject var model: IslandModel
+    var spendBeside = false
 
     var body: some View {
         let wallet = model.deepseekWallet
         let budget = model.deepseekShowsBudgetDial
-        let detailed = model.deepseekPanelStyle == .detailed
         let presentation = model.deepseekSoloPresentation
-        let moving = presentation.speed != nil, spent = presentation.distribution != nil
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 20) {
                 VStack(spacing: 8) {
                     if budget { DeepSeekBudgetDial(wallet: wallet, now: model.now, size: 132) }
                     else { DeepSeekDayDial(model: model, wallet: wallet, size: 132) }
-                    DeepSeekPeakChip(wallet: wallet, now: model.now)
+                    if model.panelOptions.deepseekPeak { DeepSeekPeakChip(wallet: wallet, now: model.now) }
                 }
-                // The time dial's column is short, so where the money went joins it.
                 VStack(alignment: .leading, spacing: 12) {
                     if budget { DeepSeekBudgetDetails(wallet: wallet, now: model.now) } else { todayRow(wallet) }
-                    if moving { DeepSeekSpeedRow(wallet: wallet) }
-                    if detailed, !budget, spent { DeepSeekWhereItWent(model: model, wallet: wallet) }
+                    if presentation.speed != nil { DeepSeekSpeedRow(wallet: wallet) }
+                    if spendBeside, presentation.distribution != nil { DeepSeekWhereItWent(model: model, wallet: wallet) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if detailed {
-                if budget, spent { DeepSeekWhereItWent(model: model, wallet: wallet) }
-                if DeepSeekWeekChart.hasHistory(wallet) { DeepSeekWeekChart(wallet: wallet, now: model.now) }
             }
             DeepSeekBalanceStatusView(model: model).frame(maxWidth: .infinity)
         }
@@ -507,17 +502,22 @@ struct DeepSeekBudgetDetails: View {
 struct DeepSeekWhereItWent: View {
     @ObservedObject var model: IslandModel
     let wallet: DeepSeekWallet
+    /// The block's header names it when it opens the panel.
+    var showsTitle = true
 
     private typealias Part = DeepSeekSoloPresentation.Part
     private var distribution: DeepSeekSoloPresentation.Distribution? {
-        DeepSeekSoloPresentation.distribution(wallet, hideProjects: model.hideProjects, taskTitle: model.deepseekTaskTitle)
+        ExpandedPanelPresentation.distribution(wallet, options: model.panelOptions, hideProjects: model.hideProjects,
+            taskTitle: model.deepseekTaskTitle)
     }
     private var parts: [Part] { distribution?.parts ?? [] }
 
     var body: some View {
         let parts = self.parts
         VStack(alignment: .leading, spacing: 7) {
-            Text(L10n.text("deepseek.where")).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+            if showsTitle {
+                Text(L10n.text("deepseek.where")).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+            }
             GeometryReader { proxy in
                 let available = proxy.size.width - CGFloat(max(0, parts.count - 1)) * 2
                 HStack(spacing: 2) {
@@ -603,16 +603,22 @@ struct FlowRow: Layout {
 struct DeepSeekWeekChart: View {
     let wallet: DeepSeekWallet
     let now: Date
+    /// The dashed daily budget or average and its label.
+    var line = true
+    /// The block's header names it, with the line's label, when it opens the panel.
+    var showsTitle = true
     private static let height: CGFloat = 44
     static func hasHistory(_ wallet: DeepSeekWallet) -> Bool { DeepSeekSoloPresentation.week(wallet) != nil }
     var body: some View {
-        if let value = DeepSeekSoloPresentation.week(wallet) {
+        if let value = DeepSeekSoloPresentation.week(wallet, line: line) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(value.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
-                    Spacer(minLength: 8)
-                    if let text = value.lineText {
-                        Text(text).font(.system(size: 9)).foregroundStyle(PacerPalette.tertiary).monospacedDigit()
+                if showsTitle {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(value.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+                        Spacer(minLength: 8)
+                        if let text = value.lineText {
+                            Text(text).font(.system(size: 9)).foregroundStyle(PacerPalette.tertiary).monospacedDigit()
+                        }
                     }
                 }
                 ZStack(alignment: .topLeading) {

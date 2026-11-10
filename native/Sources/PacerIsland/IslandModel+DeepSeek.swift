@@ -119,9 +119,11 @@ extension IslandModel {
     var deepseekRingPeriod: DeepSeekBudgetPeriod.Kind {
         defaults.string(forKey: Self.deepseekRingPeriodKey).flatMap(DeepSeekBudgetPeriod.Kind.init(rawValue:)) ?? .day
     }
-    /// Budget mode with an amount set shows the budget dial; otherwise the time dial.
-    var deepseekShowsBudgetDial: Bool { !deepseekBudgets.isEmpty }
-    /// DeepSeek alone shows the full dashboard unless the simple one was chosen.
+    /// The budget dial needs an amount in budget mode and the panel's Budget
+    /// choice; otherwise the time dial shows.
+    var deepseekShowsBudgetDial: Bool { panelOptions.showsBudgetDial(hasBudget: !deepseekBudgets.isEmpty) }
+    /// The earlier DeepSeek content choice, which only decides whether the
+    /// automatic panel adds spend and week for DeepSeek alone.
     var deepseekPanelStyle: DeepSeekPanelStyle { .load(from: defaults) }
     var deepseekSpeedSource: DeepSeekSpeedSource {
         defaults.string(forKey: Self.deepseekSpeedSourceKey).flatMap(DeepSeekSpeedSource.init(rawValue:)) ?? .local

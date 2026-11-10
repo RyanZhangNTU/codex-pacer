@@ -13,11 +13,9 @@ enum ClassicQuotaDashboardLayout {
 
 struct ClassicQuotaDashboardView: View {
     @ObservedObject var model: IslandModel
-    var providers: [AgentProvider]? = nil
-    private var shown: [AgentProvider] { providers ?? model.enabledProviders }
-    private var slots: [ClassicQuotaDashboardSlot] {
-        ClassicQuotaDashboardLayout.slots(providers: shown)
-    }
+    let providers: [AgentProvider]
+    /// The rings the block's services and windows give, in the panel's order.
+    let slots: [ClassicQuotaDashboardSlot]
 
     var body: some View { rings }
 
@@ -31,15 +29,18 @@ struct ClassicQuotaDashboardView: View {
                             title: slot.title, identifiesProvider: slot.identifiesProvider,
                             providerHelp: providerHelp(slot.provider, period: slot.period), now: model.now)
                         if slot.identifiesProvider {
-                            ClassicQuotaOtherPeriodView(quota: model.dashboardQuota(provider: slot.provider,
-                                period: slot.period == .fiveHour ? .weekly : .fiveHour), now: model.now)
+                            // A service limited to one window names no other.
+                            if model.panelOptions.periods(for: slot.provider) == .both {
+                                ClassicQuotaOtherPeriodView(quota: model.dashboardQuota(provider: slot.provider,
+                                    period: slot.period == .fiveHour ? .weekly : .fiveHour), now: model.now)
+                            }
                             QuotaProviderStatusView(model: model, provider: slot.provider)
                         }
                     }.frame(maxWidth: .infinity, alignment: .top)
                     }
                 }
             }
-            if shown.count == 1, let provider = shown.first {
+            if providers.count == 1, let provider = providers.first {
                 QuotaProviderStatusView(model: model, provider: provider)
                     .frame(maxWidth: .infinity)
             }
@@ -70,6 +71,7 @@ struct ClassicQuotaDashboardRingView: View {
     /// Pace needs fresh quota; a stale value against the live clock would mislead.
     private var reading: QuotaDashboardPresentation.Reading { quota.at(now) }
     private var verdict: QuotaPaceVerdict? { reading.verdict }
+    @Environment(\.quotaPaceTick) private var showsPaceTick
 
     var body: some View {
         VStack(spacing: 8) {
@@ -87,7 +89,7 @@ struct ClassicQuotaDashboardRingView: View {
                         .foregroundStyle(PacerPalette.tertiary)
                 } else {
                     ring(percent: quota.remainingQuotaPercent, lineWidth: Self.stroke, color: quota.provider.tint)
-                    if let time = quota.remainingTimePercent.flatMap({ $0.isFinite ? min(100, max(0, $0)) : nil }) {
+                    if showsPaceTick, let time = quota.remainingTimePercent.flatMap({ $0.isFinite ? min(100, max(0, $0)) : nil }) {
                         paceTick(at: time / 100)
                     }
                     VStack(spacing: 2) {

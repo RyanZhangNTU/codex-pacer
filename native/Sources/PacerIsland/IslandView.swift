@@ -109,10 +109,29 @@ private struct IslandExpandedContent: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            taskContent
-            Hairline().padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 10)
-            IslandQuotaSection(model: model)
+        let sections = drawnSections
+        let errorHolder = sections.first?.id
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                if index > 0 {
+                    if Self.joins(section, after: sections[index - 1]) {
+                        Color.clear.frame(height: 14)
+                    } else {
+                        Hairline().padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 10)
+                    }
+                }
+                IslandPanelSection(model: model, section: section, showsNavigationError: section.id == errorHolder)
+            }
+            if model.enabledProviders.isEmpty {
+                Hairline().padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 10)
+                HStack(spacing: 12) {
+                    Text(L10n.text("provider.none_enabled")).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
+                    Spacer(minLength: 8)
+                    Button(L10n.text("common.open_settings")) { model.onSettings?() }
+                        .font(.system(size: 12, weight: .medium)).buttonStyle(.plain).foregroundStyle(PacerPalette.primary)
+                }
+                .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
+            }
         }
         .padding(.top, topInset)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -122,10 +141,64 @@ private struct IslandExpandedContent: View {
         })
     }
 
-    @ViewBuilder private var taskContent: some View {
+    /// DeepSeek's spend and week leave the panel when they have nothing to
+    /// show, hairline and all, unless they carry the panel's buttons.
+    private var drawnSections: [ExpandedPanelPresentation.Section] {
+        let sections = model.panelSections
+        guard sections.contains(where: { $0.kind == .deepseekSpend || $0.kind == .deepseekWeek }) else { return sections }
+        let deepseek = model.deepseekSoloPresentation
+        return sections.filter { section in
+            switch section.kind {
+            case .deepseekSpend: section.actions || deepseek.distribution != nil
+            case .deepseekWeek: section.actions || deepseek.week != nil
+            case .tasks, .quota: true
+            }
+        }
+    }
+
+    /// A joined section continues DeepSeek's blocks with a gap; after a
+    /// section that was left out, it starts with a hairline as usual.
+    static func joins(_ section: ExpandedPanelPresentation.Section, after previous: ExpandedPanelPresentation.Section) -> Bool {
+        guard section.joined else { return false }
+        switch previous.kind {
+        case .deepseekSpend, .deepseekWeek: return true
+        case .quota: return previous.providers.contains(.deepseek)
+        case .tasks: return false
+        }
+    }
+}
+
+/// One block of the expanded panel. The first carries the panel's buttons
+/// in its header.
+private struct IslandPanelSection: View {
+    @ObservedObject var model: IslandModel
+    let section: ExpandedPanelPresentation.Section
+    /// A failed open explains itself under the first block, beside the panel's buttons.
+    let showsNavigationError: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            switch section.kind {
+            case .tasks: tasks
+            case .quota: IslandQuotaSection(model: model, section: section)
+            case .deepseekSpend: spend
+            case .deepseekWeek: week
+            }
+            if showsNavigationError, let error = model.navigationError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, IslandMetrics.rowInset).padding(.top, 6)
+            }
+        }
+    }
+
+    @ViewBuilder private var tasks: some View {
         if model.visibleActivities.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: "0") { IslandPanelControls(model: model) }
+                IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: "0") {
+                    if section.actions { IslandPanelControls(model: model) }
+                }
                 HStack(spacing: 10) {
                     StatusGlyph(symbol: StatusSymbols.idle, tint: PacerPalette.secondary)
                     Text(L10n.text("activity.no_tasks")).font(.system(size: 12, weight: .medium)).foregroundStyle(PacerPalette.secondary)
@@ -133,56 +206,80 @@ private struct IslandExpandedContent: View {
                 .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
             }
         } else {
-            TaskPagerView(model: model)
+            TaskPagerView(model: model, actions: section.actions)
         }
-        if let error = model.navigationError {
-            Label(error, systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 11)).foregroundStyle(PacerPalette.attention)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, IslandMetrics.rowInset).padding(.top, 6)
+    }
+
+    private var header: ExpandedPanelPresentation.Header {
+        ExpandedPanelPresentation.header(section, budgetDial: model.deepseekShowsBudgetDial)
+    }
+
+    /// Spend and week draw their own small title, unless they open the panel
+    /// and carry its buttons in a section header instead.
+    private var spend: some View {
+        let wallet = model.deepseekWallet
+        return VStack(alignment: .leading, spacing: 8) {
+            if section.showsHeader {
+                IslandSectionHeader(title: header.title, detail: nil) {
+                    if section.actions { IslandPanelControls(model: model) }
+                }
+            }
+            if model.deepseekSoloPresentation.distribution != nil {
+                DeepSeekWhereItWent(model: model, wallet: wallet, showsTitle: !section.showsHeader)
+                    .padding(.horizontal, IslandMetrics.rowInset)
+            }
         }
+        .padding(.bottom, 4)
+    }
+
+    private var week: some View {
+        let wallet = model.deepseekWallet, line = model.panelOptions.weekLine
+        return VStack(alignment: .leading, spacing: 8) {
+            if section.showsHeader {
+                IslandSectionHeader(title: header.title, detail: DeepSeekSoloPresentation.week(wallet, line: line)?.lineText) {
+                    if section.actions { IslandPanelControls(model: model) }
+                }
+            }
+            DeepSeekWeekChart(wallet: wallet, now: model.now, line: line, showsTitle: !section.showsHeader)
+                .padding(.horizontal, IslandMetrics.rowInset)
+        }
+        .padding(.bottom, 4)
     }
 }
 
-/// The expanded island's quota section, also shown on the main window's
-/// Overview so both read the same way and follow the same style setting.
+/// One quota block: a service, or several side by side, under the title the
+/// panel gives them.
 struct IslandQuotaSection: View {
     @ObservedObject var model: IslandModel
+    let section: ExpandedPanelPresentation.Section
 
     var body: some View {
+        let header = ExpandedPanelPresentation.header(section, budgetDial: model.deepseekShowsBudgetDial)
         VStack(alignment: .leading, spacing: 8) {
-            let single = model.enabledProviders.count == 1 ? model.enabledProviders.first : nil
-            let title = single == .deepseek ? (model.deepseekShowsBudgetDial ? "layout.group.budget" : "layout.group.balance")
-                : model.enabledProviders.contains(.deepseek) ? "layout.group.quota_balance" : "layout.group.quota"
-            IslandSectionHeader(title: L10n.text(title), detail: single?.displayName,
-                detailColor: single?.tint ?? PacerPalette.tertiary) {
-                if single == .deepseek { DeepSeekSectionStatus(model: model) }
-            }
-            if model.enabledProviders.isEmpty {
-                HStack(spacing: 12) {
-                    Text(L10n.text("provider.none_enabled")).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
-                    Spacer(minLength: 8)
-                    Button(L10n.text("common.open_settings")) { model.onSettings?() }
-                        .font(.system(size: 12, weight: .medium)).buttonStyle(.plain).foregroundStyle(PacerPalette.primary)
+            IslandSectionHeader(title: header.title, detail: header.detail,
+                detailColor: header.provider?.tint ?? PacerPalette.tertiary) {
+                HStack(spacing: 8) {
+                    if header.provider == .deepseek { DeepSeekSectionStatus(model: model) }
+                    if section.actions { IslandPanelControls(model: model) }
                 }
-                .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
-            } else {
-                QuotaDashboardView(model: model)
             }
+            QuotaDashboardView(model: model, section: section)
         }
     }
 }
 
-/// Panel actions sit at the right of the task header, after a button for each
-/// enabled module's desktop app. Read, Pin and Settings stay one click away;
-/// refresh and quit are rare and share one menu. Collapsing needs no control:
-/// moving away, Escape or unpinning closes the panel.
+/// The panel's buttons in its first block's header: a button for each
+/// enabled module's desktop app, then Mark All as Read, Keep Expanded and
+/// Settings as chosen. What is not in the header waits in the More menu with
+/// Refresh and Quit. Collapsing needs no control: moving away, Escape or
+/// unpinning closes the panel.
 struct IslandPanelControls: View {
     @ObservedObject var model: IslandModel
     var language: AppLanguage = L10n.language
     @State private var hovered = false
 
     var body: some View {
+        let actions = model.panelOptions.headerActions
         HStack(spacing: 0) {
             if model.isDemo {
                 Text(L10n.text("demo.label", language: language)).font(.system(size: 10, weight: .semibold)).foregroundStyle(PacerPalette.secondary)
@@ -193,22 +290,22 @@ struct IslandPanelControls: View {
             let apps = model.appButtonProviders
             if !apps.isEmpty {
                 ForEach(apps, id: \.self) { provider in
-                    IslandIconButton(symbol: provider.glyph, title: L10n.text("activity.open_app", provider.displayName),
+                    IslandIconButton(symbol: provider.glyph, title: L10n.text("activity.open_app", provider.displayName, language: language),
                         tint: provider.tint) { model.openDesktopApplication(provider) }
                 }
                 Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
             }
-            IslandIconButton(symbol: "checkmark.rectangle.stack", title: L10n.text("activity.mark_all_read")) { model.markAllRead() }
-                .disabled(!model.canMarkAllRead)
-            IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin",
-                title: model.pinned ? L10n.text("common.unpin") : L10n.text("common.pin"), active: model.pinned) { model.togglePin() }
-            IslandIconButton(symbol: "gearshape", title: L10n.text("common.settings")) { model.onSettings?() }
-            Menu {
-                Button(L10n.text("common.refresh")) { model.refreshQuota(); model.refreshTaskSources() }
-                    .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
-                Divider()
-                Button(L10n.text("common.quit")) { model.onQuit?() }
-            } label: {
+            if actions.contains(.markRead) {
+                IslandIconButton(symbol: "checkmark.rectangle.stack", title: L10n.text("activity.mark_all_read", language: language)) { model.markAllRead() }
+                    .disabled(!model.canMarkAllRead)
+            }
+            if actions.contains(.pin) {
+                IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin", title: pinTitle, active: model.pinned) { model.togglePin() }
+            }
+            if actions.contains(.settings) {
+                IslandIconButton(symbol: "gearshape", title: L10n.text("common.settings", language: language)) { model.onSettings?() }
+            }
+            Menu { menu(actions) } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(hovered ? PacerPalette.primary : PacerPalette.secondary)
@@ -218,8 +315,28 @@ struct IslandPanelControls: View {
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             .onHover { hovered = $0 }
-            .help(L10n.text("common.more")).accessibilityLabel(L10n.text("common.more"))
+            .help(L10n.text("common.more", language: language)).accessibilityLabel(L10n.text("common.more", language: language))
         }
+    }
+
+    private var pinTitle: String { L10n.text(model.pinned ? "common.unpin" : "common.pin", language: language) }
+
+    /// The buttons left out of the header, then Refresh, then Quit.
+    @ViewBuilder private func menu(_ actions: Set<ExpandedPanelOptions.HeaderAction>) -> some View {
+        let apps = model.showsAppButtons ? [] : model.desktopAppProviders
+        ForEach(apps, id: \.self) { provider in
+            Button(L10n.text("activity.open_app", provider.displayName, language: language)) { model.openDesktopApplication(provider) }
+        }
+        if !actions.contains(.markRead) {
+            Button(L10n.text("activity.mark_all_read", language: language)) { model.markAllRead() }.disabled(!model.canMarkAllRead)
+        }
+        if !actions.contains(.pin) { Button(pinTitle) { model.togglePin() } }
+        if !actions.contains(.settings) { Button(L10n.text("common.settings", language: language)) { model.onSettings?() } }
+        if !apps.isEmpty || actions.count < ExpandedPanelOptions.HeaderAction.allCases.count { Divider() }
+        Button(L10n.text("common.refresh", language: language)) { model.refreshQuota(); model.refreshTaskSources() }
+            .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
+        Divider()
+        Button(L10n.text("common.quit", language: language)) { model.onQuit?() }
     }
 }
 

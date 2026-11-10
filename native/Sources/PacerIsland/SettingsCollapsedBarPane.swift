@@ -254,7 +254,7 @@ struct SettingsCollapsedBarPane: View {
 
 /// A choice stacked over its segments, so three of them fit the inspector's
 /// width; a hint under the title says when or why it applies.
-private struct OptionSegments<Value: Hashable>: View {
+struct OptionSegments<Value: Hashable>: View {
     let title: String
     var hint: String?
     @Binding var selection: Value

@@ -7,11 +7,11 @@ import SwiftUI
 /// a footer with About and Support. Earlier stored pages open where their
 /// content moved.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case overview, history, codex, claude, deepseek, remote, appearance, collapsedBar, notifications, general, about, support
+    case overview, history, codex, claude, deepseek, remote, appearance, collapsedBar, expandedPanel, notifications, general, about, support
     static let defaultsKey = "settingsPane"
     /// The sidebar's groups, in order; About and Support sit in its footer.
     static let groups: [[SettingsPane]] = [[.overview, .history], [.codex, .claude, .deepseek, .remote],
-                                           [.appearance, .collapsedBar, .notifications, .general]]
+                                           [.appearance, .collapsedBar, .expandedPanel, .notifications, .general]]
     var id: String { rawValue }
 
     init?(stored value: String) {
@@ -54,6 +54,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .remote: L10n.text("main.pane.remote")
         case .appearance: L10n.text("settings.pane.appearance")
         case .collapsedBar: L10n.text("settings.pane.collapsed")
+        case .expandedPanel: L10n.text("settings.pane.expanded_panel")
         case .notifications: L10n.text("main.pane.notifications")
         case .general: L10n.text("settings.pane.general")
         case .about: L10n.text("main.pane.about")
@@ -72,6 +73,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .remote: "server.rack"
         case .appearance: "circle.lefthalf.filled"
         case .collapsedBar: "rectangle.topthird.inset.filled"
+        case .expandedPanel: "text.alignleft"
         case .notifications: "bell"
         case .general: "gearshape"
         case .about: "info.circle"
@@ -97,7 +99,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .codex, .claude, .deepseek: provider?.brand ?? .gray
         case .appearance: Color(red: 0.44, green: 0.4, blue: 0.96)
-        case .collapsedBar: Color(red: 0.2, green: 0.22, blue: 0.27)
+        case .collapsedBar, .expandedPanel: Color(red: 0.2, green: 0.22, blue: 0.27)
         case .notifications: Color(red: 1, green: 0.3, blue: 0.29)
         case .remote: Color(red: 0.16, green: 0.5, blue: 1)
         case .support: Color(red: 0.96, green: 0.36, blue: 0.42)

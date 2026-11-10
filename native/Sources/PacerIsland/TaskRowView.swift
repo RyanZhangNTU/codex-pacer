@@ -2,7 +2,9 @@ import SwiftUI
 import PacerCore
 
 /// Line one names the task and its speed, line two its state and model, so the
-/// trailing column pairs a rate with the model that produced it.
+/// trailing column pairs a rate with the model that produced it. The panel's
+/// choices can leave out readings or keep one line with the name and the
+/// speed; a row that needs the user then shows its state there instead.
 struct TaskRowView: View {
     let presentation: ActivityTaskRowPresentation
     let group: ActivityTaskGroup?
@@ -18,6 +20,8 @@ struct TaskRowView: View {
     private var cost: Double? { presentation.cost == nil ? nil : activity.turnCost }
     /// The turn was billed at the doubled peak price, and the task's spend today.
     var costDetail: (peak: Bool, help: String)? = nil
+    /// The expanded panel's row style and fields; Overview keeps every reading.
+    var options = ExpandedPanelOptions()
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -108,34 +112,64 @@ struct TaskRowView: View {
             + (cost.map { ", " + L10n.text("deepseek.turn_cost_accessibility", DeepSeekWallet.turnAmount($0)) } ?? "")
     }
 
-    private func rowContent(measuring: Bool) -> some View {
-        HStack(spacing: 10) {
-            statusIcon(measuring: measuring)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 16) {
-                    Text(name).font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(dimmed ? PacerPalette.secondary : PacerPalette.primary).lineLimit(1)
-                        .frame(maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)
+    /// Rows of one line are this tall; two-line rows take 54 points.
+    static func height(_ style: ExpandedPanelOptions.RowStyle) -> CGFloat { style == .oneLine ? 38 : 54 }
+    private var oneLine: Bool { options.rowStyle == .oneLine }
+    private var showsRateLine: Bool { options.shows(.rate) || (options.shows(.turnTime) && turnTime != nil) }
+    private var showsModelLine: Bool { options.shows(.model) || (options.shows(.cost) && cost != nil) }
+    /// A request for the user, a wait for an answer or a failure replaces the
+    /// readings in a one-line row.
+    private var statusLeads: Bool { attention != nil || phase == .waitingForInput || activity.turnFailed }
+
+    @ViewBuilder private func rowContent(measuring: Bool) -> some View {
+        if oneLine {
+            HStack(spacing: 8) {
+                statusIcon(measuring: measuring)
+                title(measuring: measuring)
+                if statusLeads {
+                    Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
+                } else if showsRateLine {
                     rateLine
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 16) {
-                    statusLine.frame(maxWidth: measuring ? nil : .infinity, alignment: .leading)
-                    modelLine
+            }
+            .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
+        } else {
+            HStack(spacing: 10) {
+                statusIcon(measuring: measuring)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 16) {
+                        title(measuring: measuring)
+                        if showsRateLine { rateLine }
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 16) {
+                        statusLine.frame(maxWidth: measuring ? nil : .infinity, alignment: .leading)
+                        if showsModelLine { modelLine }
+                    }
                 }
             }
+            .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
         }
-        .padding(.horizontal, IslandMetrics.rowInset).padding(.vertical, 8)
     }
 
-    /// The ring and the state share one 28 pt icon. The width probe draws
-    /// nothing, so only the shown row keeps a task's motion.
+    private func title(measuring: Bool) -> some View {
+        Text(name).font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(dimmed ? PacerPalette.secondary : PacerPalette.primary).lineLimit(1)
+            .frame(maxWidth: measuring ? Self.measuredTitleWidth : .infinity, alignment: .leading)
+    }
+
+    /// The ring and the state share one icon, 28 points or 22 in a one-line
+    /// row. The width probe draws nothing, so only the shown row keeps a
+    /// task's motion.
     @ViewBuilder private func statusIcon(measuring: Bool) -> some View {
+        let full = TaskStatusIconNSView.diameter, side = oneLine ? 22 : full
         if measuring {
-            Color.clear.frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
+            Color.clear.frame(width: side, height: side)
         } else {
             TaskStatusIconView(id: activity.id, ring: progressRing, face: face, color: color, animates: !reduceMotion,
                 completionPulseOnly: activity.provider == .codex)
-                .frame(width: TaskStatusIconNSView.diameter, height: TaskStatusIconNSView.diameter)
+                .frame(width: full, height: full)
+                .scaleEffect(side / full)
+                .frame(width: side, height: side)
                 .accessibilityHidden(true)
         }
     }
@@ -153,14 +187,14 @@ struct TaskRowView: View {
     private var statusLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(status).foregroundStyle(detailColor).lineLimit(1).layoutPriority(1)
-            if subagents > 0 {
+            if subagents > 0, options.shows(.subagents) {
                 HStack(spacing: 3) {
                     Image(systemName: "person.2").font(.system(size: 9, weight: .semibold))
                     Text(presentation.subagentText).monospacedDigit()
                 }
                 .foregroundStyle(PacerPalette.secondary).fixedSize()
             }
-            if let source = sourceName {
+            if let source = sourceName, options.shows(.source) {
                 HStack(spacing: 3) {
                     // Remote hosts get a server glyph; a local app is named as is.
                     if activity.sourceHostID != nil {
@@ -175,17 +209,18 @@ struct TaskRowView: View {
     }
 
     private var rateLine: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            if let rate {
+        let showsRate = options.shows(.rate)
+        return HStack(alignment: .firstTextBaseline, spacing: 0) {
+            if showsRate, let rate {
                 Text(presentation.rateText ?? "").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(rate.isFresh && !dimmed ? PacerPalette.primary : PacerPalette.secondary)
                 Text(" t/s").font(.system(size: 10, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
-            } else if activity.claudeCloud == nil {
+            } else if showsRate, activity.claudeCloud == nil {
                 Text(L10n.text("performance.awaiting_usage")).font(.system(size: 11, weight: .medium))
                     .foregroundStyle(PacerPalette.tertiary)
             }
-            if let turnTime {
-                if rate != nil || activity.claudeCloud == nil {
+            if let turnTime, options.shows(.turnTime) {
+                if showsRate, rate != nil || activity.claudeCloud == nil {
                     Text(" · ").font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
                 }
                 Text(turnTime).font(.system(size: 11, weight: .medium))
@@ -197,7 +232,7 @@ struct TaskRowView: View {
 
     private var modelLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            if let cost {
+            if let cost, options.shows(.cost) {
                 HStack(alignment: .center, spacing: 4) {
                     if costDetail?.peak == true {
                         Circle().fill(PacerPalette.attention).frame(width: 5, height: 5).accessibilityHidden(true)
@@ -206,8 +241,10 @@ struct TaskRowView: View {
                 }
                 .padding(.trailing, 3)
             }
-            Text(modelLabel)
-            if let effortLabel { Text(effortLabel).opacity(0.62) }
+            if options.shows(.model) {
+                Text(modelLabel)
+                if let effortLabel { Text(effortLabel).opacity(0.62) }
+            }
         }
         .font(.system(size: 11, weight: .medium)).foregroundStyle(activity.provider.tint)
         .opacity(dimmed ? 0.7 : 1).lineLimit(1).fixedSize()
