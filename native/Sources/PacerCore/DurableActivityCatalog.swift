@@ -12,11 +12,15 @@ public struct DurableActivityCatalog: Equatable, Sendable {
         self.threadIDs = Set(threadIDs.prefix(64).compactMap { UUID(uuidString: $0)?.uuidString.lowercased() })
     }
 
+    /// An idle or finished thread takes part only while it is this recent.
+    package static let recentWindow: TimeInterval = 180
+
     public struct Page: Sendable {
         package let entries: [Entry]
         public var threadIDs: [String] { entries.map(\.id) }
         public let nextCursor: String?
-        public let executorIdle: Bool
+        /// The oldest update among all rows on the page, of any source.
+        package let oldestUpdate: Date?
     }
 
     package struct Entry: Sendable {
@@ -30,22 +34,18 @@ public struct DurableActivityCatalog: Equatable, Sendable {
                              now: Date = Date()) throws -> Page {
         let fields = try result.fields(["data", "nextCursor"])
         guard let data = fields["data"], data.isArray else { throw CodexClientError.invalidResponse }
-        let recent = now.addingTimeInterval(-180).timeIntervalSince1970
-        let quietSince = now.addingTimeInterval(-60).timeIntervalSince1970
-        var threads: [Entry] = [], idle = true
+        let recent = now.addingTimeInterval(-recentWindow).timeIntervalSince1970
+        var threads: [Entry] = [], oldest: Double?
         for entry in try data.elements(maximumCount: 100) {
             let row = try entry.fields(["id", "name", "threadSource", "updatedAt", "status", "environments", "ephemeral"])
+            let updated = row["updatedAt"]?.number()
+            if let updated { oldest = min(oldest ?? updated, updated) }
             let status = try row["status"].flatMap { $0.isObject ? try $0.fields(["type"])["type"]?.string() : nil }
-            guard let environments = row["environments"], environments.isArray else {
-                if status == "active" { idle = false }
-                continue
-            }
+            guard let environments = row["environments"], environments.isArray else { continue }
             let local = try environments.elements(maximumCount: 32).contains { environment in
                 try environment.fields(["environmentId"])["environmentId"]?.string(limit: 128) == environmentID
             }
             guard local else { continue }
-            let updated = row["updatedAt"]?.number()
-            if status != "idle" || (updated ?? .infinity) >= quietSince { idle = false }
             guard row["ephemeral"]?.boolean() != true,
                   ["aeon", "aeon_child"].contains(row["threadSource"]?.string() ?? ""),
                   let value = row["id"]?.string(limit: 36), let id = UUID(uuidString: value)?.uuidString.lowercased(),
@@ -53,8 +53,7 @@ public struct DurableActivityCatalog: Equatable, Sendable {
             threads.append(Entry(id: id, name: row["name"]?.string(limit: 512),
                                  updatedAt: updated.map(Date.init(timeIntervalSince1970:)), active: status == "active"))
         }
-        let next = fields["nextCursor"]?.string(limit: 1024)
-        if fields["nextCursor"]?.isNull != true, next == nil { idle = false }
-        return Page(entries: threads, nextCursor: next, executorIdle: idle)
+        return Page(entries: threads, nextCursor: fields["nextCursor"]?.string(limit: 1024),
+                    oldestUpdate: oldest.map(Date.init(timeIntervalSince1970:)))
     }
 }

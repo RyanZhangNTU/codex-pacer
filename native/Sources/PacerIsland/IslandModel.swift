@@ -416,9 +416,10 @@ final class IslandModel: ObservableObject {
             CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 8) }
         }
         if !enabled || status == .ready {
-            let configured = await MacDurableProgressSetup.apply(home: home, reporter: enabled ? reporter : nil,
-                                                                 customExecutable: executable)
-            if enabled && !configured { return .failed }
+            // The Dot plugin is best effort: a failed install leaves local
+            // sessions reporting and is retried by the next setup.
+            _ = await MacDurableProgressSetup.apply(home: home, reporter: enabled ? reporter : nil,
+                                                    customExecutable: executable)
         }
         return status
     }

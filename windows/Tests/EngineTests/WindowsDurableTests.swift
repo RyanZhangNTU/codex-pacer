@@ -149,7 +149,9 @@ final class WindowsDurableTests: XCTestCase {
         defer { reader.close() }
         do {
             try await reader.initialize()
-            _ = try await reader.read(retaining: nil)
+            // The second read on the connection may stop paging early.
+            let first = try await reader.read(retaining: nil)
+            _ = try await reader.read(retaining: first.catalog)
         } catch { XCTFail("The Durable server did not return a valid catalog page.") }
     }
 

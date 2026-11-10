@@ -62,7 +62,7 @@ enum WindowsDurableCatalog {
                 let updates = try await history.read(result, using: reader, ipc: await ipc(), receipts: mailbox.read(at:), at: now)
                 try Task.checkCancellation()
                 guard binding.isCurrent(home: home) else { throw CodexClientError.accountMismatch }
-                if !updates.history.isEmpty { await publishHistory(result.catalog.scope, binding, updates.history) }
+                if !updates.isEmpty { await publishHistory(result.catalog.scope, binding, updates) }
                 retryDelay = 5
                 delay = max(1, 15 - Date().timeIntervalSince(now))
             } catch {

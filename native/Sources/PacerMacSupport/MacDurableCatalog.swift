@@ -13,7 +13,6 @@ enum MacDurableCatalog {
         var polls = DurableHistoryPoll()
         let mailbox = MacDurableProgressMailbox(home: home)
         defer { connection?.close() }
-        await MacDurableRefresh.shared.interrupt(home: home)
         var retryDelay = 5.0
         while !Task.isCancelled {
             let delay: TimeInterval
@@ -47,14 +46,11 @@ enum MacDurableCatalog {
                       CodexClient.authenticationFingerprint(home: home, files: MacFileSystem()) == fingerprint else {
                     throw CodexClientError.accountMismatch
                 }
-                if previous?.scope != result.catalog.scope {
-                    await MacDurableRefresh.shared.interrupt(home: home)
-                    polls.reset(startingNow: previous != nil)
-                }
+                if previous?.scope != result.catalog.scope { polls.reset(startingNow: previous != nil) }
                 previous = result.catalog
                 publish(result.catalog)
                 let now = Date()
-                let (history, newestLocalReportTurnStart) = try await polls.read(result, using: connection.reader,
+                let history = try await polls.read(result, using: connection.reader,
                     ipc: ipcObservations(), receipts: mailbox.read(at:), at: now)
                 if !history.isEmpty {
                     try Task.checkCancellation()
@@ -64,18 +60,11 @@ enum MacDurableCatalog {
                     }
                     publishHistory(result.catalog.scope, history)
                 }
-                // Verify any available receipt before considering a refresh.
-                // History reads can outlast the catalog's idle observation.
-                try Task.checkCancellation()
-                let recentlyIdle = result.executorIdle && Date().timeIntervalSince(now) < 1
-                await MacDurableRefresh.shared.observe(home: home, executor: executor, catalogIdle: recentlyIdle,
-                                                       verifiedReportTurnStartedAt: newestLocalReportTurnStart)
                 retryDelay = 5
                 delay = max(1, 15 - Date().timeIntervalSince(now))
             } catch {
                 connection?.close()
                 connection = nil
-                await MacDurableRefresh.shared.interrupt(home: home)
                 if Task.isCancelled { break }
                 publish(nil)
                 delay = retryDelay

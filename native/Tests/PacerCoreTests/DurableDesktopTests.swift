@@ -20,10 +20,62 @@ final class DurableDesktopTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: payload)
         let page = try DurableActivityCatalog.page(JSONFieldView.document(data), environmentID: "this-mac", now: now)
         XCTAssertEqual(page.threadIDs, [thread])
-        XCTAssertFalse(page.executorIdle)
+        XCTAssertEqual(page.oldestUpdate, Date(timeIntervalSince1970: 970))
         let later = try DurableActivityCatalog.page(JSONFieldView.document(data), environmentID: "this-mac",
                                                     retaining: [thread], now: now.addingTimeInterval(900))
         XCTAssertEqual(later.threadIDs, [thread])
+    }
+
+    /// Serves `thread/list` pages keyed by cursor and records each request.
+    private final class CatalogPages: DurableCatalogSocket, @unchecked Sendable {
+        private let lock = NSLock()
+        private let pages: [String: [String: Any]]
+        private var replies: [Data] = []
+        private(set) var cursors: [String] = []
+        init(_ pages: [String: [String: Any]]) { self.pages = pages }
+        func send(_ bytes: Data) async throws {
+            let message = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+            guard let id = message["id"] else { return }
+            let cursor = (message["params"] as? [String: Any])?["cursor"] as? String ?? "first"
+            let result = message["method"] as? String == "thread/list" ? pages[cursor] ?? [:] : [:]
+            let reply = try JSONSerialization.data(withJSONObject: ["id": id, "result": result])
+            lock.lock(); defer { lock.unlock() }
+            if message["method"] as? String == "thread/list" { cursors.append(cursor) }
+            replies.append(reply)
+        }
+        func receive() async throws -> Data {
+            lock.lock(); defer { lock.unlock() }
+            return replies.removeFirst()
+        }
+        func close() {}
+        func takeCursors() -> [String] { lock.lock(); defer { lock.unlock() }; let value = cursors; cursors = []; return value }
+    }
+
+    func testLaterCatalogReadsStopAtTheFirstOldPageOnceRetainedThreadsAreFound() async throws {
+        let now = Date(timeIntervalSince1970: 10_000)
+        func row(_ id: String, updated: Double, status: String = "idle") -> [String: Any] {
+            ["id": id, "threadSource": "aeon_child", "updatedAt": updated, "status": ["type": status],
+             "environments": [["environmentId": "this-pc"]]]
+        }
+        let socket = CatalogPages([
+            "first": ["data": [row(thread, updated: 9_990), row(UUID().uuidString, updated: 9_000)], "nextCursor": "second"],
+            "second": ["data": [row(other, updated: 8_000, status: "active")], "nextCursor": "third"],
+            "third": ["data": [row(UUID().uuidString, updated: 7_000)], "nextCursor": NSNull()]
+        ])
+        let reader = DurableCatalogReader(socket: socket, scope: "account", environmentID: "this-pc")
+        // The first read on a connection pages to the end and finds the
+        // active thread whose last update is old.
+        let first = try await reader.read(retaining: nil, now: { now })
+        XCTAssertEqual(first.catalog.threadIDs, [thread, other])
+        XCTAssertEqual(socket.takeCursors(), ["first", "second", "third"])
+        // A retained thread on a later page is still followed there.
+        let second = try await reader.read(retaining: first.catalog, now: { now })
+        XCTAssertEqual(second.catalog.threadIDs, [thread, other])
+        XCTAssertEqual(socket.takeCursors(), ["first", "second"])
+        // Without retained threads, a page older than the window ends the read.
+        let third = try await reader.read(retaining: nil, now: { now })
+        XCTAssertEqual(third.catalog.threadIDs, [thread])
+        XCTAssertEqual(socket.takeCursors(), ["first"])
     }
 
     func testClosedTaskWaitsForItsOwnerAndReportsTwoAcceptedPercentages() throws {

@@ -12,13 +12,13 @@ package final class DurableCatalogReader {
     package struct Result {
         package let catalog: DurableActivityCatalog
         package let entries: [DurableActivityCatalog.Entry]
-        package let executorIdle: Bool
     }
 
     private let socket: any DurableCatalogSocket
     private let scope: String
     private let environmentID: String
     private var nextID = 0
+    private var scannedEveryPage = false
 
     package init(socket: any DurableCatalogSocket, scope: String, environmentID: String) {
         self.socket = socket; self.scope = scope; self.environmentID = environmentID
@@ -34,25 +34,33 @@ package final class DurableCatalogReader {
         try await socket.send(Data(#"{"method":"initialized","params":{}}"#.utf8))
     }
 
-    package func read(retaining previous: DurableActivityCatalog?) async throws -> Result {
-        var entries: [DurableActivityCatalog.Entry] = [], cursor: String?
-        var idle = true, complete = false
+    /// Rows arrive newest first. The first read on a connection pages up to
+    /// the limit, so an active thread with an old update is found at least
+    /// once per connection. Later reads stop after a page older than the
+    /// recent window once every retained thread has been seen.
+    package func read(retaining previous: DurableActivityCatalog?, now: () -> Date = { Date() }) async throws -> Result {
+        let retained = previous?.scope == scope ? previous?.threadIDs ?? [] : []
+        let stopsEarly = scannedEveryPage
+        var entries: [DurableActivityCatalog.Entry] = [], cursor: String?, unseen = retained
         for _ in 0..<4 {
             var params: [String: Any] = [
                 "limit": 50, "archived": false, "useStateDbOnly": true, "sortKey": "updated_at", "sortDirection": "desc"
             ]
             if let cursor { params["cursor"] = cursor }
+            let date = now()
             let page = try DurableActivityCatalog.page(await request("thread/list", params: params),
-                environmentID: environmentID, retaining: previous?.scope == scope ? previous?.threadIDs ?? [] : [])
+                environmentID: environmentID, retaining: retained, now: date)
             for entry in page.entries where entries.count < 64 && !entries.contains(where: { $0.id == entry.id }) {
                 entries.append(entry)
             }
-            idle = idle && page.executorIdle
-            guard let next = page.nextCursor else { complete = true; break }
-            guard entries.count < 64, next != cursor else { break }
+            unseen.subtract(page.threadIDs)
+            guard let next = page.nextCursor, entries.count < 64, next != cursor else { break }
+            if stopsEarly, unseen.isEmpty, let oldest = page.oldestUpdate,
+               oldest < date.addingTimeInterval(-DurableActivityCatalog.recentWindow) { break }
             cursor = next
         }
-        return Result(catalog: .init(scope: scope, threadIDs: entries.map(\.id)), entries: entries, executorIdle: idle && complete)
+        scannedEveryPage = true
+        return Result(catalog: .init(scope: scope, threadIDs: entries.map(\.id)), entries: entries)
     }
 
     package func latestTurn(_ thread: DurableActivityCatalog.Entry) async throws -> DurableTurnHistory? {
@@ -122,7 +130,7 @@ package struct DurableHistoryPoll {
 
     package mutating func read(_ result: DurableCatalogReader.Result, using connection: DurableCatalogReader,
                                ipc: [String: Date], receipts readReceipts: (Date) -> [String: DurableProgressReceipt],
-                               at now: Date) async throws -> (history: [DurableTurnHistory], latestReportTurnStart: Date?) {
+                               at now: Date) async throws -> [DurableTurnHistory] {
         polls = polls.filter { result.catalog.threadIDs.contains($0.key) }
         let candidates = result.entries.filter { entry in
             let previous = polls[entry.id]
@@ -134,7 +142,7 @@ package struct DurableHistoryPoll {
             (polls[$0.id]?.checkedAt ?? .distantPast) < (polls[$1.id]?.checkedAt ?? .distantPast)
         }
         let receipts = candidates.isEmpty ? [:] : readReceipts(now)
-        var history: [DurableTurnHistory] = [], latestReportTurnStart: Date?
+        var history: [DurableTurnHistory] = []
         for entry in candidates.prefix(4) {
             try Task.checkCancellation()
             if Date().timeIntervalSince(now) >= 6 { break }
@@ -147,9 +155,8 @@ package struct DurableHistoryPoll {
                 poll.settled = !active
                 poll.activeTurn = active ? turn.turnID : nil
                 if active || (turn.completedAt ?? turn.startedAt).map({ $0 >= since }) == true || previous?.activeTurn == turn.turnID {
-                    if let receipt = receipts[entry.id + ":" + turn.turnID.lowercased()],
-                       turn.useLocalReceipt(receipt), let startedAt = turn.startedAt {
-                        latestReportTurnStart = max(latestReportTurnStart ?? .distantPast, startedAt)
+                    if let receipt = receipts[entry.id + ":" + turn.turnID.lowercased()] {
+                        turn.useLocalReceipt(receipt)
                     }
                     if turn.report == nil || !active,
                        let persisted = try? await connection.latestReport(turn, thread: entry.id),
@@ -164,6 +171,6 @@ package struct DurableHistoryPoll {
                 break
             }
         }
-        return (history, latestReportTurnStart)
+        return history
     }
 }

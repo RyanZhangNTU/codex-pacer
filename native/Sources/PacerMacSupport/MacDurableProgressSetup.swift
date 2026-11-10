@@ -3,7 +3,9 @@ import Foundation
 import PacerCore
 
 /// The native progress switch owns this local marketplace. Durable and local
-/// sessions use the same reporter and immediate revocation flag.
+/// sessions use the same reporter and immediate revocation flag. Codex
+/// Desktop loads a change when it next registers its executor; Pacer never
+/// signals Desktop's processes.
 public enum MacDurableProgressSetup {
     private static let market = "codex-pacer-local"
     private static let plugin = "pacer-progress"
@@ -12,11 +14,7 @@ public enum MacDurableProgressSetup {
     private enum Result { case unchanged, changed, failed }
 
     public static func apply(home: URL, reporter: URL?, customExecutable: String) async -> Bool {
-        let home = home.standardizedFileURL
-        await MacDurableRefresh.shared.begin(home: home)
-        let result = await reconcile(home: home, reporter: reporter, customExecutable: customExecutable)
-        let recorded = await MacDurableRefresh.shared.finish(home: home, changed: result == .changed, enabled: reporter != nil)
-        return recorded && result != .failed
+        await reconcile(home: home.standardizedFileURL, reporter: reporter, customExecutable: customExecutable) != .failed
     }
 
     private static func reconcile(home: URL, reporter: URL?, customExecutable: String) async -> Result {

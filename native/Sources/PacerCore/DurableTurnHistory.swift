@@ -51,6 +51,7 @@ package struct DurableTurnHistory: Sendable {
     package let completedAt: Date?
     package var report: Report?
 
+    @discardableResult
     package mutating func useLocalReceipt(_ receipt: DurableProgressReceipt) -> Bool {
         guard receipt.threadID == threadID, receipt.turnID == turnID.lowercased(),
               receipt.at >= (startedAt ?? .distantPast),

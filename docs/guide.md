@@ -74,7 +74,7 @@ Codex, Claude Code and DeepSeek Harness each report how much of your request is 
 
 Estimates are the agent's own guess, so a ring can move back. Rings are on by default; turn them off for each service with **Progress Ring** on its page in the main window. Start a new session after turning a ring on.
 
-Pacer labels Dot Durable tasks assigned to this computer with `Dot`, even when their chats are closed. On Windows this works with the Microsoft Store version of Codex Desktop and its default profile. The Codex **Progress Ring** switch sets up percentage reporting. On Windows, Codex Desktop loads the change the next time it registers the local executor. Turning the ring off stops new reports right away. Pacer still shows whether the task is running or has finished.
+Pacer labels Dot Durable tasks assigned to this computer with `Dot`, even when their chats are closed. On Windows this works with the Microsoft Store version of Codex Desktop and its default profile. The Codex **Progress Ring** switch sets up percentage reporting. Restart Codex Desktop after turning the ring on so Dot tasks pick it up. Turning the ring off stops new reports right away. Pacer still shows whether the task is running or has finished.
 
 ## Quota and balance
 

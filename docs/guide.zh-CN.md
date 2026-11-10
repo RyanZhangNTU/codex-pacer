@@ -74,7 +74,7 @@ Codex、Claude Code 和 DeepSeek Harness 都会报告你的请求完成了多少
 
 估计来自代理自己的判断，所以圆环偶尔会往回走。圆环默认开启；可以在主窗口各服务页面的“任务进度圆环”中分别关闭。打开圆环后，新开的会话才会开始报告。
 
-Dot 分派到这台电脑的 Durable 任务会标注 `Dot`，聊天关闭时也能看到。Windows 上需要使用 Microsoft Store 版 Codex Desktop 和它的默认配置。Codex 页的“任务进度圆环”开关控制百分比上报。在 Windows 上，Codex Desktop 下次注册本机执行器时会加载这项设置。关闭圆环会立即停止上报，Pacer 仍会显示任务是正在运行还是已经结束。
+Dot 分派到这台电脑的 Durable 任务会标注 `Dot`，聊天关闭时也能看到。Windows 上需要使用 Microsoft Store 版 Codex Desktop 和它的默认配置。Codex 页的“任务进度圆环”开关控制百分比上报。打开圆环后请重启 Codex Desktop，Dot 任务才会开始上报。关闭圆环会立即停止上报，Pacer 仍会显示任务是正在运行还是已经结束。
 
 ## 额度与余额
 

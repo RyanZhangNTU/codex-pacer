@@ -1196,7 +1196,11 @@ actor EngineRuntime {
             CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 3) }
         }
         if !enabled || status == .ready {
-            guard await WindowsDurableProgressSetup.apply(home: home, reporter: reporter, fallbackExecutable: executable) else { return .failed }
+            // The Dot plugin is best effort: a failed install leaves local
+            // sessions reporting and is retried by the next setup. Removal
+            // still reports failure so the switch can retry the cleanup.
+            let durable = await WindowsDurableProgressSetup.apply(home: home, reporter: reporter, fallbackExecutable: executable)
+            if !enabled, !durable { return .failed }
         }
         return status
     }
