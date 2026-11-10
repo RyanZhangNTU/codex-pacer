@@ -115,9 +115,24 @@ final class WindowsDurableTests: XCTestCase {
         let root = try fixtureDirectory(); defer { try? FileManager.default.removeItem(at: root) }
         let reporter = try prepareReporter(root: root)
         let config = root.appendingPathComponent("config.toml")
+        let manifest = root.appendingPathComponent("plugins/cache/codex-pacer-local/pacer-progress/1.0.0/.mcp.json")
+        let paths = WindowsCodexProgressPaths(root: root.appendingPathComponent("CodexProgressRuntime"))
+        let legacy = paths.command(python: paths.root.appendingPathComponent(try WindowsPythonPin.load().identifier + "/python.exe"), home: root)
+        func checkManifest(_ expected: CodexProgressCommand) throws {
+            let data = try Data(contentsOf: manifest)
+            let value = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let server = try XCTUnwrap((value["mcpServers"] as? [String: [String: Any]])?["pacer_progress"])
+            XCTAssertEqual(server["command"] as? String, expected.executable)
+            XCTAssertEqual(server["args"] as? [String], expected.arguments + ["--durable"])
+        }
+
         try Data("[mcp_servers.unrelated]\ncommand = \"fixture\"\n".utf8).write(to: config)
+        let beforeUpgrade = await WindowsDurableProgressSetup.apply(home: root, reporter: legacy, cli: executor.packagedCLI)
+        XCTAssertTrue(beforeUpgrade)
+        try checkManifest(legacy)
         let installed = await WindowsDurableProgressSetup.apply(home: root, reporter: reporter, cli: executor.packagedCLI)
         XCTAssertTrue(installed)
+        try checkManifest(reporter)
         XCTAssertTrue(try String(contentsOf: config, encoding: .utf8).contains("pacer-progress@codex-pacer-local"))
         let checked = await WindowsDurableProgressSetup.apply(home: root, reporter: nil, cli: executor.packagedCLI, checkOnly: true)
         XCTAssertTrue(checked)
