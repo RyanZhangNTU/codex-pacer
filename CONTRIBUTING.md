@@ -21,7 +21,7 @@ Thanks for helping improve Codex Pacer, a native macOS app written in SwiftUI an
    On Windows, use the scripts in [Windows shell development](docs/windows-shell.md) and [Windows engine development](docs/windows-engine.md).
 
 3. Check compiler warnings and try the changed behavior in the real app. `--demo` launches it with sample data.
-4. Update the README, user guide, development notes or Windows docs when behavior or setup changes.
+4. Update the docs when behavior or setup changes: the README and [user guide](docs/guide.md) describe features in plain language, while [development notes](docs/development.md) and the Windows docs hold the technical details.
 5. Open a pull request into `develop`, describing what changed and how you tested it, including the OS version and architecture. `main` only receives release promotions; packaging follows [releasing](docs/releasing.md).
 
 ## Privacy

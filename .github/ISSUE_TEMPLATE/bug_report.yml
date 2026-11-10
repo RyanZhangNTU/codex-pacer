@@ -28,7 +28,7 @@ body:
     attributes:
       label: Environment
       description: Codex Pacer version, OS version, and Apple silicon, Intel, x64 or ARM64
-      placeholder: Codex Pacer 4.2.3, macOS 26.1, Apple silicon / Codex Pacer 4.2.3, Windows 11 24H2, x64
+      placeholder: Codex Pacer 4.3.2, macOS 26.1, Apple silicon / Codex Pacer 4.3.2, Windows 11 24H2, x64
     validations:
       required: true
   - type: dropdown

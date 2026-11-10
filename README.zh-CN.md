@@ -5,14 +5,14 @@
 <h1 align="center">Codex Pacer</h1>
 
 <p align="center">
-  Mac 和 Windows 上的灵动岛，帮你盯着 <b>Codex</b>、<b>Claude Code</b> 和 <b>DeepSeek Harness</b>：<br>
-  正在运行的任务、输出速度、额度配速和余额，抬眼就能看到。
+  为 <b>Codex</b>、<b>Claude Code</b> 和 <b>DeepSeek Harness</b> 打造的灵动岛，支持 Mac 和 Windows。<br>
+  正在运行的任务、进度和额度，抬眼就能看到，不用打断手头的事。
 </p>
 
 <p align="center">
   <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/RyanZhangNTU/codex-pacer?label=release&color=2f9e8f"></a>
   <img alt="macOS 14 及以上" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple">
-  <img alt="通用应用，支持 Apple 芯片与 Intel" src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-universal-555555">
+  <img alt="Windows 10 及以上" src="https://img.shields.io/badge/Windows-10%2B-0078D4?logo=windows">
   <a href="LICENSE"><img alt="MIT 许可证" src="https://img.shields.io/github/license/RyanZhangNTU/codex-pacer?color=555555"></a>
 </p>
 
@@ -22,98 +22,55 @@
   &nbsp;·&nbsp; <a href="README.md">English</a>
 </p>
 
-![Codex Pacer 在刘海处（演示数据）：悬停展开本机的 Claude Code、SSH 上的 Codex 和 DeepSeek Harness 三个任务，各自显示速度、模型和推理强度；审批请求让灵动岛变成琥珀色，点一下任务就打开它的 Claude 窗口；接着依次是只开 Codex 时的配速和预计用完时间、Codex 加 Claude 云端线程、只开 DeepSeek 时的每日和每周预算，最后是 Windows 上的同一个灵动岛](docs/assets/demo.zh-CN.webp)
+![Codex Pacer（演示数据）：折叠栏徽标显示平均进度；展开后，Codex、Claude Code 和 DeepSeek Harness 报告估计，每个任务的进度圆环随之推进，需要审批时变成琥珀色；同一时刻依次切换纯黑、石墨和液态玻璃材质，最后是每个服务单独的界面](docs/assets/demo.zh-CN.webp)
 
-## 一眼看清
+## 功能
 
-折叠时，Pacer 是摄像头两侧的一条细栏，不用展开就知道代理们进展如何。
-
-![折叠栏：摄像头左侧是任务徽标和输出速度，右侧是额度圆环和 DeepSeek 余额](docs/assets/collapsed-bar.zh-CN.png)
-
-| | 含义 |
-| --- | --- |
-| **任务徽标** | 正在运行的任务数。任务进行时有光弧环绕，青绿色是 Codex，暖橙色是 Claude，蓝色是 DeepSeek。变成实心琥珀色表示有任务等你回复或审批；出现对勾表示有任务刚刚结束。只有一个任务在运行且报告了进度时，徽标会显示它的进度弧。 |
-| **速度** | 所有运行中任务的合计输出速度，单位为 token/秒。 |
-| **额度** | Codex 与 Claude 的剩余额度，以及 DeepSeek 余额或预算。双环显示你选的两个模块，数值在各服务之间交替。 |
-| **警告** | 有问题时才出现：5 小时额度不足、SSH 主机未连接、额度没有按时更新，或 DeepSeek 余额偏低、花费异常、预算快用完。 |
-
-**悬停**展开，**移开**收起，点击顶部可以固定展开。
-
-## 一个面板看全部
-
-- **所有任务一个列表。** 本机、SSH 主机、Windows 上的 WSL 以及 Codex Remote Control 上的 Codex 与 Claude Code 任务，Claude 云端项目里的线程和协调，还有本机的 DeepSeek Harness 任务，都显示当前阶段、模型与推理强度、本轮用时和输出速度。任务派生的子代理归在它下面。
-- **每个任务的进度。** Codex、Claude Code 和 DeepSeek Harness 会报告请求完成了多少，显示为任务图标外的一圈圆环。收到估计前是一颗绕圈的彗星，工作时光沿弧流动，等你处理或已结束的任务填成实心圆。
-- **一点就回到对话。** 点击任务打开对应会话。任务结束后会保留一张卡片，直到你打开它或保留时间到期，不会错过任何一次结束。
-- **额度带配速。** 每个服务一个圆环：较短的上弧显示 5 小时，较长的下弧显示 7 天，各自保留剩余额度、重置倒计时和白色配速刻度。没有 5 小时限制时显示底部开口的每周圆环。只开启一个服务时，配速、重置时刻和预计显示在圆环右侧。可在“设置 → 外观 → 展开态额度”切回原版经典样式。
-- **DeepSeek 按余额或预算。** DeepSeek 按余额扣费，没有额度窗口，所以它的环是今天的 24 小时钟面：每个小时花了多少、单价翻倍的高峰时段，中间是余额。也可以改用每日、每周预算，环会像额度一样显示配速。Pacer 用余额变化和本机估算对账，联网搜索、别的设备等不在本机的花费也会算进去；10 分钟花得比平时多时会提醒你。每个任务显示这一回合的估算花费；只开启 DeepSeek 时，面板还会显示今天的花费去向和近 7 天。余额按 Harness 的登录方式，通过 Pacer 窗口中的 DeepSeek 开放平台登录或 API Key 读取。
-- **总览与历史。** Pacer 的主窗口打开就是总览：每个服务一张卡片，需要你处理的事放在最前面。历史页保留每个服务当前周期的额度曲线、服务提供的 Credit 和重置券，以及 DeepSeek 的近 7 天。
-
-![只开启 DeepSeek（演示数据）：日环中间是余额，下方是“×2 至 下午6:00”提示；右侧是今天的花费、最近 2 小时的速度和今天的花费去向，含带斜纹的“不在本机”；下方是近 7 天](docs/assets/deepseek.zh-CN.png)
+- **每个任务都有进度。** Codex、Claude Code 和 DeepSeek Harness 会报告你的请求完成了多少，显示为任务图标外的一圈圆环；折叠栏还能显示平均进度。
+- **所有任务都在一处。** 本机、SSH 主机、WSL、Codex Remote Control 和 Claude 云端项目里的任务，都显示当前阶段、模型、速度和本轮用时。
+- **需要你时会提醒。** 任务等你回复或审批时，灵动岛变成琥珀色；任务结束后会一直留着，直到你看过为止。也可以开启系统通知。
+- **一点就回到对话。** 点击任务，在运行它的应用里打开对应对话。
+- **额度带配速。** 每个服务一个圆环，同时显示 5 小时和每周额度；刻度告诉你用得比匀速快还是慢，并预计重置时还剩多少。
+- **DeepSeek 余额与预算。** 用 24 小时钟面显示今天的花费，并标出高峰价时段；也可以设每日、每周预算，像额度一样显示配速。账户在别处产生的花费也会算进去。
+- **概览与历史。** 主窗口一打开就是需要你处理的事，还能查看每个服务的额度历史。
+- **支持简体中文和英文。**
 
 ## 按你的习惯来
 
-![主窗口的“折叠栏”页：上方是实时预览，下方是组件库和选中组件“活动徽标”的设置](docs/assets/settings-collapsed-bar.zh-CN.png)
+![摄像头两侧的折叠栏：左边是任务徽标和输出速度，右边是额度圆环和数值](docs/assets/collapsed-bar.zh-CN.png)
 
-- **自定义折叠栏。** 在实时预览上，于摄像头左右两侧拖动组件、隐藏不需要的组件，选择额度双环各显示哪个模块，并为每个服务选择显示 5 小时还是 7 天额度。只开 DeepSeek 时，价格钟让你一眼看到高峰时段。
-- **纯黑或液态玻璃。** macOS 26 及以上可使用液态玻璃，通透程度跟随系统设置。
-- **主题和强调色。** Pacer 的窗口可以跟随系统，或固定浅色、深色；强调色会用在圆环、进度和选中状态上。
-- **把灵动岛放在顺手的位置。** 可以留在顶部中央贴合刘海，也可以选“自由拖动”，按住状态栏拖到任意位置，靠近屏幕边缘松手会吸附。可以选择显示器，也可以在全屏应用上方显示。
-- **只开需要的模块。** Codex、Claude 和 DeepSeek 模块可以分别开启或关闭。
-- **通知随你。** 可选择在任务需要你处理或结束、额度或余额不足、DeepSeek 花费异常或预算快用完时发送 macOS 通知。
-- **支持中英文。** 简体中文与英文。
+折叠时，Pacer 是摄像头两侧的一条细栏。**悬停**展开，**移开**收起。
 
-## 开始使用
+- 在实时预览上选择折叠栏显示哪些内容、放在摄像头哪一侧。
+- 四种大小，纯黑、石墨或液态玻璃材质。
+- 可以作为灵动岛留在顶部中央，也可以选“自由拖动”放到任意位置，靠近屏幕边缘会自动吸附。每块屏幕单独记住位置。
 
-![入门引导第一页：摄像头两侧的折叠栏，标注了任务、速度、剩余额度和警告](docs/assets/welcome.zh-CN.png)
-
-1. [下载最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)，按下方步骤安装。
-2. 打开 Codex Pacer。简短的入门引导会介绍灵动岛，让你选择灵动岛或自由拖动、要追踪的服务，并说明进度圆环、通知和登录时打开。之后可以在“设置 → 帮助与更新”中再次打开。
-3. 想看 Claude 额度，只需在 Pacer 自带的 Claude 窗口中登录一次。Claude Code 和 SSH 主机上的任务追踪会自动配置好。想看 DeepSeek 余额，在 Pacer 的窗口中登录 DeepSeek 开放平台；Harness 使用 API Key 时，粘贴一个 Key 即可。
+![折叠栏设置：上方是实时预览，下方是组件库和选中组件的选项](docs/assets/settings-collapsed-bar.zh-CN.png)
 
 ## 安装
 
-### Mac
+**Mac。** 从[最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)下载 DMG，打开后把 **Codex Pacer** 拖入“应用程序”。应用已通过 Apple 公证。
 
-Codex Pacer 以通用 DMG 发布，已使用 Developer ID 签名并通过 Apple 公证。
+**Windows。** 下载 `x64` 安装包（ARM 电脑下载 `arm64`）并运行，无需管理员权限。安装包暂未做代码签名，如果出现 SmartScreen 提示，点**更多信息 → 仍要运行**。
 
-1. 双击下载的 DMG，把 **Codex Pacer** 拖入“应用程序”。
-2. 从“应用程序”中打开 Codex Pacer。macOS 会询问一次是否打开从互联网下载的应用，点击“打开”即可。
-
-之后 Pacer 会自行更新：每天检查一次，发现新版本时在主窗口中提示，点“更新并重启”即可一键安装，更新后会显示一次更新内容。在“设置 → 帮助与更新 → 检查更新”中可以立即检查。关于 Gatekeeper 的更多说明见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
-
-### Windows
-
-1. 从[最新版本](https://github.com/RyanZhangNTU/codex-pacer/releases/latest)下载 `Codex-Pacer-版本号-windows-x64-setup.exe`（ARM 电脑下载 `windows-arm64-setup.exe`）并运行。按当前用户安装，无需管理员权限。
-2. 安装包暂未做代码签名。如果 SmartScreen 提示“Windows 已保护你的电脑”，点**更多信息 → 仍要运行**。
-
-之后的更新和 Mac 一样，在“设置 → 帮助与更新”中进行。在 Windows“已安装的应用”中卸载，偏好与已读记录会保留。需要用示例数据截图时，先退出 Pacer，再从安装目录（默认 `%LOCALAPPDATA%\Programs\Codex Pacer`）运行 `CodexPacer.exe --demo`。更多说明见 [Windows 安装](docs/windows-installation.md)。
+首次打开时，简短的引导会帮你选择摆放方式和要追踪的服务。之后 Pacer 会自动更新，也可以随时在“帮助与更新”中检查。
 
 ## 系统要求
 
-- macOS 14 Sonoma 及以上，Apple 芯片或 Intel。液态玻璃需要 macOS 26。
-- 或 Windows 10 2004（内部版本 19041）及以上，x64 或 ARM64。玻璃表面需要 Windows 11 22H2；登录 Claude 和 DeepSeek 需要 WebView2 Runtime，Windows 11 已自带。
-- 已安装并登录 Codex（应用或 CLI）、Claude Code 或 DeepSeek Harness，任意组合均可。
-- 配置工具和 SSH helper 需要 Python 3；SSH 主机需要 Python 3.6 及以上，并能免交互地通过 OpenSSH 连接。
-- 追踪 Codex Remote Control 任务时，需要保持 Codex 应用开启并连接到远程主机。
+- macOS 14 及以上（Apple 芯片或 Intel），或 Windows 10 2004 及以上（x64 或 ARM64）。液态玻璃需要 macOS 26 或 Windows 11 22H2。
+- 已安装并登录 Codex、Claude Code 或 DeepSeek Harness 中的至少一个。
+- 使用 SSH 主机时：能免密码连接，且主机上装有 Python 3。
 
 ## 隐私
 
-- **本地优先。** Pacer 没有账号，也不做任何统计上报。它读取 Codex、Claude Code 和 DeepSeek Harness 本来就会写下的会话日志，只保留灵动岛需要显示的内容：任务标题、阶段、模型、时间和 token 数，从不保存你的提示词或回复内容。
-- **用你自己的登录。** Codex 额度通过你的 Codex CLI 读取；Claude 额度来自 Claude Code 的状态栏数据，或 Pacer 专用窗口中的 claude.ai 会话，这个会话也用于跟随云端项目；DeepSeek 余额来自 Pacer 专用窗口中的开放平台会话，或你粘贴并保存在钥匙串里的 Key。Pacer 不读取其他应用的钥匙串条目、凭据或浏览器 Cookie。
-- **配置可以撤回。** 对于 Claude Code，Pacer 会在你现有设置旁追加自己的 hooks 和仅限本机的遥测端点；关闭 Claude 模块时会移除这些内容。进度圆环会为 Claude Code、Codex 和 Harness 添加一个只向 Pacer 报告数字的本机上报工具，关闭圆环即移除。
-- **很少的网络请求。** Pacer 只连接你的 SSH 主机、各服务自己的额度接口，以及用于检查更新的 GitHub。
-- **共享屏幕时。** 设置中的“隐藏项目名称”会替换屏幕上的任务标题。
+- 没有账号，不做统计上报。Pacer 读取代理本来就会写下的日志，只保留灵动岛要显示的内容：任务标题、阶段、时间和 token 数，从不保存你的提示词或回复。
+- Claude 和 DeepSeek 在 Pacer 自己的窗口里登录。Pacer 不读取其他应用的密码或浏览器 Cookie。
+- Pacer 添加到代理设置里的内容，关闭对应功能时会一并移除。
+- 共享屏幕时，“隐藏项目名称”会把任务标题从屏幕上隐去。
 
-## 从源码构建
+## 参与贡献
 
-需要 Xcode 26 及以上。Swift Package Manager 会拉取唯一的依赖 Sparkle。
-
-```sh
-make build                                  # 构建应用并输出路径
-make test TEST_FILTER='CompletionInboxTests' # 运行指定的测试套件
-```
-
-参与开发请先阅读[贡献指南](CONTRIBUTING.md)，架构和数据语义见[开发说明](docs/development.md)，打包发布见[发布流程](docs/releasing.md)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
+欢迎在 [Issues](https://github.com/RyanZhangNTU/codex-pacer/issues) 中反馈问题和建议。想从源码构建或提交 PR，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## 许可证
 

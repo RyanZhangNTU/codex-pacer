@@ -1,12 +1,18 @@
 # Windows automatic updates
 
-Pacer for Windows checks, downloads and verifies updates itself and shows them in its own update window, in the Settings style. Since 4.2.3 there is no WinSparkle and no local listener. The feed is `appcast-windows.xml` in the same GitHub Release as the Mac DMG, signed with the Mac appcast's Ed25519 key; see [automatic updates](automatic-updates.md#windows). Releases up to 4.2.2 used WinSparkle behind a loopback proxy, so an update from 4.2.2 still shows that older window once.
+Pacer for Windows checks, downloads and verifies updates itself and shows them in its own update window, in the Settings style. The feed is `appcast-windows.xml` in the same GitHub Release as the Mac DMG, signed with the Mac appcast's Ed25519 key; see [automatic updates](automatic-updates.md#windows). Releases up to 4.2.2 used WinSparkle behind a loopback proxy, so an update from 4.2.2 still shows that older window once.
 
 ## Scheduling and the update window
 
 The automatic preference defaults to enabled and persists under `SUEnableAutomaticChecks`, with the same meaning as the Mac setting. Turning it off leaves manual checks available. The host checks at most once per day from its saved check time, using a sleeping task rather than a polling loop. A failed setting change or preference save restores the previous value and shows an error.
 
-**Check for Updates** on Help & Updates reports in that card instead of a window, as on the Mac: checking, up to date, a found version, or a failure in amber. **Update and Restart** there (or on Overview's update banner) downloads with real progress and Cancel, verifies, and hands off to the installer, which restarts Pacer. A check started anywhere else opens the update window at once with the check's progress. An automatic check opens no window, as on the Mac: a found version shows on Overview's update banner and as a dot by Help & Updates in the sidebar, and the check stays quiet when nothing is found, when it fails, or when the offer is a build the person chose to skip. A manual check still offers a skipped build. The window's stages are:
+Where a check reports, as on the Mac:
+
+- **Check for Updates** on Help & Updates reports in that card. **Update and Restart** there or on Overview's banner downloads with progress and Cancel, verifies, and hands off to the installer, which restarts Pacer.
+- A check started anywhere else opens the update window at once.
+- An automatic check opens no window. A found version shows on Overview's banner and as a dot by Help & Updates; nothing found, a failure or a skipped build stays quiet. A manual check still offers a skipped build.
+
+The window's stages are:
 
 - **Offer:** the new and installed versions and the signed notes for this language. Buttons: **Skip This Version**, **Remind Me Later** and **Install Update** (the default).
 - **Download:** a progress bar with megabytes and percentage, and **Cancel**.
@@ -32,15 +38,15 @@ Limits:
 
 The package streams into `setup.exe.download` in a new owned session directory and reports progress. Only after its length and Ed25519 signature pass is it renamed to `setup.exe`. Any failure or cancellation deletes the partial file. An offer older than 30 minutes is verified again when the download starts; if the feed now selects a different build, that build replaces the offer.
 
-The release Mac signs both installers and the feed with the Mac appcast's Keychain key (`prepare-windows-update.py`, run by the [release build](releasing.md#3-build-and-publish-once)), with one feed entry per architecture and English and Simplified Chinese notes. The feed starts with a `<!-- pacer-feed-ed25519:SIGNATURE -->` line covering the XML bytes that follow, and each `enclosure` carries the installer's `sparkle:edSignature`; the signatures, not the redirect hosts, establish trust. The script signs the feed body under a non-`.xml` name because `sign_update` rewrites files it recognizes as appcasts. A missing Windows feed means there is no Windows update yet.
+The Release workflow's publish job signs both installers and the feed with the Mac appcast's key (`sign-updates.sh` runs `prepare-windows-update.py`; see [the release workflow](releasing.md)), with one feed entry per architecture and English and Simplified Chinese notes. The feed starts with a `<!-- pacer-feed-ed25519:SIGNATURE -->` line covering the XML bytes that follow, and each `enclosure` carries the installer's `sparkle:edSignature`; the signatures, not the redirect hosts, establish trust. The script signs the feed body under a non-`.xml` name because `sign_update` rewrites files it recognizes as appcasts. A missing Windows feed means there is no Windows update yet.
 
 Diagnostics retain only the exception type and error code. Pacer never logs complete URLs, query parameters, remote response text or keys.
 
 ## Patch updates
 
-From 4.2.3 each release publishes its file manifest (`build-info.json`) for each architecture. When the next release is built, the Release workflow makes a patch installer from the latest published manifest; the new release is still a draft then, so the latest is the previous one. Until the version is bumped, the latest release is the build being made, so CI builds only the full installer. It is an ordinary Inno Setup installer with the same product identity and build, but it carries only the files whose content changed, the new manifest and the maintenance host. Builds are reproducible, so a patch is usually a small fraction of the full installer.
+Each release publishes its file manifest (`build-info.json`, as `Codex-Pacer-VERSION-windows-ARCH-manifest.json`) for each architecture. When the next release is built, the Release workflow makes a patch installer from the latest published manifest (`fetch-update-base.ps1`). Only the full installer is built when the latest published build is not older than the one being built (the version has not been bumped yet) or has no manifest (4.2.2 and earlier). The patch is an ordinary Inno Setup installer with the same product identity and build, but it carries only the files whose content changed, the new manifest and the maintenance host. Builds are reproducible, so a patch is usually a small fraction of the full installer.
 
-The release Mac signs a patch and lists it only when its base is still the latest build in the signed public feed. It sits inside `<sparkle:deltas>` with `sparkle:deltaFrom` (the base build) and `pacer:baseManifestSHA256`. The full installer stays the item's only direct enclosure and gains `pacer:manifestSHA256`. Windows 4.2.2 and earlier read only that direct enclosure, so they keep installing in full; a test runs the 4.2.2 parser, frozen, on the new feed shape.
+The publish job signs a patch and lists it only when its base is still the latest build in the signed public feed. It sits inside `<sparkle:deltas>` with `sparkle:deltaFrom` (the base build) and `pacer:baseManifestSHA256`. The full installer stays the item's only direct enclosure and gains `pacer:manifestSHA256`. Windows 4.2.2 and earlier read only that direct enclosure, so they keep installing in full; a test runs the 4.2.2 parser, frozen, on the new feed shape.
 
 The app takes the patch only when all of the following hold:
 
@@ -61,7 +67,7 @@ Before changing anything, the patch installer checks that the installation is ex
 
 ## Installation and recovery
 
-Update state uses a checked, bounded, versioned file at `%LOCALAPPDATA%\CodexPacer\Updates\state-v1.json`, never HKCU. It holds the schedule, the skipped build and the presented notes; the keys keep the names WinSparkle used, so existing choices carry over. Update files reject reparse points and hard links. Their owner must be the current user, or Administrators when the current token is elevated with that group enabled. Future state versions are preserved.
+Update state uses a checked, bounded, versioned file at `%LOCALAPPDATA%\CodexPacer\Updates\state-v1.json`, never HKCU. It holds the schedule, the skipped build, the presented notes and the update banner's closed version (`PacerUpdateBannerDismissed`); the keys keep the names WinSparkle used, so existing choices carry over. Update files reject reparse points and hard links. Their owner must be the current user, or Administrators when the current token is elevated with that group enabled. Future state versions are preserved.
 
 Each update uses `Updates\<session>`. When the channel configures `SignerSHA256`, both sides of the handoff additionally require cached Windows Authenticode trust and that exact signer-certificate SHA-256. An absent pin permits an unsigned installer; production pins no signer because the installers are not Authenticode signed yet, and adding one later makes Authenticode mandatory for every subsequent update. Empty or malformed pins are rejected; they cannot select unsigned mode. Ed25519 and SHA-256 remain mandatory at both handoff boundaries in either mode. The installer product name, QA identity and file build must still match the signed offer.
 
