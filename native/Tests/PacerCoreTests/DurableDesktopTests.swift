@@ -117,7 +117,7 @@ final class DurableDesktopTests: XCTestCase {
         XCTAssertEqual(runtime.activities.first?.currentProgress?.percent, 0)
         let runningRow = ActivityTaskRowPresentation(activity: try XCTUnwrap(runtime.activities.first),
                                                       unread: false, at: start.addingTimeInterval(12))
-        XCTAssertEqual(runningRow.sourceLabel, "dot")
+        XCTAssertEqual(runningRow.sourceLabel, "Dot")
         XCTAssertEqual(runningRow.sourceKind, "server")
 
         // Follow retries may expire with no IPC owner. That does not invalidate
@@ -142,7 +142,7 @@ final class DurableDesktopTests: XCTestCase {
         XCTAssertEqual(runtime.activities.first?.threadURL?.query, "hostId=durable")
         let completedRow = ActivityTaskRowPresentation(activity: try XCTUnwrap(runtime.activities.first),
                                                         unread: true, at: start.addingTimeInterval(115))
-        XCTAssertEqual(completedRow.sourceLabel, "dot")
+        XCTAssertEqual(completedRow.sourceLabel, "Dot")
         runtime.releasePublishedState()
         try observe(finished, seconds: 130)
         XCTAssertTrue(runtime.activities.isEmpty, "Repeated history must not recreate a published completion")
