@@ -221,6 +221,7 @@ public struct ActivityTaskRowPresentation: Sendable {
     }
     public static func sourceName(_ activity: SessionActivity, options: TaskPresentationOptions) -> String? {
         if let cloud = activity.claudeCloud { return options.hideProjects ? L10n.text("connections.kind.claude_cloud") : cloud.projectName }
+        if activity.sourceHostID == DurableActivityCatalog.hostID { return "dot" }
         if activity.sourceHostID == nil, activity.provider == .claude || activity.launchedByEmbeddingApp {
             return options.hostApplications[activity.id].flatMap { activity.provider == .claude && $0.isClaudeDesktop ? nil : $0.name }
         }

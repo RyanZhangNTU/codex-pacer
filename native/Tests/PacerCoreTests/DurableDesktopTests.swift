@@ -115,6 +115,10 @@ final class DurableDesktopTests: XCTestCase {
         try observe(history(thread: thread, start: start, percent: 0, includeStartedAt: false), seconds: 12)
         XCTAssertEqual(runtime.activities.first?.phase, .running)
         XCTAssertEqual(runtime.activities.first?.currentProgress?.percent, 0)
+        let runningRow = ActivityTaskRowPresentation(activity: try XCTUnwrap(runtime.activities.first),
+                                                      unread: false, at: start.addingTimeInterval(12))
+        XCTAssertEqual(runningRow.sourceLabel, "dot")
+        XCTAssertEqual(runningRow.sourceKind, "server")
 
         // Follow retries may expire with no IPC owner. That does not invalidate
         // the verified Durable turn or produce a second unknown activity.
@@ -136,6 +140,9 @@ final class DurableDesktopTests: XCTestCase {
         XCTAssertEqual(runtime.activities.first?.phase, .completed)
         XCTAssertEqual(runtime.activities.first?.title, "Closed task")
         XCTAssertEqual(runtime.activities.first?.threadURL?.query, "hostId=durable")
+        let completedRow = ActivityTaskRowPresentation(activity: try XCTUnwrap(runtime.activities.first),
+                                                        unread: true, at: start.addingTimeInterval(115))
+        XCTAssertEqual(completedRow.sourceLabel, "dot")
         runtime.releasePublishedState()
         try observe(finished, seconds: 130)
         XCTAssertTrue(runtime.activities.isEmpty, "Repeated history must not recreate a published completion")
