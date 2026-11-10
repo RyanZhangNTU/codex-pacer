@@ -8,7 +8,7 @@ import XCTest
 @testable import PacerCore
 
 final class ClaudeRemoteSetupContractTests: XCTestCase {
-    private let success = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false}"#
+    private let success = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false,"telemetryConflictReason":"none"}"#
     private var target: RemoteActivityTarget { RemoteActivityTarget(id: "fixture-host", name: "Fixture", alias: "fixture-host", home: "/private-codex-home") }
 
     func testAutomaticSetupRunsOncePerDigestForConnectedHostsAndBacksOffFailures() throws {
@@ -32,10 +32,31 @@ final class ClaudeRemoteSetupContractTests: XCTestCase {
             inFlight: [host("busy").id], now: now)
         XCTAssertEqual(pending.map(\.alias), ["outdated", "fresh", "failed-long-ago"])
 
+        // Current hosts are checked again only when the caller tracks checks:
+        // once per launch, then every 30 minutes while telemetry stays off and
+        // every six hours otherwise.
+        let current = Array(targets.prefix(2)), digests = Dictionary(uniqueKeysWithValues: current.map { ($0.alias, "digest-2") })
+        func due(_ checks: [String: Date]?, _ conflicts: [String: ClaudeTelemetryConflict] = [:], after: TimeInterval = 0) -> [String] {
+            ClaudeRemoteAutoSetup.pending(targets: current, statuses: statuses, configured: digests, digest: "digest-2", failures: [:], inFlight: [],
+                now: now.addingTimeInterval(after), checkedAt: checks, conflicts: conflicts).map(\.alias)
+        }
+        let checked = Dictionary(uniqueKeysWithValues: current.map { ($0.id, now) })
+        XCTAssertEqual(due(nil), [], "Without check times only a changed digest makes a host due")
+        XCTAssertEqual(due([:]), current.map(\.alias), "Each launch checks current hosts once")
+        XCTAssertEqual(due(checked, [current[0].alias: .managed], after: 31 * 60), [current[0].alias])
+        XCTAssertEqual(due(checked, after: 31 * 60), [])
+        XCTAssertEqual(due(checked, after: 6 * 60 * 60 + 1), current.map(\.alias))
         for index in 0..<40 { ClaudeRemoteAutoSetup.recordConfigured(alias: String(format: "host-%02d", index), digest: "digest", defaults: defaults) }
         let recorded = ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults)
         XCTAssertEqual(recorded.count, 32)
         XCTAssertEqual(recorded["host-39"], "digest")
+        ClaudeRemoteAutoSetup.recordConfigured(alias: "host-38", digest: "digest", conflict: .existing, defaults: defaults)
+        ClaudeRemoteAutoSetup.recordConfigured(alias: "host-39", digest: "digest", conflict: .managed, defaults: defaults)
+        XCTAssertEqual(ClaudeRemoteAutoSetup.telemetryConflicts(defaults: defaults), ["host-38": .existing, "host-39": .managed])
+        ClaudeRemoteAutoSetup.recordConfigured(alias: "host-38", digest: "digest", defaults: defaults)
+        XCTAssertEqual(ClaudeRemoteAutoSetup.telemetryConflicts(defaults: defaults), ["host-39": .managed], "A clean setup clears the note")
+        for index in 40..<72 { ClaudeRemoteAutoSetup.recordConfigured(alias: "host-\(index)", digest: "digest", defaults: defaults) }
+        XCTAssertEqual(ClaudeRemoteAutoSetup.telemetryConflicts(defaults: defaults), [:], "A host dropped from the digests loses its note")
         XCTAssertFalse(try ClaudeRemoteSetup.adapterDigest().isEmpty)
         XCTAssertEqual(try ClaudeRemoteSetup.adapterDigest(), try ClaudeRemoteSetup.adapterDigest())
         // Switching the progress ring changes the digest, so configured hosts are set up again.

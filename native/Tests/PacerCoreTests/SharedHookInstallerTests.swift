@@ -21,12 +21,13 @@ final class SharedHookInstallerTests: XCTestCase {
         }
         func remove(_ url: URL) throws { files.removeValue(forKey: url) }
     }
-    private func fixture() -> (URL, Storage, ClaudeHookInstaller) {
+    private final class Managed: @unchecked Sendable { var value = ClaudeManagedTelemetry() }
+    private func fixture(managed: Managed = Managed()) -> (URL, Storage, ClaudeHookInstaller) {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-hooks")
         let storage = Storage(); storage.directories.insert(home)
         let installer = ClaudeHookInstaller(storage: storage, python: "fixture-python", serialize: { arguments in
             arguments.map { "[" + $0 + "]" }.joined(separator: " ")
-        })
+        }, managedTelemetry: { managed.value })
         return (home, storage, installer)
     }
     private func object(_ url: URL, _ storage: Storage) throws -> [String: Any] {
@@ -167,6 +168,128 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertNotNil((configured["hooks"] as? [String: Any])?["MessageDisplay"])
         try installer.uninstall(home: home)
         XCTAssertTrue(NSDictionary(dictionary: try object(settings, storage)).isEqual(to: original))
+    }
+    /// Pacer's trace keys follow the conflict state on automatic checks:
+    /// withdrawn while an organization claims the exporter, restored after.
+    func testManagedClaimWithdrawsAndRestoresOnlyPacersOwnKeys() throws {
+        let managed = Managed(), (home, storage, installer) = fixture(managed: managed), settings = home.appendingPathComponent("settings.json")
+        storage.files[settings] = try JSONSerialization.data(withJSONObject: ["env": ["USER_SETTING": "retained"]])
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        XCTAssertTrue(installer.details(home: home).telemetryConfigured)
+        // The user's own metrics export now runs on Pacer's switch.
+        var value = try object(settings, storage), env = try XCTUnwrap(value["env"] as? [String: String])
+        env["OTEL_METRICS_EXPORTER"] = "otlp"; value["env"] = env
+        storage.files[settings] = try JSONSerialization.data(withJSONObject: value)
+        managed.value = ClaudeManagedTelemetry(environment: ["OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.invalid"])
+        let blocked = installer.details(home: home)
+        XCTAssertEqual(blocked.telemetryConflictReason, .managed); XCTAssertTrue(blocked.updateAvailable)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        XCTAssertEqual(try object(settings, storage)["env"] as? [String: String],
+            ["USER_SETTING": "retained", "OTEL_METRICS_EXPORTER": "otlp", "CLAUDE_CODE_ENABLE_TELEMETRY": "1"],
+            "Withdrawal keeps the switch that the user's metrics export needs")
+        XCTAssertNil((try object(settings, storage)["hooks"] as? [String: Any])?["MessageDisplay"], "Automatic checks add no optional observer")
+        XCTAssertEqual(installer.ensureInstalled(home: home), .current)
+        managed.value = ClaudeManagedTelemetry()
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        let restored = try XCTUnwrap(try object(settings, storage)["env"] as? [String: String])
+        XCTAssertTrue(ClaudeTelemetryRules.configured(restored)); XCTAssertEqual(restored["USER_SETTING"], "retained")
+        XCTAssertNil((try object(settings, storage)["hooks"] as? [String: Any])?["MessageDisplay"])
+    }
+    func testUserEditsToPacersKeysAreNeverWithdrawnOrReadded() throws {
+        let managed = Managed(), (home, storage, installer) = fixture(managed: managed), settings = home.appendingPathComponent("settings.json")
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        // The user points traces at their own collector: the set is now theirs.
+        var value = try object(settings, storage), env = try XCTUnwrap(value["env"] as? [String: String])
+        env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = "http://127.0.0.1:4318/v1/traces"; value["env"] = env
+        storage.files[settings] = try JSONSerialization.data(withJSONObject: value)
+        managed.value = ClaudeManagedTelemetry(headersHelper: true)
+        _ = installer.ensureInstalled(home: home)
+        XCTAssertEqual(try object(settings, storage)["env"] as? [String: String], env)
+        // Removing Pacer's keys sticks on automatic checks; an explicit retry restores them.
+        managed.value = ClaudeManagedTelemetry()
+        value["env"] = nil; storage.files[settings] = try JSONSerialization.data(withJSONObject: value)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .current)
+        XCTAssertNil(try object(settings, storage)["env"])
+        XCTAssertTrue(try installer.install(home: home).telemetryConfigured)
+    }
+    /// An equivalent edit to one of Pacer's keys must not keep Pacer's
+    /// endpoint once headers would be sent to it.
+    func testHeadersWithdrawPacersEndpointEvenAfterAnEquivalentSwitchEdit() throws {
+        let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        var value = try object(settings, storage), env = try XCTUnwrap(value["env"] as? [String: String])
+        env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "true"; env["OTEL_EXPORTER_OTLP_HEADERS"] = "authorization=synthetic"; value["env"] = env
+        storage.files[settings] = try JSONSerialization.data(withJSONObject: value)
+        XCTAssertEqual(installer.details(home: home).telemetryConflictReason, .existing)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        XCTAssertEqual(try object(settings, storage)["env"] as? [String: String],
+            ["CLAUDE_CODE_ENABLE_TELEMETRY": "true", "OTEL_EXPORTER_OTLP_HEADERS": "authorization=synthetic"])
+    }
+    /// A removal outlasts a conflict: withdrawal keeps it recorded, so the
+    /// automatic check after the conflict adds nothing back.
+    func testRemovalSurvivesAConflictAndRemovingTheEndpointWithdrawsTheRest() throws {
+        let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
+        func env() throws -> [String: String] { try object(settings, storage)["env"] as? [String: String] ?? [:] }
+        func write(_ env: [String: String]) throws {
+            var value = try object(settings, storage); value["env"] = env.isEmpty ? nil : env
+            storage.files[settings] = try JSONSerialization.data(withJSONObject: value)
+        }
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        var current = try env(); current.removeValue(forKey: "OTEL_TRACES_EXPORTER"); try write(current)
+        _ = installer.ensureInstalled(home: home)
+        XCTAssertNil(try env()["OTEL_TRACES_EXPORTER"])
+        current["OTEL_EXPORTER_OTLP_HEADERS"] = "authorization=synthetic"; try write(current)
+        _ = installer.ensureInstalled(home: home)
+        XCTAssertEqual(try env(), ["OTEL_EXPORTER_OTLP_HEADERS": "authorization=synthetic"])
+        try write([:])
+        _ = installer.ensureInstalled(home: home)
+        XCTAssertEqual(try env(), [:], "The exporter the user removed is not turned back on")
+        XCTAssertTrue(try installer.install(home: home).telemetryConfigured, "An explicit retry restores everything")
+
+        // Removing Pacer's endpoint would leave its exporter sending traces elsewhere.
+        current = try env(); current.removeValue(forKey: "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+        current["OTEL_LOGS_EXPORTER"] = "otlp"; try write(current)
+        _ = installer.ensureInstalled(home: home)
+        XCTAssertEqual(try env(), ["OTEL_LOGS_EXPORTER": "otlp", "CLAUDE_CODE_ENABLE_TELEMETRY": "1"], "The switch stays for the user's logs")
+        _ = installer.ensureInstalled(home: home)
+        XCTAssertEqual(try env(), ["OTEL_LOGS_EXPORTER": "otlp", "CLAUDE_CODE_ENABLE_TELEMETRY": "1"])
+    }
+    /// OTLP routing comes whole from the highest managed source that sets any of it.
+    func testManagedOTLPSettingsComeAsOneGroupFromTheHighestSource() throws {
+        let managed = Managed(), (home, storage, installer) = fixture(managed: managed), cache = home.appendingPathComponent("remote-settings.json")
+        managed.value = ClaudeManagedTelemetry(environment: ["OTEL_EXPORTER_OTLP_ENDPOINT": "https://old.invalid", "OTEL_METRICS_EXPORTER": "none"])
+        XCTAssertEqual(installer.details(home: home).telemetryConflictReason, .managed)
+        storage.files[cache] = Data(#"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://metrics.invalid"}}"#.utf8)
+        XCTAssertEqual(installer.details(home: home).telemetryConflictReason, .none, "The server's OTLP group hides the file's old endpoint")
+        storage.files[cache] = Data(#"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":" "}}"#.utf8)
+        XCTAssertEqual(installer.details(home: home).telemetryConflictReason, .managed, "An empty value claims nothing")
+        var helper = ClaudeManagedTelemetry(headersHelper: true)
+        helper.fill(ClaudeManagedTelemetry(environment: ["OTEL_EXPORTER_OTLP_PROTOCOL": "grpc", "OTEL_METRICS_EXPORTER": "otlp"]))
+        XCTAssertEqual(helper.environment, ["OTEL_METRICS_EXPORTER": "otlp"], "A helper claims the group too")
+    }
+    /// Server-managed settings outrank the host's managed sources, variable by variable.
+    func testServerManagedValuesOutrankHostManagedValues() throws {
+        let managed = Managed(), (home, storage, installer) = fixture(managed: managed), cache = home.appendingPathComponent("remote-settings.json")
+        managed.value = ClaudeManagedTelemetry(environment: ["CLAUDE_CODE_ENABLE_TELEMETRY": "0"])
+        XCTAssertEqual(installer.details(home: home).telemetryConflictReason, .managed)
+        storage.files[cache] = Data(#"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1"}}"#.utf8)
+        XCTAssertEqual(installer.details(home: home).telemetryConflictReason, .none)
+        var lower = ClaudeManagedTelemetry(environment: ["A": "server"]); lower.fill(ClaudeManagedTelemetry(environment: ["A": "file", "B": "file"], headersHelper: true))
+        XCTAssertEqual(lower, ClaudeManagedTelemetry(environment: ["A": "server", "B": "file"], headersHelper: true))
+    }
+    func testConflictAtFirstInstallLiftsOnALaterCheck() throws {
+        let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
+        storage.files[settings] = try JSONSerialization.data(withJSONObject: ["env": ["OTEL_EXPORTER_OTLP_HEADERS": "authorization=synthetic"]])
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        XCTAssertEqual(installer.details(home: home).telemetryConflictReason, .existing)
+        var value = try object(settings, storage); value["env"] = nil
+        storage.files[settings] = try JSONSerialization.data(withJSONObject: value)
+        XCTAssertTrue(installer.details(home: home).updateAvailable)
+        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        XCTAssertTrue(installer.details(home: home).telemetryConfigured)
+        // A cached server-managed setting inside the home is a managed claim.
+        storage.files[home.appendingPathComponent("remote-settings.json")] = Data(#"{"otelHeadersHelper":"/synthetic/helper"}"#.utf8)
+        XCTAssertEqual(installer.details(home: home).telemetryConflictReason, .managed)
     }
     func testFailedAtomicSettingsReplacementPreservesOldSettingsAndManifest() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")

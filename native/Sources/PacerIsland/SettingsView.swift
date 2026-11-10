@@ -364,6 +364,15 @@ struct SettingsView: View {
         }
     }
 
+    /// One plain line when Pacer keeps a home's own telemetry settings and
+    /// its Claude speeds are estimated from transcripts.
+    static func claudeTelemetryNote(_ conflict: ClaudeTelemetryConflict) -> String? {
+        switch conflict {
+        case .none: nil
+        case .existing: L10n.text("claude.telemetry.kept_existing")
+        case .managed: L10n.text("claude.telemetry.managed")
+        }
+    }
     private var claudeMonitoringRow: some View {
         let (tint, state): (Color, String) = switch model.claudeLocalSetup {
         case .ready: (MainPalette.positive, L10n.text("provider.state.ready"))
@@ -372,7 +381,8 @@ struct SettingsView: View {
         case .failed: (MainPalette.attention, L10n.text("provider.state.failed"))
         }
         return CardStatusRow(title: L10n.text("provider.monitoring"), state: state, tint: tint,
-                             help: model.claudeLocalSetup == .failed ? L10n.text("claude.monitoring_setup_failed") : nil) {
+                             help: model.claudeLocalSetup == .failed ? L10n.text("claude.monitoring_setup_failed") : nil,
+                             detail: model.claudeLocalSpeedsEstimated ? Self.claudeTelemetryNote(model.claudeTelemetryConflict) : nil) {
             if model.claudeLocalSetup == .failed {
                 Button(L10n.text("connections.retry")) { model.retryClaudeLocalSetup() }.buttonStyle(.main)
             }

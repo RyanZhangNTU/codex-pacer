@@ -19,7 +19,7 @@ private actor RemoteSetupCapture {
         calls += 1
         if hold { await withCheckedContinuation { held = $0 } }
         if let failure { throw failure }
-        return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true, telemetryConflict: false)
+        return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true)
     }
     func setFailure(_ value: ClaudeRemoteSetup.Failure?) { failure = value }
     func setHold() { hold = true }
@@ -36,6 +36,40 @@ private final class RingCapture: @unchecked Sendable {
     func install(_ ring: Bool) { lock.lock(); installed.append(ring); lock.unlock() }
     func save(_ value: [String: String]) { lock.lock(); digests = value; lock.unlock() }
 }
+private actor RecheckCapture {
+    var rows: [EngineClaudeRemoteSetup] = []
+    var automatic: [Bool] = []
+    var finished = 0, publishedAfter = 0
+    private var results: [Result<ClaudeTelemetryConflict, ClaudeRemoteSetup.Failure>] = []
+    private var hold = false, held: CheckedContinuation<Void, Never>?
+    func queue(_ values: [Result<ClaudeTelemetryConflict, ClaudeRemoteSetup.Failure>]) { results = values }
+    func setHold(_ value: Bool) { hold = value }
+    func release() { held?.resume(); held = nil }
+    func install(_ automatic: Bool) async throws -> ClaudeHookInstaller.Status {
+        self.automatic.append(automatic)
+        if hold { await withCheckedContinuation { held = $0 } }
+        defer { finished += 1 }
+        switch results.isEmpty ? .success(ClaudeTelemetryConflict.none) : results.removeFirst() {
+        case .success(let reason):
+            return .init(hooksConfigured: true, telemetryConfigured: reason == ClaudeTelemetryConflict.none, statusLineConfigured: true, telemetryConflictReason: reason)
+        case .failure(let failure): throw failure
+        }
+    }
+    /// Records which completed install the coordinator had seen when it published.
+    func publish(_ values: [EngineClaudeRemoteSetup]) { rows = values; publishedAfter = finished }
+}
+private final class ConflictLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [[String: ClaudeTelemetryConflict]] = []
+    var last: [String: ClaudeTelemetryConflict]? { lock.lock(); defer { lock.unlock() }; return values.last }
+    func save(_ value: [String: ClaudeTelemetryConflict]) { lock.lock(); values.append(value); lock.unlock() }
+}
+private final class FlagLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Bool] = []
+    var all: [Bool] { lock.lock(); defer { lock.unlock() }; return values }
+    func add(_ value: Bool) { lock.lock(); values.append(value); lock.unlock() }
+}
 
 final class WindowsClaudeRemoteTests: XCTestCase {
     private let target = RemoteActivityTarget(id: "remote-ssh-discovered:alias-a", name: "Synthetic", alias: "alias-a", home: "~/.claude")
@@ -48,9 +82,9 @@ final class WindowsClaudeRemoteTests: XCTestCase {
         env["PACER_SSH_FIXTURE_ROOT"] = WindowsCodexExecutableDiscovery.path(root)
         return (root, exe, env)
     }
-    private func wait(_ condition: @escaping () async -> Bool) async throws {
+    private func wait(file: StaticString = #filePath, line: UInt = #line, _ condition: @escaping () async -> Bool) async throws {
         if try await TestWait.until(condition) { return }
-        XCTFail("The synthetic remote setup did not reach its boundary"); throw ClaudeRemoteSetup.Failure.timedOut
+        XCTFail("The synthetic remote setup did not reach its boundary", file: file, line: line); throw ClaudeRemoteSetup.Failure.timedOut
     }
     private func installer(_ exe: URL, env: [String: String], timeout: TimeInterval = 15) -> ClaudeRemoteSetup {
         .init(executable: exe, timeout: timeout, makeOperation: {
@@ -108,7 +142,7 @@ final class WindowsClaudeRemoteTests: XCTestCase {
     }
     func testThirtyMinuteBackoffManualRetryIdempotenceAndVersionRefreshUseSharedPolicy() async throws {
         let capture = RemoteSetupCapture(), clock = RemoteClock(), digest = String(repeating: "a", count: 64)
-        let services = EngineClaudeRemoteServices(digest: { _ in digest }, install: { _, _ in try await capture.install() },
+        let services = EngineClaudeRemoteServices(digest: { _ in digest }, install: { _, _, _ in try await capture.install() },
             shutdown: { await capture.stop() }, loadDigests: { [:] }, saveDigests: { _ in })
         let coordinator = WindowsClaudeRemoteCoordinator(services: services, now: { clock.now() })
         var connected = RuntimeStreamStatus(); connected.connected = true; connected.sourceAvailable = true
@@ -137,14 +171,14 @@ final class WindowsClaudeRemoteTests: XCTestCase {
         let disabled = await coordinator.retry(sourceID: target.id, context: try XCTUnwrap(context)); XCTAssertFalse(disabled)
         // A new adapter digest must refresh a previously configured alias.
         let changed = WindowsClaudeRemoteCoordinator(services: .init(digest: { _ in String(repeating: "b", count: 64) },
-            install: { _, _ in try await capture.install() }, shutdown: {}, loadDigests: { ["alias-a": digest] }, saveDigests: { _ in }))
+            install: { _, _, _ in try await capture.install() }, shutdown: {}, loadDigests: { ["alias-a": digest] }, saveDigests: { _ in }))
         await changed.configure(targets: [target], statuses: statuses, enabled: true, version: 2, update: { _, _ in })
         try await wait { await capture.calls == 4 }; await changed.shutdown()
     }
     func testRemovalSleepAndLateCompletionCannotRestoreOldSourceOrCache() async throws {
         let capture = RemoteSetupCapture(); await capture.setFailure(nil); await capture.setHold()
         let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: { _ in String(repeating: "c", count: 64) },
-            install: { _, _ in try await capture.install() }, shutdown: { await capture.stop() }, loadDigests: { [:] },
+            install: { _, _, _ in try await capture.install() }, shutdown: { await capture.stop() }, loadDigests: { [:] },
             saveDigests: { _ in XCTFail("A removed source cannot update the digest cache") }))
         var status = RuntimeStreamStatus(); status.connected = true
         await coordinator.configure(targets: [target], statuses: [target.id: status], enabled: true, version: 1,
@@ -158,6 +192,83 @@ final class WindowsClaudeRemoteTests: XCTestCase {
         XCTAssertTrue(rows.isEmpty); XCTAssertGreaterThanOrEqual(stops, 1)
         let accepted = await coordinator.retry(sourceID: replacement.id, context: try XCTUnwrap(old)); XCTAssertFalse(accepted)
         let refreshes = await capture.refreshes; XCTAssertEqual(refreshes, 0)
+    }
+    func testCurrentHostsAreCheckedQuietlyOncePerLaunchThenAfterThirtyMinutesOrSixHours() async throws {
+        let capture = RecheckCapture(), clock = RemoteClock(), saved = ConflictLog(), digest = String(repeating: "a", count: 64)
+        await capture.queue([.success(.existing), .success(ClaudeTelemetryConflict.none), .failure(.connectionFailed), .success(ClaudeTelemetryConflict.none)])
+        await capture.setHold(true)
+        let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: { _ in digest },
+            install: { _, _, automatic in try await capture.install(automatic) }, shutdown: {},
+            loadDigests: { ["alias-a": digest] }, saveDigests: { _ in XCTFail("A check with the same digest leaves the digest cache alone") },
+            loadConflicts: { [:] }, saveConflicts: { saved.save($0) }), now: { clock.now() })
+        var connected = RuntimeStreamStatus(); connected.connected = true; connected.sourceAvailable = true
+        func configure() async {
+            await coordinator.configure(targets: [target], statuses: [target.id: connected], enabled: true, version: 1,
+                update: { rows, _ in await capture.publish(rows) })
+        }
+        func calls() async -> Int { await capture.automatic.count }
+        // Every install holds until the call that started it has published, so
+        // the coordinator's own publish after completion is the last one seen.
+        func started(_ count: Int, line: UInt = #line) async throws { try await wait(line: line) { await calls() == count } }
+        func settle(_ count: Int, line: UInt = #line) async throws {
+            await capture.release()
+            try await wait(line: line) { let done = await capture.finished, seen = await capture.publishedAfter; return done == count && seen == count }
+        }
+        // A host configured by an earlier launch is checked once, without showing it as configuring.
+        await configure(); try await started(1)
+        let quiet = await capture.rows.first
+        XCTAssertEqual(quiet?.configured, true); XCTAssertEqual(quiet?.inFlight, false); XCTAssertNil(quiet?.message)
+        try await settle(1)
+        XCTAssertEqual(saved.last, ["alias-a": .existing])
+        await configure(); let once = await calls(); XCTAssertEqual(once, 1, "One check per launch")
+        // While telemetry stays off, the host is checked again after 30 minutes.
+        clock.advance(1799); await configure(); let early = await calls(); XCTAssertEqual(early, 1)
+        clock.advance(1); await configure(); try await started(2); try await settle(2)
+        XCTAssertEqual(saved.last, [:], "Recovered telemetry clears the recorded conflict")
+        // With telemetry on, the next check waits six hours.
+        clock.advance(1800); await configure(); let calm = await calls(); XCTAssertEqual(calm, 2)
+        clock.advance(6 * 3600 - 1800); await configure(); try await started(3); try await settle(3)
+        let failed = await capture.rows.first
+        XCTAssertEqual(failed?.configured, true); XCTAssertEqual(failed?.inFlight, false)
+        XCTAssertNil(failed?.message, "A failed check only backs off"); XCTAssertNil(failed?.retryAt)
+        clock.advance(1799); await configure(); let backoff = await calls(); XCTAssertEqual(backoff, 3)
+        clock.advance(1); await configure(); try await started(4); try await settle(4)
+        let automatic = await capture.automatic; XCTAssertEqual(automatic, [true, true, true, true])
+        // A manual retry shows its progress and is not automatic.
+        let current = await capture.rows.first, context = try XCTUnwrap(current?.context)
+        let accepted = await coordinator.retry(sourceID: target.id, context: context); XCTAssertTrue(accepted)
+        try await started(5)
+        let progress = await capture.rows.first; XCTAssertEqual(progress?.inFlight, true)
+        try await settle(5)
+        let manual = await capture.automatic.last; XCTAssertEqual(manual, false)
+        await coordinator.shutdown()
+    }
+    func testInstallHandsTheAutomaticFlagToACustomArgumentBuilder() async throws {
+        let flags = FlagLog()
+        let setup = ClaudeRemoteSetup(executable: URL(fileURLWithPath: "C:/synthetic/ssh.exe"), makeOperation: { executable, arguments in
+            WindowsClaudeSetupOperation(executable: executable, arguments: arguments, environment: [:])
+        }, validDestination: { _ in true }, argumentBuilder: { _, _, _, automatic in flags.add(automatic); return ["--pacer-wsl"] })
+        for automatic in [false, true] { _ = try? await setup.install(target: target, requireHome: true, automatic: automatic) }
+        XCTAssertEqual(flags.all, [false, true])
+        await setup.shutdown()
+    }
+    func testDigestStoreKeepsTelemetryConflictsBesideDigestsWithoutChangingDigestOnlyFiles() throws {
+        let (root, _, _) = try fixture(), file = root.appendingPathComponent("cache/state.json"), store = WindowsClaudeRemoteDigestStore(file: file)
+        let digest = String(repeating: "d", count: 64)
+        store.save(["alias-a": digest, "alias-b": digest])
+        XCTAssertFalse(String(decoding: try Data(contentsOf: file), as: UTF8.self).contains("claudeRemoteTelemetryConflicts"),
+            "A cache without conflicts keeps its original shape")
+        store.save(conflicts: ["alias-a": .managed, "alias-b": ClaudeTelemetryConflict.none, "alias-gone": .existing])
+        XCTAssertEqual(store.loadConflicts(), ["alias-a": .managed], "Only real conflicts of configured aliases are kept")
+        XCTAssertEqual(WindowsClaudeRemoteDigestStore(file: file).load(), ["alias-a": digest, "alias-b": digest])
+        store.save(["alias-a": digest]); XCTAssertEqual(store.loadConflicts(), ["alias-a": .managed], "Saving digests keeps the conflicts")
+        store.save(["alias-b": digest]); XCTAssertTrue(store.loadConflicts().isEmpty, "A dropped alias drops its conflict")
+        let later = Data(#"{"version":1,"claudeRemoteSetupDigests":{"alias-a":"\#(digest)"},"claudeRemoteTelemetryConflicts":{"alias-a":"future"}}"#.utf8)
+        try later.write(to: file)
+        XCTAssertEqual(store.load(), ["alias-a": digest]); XCTAssertTrue(store.loadConflicts().isEmpty, "An unknown reason is ignored, not fatal")
+        let unsafe = Data(#"{"version":1,"claudeRemoteSetupDigests":{},"claudeRemoteTelemetryConflicts":{"unsafe;alias":"managed"}}"#.utf8)
+        try unsafe.write(to: file)
+        XCTAssertTrue(store.load().isEmpty); store.save(["alias-a": digest]); XCTAssertEqual(try Data(contentsOf: file), unsafe)
     }
     func testDigestStorePersistsOnlyBoundedValidatedVersionedDataAndPreservesFutureFiles() throws {
         let (root, _, _) = try fixture(), file = root.appendingPathComponent("cache/state.json"), store = WindowsClaudeRemoteDigestStore(file: file)
@@ -267,8 +378,8 @@ final class WindowsClaudeRemoteTests: XCTestCase {
 
     func testSwitchingTheProgressRingSetsConnectedHostsUpAgain() async throws {
         let capture = RingCapture(), off = String(repeating: "e", count: 64), on = String(repeating: "f", count: 64)
-        let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: { $0 ? on : off }, install: { _, ring in
-            capture.install(ring); return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true, telemetryConflict: false)
+        let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: { $0 ? on : off }, install: { _, ring, _ in
+            capture.install(ring); return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true)
         }, shutdown: {}, loadDigests: { [:] }, saveDigests: { capture.save($0) }))
         var connected = RuntimeStreamStatus(); connected.connected = true; connected.sourceAvailable = true
         let alias = target.alias, statuses = [target.id: connected], targets = [target]

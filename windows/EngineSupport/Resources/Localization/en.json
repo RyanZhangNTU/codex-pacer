@@ -76,7 +76,6 @@
   "windows.claude.setup_missing": "Choose an existing Claude folder to enable activity tracking.",
   "windows.claude.setup_disabled": "Claude activity is off.",
   "windows.claude.setup_failed": "Claude activity setup failed. Retry setup or repair the app.",
-  "windows.claude.setup_conflict": "Activity tracking is ready. Existing telemetry settings were kept; some rate readings may be unavailable.",
   "windows.claude.demo_web_help": "Claude web sign-in is unavailable in the offline demo.",
   "windows.claude.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
   "windows.claude.sign_out": "Sign Out",

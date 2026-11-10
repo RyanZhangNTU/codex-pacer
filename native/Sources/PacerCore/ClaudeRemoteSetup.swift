@@ -31,8 +31,9 @@ public actor ClaudeRemoteSetup {
     private let timeout: TimeInterval
     private let validDestination: @Sendable (String) -> Bool
     private let validIdentityFile: (@Sendable (String) -> Bool)?
-    /// Builds a setup command from the target, `requireHome` and whether the progress ring is on.
-    private let argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool) throws -> [String])?
+    /// Builds a setup command from the target, `requireHome`, whether the
+    /// progress ring is on and whether the run is `automatic`.
+    private let argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool, Bool) throws -> [String])?
     private let makeOperation: @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation
     private var operations: [UUID: any ClaudeRemoteSetupOperation] = [:]
 
@@ -40,7 +41,7 @@ public actor ClaudeRemoteSetup {
                 makeOperation: @escaping @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation,
                 validDestination: @escaping @Sendable (String) -> Bool,
                 validIdentityFile: (@Sendable (String) -> Bool)? = nil,
-                argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool) throws -> [String])? = nil) {
+                argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool, Bool) throws -> [String])? = nil) {
         self.executable = executable
         self.timeout = timeout.isFinite ? min(15, max(0.05, timeout)) : 15
         self.makeOperation = makeOperation
@@ -51,10 +52,14 @@ public actor ClaudeRemoteSetup {
 
     /// `requireHome` is set for automatic setup so a host without Claude is skipped.
     /// `progressRing` installs the ring's switch and Pacer's plugin there, or removes them.
-    @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false) async throws -> ClaudeHookInstaller.Status {
+    /// `automatic` marks a run nobody asked for: telemetry keys the user removed
+    /// stay removed. A custom `argumentBuilder` receives it too.
+    @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false,
+                                           automatic: Bool = false) async throws -> ClaudeHookInstaller.Status {
         let arguments: [String]
-        if let argumentBuilder { arguments = try argumentBuilder(target, requireHome, progressRing) }
-        else { arguments = try Self.arguments(target: target, requireHome: requireHome, progressRing: progressRing, validDestination: validDestination, validIdentityFile: validIdentityFile) }
+        if let argumentBuilder { arguments = try argumentBuilder(target, requireHome, progressRing, automatic) }
+        else { arguments = try Self.arguments(target: target, requireHome: requireHome, progressRing: progressRing, automatic: automatic,
+                                              validDestination: validDestination, validIdentityFile: validIdentityFile) }
         let identifier = UUID()
         let operation = makeOperation(executable, arguments)
         operations[identifier] = operation
@@ -85,20 +90,21 @@ public actor ClaudeRemoteSetup {
         operations.removeAll()
     }
 
-    public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false,
+    public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false, automatic: Bool = false,
                                  validDestination: (String) -> Bool, validIdentityFile: ((String) -> Bool)? = nil) throws -> [String] {
         guard let arguments = target.sshArguments(validDestination: validDestination, validIdentityFile: validIdentityFile) else { throw Failure.invalidTarget }
-        return arguments + [try command(requireHome: requireHome, progressRing: progressRing)]
+        return arguments + [try command(requireHome: requireHome, progressRing: progressRing, automatic: automatic)]
     }
     /// Hosts with another transport can use the same additive installer. The
     /// default keeps SSH's original home and serialized command unchanged.
-    public static func command(home: String = "~/.claude", requireHome: Bool = false, progressRing: Bool = false) throws -> String {
+    public static func command(home: String = "~/.claude", requireHome: Bool = false, progressRing: Bool = false, automatic: Bool = false) throws -> String {
         guard !home.isEmpty, home.utf8.count <= 4096, !home.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Failure.invalidTarget }
         let (installer, hook) = try resources()
         // SSH keeps its original default. Other transports must select their
         // bound Claude root; a Codex target is never a Claude home.
         var request: [String: Any] = ["home": home, "hook": hook.base64EncodedString()]
         if requireHome { request["requireHome"] = true }
+        if automatic { request["automatic"] = true }
         // Off is stated too, so a host that had the ring loses its switch and plugin.
         request["progressRing"] = progressRing
         if progressRing { request["progressServer"] = try progressServer().base64EncodedString() }
@@ -146,12 +152,15 @@ public actor ClaudeRemoteSetup {
             }
         }
         guard exitStatus == 0 else { throw Failure.connectionFailed }
-        let keys = ["hooksConfigured", "telemetryConfigured", "statusLineConfigured", "telemetryConflict"]
+        let keys = ["hooksConfigured", "telemetryConfigured", "statusLineConfigured", "telemetryConflict", "telemetryConflictReason"]
         let fields = try? JSONFieldView.document(data).fields(Set(keys))
         guard Set(value.keys) == Set(keys),
               let hooks = fields?["hooksConfigured"]?.boolean(), let telemetry = fields?["telemetryConfigured"]?.boolean(),
-              let line = fields?["statusLineConfigured"]?.boolean(), let conflict = fields?["telemetryConflict"]?.boolean() else { throw Failure.invalidResponse }
-        return ClaudeHookInstaller.Status(hooksConfigured: hooks, telemetryConfigured: telemetry, statusLineConfigured: line, telemetryConflict: conflict)
+              let line = fields?["statusLineConfigured"]?.boolean(), let conflict = fields?["telemetryConflict"]?.boolean(),
+              let reason = fields?["telemetryConflictReason"]?.string(limit: 16).flatMap(ClaudeTelemetryConflict.init(rawValue:)),
+              conflict == (reason != .none) else { throw Failure.invalidResponse }
+        return ClaudeHookInstaller.Status(hooksConfigured: hooks, telemetryConfigured: telemetry, statusLineConfigured: line,
+                                          telemetryConflictReason: reason)
     }
 }
 
