@@ -24,13 +24,13 @@ struct EngineWallet: Codable, Equatable {
     var reminders: EngineReminderReading?
 
     init(_ wallet: DeepSeekWallet, at now: Date, hideProjects: Bool = false, compactBudget: DeepSeekBudgetPeriod? = nil,
-         reminders: EngineReminderSettings = .init(), connection: DeepSeekBalanceState? = nil,
+         reminders: EngineReminderSettings = .init(), connection: DeepSeekBalanceState? = nil, panel: ExpandedPanelOptions = .init(),
          taskTitle: (String) -> String = { _ in L10n.text("deepseek.task_untitled") }) {
         let presentation = DeepSeekDialPresentation(wallet: wallet, at: now, refreshing: connection?.refreshing ?? false,
             needsConnection: connection.map { $0.error?.needsConnection == true || $0.mode == nil } ?? true,
             apiKey: connection?.mode == .apiKey)
         dial = presentation
-        solo = .init(wallet: wallet, at: now, hideProjects: hideProjects, taskTitle: taskTitle)
+        solo = .init(wallet: wallet, at: now, hideProjects: hideProjects, panel: panel, taskTitle: taskTitle)
         settings = .init(wallet: wallet, compactBudget: compactBudget, freshness: presentation.freshness, now: now)
         alert = .init(wallet: wallet, lowBalance: reminders.contains(.lowBalance), spike: reminders.contains(.spendSpike), budget: reminders.contains(.budget))
         switch wallet.state {
@@ -79,10 +79,11 @@ struct EngineWalletSource {
         presentation(wallet: wallet(at: now, configuration: configuration), at: now, hideProjects: hideProjects, configuration: configuration, compactUsesBudget: compactUsesBudget)
     }
     func presentation(wallet: DeepSeekWallet, at now: Date, hideProjects: Bool, configuration: EngineDeepSeekSettings,
-                      compactUsesBudget: Bool, reminders: EngineReminderSettings = .init(), connection: DeepSeekBalanceState? = nil) -> EngineWallet {
+                      compactUsesBudget: Bool, reminders: EngineReminderSettings = .init(), connection: DeepSeekBalanceState? = nil,
+                      panel: ExpandedPanelOptions = .init()) -> EngineWallet {
         let budget = compactUsesBudget ? wallet.ringBudget(prefer: .init(rawValue: configuration.ringPeriod) ?? .day) : nil
         var result = EngineWallet(wallet, at: now, hideProjects: hideProjects, compactBudget: budget, reminders: reminders, connection: connection,
-            taskTitle: { titles[$0] ?? L10n.text("deepseek.task_untitled") })
+            panel: panel, taskTitle: { titles[$0] ?? L10n.text("deepseek.task_untitled") })
         result.reminders = .init(low: DeepSeekWallet.automaticLowLine(balance), spike: ledger.automaticSpikeLimit(before: wallet.day.start))
         return result
     }

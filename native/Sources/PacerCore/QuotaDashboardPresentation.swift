@@ -65,12 +65,29 @@ public enum QuotaDashboardPresentation {
            let window = windows.first(where: { $0.durationMinutes == 300 }) { return window }
         return windows.first { $0.durationMinutes == 10080 } ?? snapshot.windows.first { $0.durationMinutes == 10080 } ?? snapshot.limitingWindow
     }
-    public static func slots(providers: [AgentProvider], style: Style) -> [Slot] {
-        let enabled = Set(providers), ordered = AgentProvider.allCases.filter { enabled.contains($0) }
+    /// `preservingOrder` keeps the panel's block order instead of the services'
+    /// usual one. `periods` limits which windows each service draws: Classic
+    /// shows one ring per window for a lone service, and one ring per service
+    /// otherwise, on the week unless only 5 hours is chosen.
+    public static func slots(providers: [AgentProvider], style: Style, preservingOrder: Bool = false,
+                             periods: (AgentProvider) -> ExpandedPanelOptions.Periods = { _ in .both }) -> [Slot] {
+        let ordered = order(providers, preservingOrder: preservingOrder)
         if style == .classic, let provider = ordered.first, ordered.count == 1 {
-            return Period.allCases.map { Slot(provider: provider, period: $0, identifiesProvider: false) }
+            let chosen = periods(provider)
+            return Period.allCases.filter { chosen == .both || (chosen == .weekly) == ($0 == .weekly) }
+                .map { Slot(provider: provider, period: $0, identifiesProvider: false) }
         }
-        return ordered.map { Slot(provider: $0, period: .weekly, identifiesProvider: style == .classic) }
+        return ordered.map {
+            Slot(provider: $0, period: style == .classic && periods($0) == .fiveHour ? .fiveHour : .weekly, identifiesProvider: style == .classic)
+        }
+    }
+    private static func order(_ providers: [AgentProvider], preservingOrder: Bool) -> [AgentProvider] {
+        guard preservingOrder else {
+            let enabled = Set(providers)
+            return AgentProvider.allCases.filter { enabled.contains($0) }
+        }
+        var seen: Set<AgentProvider> = []
+        return providers.filter { seen.insert($0).inserted }
     }
     public static func usesLegacyCodexDisplay(providers: [AgentProvider], snapshot: QuotaSnapshot?, style: Style) -> Bool {
         guard Set(providers) == [.codex], let primary = snapshot?.buckets.first(where: { $0.id == "codex" }),
@@ -80,15 +97,20 @@ public enum QuotaDashboardPresentation {
             $0.remainingPercent != nil || ($0.durationMinutes.map { $0 > 0 } ?? false) || $0.resetsAt != nil
         }
     }
-    public static func layout(providers: [AgentProvider], snapshots: [AgentProvider: QuotaSnapshot], style: Style, now: Date) -> Layout {
-        let enabled = Set(providers), ordered = AgentProvider.allCases.filter { enabled.contains($0) }
+    /// One quota section's drawing. A lone service shows its details beside
+    /// the ring unless `details` is off; then its ring stands alone as in a row.
+    public static func layout(providers: [AgentProvider], snapshots: [AgentProvider: QuotaSnapshot], style: Style, now: Date,
+                              preservingOrder: Bool = false, details: Bool = true,
+                              periods: (AgentProvider) -> ExpandedPanelOptions.Periods = { _ in .both }) -> Layout {
+        let ordered = order(providers, preservingOrder: preservingOrder)
         if usesLegacyCodexDisplay(providers: ordered, snapshot: snapshots[.codex], style: style) { return Layout(kind: .legacyCodex, slots: []) }
         if ordered == [.deepseek] { return Layout(kind: .deepseekSolo, slots: []) }
-        if style == .classic { return Layout(kind: .classicRings, slots: slots(providers: ordered, style: style)) }
-        let single = ordered.count == 1 && ordered.first.map {
+        let drawn = Self.slots(providers: ordered, style: style, preservingOrder: preservingOrder, periods: periods)
+        if style == .classic { return Layout(kind: .classicRings, slots: drawn) }
+        let single = details && ordered.count == 1 && ordered.first.map {
             Reading(provider: $0, period: .weekly, snapshot: snapshots[$0], now: now).availability != .unavailable
         } == true
-        return Layout(kind: single ? .splitSingle : .splitRings, slots: slots(providers: ordered, style: style))
+        return Layout(kind: single ? .splitSingle : .splitRings, slots: drawn)
     }
 
     public struct Reading: Codable, Equatable, Sendable {

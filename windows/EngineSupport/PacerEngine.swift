@@ -251,6 +251,7 @@ actor EngineRuntime {
     private var localStreamStatuses: [AgentProvider: RuntimeStreamStatus] = [:]
     private var deepseekSettings = EngineDeepSeekSettings()
     private var reminderSettings = EngineReminderSettings()
+    private var panelSettings = EngineExpandedPanelSettings()
     /// Claude's self-reported progress ring; off until the desktop turns it on.
     private var claudeProgressRing = false
     private var codexProgressRing = false
@@ -945,6 +946,7 @@ actor EngineRuntime {
         if let minutes = parameters.retentionMinutes, !(0...10080).contains(minutes) { throw EngineCommand.Failure.invalid }
         if let value = parameters.deepseekSettings, !value.isValid { throw EngineCommand.Failure.invalid }
         if let value = parameters.reminderSettings, !value.isValid { throw EngineCommand.Failure.invalid }
+        if let value = parameters.expandedPanel, !value.isValid { throw EngineCommand.Failure.invalid }
         guard parameters.providerModes == nil || explicitProviders == nil else { throw EngineCommand.Failure.invalid }
         var updatedSettings = moduleSettings
         if let explicitProviders {
@@ -1014,6 +1016,7 @@ actor EngineRuntime {
             deepseekSettings = value
         }
         if let value = parameters.reminderSettings { reminderSettings = value }
+        if let value = parameters.expandedPanel { panelSettings = value }
         if let minutes = parameters.retentionMinutes { retention = minutes == 0 ? .infinity : Double(minutes) * 60 }
         if changesCodex { codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) }) }
         if changesClaude { resetClaudeLocalSource() }
@@ -2031,11 +2034,15 @@ actor EngineRuntime {
         navigationHosts = navigationHosts.filter { openIDs.contains($0.key) }
         let date = now()
         var wallet: EngineWallet?, walletNotices: [IslandNotice] = [], compactWallet: CompactBarContext.Wallet?
+        let panelOptions = panelSettings.choices
+        var hasBudget = false
         if enabled.contains(.deepseek), let source = walletSource {
             let reading = source.wallet(at: date, configuration: deepseekSettings, reminders: reminderSettings)
+            hasBudget = reading.daily != nil || reading.weekly != nil
             compactWallet = .init(reading, preferred: .init(rawValue: deepseekSettings.ringPeriod) ?? .day)
             wallet = source.presentation(wallet: reading, at: date, hideProjects: hideProjects, configuration: deepseekSettings,
-                compactUsesBudget: enabled.subtracting([.deepseek]).count < 2, reminders: reminderSettings, connection: balanceState)
+                compactUsesBudget: enabled.subtracting([.deepseek]).count < 2, reminders: reminderSettings, connection: balanceState,
+                panel: panelOptions)
             walletNotices = deepseekNoticePolicy.balanceNotices(reading, low: reminderSettings.contains(.lowBalance))
                 + deepseekNoticePolicy.spendNotices(reading, spike: reminderSettings.contains(.spendSpike), budget: reminderSettings.contains(.budget),
                     snoozedUntil: spikeSnoozedUntil, now: date)
@@ -2068,7 +2075,7 @@ actor EngineRuntime {
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
                 }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
-                progressRingProviders: progressRingProviders))
+                progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize))
         scheduleActivityDisplay(at: date)
         var failedProviders = Set<AgentProvider>(), refreshingProviders = Set<AgentProvider>(), quotaErrors: [AgentProvider: String] = [:], sourceTexts: [AgentProvider: String] = [:]
         if !demo {
@@ -2146,7 +2153,7 @@ actor EngineRuntime {
             }
         }
         let notificationProjections = visibleNotices.map { notificationProjection($0, requests: visibleRequests, at: date) }
-        let snapshot = EngineSnapshot(sequence: sequence + 1, demo: demo, activities: visibleActivities, requests: visibleRequests,
+        var snapshot = EngineSnapshot(sequence: sequence + 1, demo: demo, activities: visibleActivities, requests: visibleRequests,
             sources: displayedSources, quota: displayedQuota,
             notices: visibleNotices, inbox: inbox, hideProjects: hideProjects, now: date, wallet: enabled.contains(.deepseek) ? wallet : nil,
             modules: moduleConfigurationActive ? AgentProvider.allCases.map {
@@ -2162,6 +2169,8 @@ actor EngineRuntime {
             navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup,
             claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation(), codexProgressSetup: codexProgressSetup,
             deepseekProgressSetup: deepseekProgressSetup)
+        snapshot.expandedPanel = EngineExpandedPanel(settings: panelSettings, enabled: enabled, snapshots: snapshots,
+            hasBudget: hasBudget, at: date)
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return
         }

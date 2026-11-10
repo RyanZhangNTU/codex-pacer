@@ -78,7 +78,9 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
             self.elsewhereKey = elsewhereKey; self.elsewhereHelpKey = elsewhereHelpKey
         }
     }
+    /// `panel` carries the expanded panel's choices for the spend bar and the week chart.
     public init(wallet: DeepSeekWallet, at now: Date, hideProjects: Bool = false, wording: Wording = .init(),
+                panel: ExpandedPanelOptions = .init(),
                 taskTitle: (String) -> String = { _ in L10n.text("deepseek.task_untitled") }) {
         func amount(_ value: Double) -> String { DeepSeekDialPresentation.amount(value) }
         todayLabel = L10n.text("deepseek.group.today"); todayText = amount(wallet.todayTotal)
@@ -86,8 +88,9 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
         todayHelp = L10n.text(todayHelpKey, amount(wallet.today), amount(wallet.elsewhereToday))
         peakUntil = wallet.peakNow ? wallet.nextPriceChange.map { L10n.text("deepseek.peak_until", L10n.moment($0, relativeTo: now)) } : nil
         speed = Self.speed(wallet, wording: wording)
-        distribution = Self.distribution(wallet, hideProjects: hideProjects, wording: wording, taskTitle: taskTitle)
-        week = Self.week(wallet)
+        distribution = Self.distribution(wallet, hideProjects: hideProjects, wording: wording, taskTitle: taskTitle,
+            tasks: panel.spendTasks, elsewhere: panel.spendElsewhere)
+        week = Self.week(wallet, line: panel.weekLine)
         budgets = [wallet.daily, wallet.weekly].compactMap { $0 }.map { Self.budget($0, at: now) }
     }
     public static func speed(_ wallet: DeepSeekWallet, wording: Wording = .init()) -> Speed? {
@@ -103,17 +106,24 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
                 accessibilityLabel: L10n.text("deepseek.speed") + " " + rate)
         } else { return nil }
     }
-    public static func distribution(_ wallet: DeepSeekWallet, hideProjects: Bool = false, wording: Wording = .init(), taskTitle: (String) -> String = { _ in L10n.text("deepseek.task_untitled") }) -> Distribution? {
+    /// The largest `tasks` tasks by name, the rest, and, when `elsewhere`,
+    /// what the account was charged with no task on this computer.
+    public static func distribution(_ wallet: DeepSeekWallet, hideProjects: Bool = false, wording: Wording = .init(),
+                                    taskTitle: (String) -> String = { _ in L10n.text("deepseek.task_untitled") },
+                                    tasks limit: Int = 2, elsewhere: Bool = true) -> Distribution? {
         func amount(_ value: Double) -> String { DeepSeekDialPresentation.amount(value) }
         let elsewhereKey = wording.elsewhereKey, elsewhereHelpKey = wording.elsewhereHelpKey
         if wallet.todayTotal >= 0.005 {
-            let tasks = wallet.tasks.filter { $0.total >= 0.005 }
-            var parts: [(String, Double, Double, Bool)] = tasks.prefix(2).enumerated().map { index, task in
-                (hideProjects ? L10n.text("activity.hidden_name") : taskTitle(task.task), task.total, index == 0 ? 0.9 : 0.6, false)
+            let tasks = wallet.tasks.filter { $0.total >= 0.005 }, limit = max(1, limit)
+            let opacities = limit <= 2 ? [0.9, 0.6] : [0.9, 0.72, 0.56, 0.44]
+            var parts: [(String, Double, Double, Bool)] = tasks.prefix(limit).enumerated().map { index, task in
+                (hideProjects ? L10n.text("activity.hidden_name") : taskTitle(task.task), task.total,
+                 opacities[min(index, opacities.count - 1)], false)
             }
-            let rest = tasks.dropFirst(2).reduce(0) { $0 + $1.total } + max(0, wallet.today - tasks.reduce(0) { $0 + $1.total })
+            let rest = tasks.dropFirst(limit).reduce(0) { $0 + $1.total } + max(0, wallet.today - tasks.reduce(0) { $0 + $1.total })
             if rest >= 0.005 { parts.append((L10n.text("deepseek.others"), rest, 0.32, false)) }
-            if wallet.elsewhereToday >= 0.005 { parts.append((L10n.text(elsewhereKey), wallet.elsewhereToday, 0, true)) }
+            if elsewhere, wallet.elsewhereToday >= 0.005 { parts.append((L10n.text(elsewhereKey), wallet.elsewhereToday, 0, true)) }
+            guard !parts.isEmpty else { return nil }
             let total = max(0.01, parts.reduce(0) { $0 + $1.1 }), explanation = L10n.text(elsewhereHelpKey)
             return Distribution(title: L10n.text("deepseek.where"), parts: parts.map { title, value, opacity, elsewhere in
                 Part(title: title, amountText: amount(value), fraction: value / total, opacity: opacity, elsewhere: elsewhere,
@@ -121,12 +131,14 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
             }, usageTitle: L10n.text("deepseek.usage_link"), usageHelp: explanation + "\n" + L10n.text("deepseek.usage_link"))
         } else { return nil }
     }
-    public static func week(_ wallet: DeepSeekWallet) -> Week? {
+    /// Without `line` the dashed reference and its label are left out; the
+    /// part of a day over its budget still turns red.
+    public static func week(_ wallet: DeepSeekWallet, line showsLine: Bool = true) -> Week? {
         func amount(_ value: Double) -> String { DeepSeekDialPresentation.amount(value) }
 
         if wallet.dayTotals.dropLast().filter({ $0 >= 0.005 }).count >= 2 {
             let budget = wallet.daily?.limit
-            let line = budget ?? wallet.averageDaily.flatMap { $0 >= 0.005 ? $0 : nil }
+            let line = showsLine ? budget ?? wallet.averageDaily.flatMap { $0 >= 0.005 ? $0 : nil } : nil
             let top = max(0.01, wallet.dayTotals.max() ?? 0, (line ?? 0) * 1.15)
             let days = zip(wallet.days, wallet.dayTotals).enumerated().map { index, pair -> Day in
                 let day = pair.0, total = pair.1, today = index == wallet.days.count - 1

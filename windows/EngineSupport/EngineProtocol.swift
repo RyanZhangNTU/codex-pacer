@@ -39,6 +39,7 @@ struct EngineCommand: Decodable {
         var monitorSSH: Bool?
         var deepseekSettings: EngineDeepSeekSettings?
         var reminderSettings: EngineReminderSettings?
+        var expandedPanel: EngineExpandedPanelSettings?
         var claudeProgressRing: Bool?
         var codexProgressRing: Bool?
         var deepseekProgressRing: Bool?
@@ -286,6 +287,7 @@ struct EngineSnapshot: Codable, Equatable {
     let connections: ConnectionPagePresentation?
     let navigationError: EngineNavigationFailure?
     let openingActivityIDs: [String]?
+    var expandedPanel: EngineExpandedPanel? = nil
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,
