@@ -49,6 +49,20 @@ internal static class ProviderHomeSettingsChecks
                 Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { LaunchMode = "direct" }) == ui.Text("windows.claude.setup_ready"), "The direct route must retain its ready message");
                 Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { LaunchMode = "shortPath" }) == ui.Text("windows.claude.setup_ready"), "The 8.3 route must retain its ready message");
                 Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", setup with { TelemetryConflict = true }).Contains(ui.Text("windows.claude.setup_conflict")), "The cost notice must retain the existing telemetry conflict");
+                var direct = setup with { LaunchMode = "direct" };
+                Check(!SettingsWindow.ClaudeSetupVisible("ready", direct) && SettingsWindow.ClaudeSetupVisible("ready", setup) && SettingsWindow.ClaudeSetupVisible("failed", direct),
+                    "A ready direct setup stays silent; the PowerShell cost and failures stay visible");
+                var existing = direct with { TelemetryConflict = true, TelemetryConflictReason = "existing" };
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", existing) == ui.Text("windows.claude.setup_conflict") && SettingsWindow.ClaudeSetupVisible("ready", existing),
+                    "Existing telemetry settings must say that TPS is estimated");
+                var managed = direct with { TelemetryConflict = true, TelemetryConflictReason = "managed" };
+                Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", managed) == ui.Text("windows.claude.setup_managed") && SettingsWindow.ClaudeSetupVisible("ready", managed),
+                    "Organization-managed telemetry must name its source");
+                Check(ui.Text("windows.claude.setup_managed") != ui.Text("windows.claude.setup_conflict"), "Managed and existing telemetry need distinct notices");
+                foreach (var exact in new[] { existing with { ExactRequestSpans = true }, managed with { ExactRequestSpans = true } })
+                    Check(SettingsWindow.ClaudeSetupDescription(ui, "ready", exact) == ui.Text("windows.claude.setup_ready") && !SettingsWindow.ClaudeSetupVisible("ready", exact),
+                        "An exact request span means speeds are exact, so the estimate notice hides");
+                Check(SettingsWindow.ClaudeSetupVisible("ready", managed with { ExactRequestSpans = false }), "Spans not yet seen keep the estimate notice");
                 Check(SettingsWindow.ClaudeSetupDescription(ui, "failed", setup) == ui.Text("windows.claude.setup_failed"), "A failed setup must retain its actionable error");
                 Check(Find<TextBlock>(window, "settings.claude.setup").Text == UiText.For(language == "zh-Hans").Text("windows.claude.setup_ready"),
                     "The demo must show the localized Claude setup state");

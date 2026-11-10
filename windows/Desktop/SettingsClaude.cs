@@ -101,7 +101,7 @@ internal sealed partial class SettingsWindow
         };
         SetStatus(claudeMonitorDot, claudeLocalState, ui.Text(stateKey), tone);
         claudeSetupState!.Text = ClaudeSetupDescription(ui, setup, snapshot?.ClaudeSetup);
-        claudeSetupState.Visibility = setup == "ready" && snapshot?.ClaudeSetup is not { SpeedsEstimated: true } && snapshot?.ClaudeSetup?.LaunchMode != "powershell" ? Visibility.Collapsed : Visibility.Visible;
+        claudeSetupState.Visibility = ClaudeSetupVisible(setup, snapshot?.ClaudeSetup) ? Visibility.Visible : Visibility.Collapsed;
         claudeSetupState.SetResourceReference(TextBlock.ForegroundProperty, setup == "failed" ? "SettingsWarning" : "SettingsSecondary");
         claudeSetupRetry!.Visibility = setup == "failed" ? Visibility.Visible : Visibility.Collapsed;
         claudeSetupRetry.IsEnabled = enabled && connected && !busy && setup != "settingUp" && snapshot?.Demo == false;
@@ -114,4 +114,7 @@ internal sealed partial class SettingsWindow
         { "ready" when setup?.SpeedsEstimated == true => setup.TelemetryConflictReason == "managed" ? "managed" : "conflict", "ready" => "ready", "settingUp" => "working", "missingHome" => "missing", "disabled" => "disabled", _ => "failed" }));
         return state == "ready" && setup?.LaunchMode == "powershell" ? message + " " + ui.Text("windows.claude.setup_slow") : message;
     }
+    /// A ready setup stays silent unless speeds are estimated or every hook starts through PowerShell.
+    internal static bool ClaudeSetupVisible(string state, ClaudeHookSetup? setup) =>
+        state != "ready" || setup is { SpeedsEstimated: true } || setup?.LaunchMode == "powershell";
 }
