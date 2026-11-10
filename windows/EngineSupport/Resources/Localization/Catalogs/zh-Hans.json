@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "27f31b3d8e6f46d9f703fa7f1f6b2d688fb52889e3cdf39d771a2db7b4c5a4be",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "3811b69ec33a40a385fd84a0162f50998e8ca5ffe5050ef2644e34f413224b58",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "98a252b85bca9a791ab59d47bc80d386ba230d0d1483822c0456951a989a79fa"
   },
   "strings": {
@@ -129,6 +129,9 @@
     "appearance.notch_black": "\u6298\u53e0\u65f6\u7eaf\u9ed1\uff0c\u5c55\u5f00\u4e3a\u6db2\u6001\u73bb\u7483",
     "appearance.notch_mode": "\u5218\u6d77\u6a21\u5f0f",
     "appearance.position": "\u4f4d\u7f6e",
+    "appearance.position_display": "\u5f53\u524d\uff1a%@",
+    "appearance.position_per_display": "\u6bcf\u5757\u5c4f\u5e55\u5355\u72ec\u8bb0\u4f4f\u4f4d\u7f6e",
+    "appearance.position_per_display_info": "\u6bcf\u5757\u5c4f\u5e55\u5206\u522b\u8bb0\u4f4f\u8d34\u5218\u6d77\u8fd8\u662f\u81ea\u7531\u79fb\u52a8\uff0c\u4ee5\u53ca\u653e\u5728\u54ea\u91cc\u3002\u7b2c\u4e00\u6b21\u7528\u7684\u5c4f\u5e55\u4ece\u73b0\u5728\u7684\u4f4d\u7f6e\u5f00\u59cb\uff1b\u6709\u5218\u6d77\u7684\u5c4f\u5e55\u9ed8\u8ba4\u8d34\u5218\u6d77\u3002",
     "appearance.position_reset": "\u56de\u5230\u9876\u90e8\u4e2d\u592e",
     "appearance.quota_classic": "\u7ecf\u5178",
     "appearance.quota_split": "\u5206\u6bb5\u5706\u73af",

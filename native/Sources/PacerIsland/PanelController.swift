@@ -102,12 +102,28 @@ final class PanelController: NSObject {
         panel.makeKey()
     }
 
-    private static func number(_ screen: NSScreen) -> Int {
-        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0
-    }
-    /// The chosen display, or the main one when none is chosen or it is gone.
+    private static func number(_ screen: NSScreen) -> Int { DisplayIdentity.number(screen) }
+    /// The chosen display, found by its UUID, or the main one when none is
+    /// chosen or it is gone. A choice saved before the UUID uses its number.
     private var selectedScreen: NSScreen? {
-        NSScreen.screens.first { Self.number($0) == model.displayID } ?? NSScreen.screens.first
+        let screens = NSScreen.screens
+        if model.displayID != 0, let saved = model.defaults.string(forKey: DisplayIdentity.defaultsKey) {
+            return screens.first { DisplayIdentity.uuid($0) == saved } ?? screens.first
+        }
+        return screens.first { Self.number($0) == model.displayID } ?? screens.first
+    }
+    /// Keeps the chosen display's number and UUID in step: a display plugged
+    /// in again may get a new number, and a choice from before the UUID gains one.
+    private func syncDisplayChoice(_ screen: NSScreen) {
+        let defaults = model.defaults, chosen = model.displayID
+        guard chosen != 0, let uuid = DisplayIdentity.uuid(screen) else { return }
+        let saved = defaults.string(forKey: DisplayIdentity.defaultsKey)
+        if saved == uuid, Self.number(screen) != chosen {
+            defaults.set(Self.number(screen), forKey: "displayID")
+            model.islandPlacementSaved()
+        } else if saved == nil, Self.number(screen) == chosen {
+            defaults.set(uuid, forKey: DisplayIdentity.defaultsKey)
+        }
     }
 
     private static var buttonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
@@ -118,6 +134,10 @@ final class PanelController: NSObject {
         if !model.expanded { panel.resignKey() }
         guard let screen = selectedScreen else { return }
         let demoNotch = model.isDemo && CommandLine.arguments.contains("--demo-notch")
+        syncDisplayChoice(screen)
+        // Each display can keep its own place; reaching one applies it first.
+        _ = model.arrive(onDisplay: DisplayIdentity.key(screen), name: screen.localizedName,
+            hasNotch: demoNotch || screen.safeAreaInsets.top > 0)
         let hardwareNotchWidth: CGFloat
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             hardwareNotchWidth = max(0, right.minX - left.maxX)
@@ -129,6 +149,7 @@ final class PanelController: NSObject {
         let layout = mode.layout(safeAreaTop: screenNotchSize.height, hardwareNotchWidth: screenNotchSize.width,
             size: CompactBarSize.load(from: model.defaults))
         if model.isAttached != layout.attached { model.isAttached = layout.attached }
+        if model.atHardwareNotch != layout.atHardwareNotch { model.atHardwareNotch = layout.atHardwareNotch }
         if model.stripWidth != layout.stripWidth { model.stripWidth = layout.stripWidth }
         // Light glass forces the light appearance on its system material.
         let appearance = NSAppearance(named: model.appearance.isLight ? .aqua : .darkAqua)
@@ -187,8 +208,9 @@ final class PanelController: NSObject {
         if presentation.canvas != expandedFrame.size { presentation.canvas = expandedFrame.size }
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         let current = presentation.sample
-        // At the notch the collapsed bar is black whatever the material.
-        let hasBlackHeader = layout.attached
+        // At a hardware notch the collapsed bar is black whatever the material;
+        // attached to a screen without one, it keeps its material.
+        let hasBlackHeader = layout.atHardwareNotch
         // Only a free capsule casts a shadow; an island against an edge flares into it.
         let floating = !layout.attached && dock == nil && edge == nil
         if panel.hasShadow != floating { panel.hasShadow = floating }
@@ -247,7 +269,7 @@ final class PanelController: NSObject {
         CATransaction.setDisableActions(true)
         withTransaction(transaction) {
             presentation.sample = sample
-            model.coverTone(model.isAttached && sample.blackOpacity >= 0.5)
+            model.coverTone(model.atHardwareNotch && sample.blackOpacity >= 0.5)
             let frame = IslandGeometry.windowFrame(sample.frame, anchor: anchor)
             if panel.frame != frame { panel.setFrame(frame, display: false) }
             // Resolve SwiftUI geometry in the same frame without forcing a
@@ -261,9 +283,9 @@ final class PanelController: NSObject {
         CATransaction.commit()
     }
 
-    /// Shoulders where a bar docked at a screen edge meets it, drawn in a
-    /// child panel that never takes a click. Glass cannot paint outside its
-    /// window, so only the opaque materials have them. A bar at the notch has
+    /// Shoulders where a bar against a screen edge meets it, drawn in a child
+    /// panel that never takes a click. Glass cannot paint outside its window,
+    /// so only the opaque materials have them. A bar at a hardware notch has
     /// none: like the camera housing, it ends at its own outline.
     private func updateDecoration(_ frame: CGRect, sample: IslandTransition.Sample) {
         let sides = IslandFreeSides(attached: model.isAttached, flatEdge: model.dockedEdge)
@@ -271,7 +293,7 @@ final class PanelController: NSObject {
         let appearance = model.appearance
         let glass = appearance.isGlass && IslandAppearance.supportsLiquidGlass && !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         let radius = CGFloat(model.barMetrics.shoulder)
-        guard move == nil, panel.isVisible, !model.isAttached, !glass, !screenSide.isEmpty, radius > 0,
+        guard move == nil, panel.isVisible, !model.atHardwareNotch, !glass, !screenSide.isEmpty, radius > 0,
               frame.width > 1, frame.height > 1 else {
             decoration?.orderOut(nil); return
         }
@@ -338,8 +360,9 @@ final class PanelController: NSObject {
         placement.save(to: defaults)
         // A drag that stays on the fallback display keeps the chosen one, so
         // the island returns there when it reconnects.
-        if selectedScreen != move.screen { defaults.set(Self.number(move.screen), forKey: "displayID") }
+        if selectedScreen != move.screen { DisplayIdentity.choose(Self.number(move.screen), in: defaults) }
         if IslandDisplayMode.load(from: defaults) != .floating { IslandDisplayMode.floating.save(to: defaults) }
+        model.placeMoved(toDisplay: DisplayIdentity.key(move.screen), name: move.screen.localizedName)
         model.islandPlacementSaved()
         if model.pinned { model.setExpanded(true) }
         layout(animated: false)

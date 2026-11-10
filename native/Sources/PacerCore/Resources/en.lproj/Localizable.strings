@@ -1106,6 +1106,9 @@
 "appearance.bar_size.large" = "Large";
 "appearance.bar_size.extraLarge" = "Extra large";
 "appearance.bar_size_info" = "Sets the height of the collapsed bar and the width of the side strip. Text and graphics scale with it.";
+"appearance.position_per_display" = "Remember for Each Display";
+"appearance.position_per_display_info" = "Each display keeps its own Notch or Free Move place. A display used for the first time starts where the island is now, or at its notch if it has one.";
+"appearance.position_display" = "On %@";
 "appearance.bar_size_notch" = "Attached to the notch, the bar matches the notch height, so its size cannot change.";
 "settings.graphite" = "Graphite";
 "appearance.material_info.classic" = "Black with a fine edge; one with the notch on any wallpaper.";

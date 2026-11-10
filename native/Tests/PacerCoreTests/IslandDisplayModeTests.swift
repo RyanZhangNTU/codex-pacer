@@ -63,6 +63,11 @@ final class IslandDisplayModeTests: XCTestCase {
         let unmeasured = IslandDisplayMode.automatic.layout(safeAreaTop: 37, hardwareNotchWidth: 0)
         XCTAssertTrue(unmeasured.attached)
         XCTAssertEqual(unmeasured.notchWidth, 0)
+        // Only a bar at a real notch turns black; attached elsewhere it keeps its material.
+        XCTAssertFalse(virtual.atHardwareNotch)
+        XCTAssertTrue(hardware.atHardwareNotch); XCTAssertTrue(unmeasured.atHardwareNotch)
+        XCTAssertFalse(IslandDisplayMode.floating.layout(safeAreaTop: 37, hardwareNotchWidth: 185).atHardwareNotch)
+        XCTAssertFalse(IslandDisplayMode.automatic.layout(safeAreaTop: 0, hardwareNotchWidth: 0).atHardwareNotch)
     }
 
     func testNotchAndFloatingAnchorsOnOneAndTwoTimesExternalDisplays() {

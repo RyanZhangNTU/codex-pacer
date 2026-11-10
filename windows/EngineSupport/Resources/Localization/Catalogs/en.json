@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "687c884cfa55e011b3c7adc462e54ba9fa1ff08bcd8b5acd00f712c128a32812",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "02e0ef805d04800cf03b732154d41b36cec77b7e70d5872555cdf79a833c794d",
     "windows/EngineSupport/Resources/Localization/en.json": "23bd4e6629e9a665f4d03692b962b51b2a2f93a20fd1379517367849fa50b31b"
   },
   "strings": {
@@ -129,6 +129,9 @@
     "appearance.notch_black": "Black when collapsed, glass when expanded",
     "appearance.notch_mode": "Notch Mode",
     "appearance.position": "Position",
+    "appearance.position_display": "On %@",
+    "appearance.position_per_display": "Remember for Each Display",
+    "appearance.position_per_display_info": "Each display keeps its own Notch or Free Move place. A display used for the first time starts where the island is now, or at its notch if it has one.",
     "appearance.position_reset": "Return to Top Center",
     "appearance.quota_classic": "Classic",
     "appearance.quota_split": "Split Ring",

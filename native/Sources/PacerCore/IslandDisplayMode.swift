@@ -30,6 +30,9 @@ public enum IslandDisplayMode: String, CaseIterable, Sendable {
         /// False while the bar is attached to a real camera housing, whose
         /// height it keeps whatever size is saved.
         public let sizeAdjustable: Bool
+        /// The bar hangs from a Mac's hardware notch, not just the top of a
+        /// screen without one; only there is it pure black while collapsed.
+        public var atHardwareNotch: Bool { !sizeAdjustable }
         public init(attached: Bool, notchWidth: CGFloat, topHeight: CGFloat,
                     stripWidth: CGFloat = IslandGeometry.stripWidth, sizeAdjustable: Bool = true) {
             self.attached = attached; self.notchWidth = notchWidth; self.topHeight = topHeight

@@ -93,9 +93,9 @@ struct IslandSurface: ViewModifier {
     var progress: Double?
     /// The collapsed bar's corner radius; the corners grow to 27 as it opens.
     var collapsedRadius: CGFloat = 19
-    /// At the notch the collapsed bar is pure black whatever the material, with
-    /// no rim, so it reads as one with the camera housing. It fades as the bar
-    /// opens.
+    /// At a hardware notch the collapsed bar is pure black whatever the
+    /// material, with no rim, so it reads as one with the camera housing. It
+    /// fades as the bar opens.
     var notchBlack: Double = 0
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast

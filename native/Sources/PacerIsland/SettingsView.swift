@@ -40,6 +40,7 @@ struct SettingsView: View {
     @State private var accent = PacerAccent(defaults: .standard)
     @State private var quotaStyle = ExpandedQuotaStyle.load()
     @State private var fullscreen = UserDefaults.standard.bool(forKey: "showInFullscreen")
+    @State private var positionPerDisplay = IslandScreenMemory.isEnabled(in: .standard)
     @State private var displayID = UserDefaults.standard.integer(forKey: "displayID")
     @State private var metric = UserDefaults.standard.string(forKey: "compactMetric") ?? "remaining"
     @State private var singleTask = ActivityBadgeSingleTask()
@@ -262,7 +263,7 @@ struct SettingsView: View {
             }
         case .appearance:
             SettingsAppearancePane(model: model, theme: $theme, appearance: $appearance, accent: $accent, barSize: $barSize, displayMode: $displayMode, position: $position,
-                displayID: $displayID, fullscreen: $fullscreen, quotaStyle: $quotaStyle, deepseekPanelStyle: $deepseekPanelStyle,
+                displayID: $displayID, fullscreen: $fullscreen, positionPerDisplay: $positionPerDisplay, quotaStyle: $quotaStyle, deepseekPanelStyle: $deepseekPanelStyle,
                 showsAppButtons: $showsAppButtons,
                 deepseekAlone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek])
         case .collapsedBar:
@@ -488,7 +489,7 @@ struct SettingsView: View {
     private var liveSettings: LiveSettings {
         LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, componentOptions: componentOptions,
             barSize: barSize, appearance: appearance, theme: theme, accent: accent,
-            quotaStyle: quotaStyle, deepseekPanelStyle: deepseekPanelStyle, fullscreen: fullscreen, displayID: displayID, metric: metric, singleTask: singleTask,
+            quotaStyle: quotaStyle, deepseekPanelStyle: deepseekPanelStyle, fullscreen: fullscreen, displayID: displayID, positionPerDisplay: positionPerDisplay, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
@@ -530,7 +531,8 @@ struct SettingsView: View {
         quotaStyle.save(to: defaults)
         deepseekPanelStyle.save(to: defaults)
         defaults.set(fullscreen, forKey: "showInFullscreen")
-        defaults.set(displayID, forKey: "displayID")
+        DisplayIdentity.choose(displayID, in: defaults)
+        defaults.set(positionPerDisplay, forKey: IslandScreenMemory.enabledKey)
         defaults.set(metric, forKey: "compactMetric")
         defaults.set(singleTask.rawValue, forKey: ActivityBadgeSingleTask.defaultsKey)
         defaults.set(windowID, forKey: "quotaWindowID")
@@ -618,6 +620,7 @@ private struct LiveSettings: Equatable {
     var deepseekPanelStyle: DeepSeekPanelStyle
     var fullscreen: Bool
     var displayID: Int
+    var positionPerDisplay: Bool
     var metric: String
     var singleTask: ActivityBadgeSingleTask
     var windowID: String

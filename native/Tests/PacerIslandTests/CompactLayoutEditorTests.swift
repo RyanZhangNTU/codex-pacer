@@ -30,7 +30,7 @@ final class CompactLayoutEditorTests: XCTestCase {
         let pane = SettingsAppearancePane(model: model, theme: .constant(.auto), appearance: .constant(.classic), accent: .constant(.multicolor),
             barSize: .constant(.standard), displayMode: Binding(get: { mode }, set: { mode = $0 }),
             position: Binding(get: { position }, set: { position = $0 }),
-            displayID: .constant(0), fullscreen: .constant(false), quotaStyle: .constant(.split),
+            displayID: .constant(0), fullscreen: .constant(false), positionPerDisplay: .constant(true), quotaStyle: .constant(.split),
             deepseekPanelStyle: .constant(.detailed), showsAppButtons: .constant(false), deepseekAlone: false)
         model.screenNotchSize = .zero
         XCTAssertEqual(pane.customBinding.wrappedValue, .center)

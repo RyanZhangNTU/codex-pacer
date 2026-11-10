@@ -10,14 +10,14 @@ struct IslandView: View {
         Group {
             if let dock = model.sideDock, let side = dock.side { docked(dock, side: side) } else { centered }
         }
-        // The black notch bar draws the dark tone even under light glass. The
+        // The black bar at a hardware notch draws the dark tone even under light glass. The
         // tokens are read as views draw, so a change of tone redraws them all.
         .id(model.lightTone)
         .environment(\.colorScheme, model.lightTone ? .light : .dark)
         .foregroundStyle(PacerPalette.primary)
         .modifier(IslandSurface(appearance: model.appearance, attached: attached, flatEdge: model.dockedEdge,
             expanded: model.expanded, progress: presentation.expansion, collapsedRadius: model.collapsedCornerRadius,
-            notchBlack: attached ? presentation.blackOpacity : 0))
+            notchBlack: model.atHardwareNotch ? presentation.blackOpacity : 0))
         .onHover { model.hover($0) }
         .onExitCommand { model.close() }
         // Light glass turns the island's system material light.

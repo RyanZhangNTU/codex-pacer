@@ -1106,6 +1106,9 @@
 "appearance.bar_size.large" = "大";
 "appearance.bar_size.extraLarge" = "特大";
 "appearance.bar_size_info" = "决定折叠栏的高度和侧边竖条的宽度，文字与图形随之等比缩放。";
+"appearance.position_per_display" = "每块屏幕单独记住位置";
+"appearance.position_per_display_info" = "每块屏幕分别记住贴刘海还是自由移动，以及放在哪里。第一次用的屏幕从现在的位置开始；有刘海的屏幕默认贴刘海。";
+"appearance.position_display" = "当前：%@";
 "appearance.bar_size_notch" = "贴住刘海时，高度与刘海一致，不能调整大小。";
 "settings.graphite" = "石墨";
 "appearance.material_info.classic" = "纯黑配细描边；与刘海连成一体，在任何壁纸上都稳。";

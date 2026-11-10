@@ -16,6 +16,7 @@ struct SettingsAppearancePane: View {
     @Binding var position: IslandPosition?
     @Binding var displayID: Int
     @Binding var fullscreen: Bool
+    @Binding var positionPerDisplay: Bool
     @Binding var quotaStyle: ExpandedQuotaStyle
     @Binding var deepseekPanelStyle: DeepSeekPanelStyle
     @Binding var showsAppButtons: Bool
@@ -30,9 +31,9 @@ struct SettingsAppearancePane: View {
         displayMode.layout(safeAreaTop: model.screenNotchSize.height, hardwareNotchWidth: model.screenNotchSize.width, size: barSize)
     }
     private var attachesHere: Bool { layout.attached }
-    /// At the notch the collapsed bar is black whatever the material, so it
-    /// reads as one shape with the camera housing; glass shows once it opens.
-    private var collapsedStaysBlack: Bool { appearance.isGlass && glassAvailable && attachesHere }
+    /// At a hardware notch the collapsed bar is black whatever the material, so
+    /// it reads as one shape with the camera housing; glass shows once it opens.
+    private var collapsedStaysBlack: Bool { appearance.isGlass && glassAvailable && layout.atHardwareNotch }
     /// Before a choice, the island attaches only around a notch, so the tile
     /// that matches what the island shows here is the selected one.
     private var customPosition: IslandPosition { .custom(saved: position, attached: attachesHere) }
@@ -96,7 +97,7 @@ struct SettingsAppearancePane: View {
                 AccentPicker(selection: $accent)
             }
         }
-        MainCard(title: L10n.text("appearance.position")) {
+        MainCard(title: L10n.text("appearance.position"), titleTrailing: currentDisplay) {
             HStack(alignment: .top, spacing: 10) {
                 tile(L10n.text("settings.notch"), selected: attachesHere, artHeight: nil) { displayMode = .notch } art: {
                     ModeScene { WelcomeHoverScene(width: $0) }
@@ -118,6 +119,8 @@ struct SettingsAppearancePane: View {
                        options: [(0, L10n.text("settings.main_display"))] + NSScreen.screens.map { screen in
                            ((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0, screen.localizedName)
                        })
+            CardToggle(title: L10n.text("appearance.position_per_display"), info: L10n.text("appearance.position_per_display_info"),
+                       isOn: $positionPerDisplay)
             CardToggle(title: L10n.text("settings.fullscreen"), isOn: $fullscreen)
         }
         MainCard(title: L10n.text("main.appearance.panel")) {
@@ -134,6 +137,14 @@ struct SettingsAppearancePane: View {
             }
             CardToggle(title: L10n.text("settings.app_buttons"), info: L10n.text("main.info.app_buttons"), isOn: $showsAppButtons)
         }
+    }
+
+    /// While each display keeps its own place, the card names the display
+    /// whose place it shows.
+    private var currentDisplay: AnyView? {
+        guard positionPerDisplay, NSScreen.screens.count > 1, let name = model.currentDisplayName else { return nil }
+        return AnyView(Text(L10n.text("appearance.position_display", name)).font(.system(size: 11.5)).foregroundStyle(.secondary)
+            .lineLimit(1).truncationMode(.middle))
     }
 
     // MARK: Tiles
