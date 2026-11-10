@@ -106,7 +106,7 @@ final class IslandMaterialTests: XCTestCase {
         XCTAssertEqual(try rgb(PacerPalette.overlay(0.08)), [0, 0, 0], "White washes turn black at the same strength")
         XCTAssertEqual(try alpha(PacerPalette.overlay(0.08)), 0.08, accuracy: 0.002)
         XCTAssertEqual(try rgb(PacerPalette.tick), [29, 29, 31], "Ticks and hands turn dark")
-        XCTAssertEqual(try rgb(PacerPalette.surface), try rgb(PacerPalette.face(IslandAppearance.stored)))
+        XCTAssertEqual(try rgb(PacerPalette.surface), [236, 236, 240], "Previews of the light island sit on its light face")
 
         PacerPalette.light = false
         XCTAssertEqual(AgentProvider.codex.tint, AgentProvider.codex.brand)
@@ -154,10 +154,25 @@ final class IslandMaterialTests: XCTestCase {
         defaults.set(IslandAppearance.liquidGlassLight.rawValue, forKey: "islandAppearance")
         model.applySettings(sourceChanged: false)
         XCTAssertTrue(PacerPalette.light)
+        XCTAssertTrue(model.lightTone)
         XCTAssertEqual(model.appearance, .liquidGlassLight)
+
+        // The black notch bar draws the dark tone over light glass, and the
+        // tone stays dark through a settings change while it is covered.
+        model.coverTone(true)
+        XCTAssertFalse(PacerPalette.light); XCTAssertFalse(model.lightTone)
+        XCTAssertEqual(try rgb(PacerPalette.primary), [245, 245, 245], "Light ink on the black bar")
+        XCTAssertNotEqual(try rgb(PacerPalette.surface), [236, 236, 240], "Previews leave the light face while the bar is black")
+        model.applySettings(sourceChanged: false)
+        XCTAssertFalse(PacerPalette.light)
+        model.coverTone(false)
+        XCTAssertTrue(PacerPalette.light, "The open island shows light glass again"); XCTAssertTrue(model.lightTone)
+
         defaults.set(IslandAppearance.graphite.rawValue, forKey: "islandAppearance")
         model.applySettings(sourceChanged: false)
         XCTAssertFalse(PacerPalette.light, "Graphite is a dark material")
+        model.coverTone(true)
+        XCTAssertFalse(PacerPalette.light)
         await model.shutdown()
     }
 

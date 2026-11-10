@@ -67,9 +67,17 @@ struct CompactLayoutEditor: View {
         }
         .padding(.horizontal, 10)
         .frame(height: Self.barHeight)
-        .background(PacerPalette.face(model.appearance), in: barShape)
-        .overlay(barShape.stroke(PacerPalette.overlay(model.appearance.isLight ? 0.12 : 0.15), lineWidth: 0.75))
-        .environment(\.colorScheme, model.appearance.isLight ? .light : .dark)
+        .background(face, in: barShape)
+        // At the notch the bar is pure black with no rim, like the island.
+        .overlay(barShape.stroke(PacerPalette.overlay(PacerPalette.light ? 0.12 : 0.15), lineWidth: 0.75).opacity(notchBlack ? 0 : 1))
+        .environment(\.colorScheme, PacerPalette.light ? .light : .dark)
+    }
+
+    /// Black at the notch whatever the material, unless the island is open in
+    /// light glass, whose light tone the preview then follows.
+    private var notchBlack: Bool { attached && !PacerPalette.light }
+    private var face: Color {
+        notchBlack ? .black : PacerPalette.light ? IslandAppearance.lightFace : PacerPalette.face(model.appearance.isLight ? .classic : model.appearance)
     }
 
     private var barShape: AnyShape {

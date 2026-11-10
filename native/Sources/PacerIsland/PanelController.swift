@@ -187,7 +187,8 @@ final class PanelController: NSObject {
         if presentation.canvas != expandedFrame.size { presentation.canvas = expandedFrame.size }
         panel.collectionBehavior = model.showInFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : [.canJoinAllSpaces]
         let current = presentation.sample
-        let hasBlackHeader = layout.attached && model.appearance == .liquidGlass
+        // At the notch the collapsed bar is black whatever the material.
+        let hasBlackHeader = layout.attached
         // Only a free capsule casts a shadow; an island against an edge flares into it.
         let floating = !layout.attached && dock == nil && edge == nil
         if panel.hasShadow != floating { panel.hasShadow = floating }
@@ -246,6 +247,7 @@ final class PanelController: NSObject {
         CATransaction.setDisableActions(true)
         withTransaction(transaction) {
             presentation.sample = sample
+            model.coverTone(model.isAttached && sample.blackOpacity >= 0.5)
             let frame = IslandGeometry.windowFrame(sample.frame, anchor: anchor)
             if panel.frame != frame { panel.setFrame(frame, display: false) }
             // Resolve SwiftUI geometry in the same frame without forcing a
@@ -259,27 +261,22 @@ final class PanelController: NSObject {
         CATransaction.commit()
     }
 
-    /// Shoulders where an island against the screen edge meets it, drawn in a
+    /// Shoulders where a bar docked at a screen edge meets it, drawn in a
     /// child panel that never takes a click. Glass cannot paint outside its
-    /// window, so only the opaque materials and the black header of attached
-    /// dark glass have them; a glass strip has none.
+    /// window, so only the opaque materials have them. A bar at the notch has
+    /// none: like the camera housing, it ends at its own outline.
     private func updateDecoration(_ frame: CGRect, sample: IslandTransition.Sample) {
         let sides = IslandFreeSides(attached: model.isAttached, flatEdge: model.dockedEdge)
         let screenSide = IslandFreeSides.all.subtracting(sides)
         let appearance = model.appearance
         let glass = appearance.isGlass && IslandAppearance.supportsLiquidGlass && !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         let radius = CGFloat(model.barMetrics.shoulder)
-        let fill: NSColor?
-        if glass {
-            fill = appearance == .liquidGlass && model.isAttached && sample.blackOpacity > 0.01
-                ? NSColor.black.withAlphaComponent(min(1, max(0, sample.blackOpacity))) : nil
-        } else {
-            fill = NSColor(appearance == .graphite ? IslandAppearance.graphiteFace : appearance.isLight ? IslandAppearance.lightFace : .black)
-        }
-        guard move == nil, panel.isVisible, !screenSide.isEmpty, radius > 0, let fill, frame.width > 1, frame.height > 1 else {
+        guard move == nil, panel.isVisible, !model.isAttached, !glass, !screenSide.isEmpty, radius > 0,
+              frame.width > 1, frame.height > 1 else {
             decoration?.orderOut(nil); return
         }
-        let rim = glass ? nil : appearance.rim(glassVisible: false)
+        let fill = NSColor(appearance == .graphite ? IslandAppearance.graphiteFace : appearance.isLight ? IslandAppearance.lightFace : .black)
+        let rim = appearance.rim(glassVisible: false)
         let shoulders = decoration ?? IslandDecorationPanel()
         if decoration == nil {
             decoration = shoulders
@@ -287,7 +284,7 @@ final class PanelController: NSObject {
         }
         shoulders.collectionBehavior = panel.collectionBehavior.union(.ignoresCycle)
         shoulders.present(island: frame, side: screenSide, radius: radius, fill: fill,
-            rim: rim.map { NSColor($0.ink) }, rimWidth: rim?.width ?? 0)
+            rim: NSColor(rim.ink), rimWidth: rim.width)
     }
 
     private func stopMotion() {

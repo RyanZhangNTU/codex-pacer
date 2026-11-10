@@ -17,6 +17,7 @@ struct SettingsCollapsedBarPane: View {
     @Binding var options: CompactComponentOptions
     @Binding var deepseekBudgets: DeepSeekBudgetSettings
     let providers: [AgentProvider]
+    let openNotifications: () -> Void
     /// Where the DeepSeek page's ring link lands.
     static let inspectorAnchor = "quotaGauge"
 
@@ -183,26 +184,18 @@ struct SettingsCollapsedBarPane: View {
         }
     }
 
-    /// Which warnings the bar shows, chosen here with the rest of the
-    /// warnings' settings; Notifications only mirrors them.
+    /// Which warnings the bar shows is chosen in Notifications, beside
+    /// their system notifications.
     private var warningKinds: some View {
-        let quotaModules = providers.contains { $0 != .deepseek }
-        let kinds: [(CompactIslandLayout.Warning, String)] = [
-            (.fiveHour, CompactIslandLayout.Warning.fiveHour.label), (.quotaDelay, CompactIslandLayout.Warning.quotaDelay.label),
-            (.ssh, CompactIslandLayout.Warning.ssh.label), (.lowBalance, L10n.text("main.notify.low_balance")),
-            (.spendSpike, L10n.text("main.notify.spike")), (.budget, L10n.text("main.notify.budget")),
-        ].filter { kind, _ in
-            CompactIslandLayout.Warning.deepseek.contains(kind) ? providers.contains(.deepseek) : quotaModules || kind == .ssh
-        }
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(L10n.text("layout.option.warning_kinds")).font(.system(size: 13))
-            ForEach(kinds, id: \.0) { kind, title in
-                Toggle(title, isOn: Binding(get: { layout.warnings.contains(kind) }, set: { on in
-                    if on { layout.warnings.insert(kind) } else { layout.warnings.remove(kind) }
-                }))
-                .toggleStyle(.checkbox).font(.system(size: 12.5))
+        Button(action: openNotifications) {
+            HStack(spacing: 6) {
+                Text(L10n.text("main.collapsed.warnings_choose")).font(.system(size: 13)).foregroundStyle(Color.primary)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder private var windowPickers: some View {

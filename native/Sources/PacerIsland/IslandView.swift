@@ -10,12 +10,17 @@ struct IslandView: View {
         Group {
             if let dock = model.sideDock, let side = dock.side { docked(dock, side: side) } else { centered }
         }
+        // The black notch bar draws the dark tone even under light glass. The
+        // tokens are read as views draw, so a change of tone redraws them all.
+        .id(model.lightTone)
+        .environment(\.colorScheme, model.lightTone ? .light : .dark)
         .foregroundStyle(PacerPalette.primary)
         .modifier(IslandSurface(appearance: model.appearance, attached: attached, flatEdge: model.dockedEdge,
-            expanded: model.expanded, progress: presentation.expansion, collapsedRadius: model.collapsedCornerRadius))
+            expanded: model.expanded, progress: presentation.expansion, collapsedRadius: model.collapsedCornerRadius,
+            notchBlack: attached ? presentation.blackOpacity : 0))
         .onHover { model.hover($0) }
         .onExitCommand { model.close() }
-        // Light glass turns the whole island light, its system material included.
+        // Light glass turns the island's system material light.
         .preferredColorScheme(model.appearance.isLight ? .light : .dark)
         .environment(\.locale, L10n.locale)
     }
@@ -27,8 +32,6 @@ struct IslandView: View {
         return VStack(spacing: 0) {
             CompactIslandHeader(model: model, layout: model.compactLayout,
                 baseHeight: model.baseHeaderHeight, notchWidth: model.notchWidth)
-                .background(attached && model.appearance == .liquidGlass
-                    ? Color.black.opacity(presentation.blackOpacity) : Color.clear)
                 .modifier(IslandMoveGesture(model: model))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge)

@@ -269,16 +269,11 @@ struct SettingsView: View {
             SettingsCollapsedBarPane(model: model, layout: $compactLayout, selection: $collapsedSelection, singleTask: $singleTask,
                 metric: $metric, windowID: $windowID, claudeWindowID: $claudeWindowID, quotaRings: $quotaRings,
                 options: $componentOptions, deepseekBudgets: $deepseekBudgets,
-                providers: AgentProvider.allCases.filter { moduleEnabled($0) })
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openNotifications: { pane = .notifications })
         case .notifications:
             SettingsNotificationsPane(model: model, notificationPreference: notificationPreference, layout: $compactLayout,
                 retention: $completedRetention, lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
-                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek },
-                openWarnings: {
-                    collapsedSelection = .warnings
-                    scrollTarget = Self.gaugeAnchor
-                    pane = .collapsedBar
-                })
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek })
         case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
         case .remote:

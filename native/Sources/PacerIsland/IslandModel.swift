@@ -454,6 +454,20 @@ final class IslandModel: ObservableObject {
     @Published var now = Date()
     @Published var settingsRevision = 0
     @Published var isAttached = false
+    /// The island's tone: light under Light Liquid Glass, except while the
+    /// black notch bar covers the material. Previews elsewhere follow it.
+    @Published private(set) var lightTone = PacerPalette.light
+    private var toneCovered = false
+    func coverTone(_ covered: Bool) {
+        guard covered != toneCovered else { return }
+        toneCovered = covered
+        syncTone()
+    }
+    private func syncTone() {
+        let light = appearance.isLight && !toneCovered
+        PacerPalette.light = light
+        if lightTone != light { lightTone = light }
+    }
     /// The docked corner while the island floats as a vertical strip; nil for
     /// the centered bar and notch attachment.
     @Published var sideDock: IslandPosition?
@@ -1654,7 +1668,7 @@ final class IslandModel: ObservableObject {
         modules = .load(from: defaults)
         PacerAccent.current = PacerAccent(defaults: defaults)
         // Light Liquid Glass turns the whole island light before it redraws.
-        PacerPalette.light = appearance.isLight
+        syncTone()
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         syncCodexProgressSwitch()
         syncDeepSeekProgressSwitch()

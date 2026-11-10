@@ -7,7 +7,8 @@ import PacerCore
 /// only their island previews follow the island's tone.
 enum PacerPalette {
     /// The island draws its light tone. The model sets it whenever settings
-    /// apply, before the island redraws.
+    /// apply or the black notch bar covers or uncovers light glass, before the
+    /// island redraws.
     static var light = IslandAppearance.stored.isLight
     static var primary: Color { light ? Color(red: 29 / 255, green: 29 / 255, blue: 31 / 255) : Color(white: 0.96) }
     static var secondary: Color { light ? Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255).opacity(0.72) : Color(white: 0.62) }
@@ -29,8 +30,9 @@ enum PacerPalette {
     static var tickEdge: Color { (light ? Color.white : Color.black).opacity(0.45) }
     /// Units beside a value: 60% of the primary ink.
     static var unit: Color { light ? Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255).opacity(0.72) : Color(red: 235 / 255, green: 235 / 255, blue: 245 / 255).opacity(0.6) }
-    /// The island's own opaque face, for previews of it elsewhere.
-    static var surface: Color { face(IslandAppearance.stored) }
+    /// The island's own opaque face in its current tone, for previews of it
+    /// elsewhere: black while the notch bar covers light glass.
+    static var surface: Color { light ? IslandAppearance.lightFace : face(IslandAppearance.stored.isLight ? .classic : IslandAppearance.stored) }
     static func face(_ appearance: IslandAppearance) -> Color {
         appearance == .graphite ? IslandAppearance.graphiteFace : appearance.isLight ? IslandAppearance.lightFace : .black
     }

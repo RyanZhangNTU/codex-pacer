@@ -30,9 +30,9 @@ struct SettingsAppearancePane: View {
         displayMode.layout(safeAreaTop: model.screenNotchSize.height, hardwareNotchWidth: model.screenNotchSize.width, size: barSize)
     }
     private var attachesHere: Bool { layout.attached }
-    /// Around the camera the collapsed bar keeps a black backing so it reads as
-    /// one shape with the hardware notch; glass shows once it expands.
-    private var collapsedStaysBlack: Bool { appearance == .liquidGlass && glassAvailable && attachesHere }
+    /// At the notch the collapsed bar is black whatever the material, so it
+    /// reads as one shape with the camera housing; glass shows once it opens.
+    private var collapsedStaysBlack: Bool { appearance.isGlass && glassAvailable && attachesHere }
     /// Before a choice, the island attaches only around a notch, so the tile
     /// that matches what the island shows here is the selected one.
     private var customPosition: IslandPosition { .custom(saved: position, attached: attachesHere) }

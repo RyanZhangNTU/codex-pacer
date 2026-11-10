@@ -457,8 +457,10 @@ private struct WelcomeIslandMap: View {
         }
         .foregroundStyle(PacerPalette.primary)
         .frame(height: Self.barHeight)
-        // The bar in the island's own material and tone.
-        .modifier(IslandSurface(appearance: IslandAppearance.stored, attached: true, expanded: false))
+        // The bar under the camera is black, as the island draws it at the
+        // notch, unless the island shows light glass's light tone now.
+        .modifier(IslandSurface(appearance: IslandAppearance.stored, attached: true, expanded: false,
+            notchBlack: PacerPalette.light ? 0 : 1))
         .environment(\.colorScheme, PacerPalette.light ? .light : .dark)
         .accessibilityHidden(true)
     }

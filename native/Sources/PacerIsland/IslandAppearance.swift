@@ -93,6 +93,10 @@ struct IslandSurface: ViewModifier {
     var progress: Double?
     /// The collapsed bar's corner radius; the corners grow to 27 as it opens.
     var collapsedRadius: CGFloat = 19
+    /// At the notch the collapsed bar is pure black whatever the material, with
+    /// no rim, so it reads as one with the camera housing. It fades as the bar
+    /// opens.
+    var notchBlack: Double = 0
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -114,7 +118,13 @@ struct IslandSurface: ViewModifier {
 
     func body(content: Content) -> some View {
         let rim = appearance.rim(glassVisible: glassVisible), sides = IslandFreeSides(attached: attached, flatEdge: flatEdge)
-        content.background { material }
+        let black = min(1, max(0, notchBlack))
+        content.background {
+            ZStack {
+                material
+                shape.fill(Color.black.opacity(black))
+            }
+        }
             .overlay {
                 ZStack {
                     IslandRimShape(corners: radii, sides: sides, inset: rim.width / 2).stroke(rim.ink, lineWidth: rim.width)
@@ -122,6 +132,7 @@ struct IslandSurface: ViewModifier {
                         IslandTopHighlight(corners: radii, inset: rim.width + 0.5).stroke(highlight, lineWidth: 1)
                     }
                 }
+                .opacity(1 - black)
                 .allowsHitTesting(false).accessibilityHidden(true)
             }
             .clipShape(shape)
