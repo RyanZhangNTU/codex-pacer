@@ -1094,6 +1094,7 @@
 "panel.group.tasks" = "任务";
 "panel.group.quota" = "额度";
 "panel.group.deepseek" = "DeepSeek";
+"panel.group.panel" = "面板";
 "panel.block.tasks" = "任务列表";
 "panel.block.codex" = "Codex 额度";
 "panel.block.claude" = "Claude 额度";

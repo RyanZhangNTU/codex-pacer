@@ -1094,6 +1094,7 @@
 "panel.group.tasks" = "Tasks";
 "panel.group.quota" = "Quota";
 "panel.group.deepseek" = "DeepSeek";
+"panel.group.panel" = "Panel";
 "panel.block.tasks" = "Task List";
 "panel.block.codex" = "Codex Quota";
 "panel.block.claude" = "Claude Quota";

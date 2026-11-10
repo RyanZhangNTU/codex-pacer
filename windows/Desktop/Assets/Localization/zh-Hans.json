@@ -957,6 +957,7 @@
     "panel.field.subagents": "子代理数量",
     "panel.field.turnTime": "本轮用时",
     "panel.group.deepseek": "DeepSeek",
+    "panel.group.panel": "面板",
     "panel.group.quota": "额度",
     "panel.group.tasks": "任务",
     "performance.average_help": "每任务平均：%.1f t/s，按 %d 个有测量的运行任务计算。",

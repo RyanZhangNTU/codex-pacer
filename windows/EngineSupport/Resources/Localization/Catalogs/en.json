@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "ab362192883ec3f00cc8da3d99b1c64c49eb3bb4efa17e1cb88435e883f35173",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "8bba16f3fe04879b3dfc22362ed9c678f7c92c90559e7c66dac27b5946b283f7",
     "windows/EngineSupport/Resources/Localization/en.json": "60fbb00b0cd35907aa861081a115ca792ee7d881a0b441e3cf7ab085494eb4d7"
   },
   "strings": {
@@ -961,6 +961,7 @@
     "panel.field.subagents": "Subagents",
     "panel.field.turnTime": "Turn time",
     "panel.group.deepseek": "DeepSeek",
+    "panel.group.panel": "Panel",
     "panel.group.quota": "Quota",
     "panel.group.tasks": "Tasks",
     "performance.average_help": "Average per task: %.1f t/s across %d running tasks with a measured rate.",

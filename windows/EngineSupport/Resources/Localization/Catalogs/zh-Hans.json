@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "470a513f937d03c6238a64eeeac12718a68b924cc931c956cbec2d5742a2b3cc",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "fc57112888cb96162020909c07d522894d59c2df65ea1fda7ad4526ba8024677",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "18d32efd9765c1604bc5c9b8a4a9d1125e36052286d44909a1b6df04680bb11e"
   },
   "strings": {
@@ -961,6 +961,7 @@
     "panel.field.subagents": "\u5b50\u4ee3\u7406\u6570\u91cf",
     "panel.field.turnTime": "\u672c\u8f6e\u7528\u65f6",
     "panel.group.deepseek": "DeepSeek",
+    "panel.group.panel": "\u9762\u677f",
     "panel.group.quota": "\u989d\u5ea6",
     "panel.group.tasks": "\u4efb\u52a1",
     "performance.average_help": "\u6bcf\u4efb\u52a1\u5e73\u5747\uff1a%.1f t/s\uff0c\u6309 %d \u4e2a\u6709\u6d4b\u91cf\u7684\u8fd0\u884c\u4efb\u52a1\u8ba1\u7b97\u3002",
