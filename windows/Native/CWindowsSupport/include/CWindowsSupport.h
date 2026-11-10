@@ -77,6 +77,9 @@ int pacer_pipe_peer_identity(void *pipe, pacer_process_identity *identity);
 // Metadata only: current-user/session writers of this exact file identity.
 // A negative result means ownership could not be established.
 int pacer_file_writers(const uint16_t *path, pacer_process_identity *writers, size_t capacity);
+// 1 when the handle capture behind the writer checks reports an object of this
+// process whose name ends with `name`; 0 when it does not, -1 when it failed.
+int pacer_handle_capture_names(const uint16_t *name);
 int pacer_scoped_file_writers(const uint16_t *home, const uint16_t *path, pacer_process_identity *writers, size_t capacity);
 typedef struct { uint64_t file_volume, file_low, file_high, root_volume, root_low, root_high; } pacer_source_file_identity;
 int pacer_source_file_stamp(const uint16_t *home, const uint16_t *path, pacer_source_file_identity *stamp);
