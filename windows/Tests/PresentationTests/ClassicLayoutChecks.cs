@@ -50,8 +50,9 @@ internal static class ClassicLayoutChecks
                 await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = providers }); await island.WaitForPresentationAsync();
                 var data = engine.LatestSnapshot!.QuotaDashboard!;
                 if (providers.Length == 0)
-                    Check(!Descendants(island).OfType<ClassicQuotaView>().Any() && !Descendants(island).OfType<QuotaDial>().Any(),
-                        "Without a service the panel keeps only its task list");
+                    Check(!Descendants(island).OfType<ClassicQuotaView>().Any() && !Descendants(island).OfType<QuotaDial>().Any()
+                        && Descendants(island).OfType<Grid>().Any(value => AutomationProperties.GetAutomationId(value) == "island.none"),
+                        "Without a service the panel keeps its task list and offers Settings, as on the Mac");
                 else if (data.Classic.Kind == "legacyCodex")
                     Check(Descendants(island).OfType<LegacyQuotaView>().Any() && !Descendants(island).OfType<ClassicQuotaView>().Any(),
                         "Codex alone with its weekly-only account must keep the original classic bar exception");

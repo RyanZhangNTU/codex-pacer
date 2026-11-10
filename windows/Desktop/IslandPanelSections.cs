@@ -76,6 +76,22 @@ public partial class IslandWindow
 
     private QuotaParts FirstQuota => firstQuota ??= new(QuotaSection, QuotaHeader, QuotaTitle, QuotaDetail, QuotaHeaderTrailing, QuotaSlots);
 
+    private Grid? noServicesRow;
+    private Grid NoServicesRow()
+    {
+        if (noServicesRow != null) return noServicesRow;
+        var row = new Grid { Margin = new Thickness(9, 8, 9, 8) };
+        row.ColumnDefinitions.Add(new()); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var text = new TextBlock { Text = ui.Text("provider.none_enabled"), FontSize = 12, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+        text.SetResourceReference(TextBlock.ForegroundProperty, "Island.Secondary"); row.Children.Add(text);
+        var open = new Button { Content = ui.Text("common.open_settings"), Style = (Style)FindResource("QuotaLinkButton"), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetAutomationId(open, "island.none.settings"); AutomationProperties.SetName(open, ui.Text("common.open_settings"));
+        open.Click += (_, _) => { if (!presentationStopped && expanded) { DismissForSettings(); SettingsRequested?.Invoke(); } };
+        Grid.SetColumn(open, 1); row.Children.Add(open);
+        AutomationProperties.SetAutomationId(row, "island.none");
+        return noServicesRow = row;
+    }
+
     private QuotaParts ExtraQuota(int index)
     {
         while (extraQuota.Count <= index)
@@ -166,8 +182,11 @@ public partial class IslandWindow
         // A panel always keeps somewhere for its buttons.
         if (placed.Count == 0) placed.Add((new("tasks", [], true, false, false, true, "", null), TasksSection, TaskHeaderTrailing, TaskToolbar));
         tasksShown = placed.Any(item => ReferenceEquals(item.Element, TasksSection));
+        // Without any service the panel says so under its blocks and offers Settings, as on the Mac.
+        bool noServices = snapshot.QuotaDashboard is { Providers.Count: 0 };
+        var none = NoServicesRow();
 
-        string signature = string.Join("|", placed.Select(item => item.Section.Key + ":" + item.Section.Joined + ":" + item.Element.GetHashCode()));
+        string signature = string.Join("|", placed.Select(item => item.Section.Key + ":" + item.Section.Joined + ":" + item.Element.GetHashCode())) + ":" + noServices;
         if (signature != sectionSignature)
         {
             sectionSignature = signature;
@@ -192,6 +211,12 @@ public partial class IslandWindow
                     // Navigation and connection messages sit under the first section.
                     PanelContent.Children.Add(StatusLabel);
                 }
+            }
+            if (noServices)
+            {
+                var hairline = new Border { Height = 1, Margin = new Thickness(9, 10, 9, 10) };
+                hairline.SetResourceReference(Border.BackgroundProperty, "Island.Overlay08");
+                PanelContent.Children.Add(hairline); PanelContent.Children.Add(none);
             }
         }
         // The pager's divider only separates it from the buttons beside it.
