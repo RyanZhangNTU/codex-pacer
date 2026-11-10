@@ -149,6 +149,14 @@ final class ExpandedPanelDisplayTests: XCTestCase {
                        [[.tasks], [.codex, .claude], [.deepseekSpend], [.deepseek]])
         XCTAssertEqual(SettingsExpandedPanelPane.rows([.codex, .claude], arrange: .stack), [[.codex], [.claude]])
 
+        var choices = ExpandedPanelOptions()
+        choices.pageSize = 5; choices.rowStyle = .oneLine; choices.setPeriods(.weekly, for: .claude)
+        XCTAssertEqual(SettingsExpandedPanelPane.summary(.tasks, options: choices),
+                       L10n.text("main.panel.page_size") + " 5 · " + L10n.text("main.panel.row_one"))
+        XCTAssertEqual(SettingsExpandedPanelPane.summary(.claude, options: choices), L10n.text("main.panel.periods_weekly"),
+                       "Each quota's outline line names its own periods")
+        XCTAssertEqual(SettingsExpandedPanelPane.summary(.codex, options: choices), L10n.text("main.panel.periods_both"))
+
         saved = ExpandedPanelLayout(blocks: [.tasks, .codex])
         selection = .block(.claude)
         XCTAssertEqual(pane([.codex]).selected, .block(.tasks), "A block whose service is off and not placed is not described")

@@ -1,3 +1,4 @@
+import AppKit
 import PacerCore
 import SwiftUI
 
@@ -8,11 +9,13 @@ enum ExpandedPanelSelection: Hashable {
     case actions
 }
 
-/// The Expanded Panel page: the panel as a sketch of its blocks to click and
-/// drag, every block by group to add or remove, and the settings of the one
-/// selected. Each change is saved at once and reaches the real panel.
+/// The Expanded Panel page: on the left the panel's outline to click and
+/// drag, with every block by group to add or remove; on the right the
+/// selected block's settings. Each change is saved at once and reaches the
+/// real panel; explanations sit behind ⓘ.
 struct SettingsExpandedPanelPane: View {
     @Environment(\.pacerAccent) private var accent
+    @Environment(\.colorScheme) private var colorScheme
     /// The saved blocks; nil follows the enabled services.
     @Binding var savedLayout: ExpandedPanelLayout?
     @Binding var options: ExpandedPanelOptions
@@ -50,13 +53,13 @@ struct SettingsExpandedPanelPane: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            sketch.frame(width: 248)
-            VStack(alignment: .leading, spacing: 18) {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
+                outline
                 library
-                inspector
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: 270)
+            inspector.frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -74,7 +77,7 @@ struct SettingsExpandedPanelPane: View {
     func shift(_ block: ExpandedPanelLayout.Block, by offset: Int) { edit { $0.shift(block, by: offset, providers: providerSet) } }
     func move(_ block: ExpandedPanelLayout.Block, before: ExpandedPanelLayout.Block?) { edit { $0.move(block, before: before) } }
 
-    /// The sketch's rows: adjacent quota blocks share a row while paired.
+    /// The outline's sections: adjacent quota blocks share one while paired.
     static func rows(_ blocks: [ExpandedPanelLayout.Block], arrange: ExpandedPanelOptions.Arrange) -> [[ExpandedPanelLayout.Block]] {
         var rows: [[ExpandedPanelLayout.Block]] = []
         for block in blocks {
@@ -87,52 +90,131 @@ struct SettingsExpandedPanelPane: View {
         return rows
     }
 
-    // MARK: Sketch
+    /// The short line under a block's name in the outline.
+    static func summary(_ block: ExpandedPanelLayout.Block, options: ExpandedPanelOptions) -> String {
+        switch block {
+        case .tasks:
+            "\(L10n.text("main.panel.page_size")) \(options.pageSize) · "
+                + L10n.text(options.rowStyle == .oneLine ? "main.panel.row_one" : "main.panel.row_two")
+        case .codex, .claude:
+            periodsLabel(options.periods(for: block.provider ?? .codex))
+        case .deepseek:
+            L10n.text("main.panel.dial") + " · " + L10n.text(options.deepseekDial == .budget ? "main.panel.dial_budget" : "main.panel.dial_day")
+        case .deepseekSpend:
+            L10n.text("main.panel.spend_tasks") + " · " + L10n.text("main.panel.spend_count", options.spendTasks)
+        case .deepseekWeek:
+            L10n.text("main.panel.week_line") + " · " + L10n.text(options.weekLine ? "main.panel.show" : "main.panel.hide")
+        }
+    }
 
-    private var sketch: some View {
+    private static func periodsLabel(_ periods: ExpandedPanelOptions.Periods) -> String {
+        switch periods {
+        case .both: L10n.text("main.panel.periods_both")
+        case .weekly: L10n.text("main.panel.periods_weekly")
+        case .fiveHour: L10n.text("main.panel.periods_five")
+        }
+    }
+
+    // MARK: Outline
+
+    private enum Outline {
+        static let face = Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255)
+        static let block = Color(red: 36 / 255, green: 36 / 255, blue: 40 / 255)
+        static let selectedBlock = Color(red: 44 / 255, green: 44 / 255, blue: 48 / 255)
+        static let label = Color(red: 245 / 255, green: 245 / 255, blue: 247 / 255)
+        static let secondary = Color(red: 142 / 255, green: 142 / 255, blue: 147 / 255)
+        static let grip = Color(red: 99 / 255, green: 99 / 255, blue: 102 / 255)
+        static let icon = Color(red: 174 / 255, green: 174 / 255, blue: 178 / 255)
+    }
+
+    /// The panel as a dark outline of its sections, in the order it shows them.
+    private var outline: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L10n.text("main.panel.shown")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                .padding(.leading, 4).accessibilityAddTraits(.isHeader)
+            HStack(alignment: .firstTextBaseline) {
+                Text(L10n.text("panel.group.panel")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                Text(L10n.text(savedLayout == nil ? "main.panel.automatic_short" : "main.panel.custom"))
+                    .font(.system(size: 11.5)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 4)
             VStack(alignment: .leading, spacing: 6) {
                 let rows = Self.rows(visible, arrange: options.quotaArrange)
                 ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    HStack(spacing: 6) {
-                        ForEach(row) { block in
-                            sketchTile(block, first: index == 0 && block == row.first, shared: row.count > 1)
+                    if index > 0 {
+                        Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+                            .padding(.horizontal, 8).padding(.vertical, 2).accessibilityHidden(true)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(sectionTitle(row)).font(.system(size: 11, weight: .semibold)).foregroundStyle(Outline.secondary)
+                                .lineLimit(1).accessibilityAddTraits(.isHeader)
+                            Spacer(minLength: 4)
+                            if index == 0 { actionsChip }
+                        }
+                        .padding(.leading, 8).padding(.trailing, 4).frame(height: 22)
+                        HStack(spacing: 6) {
+                            ForEach(row) { outlineBlock($0, paired: row.count > 1) }
                         }
                     }
                 }
                 endZone
             }
-            .padding(8)
-            .islandSurface(radius: 16)
-            footer
+            .padding(10)
+            .background(Outline.face, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color.black.opacity(0.2)))
+            .shadow(color: .black.opacity(0.12), radius: 12, y: 6)
+            .environment(\.colorScheme, .dark)
         }
     }
 
-    /// A tile sharing its row names only its service, so the name fits.
-    private func sketchTile(_ block: ExpandedPanelLayout.Block, first: Bool, shared: Bool) -> some View {
-        let isSelected = selected == .block(block)
-        let target = dropTarget == .block(block)
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 5) {
-                if !shared { Image(systemName: block.symbol).font(.system(size: 9.5, weight: .semibold)).frame(width: 12) }
-                Text(shared ? block.provider?.displayName ?? block.label : block.label)
-                    .font(.system(size: 11, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.75)
-                Spacer(minLength: 2)
-                // Room for the buttons' chip, drawn over the tile so it stays its own control.
-                if first { Color.clear.frame(width: 22, height: 14) }
-            }
-            .foregroundStyle(PacerPalette.secondary)
-            SketchContent(block: block, options: options, alone: !shared)
+    private func sectionTitle(_ row: [ExpandedPanelLayout.Block]) -> String {
+        guard let first = row.first else { return "" }
+        switch first {
+        case .tasks:
+            return ExpandedPanelPresentation.header(.init(kind: .tasks), budgetDial: false).title
+        case .codex, .claude, .deepseek:
+            return ExpandedPanelPresentation.header(.init(kind: .quota, providers: row.compactMap(\.provider)), budgetDial: false).title
+        case .deepseekSpend, .deepseekWeek:
+            return first.label
         }
-        .padding(.horizontal, 9).padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(PacerPalette.overlay(isSelected ? 0.1 : 0.04), in: shape)
-        .overlay(shape.strokeBorder(isSelected ? accent : PacerPalette.overlay(0.08), lineWidth: isSelected ? 1.5 : 1))
+    }
+
+    /// A paired block names only its service, so the name fits.
+    private func outlineBlock(_ block: ExpandedPanelLayout.Block, paired: Bool) -> some View {
+        let isSelected = selected == .block(block)
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        let summary = Self.summary(block, options: options)
+        let grip = Image(systemName: "circle.grid.2x3.fill").font(.system(size: 7)).foregroundStyle(Outline.grip)
+        let dot = Circle().fill(block.provider?.shade(light: false) ?? Outline.secondary).frame(width: 8, height: 8)
+        return Group {
+            if paired {
+                // Three to a row leave no room beside the dot, so the name takes its own line.
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 0) { dot; Spacer(minLength: 4); grip }
+                    Text(block.provider?.displayName ?? block.label).font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Outline.label).lineLimit(1).minimumScaleFactor(0.8)
+                }
+                .padding(.horizontal, 9)
+            } else {
+                HStack(spacing: 6) {
+                    grip.frame(width: 10)
+                    dot
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(block.label).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Outline.label).lineLimit(1)
+                        Text(summary).font(.system(size: 11)).foregroundStyle(Outline.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 6).padding(.trailing, 10)
+            }
+        }
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: block == .tasks ? 58 : 46, alignment: .leading)
+        .background(isSelected ? Outline.selectedBlock : Outline.block, in: shape)
+        .overlay(shape.strokeBorder(isSelected ? accent : Color.white.opacity(0.06), lineWidth: isSelected ? 2 : 1))
         .overlay(alignment: .top) {
-            if target { Capsule().fill(accent).frame(height: 3).offset(y: -4.5).accessibilityHidden(true) }
+            if dropTarget == .block(block) { Capsule().fill(accent).frame(height: 3).offset(y: -4.5).accessibilityHidden(true) }
         }
         .contentShape(shape)
         .onTapGesture { selection = .block(block) }
@@ -148,34 +230,41 @@ struct SettingsExpandedPanelPane: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(block.label)
+        .accessibilityValue(summary)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { selection = .block(block) }
         .accessibilityAction(named: L10n.text("main.panel.move_up")) { shift(block, by: -1) }
         .accessibilityAction(named: L10n.text("main.panel.move_down")) { shift(block, by: 1) }
-        .overlay(alignment: .topTrailing) {
-            if first { actionsChip.padding(.top, 8).padding(.trailing, 9) }
-        }
     }
 
-    /// The panel's buttons ride in the first block's header.
+    /// The panel's buttons ride in the first section's header, as in the panel.
     private var actionsChip: some View {
         let isSelected = selected == .actions
-        return Image(systemName: "ellipsis").font(.system(size: 9, weight: .bold))
-            .foregroundStyle(isSelected ? Color.white : PacerPalette.secondary)
-            .frame(width: 22, height: 14)
-            .background(isSelected ? accent : PacerPalette.overlay(0.1), in: Capsule())
-            .contentShape(Capsule())
-            .onTapGesture { selection = .actions }
-            .help(L10n.text("panel.block.actions"))
-            .accessibilityElement()
-            .accessibilityLabel(L10n.text("panel.block.actions"))
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { selection = .actions }
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        var symbols: [String] = showsAppButtons ? ["square.grid.2x2"] : []
+        if options.headerActions.contains(.markRead) { symbols.append("checkmark.rectangle.stack") }
+        if options.headerActions.contains(.pin) { symbols.append("pin") }
+        if options.headerActions.contains(.settings) { symbols.append("gearshape") }
+        symbols.append("ellipsis")
+        return Button { selection = .actions } label: {
+            HStack(spacing: 7) {
+                ForEach(symbols, id: \.self) { Image(systemName: $0).font(.system(size: 10, weight: .medium)) }
+            }
+            .foregroundStyle(Outline.icon)
+            .padding(.horizontal, 7).frame(height: 22)
+            .background(isSelected ? accent.opacity(0.22) : Color.white.opacity(0.06), in: shape)
+            .overlay(shape.strokeBorder(isSelected ? accent : .clear, lineWidth: 1.5))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .help(L10n.text("panel.block.actions"))
+        .accessibilityLabel(L10n.text("panel.block.actions"))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     /// Dropping below the last block moves a block to the end.
     private var endZone: some View {
-        Color.clear.frame(height: 12)
+        Color.clear.frame(height: 10)
             .overlay(alignment: .top) {
                 if dropTarget == .end { Capsule().fill(accent).frame(height: 3).accessibilityHidden(true) }
             }
@@ -196,92 +285,61 @@ struct SettingsExpandedPanelPane: View {
         return true
     }
 
-    @ViewBuilder private var footer: some View {
-        if savedLayout == nil {
-            Text(L10n.text("main.panel.automatic")).font(.system(size: 11.5)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
-        } else {
-            Button(L10n.text("main.panel.restore")) { savedLayout = nil }.buttonStyle(.main).padding(.leading, 2)
-        }
-    }
-
     // MARK: Library
 
     private var library: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(L10n.text("main.panel.blocks")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
                 .padding(.leading, 4).accessibilityAddTraits(.isHeader)
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(ExpandedPanelLayout.Group.allCases, id: \.self) { group in
-                    let blocks = group.blocks.filter { $0.isAvailable(for: providerSet) }
+                    // A block of a service that is off stays listed while placed.
+                    let blocks = group.blocks.filter { $0.isAvailable(for: providerSet) || layout.blocks.contains($0) }
                     if !blocks.isEmpty {
-                        libraryGroup(group.label) { ForEach(blocks) { tile(.block($0)) } }
+                        libraryGroup(group.label) { ForEach(blocks) { blockTile($0) } }
                     }
                 }
-                libraryGroup(L10n.text("panel.group.panel")) { tile(.actions) }
+                libraryGroup(L10n.text("panel.group.panel")) {
+                    LibraryTile(label: L10n.text("panel.block.actions"), symbol: "ellipsis", placed: true,
+                                selected: selected == .actions, always: L10n.text("main.panel.always"),
+                                select: { selection = .actions })
+                }
             }
-            .padding(14)
+            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .mainCardSurface()
+            .mainCardSurface(radius: 14)
         }
     }
 
     private func libraryGroup<Tiles: View>(_ title: String, @ViewBuilder tiles: () -> Tiles) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.system(size: 11.5)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)], alignment: .leading, spacing: 6) { tiles() }
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 4).accessibilityAddTraits(.isHeader)
+            tiles()
         }
     }
 
-    private func tile(_ item: ExpandedPanelSelection) -> some View {
-        let block: ExpandedPanelLayout.Block? = if case .block(let block) = item { block } else { nil }
-        let on = block.map(layout.blocks.contains) ?? true
-        let locked = block.map { on && layout.isLastVisible($0, providers: providerSet) } ?? false
-        let isSelected = selected == item
-        let label = block?.label ?? L10n.text("panel.block.actions")
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-        return HStack(spacing: 0) {
-            Button { selection = item } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: block?.symbol ?? "ellipsis").font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(on ? Color.primary : Color.secondary).frame(width: 16)
-                    Text(label).font(.system(size: 12.5)).lineLimit(1).minimumScaleFactor(0.85)
-                        .foregroundStyle(on ? Color.primary : Color.secondary)
-                    Spacer(minLength: 4)
-                }
-                .padding(.leading, 10).frame(maxHeight: .infinity).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(label)
-            .accessibilityValue(L10n.text(on ? "main.panel.shown" : "main.panel.hidden"))
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
-            if let block {
-                Button { selection = item; toggle(block) } label: {
-                    Image(systemName: on ? "checkmark" : "plus").font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(on ? accent : Color.secondary)
-                        .frame(width: 30).frame(maxHeight: .infinity).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).disabled(locked)
-                .help(locked ? L10n.text("main.panel.last") : L10n.text(on ? "main.collapsed.remove" : "main.collapsed.add"))
-                .accessibilityLabel(L10n.text(on ? "main.collapsed.remove" : "main.collapsed.add") + " " + label)
-            } else {
-                Text(L10n.text("main.panel.always")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                    .padding(.horizontal, 10)
-            }
-        }
-        .frame(height: 32)
-        .background(on ? MainPalette.fill : .clear, in: shape)
-        .overlay(shape.strokeBorder(isSelected ? accent : MainPalette.cardBorder, lineWidth: isSelected ? 1.5 : 1))
+    /// Clicking selects; the round button adds or removes.
+    private func blockTile(_ block: ExpandedPanelLayout.Block) -> some View {
+        LibraryTile(label: block.label, symbol: block.symbol, placed: layout.blocks.contains(block),
+                    selected: selected == .block(block), tint: tint(block),
+                    faint: !block.isAvailable(for: providerSet), locked: locked(.block(block)),
+                    addLabel: L10n.text("main.library.add_to_panel", block.label),
+                    removeLabel: L10n.text("main.library.remove_from_panel", block.label),
+                    lockedHelp: L10n.text("main.panel.last"),
+                    select: { selection = .block(block) }, toggle: { toggle(block) })
+    }
+
+    private func tint(_ block: ExpandedPanelLayout.Block?) -> Color? {
+        block?.provider?.shade(light: colorScheme == .light)
     }
 
     // MARK: Selected block
 
     private var inspector: some View {
         let item = selected
-        return PanelBlockInspector(item: item, placed: placed(item), canShift: canShift(item), locked: locked(item),
-            unavailable: unavailableProvider(item),
-            toggle: { if case .block(let block) = item { toggle(block) } },
-            shift: { offset in if case .block(let block) = item { shift(block, by: offset) } }) {
+        let block: ExpandedPanelLayout.Block? = if case .block(let block) = item { block } else { nil }
+        return PanelBlockInspector(item: item, placed: placed(item), locked: locked(item), tint: tint(block),
+                                   note: note(item), toggle: { if let block { toggle(block) } }) {
             settings(item)
         }
     }
@@ -291,106 +349,102 @@ struct SettingsExpandedPanelPane: View {
         return true
     }
 
-    /// Up and down, each when the block can move that way among those shown.
-    private func canShift(_ item: ExpandedPanelSelection) -> (up: Bool, down: Bool)? {
-        guard case .block(let block) = item, let index = visible.firstIndex(of: block) else { return nil }
-        return (index > 0, index < visible.count - 1)
-    }
-
     private func locked(_ item: ExpandedPanelSelection) -> Bool {
         if case .block(let block) = item { return layout.blocks.contains(block) && layout.isLastVisible(block, providers: providerSet) }
         return false
     }
 
-    private func unavailableProvider(_ item: ExpandedPanelSelection) -> AgentProvider? {
-        guard case .block(let block) = item, !block.isAvailable(for: providerSet) else { return nil }
-        return block.provider
+    /// The state line above the options, when there is something to say:
+    /// kept as the last block, waiting for its service, or not added yet.
+    private func note(_ item: ExpandedPanelSelection) -> (text: String, neutral: Bool)? {
+        guard case .block(let block) = item else { return nil }
+        if locked(item) { return (L10n.text("main.panel.last"), true) }
+        if !block.isAvailable(for: providerSet), let provider = block.provider {
+            return (L10n.text("main.panel.unavailable", provider.displayName), true)
+        }
+        if !placed(item) { return (L10n.text("main.library.not_added"), false) }
+        return nil
     }
-
-    private var show: [(Bool, String)] { [(true, L10n.text("main.panel.show")), (false, L10n.text("main.panel.hide"))] }
 
     /// Only what changes the selected block. Style, arrangement, details and
     /// the pace tick are shared by every quota.
     @ViewBuilder private func settings(_ item: ExpandedPanelSelection) -> some View {
         switch item {
         case .block(.tasks):
-            OptionSegments(title: L10n.text("main.panel.page_size"), hint: L10n.text("main.panel.page_size_help"),
-                           selection: $options.pageSize, options: ExpandedPanelOptions.pageSizes.map { ($0, "\($0)") })
-            OptionSegments(title: L10n.text("main.panel.row_style"), hint: L10n.text("main.panel.row_style_help"),
-                           selection: $options.rowStyle, options: [(.twoLine, L10n.text("main.panel.row_two")),
-                                                                   (.oneLine, L10n.text("main.panel.row_one"))])
-            fields
-            CardPicker(title: L10n.text("reminders.retention"), selection: $retention, options: [
-                (5, L10n.text("settings.five_minutes")), (15, L10n.text("settings.fifteen_minutes")),
-                (30, L10n.text("settings.thirty_minutes")), (60, L10n.text("settings.one_hour")),
-                (240, L10n.text("settings.four_hours")), (0, L10n.text("settings.until_clicked"))])
-            CardRow(title: L10n.text("settings.hide_projects")) {
-                Button(L10n.text("main.panel.in_general"), action: openGeneral).buttonStyle(.link).font(.system(size: 12.5))
+            segments(L10n.text("main.panel.page_size"), help: L10n.text("main.panel.page_size_help"),
+                     selection: $options.pageSize, options: ExpandedPanelOptions.pageSizes.map { ($0, "\($0)") })
+            segments(L10n.text("main.panel.row_style"), help: L10n.text("main.panel.row_style_help"),
+                     selection: $options.rowStyle, options: [(.twoLine, L10n.text("main.panel.row_two")),
+                                                             (.oneLine, L10n.text("main.panel.row_one"))])
+            PanelRow(title: L10n.text("main.panel.fields"), stacked: true) { RowFieldsEditor(options: $options) }
+            PanelRow(title: L10n.text("reminders.retention")) {
+                OutlineMenu(title: L10n.text("reminders.retention"), selection: $retention, options: [
+                    (5, L10n.text("settings.five_minutes")), (15, L10n.text("settings.fifteen_minutes")),
+                    (30, L10n.text("settings.thirty_minutes")), (60, L10n.text("settings.one_hour")),
+                    (240, L10n.text("settings.four_hours")), (0, L10n.text("settings.until_clicked"))])
             }
+            link(L10n.text("settings.hide_projects"), to: L10n.text("main.panel.in_general"), action: openGeneral)
         case .block(.codex), .block(.claude):
             if case .block(let block) = item, let provider = block.provider { quota(provider) }
         case .block(.deepseek):
-            OptionSegments(title: L10n.text("main.panel.dial"), hint: L10n.text("main.panel.dial_help"),
-                           selection: $options.deepseekDial, options: [(.budget, L10n.text("main.panel.dial_budget")),
-                                                                       (.day, L10n.text("main.panel.dial_day"))])
-            OptionSegments(title: L10n.text("main.panel.peak"), hint: L10n.text("main.panel.peak_help"),
-                           selection: $options.deepseekPeak, options: show)
-            CardRow(title: L10n.text("main.panel.budget_link")) {
-                Button(L10n.text("main.panel.in_deepseek"), action: openDeepSeek).buttonStyle(.link).font(.system(size: 12.5))
-            }
+            segments(L10n.text("main.panel.dial"), help: L10n.text("main.panel.dial_help"),
+                     selection: $options.deepseekDial, options: [(.budget, L10n.text("main.panel.dial_budget")),
+                                                                 (.day, L10n.text("main.panel.dial_day"))])
+            switchRow(L10n.text("main.panel.peak"), help: L10n.text("main.panel.peak_help"), isOn: $options.deepseekPeak)
+            link(L10n.text("main.panel.budget_link"), to: L10n.text("main.panel.in_deepseek"), action: openDeepSeek)
         case .block(.deepseekSpend):
-            OptionSegments(title: L10n.text("main.panel.spend_tasks"), hint: L10n.text("main.panel.spend_tasks_help"),
-                           selection: $options.spendTasks,
-                           options: ExpandedPanelOptions.spendTaskChoices.map { ($0, L10n.text("main.panel.spend_count", $0)) })
-            OptionSegments(title: L10n.text("main.panel.elsewhere"), hint: L10n.text("main.panel.elsewhere_help"),
-                           selection: $options.spendElsewhere, options: show)
+            segments(L10n.text("main.panel.spend_tasks"), help: L10n.text("main.panel.spend_tasks_help"),
+                     selection: $options.spendTasks,
+                     options: ExpandedPanelOptions.spendTaskChoices.map { ($0, L10n.text("main.panel.spend_count", $0)) })
+            switchRow(L10n.text("main.panel.elsewhere"), help: L10n.text("main.panel.elsewhere_help"), isOn: $options.spendElsewhere)
         case .block(.deepseekWeek):
-            OptionSegments(title: L10n.text("main.panel.week_line"), hint: L10n.text("main.panel.week_line_help"),
-                           selection: $options.weekLine, options: show)
+            switchRow(L10n.text("main.panel.week_line"), help: L10n.text("main.panel.week_line_help"), isOn: $options.weekLine)
         case .actions:
-            Checklist(title: L10n.text("main.panel.actions"), hint: L10n.text("main.panel.actions_help"), items: [
-                (L10n.text("panel.action.apps"), nil, $showsAppButtons),
-                (L10n.text("panel.action.markRead"), nil, action(.markRead)),
-                (L10n.text("panel.action.pin"), nil, action(.pin)),
-                (L10n.text("panel.action.settings"), nil, action(.settings))])
+            switchRow(L10n.text("panel.action.apps"), isOn: $showsAppButtons)
+            switchRow(L10n.text("panel.action.markRead"), isOn: action(.markRead))
+            switchRow(L10n.text("panel.action.pin"), isOn: action(.pin))
+            switchRow(L10n.text("panel.action.settings"), isOn: action(.settings))
         }
-    }
-
-    /// One line of a two-line row; a one-line row keeps only speed and turn time.
-    private var fields: some View {
-        Checklist(title: L10n.text("main.panel.fields"), hint: L10n.text("main.panel.fields_help"),
-                  items: ExpandedPanelOptions.RowField.allCases.map { field in
-                      let note: String? = switch field {
-                      case .source: L10n.text("panel.field.source_note")
-                      case .cost: L10n.text("panel.field.cost_note")
-                      default: nil
-                      }
-                      return (field.label, note, Binding(get: { options.rowFields.contains(field) }, set: { on in
-                          if on { options.rowFields.insert(field) } else { options.rowFields.remove(field) }
-                      }))
-                  },
-                  disabled: { index in
-                      options.rowStyle == .oneLine && !ExpandedPanelOptions.RowField.allCases[index].showsInOneLine
-                  })
     }
 
     @ViewBuilder private func quota(_ provider: AgentProvider) -> some View {
-        OptionSegments(title: L10n.text("main.panel.periods"), selection: Binding(get: { options.periods(for: provider) },
-                       set: { options.setPeriods($0, for: provider) }),
-                       options: [(.both, L10n.text("main.panel.periods_both")), (.weekly, L10n.text("main.panel.periods_weekly")),
-                                 (.fiveHour, L10n.text("main.panel.periods_five"))])
-        OptionSegments(title: L10n.text("main.panel.style"), selection: $quotaStyle,
-                       options: ExpandedQuotaStyle.allCases.map { ($0, $0.label) })
+        segments(L10n.text("main.panel.periods"), stacked: true,
+                 selection: Binding(get: { options.periods(for: provider) }, set: { options.setPeriods($0, for: provider) }),
+                 options: [(.both, L10n.text("main.panel.periods_both")), (.weekly, L10n.text("main.panel.periods_weekly")),
+                           (.fiveHour, L10n.text("main.panel.periods_five"))])
+        segments(L10n.text("main.panel.style"), selection: $quotaStyle, options: ExpandedQuotaStyle.allCases.map { ($0, $0.label) })
         if providers.filter({ ExpandedPanelLayout.Block.quotaBlock(for: $0) != nil }).count > 1 {
-            OptionSegments(title: L10n.text("main.panel.arrange"), selection: $options.quotaArrange,
-                           options: [(.pair, L10n.text("main.panel.arrange_pair")), (.stack, L10n.text("main.panel.arrange_stack"))])
+            segments(L10n.text("main.panel.arrange"), selection: $options.quotaArrange,
+                     options: [(.pair, L10n.text("main.panel.arrange_pair")), (.stack, L10n.text("main.panel.arrange_stack"))])
         }
-        OptionSegments(title: L10n.text("main.panel.details"), hint: L10n.text("main.panel.details_help"),
-                       selection: $options.quotaDetails, options: show)
-        OptionSegments(title: L10n.text("main.panel.pace_tick"), hint: L10n.text("main.panel.pace_tick_help"),
-                       selection: $options.paceTick, options: show)
-        Text(L10n.text("main.panel.shared_note")).font(.system(size: 11.5)).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        switchRow(L10n.text("main.panel.details"), help: L10n.text("main.panel.details_help"), isOn: $options.quotaDetails)
+        switchRow(L10n.text("main.panel.pace_tick"), help: L10n.text("main.panel.pace_tick_help"), isOn: $options.paceTick)
+    }
+
+    private func segments<Value: Hashable>(_ title: String, help: String? = nil, stacked: Bool = false,
+                                           selection: Binding<Value>, options: [(Value, String)]) -> some View {
+        PanelRow(title: title, help: help, stacked: stacked) {
+            MainSegmented(options: options.map { (value: $0.0, title: $0.1) }, selection: selection, label: title)
+        }
+    }
+
+    private func switchRow(_ title: String, help: String? = nil, isOn: Binding<Bool>) -> some View {
+        PanelRow(title: title, help: help) { Toggle(title, isOn: isOn).labelsHidden().toggleStyle(.switch) }
+    }
+
+    /// A setting kept on another page, with the way there.
+    private func link(_ title: String, to page: String, action: @escaping () -> Void) -> some View {
+        PanelRow(title: title) {
+            Button(action: action) {
+                HStack(spacing: 4) {
+                    Text(page).font(.system(size: 12.5))
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(accent).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title + ", " + page)
+        }
     }
 
     private func action(_ action: ExpandedPanelOptions.HeaderAction) -> Binding<Bool> {
@@ -411,153 +465,260 @@ extension ExpandedPanelLayout.Block {
     }
 }
 
-/// A rough drawing of what a block shows, enough to tell the blocks apart.
-private struct SketchContent: View {
-    let block: ExpandedPanelLayout.Block
-    let options: ExpandedPanelOptions
-    /// A quota with a row to itself shows its details beside the ring.
-    let alone: Bool
-
-    var body: some View {
-        switch block {
-        case .tasks:
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(0..<min(options.pageSize, 3), id: \.self) { index in
-                    HStack(spacing: 5) {
-                        Circle().strokeBorder(PacerPalette.overlay(0.3), lineWidth: 1.5).frame(width: 9, height: 9)
-                        bar(width: index == 0 ? 70 : 54)
-                        Spacer(minLength: 4)
-                        bar(width: 22, opacity: 0.12)
-                    }
-                    if options.rowStyle == .twoLine { bar(width: 40, opacity: 0.1).padding(.leading, 14) }
-                }
-            }
-        case .codex, .claude, .deepseek:
-            HStack(spacing: 8) {
-                Circle().trim(from: 0, to: 0.72).stroke(block.provider?.tint ?? PacerPalette.secondary,
-                    style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90)).frame(width: 24, height: 24)
-                if alone ? options.quotaDetails || block == .deepseek : block == .deepseek {
-                    VStack(alignment: .leading, spacing: 4) { bar(width: 46); bar(width: 32, opacity: 0.12) }
-                }
-            }
-        case .deepseekSpend:
-            HStack(spacing: 2) {
-                RoundedRectangle(cornerRadius: 2).fill(AgentProvider.deepseek.tint.opacity(0.9)).frame(width: 60, height: 6)
-                RoundedRectangle(cornerRadius: 2).fill(AgentProvider.deepseek.tint.opacity(0.5)).frame(width: 40, height: 6)
-                RoundedRectangle(cornerRadius: 2).fill(PacerPalette.overlay(0.16)).frame(height: 6)
-            }
-        case .deepseekWeek:
-            HStack(alignment: .bottom, spacing: 5) {
-                ForEach([8, 14, 10, 18, 12, 16, 20], id: \.self) { height in
-                    RoundedRectangle(cornerRadius: 1.5).fill(AgentProvider.deepseek.tint.opacity(height == 20 ? 1 : 0.5))
-                        .frame(width: 8, height: CGFloat(height))
-                }
-            }
-        }
-    }
-
-    private func bar(width: CGFloat, opacity: Double = 0.2) -> some View {
-        Capsule().fill(PacerPalette.overlay(opacity)).frame(width: width, height: 4)
-    }
-}
-
-/// The selected block's card: its name with ⓘ, moving and Add or Remove,
-/// then the options that change it.
-private struct PanelBlockInspector<Options: View>: View {
-    @Environment(\.pacerAccent) private var accent
+/// The selected block's card: a tinted tile, its name with ⓘ and Add or
+/// Remove, a state line when needed, then one row per option.
+private struct PanelBlockInspector<Rows: View>: View {
     let item: ExpandedPanelSelection
     let placed: Bool
-    let canShift: (up: Bool, down: Bool)?
     let locked: Bool
-    let unavailable: AgentProvider?
+    let tint: Color?
+    let note: (text: String, neutral: Bool)?
     let toggle: () -> Void
-    let shift: (Int) -> Void
-    @ViewBuilder let options: () -> Options
+    @ViewBuilder let rows: () -> Rows
     @State private var showsInfo = false
 
     private var block: ExpandedPanelLayout.Block? { if case .block(let block) = item { block } else { nil } }
     private var name: String { block?.label ?? L10n.text("panel.block.actions") }
 
     var body: some View {
-        MainCard(title: L10n.text("main.panel.selected")) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: block?.symbol ?? "ellipsis").font(.system(size: 12, weight: .medium)).foregroundStyle(accent)
-                        .frame(width: 26, height: 26)
-                        .background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L10n.text("main.panel.selected")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.leading, 4).accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 12) {
+                    Image(systemName: block?.symbol ?? "ellipsis").font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(tint ?? Color.secondary)
+                        .frame(width: 34, height: 34)
+                        .background((tint ?? Color.secondary).opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                         .accessibilityHidden(true)
-                    Text(name).font(.system(size: 13.5, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
-                    InfoButton(title: name, isOn: $showsInfo)
-                    Spacer(minLength: 4)
-                    if let canShift {
-                        HStack(spacing: 2) {
-                            Button { shift(-1) } label: { Image(systemName: "chevron.up") }
-                                .disabled(!canShift.up).help(L10n.text("main.panel.move_up"))
-                                .accessibilityLabel(L10n.text("main.panel.move_up"))
-                                .keyboardShortcut(.upArrow, modifiers: .option)
-                            Button { shift(1) } label: { Image(systemName: "chevron.down") }
-                                .disabled(!canShift.down).help(L10n.text("main.panel.move_down"))
-                                .accessibilityLabel(L10n.text("main.panel.move_down"))
-                                .keyboardShortcut(.downArrow, modifiers: .option)
-                        }
-                        .buttonStyle(MainButtonStyle(height: 24)).font(.system(size: 10, weight: .semibold))
+                    HStack(spacing: 2) {
+                        Text(name).font(.system(size: 15, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
+                            .accessibilityAddTraits(.isHeader)
+                        PanelInfoButton(title: name, isOn: $showsInfo, large: true)
                     }
+                    Spacer(minLength: 8)
                     if block != nil {
                         if placed {
-                            Button(L10n.text("main.collapsed.remove"), action: toggle).buttonStyle(.main).disabled(locked)
+                            Button(L10n.text("main.collapsed.remove"), action: toggle).buttonStyle(MainButtonStyle(height: 26)).disabled(locked)
                         } else {
-                            Button(L10n.text("main.collapsed.add"), action: toggle).buttonStyle(.mainProminent)
+                            Button(L10n.text("main.collapsed.add"), action: toggle).buttonStyle(MainButtonStyle(prominent: true, height: 26))
                         }
                     }
                 }
-                if showsInfo { InfoBox(text: block?.detail ?? L10n.text("panel.block_detail.actions")) }
-                if locked {
-                    Text(L10n.text("main.panel.last")).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 14)
+                if showsInfo {
+                    InfoBox(text: block?.detail ?? L10n.text("panel.block_detail.actions")).padding(.horizontal, 16).padding(.bottom, 12)
                 }
+                if let note { LibraryNote(text: note.text, neutral: note.neutral).padding(.horizontal, 16).padding(.bottom, 12) }
+                _VariadicView.Tree(InspectorRows()) { rows() }
+                    .padding(.horizontal, 16).padding(.bottom, 4)
+                    .id(item)
             }
-            if let unavailable {
-                CardRow(title: L10n.text("main.panel.unavailable", unavailable.displayName))
-            } else if placed {
-                options()
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .mainCardSurface(radius: 14)
         }
         .onChange(of: item) { _, _ in showsInfo = false }
     }
 }
 
-/// A titled list of checkboxes, two to a row, each with an optional note.
-private struct Checklist: View {
+/// Each option row under a hairline.
+private struct InspectorRows: _VariadicView_MultiViewRoot {
+    func body(children: _VariadicView.Children) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(children) { child in
+                Rectangle().fill(MainPalette.separator).frame(height: 1)
+                child.padding(.vertical, 10)
+            }
+        }
+    }
+}
+
+/// One option: its label with an optional ⓘ, and the control at the end or
+/// under the label.
+private struct PanelRow<Control: View>: View {
     let title: String
-    let hint: String
-    let items: [(String, String?, Binding<Bool>)]
-    var disabled: (Int) -> Bool = { _ in false }
+    var help: String? = nil
+    var stacked = false
+    @ViewBuilder let control: Control
+    @State private var showsInfo = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13))
-                Text(hint).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
-                      alignment: .leading, spacing: 8) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    // The card's rows draw switches; a checkbox here leads its label.
-                    HStack(spacing: 6) {
-                        Toggle(item.1.map { item.0 + ", " + $0 } ?? item.0, isOn: item.2).labelsHidden().toggleStyle(.checkbox)
-                        HStack(spacing: 4) {
-                            Text(item.0).font(.system(size: 12.5))
-                            if let note = item.1 { Text(note).font(.system(size: 11)).foregroundStyle(.secondary) }
-                        }
-                        .lineLimit(1)
-                        .contentShape(Rectangle())
-                        .onTapGesture { if !disabled(index) { item.2.wrappedValue.toggle() } }
-                        .accessibilityHidden(true)
-                    }
-                    .disabled(disabled(index))
-                    .opacity(disabled(index) ? 0.5 : 1)
+            if stacked {
+                label
+                control
+            } else {
+                HStack(spacing: 12) {
+                    label
+                    Spacer(minLength: 8)
+                    control
                 }
             }
+            if showsInfo, let help { InfoBox(text: help) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var label: some View {
+        HStack(spacing: 2) {
+            Text(title).font(.system(size: 13)).lineLimit(1)
+            if help != nil { PanelInfoButton(title: title, isOn: $showsInfo) }
+        }
+        .frame(minHeight: 24)
+    }
+}
+
+/// A round ⓘ that tints while its explanation is open.
+private struct PanelInfoButton: View {
+    @Environment(\.pacerAccent) private var accent
+    let title: String
+    @Binding var isOn: Bool
+    var large = false
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { isOn.toggle() }
+        } label: {
+            Image(systemName: "info.circle").font(.system(size: large ? 14 : 13))
+                .foregroundStyle(isOn ? accent : Color.secondary)
+                .frame(width: large ? 22 : 20, height: large ? 22 : 20)
+                .background(isOn ? accent.opacity(0.14) : .clear, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L10n.text("main.info", title))
+        .accessibilityValue(L10n.text(isOn ? "main.info_shown" : "main.info_hidden"))
+    }
+}
+
+/// The task row's readings: a live sample row, then one chip per reading. A
+/// one-line row has no room for the second line's readings, so those chips
+/// rest.
+private struct RowFieldsEditor: View {
+    @Environment(\.pacerAccent) private var accent
+    @Environment(\.colorScheme) private var colorScheme
+    @Binding var options: ExpandedPanelOptions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            RowPreview(options: options)
+            FlowRow(spacing: 6, lineSpacing: 6) {
+                ForEach(ExpandedPanelOptions.RowField.allCases, id: \.self) { chip($0) }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(L10n.text("main.panel.fields"))
+        }
+    }
+
+    static func symbol(_ field: ExpandedPanelOptions.RowField) -> String {
+        switch field {
+        case .rate: "speedometer"
+        case .turnTime: "timer"
+        case .model: "cpu"
+        case .source: "server.rack"
+        case .subagents: "person.2"
+        case .cost: "yensign.circle"
+        }
+    }
+
+    private func chip(_ field: ExpandedPanelOptions.RowField) -> some View {
+        let usable = options.rowStyle == .twoLine || field.showsInOneLine
+        let on = usable && options.rowFields.contains(field)
+        let light = colorScheme == .light
+        let onInk = light ? Color(nsColor: NSColor(accent).blended(withFraction: 0.25, of: .black) ?? NSColor(accent)) : accent
+        return Button {
+            if options.rowFields.contains(field) { options.rowFields.remove(field) } else { options.rowFields.insert(field) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: Self.symbol(field)).font(.system(size: 11, weight: .medium))
+                Text(L10n.text("panel.chip." + field.rawValue)).font(.system(size: 12.5, weight: on ? .semibold : .medium))
+            }
+            .foregroundStyle(on ? onInk : Color.primary.opacity(0.8))
+            .padding(.leading, 9).padding(.trailing, 12).frame(height: 28)
+            .background(on ? accent.opacity(light ? 0.12 : 0.25) : .clear, in: Capsule())
+            .overlay(Capsule().strokeBorder(on ? accent.opacity(0.35) : LibraryPalette.border, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!usable)
+        .opacity(usable ? 1 : 0.38)
+        .accessibilityLabel(field.label)
+        .accessibilityAddTraits(on ? [.isToggle, .isSelected] : .isToggle)
+    }
+}
+
+/// A dark sample task row with only the chosen readings, in DeepSeek's blue.
+private struct RowPreview: View {
+    let options: ExpandedPanelOptions
+    private static let label = Color(red: 245 / 255, green: 245 / 255, blue: 247 / 255)
+    private static let secondary = Color(red: 152 / 255, green: 152 / 255, blue: 157 / 255)
+    private static let time = Color(red: 199 / 255, green: 199 / 255, blue: 204 / 255)
+    private static let cost = Color(red: 229 / 255, green: 229 / 255, blue: 234 / 255)
+
+    private var oneLine: Bool { options.rowStyle == .oneLine }
+    private func shows(_ field: ExpandedPanelOptions.RowField) -> Bool {
+        options.rowFields.contains(field) && (!oneLine || field.showsInOneLine)
+    }
+
+    var body: some View {
+        let tint = AgentProvider.deepseek.shade(light: false)
+        let icon: CGFloat = oneLine ? 22 : 28
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.1), lineWidth: 2.2)
+                Circle().trim(from: 0, to: 0.3).stroke(tint, style: StrokeStyle(lineWidth: 2.2, lineCap: .round)).rotationEffect(.degrees(-90))
+                Circle().fill(tint).frame(width: 6, height: 6)
+            }
+            .padding(1.1)
+            .frame(width: icon, height: icon)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(L10n.text("panel.preview.title")).font(.system(size: 13, weight: .semibold)).foregroundStyle(Self.label)
+                        .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        if shows(.rate) {
+                            Text("48.2").font(.system(size: 13, weight: .semibold)).foregroundStyle(Self.label)
+                            Text(" t/s").font(.system(size: 10))
+                        }
+                        if shows(.rate), shows(.turnTime) { Text(" · ") }
+                        if shows(.turnTime) { Text(L10n.text("dashboard.countdown_minutes", 12)).foregroundStyle(Self.time) }
+                    }
+                    .font(.system(size: 12)).foregroundStyle(Self.secondary).monospacedDigit().fixedSize()
+                }
+                if !oneLine {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        HStack(spacing: 10) {
+                            Text(L10n.text("panel.preview.status"))
+                            if shows(.subagents) { Label("2", systemImage: "person.2") }
+                            if shows(.source) { Label("devbox", systemImage: "server.rack") }
+                        }
+                        .labelStyle(PreviewLabelStyle())
+                        .foregroundStyle(Self.secondary).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            if shows(.cost) { Text("¥0.12").foregroundStyle(Self.cost) }
+                            if shows(.model) { Text(ModelDisplay.name("deepseek-v4-pro")).foregroundStyle(tint) }
+                        }
+                        .fixedSize()
+                    }
+                    .font(.system(size: 11))
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, oneLine ? 8 : 10)
+        .background(Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.white.opacity(0.04)))
+        .environment(\.colorScheme, .dark)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.text("panel.preview.accessibility"))
+    }
+}
+
+private struct PreviewLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) {
+            configuration.icon.font(.system(size: 9.5))
+            configuration.title
         }
     }
 }

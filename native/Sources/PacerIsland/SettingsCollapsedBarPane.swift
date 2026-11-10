@@ -5,7 +5,6 @@ import SwiftUI
 /// by group to add or remove, and the settings of the one selected. Changes
 /// reach the real bar at once; what each component is sits behind ⓘ.
 struct SettingsCollapsedBarPane: View {
-    @Environment(\.pacerAccent) private var accent
     @ObservedObject var model: IslandModel
     @Binding var layout: CompactIslandLayout
     @Binding var selection: CompactIslandLayout.Component?
@@ -62,7 +61,8 @@ struct SettingsCollapsedBarPane: View {
                             Text(L10n.text("layout.no_quota_providers")).font(.system(size: 12)).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 6)], alignment: .leading, spacing: 6) {
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)],
+                                      alignment: .leading, spacing: 6) {
                                 ForEach(items) { tile($0) }
                             }
                         }
@@ -75,32 +75,13 @@ struct SettingsCollapsedBarPane: View {
         }
     }
 
+    /// Clicking selects; the round button adds or removes.
     private func tile(_ component: CompactIslandLayout.Component) -> some View {
-        let on = layout.components.contains(component)
-        let isSelected = selected == component
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-        return Button {
-            selection = component
-            toggle(component)
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: component.symbol).font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(on ? Color.primary : Color.secondary).frame(width: 16)
-                Text(component.label).font(.system(size: 12.5)).lineLimit(1).minimumScaleFactor(0.85)
-                    .foregroundStyle(on ? Color.primary : Color.secondary)
-                Spacer(minLength: 4)
-                Image(systemName: on ? "checkmark" : "plus").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(on ? accent : Color.secondary)
-            }
-            .padding(.horizontal, 10).frame(height: 32)
-            .background(on ? MainPalette.fill : .clear, in: shape)
-            .overlay(shape.strokeBorder(isSelected ? accent : MainPalette.cardBorder, lineWidth: isSelected ? 1.5 : 1))
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(component.label)
-        .accessibilityValue(L10n.text(on ? "main.collapsed.shown" : "main.collapsed.hidden"))
-        .accessibilityHint(L10n.text(on ? "main.collapsed.remove" : "main.collapsed.add"))
+        LibraryTile(label: component.label, symbol: component.symbol, placed: layout.components.contains(component),
+                    selected: selected == component,
+                    addLabel: L10n.text("main.library.add_to_bar", component.label),
+                    removeLabel: L10n.text("main.library.remove_from_bar", component.label),
+                    select: { selection = component }, toggle: { toggle(component) })
     }
 
     private func toggle(_ component: CompactIslandLayout.Component) {
@@ -303,8 +284,10 @@ private struct ComponentInspector<Options: View>: View {
                     }
                 }
                 if showsInfo { InfoBox(text: component.detail) }
+                // Options of a component not on the bar are kept for when it is added.
+                if !placed { LibraryNote(text: L10n.text("main.library.not_added")) }
             }
-            if placed { options() }
+            options()
         }
         .onChange(of: component) { _, _ in showsInfo = false }
     }
