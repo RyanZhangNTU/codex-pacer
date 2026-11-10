@@ -28,6 +28,15 @@ internal sealed class EngineClient : IAsyncDisposable
     private Process? process;
     private OwnedJob? job;
     private Task? reading, drainingErrors;
+    private EngineCrashLog? crashLog;
+    private readonly Stopwatch running = new();
+    // The end of the engine's error text, for its crash report. Where the Swift
+    // runtime finds its backtrace helper it prints folders and memory after a
+    // line of asterisks, and no setting turns that off on Windows, so nothing
+    // from that line on is kept.
+    private readonly byte[] errorTail = new byte[4096];
+    private int errorLength, errorNext, errorStars;
+    private bool errorEnded;
     private long request;
     private ulong sequence;
     private volatile bool initialized;
@@ -47,9 +56,10 @@ internal sealed class EngineClient : IAsyncDisposable
 
     internal EngineClient(TimeSpan? commandTimeout = null) => this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
 
-    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null)
+    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null, EngineCrashLog? crashLog = null)
     {
         if (process != null) throw new InvalidOperationException("Engine already started.");
+        this.crashLog = crashLog;
         callbacks = SynchronizationContext.Current;
         if (referenceFixture && !demo) throw new ArgumentException("Reference fixtures require demo mode.");
         if (claudeWebFixture && (!demo || !referenceFixture)) throw new ArgumentException("Claude web fixtures require the offline reference mode.");
@@ -78,6 +88,11 @@ internal sealed class EngineClient : IAsyncDisposable
             start.ArgumentList.Add("--codex-progress-runtime-root");
             start.ArgumentList.Add(Path.GetFullPath(codexProgressRuntimeRoot));
         }
+        if (crashLog != null)
+        {
+            start.ArgumentList.Add("--crash-log-directory"); start.ArgumentList.Add(crashLog.Directory);
+            start.ArgumentList.Add("--app-version"); start.ArgumentList.Add(crashLog.Version);
+        }
         start.ArgumentList.Add("--language"); start.ArgumentList.Add(language);
         // Swift Foundation on Windows reports GMT as the current zone, so local
         // days (Codex log folders, daily budgets, reset times) need the user's zone.
@@ -90,6 +105,7 @@ internal sealed class EngineClient : IAsyncDisposable
         try
         {
             process = Process.Start(start) ?? throw new IOException("Could not start PacerEngine.");
+            running.Start();
             // The engine starts no collectors before the initialize handshake.
             job.Attach(process);
             reading = ReadAsync(process.StandardOutput.BaseStream);
@@ -180,7 +196,11 @@ internal sealed class EngineClient : IAsyncDisposable
                 }
             }
             if (line.Length != 0) throw new InvalidDataException("Truncated engine frame.");
-            if (!lifetime.IsCancellationRequested && !disposing) Publish(() => Status?.Invoke("engineStopped"));
+            if (!lifetime.IsCancellationRequested && !disposing)
+            {
+                await CompleteCrashReportAsync().ConfigureAwait(false);
+                Publish(() => Status?.Invoke("engineStopped"));
+            }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
@@ -253,9 +273,54 @@ internal sealed class EngineClient : IAsyncDisposable
     private async Task DrainErrorsAsync(Stream stream)
     {
         byte[] buffer = new byte[4096];
-        try { while (await stream.ReadAsync(buffer, lifetime.Token).ConfigureAwait(false) != 0) { } }
+        try
+        {
+            int count;
+            while ((count = await stream.ReadAsync(buffer, lifetime.Token).ConfigureAwait(false)) != 0)
+                lock (errorTail)
+                    for (int i = 0; i < count && !errorEnded; i++)
+                    {
+                        byte value = buffer[i];
+                        // Asterisks at the start of a line wait until the line shows what it is.
+                        if (errorStars >= 0 && value == (byte)'*') { errorEnded = ++errorStars == 3; continue; }
+                        for (; errorStars > 0; errorStars--) KeepError((byte)'*');
+                        errorStars = value == (byte)'\n' ? 0 : -1;
+                        KeepError(value);
+                    }
+        }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (IOException) { }
+    }
+
+    private void KeepError(byte value)
+    {
+        errorTail[errorNext] = value; errorNext = (errorNext + 1) % errorTail.Length;
+        if (errorLength < errorTail.Length) errorLength++;
+    }
+
+    /// <summary>
+    /// Runs after the engine's output ended on its own. Its pipes close when the
+    /// process ends, so the exit code is available at once; the report gets that
+    /// code and the end of the engine's error text.
+    /// </summary>
+    private async Task CompleteCrashReportAsync()
+    {
+        if (crashLog is not { } log || process is not { } child) return;
+        try
+        {
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            if (drainingErrors != null) await drainingErrors.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+            string output;
+            lock (errorTail)
+            {
+                byte[] ordered = new byte[errorLength];
+                int first = (errorNext - errorLength + errorTail.Length) % errorTail.Length;
+                for (int i = 0; i < errorLength; i++) ordered[i] = errorTail[(first + i) % errorTail.Length];
+                output = Encoding.UTF8.GetString(ordered);
+            }
+            log.Complete(child.Id, child.ExitCode, running.Elapsed, output, DateTimeOffset.UtcNow);
+        }
+        catch (Exception error) when (error is TimeoutException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
     }
 
     public async ValueTask DisposeAsync()

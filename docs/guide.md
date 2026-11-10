@@ -195,6 +195,7 @@ Everything that needs attention already shows on the collapsed bar. Turn on **Se
 - **The DeepSeek balance asks you to sign in or paste a key.** The platform session ended or the key was rejected. Sign in again or paste a new key in **Settings → DeepSeek**; tasks and turn costs keep working meanwhile.
 - **An SSH host is disconnected.** Make sure `ssh <host>` works without a password prompt, then use **Retry** in Settings → Remote.
 - **Speeds look high right after Pacer starts.** When Pacer joins a task midway, the first estimate can include output from before it started watching. It settles with the next measurement.
+- **On Windows, tasks stop updating and Pacer asks you to reopen it.** Pacer's engine stopped; reopening Pacer starts it again. Please [open an issue](https://github.com/RyanZhangNTU/codex-pacer/issues) and attach the newest file from `%LOCALAPPDATA%\CodexPacer\CrashLogs` (paste that into File Explorer's address bar). The report holds version numbers and code addresses, with no task content or file paths.
 - **Something else.** [Open an issue](https://github.com/RyanZhangNTU/codex-pacer/issues) with the app and macOS versions, the source type (local, SSH or Remote Control) and steps to reproduce. Hide private task titles and account details in screenshots.
 
 ## Uninstall

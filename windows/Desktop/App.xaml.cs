@@ -291,16 +291,18 @@ public partial class App : Application
         try
         {
             string? runtimeRoot = null, codexProgressRuntimeRoot = null;
+            EngineCrashLog? crashLog = null;
             if (!demo)
                 try
                 {
                     var identity = WindowsInstallationIdentity.ForApp(AppContext.BaseDirectory);
                     runtimeRoot = Path.Combine(identity.DataRoot, "ClaudeRuntime");
                     codexProgressRuntimeRoot = identity.CodexProgressRuntimeRoot;
+                    crashLog = EngineCrashLog.Prepare(Path.Combine(identity.DataRoot, EngineCrashLog.Folder), typeof(App).Assembly.GetName().Version?.ToString() ?? "0.0.0");
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
             await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture,
-                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot);
+                claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             engineReadyTicks = Environment.TickCount64;

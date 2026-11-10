@@ -6,6 +6,11 @@ import CWindowsSupport
 
 public enum PacerEngine {
     public static func run() async {
+        #if os(Windows)
+        // First, so a failure anywhere below leaves a report.
+        WindowsCrashReport.install()
+        if WindowsCrashReport.diagnose() { return }
+        #endif
         WindowsResources.configure()
         #if os(Windows)
         if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--ssh-terminal" {

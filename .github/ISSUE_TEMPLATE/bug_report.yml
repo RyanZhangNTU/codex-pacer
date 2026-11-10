@@ -78,4 +78,4 @@ body:
     id: logs
     attributes:
       label: Logs or screenshots
-      description: Optional. Hide private task titles first; Settings → General → Hide Project Names helps.
+      description: Optional. Hide private task titles first; Settings → General → Hide Project Names helps. On Windows, if tasks stopped updating, attach the newest file from %LOCALAPPDATA%\CodexPacer\CrashLogs.
