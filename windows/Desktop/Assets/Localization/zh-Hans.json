@@ -1171,6 +1171,7 @@
     "windows.appearance.display_fallback": "选中的显示器已断开，暂时使用主显示器；重新连接后会恢复。",
     "windows.appearance.display_unavailable": "Windows 无法读取显示器信息，岛暂时留在当前屏幕。",
     "windows.appearance.fullscreen": "在全屏应用上方显示",
+    "windows.appearance.position_per_display_info": "每块屏幕分别记住灵动岛还是自由拖动，以及放在哪里。第一次用的屏幕从现在的位置开始。",
     "windows.appearance.surface_available": "玻璃效果跟随 Windows 透明效果。刘海模式收起时为黑色。",
     "windows.appearance.surface_classic": "使用纯黑表面。",
     "windows.appearance.surface_device_lost": "图形设备连接已丢失，当前使用黑色。已保留玻璃偏好，显示恢复后可重试。",

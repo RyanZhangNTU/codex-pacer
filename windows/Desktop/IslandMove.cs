@@ -190,6 +190,11 @@ public partial class IslandWindow
         if (move != gesture) return;
         if (gesture.Placement is not { } placement || SaveIslandPlacement is not { } save) { CancelMove(); return; }
         EndMove(gesture);
+        // Each display keeps its own place: a drop on another display makes it the
+        // island's display first, so the new place is recorded for it.
+        if (compactPreferences.IslandPositionPerDisplay && gesture.Monitor is { } dropped)
+            placeDisplay = (DisplaySelection.PlaceKey(dropped, displays.Current), dropped.Name);
+        var place = placeDisplay; var now = DateTimeOffset.UtcNow;
         DesktopPreferences Edit(DesktopPreferences previous)
         {
             // Moving within the display shown keeps the saved choice, including a
@@ -197,7 +202,8 @@ public partial class IslandWindow
             var oldDisplay = DisplaySelection.Resolve(displays.Current, previous);
             if (gesture.Monitor is { } monitor && monitor != oldDisplay.Display)
                 previous = monitor.Choose(previous);
-            return previous with { IslandPlacement = placement, DisplayMode = "floating" };
+            var moved = previous with { IslandPlacement = placement, DisplayMode = "floating" };
+            return moved.IslandPositionPerDisplay && place is { } shown ? IslandScreenMemory.RememberCurrent(moved, shown.Key, shown.Name, now) : moved;
         }
         displayedPlacement = Edit(compactPreferences);
         if (pinned) SetExpanded(true, snap: true); else Relayout(snap: true);

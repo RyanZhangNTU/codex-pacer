@@ -11,6 +11,7 @@ Every released Windows build (4.2.2 and later) uses schema 2. Schema-1 files com
 | Language | `appLanguage` | `system` |
 | Position and attachment | `islandPlacement`, legacy `islandPosition`, `islandDisplayMode`, legacy `floatingIsland` | No explicit position; `automatic`, then the legacy floating choice |
 | Display and fullscreen | `displayID`, `displayName`, `displayX`, `displayY`, `showInFullscreen` | Main Display, fullscreen off |
+| Place per display | `islandPositionPerDisplay`, `islandDisplayPlaces` | On, no saved places; the places are Core's `IslandScreenMemory` JSON Data in base64, and damaged data reads as none |
 | Surface and quota style | `islandAppearance` (`classic`, `liquidGlass`, `liquidGlassLight`, `graphite`), `expandedQuotaStyle` | `liquidGlass`, `split`; the existing platform fallback still applies |
 | Collapsed bar | `compactIslandLayout`, `compactComponentOptions`, `compactBarSize`, `compactSingleTask`, `compactMetric` | Core's standard layout, every component default, `standard`, `stage`, `remaining` |
 | Quota windows and rings | `quotaWindowID`, `claudeQuotaWindowID`, `quotaRingOuter`, `quotaRingInner` | `auto`; absent ring keys mean automatic |

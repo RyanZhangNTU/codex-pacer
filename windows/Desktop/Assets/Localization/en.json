@@ -1171,6 +1171,7 @@
     "windows.appearance.display_fallback": "The selected display is disconnected. Using Main Display until it reconnects.",
     "windows.appearance.display_unavailable": "Windows could not read the displays. The island stays on the current screen.",
     "windows.appearance.fullscreen": "Show above fullscreen apps",
+    "windows.appearance.position_per_display_info": "Each display keeps its own Island or Free Move place. A display used for the first time starts where the island is now.",
     "windows.appearance.surface_available": "Glass follows Windows transparency effects. Black when collapsed in Notch mode.",
     "windows.appearance.surface_classic": "Solid Black surface.",
     "windows.appearance.surface_device_lost": "The graphics device was lost. Using Black. Your glass choice is saved; try again after the display recovers.",

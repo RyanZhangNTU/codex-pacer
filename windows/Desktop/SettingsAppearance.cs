@@ -18,14 +18,15 @@ internal sealed partial class SettingsWindow
     private TextBlock? surfaceStatus, transparencyMode;
     private FrameworkElement? transparencyRow, expandedQuotaRow, deepseekPanelRow;
     private ComboBox? displayChoice;
-    private CheckBox? fullscreenChoice;
+    private CheckBox? fullscreenChoice, perDisplayChoice;
+    private TextBlock? positionDisplayName;
     private TextBlock? displayStatus;
     private IReadOnlyList<DisplayMonitor>? displayItemsSource;
     private sealed record DisplayOption(string Mode, DisplayMonitor? Monitor);
 
     private void ClearAppearance()
     { ClearAppearanceTheme(); notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); barSizeChoices.Clear(); surfaceStatus = transparencyMode = null;
-        displayChoice = null; fullscreenChoice = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = deepseekPanelRow = null; }
+        displayChoice = null; fullscreenChoice = perDisplayChoice = null; positionDisplayName = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = deepseekPanelRow = null; }
     private TextBlock SectionHeader(string key) => SectionTitle(ui.Text(key));
     /// A picture choice, as on the Mac: the art (64 tall, or its own height when NaN), then its name 7 below.
     private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true, double artHeight = 64)
@@ -99,7 +100,14 @@ internal sealed partial class SettingsWindow
         // The expanded panel's choices follow Position, as on the Mac.
         expandedQuotaRow = Row(Label(ui.Text("main.appearance.quota_style")), segments);
         BuildAccentSection();
-        form.Children.Add(SectionHeader("appearance.position"));
+        // With several displays the title ends with the one the island shows on, as on the Mac.
+        var positionHeader = new Grid();
+        positionHeader.ColumnDefinitions.Add(new ColumnDefinition()); positionHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        positionHeader.Children.Add(SectionHeader("appearance.position"));
+        positionDisplayName = Label("", 12); positionDisplayName.Margin = new Thickness(8, 0, 4, 8); positionDisplayName.TextTrimming = TextTrimming.CharacterEllipsis;
+        positionDisplayName.MaxWidth = 260; positionDisplayName.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        Identify(positionDisplayName, "appearance.position.display", ""); Grid.SetColumn(positionDisplayName, 1); positionHeader.Children.Add(positionDisplayName);
+        form.Children.Add(positionHeader);
         // Both positions are shown moving, with the welcome guide's scenes, as on the Mac.
         notchChoice = ArtChoice("appearance.mode.notch", ui.Text("settings.notch"), "appearance.modes", ModeScene(new WelcomeGestureScene()), artHeight: double.NaN);
         freeChoice = ArtChoice("appearance.mode.free", ui.Text("appearance.free_move"), "appearance.modes", ModeScene(new WelcomeMoveScene(true)), artHeight: double.NaN);
@@ -123,7 +131,10 @@ internal sealed partial class SettingsWindow
         displayStatus = Detail(""); displayStatus.MaxWidth = 230; Identify(displayStatus, "appearance.display.status", ui.Text("settings.display_picker")); displayCaption.Children.Add(displayStatus);
         var fullscreen = Toggle("windows.appearance.fullscreen", null, "appearance.fullscreen", out var full); fullscreenChoice = full;
         BindToggle(full, (p, value) => p with { ShowInFullscreen = value }); editors.Add(full);
-        var positionCard = Card(Pair(notchChoice, freeChoice), positionRow, Row(displayCaption, displayChoice), fullscreen);
+        // Each display can keep its own Island or Free Move place.
+        var perDisplay = Toggle("appearance.position_per_display", "windows.appearance.position_per_display_info", "appearance.position_per_display", out var perDisplaySwitch);
+        perDisplayChoice = perDisplaySwitch; BindToggle(perDisplaySwitch, (p, value) => p with { IslandPositionPerDisplay = value }); editors.Add(perDisplaySwitch);
+        var positionCard = Card(Pair(notchChoice, freeChoice), positionRow, Row(displayCaption, displayChoice), perDisplay, fullscreen);
         form.Children.Add(positionCard);
         deepseekPanelRow = Row(Label(ui.Text("main.appearance.deepseek_panel")), DeepSeekSegments("panel", new[] { ("simple", "deepseek.panel_style.simple"), ("detailed", "deepseek.panel_style.detailed") }, value => ChangeDeepSeek(p => p with { DeepSeekPanelStyle = value })));
         var apps = Toggle("settings.app_buttons", "main.info.app_buttons", "settings.app_buttons", out var appsSwitch); appButtons = appsSwitch;
@@ -135,6 +146,7 @@ internal sealed partial class SettingsWindow
         RefreshAppearanceTheme();
         RefreshDisplayChoices();
         if (fullscreenChoice != null) fullscreenChoice.IsChecked = session.Current.ShowInFullscreen;
+        if (perDisplayChoice != null) perDisplayChoice.IsChecked = session.Current.IslandPositionPerDisplay;
         foreach (var item in surfaceChoices) item.Value.IsChecked = item.Key == session.Current.IslandAppearance;
         // Windows has no camera housing to match, so every size is available.
         foreach (var item in barSizeChoices) item.Value.IsChecked = item.Key == session.Current.CompactBarSize;
@@ -186,6 +198,12 @@ internal sealed partial class SettingsWindow
                 && option.Mode == mode && (option.Mode != "specified" || option.Monitor == resolved.Display));
         }
         displayChoice.SelectedItem = selected;
+        if (positionDisplayName != null)
+        {
+            positionDisplayName.Text = topology.Count > 1 && resolved.Display is { } shown ? ui.Text("appearance.position_display").Replace("%@", shown.Name, StringComparison.Ordinal) : "";
+            positionDisplayName.Visibility = positionDisplayName.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+            System.Windows.Automation.AutomationProperties.SetName(positionDisplayName, positionDisplayName.Text);
+        }
         if (displayStatus != null)
         {
             displayStatus.Text = topology.Count == 0 ? ui.Text("windows.appearance.display_unavailable")

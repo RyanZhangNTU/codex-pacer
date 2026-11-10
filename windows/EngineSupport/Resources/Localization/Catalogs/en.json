@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "02e0ef805d04800cf03b732154d41b36cec77b7e70d5872555cdf79a833c794d",
-    "windows/EngineSupport/Resources/Localization/en.json": "23bd4e6629e9a665f4d03692b962b51b2a2f93a20fd1379517367849fa50b31b"
+    "windows/EngineSupport/Resources/Localization/en.json": "60fbb00b0cd35907aa861081a115ca792ee7d881a0b441e3cf7ab085494eb4d7"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -1175,6 +1175,7 @@
     "windows.appearance.display_fallback": "The selected display is disconnected. Using Main Display until it reconnects.",
     "windows.appearance.display_unavailable": "Windows could not read the displays. The island stays on the current screen.",
     "windows.appearance.fullscreen": "Show above fullscreen apps",
+    "windows.appearance.position_per_display_info": "Each display keeps its own Island or Free Move place. A display used for the first time starts where the island is now.",
     "windows.appearance.surface_available": "Glass follows Windows transparency effects. Black when collapsed in Notch mode.",
     "windows.appearance.surface_classic": "Solid Black surface.",
     "windows.appearance.surface_device_lost": "The graphics device was lost. Using Black. Your glass choice is saved; try again after the display recovers.",

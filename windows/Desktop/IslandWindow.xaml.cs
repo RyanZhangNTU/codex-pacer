@@ -296,7 +296,9 @@ public partial class IslandWindow : Window
         bool placementChanged = compactPreferences.IslandPlacement != preferences.IslandPlacement ||
             compactPreferences.Position != preferences.Position || compactPreferences.DisplayMode != preferences.DisplayMode;
         if (screenChanged || placementChanged) CancelMove();
+        bool memoryTurnedOn = preferences.IslandPositionPerDisplay && !compactPreferences.IslandPositionPerDisplay;
         compactPreferences = preferences;
+        RememberDisplayPlace(preferences);
         // Light Liquid Glass turns the whole island light before its surface changes.
         bool toneChanged = PacerPalette.ApplyTone(preferences.IslandAppearance == "liquidGlassLight");
         PreferSurface(preferences.IslandAppearance);
@@ -315,7 +317,8 @@ public partial class IslandWindow : Window
             if (latest != null) RenderQuota(latest);
         }
         UpdateAppButtons(); UpdateCompactBar();
-        if (screenChanged && PresentationSource.FromVisual(this) != null && screenGeometry == null) QueueDisplayRefresh(force: true);
+        // Turning the memory on records the current display's place.
+        if ((screenChanged || memoryTurnedOn) && PresentationSource.FromVisual(this) != null && screenGeometry == null) QueueDisplayRefresh(force: true);
         else Relayout(snap: placementChanged);
         ApplyFullscreenVisibility(); occlusion?.Request();
     }

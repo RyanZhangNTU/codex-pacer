@@ -61,6 +61,7 @@ internal static class DisplayWindowChecks
             finally { window.AllowClose = true; window.Close(); }
         }
         await CheckTopology(main);
+        await CheckPlacesPerDisplay(main);
         await CheckExpansionAnchor();
         File.WriteAllText(Path.Combine(output, "display-acceptance.json"), JsonSerializer.Serialize(new
         { syntheticOnly = true, physicalMonitorCount = native.Current.Count, fullscreen = "borderless", styles = measured, injectedTopology = true, windowsClosed = true }, new JsonSerializerOptions { WriteIndented = true }));
@@ -179,6 +180,49 @@ internal static class DisplayWindowChecks
         }
         finally { window.AllowClose = true; window.Close(); }
         Check(topology.Disposed, "Closing releases the display source");
+    }
+    // Each display keeps its own place: reaching one applies it, and a change belongs to the display shown.
+    private static async Task CheckPlacesPerDisplay(DisplayMonitor physical)
+    {
+        int middle = physical.Bounds.Left + (physical.Bounds.Right - physical.Bounds.Left) / 2;
+        ScreenRectangle Work(ScreenRectangle bounds) => new(Math.Max(bounds.Left, physical.Work.Left), Math.Max(bounds.Top, physical.Work.Top), Math.Min(bounds.Right, physical.Work.Right), Math.Min(bounds.Bottom, physical.Work.Bottom));
+        var lb = physical.Bounds with { Right = middle }; var rb = physical.Bounds with { Left = middle };
+        var left = new DisplayMonitor(physical.Handle, "qa-places-left", "QA Left", "QA1", lb, Work(lb), true);
+        var right = new DisplayMonitor(physical.Handle, "qa-places-right", "QA Right", "QA2", rb, Work(rb), false);
+        var topology = new MutableDisplayTopology(left, right);
+        await using var engine = new EngineClient();
+        var window = new IslandWindow(engine, true, false, animationOverride: false, displayTopologyFactory: () => topology) { IsHitTestVisible = false, ShowActivated = false };
+        IslandPlacement bottom = new(IslandEdge.Bottom, .3, 1), top = new(IslandEdge.Top, .7, 0);
+        var current = left.Choose(new() { IslandAppearance = "classic", DisplayMode = "floating", IslandPlacement = bottom });
+        // The app saves through its preferences session; here the edit applies at once.
+        window.SaveIslandPlacement = edit => { current = edit(current); window.ApplyPreferences(current); return Task.FromResult(PreferencesApplyResult.Applied); };
+        IslandPlacement? Saved(string display) => IslandScreenMemory.Load(current.IslandDisplayPlaces).TryGetValue(display, out var entry) ? entry.Place.Placement : null;
+        try
+        {
+            window.ApplyPreferences(current); window.Show();
+            await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
+            window.Reveal(); await window.WaitForPresentationAsync();
+            await Until(() => window.PlaceDisplayKey == left.DevicePath && Saved(left.DevicePath) == bottom, "Arriving records the first display's place");
+            Check(current.IslandPlacement == bottom, "A first display moves nothing");
+            current = right.Choose(current); window.ApplyPreferences(current);
+            await Until(() => window.PlaceDisplayKey == right.DevicePath && Saved(right.DevicePath) == bottom, "Reaching another display makes it current");
+            Check(current.IslandPlacement == bottom, "A display used for the first time keeps the current place");
+            current = current with { IslandPlacement = top }; window.ApplyPreferences(current);
+            await Until(() => Saved(right.DevicePath) == top && Saved(left.DevicePath) == bottom, "A change is recorded for the display shown only");
+            current = left.Choose(current); window.ApplyPreferences(current);
+            await Until(() => current.IslandPlacement == bottom, "Returning restores the first display's own place");
+            await window.WaitForPresentationAsync();
+            Check(Math.Abs(window.VisibleScreenBounds.Bottom - left.Work.Bottom) <= 2, "The island shows at the restored place");
+            current = right.Choose(current); window.ApplyPreferences(current);
+            await Until(() => current.IslandPlacement == top, "The other display's place comes back");
+            // Off, every display shares one place and the records stay for later.
+            current = current with { IslandPositionPerDisplay = false }; window.ApplyPreferences(current);
+            current = left.Choose(current); window.ApplyPreferences(current);
+            await window.WaitForPresentationAsync(); await Task.Delay(300);
+            Check(current.IslandPlacement == top && window.PlaceDisplayKey == null && IslandScreenMemory.Load(current.IslandDisplayPlaces).Count == 2,
+                "Turned off, the displays share one place and keep their records");
+        }
+        finally { window.AllowClose = true; window.Close(); }
     }
     private static IntPtr[] Surfaces(IslandWindow window) => [new WindowInteropHelper(window).Handle, window.BackdropWindowHandle,
         ((ActivityBadge)window.FindName("Badge")).RotationScheduling.Window, ((ActivityBadge)window.FindName("StripBadge")).RotationScheduling.Window];

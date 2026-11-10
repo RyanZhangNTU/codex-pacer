@@ -33,6 +33,9 @@ internal sealed record DesktopPreferences
     public string DisplayName { get; init; } = "";
     public int DisplayX { get; init; }
     public int DisplayY { get; init; }
+    // Each display keeps its own place while this is on; IslandScreenMemory's JSON holds them.
+    public bool IslandPositionPerDisplay { get; init; } = true;
+    public string? IslandDisplayPlaces { get; init; }
     public bool ShowInFullscreen { get; init; }
     public string IslandAppearance { get; init; } = "liquidGlass";
     public string ExpandedQuotaStyle { get; init; } = "split";
@@ -101,6 +104,7 @@ internal sealed record DesktopPreferences
         && ExpandedQuotaStyle is "split" or "classic"
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)
         && (CompactComponentOptions == null || Encoding.UTF8.GetByteCount(CompactComponentOptions) <= CompactChoices.ByteLimit)
+        && (IslandDisplayPlaces == null || Encoding.UTF8.GetByteCount(IslandDisplayPlaces) <= IslandScreenMemory.ByteLimit)
         && BarSizes.Contains(CompactBarSize)
         && CompactSingleTask is "stage" or "count" or "percent" && CompactMetric is "remaining" or "pace"
         && ValidWindow(CodexQuotaWindow) && ValidWindow(ClaudeQuotaWindow)

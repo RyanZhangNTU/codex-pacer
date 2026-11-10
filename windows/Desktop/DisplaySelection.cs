@@ -37,6 +37,18 @@ internal static class DisplaySelection
             && value.Bounds.Left == preference.DisplayX && value.Bounds.Top == preference.DisplayY).ToArray();
         return fallback.Length == 1 ? new(fallback[0], false) : new(primary, true);
     }
+    /// A display's key in the per-display memory: its device interface path,
+    /// which stays the same across restarts; displays that report the same one
+    /// are told apart by their order from the left.
+    internal static string PlaceKey(DisplayMonitor display, IReadOnlyList<DisplayMonitor> all)
+    {
+        static string Base(DisplayMonitor value) => value.DevicePath.Length > 0 ? value.DevicePath : value.DeviceName;
+        string key = Base(display);
+        var twins = all.Where(value => string.Equals(Base(value), key, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(value => value.Bounds.Left).ThenBy(value => value.Bounds.Top).ToList();
+        int index = twins.IndexOf(display);
+        return twins.Count > 1 && index > 0 ? key + "#" + index : key;
+    }
 }
 
 internal interface IDisplayTopologySource : IDisposable
