@@ -237,6 +237,7 @@ actor EngineRuntime {
     private var wslQuota: [String: SourceQuotaState] = [:]
     private var remoteControlHostIDs: Set<String> = []
     private var remoteControlScope: String?
+    private var durableAccountScope: String?
     private var desktopBinding = UUID()
     private var desktopConfiguration: String?
     private var showEmbeddedClaudeSessions = true
@@ -586,6 +587,7 @@ actor EngineRuntime {
                 input.cachedHost = hostTracking.application(for: target, activities: activities, inbox: inbox)
                 input.remoteTarget = (target.provider == .claude ? claudeRemoteTargets : codexRemoteTargets).first { $0.id == target.sourceHostID }
                 input.remoteControlHosts = allowedRemoteControlHosts
+                input.allowsDurable = allowsRemoteSource(DurableActivityCatalog.hostID, provider: target.provider)
                 input.wslProfile = target.sourceHostID.flatMap { wslServices?.registry.profile(id: $0, provider: target.provider) }
                 if let profile = input.wslProfile, let services = wslServices,
                    !(await services.validate(profile, provider: target.provider)) { throw ActivityNavigationError.unavailable }
@@ -1176,7 +1178,7 @@ actor EngineRuntime {
 
     private static func configureCodexReporter(home: URL, executable: String, enabled: Bool, paths: WindowsCodexProgressPaths,
                                               gate: CodexProgressSwitchGate? = nil, request: Int = 0) async -> CodexProgressSetupStatus? {
-        guard enabled || CodexProgressSetup.wasConfigured(in: home) else { return nil }
+        guard enabled || CodexProgressSetup.wasConfigured(in: home) || WindowsDurableProgressSetup.wasConfigured(in: home) else { return nil }
         let reporter: CodexProgressCommand?
         if enabled {
             let engine = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
@@ -1190,12 +1192,20 @@ actor EngineRuntime {
                   paths.owns(command, home: home) else { return .failed }
             reporter = command
         } else { reporter = nil }
-        return await CodexProgressSetup.apply(home: home, reporter: reporter, storage: WindowsLocalProfileStorage(),
+        let status = await CodexProgressSetup.apply(home: home, reporter: reporter, storage: WindowsLocalProfileStorage(),
                                               gate: gate, request: request, owns: {
             paths.owns($0, home: home) || $0.isNative(named: "PacerEngine.exe", home: home)
         }) {
             CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 3) }
         }
+        if !enabled || status == .ready {
+            // The Dot plugin is best effort: a failed install leaves local
+            // sessions reporting and is retried by the next setup. Removal
+            // still reports failure so the switch can retry the cleanup.
+            let durable = await WindowsDurableProgressSetup.apply(home: home, reporter: reporter, fallbackExecutable: executable)
+            if !enabled, !durable { return .failed }
+        }
+        return status
     }
     /// Only an engine that manages the hooks writes the switch; demo and
     /// read-only diagnostics never touch the Claude home. It removes only a
@@ -1388,7 +1398,7 @@ actor EngineRuntime {
         loggedSources.removeAll { $0.provider == provider.rawValue }
         switch provider {
         case .codex:
-            desktopBinding = UUID(); remoteControlHostIDs = []; remoteControlScope = nil
+            desktopBinding = UUID(); remoteControlHostIDs = []; remoteControlScope = nil; durableAccountScope = nil
             bindCodexCompletionSources()
             desktopState = nil; pendingDesktopEndings = [:]
             codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
@@ -1544,7 +1554,8 @@ actor EngineRuntime {
     private func bindCodexCompletionSources() {
         inbox.bindSourceHomes(provider: .codex, localHome: codexHome,
             remoteHomes: remoteCompletionHomes(.codex),
-            remoteControlHostIDs: monitorRemoteControl ? remoteControlHostIDs : [], remoteControlAccountScope: remoteControlScope)
+            remoteControlHostIDs: monitorRemoteControl ? remoteControlHostIDs : [], remoteControlAccountScope: remoteControlScope,
+            durableAccountScope: durableAccountScope)
     }
     private func wslCompletionHomes(_ provider: AgentProvider) -> [String: String] {
         guard monitorWSL, let state = wslServices?.registry.snapshot() else { return [:] }
@@ -1623,7 +1634,8 @@ actor EngineRuntime {
         guard !demo, enabled.contains(.codex) else {
             ownedWork.cancel(key); desktopBinding = UUID()
             desktopConfiguration = nil
-            desktopState = nil; await desktopMonitor?.shutdown(); return
+            desktopState = nil; durableAccountScope = nil; bindCodexCompletionSources()
+            await desktopMonitor?.shutdown(); return
         }
         let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorRemoteControl)|\(monitorWSL)|\(monitorSSH)"
         let replace = configuration != desktopConfiguration
@@ -1641,7 +1653,8 @@ actor EngineRuntime {
                     await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
                         attention: value.attention, attentionThreads: value.attentionThreads, names: value.names,
                         performance: value.performance, status: value.localDesktopStatus, statuses: value.statuses,
-                        bindings: value.bindings, unavailable: value.unavailableSources), binding: binding)
+                        bindings: value.bindings, durableAccountScope: value.durableAccountScope,
+                        unavailable: value.unavailableSources), binding: binding)
                 }
         }
         // Local transport fixtures need no directory request. Production owns
@@ -1658,6 +1671,11 @@ actor EngineRuntime {
 
     private func receiveDesktop(_ state: CodexDesktopState, binding: UUID) {
         guard active, desktopBinding == binding, state.context == lifecycle.version(.codex), enabled.contains(.codex), !demo else { return }
+        if durableAccountScope != state.durableAccountScope {
+            durableAccountScope = state.durableAccountScope
+            pendingDesktopEndings = pendingDesktopEndings.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID }
+            activityState.clearFirstOutput()
+        }
         if monitorRemoteControl {
             let bindings = state.bindings
             if remoteControlScope != bindings.accountScope {
@@ -1673,6 +1691,7 @@ actor EngineRuntime {
             attention: state.attention.filter { allowsRemoteSource($0.sourceHostID, provider: .codex) }, attentionThreads: state.attentionThreads,
             names: state.names, performance: state.performance, status: state.status,
             statuses: state.statuses.filter { $0.key == "local" || allowsRemoteSource($0.key, provider: .codex) }, bindings: state.bindings,
+            durableAccountScope: durableAccountScope,
             unavailable: state.unavailable.filter { allowsRemoteSource($0, provider: .codex) })
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
         if projectionReady { projectCollected(at: now()) }
@@ -1684,6 +1703,7 @@ actor EngineRuntime {
     }
     private func allowsRemoteSource(_ source: String?, provider: AgentProvider) -> Bool {
         guard let source else { return true }
+        if source == DurableActivityCatalog.hostID { return provider == .codex && durableAccountScope != nil }
         if source.hasPrefix(ConnectionSource.wslPrefix) { return monitorWSL && wslServices?.registry.profile(id: source, provider: provider) != nil }
         if source.hasPrefix(ConnectionSource.controlPrefix) { return provider == .codex && monitorRemoteControl && remoteControlHostIDs.contains(source) }
         if source == ClaudeCloudProjectState.sourceID { return provider == .claude && showClaudeCloudProjects }
@@ -2128,6 +2148,9 @@ actor EngineRuntime {
                 if demo { return true }
                 if activity.claudeCloud != nil { return activity.threadURL != nil }
                 if let host = activity.sourceHostID {
+                    if host == DurableActivityCatalog.hostID {
+                        return allowsRemoteSource(host, provider: activity.provider) && activity.threadURL != nil
+                    }
                     if monitorWSL, wslServices?.registry.profile(id: host, provider: activity.provider) != nil { return true }
                     if host.hasPrefix(ConnectionSource.sshPrefix) { return allowsRemoteSource(host, provider: activity.provider) && activity.threadID.flatMap(UUID.init(uuidString:)) != nil }
                     return activity.provider == .codex && allowedRemoteControlHosts.contains(host) && activity.threadURL != nil
@@ -2346,7 +2369,12 @@ actor EngineRuntime {
         let home = provider == .codex ? codexHome : provider == .claude ? claudeHome : deepseekHome
         var fields = ["notification-source-v1", provider.rawValue, home.standardizedFileURL.resolvingSymlinksInPath().path]
         switch provider {
-        case .codex: fields.append(codexExecutable)
+        case .codex:
+            fields.append(codexExecutable)
+            if scope == DurableActivityCatalog.hostID {
+                guard let durableAccountScope else { return nil }
+                fields.append(durableAccountScope)
+            }
         case .claude:
             fields.append(claudeOrganization)
             if scope == "cloud" {
@@ -2375,7 +2403,8 @@ actor EngineRuntime {
         let deepseek = notice.category?.hasPrefix("deepseek.") == true || notice.id.hasPrefix("deepseek:") ||
             notificationActivities.contains { $0.provider == .deepseek && (requested == $0.id || notice.id.hasPrefix($0.id + ":")) }
         let provider = entry?.target.provider ?? (deepseek ? .deepseek : notice.id.hasPrefix("claude:") ? .claude : .codex)
-        let scope = entry?.target.claudeCloud != nil ? "cloud" : deepseek ? "wallet" : notice.kind == .lowQuota ? "quota" : "local"
+        let scope = entry?.target.sourceHostID == DurableActivityCatalog.hostID ? DurableActivityCatalog.hostID
+            : entry?.target.claudeCloud != nil ? "cloud" : deepseek ? "wallet" : notice.kind == .lowQuota ? "quota" : "local"
         guard let source = notificationSource(provider, scope: scope) else { value.actions = []; return value }
         let target = entry.map(EngineNotificationRegistry.target)
         let kind = target != nil ? "openTask" : deepseek && notice.kind != .lowQuota ? "openHarness" : "showIsland"
@@ -2397,6 +2426,9 @@ actor EngineRuntime {
     private func navigationIsCurrent(_ entry: ActivityNavigationRegistry.Entry) -> Bool {
         let sourceIsCurrent: Bool
         if entry.target.claudeCloud != nil || entry.target.sourceHostID == nil { sourceIsCurrent = true }
+        else if entry.target.sourceHostID == DurableActivityCatalog.hostID {
+            sourceIsCurrent = allowsRemoteSource(DurableActivityCatalog.hostID, provider: entry.target.provider)
+        }
         else if let source = entry.target.sourceHostID, source.hasPrefix(ConnectionSource.controlPrefix) {
             sourceIsCurrent = entry.target.provider == .codex && allowedRemoteControlHosts.contains(source)
         } else if let source = entry.target.sourceHostID, source.hasPrefix(ConnectionSource.wslPrefix) {

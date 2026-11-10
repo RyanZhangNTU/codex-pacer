@@ -120,6 +120,10 @@ struct DesktopWireProjection {
     }
     func isOwned(by client: String) -> Bool { owner == client }
     var currentTurnID: String? { previousTurn?["turnId"]?.text }
+    var currentTurnStartedAt: Date? {
+        guard let milliseconds = previousTurn?["turnStartedAtMs"]?.number, milliseconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: milliseconds / 1000)
+    }
     var retainedItemCount: Int {
         func count(_ value: DesktopValue) -> Int {
             switch value {

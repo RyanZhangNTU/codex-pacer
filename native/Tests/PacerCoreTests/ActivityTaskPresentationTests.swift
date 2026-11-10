@@ -105,8 +105,9 @@ final class ActivityTaskPresentationTests: XCTestCase {
         XCTAssertTrue(presentation.rows.allSatisfy { $0.title == L10n.text("activity.hidden_name") })
         XCTAssertTrue(presentation.rows.allSatisfy { $0.source == L10n.text("connections.kind.claude_cloud") })
         XCTAssertTrue(presentation.rows.allSatisfy { $0.sourceKind == "cloud" })
-        let remote = DemoScenario.tasks(stage: .tool, at: now)[1]
-        XCTAssertEqual(ActivityTaskRowPresentation.sourceName(remote, options: .init()), remote.sourceHost)
+        let codex = DemoScenario.tasks(stage: .tool, at: now)
+        XCTAssertNil(ActivityTaskRowPresentation.sourceName(codex[0], options: .init()))
+        XCTAssertEqual(ActivityTaskRowPresentation.sourceName(codex[1], options: .init()), codex[1].sourceHost)
     }
 
     func testPaginationAndReadOnlyEndingDoNotChangeOtherRows() throws {

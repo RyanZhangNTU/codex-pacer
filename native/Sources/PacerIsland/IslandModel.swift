@@ -407,7 +407,7 @@ final class IslandModel: ObservableObject {
     private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool,
                                                            gate: CodexProgressSwitchGate? = nil, request: Int = 0) async -> CodexProgressSetupStatus? {
         let command: CodexProgressCommand? = enabled ? .native(executable: reporter, home: home) : nil
-        return await CodexProgressSetup.apply(home: home, reporter: command, storage: MacClaudeHookStorage(),
+        let status = await CodexProgressSetup.apply(home: home, reporter: command, storage: MacClaudeHookStorage(),
                                               gate: gate, request: request, owns: {
             $0.isNative(named: reporter.lastPathComponent, home: home)
         }) {
@@ -415,6 +415,13 @@ final class IslandModel: ObservableObject {
             // allows a cold start as long as the realtime collector does.
             CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 8) }
         }
+        if !enabled || status == .ready {
+            // The Dot plugin is best effort: a failed install leaves local
+            // sessions reporting and is retried by the next setup.
+            _ = await MacDurableProgressSetup.apply(home: home, reporter: enabled ? reporter : nil,
+                                                    customExecutable: executable)
+        }
+        return status
     }
     private var progressRingProviders: Set<AgentProvider> {
         var providers: Set<AgentProvider> = []
@@ -727,6 +734,7 @@ final class IslandModel: ObservableObject {
     private let realtimeMonitor = RealtimeActivityMonitor()
     private var remoteTask: Task<Void, Never>? { ownedWork.task(.init(.remote, provider: .codex)) }
     private var remoteControlHostIDs: Set<String>?
+    private var durableAccountScope: String?
     private var lastRemoteDiscovery = Date.distantPast
     private let historyStore: QuotaHistoryStore
     private let claudeHistoryStore: QuotaHistoryStore
@@ -1666,13 +1674,14 @@ final class IslandModel: ObservableObject {
         launchOwnedWork(.init(.remote, provider: .codex)) { [weak self] workTicket in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.ownedWork.finish(workTicket) } }
-            await self.realtimeMonitor.start(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl, refreshPolicy: self.activityRefreshPolicy) { [weak self] activities, statuses, unavailable, requests, names, performance, controls in
+            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl, refreshPolicy: self.activityRefreshPolicy) { [weak self] snapshot in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
-                    self.receiveRemoteUpdate(activities, statuses: statuses, unavailable: unavailable, requests: requests, names: names, performance: performance,
-                        remoteControlBindings: controls)
+                    self.receiveRemoteUpdate(snapshot.activities, statuses: snapshot.statuses, unavailable: snapshot.unavailable,
+                        requests: snapshot.attention, names: snapshot.names, performance: snapshot.performance,
+                        remoteControlBindings: snapshot.bindings, durableAccountScope: snapshot.durableAccountScope)
                 }
             }
             // A hover/collapse can occur while start is awaiting the monitor.
@@ -1682,7 +1691,11 @@ final class IslandModel: ObservableObject {
 
     func receiveRemoteUpdate(_ activities: [SessionActivity], statuses: [String: RuntimeStreamStatus],
                              unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = [],
-                             remoteControlBindings: RemoteControlSourceBindings? = nil) {
+                             remoteControlBindings: RemoteControlSourceBindings? = nil, durableAccountScope: String? = nil) {
+        if self.durableAccountScope != durableAccountScope {
+            self.durableAccountScope = durableAccountScope
+            bindCompletionSources(.codex)
+        }
         if let bindings = remoteControlBindings {
             let previous = remoteControlHostIDs ?? Set(RemoteControlActivityTarget.configured(home: home).map(\.id))
             let hosts = bindings.authoritative ? bindings.hostIDs : previous.union(bindings.hostIDs)
@@ -1779,6 +1792,7 @@ final class IslandModel: ObservableObject {
         quotaCLI = nil; attention = AttentionPolicy()
         completionInbox.remove(provider: .codex)
         remoteControlHostIDs = nil
+        durableAccountScope = nil
         bindCompletionSources(.codex)
         codexAttentionRequests = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         activities.removeAll { $0.provider == .codex }
@@ -1851,7 +1865,8 @@ final class IslandModel: ObservableObject {
         let controls = provider == .codex && isModuleEnabled(.codex) && monitorsRemoteControl
             ? remoteControlHostIDs ?? Set(RemoteControlActivityTarget.configured(home: home).map(\.id)) : []
         completionInbox.bindSourceHomes(provider: provider, localHome: provider == .codex ? home : claudeHome,
-            remoteHomes: remoteHomes, remoteControlHostIDs: controls)
+            remoteHomes: remoteHomes, remoteControlHostIDs: controls,
+            durableAccountScope: provider == .codex ? durableAccountScope : nil)
     }
 
     func shutdown() async {

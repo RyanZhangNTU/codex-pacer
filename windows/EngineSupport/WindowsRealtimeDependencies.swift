@@ -13,12 +13,15 @@ struct CodexDesktopServices: Sendable {
     let catalog: RemoteControlCatalog?
     let routed: RoutedConnection?
     let setExecutable: @Sendable (String) -> Void
-    init(makeConnection: @escaping Connection) {
+    let supportsDurable: Bool
+    init(makeConnection: @escaping Connection, supportsDurable: Bool = false) {
         self.makeConnection = makeConnection; catalog = nil; routed = nil; setExecutable = { _ in }
+        self.supportsDurable = supportsDurable
     }
     init(makeConnection: @escaping Connection, catalog: RemoteControlCatalog, routed: @escaping RoutedConnection,
-         setExecutable: @escaping @Sendable (String) -> Void = { _ in }) {
+         setExecutable: @escaping @Sendable (String) -> Void = { _ in }, supportsDurable: Bool = false) {
         self.makeConnection = makeConnection; self.catalog = catalog; self.routed = routed; self.setExecutable = setExecutable
+        self.supportsDurable = supportsDurable
     }
     func authorization(home: URL) -> RemoteControlAuthorizationSnapshot? { catalog?.authorization.snapshot(home: home) }
     static var platformLive: Self? {
@@ -33,7 +36,7 @@ struct CodexDesktopServices: Sendable {
         }, catalog: catalog, routed: { home, hosts, local, interval, frame, closed in
             WindowsDesktopCollector(home: home, interval: interval, hosts: hosts, localRuntime: local,
                 authorization: { catalog.authorization.snapshot(home: home) }, onFrame: frame, onClosed: closed)
-        }, setExecutable: { path.set($0) })
+        }, setExecutable: { path.set($0) }, supportsDurable: true)
         #else
         return nil
         #endif
@@ -57,7 +60,7 @@ struct CodexDesktopServices: Sendable {
                 return makeConnection(home, interval, frame, closed)
             }, processes: wsl?.launcher(base: base) ?? base, python: WindowsExecutables.python, ssh: ssh?.ssh ?? WindowsExecutables.ssh,
             sshTargets: targets, sshArguments: arguments,
-            remoteControlAuthorization: authorization),
+            remoteControlAuthorization: authorization, supportsDurable: supportsDurable),
             retryInterval: retryInterval)
     }
     private final class ExecutablePath: @unchecked Sendable {
@@ -76,6 +79,7 @@ struct CodexDesktopState: Sendable {
     let status: RuntimeStreamStatus
     var statuses: [String: RuntimeStreamStatus] = [:]
     var bindings = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
+    var durableAccountScope: String?
     /// Failed sources without a stream status, such as an exited SSH helper.
     var unavailable: [String] = []
     var remoteStatuses: [String: RuntimeStreamStatus] { statuses.filter { $0.key != "local" } }

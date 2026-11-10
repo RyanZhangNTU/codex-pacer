@@ -29,7 +29,7 @@ extension RealtimeActivityMonitor {
             makeDesktop: { home, hosts, local, interval, frame, closed in
                 MacDesktopActivityChannel(home: home, hosts: hosts, localRuntime: local, interval: interval, frame: frame, closed: closed)
             }, processes: MacHelperProcessLauncher(), python: URL(fileURLWithPath: "/usr/bin/python3"),
-            ssh: URL(fileURLWithPath: "/usr/bin/ssh"), diagnostics: RuntimeDiagnostics.observer))
+            ssh: URL(fileURLWithPath: "/usr/bin/ssh"), diagnostics: RuntimeDiagnostics.observer, supportsDurable: true))
     }
     public static func localEndpointAvailable(home: URL) -> Bool {
         controlEndpointAvailable(home: home) || desktopEndpointAvailable(home: home)

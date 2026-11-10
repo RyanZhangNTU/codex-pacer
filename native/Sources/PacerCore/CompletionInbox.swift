@@ -53,7 +53,8 @@ public struct CompletionInbox: Sendable {
 
     /// Rebinding only changes lookup scope; it never deletes another profile's acknowledgments.
     public mutating func bindSourceHomes(provider: AgentProvider, localHome: URL, remoteHomes: [String: String] = [:],
-                                         remoteControlHostIDs: Set<String> = [], remoteControlAccountScope: String? = nil) {
+                                         remoteControlHostIDs: Set<String> = [], remoteControlAccountScope: String? = nil,
+                                         durableAccountScope: String? = nil) {
         let local = localHome.standardizedFileURL.resolvingSymlinksInPath().path
         let localHash = CompletionDismissalStore.digest(["source-home-v1", provider.rawValue, local])
         var namespaces = ["local": localHash]
@@ -61,6 +62,10 @@ public struct CompletionInbox: Sendable {
             namespaces[host] = CompletionDismissalStore.digest(["source-home-v1", provider.rawValue, localHash, host, remoteHome])
         }
         if provider == .codex {
+            if let durableAccountScope {
+                namespaces[DurableActivityCatalog.hostID] = CompletionDismissalStore.digest(
+                    ["source-home-v1", provider.rawValue, localHash, DurableActivityCatalog.hostID, durableAccountScope])
+            }
             for host in remoteControlHostIDs where host.range(of: #"^remote-control:[A-Za-z0-9_-]{1,128}\z"#, options: .regularExpression) != nil {
                 // Remote Control has an owner route, not an observed remote configuration directory.
                 var fields = ["source-home-v1", provider.rawValue, localHash, "remote-control", host]

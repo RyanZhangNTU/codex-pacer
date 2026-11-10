@@ -1,5 +1,8 @@
 import Foundation
 import CryptoKit
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public enum CodexClientError: Error, LocalizedError {
     case missingExecutable, disconnected, invalidResponse, accountMismatch, notLoggedIn
@@ -229,6 +232,88 @@ public actor CodexClient {
         _ = try await request("config/batchWrite", params: ["edits": [edit], "filePath": path.path, "expectedVersion": version])
         return .ready
     }
+
+    /// Configure only the marketplace that points at Pacer's owned source.
+    package func setDurableProgressPlugin(market: String, plugin: String, source: URL,
+                                          enabled: Bool, cachedManifestMatches: Bool, checkOnly: Bool = false,
+                                          pathsMatch: ((String, URL) -> Bool)? = nil) async throws -> Bool {
+        try await prepareReadConnection()
+        let id = plugin + "@" + market
+        let manifest = source.appendingPathComponent(".agents/plugins/marketplace.json")
+        let configPath = home.appendingPathComponent("config.toml")
+        func matches(_ actual: String?, _ expected: URL) -> Bool {
+            guard let actual else { return false }
+            return pathsMatch?(actual, expected) ?? Self.samePath(actual, expected)
+        }
+        let bytes = try await request("config/read", params: ["includeLayers": true])
+        let fields = try JSONFieldView.document(bytes).fields(["layers"])
+        guard let layers = fields["layers"], layers.isArray else { throw CodexClientError.invalidResponse }
+        var foundUser = false, owned = false, configured = false
+        for layer in try layers.elements(maximumCount: 32) {
+            let fields = try layer.fields(["name", "config", "disabledReason"])
+            if fields["disabledReason"]?.string() != nil { continue }
+            let name = try fields["name"]?.fields(["type", "file"])
+            let config = try fields["config"]?.fields(["marketplaces", "plugins"])
+            let marketEntry = try config?["marketplaces"]?.fields([market])[market]
+            let pluginEntry = try config?["plugins"]?.fields([id])[id]
+            let user = name?["type"]?.string() == "user" && matches(name?["file"]?.string(limit: 4096), configPath)
+            if !user {
+                guard marketEntry == nil, pluginEntry == nil else { throw CodexClientError.invalidResponse }
+                continue
+            }
+            foundUser = true
+            if let marketEntry {
+                let entry = try marketEntry.fields(["source_type", "source"])
+                guard entry["source_type"]?.string() == "local",
+                      matches(entry["source"]?.string(limit: 4096), source) else { throw CodexClientError.invalidResponse }
+                owned = true
+            }
+            configured = pluginEntry != nil
+        }
+        guard foundUser, !configured || owned else { throw CodexClientError.invalidResponse }
+        if checkOnly { return false }
+        if !enabled {
+            guard owned else { return false }
+            if configured { _ = try await request("plugin/uninstall", params: ["pluginId": id]) }
+            _ = try await request("marketplace/remove", params: ["marketplaceName": market])
+            return true
+        }
+        if !owned {
+            let added = try await request("marketplace/add", params: ["source": source.path])
+            let reply = try JSONFieldView.document(added).fields(["marketplaceName", "installedRoot"])
+            guard reply["marketplaceName"]?.string() == market,
+                  matches(reply["installedRoot"]?.string(limit: 4096), source) else { throw CodexClientError.invalidResponse }
+        }
+        if configured {
+            if cachedManifestMatches, try await durablePluginIsEnabled(id: id, market: market, manifest: manifest, pathsMatch: matches) { return false }
+            _ = try await request("plugin/uninstall", params: ["pluginId": id])
+        }
+        _ = try await request("plugin/install", params: ["pluginName": plugin, "marketplacePath": manifest.path])
+        guard try await durablePluginIsEnabled(id: id, market: market, manifest: manifest, pathsMatch: matches) else { throw CodexClientError.invalidResponse }
+        return true
+    }
+
+    private static func samePath(_ actual: String?, _ expected: URL) -> Bool {
+        guard let actual, actual.hasPrefix("/") else { return false }
+        return URL(fileURLWithPath: actual).standardizedFileURL.resolvingSymlinksInPath().path ==
+            expected.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    private func durablePluginIsEnabled(id: String, market: String, manifest: URL, pathsMatch: (String?, URL) -> Bool) async throws -> Bool {
+        let bytes = try await request("plugin/installed", params: [:])
+        let fields = try JSONFieldView.document(bytes).fields(["marketplaces"])
+        guard let values = fields["marketplaces"], values.isArray else { throw CodexClientError.invalidResponse }
+        for value in try values.elements(maximumCount: 128) {
+            let row = try value.fields(["name", "path", "plugins"])
+            guard row["name"]?.string() == market, pathsMatch(row["path"]?.string(limit: 4096), manifest),
+                  let plugins = row["plugins"], plugins.isArray else { continue }
+            for value in try plugins.elements(maximumCount: 512) {
+                let plugin = try value.fields(["id", "installed", "enabled"])
+                if plugin["id"]?.string() == id { return plugin["installed"]?.boolean() == true && plugin["enabled"]?.boolean() == true }
+            }
+        }
+        return false
+    }
     /// Short-lived authorization for the paired-device metadata GET only.
     /// No authentication material is cached by the catalog or exposed to UI.
     func remoteControlCatalogAuthorization() async throws -> RemoteControlCatalogAuthorization {
@@ -239,7 +324,21 @@ public actor CodexClient {
             return try RemoteControlCatalogAuthorization(account: account, auth: auth)
         } catch { disconnect(); throw error }
     }
-    static func authenticationFingerprint(home: URL, files: any PlatformFileSystem) -> String? {
+
+    /// Reuse the Desktop profile's current login for the first-party Durable
+    /// catalog. The bearer travels only in the TLS WebSocket handshake.
+    package func durableCatalogCredentials() async throws -> (request: URLRequest, scope: String) {
+        let auth = try await remoteControlCatalogAuthorization()
+        guard auth.backendOrigin.host == "chatgpt.com", !auth.isFedRAMP else { throw CodexClientError.invalidResponse }
+        var request = URLRequest(url: URL(string: "wss://codex-cloud-backend.chatgpt.com/")!, timeoutInterval: 8)
+        request.setValue("codex-app-server, codex-client.desktop, openai-bearer." + auth.token,
+                         forHTTPHeaderField: "Sec-WebSocket-Protocol")
+        request.setValue("codex", forHTTPHeaderField: "X-OpenAI-Product-Sku")
+        request.setValue(auth.accountID, forHTTPHeaderField: "ChatGPT-Account-Id")
+        let scope = CompletionDismissalStore.digest(["durable-account-v1", auth.accountID, auth.accountUserIDs[0]])
+        return (request, scope)
+    }
+    package static func authenticationFingerprint(home: URL, files: any PlatformFileSystem) -> String? {
         guard let metadata = files.metadata(home.appendingPathComponent("auth.json")) else { return nil }
         return "\(metadata.identity)|\(metadata.modified.timeIntervalSince1970)|\(metadata.size)"
     }

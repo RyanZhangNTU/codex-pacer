@@ -39,6 +39,11 @@ enum WindowsActivityNavigation {
             return .init(context: input.context, provider: provider, url: url)
         }
         guard let session = activity.threadID, UUID(uuidString: session) != nil else { throw ActivityNavigationError.unavailable }
+        if activity.sourceHostID == DurableActivityCatalog.hostID {
+            guard provider == .codex, input.allowsDurable, isDefaultProfile(input.home, provider: provider, userHome: userHome),
+                  let url = activity.threadURL else { throw ActivityNavigationError.unavailable }
+            return .init(context: input.context, provider: provider, url: url)
+        }
         if let source = activity.sourceHostID {
             guard let target = input.remoteTarget, target.id == source,
                   let token = WindowsSSHResume(provider: provider, session: session, target: target).token else { throw ActivityNavigationError.unavailable }
