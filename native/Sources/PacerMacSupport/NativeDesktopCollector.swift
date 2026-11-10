@@ -17,6 +17,8 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     private var removedHosts: Set<String> = []
     private var durableCatalog: DurableActivityCatalog?
     private var durableChanged = false
+    private var durableHistory: (scope: String, turns: [DurableTurnHistory])?
+    private var ipcObservations: [String: Date] = [:]
     private var peer: pid_t?
     private let localRuntime: Bool
     private var batchInterval: TimeInterval
@@ -45,17 +47,34 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     func setDurableCatalog(_ value: DurableActivityCatalog?) {
         lock.lock(); defer { lock.unlock() }
         guard !cancelled, value != nil || durableCatalog != nil else { return }
+        if durableCatalog?.scope != value?.scope { durableHistory = nil; ipcObservations.removeAll() }
         durableCatalog = value; durableChanged = true
         if eventQueue >= 0 {
             var trigger = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
             _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
         }
     }
-    private func batchUpdate() -> (interval: TimeInterval, flush: Bool, hosts: Set<String>?, resetHosts: Set<String>, durable: DurableActivityCatalog??) {
+    func setDurableHistory(scope: String, turns: [DurableTurnHistory]) {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled, durableCatalog?.scope == scope, !turns.isEmpty else { return }
+        durableHistory = (scope, turns)
+        if eventQueue >= 0 {
+            var trigger = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
+            _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
+        }
+    }
+    var durableIPCObservations: [String: Date] { lock.lock(); defer { lock.unlock() }; return ipcObservations }
+    private func updateDurableIPCObservations(_ values: [String: Date]) {
+        lock.lock(); defer { lock.unlock() }
+        if !durableChanged, durableCatalog != nil { ipcObservations = values }
+    }
+    private func batchUpdate() -> (interval: TimeInterval, flush: Bool, hosts: Set<String>?, resetHosts: Set<String>,
+                                   durable: DurableActivityCatalog??, history: (scope: String, turns: [DurableTurnHistory])?) {
         lock.lock(); defer { lock.unlock() }
         let update: DurableActivityCatalog?? = durableChanged ? .some(durableCatalog) : nil
-        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts, update)
+        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts, update, durableHistory)
         flushRequested = false; hostsChanged = false; removedHosts.removeAll(); durableChanged = false
+        durableHistory = nil
         return result
     }
     private let onFrame: @Sendable (Data) -> Void
@@ -201,6 +220,7 @@ public final class NativeDesktopCollector: @unchecked Sendable {
                         routing = DesktopRouteHints(files: MacFileSystem(), owned: Self.owned); routingDirty = true
                     }
                     if let catalog = batch.durable { try session.setDurableCatalog(catalog, at: now) }
+                    if let history = batch.history { try session.observeDurableHistory(history.turns, scope: history.scope, at: now) }
                     try session.setBatchInterval(batch.interval, at: now)
                     var discovered: [NativeDesktopSession.Key] = []
                     if routingDirty && now >= nextRoutingRead {
@@ -209,6 +229,7 @@ public final class NativeDesktopCollector: @unchecked Sendable {
                         routingDirty = false; nextRoutingRead = now.addingTimeInterval(0.25)
                     }
                     try session.service(at: now, discovering: discovered, flushPending: batch.flush)
+                    if session.hosts.contains(DurableActivityCatalog.hostID) { updateDurableIPCObservations(session.durableIPCObservations) }
                     for frame in session.takeFrames() { onFrame(frame) }
                     var delay = min(15, max(0.01, session.nextServiceDate.timeIntervalSinceNow))
                     if routingDirty { delay = min(delay, max(0.01, nextRoutingRead.timeIntervalSinceNow)) }
@@ -227,6 +248,7 @@ public final class NativeDesktopCollector: @unchecked Sendable {
                     }
                     if changed.prefix(Int(result)).contains(where: { $0.filter == Int16(EVFILT_READ) }) {
                         try session.receive(receive(fd, observedTurnIDs: session.observedTurnIDs))
+                        if session.hosts.contains(DurableActivityCatalog.hostID) { updateDurableIPCObservations(session.durableIPCObservations) }
                         // Pending questions and approvals are delivered immediately,
                         // independently of the ordinary token/activity batch.
                         for frame in session.takeFrames() { onFrame(frame) }

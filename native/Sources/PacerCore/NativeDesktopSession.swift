@@ -24,6 +24,9 @@ public struct NativeDesktopSession {
     private static let snapshotDelays: [TimeInterval] = [0.5, 1, 2, 5]
     private static let durableSnapshotDelays: [TimeInterval] = [0.5, 1, 2, 5, 10, 18, 25]
     private var durableCatalog: DurableActivityCatalog?
+    private var durableHistory: [String: DurableTurnHistory] = [:]
+    private var durableIPCActivity: [String: Date] = [:]
+    private var durableIPCEndings: [String: String] = [:]
     private struct HostEvent { let host: String; let value: [String: Any] }
     private var events: [HostEvent] = []
     private var frames: [Data] = []
@@ -97,8 +100,12 @@ public struct NativeDesktopSession {
             ["turn/started", "turn/completed", "thread/status/changed", "subagents/updated"].contains(method) { try publishEvents() }
     }
     private mutating func release(_ key: Key, at now: Date) throws {
-        if dormant[key] == nil, suppliesRuntime(key.host) { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }
+        if dormant[key] == nil, suppliesRuntime(key.host),
+           key.host != DurableActivityCatalog.hostID || (streams[key] != nil && !durableHistoryIsActive(key.thread)) {
+            try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host)
+        }
         try follow(key, value: false); streams.removeValue(forKey: key)
+        if key.host == DurableActivityCatalog.hostID { durableIPCActivity.removeValue(forKey: key.thread) }
         dormant.removeValue(forKey: key)
         waiting.removeAll { $0 == key }; try drain()
     }
@@ -107,7 +114,12 @@ public struct NativeDesktopSession {
         // turn ending can hide the next turn in an already-open conversation.
         // Keep bounded revision/header-only interests, outside active slots.
         if dormant[key] == nil {
-            if suppliesRuntime(key.host) { try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host) }
+            let turn = streams[key]?.currentTurnID
+            let deliveredIPC = turn != nil && durableIPCEndings[key.thread] == turn
+            let deliveredHistory = durableHistory[key.thread].map { $0.turnID == turn && $0.status != .inProgress } ?? false
+            if suppliesRuntime(key.host), key.host != DurableActivityCatalog.hostID || (deliveredIPC && !deliveredHistory) {
+                try queue(["method": "stream/released", "threadId": key.thread, "at": now.timeIntervalSince1970], host: key.host)
+            }
             retirementSequence &+= 1; dormant[key] = retirementSequence
         }
         let inactive = dormant.filter { $0.key.host == key.host }.sorted { $0.value < $1.value }
@@ -117,6 +129,69 @@ public struct NativeDesktopSession {
     var dormantSubscriptionCount: Int { dormant.count }
     var retainedItemCount: Int { streams.values.reduce(0) { $0 + $1.retainedItemCount } }
     var observedTurnIDs: Set<String> { Set(streams.values.compactMap(\.currentTurnID)) }
+    var durableIPCObservations: [String: Date] { durableIPCActivity }
+
+    private func durableHistoryIsActive(_ thread: String) -> Bool {
+        guard let history = durableHistory[thread] else { return false }
+        return history.status == .inProgress && durableIPCEndings[thread] != history.turnID
+    }
+
+    mutating func observeDurableHistory(_ observations: [DurableTurnHistory], scope: String, at now: Date) throws {
+        let host = DurableActivityCatalog.hostID
+        guard durableCatalog?.scope == scope else { return }
+        for var history in observations {
+            let thread = history.threadID, turn = history.turnID
+            let key = Key(host: host, thread: thread)
+            guard allows(key), !excluded.contains(key), durableIPCEndings[thread] != turn else { continue }
+            let previous = durableHistory[thread]
+            let sameTurn = previous?.turnID == turn
+            let stream = streams[key]
+            let sameWireTurn = stream?.currentTurnID == turn
+            if sameTurn, previous?.status != .inProgress { continue }
+            if let start = history.startedAt {
+                if !sameTurn, let previousStart = previous?.startedAt, start < previousStart { continue }
+                if !sameWireTurn, let wireStart = stream?.currentTurnStartedAt, start.addingTimeInterval(1) <= wireStart { continue }
+            }
+            if sameWireTurn, stream?.isActive == true, history.status == .inProgress,
+               let received = durableIPCActivity[thread], now.timeIntervalSince(received) < 20 { continue }
+
+            func event(_ method: String, at date: Date = now) -> [String: Any] {
+                ["method": method, "threadId": thread, "turnId": turn, "at": date.timeIntervalSince1970]
+            }
+            if let name = history.name, previous?.name != name {
+                var metadata = event("thread/name/updated")
+                metadata["name"] = name
+                try queue(metadata, host: host)
+            }
+            if !sameTurn, !(sameWireTurn && stream?.isActive == true) {
+                var start = event("turn/attached")
+                let evidenceStart = history.startedAt ?? history.report?.at ?? history.completedAt ?? now
+                start["startedAt"] = min(evidenceStart, now).timeIntervalSince1970
+                start["rootTurnId"] = history.rootTurnID
+                try queue(start, host: host)
+            }
+            let previousReport = sameTurn ? previous?.report : nil
+            if let report = history.report, report.id != previousReport?.id,
+               (report.at ?? now) >= (previousReport?.at ?? .distantPast) {
+                let at = min(report.at ?? history.completedAt ?? now, now)
+                var progress = event("progress/reported", at: at)
+                progress["percent"] = report.percent
+                try queue(progress, host: host)
+            } else {
+                history.report = previousReport
+            }
+            durableHistory[thread] = history
+            if history.status != .inProgress {
+                let at = min(max(history.completedAt ?? now, history.report?.at ?? .distantPast), now)
+                var end = event("turn/completed", at: at)
+                end["status"] = history.status.rawValue
+                try queue(end, host: host)
+                try queue(event("stream/released", at: at), host: host)
+            }
+        }
+        try publishEvents()
+    }
+
     mutating func setDurableCatalog(_ value: DurableActivityCatalog?, at now: Date) throws {
         let host = DurableActivityCatalog.hostID
         let old = durableCatalog
@@ -125,6 +200,9 @@ public struct NativeDesktopSession {
         waiting.removeAll { $0.host == host && !allowed.contains($0.thread) }
         if old?.scope != durableCatalog?.scope {
             events.removeAll { $0.host == host }
+            durableHistory.removeAll()
+            durableIPCActivity.removeAll()
+            durableIPCEndings.removeAll()
             waiting.removeAll { $0.host == host }
             for key in Array(followed) where key.host == host { try follow(key, value: false) }
             streams = streams.filter { $0.key.host != host }
@@ -132,6 +210,13 @@ public struct NativeDesktopSession {
             excluded = excluded.filter { $0.host != host }
             try frame(["kind": "durableScope", "hostId": host, "scope": durableCatalog.map { $0.scope as Any } ?? NSNull()])
         } else {
+            for thread in durableHistory.keys.filter({ !allowed.contains($0) }) {
+                if durableHistoryIsActive(thread) {
+                    try queue(["method": "stream/released", "threadId": thread, "at": now.timeIntervalSince1970], host: host)
+                }
+                durableHistory.removeValue(forKey: thread)
+            }
+            durableIPCEndings = durableIPCEndings.filter { allowed.contains($0.key) }
             for key in Array(followed) where key.host == host && !allows(key) {
                 if streams[key]?.requests.isEmpty == false {
                     try frame(["kind": "attention", "hostId": host, "threadId": key.thread, "requests": []])
@@ -210,7 +295,10 @@ public struct NativeDesktopSession {
                     if key.host.hasPrefix("remote-control:"), projection.runtimeAvailable, !projection.isTerminal {
                         invalidatedRemoteHosts.insert(key.host)
                     }
-                    if suppliesRuntime(key.host) { try frame(["kind": "streamInvalidated", "hostId": key.host, "threadId": key.thread]) }
+                    if key.host == DurableActivityCatalog.hostID { durableIPCActivity.removeValue(forKey: key.thread) }
+                    if suppliesRuntime(key.host), key.host != DurableActivityCatalog.hostID || !durableHistoryIsActive(key.thread) {
+                        try frame(["kind": "streamInvalidated", "hostId": key.host, "threadId": key.thread])
+                    }
                     streams.removeValue(forKey: key); dormant.removeValue(forKey: key)
                     awaitingSnapshot[key] = SnapshotWait(retry: 0, next: now.addingTimeInterval(Self.snapshotDelays[0]))
                     try follow(key, value: true)
@@ -269,6 +357,12 @@ public struct NativeDesktopSession {
             if projectedItems, try change.fields(["_pacerRejected"])["_pacerRejected"]?.boolean() == true { throw JSONFieldView.Failure.limit }
             let output = try projection.consume(change, owner: owner, at: now)
             streams[key] = projection
+            if host == DurableActivityCatalog.hostID {
+                durableIPCActivity[thread] = projection.isActive ? now : nil
+                if let terminal = output.last(where: { $0["method"] as? String == "turn/completed" }) {
+                    durableIPCEndings[thread] = terminal["turnId"] as? String
+                }
+            }
             if projection.runtimeAvailable { invalidatedRemoteHosts.remove(host) }
             if !projection.runtimeAvailable, old?.runtimeAvailable == true, suppliesRuntime(host) {
                 if host.hasPrefix("remote-control:") { invalidatedRemoteHosts.insert(host) }
@@ -282,7 +376,15 @@ public struct NativeDesktopSession {
                 (projection.isTerminal && old?.isActive == true) {
                 try frame(["kind": "discovery", "hostId": host, "threadIds": [thread]])
             }
-            for event in output { try queue(event, host: host) }
+            for event in output {
+                if host == DurableActivityCatalog.hostID, let history = durableHistory[thread] {
+                    if history.status != .inProgress, event["turnId"] as? String == history.turnID { continue }
+                    if durableHistoryIsActive(thread), projection.currentTurnID == nil || projection.currentTurnID == history.turnID,
+                       event["method"] as? String == "thread/status/changed",
+                       ["notLoaded", "systemError"].contains(event["status"] as? String ?? "") { continue }
+                }
+                try queue(event, host: host)
+            }
             if old == nil || old?.requests != projection.requests {
                 try frame(["kind": "attention", "hostId": host, "threadId": thread,
                     "requests": projection.requests.map { request in
@@ -295,12 +397,15 @@ public struct NativeDesktopSession {
             else { dormant.removeValue(forKey: key) }
         } catch {
             streams.removeValue(forKey: key)
+            if host == DurableActivityCatalog.hostID { durableIPCActivity.removeValue(forKey: thread) }
             dormant.removeValue(forKey: key)
             // A rejected patch cannot erase earlier valid evidence, especially
             // a completion awaiting the normal batch flush. Deliver it before
             // invalidating the projection so the consumer observes wire order.
             try publishEvents()
-            if suppliesRuntime(host) { try frame(["kind": "streamInvalidated", "hostId": host, "threadId": thread]) }
+            if suppliesRuntime(host), host != DurableActivityCatalog.hostID || !durableHistoryIsActive(thread) {
+                try frame(["kind": "streamInvalidated", "hostId": host, "threadId": thread])
+            }
             switch error {
             case DesktopProjectionFailure.review, DesktopProjectionFailure.ephemeral:
                 if excluded.count < 1024 { excluded.insert(key) }
@@ -325,7 +430,8 @@ public struct NativeDesktopSession {
     mutating func status(loopIterations: Int) throws {
         for host in hosts.sorted() where suppliesRuntime(host) {
             let current = streams.filter { $0.key.host == host }
-            let connected = ready && (host == "local" || current.values.contains { $0.runtimeAvailable })
+            let hasHistory = host == DurableActivityCatalog.hostID && !durableHistory.isEmpty
+            let connected = ready && (host == "local" || hasHistory || current.values.contains { $0.runtimeAvailable })
             let waitingForSession = ready && host.hasPrefix("remote-control:") && !connected && !invalidatedRemoteHosts.contains(host)
             try frame(["kind": "status", "hostId": host, "connected": connected, "waitingForSession": waitingForSession,
                 "attached": current.filter { $0.value.isActive }.count,

@@ -17,7 +17,9 @@ private final class MacDesktopChannelSlot: @unchecked Sendable {
             collector?.setDurableCatalog(value)
         }
         catalog = Task.detached(priority: .utility) {
-            await MacDurableCatalog.observe(home: home, peer: peer, publish: publish)
+            await MacDurableCatalog.observe(home: home, peer: peer, publish: publish,
+                ipcObservations: { [weak collector] in collector?.durableIPCObservations ?? [:] },
+                publishHistory: { [weak collector] scope, turns in collector?.setDurableHistory(scope: scope, turns: turns) })
         }
     }
     func stop() {

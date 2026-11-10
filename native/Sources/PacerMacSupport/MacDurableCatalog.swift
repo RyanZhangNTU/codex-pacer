@@ -2,12 +2,23 @@ import Foundation
 import Darwin
 import PacerCore
 
-/// A read-only companion to the Desktop socket. The cloud connection can only
-/// seed IPC interests for Dot threads assigned to this Desktop's executor.
+/// The Desktop owner supplies live IPC. For an assigned thread without usable
+/// IPC, read bounded turn and tool-result pages over the same catalog connection.
 enum MacDurableCatalog {
-    static func observe(home: URL, peer: pid_t, publish: @Sendable (DurableActivityCatalog?) -> Void) async {
+    private struct Poll {
+        let checkedAt: Date
+        let updatedAt: Date?
+        var activeTurn: String?
+        var settled = false
+    }
+
+    static func observe(home: URL, peer: pid_t, publish: @Sendable (DurableActivityCatalog?) -> Void,
+                        ipcObservations: @Sendable () -> [String: Date],
+                        publishHistory: @Sendable (String, [DurableTurnHistory]) -> Void) async {
         var connection: Connection?
         var previous: DurableActivityCatalog?
+        var polls: [String: Poll] = [:]
+        var since = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
         defer { connection?.close() }
         await MacDurableRefresh.shared.interrupt(home: home)
         var retryDelay = 5.0
@@ -42,12 +53,59 @@ enum MacDurableCatalog {
                       CodexClient.authenticationFingerprint(home: home, files: MacFileSystem()) == fingerprint else {
                     throw CodexClientError.accountMismatch
                 }
-                if previous?.scope != result.catalog.scope { await MacDurableRefresh.shared.interrupt(home: home) }
+                if previous?.scope != result.catalog.scope {
+                    await MacDurableRefresh.shared.interrupt(home: home)
+                    polls.removeAll()
+                    if previous != nil { since = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)) }
+                }
                 previous = result.catalog
                 publish(result.catalog)
                 await MacDurableRefresh.shared.observe(home: home, executor: executor, catalogIdle: result.executorIdle)
+                let now = Date(), ipc = ipcObservations()
+                polls = polls.filter { result.catalog.threadIDs.contains($0.key) }
+                let candidates = result.entries.filter { entry in
+                    let previous = polls[entry.id]
+                    guard ipc[entry.id].map({ now.timeIntervalSince($0) >= 20 }) ?? true else { return false }
+                    if entry.active || previous?.activeTurn != nil { return true }
+                    if previous?.settled == true && previous?.updatedAt == entry.updatedAt { return false }
+                    return entry.updatedAt.map { $0 >= since } ?? false
+                }.sorted {
+                    (polls[$0.id]?.checkedAt ?? .distantPast) < (polls[$1.id]?.checkedAt ?? .distantPast)
+                }
+                var history: [DurableTurnHistory] = []
+                for entry in candidates.prefix(4) {
+                    try Task.checkCancellation()
+                    if Date().timeIntervalSince(now) >= 6 { break }
+                    let previous = polls[entry.id]
+                    var poll = Poll(checkedAt: now, updatedAt: entry.updatedAt, activeTurn: previous?.activeTurn)
+                    polls[entry.id] = poll
+                    do {
+                        guard var turn = try await connection.latestTurn(entry) else { continue }
+                        let active = turn.status == .inProgress
+                        poll.settled = !active
+                        poll.activeTurn = active ? turn.turnID : nil
+                        if active || (turn.completedAt ?? turn.startedAt).map({ $0 >= since }) == true || previous?.activeTurn == turn.turnID {
+                            // A failed item page cannot erase the verified turn.
+                            turn.report = try? await connection.latestReport(turn, thread: entry.id)
+                            history.append(turn)
+                        }
+                        polls[entry.id] = poll
+                    } catch {
+                        // An unavailable history page must not discard the
+                        // valid catalog or interrupt normal Desktop IPC.
+                        break
+                    }
+                }
+                if !history.isEmpty {
+                    try Task.checkCancellation()
+                    guard MacDurableExecutor.find(peer: peer) == executor,
+                          CodexClient.authenticationFingerprint(home: home, files: MacFileSystem()) == fingerprint else {
+                        throw CodexClientError.accountMismatch
+                    }
+                    publishHistory(result.catalog.scope, history)
+                }
                 retryDelay = 5
-                delay = 15
+                delay = max(1, 15 - Date().timeIntervalSince(now))
             } catch {
                 connection?.close()
                 connection = nil
@@ -100,8 +158,9 @@ enum MacDurableCatalog {
             try await socket.send(.string(#"{"method":"initialized","params":{}}"#))
         }
 
-        func read(retaining previous: DurableActivityCatalog?) async throws -> (catalog: DurableActivityCatalog, executorIdle: Bool) {
-            var ids: [String] = [], cursor: String?
+        func read(retaining previous: DurableActivityCatalog?) async throws
+            -> (catalog: DurableActivityCatalog, entries: [DurableActivityCatalog.Entry], executorIdle: Bool) {
+            var entries: [DurableActivityCatalog.Entry] = [], cursor: String?
             var idle = true, complete = false
             for _ in 0..<4 {
                 var params: [String: Any] = [
@@ -113,13 +172,42 @@ enum MacDurableCatalog {
                 guard let result = fields["result"] else { throw CodexClientError.invalidResponse }
                 let page = try DurableActivityCatalog.page(result, environmentID: executor.environmentID,
                     retaining: previous?.scope == scope ? previous?.threadIDs ?? [] : [])
-                ids.append(contentsOf: page.threadIDs)
+                for entry in page.entries where entries.count < 64 && !entries.contains(where: { $0.id == entry.id }) {
+                    entries.append(entry)
+                }
                 idle = idle && page.executorIdle
                 guard let next = page.nextCursor else { complete = true; break }
-                guard ids.count < 64, next != cursor else { break }
+                guard entries.count < 64, next != cursor else { break }
                 cursor = next
             }
-            return (DurableActivityCatalog(scope: scope, threadIDs: ids), idle && complete)
+            return (DurableActivityCatalog(scope: scope, threadIDs: entries.map(\.id)), entries, idle && complete)
+        }
+
+        func latestTurn(_ thread: DurableActivityCatalog.Entry) async throws -> DurableTurnHistory? {
+            let result = try await response("thread/turns/list", params: [
+                "threadId": thread.id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded"
+            ])
+            return try DurableTurnHistory.latest(result, thread: thread)
+        }
+
+        func latestReport(_ turn: DurableTurnHistory, thread: String) async throws -> DurableTurnHistory.Report? {
+            var cursor: String?
+            for _ in 0..<2 {
+                var params: [String: Any] = ["threadId": thread, "turnId": turn.turnID, "limit": 32, "sortDirection": "desc"]
+                if let cursor { params["cursor"] = cursor }
+                let page = try turn.receiptPage(await response("thread/items/list", params: params))
+                if let report = page.report { return report }
+                guard let next = page.next, next != cursor else { break }
+                cursor = next
+            }
+            return nil
+        }
+
+        private func response(_ method: String, params: [String: Any]) async throws -> JSONFieldView {
+            let reply = try await request(method, params: params)
+            let fields = try JSONFieldView.document(reply).fields(["result"])
+            guard let result = fields["result"] else { throw CodexClientError.invalidResponse }
+            return result
         }
 
         private func request(_ method: String, params: [String: Any]) async throws -> Data {

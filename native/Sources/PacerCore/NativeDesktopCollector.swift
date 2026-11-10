@@ -30,6 +30,10 @@ public struct DesktopCollectionSession {
     public mutating func setDurableCatalog(_ catalog: DurableActivityCatalog?, at now: Date = Date()) throws {
         try session.setDurableCatalog(catalog, at: now)
     }
+    package var durableIPCObservations: [String: Date] { session.durableIPCObservations }
+    package mutating func observeDurableHistory(_ observations: [DurableTurnHistory], scope: String, at now: Date) throws {
+        try session.observeDurableHistory(observations, scope: scope, at: now)
+    }
     public mutating func receive(_ bytes: Data) throws { try session.receive(bytes, projectedItems: true) }
     public mutating func service(at now: Date = Date(), discovering keys: [NativeDesktopSession.Key] = [], flushPending: Bool = false) throws {
         iterations += 1
