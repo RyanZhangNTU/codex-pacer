@@ -225,6 +225,23 @@ public partial class IslandWindow
         if (!MoreButton.ContextMenu.IsOpen) BuildMoreMenu();
     }
 
+    /// Measuring the panel with an unchanged width reuses each section's cached
+    /// size, so everything that render replaced is marked up to the panel first.
+    private void InvalidatePanelMeasure()
+    {
+        void Up(UIElement element)
+        {
+            for (DependencyObject? node = element; node != null && !ReferenceEquals(node, PanelContent); node = VisualTreeHelper.GetParent(node))
+                (node as UIElement)?.InvalidateMeasure();
+        }
+        Up(QuotaSlots); Up(TaskPages); Up(StatusLabel);
+        foreach (var parts in extraQuota) Up(parts.Slots);
+        if (spendSection != null) Up(spendSection.Content);
+        if (weekSection != null) Up(weekSection.Content);
+        if (noServicesRow != null) Up(noServicesRow);
+        PanelContent.InvalidateMeasure();
+    }
+
     /// One quota section in the chosen style, as Core drew it for its services.
     private void FillQuota(Grid slots, PanelSection section, EngineSnapshot snapshot)
     {

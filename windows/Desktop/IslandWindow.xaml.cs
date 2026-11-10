@@ -472,6 +472,7 @@ public partial class IslandWindow : Window
         }
         else
         {
+            InvalidatePanelMeasure();
             PanelContent.Measure(new Size(availableContentWidth, double.PositiveInfinity));
             contentHeight = PanelContent.DesiredSize.Height;
         }
