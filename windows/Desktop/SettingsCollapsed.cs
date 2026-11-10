@@ -14,7 +14,6 @@ internal sealed partial class SettingsWindow
 {
     private CompactLayoutEditorView? compactEditor;
     private readonly Dictionary<string, StackPanel> compactGroups = new(), compactRows = new(), compactOptions = new();
-    private readonly Dictionary<string, CheckBox> compactChecks = new();
     private readonly Dictionary<string, ComboBox> compactChoices = new();
     private readonly Dictionary<string, FrameworkElement> compactWindowRows = new();
     private readonly Dictionary<string, TextBlock> compactWindowValues = new();
@@ -26,23 +25,29 @@ internal sealed partial class SettingsWindow
 
     private void OnShellProjectionChanged(string method)
     {
-        if (method.Length > 0 && method != "projectCompactBar") return;
+        if (method.Length > 0 && method != "projectCompactBar" && method != "projectExpandedPanel") return;
         _ = Dispatcher.InvokeAsync(() =>
         {
             if (!IsVisible) return;
+            if (activePane == "expandedPanel")
+            {
+                if (panelEditor == null || panelTiles.Count == 0) RebuildPane("expandedPanel");
+                RefreshValues(); return;
+            }
+            if (method == "projectExpandedPanel") return;
             if (activePane is "notifications" or "deepseek") { RefreshValues(); return; }
             if (activePane != "collapsed") return;
-            if (compactEditor == null || compactChecks.Count == 0) { RebuildPane("collapsed"); RefreshValues(); }
+            if (compactEditor == null || compactTiles.Count == 0) { RebuildPane("collapsed"); RefreshValues(); }
             else RefreshValues();
         });
     }
     private void ClearCollapsed()
     {
         compactEditor?.CancelGesture(); if (compactEditor != null) compactEditor.IsEnabled = false;
-        compactEditor = null; compactGroups.Clear(); compactRows.Clear(); compactOptions.Clear(); compactChecks.Clear(); compactChoices.Clear();
+        compactEditor = null; compactGroups.Clear(); compactRows.Clear(); compactOptions.Clear(); compactChoices.Clear();
         compactWindowRows.Clear(); compactWindowValues.Clear(); compactNoProviders = compactRingDetail = null;
         compactAutomatic = null; compactProjection = null; compactProviderSignature = "";
-        compactTiles.Clear(); compactInspector = null; compactInspectorTitle = compactInspectorDetail = null; compactInspectorToggle = null; compactInspectorIcon = null;
+        compactTiles.Clear(); compactInspector = null; compactInspectorTitle = compactInspectorDetail = null; compactInspectorToggle = null; compactInspectorIcon = null; compactNotice = null;
         compactInspectorPanels.Clear(); compactWindowsPanel = null; compactRingsCustom = null;
         compactSegments.Clear(); compactOptionRows.Clear();
         if (activePane != "collapsed") revealQuotaGauge = false;
@@ -73,9 +78,9 @@ internal sealed partial class SettingsWindow
         if (sourceClosed || activePane != "collapsed" || busy || compactEditor?.IsVisible != true) return;
         await Change(p => NativeCompactBar.Shared.EditAsync(p, ui.Language, NativeCompactBar.Providers(p, engine?.LatestSnapshot), edit));
     }
-    private readonly Dictionary<string, (Border Surface, IconGlyph Mark)> compactTiles = new();
+    private readonly Dictionary<string, LibraryTile> compactTiles = new();
     private readonly Dictionary<string, FrameworkElement> compactInspectorPanels = new();
-    private Border? compactInspector, compactInspectorIcon;
+    private Border? compactInspector, compactInspectorIcon, compactNotice;
     private TextBlock? compactInspectorTitle, compactInspectorDetail;
     private Button? compactInspectorToggle;
     private StackPanel? compactWindowsPanel;
@@ -130,30 +135,22 @@ internal sealed partial class SettingsWindow
         RevealQuotaGauge();
     }
 
-    /// A component in the library: its icon and name, with a check while it
-    /// is on the bar or a plus to add it. Clicking adds or removes it and
-    /// selects it.
-    private CheckBox CompactTile(CompactComponent component)
+    /// A component in the library: clicking selects it; the round button adds
+    /// it to the bar or removes it, and keeps the selection.
+    private FrameworkElement CompactTile(CompactComponent component)
     {
-        var tile = new CheckBox { Style = (Style)FindResource("SettingsComponentTile"), Margin = new Thickness(0, 0, 6, 6) };
-        var row = new Grid(); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var icon = new IconGlyph { Symbol = component.Symbol, Width = 12, Height = 12, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
-        icon.SetBinding(IconGlyph.InkProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = tile }); row.Children.Add(icon);
-        var name = Label(component.Label, 12.5); name.TextTrimming = TextTrimming.CharacterEllipsis;
-        name.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = tile }); Grid.SetColumn(name, 1); row.Children.Add(name);
-        var mark = new IconGlyph { Width = 10, Height = 10, Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(mark, 2); row.Children.Add(mark);
-        tile.Content = row; compactChecks[component.Id] = tile; editors.Add(tile);
-        Identify(tile, "compact.component." + component.Id, component.Label); AutomationProperties.SetHelpText(tile, component.Detail);
-        RoutedEventHandler changed = async (_, _) =>
-        {
-            if (synchronizing || !tile.IsVisible || !tile.IsEnabled || !compactChecks.TryGetValue(component.Id, out var current) || !ReferenceEquals(tile, current)) return;
-            compactSelected = component.Id;
-            await EditCompact(new(tile.IsChecked == true ? "show" : "hide", component.Id));
-            RefreshValues();
-        };
-        tile.Checked += changed; tile.Unchecked += changed;
-        compactTiles[component.Id] = (tile.Template?.FindName("Surface", tile) as Border ?? new Border(), mark);
-        return tile;
+        LibraryTile? tile = null;
+        tile = BuildLibraryTile("compact.component." + component.Id, component.Label, component.Symbol, component.Detail,
+            () => SelectCompactComponent(component.Id),
+            async () =>
+            {
+                if (tile == null || !compactTiles.TryGetValue(component.Id, out var current) || !ReferenceEquals(tile, current)) return;
+                bool shown = compactProjection?.Components.FirstOrDefault(value => value.Id == component.Id)?.Shown == true;
+                await EditCompact(new(shown ? "hide" : "show", component.Id)); RefreshValues();
+            });
+        tile.Root.Margin = new Thickness(0, 0, 6, 6);
+        compactTiles[component.Id] = tile;
+        return tile.Root;
     }
 
     /// The selected component's card: its name with info, Add or Remove, then the
@@ -182,6 +179,7 @@ internal sealed partial class SettingsWindow
         editors.Add(compactInspectorToggle); Grid.SetColumn(compactInspectorToggle, 2); header.Children.Add(compactInspectorToggle);
         body.Children.Add(header); body.Children.Add(box);
         compactInspectorPanels["box"] = box;
+        compactNotice = LibraryNotice("compact.inspector.notice"); body.Children.Add(compactNotice);
 
         Grid Option(string titleKey, UIElement choice, string? info = null, string? id = null)
         { var row = InfoRow(ui.Text(titleKey), choice, info, id: id); return row; }
@@ -392,7 +390,7 @@ internal sealed partial class SettingsWindow
         if (compactEditor == null) return;
         var projection = ReadCompact();
         if (projection.Components.Length == 0) { compactEditor.IsEnabled = false; return; }
-        if (compactChecks.Count == 0 || compactInspector == null) { RebuildPane("collapsed"); RefreshValues(); return; }
+        if (compactTiles.Count == 0 || compactInspector == null) { RebuildPane("collapsed"); RefreshValues(); return; }
         compactProjection = projection;
         var providers = CompactProviders(); bool docked = session.Current.DisplayMode != "notch" &&
             (session.Current.IslandPlacement?.Vertical ?? session.Current.Position != "center");
@@ -405,15 +403,9 @@ internal sealed partial class SettingsWindow
         compactEditor.SetSelected(selected);
         foreach (var component in projection.Components)
         {
-            if (!compactChecks.TryGetValue(component.Id, out var tile)) continue;
-            tile.IsChecked = component.Shown; tile.Visibility = component.Available ? Visibility.Visible : Visibility.Collapsed;
-            tile.SetResourceReference(ForegroundProperty, component.Shown ? "SettingsPrimary" : "SettingsSecondary");
-            tile.Tag = component.Id == selected ? "selected" : null;
-            if (compactTiles.TryGetValue(component.Id, out var parts))
-            {
-                parts.Mark.Symbol = component.Shown ? "checkmark" : "plus";
-                parts.Mark.SetResourceReference(IconGlyph.InkProperty, component.Shown ? "SettingsAccent" : "SettingsSecondary");
-            }
+            if (!compactTiles.TryGetValue(component.Id, out var tile)) continue;
+            tile.Root.Visibility = component.Available ? Visibility.Visible : Visibility.Collapsed;
+            PaintLibraryTile(tile, component.Shown, component.Id == selected, locked: false, available: true, tint: null, "main.library.add_to_bar", "main.library.remove_from_bar");
         }
         compactNoProviders!.Visibility = providers.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         var chosen = selected != null ? components[selected] : null;
@@ -429,8 +421,10 @@ internal sealed partial class SettingsWindow
             compactInspectorToggle.Style = placed ? (Style)FindResource(typeof(Button)) : (Style)FindResource("SettingsProminentButton");
             AutomationProperties.SetName(compactInspectorToggle, chosen.Label + " · " + compactInspectorToggle.Content);
         }
-        foreach (var panel in compactInspectorPanels) if (panel.Key != "box") panel.Value.Visibility = placed && panel.Key == selected ? Visibility.Visible : Visibility.Collapsed;
-        compactWindowsPanel!.Visibility = placed && selected is "quota" or "quotaGauge" or "timeRemaining" ? Visibility.Visible : Visibility.Collapsed;
+        // A component off the bar keeps its settings to change now; they apply once it is added.
+        ShowLibraryNotice(compactNotice!, chosen != null && !placed ? ui.Text("main.library.not_added") : null, locked: false);
+        foreach (var panel in compactInspectorPanels) if (panel.Key != "box") panel.Value.Visibility = panel.Key == selected ? Visibility.Visible : Visibility.Collapsed;
+        compactWindowsPanel!.Visibility = selected is "quota" or "quotaGauge" or "timeRemaining" ? Visibility.Visible : Visibility.Collapsed;
         compactChoices["singleTask"].SelectedValue = session.Current.CompactSingleTask;
         foreach (var segment in compactMetric) segment.Value.IsChecked = segment.Key == session.Current.CompactMetric;
         // Choices read back from the projection, which has already applied each fallback.

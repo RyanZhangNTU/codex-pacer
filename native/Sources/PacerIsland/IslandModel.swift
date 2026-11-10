@@ -195,7 +195,7 @@ final class IslandModel: ObservableObject {
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id))) { .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop) }
         return .init(hideProjects: hideProjects, hostApplications: hosts,
             sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost,
-            progressRingProviders: progressRingProviders)
+            progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize)
     }
     func taskSourceName(_ activity: SessionActivity) -> String? {
         ActivityTaskRowPresentation.sourceName(activity, options: taskPresentationOptions(for: [activity]))
@@ -586,13 +586,13 @@ final class IslandModel: ObservableObject {
     var onQuit: (() -> Void)?
     var onRelaunch: (() -> String?)?
     var onOpenActivity: ((SessionActivity) async -> ActivityOpenOutcome)?
-    /// The expanded task header offers each enabled module's desktop app,
-    /// whether or not it has a task. A module without one shows no button.
+    /// The expanded panel's header offers each enabled module's desktop app,
+    /// whether or not it has a task; with the buttons off, the More menu does.
+    /// A module without its app offers none.
     static let showsAppButtonsKey = "showAppButtons"
     var showsAppButtons: Bool { defaults.object(forKey: Self.showsAppButtonsKey) == nil || defaults.bool(forKey: Self.showsAppButtonsKey) }
-    var appButtonProviders: [AgentProvider] {
-        showsAppButtons ? enabledProviders.filter { desktopApplications[$0] != nil } : []
-    }
+    var desktopAppProviders: [AgentProvider] { enabledProviders.filter { desktopApplications[$0] != nil } }
+    var appButtonProviders: [AgentProvider] { showsAppButtons ? desktopAppProviders : [] }
     @Published private(set) var desktopApplications: [AgentProvider: URL] = [:]
     var desktopApplicationResolver: @Sendable (AgentProvider) async -> URL? = { provider in
         await Task.detached(priority: .utility) {
@@ -610,7 +610,7 @@ final class IslandModel: ObservableObject {
     /// once a minute; settings changes and a failed open look at once. Demo
     /// shows every enabled module and opens only its labeled sample.
     func refreshDesktopApplications(force: Bool = true, now: Date = Date()) {
-        guard showsAppButtons, !stopped, force || now.timeIntervalSince(desktopApplicationsScannedAt) >= 60 else { return }
+        guard !stopped, force || now.timeIntervalSince(desktopApplicationsScannedAt) >= 60 else { return }
         desktopApplicationsScannedAt = now
         let providers = enabledProviders
         if demo {
@@ -627,7 +627,7 @@ final class IslandModel: ObservableObject {
         }
     }
     func openDesktopApplication(_ provider: AgentProvider) {
-        guard appButtonProviders.contains(provider), let application = desktopApplications[provider],
+        guard desktopAppProviders.contains(provider), let application = desktopApplications[provider],
               let open = onOpenDesktopApplication else { return }
         clearNavigationError()
         let generation = sourceGeneration(for: provider)
@@ -675,6 +675,16 @@ final class IslandModel: ObservableObject {
         onLayoutChange?()
     }
     @Published private(set) var compactLayout = CompactIslandLayout.load()
+    /// The expanded panel's saved blocks, nil while they follow the services,
+    /// and how they draw. Settings writes both keys and reloads them here.
+    @Published private(set) var savedPanelLayout: ExpandedPanelLayout?
+    @Published private(set) var panelOptions = ExpandedPanelOptions()
+    func reloadPanelSettings() {
+        let saved = ExpandedPanelLayout.load(from: defaults), options = ExpandedPanelOptions.load(from: defaults)
+        guard saved != savedPanelLayout || options != panelOptions else { return }
+        savedPanelLayout = saved; panelOptions = options
+        onLayoutChange?()
+    }
     func updateMeasuredCompactWidth(_ width: CGFloat) {
         guard width.isFinite, width >= 0 else { return }
         let rounded = ceil(width)
@@ -691,8 +701,9 @@ final class IslandModel: ObservableObject {
     }
     var panelContentHeight: CGFloat {
         if let measuredContentHeight { return measuredContentHeight }
-        let count = visibleActivities.count, rows = max(1, min(3, count))
-        let taskHeight = CGFloat(rows) * 74 + CGFloat(rows - 1) * 2 + (count > 3 ? 26 : 0) + (demo ? 25 : 0)
+        let count = visibleActivities.count, page = panelOptions.pageSize, rows = max(1, min(page, count))
+        let rowHeight: CGFloat = panelOptions.rowStyle == .oneLine ? 58 : 74
+        let taskHeight = CGFloat(rows) * rowHeight + CGFloat(rows - 1) * 2 + (count > page ? 26 : 0) + (demo ? 25 : 0)
         let quotaHeight: CGFloat
         if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: enabledProviders, snapshot: providerQuota(.codex), style: expandedQuotaStyle),
            let snapshot = providerQuota(.codex) {
@@ -1075,6 +1086,8 @@ final class IslandModel: ObservableObject {
          deepseekMonitor: DeepSeekActivityMonitor = DeepSeekActivityMonitor()) {
         self.defaults = defaults
         self.compactLayout = .load(from: defaults)
+        self.savedPanelLayout = .load(from: defaults)
+        self.panelOptions = .load(from: defaults)
         self.claudeMonitor = claudeMonitor
         self.deepseekMonitor = deepseekMonitor
         self.claudeRemoteSetup = claudeRemoteSetup
@@ -1753,6 +1766,7 @@ final class IslandModel: ObservableObject {
         // The header reports its width only when it changes, so the last measurement
         // stays: clearing it would leave the bar at the wider estimate after any setting.
         compactLayout = .load(from: defaults); settingsRevision += 1
+        savedPanelLayout = .load(from: defaults); panelOptions = .load(from: defaults)
         // A place chosen in Settings belongs to the display the island is on.
         rememberDisplayPlace()
         if clock != nil { scheduleClock() }

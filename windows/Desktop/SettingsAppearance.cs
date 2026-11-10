@@ -13,10 +13,9 @@ internal sealed partial class SettingsWindow
     private RadioButton? notchChoice, freeChoice;
     private FrameworkElement? positionRow;
     private Button? positionReset;
-    private readonly Dictionary<string, RadioButton> quotaStyleChoices = new();
     private readonly Dictionary<string, RadioButton> surfaceChoices = new(), barSizeChoices = new();
     private TextBlock? surfaceStatus, transparencyMode;
-    private FrameworkElement? transparencyRow, expandedQuotaRow, deepseekPanelRow;
+    private FrameworkElement? transparencyRow;
     private ComboBox? displayChoice;
     private CheckBox? fullscreenChoice, perDisplayChoice;
     private TextBlock? positionDisplayName;
@@ -25,8 +24,8 @@ internal sealed partial class SettingsWindow
     private sealed record DisplayOption(string Mode, DisplayMonitor? Monitor);
 
     private void ClearAppearance()
-    { ClearAppearanceTheme(); notchChoice = freeChoice = null; positionRow = null; quotaStyleChoices.Clear(); surfaceChoices.Clear(); barSizeChoices.Clear(); surfaceStatus = transparencyMode = null;
-        displayChoice = null; fullscreenChoice = perDisplayChoice = null; positionDisplayName = null; displayStatus = null; displayItemsSource = null; transparencyRow = expandedQuotaRow = deepseekPanelRow = null; }
+    { ClearAppearanceTheme(); notchChoice = freeChoice = null; positionRow = null; surfaceChoices.Clear(); barSizeChoices.Clear(); surfaceStatus = transparencyMode = null;
+        displayChoice = null; fullscreenChoice = perDisplayChoice = null; positionDisplayName = null; displayStatus = null; displayItemsSource = null; transparencyRow = null; }
     private TextBlock SectionHeader(string key) => SectionTitle(ui.Text(key));
     /// A picture choice, as on the Mac: the art (64 tall, or its own height when NaN), then its name 7 below.
     private RadioButton ArtChoice(string id, string name, string group, UIElement art, bool enabled = true, double artHeight = 64)
@@ -86,19 +85,8 @@ internal sealed partial class SettingsWindow
         var sizeTrack = new Border { Child = sizeChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center };
         sizeTrack.SetResourceReference(Border.BackgroundProperty, "SettingsFill"); Identify(sizeTrack, "appearance.bar_size", ui.Text("appearance.bar_size"));
         form.Children.Add(Card(InfoRow(ui.Text("appearance.bar_size"), sizeTrack, ui.Text("appearance.bar_size_info"), id: "appearance.bar_size.row")));
-
-        var quotaChoices = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        foreach (string style in new[] { "split", "classic" })
-        {
-            var choice = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), Content = ui.Text("appearance.quota_" + style), GroupName = "appearance.quota", VerticalAlignment = VerticalAlignment.Center };
-            Identify(choice, "appearance.quota." + style, ui.Text("appearance.quota_" + style));
-            choice.Checked += async (_, _) => { if (!synchronizing) await Change(p => p with { ExpandedQuotaStyle = style }); };
-            quotaStyleChoices[style] = choice; editors.Add(choice); quotaChoices.Children.Add(choice);
-        }
-        var segments = new Border { Child = quotaChoices, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center };
-        segments.SetResourceReference(Border.BackgroundProperty, "SettingsFill");
-        // The expanded panel's choices follow Position, as on the Mac.
-        expandedQuotaRow = Row(Label(ui.Text("main.appearance.quota_style")), segments);
+        // The expanded panel's quota style, DeepSeek content and app buttons
+        // moved to the Expanded Panel page's blocks, as on the Mac.
         BuildAccentSection();
         // With several displays the title ends with the one the island shows on, as on the Mac.
         var positionHeader = new Grid();
@@ -136,10 +124,6 @@ internal sealed partial class SettingsWindow
         perDisplayChoice = perDisplaySwitch; BindToggle(perDisplaySwitch, (p, value) => p with { IslandPositionPerDisplay = value }); editors.Add(perDisplaySwitch);
         var positionCard = Card(Pair(notchChoice, freeChoice), positionRow, Row(displayCaption, displayChoice), perDisplay, fullscreen);
         form.Children.Add(positionCard);
-        deepseekPanelRow = Row(Label(ui.Text("main.appearance.deepseek_panel")), DeepSeekSegments("panel", new[] { ("simple", "deepseek.panel_style.simple"), ("detailed", "deepseek.panel_style.detailed") }, value => ChangeDeepSeek(p => p with { DeepSeekPanelStyle = value })));
-        var apps = Toggle("settings.app_buttons", "main.info.app_buttons", "settings.app_buttons", out var appsSwitch); appButtons = appsSwitch;
-        BindToggle(appsSwitch, (p, value) => p with { ShowAppButtons = value }); editors.Add(appsSwitch);
-        form.Children.Add(SectionTitle(ui.Text("main.appearance.panel"))); form.Children.Add(Card(expandedQuotaRow, deepseekPanelRow, apps));
     }
     private void RefreshAppearance()
     {
@@ -151,13 +135,6 @@ internal sealed partial class SettingsWindow
         // Windows has no camera housing to match, so every size is available.
         foreach (var item in barSizeChoices) item.Value.IsChecked = item.Key == session.Current.CompactBarSize;
         RefreshSurfaceStatus();
-        if (expandedQuotaRow != null) expandedQuotaRow.Visibility = SettingsPagePolicy.ShowExpandedQuotaStyle(CompactProviders()) ? Visibility.Visible : Visibility.Collapsed;
-        // DeepSeek alone has its own dashboard, so the panel offers Simple or Detailed instead.
-        if (deepseekPanelRow != null) deepseekPanelRow.Visibility = CompactProviders() is ["deepseek"] ? Visibility.Visible : Visibility.Collapsed;
-        if (appButtons != null) appButtons.IsChecked = session.Current.ShowAppButtons;
-        foreach (var choice in deepseekChoices.Where(value => value.Key.StartsWith("panel.", StringComparison.Ordinal)))
-            choice.Value.IsChecked = choice.Key == "panel." + session.Current.DeepSeekPanelStyle;
-        foreach (var item in quotaStyleChoices) item.Value.IsChecked = item.Key == session.Current.ExpandedQuotaStyle;
         if (notchChoice == null || freeChoice == null || positionRow == null) return;
         bool attached = session.Current.DisplayMode == "notch";
         notchChoice.IsChecked = attached; freeChoice.IsChecked = !attached;

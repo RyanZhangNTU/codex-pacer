@@ -460,15 +460,16 @@ internal sealed class GuideContent : StackPanel
             var rows = new List<UIElement>();
             foreach (var item in release.Items)
             {
+                // The update note keeps each explanation behind ⓘ, as Help & Updates does.
+                if (large) { var feature = InfoFeatureRow(item, true, unique: false); feature.Margin = new Thickness(0, 0, 0, 14); Children.Add(feature); continue; }
                 UIElement? control = item.Control switch
                 {
                     "openAtLogin" => Login(item.Title, "guide.control.openAtLogin"),
                     "showAppButtons" => Switch(item.Title, "guide.control.showAppButtons", () => session.Current.ShowAppButtons, value => Preference(p => p with { ShowAppButtons = value })),
                     "showEmbeddedSessions" => EmbeddedControl(item.Title, item.Detail),
-                    _ => null
+                    _ => PaneLink(item)
                 };
                 string detail = item.Control == "openAtLogin" ? ui.Text("windows.settings.open_at_login_detail") : item.Detail;
-                if (large) { Children.Add(FeatureRow(item.Symbol, item.Title, detail, control)); continue; }
                 rows.Add(TileRow(FeatureSymbol(item.Symbol, 28), item.Title, Text(detail, 11.5), control));
             }
             if (!large) Children.Add(Group(50, rows.ToArray()));
@@ -519,14 +520,16 @@ internal sealed class GuideContent : StackPanel
     }
     /// A highlight with only its title; the explanation opens under it from the info button.
     /// A blocked sign-in item still says so in place, and the item's own switch stays.
-    private StackPanel InfoFeatureRow(GuideItem item, bool large)
+    /// <param name="unique">Help & Updates lists every version, so its controls carry the title in their ids; the update note keeps plain ids.</param>
+    private StackPanel InfoFeatureRow(GuideItem item, bool large, bool unique = true)
     {
+        string suffix = unique ? "." + item.Title.GetHashCode().ToString("x") : "";
         UIElement? control = item.Control switch
         {
-            "openAtLogin" => Login(item.Title, "guide.control.openAtLogin." + item.Title.GetHashCode().ToString("x")),
-            "showAppButtons" => Switch(item.Title, "guide.control.showAppButtons." + item.Title.GetHashCode().ToString("x"), () => session.Current.ShowAppButtons, value => Preference(p => p with { ShowAppButtons = value })),
+            "openAtLogin" => Login(item.Title, "guide.control.openAtLogin" + suffix),
+            "showAppButtons" => Switch(item.Title, "guide.control.showAppButtons" + suffix, () => session.Current.ShowAppButtons, value => Preference(p => p with { ShowAppButtons = value })),
             "showEmbeddedSessions" => EmbeddedControl(item.Title, item.Detail),
-            _ => null
+            _ => PaneLink(item)
         };
         double size = large ? 40 : 28;
         var host = new StackPanel();
@@ -552,6 +555,20 @@ internal sealed class GuideContent : StackPanel
         if (control is FrameworkElement end) { end.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(end, 2); row.Children.Add(end); }
         host.Children.Add(row); host.Children.Add(box); return host;
     }
+    /// "Settings ›" at the end of a highlight whose setting lives on a page.
+    private Button? PaneLink(GuideItem item)
+    {
+        string? pane = item.Control switch { "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", _ => null };
+        if (pane == null) return null;
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        var text = Text(ui.Text("whats_new.open_settings"), 12.5); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsLinkText"); content.Children.Add(text);
+        var chevron = new IconGlyph { Symbol = "chevron.right", Width = 9, Height = 9, Margin = new Thickness(3, 1, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        chevron.SetResourceReference(IconGlyph.InkProperty, "SettingsLinkText"); content.Children.Add(chevron);
+        var button = new Button { Style = (Style)FindResource("SettingsLink"), ContentTemplate = null, Content = content, Cursor = System.Windows.Input.Cursors.Hand, Margin = new Thickness(8, 0, 0, 0) };
+        Identify(button, "guide.control." + item.Control, ui.Text("whats_new.open_settings_label").Replace("%@", item.Title, StringComparison.Ordinal));
+        button.Click += (_, _) => settings(pane);
+        return button;
+    }
     private Button InfoToggle(string title, Border box)
     {
         var glyph = new IconGlyph { Symbol = "info.circle", Width = 14, Height = 14 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
@@ -565,18 +582,6 @@ internal sealed class GuideContent : StackPanel
             AutomationProperties.SetItemStatus(button, ui.Text(show ? "main.info_shown" : "main.info_hidden"));
         };
         return button;
-    }
-    private Grid FeatureRow(string symbol, string title, string detail, UIElement? control)
-    {
-        var row = new Grid { Margin = new Thickness(0, 0, 0, 16) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var tile = FeatureSymbol(symbol, 40); tile.Margin = new Thickness(0, 0, 14, 0); tile.VerticalAlignment = VerticalAlignment.Top; row.Children.Add(tile);
-        var labels = new StackPanel { Margin = new Thickness(0, 1, 8, 0) };
-        labels.Children.Add(Text(title, 13.5, true));
-        var text = Text(detail, 12.5); text.Margin = new Thickness(0, 3, 0, 0); text.LineHeight = 18; text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); labels.Children.Add(text);
-        Grid.SetColumn(labels, 1); row.Children.Add(labels);
-        if (control is FrameworkElement end) { end.Margin = new Thickness(0, 9, 0, 0); end.VerticalAlignment = VerticalAlignment.Top; Grid.SetColumn(end, 2); row.Children.Add(end); }
-        return row;
     }
     private CheckBox EmbeddedControl(string title, string detail)
     {

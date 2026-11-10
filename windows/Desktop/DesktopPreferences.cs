@@ -43,6 +43,10 @@ internal sealed record DesktopPreferences
     // Core's CompactComponentOptions as JSON; null keeps every default.
     public string? CompactComponentOptions { get; init; }
     public string CompactBarSize { get; init; } = "standard";
+    // Core's ExpandedPanelLayout and ExpandedPanelOptions as JSON; null is the
+    // automatic layout and every default.
+    public string? ExpandedPanelLayout { get; init; }
+    public string? ExpandedPanelOptions { get; init; }
     internal static readonly string[] BarSizes = ["small", "standard", "large", "extraLarge"];
     internal static readonly string[] Appearances = ["classic", "liquidGlass", "liquidGlassLight", "graphite"];
     public string CompactSingleTask { get; init; } = "stage";
@@ -105,6 +109,8 @@ internal sealed record DesktopPreferences
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)
         && (CompactComponentOptions == null || Encoding.UTF8.GetByteCount(CompactComponentOptions) <= CompactChoices.ByteLimit)
         && (IslandDisplayPlaces == null || Encoding.UTF8.GetByteCount(IslandDisplayPlaces) <= IslandScreenMemory.ByteLimit)
+        && (ExpandedPanelLayout == null || Encoding.UTF8.GetByteCount(ExpandedPanelLayout) <= PanelChoices.LayoutByteLimit)
+        && (ExpandedPanelOptions == null || Encoding.UTF8.GetByteCount(ExpandedPanelOptions) <= PanelChoices.OptionsByteLimit)
         && BarSizes.Contains(CompactBarSize)
         && CompactSingleTask is "stage" or "count" or "percent" && CompactMetric is "remaining" or "pace"
         && ValidWindow(CodexQuotaWindow) && ValidWindow(ClaudeQuotaWindow)
@@ -150,6 +156,7 @@ internal sealed record DesktopPreferences
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
             reminderSettings = new { warnings = WarningKinds, lowLine = DeepSeekLowBalanceLine, spikeLine = DeepSeekSpikeLimit },
+            expandedPanel = new { layout = ExpandedPanelLayout, options = ExpandedPanelOptions, deepseekDetailed = DeepSeekPanelStyle != "simple" },
             codexExecutable = CodexExecutable,
             codexHome = CodexHome,
             claudeHome = ClaudeHome,

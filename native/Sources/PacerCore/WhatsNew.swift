@@ -7,7 +7,11 @@ public enum WhatsNew {
     public static let defaultsKey = "whatsNewVersion"
 
     public struct Item: Equatable, Sendable {
-        public enum Control: Equatable, Sendable { case openAtLogin, showEmbeddedSessions, showAppButtons }
+        /// A switch for the setting the item introduces, or a link to the page that holds it.
+        public enum Control: Equatable, Sendable {
+            case openAtLogin, showEmbeddedSessions, showAppButtons
+            case openExpandedPanel, openCollapsedBar, openAppearance
+        }
         public let symbol: String
         public let titleKey: String
         public let detailKey: String
@@ -25,6 +29,12 @@ public enum WhatsNew {
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "4.4.0", items: [
+            Item(symbol: "slider.horizontal.3", titleKey: "whats_new.arrange_items", detailKey: "whats_new.arrange_items_detail", control: .openExpandedPanel),
+            Item(symbol: "rectangle.topthird.inset.filled", titleKey: "whats_new.bar_upgrade", detailKey: "whats_new.bar_upgrade_detail", control: .openCollapsedBar),
+            Item(symbol: "paintpalette", titleKey: "whats_new.fresh_look", detailKey: "whats_new.fresh_look_detail", control: .openAppearance),
+            Item(symbol: "point.3.connected.trianglepath.dotted", titleKey: "whats_new.dot_tasks", detailKey: "whats_new.dot_tasks_detail")
+        ]),
         Release(version: "4.3.0", items: [
             Item(symbol: "macwindow", titleKey: "whats_new.main_window", detailKey: "whats_new.main_window_detail"),
             Item(symbol: "circle.dashed", titleKey: "whats_new.progress_ring", detailKey: "whats_new.progress_ring_detail")

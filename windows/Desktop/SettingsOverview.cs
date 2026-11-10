@@ -249,11 +249,13 @@ internal sealed partial class SettingsWindow
             Background = new SolidColorBrush(Color.FromArgb(20, amber.R, amber.G, amber.B)), BorderBrush = new SolidColorBrush(Color.FromArgb(64, amber.R, amber.G, amber.B)), Child = list };
     }
 
-    /// A service with both a 5-hour and a weekly window gets a row of its own;
-    /// the others share rows two at a time above them, as on the Mac.
+    /// A service that shows both its 5-hour and weekly windows with details gets
+    /// a row of its own; the others share rows two at a time above them, as on the Mac.
     private StackPanel ServiceCards(EngineSnapshot snapshot, string[] enabled)
     {
-        bool Wide(string provider) => provider != "deepseek" && snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider) is { } reading
+        var choices = snapshot.ExpandedPanel?.Options ?? PanelOptions.Default;
+        bool Wide(string provider) => provider != "deepseek" && choices.QuotaDetails && choices.Periods(provider) == "both"
+            && snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider) is { } reading
             && reading.FiveHour.RemainingPercent != null && reading.Weekly.RemainingPercent != null;
         var wide = enabled.Where(Wide).ToArray(); var narrow = enabled.Except(wide).ToArray();
         var stack = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
@@ -287,17 +289,22 @@ internal sealed partial class SettingsWindow
         Grid.SetColumn(details, 2); header.Children.Add(details);
         content.Children.Add(header);
         string connectUnavailable = ui.Text(demo ? "windows.deepseek.demo_web_help" : "windows.deepseek.runtime_required");
-        if (provider == "deepseek") content.Children.Add(DeepSeekOverview(snapshot.Wallet, connectUnavailable));
+        // The cards draw as the panel's quota does: its style, windows, details,
+        // pace tick and dial, but not its block order or which blocks show.
+        var panel = snapshot.ExpandedPanel;
+        var choices = panel?.Options ?? PanelOptions.Default;
+        if (provider == "deepseek") content.Children.Add(DeepSeekOverview(snapshot.Wallet, connectUnavailable, panel?.BudgetDial ?? true));
         else if (snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider) is { } reading)
         {
             var raw = snapshot.Quota.FirstOrDefault(value => value.Provider == provider);
             var help = snapshot.Sources.FirstOrDefault(source => source.Provider == provider && source.Transport == "app-server")?.Reason;
             FrameworkElement? status = reading.Status is { State: not "hidden" } connection
                 ? new QuotaConnectionView(provider, connection, ui, () => engine!.SendAsync("retryQuota", new { provider }), () => _ = NavigateAsync(provider)) : null;
-            FrameworkElement view = session.Current.ExpandedQuotaStyle == "classic"
-                ? new QuotaCell(provider, raw, snapshot.Wallet, help, reading, status) { HorizontalAlignment = HorizontalAlignment.Left }
+            var gauge = panel?.Gauge(provider);
+            FrameworkElement view = session.Current.ExpandedQuotaStyle == "classic" || !choices.QuotaDetails
+                ? new QuotaCell(provider, raw, snapshot.Wallet, help, reading, status, gauge, choices.PaceTick) { HorizontalAlignment = HorizontalAlignment.Left }
                 // The details take the rest of the card, so each value lines up at its right edge as on the Mac.
-                : new SingleQuotaView(reading, raw, ui, help, status);
+                : new SingleQuotaView(reading, raw, ui, help, status, gauge, choices.PaceTick);
             content.Children.Add(view);
         }
         else content.Children.Add(new TextBlock { Text = ui.Text("provider.state.searching"), FontSize = 12, Foreground = PacerPalette.Secondary });
@@ -305,14 +312,14 @@ internal sealed partial class SettingsWindow
     }
 
     /// The dial as the island draws it, without its name, then today or the budgets and the speed beside it, as on the Mac.
-    private Grid DeepSeekOverview(EngineWallet? wallet, string connectUnavailable)
+    private Grid DeepSeekOverview(EngineWallet? wallet, string connectUnavailable, bool budgetDial)
     {
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(118) }); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) }); grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.Children.Add(new DeepSeekQuotaCell(wallet, ui, 104, connectUnavailable: connectUnavailable, showsName: false) { HorizontalAlignment = HorizontalAlignment.Center });
+        grid.Children.Add(new DeepSeekQuotaCell(wallet, ui, 104, connectUnavailable: connectUnavailable, showsName: false, budgetDial: budgetDial) { HorizontalAlignment = HorizontalAlignment.Center });
         var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var data = wallet?.Solo;
-        if (data?.Budgets.Count > 0) right.Children.Add(new DeepSeekBudgetDetails(data.Budgets, ui));
+        if (budgetDial && data?.Budgets.Count > 0) right.Children.Add(new DeepSeekBudgetDetails(data.Budgets, ui));
         else if (data != null)
         {
             var label = DeepSeekElements.Text(data.TodayLabel, 11, PacerPalette.Tertiary, FontWeights.SemiBold); right.Children.Add(label);

@@ -53,6 +53,9 @@ enum EngineGuidePages {
                     case .openAtLogin: control = "openAtLogin"
                     case .showEmbeddedSessions: control = "showEmbeddedSessions"
                     case .showAppButtons: control = "showAppButtons"
+                    case .openExpandedPanel: control = "openExpandedPanel"
+                    case .openCollapsedBar: control = "openCollapsedBar"
+                    case .openAppearance: control = "openAppearance"
                     case nil: control = nil
                     }
                     return Item(symbol: item.symbol, title: L10n.text(item.titleKey, language: language),

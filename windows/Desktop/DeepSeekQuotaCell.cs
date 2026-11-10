@@ -12,9 +12,11 @@ internal sealed class DeepSeekQuotaCell : StackPanel
 {
     internal Grid Face { get; }
     /// <param name="showsName">Overview's card already names the service, so its dial leaves the name out, as on the Mac.</param>
-    internal DeepSeekQuotaCell(EngineWallet? wallet, UiText ui, double size = 104, Action? connectAction = null, string? connectUnavailable = null, FrameworkElement? balanceStatus = null, bool showsName = true)
+    /// <param name="budgetDial">The panel shows the budget dial when a budget is set; off keeps today's dial.</param>
+    internal DeepSeekQuotaCell(EngineWallet? wallet, UiText ui, double size = 104, Action? connectAction = null, string? connectUnavailable = null, FrameworkElement? balanceStatus = null, bool showsName = true,
+        bool budgetDial = true)
     {
-        var budget = wallet?.Solo?.Budgets;
+        var budget = budgetDial ? wallet?.Solo?.Budgets : null;
         var dial = new QuotaDial("deepseek", null, wallet, dialSize: size) { Width = size, Height = size };
         var face = new Grid { Width = size, Height = size, HorizontalAlignment = HorizontalAlignment.Center }; Face = face;
         face.Children.Add(budget?.Count > 0 ? new DeepSeekBudgetDial(budget, ui, size) : dial); Children.Add(face);

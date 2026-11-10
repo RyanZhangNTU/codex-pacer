@@ -152,10 +152,13 @@ public struct TaskPresentationOptions: Equatable, Sendable {
     public var showsDeepSeekTurnCost: Bool
     /// Providers whose rows draw the self-reported progress ring.
     public var progressRingProviders: Set<AgentProvider>
+    /// Rows on one page of the expanded panel's task list.
+    public var pageSize: Int
     public init(hideProjects: Bool = false, hostApplications: [String: TaskHostLabel] = [:], sourceNames: [String: String] = [:],
-                showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = []) {
+                showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = [], pageSize: Int = 3) {
         self.hideProjects = hideProjects; self.hostApplications = hostApplications; self.sourceNames = sourceNames
         self.showsDeepSeekTurnCost = showsDeepSeekTurnCost; self.progressRingProviders = progressRingProviders
+        self.pageSize = ExpandedPanelOptions.pageSizes.contains(pageSize) ? pageSize : 3
     }
 }
 
@@ -285,7 +288,7 @@ public struct ActivityTaskPresentation: Sendable {
             return ActivityTaskRowPresentation(activity: activity, group: group, attention: attention(activity),
                 unread: group?.isRunning != true && inbox.isUnread(activity), options: options, at: now)
         }
-        pagination = TaskPagination(itemCount: displayed.count)
+        pagination = TaskPagination(itemCount: displayed.count, pageSize: options.pageSize)
         pendingCompletions = inbox.unreadActivities.filter { roots.contains($0.id) }
         let readable = Set(groups.filter { !$0.isRunning && !$0.isWaiting && attention($0.primary) == nil }.flatMap { $0.members.map(\.id) })
         readableCompletions = inbox.unreadActivities.filter { readable.contains($0.id) }

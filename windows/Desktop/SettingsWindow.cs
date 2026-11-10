@@ -383,7 +383,7 @@ internal sealed partial class SettingsWindow : Window
     private string ResolvePane(string value)
     {
         value = CanonicalPane(value);
-        return value is "general" or "appearance" or "collapsed" or "about" or "support" || EnginePane(value) && engine != null ? value : "general";
+        return value is "general" or "appearance" or "collapsed" or "expandedPanel" or "about" or "support" || EnginePane(value) && engine != null ? value : "general";
     }
     /// Opens a page; What's New and Help open as tabs of Help & Updates.
     internal async System.Threading.Tasks.Task NavigateAsync(string pane)
@@ -421,6 +421,7 @@ internal sealed partial class SettingsWindow : Window
             ClearDeepSeek();
             ClearReminders();
             ClearCollapsed();
+            ClearExpandedPanel();
             ClearGuidePages();
             ClearConnections();
             paneTitle.Text = PaneTitle(activePane);
@@ -437,6 +438,7 @@ internal sealed partial class SettingsWindow : Window
                 case "deepseek": BuildDeepSeek(); break;
                 case "notifications": BuildReminders(); break;
                 case "collapsed": BuildCollapsed(); break;
+                case "expandedPanel": BuildExpandedPanel(); break;
                 case "remote": BuildConnections(); break;
                 default: BuildGeneral(); break;
             }
@@ -487,6 +489,7 @@ internal sealed partial class SettingsWindow : Window
             RefreshProviderHome();
             RefreshReminders();
             RefreshCollapsed();
+            RefreshExpandedPanel();
             RefreshConnections();
             RefreshSidebar();
             RefreshOverview();

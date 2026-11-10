@@ -77,12 +77,20 @@ internal static class CollapsedLayoutChecks
                 "Keyboard ordering must save once and move the shared component left");
             Check(configurations == 0, "Keyboard ordering is a presentation-only edit");
             state = await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"]);
-            foreach (string id in state.Components.Where(value => value.Available && !value.Shown).Select(value => value.Id).ToArray())
+            string[] missing = state.Components.Where(value => value.Available && !value.Shown).Select(value => value.Id).ToArray();
+            // A tile only selects: its settings open with a note, and the bar stays as it was.
+            string? arranged = session.Current.CompactLayout;
+            Invoke(Find<Button>(window, "compact.component." + missing[0])); await Pump();
+            Check(session.Current.CompactLayout == arranged && Find<TextBlock>(window, "compact.inspector.title").Text == state.Components.Single(value => value.Id == missing[0]).Label
+                && Find<TextBlock>(window, "compact.inspector.notice").IsVisible, "Clicking a tile selects its component without adding it to the bar");
+            foreach (string id in missing)
             {
                 await Until(() => editor.IsEnabled);
-                var check = Find<CheckBox>(window, "compact.component." + id); Toggle(check);
-                await Until(() => check.IsChecked == true && check.IsEnabled);
+                var add = Find<Button>(window, "compact.component." + id + ".toggle"); Invoke(add);
+                await Until(() => Equals(add.Tag, "added") && add.IsEnabled);
             }
+            Check(Find<TextBlock>(window, "compact.inspector.title").Text == state.Components.Single(value => value.Id == missing[0]).Label
+                && !Find<TextBlock>(window, "compact.inspector.notice").IsVisible, "The round buttons add components and keep the selection");
             // Each component's settings live in the inspector once it is selected, as on the Mac.
             window.SelectCompactComponent("activity"); await Pump();
             Check(Find<TextBlock>(window, "compact.inspector.title").Text == state.Components.Single(value => value.Id == "activity").Label && Find<ComboBox>(window, "compact.singleTask").IsVisible
@@ -115,10 +123,10 @@ internal static class CollapsedLayoutChecks
             Check(header.All(value => Math.Abs(value.Opacity - 1) < .001), "Expanding keeps every bar component at full strength");
             PressKey(island, island, Key.Escape); await island.WaitForPresentationAsync();
             Check(header.All(value => Math.Abs(value.Opacity - 1) < .001), "Collapsing keeps every bar component at full strength");
-            var status = Find<CheckBox>(window, "compact.component.status"); bool original = status.IsChecked == true;
-            reject = true; Toggle(status); await Until(() => !reject && status.IsEnabled);
+            var status = Find<Button>(window, "compact.component.status.toggle"); bool original = Equals(status.Tag, "added");
+            reject = true; Invoke(status); await Until(() => !reject && status.IsEnabled);
             await island.WaitForPresentationAsync();
-            Check((status.IsChecked == true) == original && SelfAndDescendants(island).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.status") == original,
+            Check(Equals(status.Tag, "added") == original && SelfAndDescendants(island).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "compact.row.status") == original,
                 "A failed write must restore the editor's acknowledged state");
             Check(configurations == 0, "A failed presentation write cannot reconfigure a source");
             var scroller = Find<ScrollViewer>(window, "settings.content"); scroller.ScrollToTop(); await Pump();
@@ -141,8 +149,8 @@ internal static class CollapsedLayoutChecks
             await Until(() => session.Current.CompactLayout != beforeRestore && Find<Button>(window, "compact.restore").IsEnabled);
             Check(session.Current.CompactSingleTask == "count" && session.Current.CompactMetric == "pace" && session.Current.QuotaRingOuter == "deepseek",
                 "Restore Arrangement must retain the independent display choices, like the original");
-            var warning = Find<CheckBox>(window, "compact.component.warnings"); Toggle(warning);
-            await Until(() => warning.IsChecked == false && warning.IsEnabled);
+            var warning = Find<Button>(window, "compact.component.warnings.toggle"); Invoke(warning);
+            await Until(() => Equals(warning.Tag, "add") && warning.IsEnabled);
             await window.NavigateAsync("reminders"); await Pump();
             var fiveHour = Find<CheckBox>(window, "settings.reminders.fiveHour");
             await Until(() => fiveHour.IsEnabled);

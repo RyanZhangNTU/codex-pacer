@@ -19,7 +19,7 @@ internal sealed partial class SettingsWindow
     private TextBox? reminderLow, reminderSpike;
     private TextBlock? reminderAmountIssue, notificationIssue;
     private CheckBox? notificationSwitch;
-    private ComboBox? reminderRetention;
+    private Button? reminderRetention;
     private double? reminderLowValue, reminderSpikeValue;
     private readonly string?[] reminderPendingAmount = [null, null];
 
@@ -135,12 +135,10 @@ internal sealed partial class SettingsWindow
         var footer = CardFooter(ui.Text("main.notify.deepseek_one")); reminderFooter = footer; reminderWalletRows.Children.Add(footer);
         form.Children.Add(reminderWalletRows);
 
-        reminderRetention = new ComboBox { VerticalAlignment = VerticalAlignment.Center, SelectedValuePath = "Tag" };
-        foreach (var item in new[] { (5, "settings.five_minutes"), (15, "settings.fifteen_minutes"), (30, "settings.thirty_minutes"), (60, "settings.one_hour"), (240, "settings.four_hours"), (0, "settings.until_clicked") })
-            reminderRetention.Items.Add(new ComboBoxItem { Tag = item.Item1, Content = ui.Text(item.Item2) });
-        Identify(reminderRetention, "settings.reminders.retention", ui.Text("reminders.retention")); editors.Add(reminderRetention);
-        reminderRetention.SelectionChanged += async (_, _) => { if (!synchronizing && reminderRetention.SelectedValue is int minutes) await Change(p => p with { RetentionMinutes = minutes }); };
-        form.Children.Add(Card(Row(Label(ui.Text("reminders.retention")), reminderRetention)));
+        // How long ended tasks stay is the task list's choice now; this row leads there, as on the Mac.
+        reminderRetention = LinkRow(ui.Text("main.notifications.retention_moved"), ui.Text("main.panel.open"), "settings.reminders.retention",
+            async () => { if (activePane == "notifications") await NavigateToPanelBlockAsync("tasks"); });
+        form.Children.Add(Card(reminderRetention));
     }
     private FrameworkElement ReminderAmount(bool low)
     {
@@ -204,6 +202,6 @@ internal sealed partial class SettingsWindow
         string? issueKey = notifications?.Availability switch { NotificationAvailability.Denied => "windows.settings.notification_denied", NotificationAvailability.Unsupported => "windows.settings.notifications_unsupported", NotificationAvailability.Failed => "windows.settings.notifications_failed", _ => null };
         notificationIssue!.Visibility = issueKey == null ? Visibility.Collapsed : Visibility.Visible;
         notificationIssue.Text = issueKey == null ? "" : ui.Text(issueKey); AutomationProperties.SetName(notificationIssue, notificationIssue.Text);
-        reminderRetention.SelectedValue = preferences.RetentionMinutes; reminderRetention.IsEnabled = enabled && connected;
+        reminderRetention.IsEnabled = enabled;
     }
 }

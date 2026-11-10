@@ -46,6 +46,21 @@ internal static class PreferencesChecks
             Check(sized.CompactBarSize == "large" && sized.CompactComponentOptions == choices && sized.IslandAppearance == "graphite" && sized.CompactSingleTask == "percent"
                 && saved.Contains("\"compactBarSize\": \"large\"") && saved.Contains("\"compactComponentOptions\": \"" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(choices)) + "\""),
                 "Component choices are stored as the Mac's data and survive relaunch");
+            // The expanded panel's blocks and choices, also as the Mac's data; damage reads as unset.
+            const string panelLayout = "{\"blocks\":[\"claude\",\"tasks\"],\"version\":1}";
+            string panelOptions = PanelChoices.With(PanelChoices.With(null, "rowFields", new[] { "rate", "model" }), "pageSize", 5);
+            Check(store.Save(original with { ExpandedPanelLayout = panelLayout, ExpandedPanelOptions = panelOptions, LastSettingsPane = "expandedPanel" }), "The panel's layout and choices must save");
+            var panel = store.Load().Value; saved = File.ReadAllText(file);
+            Check(panel.ExpandedPanelLayout == panelLayout && panel.ExpandedPanelOptions == panelOptions && panel.LastSettingsPane == "expandedPanel"
+                && saved.Contains("\"expandedPanelLayout\": \"" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(panelLayout)) + "\"")
+                && saved.Contains("\"expandedPanelOptions\": \"") && System.Text.Json.Nodes.JsonNode.Parse(panelOptions)!["rowFields"]!.AsArray().Count == 2,
+                "The panel's layout and choices are stored as the Mac's data and survive relaunch");
+            var damagedPanel = System.Text.Json.Nodes.JsonNode.Parse(saved)!.AsObject(); damagedPanel["expandedPanelLayout"] = "not base64!"; damagedPanel["expandedPanelOptions"] = Convert.ToBase64String(new byte[] { 0xff, 0xfe });
+            File.WriteAllText(file, damagedPanel.ToJsonString());
+            var panelRecovered = store.Load();
+            Check(!panelRecovered.Unavailable && panelRecovered.Value.ExpandedPanelLayout == null && panelRecovered.Value.ExpandedPanelOptions == null
+                && panelRecovered.Value.CompactLayout == original.CompactLayout && panelRecovered.Value.LastSettingsPane == "expandedPanel",
+                "A damaged panel layout or choice reads as automatic and default without touching other settings");
             const string damagedField = "{\"version\":1,\"multiRing\":\"segments\",\"paceTick\":\"yes\",\"warningStyle\":\"dot\",\"ringLayout\":\"future\",\"later\":[1,2]}";
             var readBack = CompactChoices.Parse(damagedField);
             Check(readBack.MultiRing == "segments" && readBack.WarningStyle == "dot" && readBack.PaceTick && readBack.RingLayout == "concentric",

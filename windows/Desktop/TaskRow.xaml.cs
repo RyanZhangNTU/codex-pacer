@@ -20,11 +20,19 @@ public partial class TaskRow : Button
     private bool hovered, animations = true;
     private int hoverRevision;
     private AnimationLease? hover;
-    internal TaskRow(EngineTaskRow value)
+    /// Rows with one line are 38 points tall, two lines 54.
+    internal const double TwoLineHeight = 54, OneLineHeight = 38;
+    internal static double RowHeight(PanelOptions? options) => options?.OneLine == true ? OneLineHeight : TwoLineHeight;
+    /// <param name="options">The panel's row style and fields; none draws every field on two lines.</param>
+    internal TaskRow(EngineTaskRow value, PanelOptions? options = null)
     {
         InitializeComponent();
         FontFamily = PacerFonts.Interface;
-        DataContext = new TaskRowState(value);
+        var state = new TaskRowState(value, options);
+        DataContext = state;
+        Height = RowHeight(options);
+        // The one-line row's icon draws the 28-point face at 22.
+        if (state.OneLine) Icon.LayoutTransform = new ScaleTransform(22.0 / 28, 22.0 / 28);
         Background = PacerPalette.Hover; IsEnabled = false;
         Click += (_, _) => { if (IsEnabled) open?.Invoke(); };
         MouseEnter += (_, _) => { hovered = true; UpdateHover(); };
@@ -66,18 +74,37 @@ public partial class TaskRow : Button
                 new Typeface(FontFamily, FontStyles.Normal, weight, FontStretches.Normal), size, Brushes.White,
                 VisualTreeHelper.GetDpi(this).PixelsPerDip).WidthIncludingTrailingWhitespace;
         var row = state.Value;
-        double rate = Text(state.RateText, state.RateSize, FontWeights.SemiBold) + Text(state.RateUnit + state.RateSeparator + row.TurnTime, 11, FontWeights.Medium);
-        double model = Text(row.Model, 11, FontWeights.Medium) + Text(row.Effort, 11, FontWeights.Medium) + (row.Effort == null ? 0 : 4)
-            + Text(row.Cost, 11, FontWeights.Medium) + (row.Cost == null ? 0 : row.PeakCost ? 16 : 7);
-        double detail = Text(row.Status, 11, FontWeights.Medium) + (row.Subagents > 0 ? 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium) : 0)
-            + (row.Source == null ? 0 : 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14));
-        return 28 + 10 + 18 + Math.Max(Math.Min(200, Text(row.Title, 13, FontWeights.SemiBold)) + 16 + rate, detail + 16 + model);
+        double trailing = state.OneLineStatusVisible == Visibility.Visible ? Text(row.Status, 11, FontWeights.Medium)
+            : Text(state.ShownRateText, state.RateSize, FontWeights.SemiBold) + Text(state.ShownRateUnit + state.ShownSeparator + state.ShownTurnTime, 11, FontWeights.Medium);
+        double title = Math.Min(200, Text(row.Title, 13, FontWeights.SemiBold)) + (trailing > 0 ? 16 + trailing : 0);
+        if (state.OneLine) return 22 + 10 + 18 + title;
+        double model = (state.ModelVisible == Visibility.Visible ? Text(row.Model, 11, FontWeights.Medium) : 0)
+            + (state.EffortVisible == Visibility.Visible ? Text(row.Effort, 11, FontWeights.Medium) + 4 : 0)
+            + (state.CostVisible == Visibility.Visible ? Text(row.Cost, 11, FontWeights.Medium) + (row.PeakCost ? 16 : 7) : 0);
+        double detail = Text(row.Status, 11, FontWeights.Medium)
+            + (state.SubagentsVisible == Visibility.Visible ? 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium) : 0)
+            + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0);
+        return 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0));
     }
 }
 
-internal sealed class TaskRowState(EngineTaskRow value)
+internal sealed class TaskRowState(EngineTaskRow value, PanelOptions? options = null)
 {
+    private readonly PanelOptions choices = options ?? PanelOptions.Default;
     public EngineTaskRow Value { get; } = value;
+    public bool OneLine => choices.OneLine;
+    public GridLength IconColumn => new(OneLine ? 22 : 28);
+    public GridLength GapRow => new(OneLine ? 0 : 3);
+    public GridLength DetailRow => new(OneLine ? 0 : 15);
+    public Visibility SecondLineVisible => Visible(!OneLine);
+    /// One line shows what needs the user, or a failure, where the speed would be.
+    public Visibility OneLineStatusVisible => Visible(OneLine && (Value.Attention != null || Value.Phase == "waitingForInput" || Value.Failed));
+    public Visibility RateLineVisible => Visible(OneLineStatusVisible != Visibility.Visible);
+    public string? ShownRateText => choices.Shows("rate") ? RateText : null;
+    public string ShownRateUnit => choices.Shows("rate") ? RateUnit : "";
+    public string? ShownTurnTime => choices.Shows("turnTime") ? Value.TurnTime : null;
+    public string ShownSeparator => ShownTurnTime != null && ShownRateText != null ? " · " : "";
+    public Visibility ModelVisible => Visible(choices.Shows("model"));
     public Brush ProviderInk => PacerPalette.Provider(Value.Provider);
     public Brush TitleInk => Value.Dimmed ? PacerPalette.Secondary : PacerPalette.Primary;
     public Brush DetailInk => Value.Attention != null || Value.Phase == "waitingForInput" ? PacerPalette.Attention
@@ -93,12 +120,12 @@ internal sealed class TaskRowState(EngineTaskRow value)
     public string RateUnit => Value.TokensPerSecond == null ? "" : " t/s";
     public string RateSeparator => Value.TurnTime != null && RateText != null ? " · " : "";
     public double ModelOpacity => Value.Dimmed ? 0.7 : 1;
-    public Visibility SubagentsVisible => Visible(Value.Subagents > 0);
-    public Visibility SourceVisible => Visible(Value.Source != null);
+    public Visibility SubagentsVisible => Visible(Value.Subagents > 0 && choices.Shows("subagents"));
+    public Visibility SourceVisible => Visible(Value.Source != null && choices.Shows("source"));
     public Visibility SourceIconVisible => Visible(Value.SourceKind != null);
-    public Visibility CostVisible => Visible(Value.Cost != null);
+    public Visibility CostVisible => Visible(Value.Cost != null && choices.Shows("cost"));
     public Visibility PeakVisible => Visible(Value.PeakCost);
-    public Visibility EffortVisible => Visible(Value.Effort != null);
+    public Visibility EffortVisible => Visible(Value.Effort != null && choices.Shows("model"));
     public string SourceSymbol => Value.SourceKind == "cloud" ? "cloud" : "server.rack";
 
     public string AccessibleName => string.Join(", ", new[] { Value.Provider, Value.Title, Value.Status, Value.ProgressText, Value.Source,

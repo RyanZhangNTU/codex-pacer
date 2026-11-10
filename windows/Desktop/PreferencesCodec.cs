@@ -43,7 +43,7 @@ internal static class PreferencesCodec
             var properties = JsonSerializer.SerializeToNode(new DesktopPreferences(), Json)!.AsObject();
             foreach (string property in properties.Select(pair => pair.Key).ToArray())
             {
-                if (property is "schemaVersion" or "compactLayout" or "compactComponentOptions" or "islandDisplayPlaces" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID" or "islandPlacement") continue;
+                if (property is "schemaVersion" or "compactLayout" or "compactComponentOptions" or "islandDisplayPlaces" or "expandedPanelLayout" or "expandedPanelOptions" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID" or "islandPlacement") continue;
                 if (root.TryGetPropertyValue(Key(property), out var saved)) properties[property] = saved?.DeepClone();
             }
             string displayID = ReadDisplayID(root);
@@ -82,7 +82,9 @@ internal static class PreferencesCodec
             value = Normalize(properties.Deserialize<DesktopPreferences>(Json) ?? throw new JsonException()) with
             {
                 IslandPlacement = ReadIslandPlacement(root["islandPlacement"]), CompactComponentOptions = ReadComponentOptions(root["compactComponentOptions"]),
-                IslandDisplayPlaces = ReadDisplayPlaces(root["islandDisplayPlaces"])
+                IslandDisplayPlaces = ReadDisplayPlaces(root["islandDisplayPlaces"]),
+                ExpandedPanelLayout = ReadData(root["expandedPanelLayout"], PanelChoices.LayoutByteLimit),
+                ExpandedPanelOptions = ReadData(root["expandedPanelOptions"], PanelChoices.OptionsByteLimit)
             };
         }
         if (!value.IsValid) throw new JsonException();
@@ -96,6 +98,19 @@ internal static class PreferencesCodec
         {
             byte[] data = Convert.FromBase64String(text);
             if (data.Length > CompactChoices.ByteLimit || JsonNode.Parse(data) is not JsonObject) return null;
+            return new UTF8Encoding(false, true).GetString(data);
+        }
+        catch (Exception error) when (error is FormatException or JsonException or DecoderFallbackException or ArgumentException) { return null; }
+    }
+    // A damaged panel layout reads as automatic and damaged choices as the
+    // defaults, without touching other settings.
+    private static string? ReadData(JsonNode? node, int limit)
+    {
+        if (node is not JsonValue value || !value.TryGetValue<string>(out var text)) return null;
+        try
+        {
+            byte[] data = Convert.FromBase64String(text);
+            if (data.Length > limit || JsonNode.Parse(data) is not JsonObject) return null;
             return new UTF8Encoding(false, true).GetString(data);
         }
         catch (Exception error) when (error is FormatException or JsonException or DecoderFallbackException or ArgumentException) { return null; }
@@ -131,6 +146,8 @@ internal static class PreferencesCodec
         CompactBarSize = DesktopPreferences.BarSizes.Contains(value.CompactBarSize) ? value.CompactBarSize : "standard",
         CompactComponentOptions = value.CompactComponentOptions is { } options && Encoding.UTF8.GetByteCount(options) <= CompactChoices.ByteLimit ? options : null,
         IslandDisplayPlaces = value.IslandDisplayPlaces is { } places && Encoding.UTF8.GetByteCount(places) <= IslandScreenMemory.ByteLimit ? places : null,
+        ExpandedPanelLayout = value.ExpandedPanelLayout is { } panelLayout && Encoding.UTF8.GetByteCount(panelLayout) <= PanelChoices.LayoutByteLimit ? panelLayout : null,
+        ExpandedPanelOptions = value.ExpandedPanelOptions is { } panelOptions && Encoding.UTF8.GetByteCount(panelOptions) <= PanelChoices.OptionsByteLimit ? panelOptions : null,
         ExpandedQuotaStyle = value.ExpandedQuotaStyle is "classic" ? "classic" : "split",
         DeepSeekPanelStyle = value.DeepSeekPanelStyle is "simple" ? "simple" : "detailed",
         DeepSeekMode = value.DeepSeekMode is "budget" ? "budget" : "balance",
@@ -139,7 +156,7 @@ internal static class PreferencesCodec
         DeepSeekRingPeriod = value.DeepSeekRingPeriod is "week" ? "week" : "day",
         CompactSingleTask = value.CompactSingleTask is "count" or "percent" ? value.CompactSingleTask : "stage",
         CompactMetric = value.CompactMetric is "pace" ? "pace" : "remaining",
-        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "notifications" or "codex" or "claude" or "deepseek" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew" ? value.LastSettingsPane : "overview"
+        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "notifications" or "codex" or "claude" or "deepseek" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew" ? value.LastSettingsPane : "overview"
     };
     internal static byte[] Encode(DesktopPreferences value, ReadOnlySpan<byte> original = default)
     {
@@ -153,7 +170,7 @@ internal static class PreferencesCodec
         root["schemaVersion"] = Version;
         foreach (var property in properties)
         {
-            if (property.Key is "schemaVersion" or "compactLayout" or "compactComponentOptions" or "islandDisplayPlaces" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID") continue;
+            if (property.Key is "schemaVersion" or "compactLayout" or "compactComponentOptions" or "islandDisplayPlaces" or "expandedPanelLayout" or "expandedPanelOptions" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID") continue;
             string key = Key(property.Key);
             if (property.Value == null) root.Remove(key); else root[key] = property.Value.DeepClone();
         }
@@ -185,6 +202,8 @@ internal static class PreferencesCodec
         else root["compactComponentOptions"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(value.CompactComponentOptions));
         if (value.IslandDisplayPlaces == null) root.Remove("islandDisplayPlaces");
         else root["islandDisplayPlaces"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(value.IslandDisplayPlaces));
+        foreach (var (key, data) in new[] { ("expandedPanelLayout", value.ExpandedPanelLayout), ("expandedPanelOptions", value.ExpandedPanelOptions) })
+            if (data == null) root.Remove(key); else root[key] = Convert.ToBase64String(Encoding.UTF8.GetBytes(data));
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(root, Json);
         if (bytes.Length > PreferencesStore.MaximumBytes) throw new JsonException();
         // A save must be reversible, including the warnings carried by the layout.

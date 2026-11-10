@@ -37,12 +37,16 @@ internal static class DeepSeekSoloChecks
             var view = Descendants(island).OfType<DeepSeekSoloView>().Single();
             var wallet = engine.LatestSnapshot!.Wallet!;
             Check(Descendants(view).OfType<QuotaDial>().Single().ActualWidth == 132, "DeepSeek alone must use the original 132-point time dial");
+            // The automatic layout keeps the panel as it was: the spend in the day dial's
+            // column, and the week as its own block joined under the dial.
             Check(Descendants(view).OfType<DeepSeekSpeedView>().Count() == 1 && Descendants(view).OfType<DeepSeekDistributionView>().Count() == 1
-                && Descendants(view).OfType<DeepSeekWeekView>().Count() == 1, "The actual shared engine fixture must expose speed, spend and seven-day history");
-            Check(Descendants(view).OfType<DeepSeekWeekPlot>().Single().ActualHeight == 44 && Descendants(view).OfType<DeepSeekSpeedPlot>().Single().ActualHeight == 22,
+                && !Descendants(view).OfType<DeepSeekWeekView>().Any() && Descendants(island).OfType<DeepSeekWeekView>().Count() == 1,
+                "The actual shared engine fixture must expose speed, spend beside the dial and the week as its own block");
+            var weekView = Descendants(island).OfType<DeepSeekWeekView>().Single();
+            Check(Descendants(island).OfType<DeepSeekWeekPlot>().Single().ActualHeight == 44 && Descendants(view).OfType<DeepSeekSpeedPlot>().Single().ActualHeight == 22,
                 "The original chart heights must remain 44 and 22 points");
             Check(UIElementAutomationPeer.CreatePeerForElement(Descendants(view).OfType<DeepSeekSpeedView>().Single()).GetName() == wallet.Solo!.Speed!.AccessibilityLabel
-                && UIElementAutomationPeer.CreatePeerForElement(Descendants(view).OfType<DeepSeekWeekView>().Single()).GetName() == wallet.Solo.Week!.AccessibilityLabel,
+                && UIElementAutomationPeer.CreatePeerForElement(weekView).GetName() == wallet.Solo.Week!.AccessibilityLabel,
                 "Charts must expose their actual shared readings once to accessibility");
             CheckBounds(view);
             Check(Descendants(island).OfType<ScrollViewer>().First().ScrollableHeight < .1,
@@ -69,7 +73,8 @@ internal static class DeepSeekSoloChecks
     private static async Task States(EngineWallet original, UiText ui, string language, string output)
     {
         var solo = original.Solo!;
-        var fixtures = new List<(string Name, EngineWallet Wallet, bool Detailed)>
+        // The dial's own view: the week and, beside a budget, the spend are blocks of their own.
+        var fixtures = new List<(string Name, EngineWallet Wallet, bool SpendBeside)>
         {
             ("quiet", original with { Solo = solo with { Speed = null, Distribution = null, Week = null } }, true),
             ("simple", original, false),
@@ -79,12 +84,14 @@ internal static class DeepSeekSoloChecks
             ("exceeded", original with { Solo = solo with { Budgets = new[] { Budget("day", true, ui) } } }, true)
         };
         var measurements = new List<object>();
-        foreach (var (name, wallet, detailed) in fixtures)
+        foreach (var (name, wallet, spendBeside) in fixtures)
         {
             int opened = 0;
-            var view = new DeepSeekSoloView(wallet, ui, detailed, () => opened++);
-            Check(Descendants(view).OfType<DeepSeekWeekView>().Count() == (detailed && wallet.Solo!.Week != null ? 1 : 0),
-                "History must appear exactly once when the shared projection supplies it and detailed mode is enabled");
+            var view = new DeepSeekSoloView(wallet, ui, spendBeside, () => opened++);
+            bool detailed = spendBeside && wallet.Solo!.Budgets.Count == 0;
+            Check(!Descendants(view).OfType<DeepSeekWeekView>().Any(), "The week is a block of its own, never inside the dial's view");
+            Check(Descendants(view).OfType<DeepSeekDistributionView>().Count() == (detailed && wallet.Solo!.Distribution != null ? 1 : 0),
+                "Today's spend joins only the day dial's column");
             var host = new Grid { Background = Brushes.Black }; var panel = new Border { Width = 392, VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(10), Child = view }; host.Children.Add(panel);
             var window = new Window { Width = 412, Height = 360, Content = host, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, ShowActivated = false, ShowInTaskbar = false, IsHitTestVisible = false };
             try
@@ -94,7 +101,7 @@ internal static class DeepSeekSoloChecks
                 Check(Descendants(view).OfType<DeepSeekBudgetDial>().Count() == (budget ? 1 : 0) && Descendants(view).OfType<QuotaDial>().Count() == (budget ? 0 : 1), "A budget replaces the price dial without stacking both faces");
                 if (name == "quiet") Check(!Descendants(view).OfType<DeepSeekSpeedView>().Any() && !Descendants(view).OfType<DeepSeekDistributionView>().Any() && !Descendants(view).OfType<DeepSeekWeekView>().Any(), "A quiet day must omit inactive sections");
                 if (name == "simple") Check(Descendants(view).OfType<DeepSeekSpeedView>().Any() && !Descendants(view).OfType<DeepSeekDistributionView>().Any() && !Descendants(view).OfType<DeepSeekWeekView>().Any(), "The original simple panel keeps speed while omitting distribution and history");
-                if (detailed && wallet.Solo.Distribution != null)
+                if (detailed && wallet.Solo!.Distribution != null)
                 {
                     var link = Descendants(view).OfType<Button>().Single(value => AutomationProperties.GetAutomationId(value) == "deepseek.usage");
                     Check(new ButtonAutomationPeer(link).GetName() == wallet.Solo.Distribution.UsageTitle, "The usage link needs the original accessible action name");

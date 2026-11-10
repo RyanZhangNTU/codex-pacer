@@ -112,10 +112,12 @@ internal static class SettingsPresentationChecks
             await Until(() => session.Current.HideProjects && privacy.IsEnabled, "Accessible privacy changes must await the real engine acknowledgement");
             Check(latest?.Tasks.Count > 0 && latest.Tasks.All(value => value.Title == (language == "en" ? "Local task" : "本地任务")),
                 "The settings switch must redact names before they cross the engine protocol");
-            // App buttons moved to Appearance's expanded panel, as on the Mac.
-            await window.NavigateAsync("appearance"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
-            var apps = Find<CheckBox>(window, "settings.app_buttons");
-            Check(apps.IsChecked == true, "App buttons default on under Appearance");
+            // App buttons are one of the Expanded Panel's header buttons, as on the Mac.
+            await window.NavigateAsync("expandedPanel"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            await Until(() => Descendants(window).OfType<CheckBox>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.option.action.apps"), "The panel page must load its blocks");
+            window.SelectPanelBlock("actions"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            var apps = Find<CheckBox>(window, "panel.option.action.apps");
+            Check(apps.IsChecked == true, "App buttons default on with the panel's buttons");
             Toggle(apps);
             await Until(() => !session.Current.ShowAppButtons && apps.IsEnabled, "App button choices must commit immediately");
             await window.NavigateAsync("general"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
@@ -167,15 +169,20 @@ internal static class SettingsPresentationChecks
             }
             string appearanceImage = Path.Combine(output, "settings-" + scenario + "-appearance.png");
             window.CapturePreview(appearanceImage); CheckOpaque(appearanceImage, window);
-            var classic = Find<RadioButton>(window, "appearance.quota.classic");
+            // The quota style moved to the Expanded Panel's quota blocks, as on the Mac.
+            await window.NavigateAsync("expandedPanel"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            await Until(() => Descendants(window).OfType<RadioButton>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.option.codex.style.classic"), "The panel page must load its quota blocks");
+            window.SelectPanelBlock("codex"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            var classic = Find<RadioButton>(window, "panel.option.codex.style.classic");
             Check(classic.IsEnabled, "The classic quota style must be available through the original segmented choice");
             Select(classic); await Until(() => session.Current.ExpandedQuotaStyle == "classic" && classic.IsEnabled,
                 "Classic selection must save immediately without reconfiguring data sources");
             Check(configureCalls == 3, "The quota style belongs only to the desktop presentation");
-            rejectSave = true; Select(Find<RadioButton>(window, "appearance.quota.split"));
+            rejectSave = true; Select(Find<RadioButton>(window, "panel.option.codex.style.split"));
             await Until(() => classic.IsChecked == true && classic.IsEnabled, "A failed quota-style save must restore the acknowledged selection");
-            Select(Find<RadioButton>(window, "appearance.quota.split"));
+            Select(Find<RadioButton>(window, "panel.option.codex.style.split"));
             await Until(() => session.Current.ExpandedQuotaStyle == "split", "Split Ring must remain selectable after rollback");
+            await window.NavigateAsync("appearance"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             var scroller = Find<ScrollViewer>(window, "settings.content");
             var scrolling = (IScrollProvider)new ScrollViewerAutomationPeer(scroller).GetPattern(PatternInterface.Scroll);
             if (scrolling.VerticallyScrollable) scrolling.SetScrollPercent(ScrollPatternIdentifiers.NoScroll, 100);

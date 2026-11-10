@@ -69,7 +69,18 @@ extension IslandModel {
     }
 
     var deepseekSoloPresentation: DeepSeekSoloPresentation {
-        DeepSeekSoloPresentation(wallet: deepseekWallet, at: now, hideProjects: hideProjects, taskTitle: deepseekTaskTitle)
+        DeepSeekSoloPresentation(wallet: deepseekWallet, at: now, hideProjects: hideProjects, panel: panelOptions, taskTitle: deepseekTaskTitle)
+    }
+
+    /// The panel's blocks: the saved ones, or the services' as before blocks.
+    var panelLayout: ExpandedPanelLayout {
+        .resolved(saved: savedPanelLayout, providers: Set(enabledProviders), deepseekDetailed: deepseekPanelStyle == .detailed)
+    }
+
+    /// What the expanded panel draws, top to bottom.
+    var panelSections: [ExpandedPanelPresentation.Section] {
+        ExpandedPanelPresentation.sections(layout: panelLayout, providers: Set(enabledProviders), options: panelOptions,
+            budgetDial: deepseekShowsBudgetDial)
     }
 
     func quotaHistoryPresentation(_ provider: AgentProvider) -> QuotaHistoryPresentation {

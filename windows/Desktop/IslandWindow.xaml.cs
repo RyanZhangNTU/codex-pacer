@@ -259,7 +259,7 @@ public partial class IslandWindow : Window
             embeddedFontFace = resolvedFont?.FontUri.AbsoluteUri, embeddedFontWeight = resolvedFont?.Weight.ToOpenTypeWeight(),
             animations = AnimationsEnabled, quotaHeight = QuotaLabel.Height, quotaDesired = QuotaLabel.DesiredSize,
             renderingDiagnostics = new { frames = renderedFrames, meanMilliseconds = totalRenderMilliseconds / Math.Max(1, renderedFrames), worstMilliseconds = worstRenderMilliseconds, worstIntervalMilliseconds = worstFrameIntervalMilliseconds, boundsMilliseconds, visualsMilliseconds, layoutMilliseconds, renderTier = RenderCapability.Tier >> 16 },
-            animationPhaseLocked = false, rows = rows.Skip(page * 3).Take(3), header = latest?.Presentation?.Header
+            animationPhaseLocked = false, rows = rows.Skip(page * PageSize).Take(PageSize), header = latest?.Presentation?.Header
         }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
     }
     internal async Task WaitForPresentationAsync()
@@ -308,15 +308,17 @@ public partial class IslandWindow : Window
         position = Array.IndexOf(new[] { "center", "topLeft", "bottomLeft", "topRight", "bottomRight" }, preferences.Position);
         displayMode = Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode);
         showAppButtons = preferences.ShowAppButtons;
-        if ((accentChanged || toneChanged) && latest != null) { RenderQuota(latest); BuildPage(false, 0); }
+        if ((accentChanged || toneChanged) && latest != null) { RenderPanel(latest); BuildPage(false, 0); }
         if (toneChanged) RepaintTone();
+        // The style draws from both of Core's layouts, so it needs no new snapshot.
         if (expandedQuotaStyle != preferences.ExpandedQuotaStyle || deepseekPanelStyle != preferences.DeepSeekPanelStyle)
         {
             expandedQuotaStyle = preferences.ExpandedQuotaStyle;
             deepseekPanelStyle = preferences.DeepSeekPanelStyle;
-            if (latest != null) RenderQuota(latest);
+            if (latest != null) RenderPanel(latest);
         }
         UpdateAppButtons(); UpdateCompactBar();
+        if (!MoreButton.ContextMenu.IsOpen) BuildMoreMenu();
         // Turning the memory on records the current display's place.
         if ((screenChanged || memoryTurnedOn) && PresentationSource.FromVisual(this) != null && screenGeometry == null) QueueDisplayRefresh(force: true);
         else Relayout(snap: placementChanged);
@@ -333,6 +335,7 @@ public partial class IslandWindow : Window
         var available = desktopApplications?.Available() ?? [];
         bool canOpenHarness = available.Any(value => value.Provider == "deepseek");
         if (harnessAvailable != canOpenHarness) { harnessAvailable = canOpenHarness; foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row); }
+        availableApplications = available.Where(value => enabled.Contains(value.Provider)).Select(value => value.Provider).ToArray();
         var apps = showAppButtons ? available.Where(value => enabled.Contains(value.Provider)).ToArray() : [];
         string signature = string.Join(",", apps.Select(value => value.Provider));
         if (signature == appButtonsSignature) return;
@@ -352,6 +355,17 @@ public partial class IslandWindow : Window
     private void OpenDesktopApplication(string provider, Button button)
     {
         if (presentationStopped || !expanded || !Expanded.IsAccessible || !AppButtons.Children.Contains(button)) return;
+        ClearNavigationError();
+        if (desktopApplications?.Open(provider) == true) DismissForSettings();
+        else ShowNavigationError(ui.Text("windows.app.open_failed"));
+    }
+    /// Enabled modules whose desktop app is installed, whether or not their buttons show.
+    private string[] availableApplications = [];
+    private IEnumerable<string> AvailableApplications() => availableApplications;
+    /// An app the header leaves out opens from the More menu.
+    private void OpenDesktopApplicationFromMenu(string provider)
+    {
+        if (presentationStopped || !expanded || showAppButtons || !availableApplications.Contains(provider)) return;
         ClearNavigationError();
         if (desktopApplications?.Open(provider) == true) DismissForSettings();
         else ShowNavigationError(ui.Text("windows.app.open_failed"));
@@ -378,7 +392,7 @@ public partial class IslandWindow : Window
     { CancelMove(); MoreButton.ContextMenu.IsOpen = false; SetPinned(false); SetExpanded(false); }
     private void OnMore(object sender, RoutedEventArgs e)
     {
-        collapse.Stop(); MoreButton.ContextMenu.PlacementTarget = MoreButton; MoreButton.ContextMenu.IsOpen = true;
+        collapse.Stop(); BuildMoreMenu(); MoreButton.ContextMenu.PlacementTarget = MoreButton; MoreButton.ContextMenu.IsOpen = true;
     }
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
@@ -441,15 +455,27 @@ public partial class IslandWindow : Window
         // Never reuse a constrained lane's measured size as its natural width.
         double measuredHeader = MeasureCompactBar().Header;
         dragHeaderWidth = measuredHeader;
-        double rowsHeight = rows.Count == 0 ? 44 : Math.Min(3, rows.Count) * 54 + (Math.Min(3, rows.Count) - 1) * 2;
-        TaskToolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        double contentWidth = Math.Max(measuredRowsWidth + 12, TaskToolbar.DesiredSize.Width + 12);
+        double rowsHeight = RowsHeight(rows.Count);
+        // Every section header must fit, the one carrying the buttons above all.
+        double headerWidth = 0;
+        foreach (var header in sectionHeaders.Count > 0 ? sectionHeaders : [TaskToolbar])
+        { header.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); headerWidth = Math.Max(headerWidth, header.DesiredSize.Width); }
+        double contentWidth = Math.Max((tasksShown ? measuredRowsWidth : 0) + 12, headerWidth + 12);
         var widthProbe = MeasureLayout(contentWidth, 0, measuredHeader, expanded);
         double availableContentWidth = Math.Max(1, widthProbe.CanvasWidth - 12 - (widthProbe.Position != 0 ? widthProbe.StripWidth : 0));
-        QuotaSlots.Measure(new Size(availableContentWidth, double.PositiveInfinity));
-        double quotaHeight = latest == null ? 133 : Math.Max(0, QuotaSlots.DesiredSize.Height - QuotaSlots.Margin.Top - QuotaSlots.Margin.Bottom);
-        double contentHeight = 4 + 24 + 4 + rowsHeight + 21 + 24 + 8 + quotaHeight + 4 + 14;
-        if (StatusLabel.Visibility == Visibility.Visible) { StatusLabel.Measure(new Size(availableContentWidth, double.PositiveInfinity)); contentHeight += StatusLabel.DesiredSize.Height; }
+        double contentHeight;
+        // Before the first snapshot the panel reserves the original quota row.
+        if (latest == null)
+        {
+            contentHeight = 4 + 24 + 4 + rowsHeight + 21 + 24 + 8 + 133 + 4 + 14;
+            if (StatusLabel.Visibility == Visibility.Visible) { StatusLabel.Measure(new Size(availableContentWidth, double.PositiveInfinity)); contentHeight += StatusLabel.DesiredSize.Height; }
+        }
+        else
+        {
+            InvalidatePanelMeasure();
+            PanelContent.Measure(new Size(availableContentWidth, double.PositiveInfinity));
+            contentHeight = PanelContent.DesiredSize.Height;
+        }
         // IslandModel.updateMeasuredContentHeight also rounds upward. A
         // fractional text line must not create a scrollbar and narrow the
         // already measured content when geometry snaps the panel to points.
@@ -624,50 +650,17 @@ public partial class IslandWindow : Window
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
         MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
         UpdateCompactBar(); HeaderTrailing.InvalidateMeasure();
-        if (!rows.SequenceEqual(presentation.Rows))
+        // New row choices redraw the page even when the rows are the same.
+        bool choicesChanged = ApplyPanelChoices(snapshot);
+        if (!rows.SequenceEqual(presentation.Rows) || choicesChanged)
         {
-            rows = presentation.Rows; page = Math.Clamp(page, 0, presentation.PageCount - 1); BuildPage(false, 0);
+            rows = presentation.Rows; page = Math.Clamp(page, 0, PageCount - 1); BuildPage(false, 0);
         }
         else if (linksChanged || openingChanged) foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
         TasksCount.Text = presentation.TaskCountText ?? "—";
         UpdatePager();
-        RenderQuota(snapshot);
+        RenderPanel(snapshot);
         Relayout();
-    }
-    private void RenderQuota(EngineSnapshot snapshot)
-    {
-        QuotaSlots.Children.Clear(); QuotaSlots.ColumnDefinitions.Clear();
-        string connectUnavailable = ui.Text(demo ? "windows.deepseek.demo_web_help" : "windows.deepseek.runtime_required");
-        var layout = snapshot.QuotaDashboard is { SchemaVersion: 1 } data ? expandedQuotaStyle == "classic" ? data.Classic : data.Split : null;
-        if (layout?.Kind == "legacyCodex" && snapshot.QuotaDashboard is { LegacyCodex: not null } legacy)
-            QuotaSlots.Children.Add(new LegacyQuotaView(legacy.LegacyCodex, ui,
-                snapshot.Sources.FirstOrDefault(source => source.Provider == "codex" && source.Transport == "app-server")?.Reason,
-                QuotaStatus(legacy.Providers.FirstOrDefault(value => value.Provider == "codex"))));
-        else if (layout?.Kind == "classicRings" && snapshot.QuotaDashboard is { SchemaVersion: 1 } classic)
-            QuotaSlots.Children.Add(new ClassicQuotaView(classic, snapshot.Quota, snapshot.Wallet, ui, QuotaStatus, DeepSeekConnectAction(snapshot), connectUnavailable, DeepSeekStatus(snapshot)));
-        else if (layout?.Kind == "splitSingle" && snapshot.QuotaDashboard is { Providers.Count: 1 } single)
-        {
-            var provider = single.Providers[0];
-            var help = snapshot.Sources.FirstOrDefault(source => source.Provider == provider.Provider && source.Transport == "app-server")?.Reason;
-            QuotaSlots.Children.Add(new SingleQuotaView(provider, snapshot.Quota.FirstOrDefault(value => value.Provider == provider.Provider), ui, help, QuotaStatus(provider)));
-        }
-        else if (layout?.Kind == "deepseekSolo") QuotaSlots.Children.Add(new DeepSeekSoloView(snapshot.Wallet, ui, deepseekPanelStyle == "detailed", connectAction: DeepSeekConnectAction(snapshot), connectUnavailable: connectUnavailable, balanceStatus: DeepSeekStatus(snapshot)));
-        else
-        {
-            string[] providers = layout?.Slots.Select(value => value.Provider).ToArray()
-                ?? snapshot.Sources.Select(source => source.Provider).Distinct().OrderBy(provider => provider == "codex" ? 0 : provider == "claude" ? 1 : 2).ToArray();
-            for (int index = 0; index < providers.Length; index++)
-            {
-                if (index > 0) QuotaSlots.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
-                int column = QuotaSlots.ColumnDefinitions.Count;
-                QuotaSlots.ColumnDefinitions.Add(new ColumnDefinition());
-                var help = snapshot.Sources.FirstOrDefault(source => source.Provider == providers[index] && source.Transport == "app-server")?.Reason;
-                var dashboard = snapshot.QuotaDashboard is { SchemaVersion: 1 } projected ? projected.Providers.FirstOrDefault(value => value.Provider == providers[index]) : null;
-                FrameworkElement cell = providers[index] == "deepseek" ? new DeepSeekQuotaCell(snapshot.Wallet, ui, connectAction: DeepSeekConnectAction(snapshot), connectUnavailable: connectUnavailable, balanceStatus: DeepSeekStatus(snapshot))
-                    : new QuotaCell(providers[index], snapshot.Quota.FirstOrDefault(q => q.Provider == providers[index]), snapshot.Wallet, help, dashboard, QuotaStatus(dashboard));
-                Grid.SetColumn(cell, column); QuotaSlots.Children.Add(cell);
-            }
-        }
     }
     private FrameworkElement? DeepSeekStatus(EngineSnapshot snapshot)
     {
@@ -706,14 +699,14 @@ public partial class IslandWindow : Window
     }
     private void UpdatePager()
     {
-        int count = Math.Max(1, (rows.Count + 2) / 3);
+        int count = PageCount;
         PageControls.Visibility = count > 1 ? Visibility.Visible : Visibility.Collapsed;
         PageNumber.Text = $"{page + 1} / {count}";
         PreviousPage.IsEnabled = page > 0; NextPage.IsEnabled = page + 1 < count;
     }
     private void ChangePage(int delta)
     {
-        int target = Math.Clamp(page + delta, 0, Math.Max(0, (rows.Count - 1) / 3));
+        int target = Math.Clamp(page + delta, 0, PageCount - 1);
         if (target == page) return;
         page = target; BuildPage(DecorationsAnimate, Math.Sign(delta)); UpdatePager(); Relayout();
     }
@@ -724,13 +717,13 @@ public partial class IslandWindow : Window
         var content = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
         var incoming = new RevealHost { VerticalAlignment = VerticalAlignment.Top, RenderTransform = new TranslateTransform() };
         incoming.Children.Add(content); incoming.SetAccessible(true);
-        AutomationProperties.SetName(incoming, ui.Text(rows.Count > 3 ? "activity.page_region" : "activity.task_list"));
-        TaskPages.Height = rows.Count == 0 ? 44 : Math.Min(rows.Count, 3) * 54 + (Math.Min(rows.Count, 3) - 1) * 2;
+        AutomationProperties.SetName(incoming, ui.Text(rows.Count > PageSize ? "activity.page_region" : "activity.task_list"));
+        TaskPages.Height = RowsHeight(rows.Count);
         measuredRowsWidth = 0;
         int index = 0;
-        foreach (var value in rows.Skip(page * 3).Take(3))
+        foreach (var value in rows.Skip(page * PageSize).Take(PageSize))
         {
-            var row = new TaskRow(value) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };
+            var row = new TaskRow(value, panelOptions) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };
             BindTaskAction(row);
             content.Children.Add(row); measuredRowsWidth = Math.Max(measuredRowsWidth, row.IdealWidth());
         }
@@ -825,7 +818,7 @@ public partial class IslandWindow : Window
         currentPage?.IsAccessible == true && currentPage.IsAncestorOf(control) && latest?.ActivityLinks?.Contains(link) == true;
     private bool CurrentConversationLink(EngineActivityLink link) => !presentationStopped && latest?.ActivityLinks?.Contains(link) == true;
     private bool CurrentConversationPanel(EngineActivityLink link) => CurrentConversationLink(link) && expanded && Expanded.IsAccessible &&
-        currentPage?.IsAccessible == true && rows.Skip(page * 3).Take(3).Any(row => row.Id == link.ActivityID);
+        currentPage?.IsAccessible == true && rows.Skip(page * PageSize).Take(PageSize).Any(row => row.Id == link.ActivityID);
     private async Task OpenConversationTaskAsync(TaskRow control, EngineActivityLink link)
     {
         if (!CurrentConversationAction(control, link) || !openingActivityContexts.Add(link.Context)) return;

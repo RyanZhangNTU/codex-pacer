@@ -6,17 +6,19 @@ import SwiftUI
 struct SettingsWhatsNewPane: View {
     private static let releaseNotes = URL(string: "https://github.com/RyanZhangNTU/codex-pacer/releases")!
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
+    /// Turns the window to the page a highlight introduces.
+    let openPane: (SettingsPane) -> Void
     @State private var expanded: Set<String> = []
 
     var body: some View {
         let history = WhatsNew.history(upTo: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
         if let latest = history.first {
-            LatestRelease(release: latest, notes: Self.releaseNotes, launchAtLogin: launchAtLogin)
+            LatestRelease(release: latest, notes: Self.releaseNotes, launchAtLogin: launchAtLogin, openPane: openPane)
         }
         if history.count > 1 {
             MainCard(title: L10n.text("whats_new.earlier")) {
                 ForEach(history.dropFirst(), id: \.version) { release in
-                    EarlierRelease(release: release, launchAtLogin: launchAtLogin, isExpanded: Binding(
+                    EarlierRelease(release: release, launchAtLogin: launchAtLogin, openPane: openPane, isExpanded: Binding(
                         get: { expanded.contains(release.version) },
                         set: { if $0 { expanded.insert(release.version) } else { expanded.remove(release.version) } }))
                 }
@@ -31,6 +33,7 @@ private struct LatestRelease: View {
     let release: WhatsNew.Release
     let notes: URL
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
+    let openPane: (SettingsPane) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -47,7 +50,7 @@ private struct LatestRelease: View {
                 .font(.system(size: 12.5))
             }
             ForEach(Array(release.items.enumerated()), id: \.offset) { _, item in
-                WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin, large: true, detailInInfo: true)
+                WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin, large: true, detailInInfo: true, openPane: openPane)
             }
         }
         .padding(18)
@@ -60,6 +63,7 @@ private struct LatestRelease: View {
 private struct EarlierRelease: View {
     let release: WhatsNew.Release
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
+    let openPane: (SettingsPane) -> Void
     @Binding var isExpanded: Bool
 
     var body: some View {
@@ -85,7 +89,7 @@ private struct EarlierRelease: View {
             if isExpanded {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(Array(release.items.enumerated()), id: \.offset) { _, item in
-                        WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin, detailInInfo: true)
+                        WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin, detailInInfo: true, openPane: openPane)
                     }
                 }
                 .padding(.leading, 20).padding(.bottom, 4)

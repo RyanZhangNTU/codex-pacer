@@ -200,7 +200,7 @@ jobs:
             groups: connection
             desktop: true
           - shard: settings
-            groups: settings,island,accessibility
+            groups: settings,island,accessibility,panel
             idle: true
           - shard: providers
             groups: web,quota,harness,conversation,idle,display,host,responsive,pages,updates,collapsed,recovery

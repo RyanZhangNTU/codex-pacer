@@ -24,7 +24,12 @@ struct EngineQuotaDashboard: Codable, Equatable {
         let ordered = AgentProvider.allCases.filter { enabled.contains($0) }
         split = QuotaDashboardPresentation.layout(providers: ordered, snapshots: snapshots, style: .split, now: now)
         classic = QuotaDashboardPresentation.layout(providers: ordered, snapshots: snapshots, style: .classic, now: now)
-        if (split.kind == .legacyCodex || classic.kind == .legacyCodex), let snapshot = snapshots[.codex] {
+        // The panel can give Codex a section of its own, so its bars are ready
+        // whenever Codex alone would draw them.
+        if enabled.contains(.codex), let snapshot = snapshots[.codex],
+           QuotaDashboardPresentation.Style.allCases.contains(where: {
+               QuotaDashboardPresentation.usesLegacyCodexDisplay(providers: [.codex], snapshot: snapshot, style: $0)
+           }) {
             legacyCodex = .init(snapshot: snapshot, failed: failed.contains(.codex), now: now)
         } else { legacyCodex = nil }
         providers = ordered.map { provider in

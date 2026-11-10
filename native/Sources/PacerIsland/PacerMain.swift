@@ -558,12 +558,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
         var view = WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin,
             onSettingsChange: { [weak self] in self?.model.applySettings(sourceChanged: false) },
+            onOpenPane: { [weak self] pane in self?.closeWhatsNew(); self?.showSettingsPane(pane) },
             onDone: { [weak self] in self?.closeWhatsNew() })
         let hosting = NSHostingView(rootView: view)
         let screen = whatsNewWindow?.screen ?? NSScreen.main ?? NSScreen.screens.first
         let titleHeight = whatsNewWindow.map { $0.frame.height - $0.contentRect(forFrameRect: $0.frame).height } ?? 28
         let maximumHeight = min(640, max(0, (screen?.visibleFrame.height ?? 800) - titleHeight - 48))
         view.height = min(hosting.fittingSize.height, maximumHeight)
+        // An opened explanation grows the note downward, up to the same limit.
+        view.onNaturalHeight = { [weak self, weak hosting] natural in
+            guard let window = self?.whatsNewWindow, let hosting, window.contentView === hosting else { return }
+            let height = min(natural.rounded(.up), maximumHeight)
+            guard abs(height - (hosting.rootView.height ?? height)) >= 1 else { return }
+            hosting.rootView.height = height
+            var frame = window.frame
+            let size = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: WhatsNewView.width, height: height)).size
+            frame.origin.y += frame.height - size.height
+            frame.size = size
+            if let visible = window.screen?.visibleFrame, frame.minY < visible.minY { frame.origin.y = visible.minY }
+            window.setFrame(frame, display: true)
+        }
         hosting.rootView = view
         whatsNewWindow?.contentView = hosting
         whatsNewWindow?.setContentSize(NSSize(width: WhatsNewView.width, height: view.height ?? maximumHeight))

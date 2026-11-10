@@ -211,7 +211,7 @@ internal sealed partial class SettingsWindow
     private void OnProviderSnapshot(EngineSnapshot snapshot)
     {
         if (Dispatcher.HasShutdownStarted) return;
-        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed) { synchronizing = true; try { RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshCollapsed(); RefreshConnections(); RefreshSidebar(); RefreshOverview(); RefreshHistory(); } finally { synchronizing = false; } } });
+        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed) { synchronizing = true; try { RefreshCodex(); RefreshClaude(); RefreshDeepSeek(); RefreshProviderHome(); RefreshReminders(); RefreshCollapsed(); RefreshExpandedPanel(); RefreshConnections(); RefreshSidebar(); RefreshOverview(); RefreshHistory(); } finally { synchronizing = false; } } });
     }
     private void OnProviderStatus(string status)
     {

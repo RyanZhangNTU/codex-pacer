@@ -11,16 +11,18 @@ namespace CodexPacer.Windows;
 internal sealed class SingleQuotaView : Grid
 {
     internal QuotaDial Dial { get; }
-    internal SingleQuotaView(DashboardProvider provider, EngineQuota? raw, UiText ui, string? help = null, FrameworkElement? status = null)
+    internal SingleQuotaView(DashboardProvider provider, EngineQuota? raw, UiText ui, string? help = null, FrameworkElement? status = null,
+        PanelGauge? gauge = null, bool paceTick = true)
     {
         Margin = new Thickness(9, 0, 9, 0);
         RowDefinitions.Add(new() { Height = GridLength.Auto }); RowDefinitions.Add(new() { Height = GridLength.Auto });
         ColumnDefinitions.Add(new() { Width = new GridLength(104) });
         ColumnDefinitions.Add(new() { Width = new GridLength(20) });
         ColumnDefinitions.Add(new());
-        Dial = new QuotaDial(provider.Provider, raw, null, dashboard: provider) { Width = 104, Height = 104, VerticalAlignment = VerticalAlignment.Center };
+        Dial = new QuotaDial(provider.Provider, raw, null, dashboard: provider, gauge: gauge, paceTick: paceTick) { Width = 104, Height = 104, VerticalAlignment = VerticalAlignment.Center };
         Children.Add(Dial);
-        AutomationProperties.SetHelpText(this, string.Join("\n\n", new[] { Dial.Split ? provider.FiveHour.SplitHelp : null, provider.Weekly.SplitHelp,
+        var shown = Dial.GaugeReading ?? provider.Weekly;
+        AutomationProperties.SetHelpText(this, string.Join("\n\n", new[] { Dial.Split ? provider.FiveHour.SplitHelp : null, shown.SplitHelp,
             provider.Weekly.SourceText, help }.Where(value => !string.IsNullOrWhiteSpace(value))));
         var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         if (Dial.Split)
@@ -31,7 +33,7 @@ internal sealed class SingleQuotaView : Grid
         }
         else
         {
-            var weekly = provider.Weekly;
+            var weekly = shown;
             var pace = Pace(weekly, false, ui);
             if (weekly.Availability == "stale") pace.Children.Insert(0, Freshness());
             else if (weekly.VerdictText != null)

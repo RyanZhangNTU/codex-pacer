@@ -13,16 +13,23 @@ using System.Windows.Media;
 
 namespace CodexPacer.Windows;
 
-/// The original solo composition. The engine owns spend, visibility, scale,
-/// privacy and formatted readings; these controls only lay out and draw them.
+/// DeepSeek with a row to itself: the dial with today or the budgets and the
+/// speed beside it. Where the money went and the week are blocks of their own;
+/// the spend joins the day dial's column when its block follows the dial.
+/// The engine owns spend, visibility, scale, privacy and formatted readings;
+/// these controls only lay out and draw them.
 internal sealed class DeepSeekSoloView : StackPanel
 {
-    internal DeepSeekSoloView(EngineWallet? wallet, UiText ui, bool detailed = true, Action? openUsage = null, string? recoveryText = null, Action? connectAction = null, string? connectUnavailable = null, FrameworkElement? balanceStatus = null)
+    /// <param name="spendBeside">Today's spend sits in the day dial's column.</param>
+    /// <param name="budgetDial">The budget dial shows when a budget is set.</param>
+    /// <param name="peak">The ×2 chip under the dial during peak-price hours.</param>
+    internal DeepSeekSoloView(EngineWallet? wallet, UiText ui, bool spendBeside = false, Action? openUsage = null, string? recoveryText = null, Action? connectAction = null,
+        string? connectUnavailable = null, FrameworkElement? balanceStatus = null, bool budgetDial = true, bool peak = true)
     {
         Margin = new Thickness(9, 0, 9, 4);
         AutomationProperties.SetAutomationId(this, "quota.deepseek.solo");
         var data = wallet?.Solo;
-        bool budget = data?.Budgets.Count > 0;
+        bool budget = budgetDial && data?.Budgets.Count > 0;
         var top = new Grid(); top.ColumnDefinitions.Add(new() { Width = new GridLength(132) });
         top.ColumnDefinitions.Add(new() { Width = new GridLength(20) }); top.ColumnDefinitions.Add(new());
         var face = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -43,7 +50,7 @@ internal sealed class DeepSeekSoloView : StackPanel
             }
             face.Children.Add(host);
         }
-        if (wallet?.PeakNow == true)
+        if (peak && wallet?.PeakNow == true)
         {
             var label = new TextBlock { FontFamily = PacerFonts.Interface, FontSize = 11, Foreground = PacerPalette.Attention, VerticalAlignment = VerticalAlignment.Center };
             label.Inlines.Add(new Run("×2") { FontWeight = FontWeights.Bold });
@@ -67,14 +74,9 @@ internal sealed class DeepSeekSoloView : StackPanel
                 AutomationProperties.SetHelpText(today, data.TodayHelp); AutomationProperties.SetAutomationId(today, "deepseek.today"); right.Children.Add(today);
             }
             if (data.Speed != null) AddSpaced(right, new DeepSeekSpeedView(data.Speed, data.TodayLabel), 12);
-            if (detailed && !budget && data.Distribution != null) AddSpaced(right, new DeepSeekDistributionView(data.Distribution, openUsage), 12);
+            if (spendBeside && !budget && data.Distribution != null) AddSpaced(right, new DeepSeekDistributionView(data.Distribution, openUsage), 12);
         }
         Grid.SetColumn(right, 2); top.Children.Add(right); Children.Add(top);
-        if (detailed && data != null)
-        {
-            if (budget && data.Distribution != null) AddSpaced(this, new DeepSeekDistributionView(data.Distribution, openUsage), 14);
-            if (data.Week != null) AddSpaced(this, new DeepSeekWeekView(data.Week), 14);
-        }
         if (balanceStatus != null) AddSpaced(this, balanceStatus, 14);
         else if (!string.IsNullOrWhiteSpace(recoveryText))
         {
@@ -142,11 +144,12 @@ internal sealed class DeepSeekSpeedPlot(DeepSeekSpeedPresentation data) : Framew
 
 internal sealed class DeepSeekDistributionView : StackPanel
 {
-    internal DeepSeekDistributionView(DeepSeekDistribution data, Action? openUsage = null)
+    /// <param name="showsTitle">Off when a section header above already names it.</param>
+    internal DeepSeekDistributionView(DeepSeekDistribution data, Action? openUsage = null, bool showsTitle = true)
     {
         AutomationProperties.SetAutomationId(this, "deepseek.distribution");
-        Children.Add(DeepSeekElements.Text(data.Title, 11, PacerPalette.Tertiary, FontWeights.SemiBold));
-        var strip = new DeepSeekSpendStrip(data.Parts) { Height = 10, Margin = new Thickness(0, 7, 0, 0) }; Children.Add(strip);
+        if (showsTitle) Children.Add(DeepSeekElements.Text(data.Title, 11, PacerPalette.Tertiary, FontWeights.SemiBold));
+        var strip = new DeepSeekSpendStrip(data.Parts) { Height = 10, Margin = new Thickness(0, showsTitle ? 7 : 0, 0, 0) }; Children.Add(strip);
         var legend = new DeepSeekFlowRow { Margin = new Thickness(0, 7, 0, 0) };
         foreach (var part in data.Parts)
         {
@@ -232,12 +235,14 @@ internal sealed class DeepSeekSpendSegment(DeepSeekPart part) : FrameworkElement
 
 internal sealed class DeepSeekWeekView : QuotaReadingHost
 {
-    internal DeepSeekWeekView(DeepSeekWeekPresentation data)
+    /// <param name="showsTitle">Off when a section header above names it and carries the line's label.</param>
+    internal DeepSeekWeekView(DeepSeekWeekPresentation data, bool showsTitle = true)
     {
         AutomationProperties.SetAutomationId(this, "deepseek.week"); AutomationProperties.SetName(this, data.AccessibilityLabel);
-        Children.Add(DeepSeekElements.Row(DeepSeekElements.Text(data.Title, 11, PacerPalette.Tertiary, FontWeights.SemiBold),
-            DeepSeekElements.Text(data.LineText ?? "", 9, PacerPalette.Tertiary), gap: 8));
-        Children.Add(new DeepSeekWeekPlot(data) { Height = 44, Margin = new Thickness(0, 6, 0, 0) });
+        if (showsTitle)
+            Children.Add(DeepSeekElements.Row(DeepSeekElements.Text(data.Title, 11, PacerPalette.Tertiary, FontWeights.SemiBold),
+                DeepSeekElements.Text(data.LineText ?? "", 9, PacerPalette.Tertiary), gap: 8));
+        Children.Add(new DeepSeekWeekPlot(data) { Height = 44, Margin = new Thickness(0, showsTitle ? 6 : 0, 0, 0) });
         var labels = new Grid { Margin = new Thickness(0, 6, 0, 0) };
         foreach (var day in data.Days)
         {

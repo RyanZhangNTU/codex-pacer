@@ -17,8 +17,8 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     /// Every page in the Mac's order; search lists matches in this order.
-    internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "remote", "appearance", "collapsed", "notifications", "general", "about", "support"];
-    private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "remote"], ["appearance", "collapsed", "notifications", "general"]];
+    internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "remote", "appearance", "collapsed", "expandedPanel", "notifications", "general", "about", "support"];
+    private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "remote"], ["appearance", "collapsed", "expandedPanel", "notifications", "general"]];
     private readonly Dictionary<string, TextBlock> moduleOff = new();
     private readonly Dictionary<string, Ellipse> attentionDots = new();
     private readonly StackPanel paneGroups = new(), searchResults = new() { Visibility = Visibility.Collapsed };
@@ -50,6 +50,7 @@ internal sealed partial class SettingsWindow
         "claude" => "Claude",
         "deepseek" => "DeepSeek",
         "overview" or "history" or "remote" or "notifications" or "about" or "support" => ui.Text("main.pane." + pane),
+        "expandedPanel" => ui.Text("settings.pane.expanded_panel"),
         _ => ui.Text("settings.pane." + pane)
     };
     private static string PaneSymbol(string pane) => pane switch
@@ -62,6 +63,7 @@ internal sealed partial class SettingsWindow
         "remote" => "server.rack",
         "appearance" => "circle.lefthalf.filled",
         "collapsed" => "rectangle.topthird.inset.filled",
+        "expandedPanel" => "text.alignleft",
         "notifications" => "bell",
         "general" => "gearshape",
         "support" => "heart",

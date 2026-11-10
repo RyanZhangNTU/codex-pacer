@@ -68,8 +68,13 @@ internal static class ReminderSettingsChecks
             Check(engine.LatestSnapshot!.Wallet?.Alert?.Kind == "nearingBudget", "A budget crossing reaches the compact warning slot");
             Toggle(budget); await Until(() => !session.Current.WarningKinds.Contains("budget") && budget.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet?.Alert == null, "The budget switch controls the live alert");
-            var retention = Find<ComboBox>(window, "settings.reminders.retention"); retention.SelectedValue = 0;
+            // Keeping ended tasks is the task list's choice; Notifications leads there, as on the Mac.
+            ((IInvokeProvider)new ButtonAutomationPeer(Find<Button>(window, "settings.reminders.retention")).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Until(() => session.Current.LastSettingsPane == "expandedPanel"
+                && Descendants(window).OfType<ComboBox>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.option.retention" && value.IsVisible));
+            var retention = Find<ComboBox>(window, "panel.option.retention"); retention.SelectedValue = 0;
             await Until(() => session.Current.RetentionMinutes == 0 && retention.IsEnabled);
+            await window.NavigateAsync("notifications"); await Pump();
             var systemSwitch = Find<CheckBox>(window, "settings.reminders.notifications"); system.Result = NotificationAvailability.Denied;
             before = configurations; Toggle(systemSwitch); await Until(() => !notifications.IsChanging);
             Check(!session.Current.SystemNotifications && systemSwitch.IsChecked == false && Find<TextBlock>(window, "settings.reminders.notifications.issue").Visibility == Visibility.Visible, "Native denial resets the switch and explains the Windows setting");
@@ -90,7 +95,6 @@ internal static class ReminderSettingsChecks
             Check(Find<CheckBox>(window, "settings.reminders.notifications").IsChecked == true, "Registration survives settings-window closure and reopening");
             Check(system.Deliveries == 0, "Synthetic UI checks cannot emit real notifications");
             await engine.SendAsync("shutdown"); await Until(() => !Find<TextBox>(window, "settings.reminders.lowLine").IsEnabled);
-            Check(!Find<ComboBox>(window, "settings.reminders.retention").IsEnabled, "Closed engine controls cannot claim to apply edits");
             Console.WriteLine("PASS reminders " + scenario + ": Core thresholds, warning capsules, UIA summary, independent edits/rollback, retention, native denial, host-only notification switch and settings reopen");
         }
         finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); CultureInfo.CurrentCulture = oldCulture; }

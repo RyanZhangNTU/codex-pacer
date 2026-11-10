@@ -12,6 +12,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="[2.6.4]"/>
     <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
+    <Compile Include="../../Desktop/ExpandedPanelModels.cs" Link="ExpandedPanelModels.cs"/>
     <Compile Include="../../Desktop/SystemNotifications.cs" Link="SystemNotifications.cs"/>
     <Compile Include="../../Desktop/WindowsSystemNotifications.cs" Link="WindowsSystemNotifications.cs"/>
     <Compile Include="../../Desktop/WindowsPlatformPolicy.cs" Link="WindowsPlatformPolicy.cs"/>

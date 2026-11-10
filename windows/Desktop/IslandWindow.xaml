@@ -87,14 +87,16 @@
    <local:RevealHost x:Name="Expanded" Visibility="Collapsed" Margin="6,36,6,0" VerticalAlignment="Top" HorizontalAlignment="Center">
     <local:RevealHost.RenderTransform><TranslateTransform x:Name="RevealOffset"/></local:RevealHost.RenderTransform>
     <ScrollViewer x:Name="ExpandedScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
-     <StackPanel Margin="0,4,0,14">
+     <!-- The panel's blocks in their saved order; Render places each section and the actions. -->
+     <StackPanel x:Name="PanelContent" Margin="0,4,0,14">
+      <StackPanel x:Name="TasksSection">
       <Grid x:Name="TaskToolbar" Height="24" Margin="9,0">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <TextBlock x:Name="TasksTitle" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Island.Secondary}"/>
         <TextBlock x:Name="TasksCount" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}" Margin="6,0,0,0"/>
        </StackPanel>
-       <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,-2,0,-2">
+       <StackPanel x:Name="TaskHeaderTrailing" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,-2,0,-2">
         <StackPanel x:Name="PageControls" Orientation="Horizontal" VerticalAlignment="Center">
          <Button x:Name="PreviousPage" Style="{StaticResource PageButton}" Click="OnPreviousPage">
           <local:IconGlyph Symbol="chevron.left" Width="12" Height="12" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
@@ -103,8 +105,9 @@
          <Button x:Name="NextPage" Style="{StaticResource PageButton}" Click="OnNextPage" Background="{DynamicResource Island.Overlay05}">
           <local:IconGlyph Symbol="chevron.right" Width="12" Height="12" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
          </Button>
-         <Border Width="1" Height="14" Background="{DynamicResource Island.Overlay08}" Margin="4,0"/>
+         <Border x:Name="PageDivider" Width="1" Height="14" Background="{DynamicResource Island.Overlay08}" Margin="4,0"/>
         </StackPanel>
+        <StackPanel x:Name="PanelActions" Orientation="Horizontal" VerticalAlignment="Center">
         <Border x:Name="DemoTag" CornerRadius="10" Background="{DynamicResource Island.Overlay05}" Padding="7,3" Margin="0,0,4,0" VerticalAlignment="Center">
          <TextBlock x:Name="DemoLabel" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource Island.Secondary}"/>
         </Border>
@@ -121,6 +124,7 @@
         </Button>
         <Button x:Name="MoreButton" Style="{StaticResource IconButton}" Click="OnMore">
          <local:IconGlyph Symbol="ellipsis" Width="16" Height="16" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+         <!-- Unchecked header buttons join Refresh and Quit here; OnMore rebuilds the items. -->
          <Button.ContextMenu><ContextMenu>
           <MenuItem x:Name="RefreshMenu" Click="OnRefresh"/>
           <MenuItem x:Name="SettingsMenu" Click="OnSettings"/>
@@ -128,15 +132,23 @@
           <MenuItem x:Name="QuitMenu" Click="OnQuit"/>
          </ContextMenu></Button.ContextMenu>
         </Button>
+        </StackPanel>
        </StackPanel>
       </Grid>
       <Grid x:Name="TaskPages" Margin="0,4,0,0" ClipToBounds="True" PreviewMouseWheel="OnTaskWheel" PreviewMouseLeftButtonDown="OnTaskPointerDown" PreviewMouseLeftButtonUp="OnTaskPointerUp"/>
+      </StackPanel>
       <TextBlock x:Name="StatusLabel" Visibility="Collapsed" Foreground="{DynamicResource Island.Attention}" FontSize="11" TextWrapping="Wrap" Margin="9,6,9,0"/>
-      <Border Background="{DynamicResource Island.Overlay08}" Height="1" Margin="9,10"/>
-      <Grid Height="24" Margin="9,0">
-       <TextBlock x:Name="QuotaTitle" Foreground="{DynamicResource Island.Secondary}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
-      </Grid>
-      <Grid x:Name="QuotaSlots" Margin="0,8,0,4"/>
+      <StackPanel x:Name="QuotaSection">
+       <Grid x:Name="QuotaHeader" Height="24" Margin="9,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+         <TextBlock x:Name="QuotaTitle" Foreground="{DynamicResource Island.Secondary}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+         <TextBlock x:Name="QuotaDetail" FontSize="11" FontWeight="Medium" Margin="6,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+        </StackPanel>
+        <StackPanel x:Name="QuotaHeaderTrailing" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,-2,0,-2"/>
+       </Grid>
+       <Grid x:Name="QuotaSlots" Margin="0,8,0,4"/>
+      </StackPanel>
      </StackPanel>
     </ScrollViewer>
    </local:RevealHost>

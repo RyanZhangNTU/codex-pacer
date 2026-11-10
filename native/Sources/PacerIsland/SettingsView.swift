@@ -22,7 +22,6 @@ struct SettingsView: View {
     /// Nil follows the rules shown in the empty field.
     @State private var deepseekLowBalance = IslandModel.deepseekLowLine(in: .standard)
     @State private var deepseekSpikeLimit = DeepSeekBudgetSettings.amount(IslandModel.deepseekSpikeLimitKey, in: .standard)
-    @State private var deepseekPanelStyle = DeepSeekPanelStyle.load()
     @State private var deepseekBudgets = DeepSeekBudgetSettings.load()
     /// "" follows the modules; a provider or "none" was chosen.
     @State private var quotaRings = QuotaRingSlot.allCases.map { UserDefaults.standard.string(forKey: $0.defaultsKey) ?? "" }
@@ -82,6 +81,11 @@ struct SettingsView: View {
     private static let gaugeAnchor = SettingsCollapsedBarPane.inspectorAnchor
     /// The component whose settings the Collapsed Bar page shows.
     @State private var collapsedSelection: CompactIslandLayout.Component?
+    /// The Expanded Panel page saves each change at once, outside the
+    /// debounced settings: a saved layout exists only after an edit.
+    @State private var panelLayout = ExpandedPanelLayout.load()
+    @State private var panelOptions = ExpandedPanelOptions.load()
+    @State private var panelSelection: ExpandedPanelSelection?
     private var languageChanges: Bool { language.resolved() != L10n.language }
 
     var body: some View {
@@ -123,6 +127,11 @@ struct SettingsView: View {
         .onChange(of: automaticUpdateChecks) { _, value in updater.setAutomaticallyChecks(value) }
         .onChange(of: language) { _, value in value.save(to: .standard); languageError = nil }
         .onChange(of: dockIcon) { _, value in value.save(); onDockIconChange(value) }
+        .onChange(of: panelLayout) { _, value in
+            if let value { value.save() } else { ExpandedPanelLayout.clear() }
+            model.reloadPanelSettings()
+        }
+        .onChange(of: panelOptions) { _, value in value.save(); model.reloadPanelSettings() }
         .onDisappear {
             if let focusedText { commit(focusedText) }
             if applyTask != nil { applyNow() }
@@ -138,7 +147,7 @@ struct SettingsView: View {
             case .history: HistoryPane(model: model)
             default:
                 ScrollViewReader { proxy in
-                    MainPage {
+                    MainPage(maxWidth: pane == .expandedPanel ? 760 : 640) {
                         pageHeader
                         paneContent
                     }
@@ -162,6 +171,10 @@ struct SettingsView: View {
             switch pane {
             case .remote: PageHeader(title: pane.title, subtitle: SettingsConnectionsPane.summaryText(model))
             case .notifications: PageHeader(title: pane.title, subtitle: L10n.text("main.subtitle.notifications"))
+            case .expandedPanel: PageHeader(title: pane.title, subtitle: L10n.text("main.panel.subtitle")) {
+                // Only an edited panel has something to restore.
+                if panelLayout != nil { Button(L10n.text("main.panel.restore")) { panelLayout = nil }.buttonStyle(.main) }
+            }
             case .collapsedBar: PageHeader(title: pane.title, subtitle: L10n.text("main.collapsed.subtitle")) {
                 Button(L10n.text("common.restore_defaults")) { compactLayout = .standard }.buttonStyle(.main)
             }
@@ -263,18 +276,23 @@ struct SettingsView: View {
             }
         case .appearance:
             SettingsAppearancePane(model: model, theme: $theme, appearance: $appearance, accent: $accent, barSize: $barSize, displayMode: $displayMode, position: $position,
-                displayID: $displayID, fullscreen: $fullscreen, positionPerDisplay: $positionPerDisplay, quotaStyle: $quotaStyle, deepseekPanelStyle: $deepseekPanelStyle,
-                showsAppButtons: $showsAppButtons,
-                deepseekAlone: AgentProvider.allCases.filter { moduleEnabled($0) } == [.deepseek])
+                displayID: $displayID, fullscreen: $fullscreen, positionPerDisplay: $positionPerDisplay)
         case .collapsedBar:
             SettingsCollapsedBarPane(model: model, layout: $compactLayout, selection: $collapsedSelection, singleTask: $singleTask,
                 metric: $metric, windowID: $windowID, claudeWindowID: $claudeWindowID, quotaRings: $quotaRings,
                 options: $componentOptions, deepseekBudgets: $deepseekBudgets,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openNotifications: { pane = .notifications })
+        case .expandedPanel:
+            SettingsExpandedPanelPane(savedLayout: $panelLayout, options: $panelOptions, selection: $panelSelection,
+                quotaStyle: $quotaStyle, retention: $completedRetention, showsAppButtons: $showsAppButtons,
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) },
+                deepseekDetailed: DeepSeekPanelStyle.load() == .detailed,
+                openGeneral: { pane = .general }, openDeepSeek: { pane = .deepseek })
         case .notifications:
             SettingsNotificationsPane(model: model, notificationPreference: notificationPreference, layout: $compactLayout,
-                retention: $completedRetention, lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
-                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek })
+                lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
+                providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek },
+                openTaskList: { panelSelection = .block(.tasks); pane = .expandedPanel })
         case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
         case .remote:
@@ -282,7 +300,7 @@ struct SettingsView: View {
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
         case .about:
             SettingsAboutPane(updater: updater, automaticallyChecks: $automaticUpdateChecks, launchAtLogin: launchAtLogin,
-                onShowWelcome: onShowWelcome)
+                onShowWelcome: onShowWelcome, openPane: { pane = $0 })
         case .support:
             SettingsSupportPane()
         case .overview, .history:
@@ -499,7 +517,7 @@ struct SettingsView: View {
     private var liveSettings: LiveSettings {
         LiveSettings(modules: modules, displayMode: displayMode, position: position, layout: compactLayout, componentOptions: componentOptions,
             barSize: barSize, appearance: appearance, theme: theme, accent: accent,
-            quotaStyle: quotaStyle, deepseekPanelStyle: deepseekPanelStyle, fullscreen: fullscreen, displayID: displayID, positionPerDisplay: positionPerDisplay, metric: metric, singleTask: singleTask,
+            quotaStyle: quotaStyle, fullscreen: fullscreen, displayID: displayID, positionPerDisplay: positionPerDisplay, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
@@ -539,7 +557,6 @@ struct SettingsView: View {
         defaults.set(theme.rawValue, forKey: AppTheme.defaultsKey)
         defaults.set(accent.rawValue, forKey: PacerAccent.defaultsKey)
         quotaStyle.save(to: defaults)
-        deepseekPanelStyle.save(to: defaults)
         defaults.set(fullscreen, forKey: "showInFullscreen")
         DisplayIdentity.choose(displayID, in: defaults)
         defaults.set(positionPerDisplay, forKey: IslandScreenMemory.enabledKey)
@@ -627,7 +644,6 @@ private struct LiveSettings: Equatable {
     var theme: AppTheme
     var accent: PacerAccent
     var quotaStyle: ExpandedQuotaStyle
-    var deepseekPanelStyle: DeepSeekPanelStyle
     var fullscreen: Bool
     var displayID: Int
     var positionPerDisplay: Bool

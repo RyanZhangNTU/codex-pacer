@@ -12,12 +12,13 @@ internal sealed class ClassicQuotaCell : StackPanel
 {
     internal QuotaDial Dial { get; }
     internal StackPanel Ring { get; }
-    internal ClassicQuotaCell(DashboardSlot slot, DashboardProvider provider, EngineQuota? raw, EngineWallet? wallet)
+    /// <param name="showsOther">The line under the ring names the other window; off when the panel shows one window.</param>
+    internal ClassicQuotaCell(DashboardSlot slot, DashboardProvider provider, EngineQuota? raw, EngineWallet? wallet, bool paceTick = true, bool showsOther = true)
     {
         var reading = slot.Period == "5h" ? provider.FiveHour : provider.Weekly;
         HorizontalAlignment = HorizontalAlignment.Stretch;
         Ring = new QuotaReadingHost(); Children.Add(Ring);
-        Dial = new QuotaDial(slot.Provider, raw, wallet, classic: true, dashboard: provider, classicPeriod: slot.Period)
+        Dial = new QuotaDial(slot.Provider, raw, wallet, classic: true, dashboard: provider, classicPeriod: slot.Period, paceTick: paceTick)
             { Width = 88, Height = 88, HorizontalAlignment = HorizontalAlignment.Center };
         Ring.Children.Add(Dial);
         var caption = new StackPanel { Orientation = Orientation.Horizontal, Height = 15, Margin = new Thickness(0, 8, 0, 0), HorizontalAlignment = HorizontalAlignment.Center };
@@ -32,7 +33,7 @@ internal sealed class ClassicQuotaCell : StackPanel
             caption.Children.Add(freshness);
         }
         Ring.Children.Add(caption);
-        if (slot.IdentifiesProvider)
+        if (slot.IdentifiesProvider && showsOther)
         {
             var other = slot.Period == "5h" ? provider.Weekly : provider.FiveHour;
             if (other.OtherPeriodText != null)

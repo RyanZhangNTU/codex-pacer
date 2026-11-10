@@ -46,6 +46,7 @@ The Composition bridge (`windows/Native/CompositionBackdrop`) builds with the Vi
 - Rendering reads a bounded cache and returns at once; identical requests share one pending operation; there is no polling loop. A missing projection shows a placeholder, and a failed settings edit saves nothing.
 - An engine exit fails pending requests. If the engine stops after running at least 10 minutes, Pacer restarts itself, unless an update is in progress. An engine that stops sooner keeps the stopped status, so a startup failure cannot loop.
 - Collapsed-bar and quota-chart drawing come from `projectCompactBar` and `layoutQuotaChart` (Core's `CompactBarPresentation` and `QuotaCycleChartPresentation`). `PacerWindowsBridge` supplies only geometry, finite motion and native activation.
+- The expanded panel's layout and choices reach the engine in `configure` (`expandedPanel`: layout, options and whether DeepSeek's former content was Detailed). Each snapshot carries `expandedPanel`: the resolved sections with each quota section's drawing in both styles, every ring's window and the choices after fallback, so a style change needs no new snapshot. The Expanded Panel page edits blocks through `projectExpandedPanel` (Core's `ExpandedPanelPresentation`) and saves the layout it returns.
 - `SlowEngineChecks` covers silent, slow and exiting engines.
 
 ## Main window
@@ -139,6 +140,7 @@ Preferences live in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`; keep the fi
 | Place per display | `islandPositionPerDisplay`, `islandDisplayPlaces` | on, none saved |
 | Surface | `islandAppearance`, `expandedQuotaStyle` | `liquidGlass`, `split` |
 | Collapsed bar | `compactIslandLayout`, `compactComponentOptions`, `compactBarSize`, `compactSingleTask`, `compactMetric` | Core's defaults, `standard`, `stage`, `remaining` |
+| Expanded panel | `expandedPanelLayout`, `expandedPanelOptions` | automatic layout, Core's defaults |
 | Quota windows and rings | `quotaWindowID`, `claudeQuotaWindowID`, `quotaRingOuter`, `quotaRingInner` | `auto`, automatic rings |
 | DeepSeek | `deepseekPanelStyle`, `deepseekMode`, `deepseekBalanceSource`, `deepseekDailyBudget`, `deepseekWeeklyBudget`, `deepseekRingPeriod`, `deepseekSpeedSource`, `deepseekShowsTurnCost`, `deepseekLowBalanceLine`, `deepseekSpikeLimit` | `detailed`, `balance`, `automatic`, no amounts, `day`, `local`, turn cost on |
 | Task progress rings | `codexProgressRing`, `claudeProgressRing`, `deepseekProgressRing` | on |
@@ -152,9 +154,9 @@ Preferences live in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`; keep the fi
 
 Encoding rules:
 
-- `compactIslandLayout`, `compactComponentOptions` and `islandDisplayPlaces` hold the Mac's UTF-8 JSON Data as base64. The layout carries the warnings. Damaged component options or places read as defaults without touching other settings; an explicit empty layout stays empty.
+- `compactIslandLayout`, `compactComponentOptions`, `expandedPanelLayout`, `expandedPanelOptions` and `islandDisplayPlaces` hold the Mac's UTF-8 JSON Data as base64. The compact layout carries the warnings. Damaged component options, panel data or places read as defaults (the panel as its automatic layout) without touching other settings; an explicit empty compact layout stays empty.
 - A present but empty or unknown ring value means no ring; an absent key means automatic.
-- `settingsPane` stores the desktop's `collapsed` page as the Mac value `collapsedBar`.
+- `settingsPane` stores the desktop's `collapsed` page as the Mac value `collapsedBar`; the Expanded Panel page is `expandedPanel` on both.
 - `islandPlacement` holds `edge` (`Free`, `Top`, `Bottom`, `Left`, `Right`) and the collapsed bar's center as work-area fractions `x` and `y`; a docked edge fixes the coordinate across it. Notch mode keeps the last free placement. A move to another monitor saves placement and display in one edit; while a disconnected display falls back to the main one, a move saves only the placement.
 - `displayID` absent, null, empty, `0` or `"0"` means Main Display; anything else is a Windows device-interface path (the Mac's numeric IDs mean nothing here). A monitor without a device path is saved as `displaySelection: "specified"` with its name and position. Legacy `displaySelection` values `automatic` and `primary` both mean Main Display and survive unrelated edits.
 - Open at Login is an OS registration, not a preference. Credentials and browser sessions live in their own stores.
