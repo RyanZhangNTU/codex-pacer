@@ -9,6 +9,7 @@ actor MacDurableRefresh {
     private struct Request: Codable, Equatable {
         let generation: UUID
         let writtenAt: Date
+        let enabled: Bool?
         var signalled: Bool
     }
     private struct Quiet {
@@ -28,22 +29,27 @@ actor MacDurableRefresh {
         quiet.removeValue(forKey: home.standardizedFileURL)
     }
 
-    func finish(home: URL, changed: Bool) -> Bool {
+    func finish(home: URL, changed: Bool, enabled: Bool) -> Bool {
         defer { configuring.remove(home) }
         guard changed else { return true }
         do {
-            try write(Request(generation: UUID(), writtenAt: Date(), signalled: false), home: home)
+            try write(Request(generation: UUID(), writtenAt: Date(), enabled: enabled, signalled: false), home: home)
             return true
         } catch { return false }
     }
 
-    func observe(home: URL, executor: MacDurableExecutor, catalogIdle: Bool) {
+    func observe(home: URL, executor: MacDurableExecutor, catalogIdle: Bool,
+                 verifiedReportTurnStartedAt: Date? = nil) {
         let home = home.standardizedFileURL
         guard !configuring.contains(home), var request = read(home: home) else {
             quiet.removeValue(forKey: home)
             return
         }
-        if executor.startedAt > request.writtenAt {
+        // A verified Mac receipt from a new turn can settle an install
+        // after Desktop updates capabilities without a new executor PID.
+        let adoptedInPlace = request.enabled != false &&
+            verifiedReportTurnStartedAt.map { $0 > request.writtenAt } == true
+        if executor.startedAt > request.writtenAt || adoptedInPlace {
             quiet.removeValue(forKey: home)
             if let path = try? marker(home: home) { try? MacClaudeHookStorage().remove(path) }
             return

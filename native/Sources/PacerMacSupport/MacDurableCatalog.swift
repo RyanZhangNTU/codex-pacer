@@ -62,7 +62,6 @@ enum MacDurableCatalog {
                 }
                 previous = result.catalog
                 publish(result.catalog)
-                await MacDurableRefresh.shared.observe(home: home, executor: executor, catalogIdle: result.executorIdle)
                 let now = Date(), ipc = ipcObservations()
                 polls = polls.filter { result.catalog.threadIDs.contains($0.key) }
                 let candidates = result.entries.filter { entry in
@@ -76,6 +75,7 @@ enum MacDurableCatalog {
                 }
                 let receipts = candidates.isEmpty ? [:] : mailbox.read(at: now)
                 var history: [DurableTurnHistory] = []
+                var newestLocalReportTurnStart: Date?
                 for entry in candidates.prefix(4) {
                     try Task.checkCancellation()
                     if Date().timeIntervalSince(now) >= 6 { break }
@@ -88,8 +88,9 @@ enum MacDurableCatalog {
                         poll.settled = !active
                         poll.activeTurn = active ? turn.turnID : nil
                         if active || (turn.completedAt ?? turn.startedAt).map({ $0 >= since }) == true || previous?.activeTurn == turn.turnID {
-                            if let receipt = receipts[entry.id + ":" + turn.turnID.lowercased()] {
-                                _ = turn.useLocalReceipt(receipt)
+                            if let receipt = receipts[entry.id + ":" + turn.turnID.lowercased()],
+                               turn.useLocalReceipt(receipt), let startedAt = turn.startedAt {
+                                newestLocalReportTurnStart = max(newestLocalReportTurnStart ?? .distantPast, startedAt)
                             }
                             // The Mac receipt can arrive before Durable history persists the
                             // call. A failed item page cannot erase the verified turn.
@@ -115,6 +116,12 @@ enum MacDurableCatalog {
                     }
                     publishHistory(result.catalog.scope, history)
                 }
+                // Verify any available receipt before considering a refresh.
+                // History reads can outlast the catalog's idle observation.
+                try Task.checkCancellation()
+                let recentlyIdle = result.executorIdle && Date().timeIntervalSince(now) < 1
+                await MacDurableRefresh.shared.observe(home: home, executor: executor, catalogIdle: recentlyIdle,
+                                                       verifiedReportTurnStartedAt: newestLocalReportTurnStart)
                 retryDelay = 5
                 delay = max(1, 15 - Date().timeIntervalSince(now))
             } catch {

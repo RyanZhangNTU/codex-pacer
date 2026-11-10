@@ -15,7 +15,7 @@ public enum MacDurableProgressSetup {
         let home = home.standardizedFileURL
         await MacDurableRefresh.shared.begin(home: home)
         let result = await reconcile(home: home, reporter: reporter, customExecutable: customExecutable)
-        let recorded = await MacDurableRefresh.shared.finish(home: home, changed: result == .changed)
+        let recorded = await MacDurableRefresh.shared.finish(home: home, changed: result == .changed, enabled: reporter != nil)
         return recorded && result != .failed
     }
 

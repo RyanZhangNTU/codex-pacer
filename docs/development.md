@@ -312,7 +312,7 @@ The rings are on by default (`claudeProgressRing`, `codexProgressRing`, `deepsee
 
 Claude loads plugins at session start, so only sessions that started with it enabled get the one-line request for estimates on a typed prompt. `ProgressSetupQueue` runs Codex and DeepSeek setup one at a time off the main thread and publishes only the newest status; shutdown lets the latest setup finish within the deadline.
 
-The Mac Codex switch also owns a private local marketplace in the selected Desktop profile, with the same reporter and revocation flag. A plugin change queues one executor refresh. Only a supported signed Desktop build with consecutive quiet catalog checks and no executor children receives a graceful termination request. Desktop owns the replacement and its registration. Otherwise the change waits for Desktop's next executor registration. An IPC failure never triggers this refresh.
+The Mac Codex switch also owns a private local marketplace in the selected Desktop profile, with the same reporter and revocation flag. A plugin change queues one executor refresh. Only a supported signed Desktop build with consecutive quiet catalog checks and no executor children receives a graceful termination request. Desktop owns the replacement and its registration. Otherwise the change waits for Desktop's next executor registration. A verified Mac report from a new turn after installation also settles the request if Desktop refreshed capabilities in place. An IPC failure never triggers this refresh.
 
 Request scope:
 
