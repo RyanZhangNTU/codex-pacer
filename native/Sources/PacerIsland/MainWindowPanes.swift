@@ -472,6 +472,8 @@ struct SettingsAboutPane: View {
     @Binding var automaticallyChecks: Bool
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     let onShowWelcome: () -> Void
+    /// Turns the window to the page a highlight introduces.
+    let openPane: (SettingsPane) -> Void
     @State private var tab = AboutTab.load()
 
     var body: some View {
@@ -479,7 +481,7 @@ struct SettingsAboutPane: View {
         MainSegmented(options: AboutTab.allCases.map { ($0, $0.title) }, selection: $tab, label: L10n.text("main.pane.about"))
             .onChange(of: tab) { _, value in UserDefaults.standard.set(value.rawValue, forKey: AboutTab.defaultsKey) }
         switch tab {
-        case .whatsNew: SettingsWhatsNewPane(launchAtLogin: launchAtLogin)
+        case .whatsNew: SettingsWhatsNewPane(launchAtLogin: launchAtLogin, openPane: openPane)
         case .help: SettingsHelpPane(onShowWelcome: onShowWelcome)
         }
     }

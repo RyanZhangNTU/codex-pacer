@@ -300,7 +300,7 @@ struct SettingsView: View {
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
         case .about:
             SettingsAboutPane(updater: updater, automaticallyChecks: $automaticUpdateChecks, launchAtLogin: launchAtLogin,
-                onShowWelcome: onShowWelcome)
+                onShowWelcome: onShowWelcome, openPane: { pane = $0 })
         case .support:
             SettingsSupportPane()
         case .overview, .history:
