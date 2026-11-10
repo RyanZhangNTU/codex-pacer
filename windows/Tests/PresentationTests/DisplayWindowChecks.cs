@@ -80,7 +80,8 @@ internal static class DisplayWindowChecks
             {
                 window.ApplyPreferences(new DesktopPreferences
                 {
-                    IslandAppearance = "classic", DisplayMode = "floating", IslandPlacement = new(edge, .5, .7)
+                    // Low enough that three rows open upward: with no service on, the panel holds only the task list.
+                    IslandAppearance = "classic", DisplayMode = "floating", IslandPlacement = new(edge, .5, .85)
                 });
                 window.ReceiveSnapshot(Snapshot(1, 3));
                 window.Show();
@@ -99,6 +100,9 @@ internal static class DisplayWindowChecks
                     $"The {edge} island must keep its bottom anchor when an upward panel loses rows ({bottom} to {shortPanel.Y + shortPanel.Height})");
 
                 window.CollapseForAutomation();
+                await window.WaitForPresentationAsync();
+                // Higher up, an empty panel opens downward and three rows no longer fit below the bar.
+                window.ApplyPreferences(new DesktopPreferences { IslandAppearance = "classic", DisplayMode = "floating", IslandPlacement = new(edge, .5, .7) });
                 await window.WaitForPresentationAsync();
                 window.Reveal();
                 double top = window.LogicalTarget.Y;

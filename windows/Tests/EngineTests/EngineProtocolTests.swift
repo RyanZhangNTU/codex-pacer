@@ -48,10 +48,12 @@ final class EngineProtocolTests: XCTestCase {
         XCTAssertEqual(all.classic.slots.map(\.period), [.weekly, .weekly, .weekly])
         XCTAssertEqual(all.providers.first?.weekly.remainingPercent, 43)
         XCTAssertEqual(all.providers.first?.status?.state, .hidden); XCTAssertNil(all.providers.last?.status)
-        XCTAssertNil(all.legacyCodex)
+        // The panel can give Codex a section of its own, so its bars come with every snapshot that has Codex.
+        XCTAssertEqual(all.legacyCodex?.buckets.first?.windows.first?.remainingPercent, 43)
         _ = await runtime.receive(try command("configure", ["enabledProviders": ["claude"]]))
         let one = try XCTUnwrap(capture.snapshots().last?.quotaDashboard)
         XCTAssertEqual(one.providers.map(\.provider), [.claude]); XCTAssertEqual(one.split.kind, .splitSingle)
+        XCTAssertNil(one.legacyCodex)
         XCTAssertEqual(one.classic.slots.map(\.id), ["claude:5h", "claude:7d"])
         _ = await runtime.receive(try command("configure", ["enabledProviders": ["codex"]]))
         let codex = try XCTUnwrap(capture.snapshots().last?.quotaDashboard)
