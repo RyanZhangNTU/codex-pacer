@@ -2,6 +2,8 @@
 #if os(Windows)
 import Foundation
 import XCTest
+import WinSDK
+import CWindowsSupport
 @testable import PacerCore
 
 final class WindowsProcessOwnershipTests: XCTestCase {
@@ -92,6 +94,14 @@ final class WindowsProcessOwnershipTests: XCTestCase {
         XCTAssertNil(binding.authorize("not-a-thread"))
         try FileManager.default.removeItem(at: holder.file); try Data("replacement\n".utf8).write(to: holder.file)
         XCTAssertFalse(binding.isCurrent(proof), "Replacing the selected file invalidates its original writer proof")
+    }
+    func testHandleCaptureAsksWindowsForObjectNames() throws {
+        // Windows 10 copies an uninitialized name for every handle unless the capture asks for names.
+        let name = "pacer-capture-" + UUID().uuidString
+        let event = try XCTUnwrap(name.withCString(encodedAs: UTF16.self) { CreateEventW(nil, true, false, $0) })
+        defer { CloseHandle(event) }
+        XCTAssertEqual(pacer_handle_capture_names(Array(name.utf16) + [0]), 1)
+        XCTAssertEqual(pacer_handle_capture_names(Array(("absent-" + name).utf16) + [0]), 0)
     }
     func testMissingDirectoriesAndRemoteFilesCannotEstablishOwnership() throws {
         XCTAssertNil(WindowsProcessOwnership.writers(of: FileManager.default.temporaryDirectory))
