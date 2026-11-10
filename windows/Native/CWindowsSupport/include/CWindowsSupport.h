@@ -84,6 +84,12 @@ int pacer_scoped_file_writers(const uint16_t *home, const uint16_t *path, pacer_
 typedef struct { uint64_t file_volume, file_low, file_high, root_volume, root_low, root_high; } pacer_source_file_identity;
 int pacer_source_file_stamp(const uint16_t *home, const uint16_t *path, pacer_source_file_identity *stamp);
 int pacer_same_directory(const uint16_t *first, const uint16_t *second);
+// Opens `file` for a crash report and installs the handlers that write it when
+// the engine stops on an unhandled exception, a damaged heap or abort(). The file
+// disappears with the process unless a report is written. `header` holds ASCII
+// lines for the top of the report. A report holds module names, offsets, register
+// values and module identities: no memory contents, paths or arguments.
+int pacer_crash_report_install(const uint16_t *file, const char *header);
 int pacer_process_alive(uint32_t pid, uint64_t started);
 // An existing top-level window of the exact current-user/session process.
 // activate == 0 only observes availability; this never starts a process.

@@ -26,6 +26,8 @@ internal static class Program
         if (args is ["--preferences-only", var preferencesEngine])
         { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
+        if (args is ["--crash-log-only", var crashEngine])
+        { await EngineCrashLogChecks.Run(Path.GetFullPath(crashEngine)); Console.WriteLine("PASS engine crash reports: allowed fields, retention, the engine's report, and engines ended from outside or in the middle of a frame"); return 0; }
         if (args is ["--display-preferences-read", var preferences, var expected])
             return DisplaySelectionChecks.ReadAfterRestart(preferences, expected);
         if (args is ["--display-only", var displayEngine])
@@ -71,6 +73,7 @@ internal static class Program
         await Test("legacy guide controls coordinate independent embedded-session preferences", GuideControlChecks.Run);
         await Test("Windows platform capabilities fail closed", () => { WindowsPlatformChecks.Run(); return Task.CompletedTask; });
         await Test("an engine that stops after ten minutes restarts with the app, an earlier stop does not", () => { EngineRecoveryChecks.Run(); return Task.CompletedTask; });
+        await Test("engine crash reports: allowed fields, retention, the engine's report, and engines ended from outside or in the middle of a frame", () => EngineCrashLogChecks.Run(engine));
         await Test("opaque fullscreen occlusion respects z-order, transparency, regions and monitor bounds", () => { OcclusionPolicyChecks.Run(); return Task.CompletedTask; });
         await Test("occlusion refresh trails location-event bursts with a bounded rate", () => { OcclusionRefreshChecks.Run(); return Task.CompletedTask; });
         await Test("connection actions bind setup retries and quota reads to the current source", () => { ConnectionActionChecks.Run(); return Task.CompletedTask; });
@@ -387,6 +390,15 @@ internal static class Program
                 runningCount = 1, waitingCount = 0, rateIsFresh = false
             });
             await Write(new { protocolVersion = 1, type = "result", id, ok = true });
+            if (mode == EngineCrashLogChecks.TruncatedFixture)
+            {
+                // Stops as an engine does when it fails while writing: error text with paths, half a frame, an exit code.
+                Console.Error.Write("earlier line about D:\\private\\folder\nFixture/Engine.swift:7: Fatal error: could not read D:\\private\\folder\\file\nCurrent stack trace:\n0    0x00007ff81e20cea9\n");
+                Console.Error.Flush();
+                Stream output = Console.OpenStandardOutput();
+                await output.WriteAsync(Encoding.UTF8.GetBytes("{\"protocolVersion\":1,\"type\":\"snap")); await output.FlushAsync();
+                Environment.Exit(7);
+            }
         }
     }
 }

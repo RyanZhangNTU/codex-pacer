@@ -193,6 +193,7 @@ Codex Remote Control 任务通过 Codex 桌面端获取。请保持 Codex 开启
 - **DeepSeek 余额要求登录或粘贴 Key。** 开放平台会话已过期或 Key 被拒绝。在“设置 → DeepSeek”中重新登录或粘贴新的 Key；在此期间任务和回合花费照常显示。
 - **SSH 主机未连接。** 确认 `ssh <主机>` 不需要输入密码即可连接，然后在“设置 → 远程”中点击“重试”。
 - **刚启动时速度偏高。** Pacer 中途接入任务时，第一次估算可能包含接入前的输出，下一次测量后会恢复正常。
+- **Windows 上任务停止更新，并提示重新打开 Pacer。** Pacer 的后台引擎已停止，重新打开 Pacer 即可恢复。请[提交 issue](https://github.com/RyanZhangNTU/codex-pacer/issues)，并附上 `%LOCALAPPDATA%\CodexPacer\CrashLogs` 中最新的文件（把这个路径粘贴到资源管理器的地址栏即可打开）。报告只包含版本号和代码地址，不含任务内容和文件路径。
 - **其他问题。** 请[提交 issue](https://github.com/RyanZhangNTU/codex-pacer/issues)，附上应用和 macOS 版本、来源类型（本机、SSH 或 Remote Control）以及复现步骤。截图前请隐藏私密的任务标题和账户信息。
 
 ## 卸载
