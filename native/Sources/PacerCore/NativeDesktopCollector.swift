@@ -27,6 +27,9 @@ public struct DesktopCollectionSession {
         if flushPending, session.hasEvents { try session.publishEvents(); lastFlush = now }
     }
     public mutating func discover(_ keys: [NativeDesktopSession.Key]) throws { try session.discover(keys) }
+    public mutating func setDurableCatalog(_ catalog: DurableActivityCatalog?, at now: Date = Date()) throws {
+        try session.setDurableCatalog(catalog, at: now)
+    }
     public mutating func receive(_ bytes: Data) throws { try session.receive(bytes, projectedItems: true) }
     public mutating func service(at now: Date = Date(), discovering keys: [NativeDesktopSession.Key] = [], flushPending: Bool = false) throws {
         iterations += 1

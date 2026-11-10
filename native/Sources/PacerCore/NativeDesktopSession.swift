@@ -22,6 +22,8 @@ public struct NativeDesktopSession {
     private struct SnapshotWait { var retry: Int; var next: Date }
     private var awaitingSnapshot: [Key: SnapshotWait] = [:]
     private static let snapshotDelays: [TimeInterval] = [0.5, 1, 2, 5]
+    private static let durableSnapshotDelays: [TimeInterval] = [0.5, 1, 2, 5, 10, 18, 25]
+    private var durableCatalog: DurableActivityCatalog?
     private struct HostEvent { let host: String; let value: [String: Any] }
     private var events: [HostEvent] = []
     private var frames: [Data] = []
@@ -29,7 +31,13 @@ public struct NativeDesktopSession {
     private(set) var hosts: Set<String>
     let localRuntime: Bool
     private func suppliesRuntime(_ host: String) -> Bool {
-        host == "local" ? localRuntime : host.hasPrefix("remote-control:")
+        if host == "local" { return localRuntime }
+        if host == DurableActivityCatalog.hostID { return durableCatalog != nil }
+        return host.hasPrefix("remote-control:")
+    }
+    private func allows(_ key: Key) -> Bool {
+        hosts.contains(key.host) &&
+            (key.host != DurableActivityCatalog.hostID || durableCatalog?.threadIDs.contains(key.thread) == true)
     }
     var send: ([String: Any]) throws -> Void
     init(hosts: Set<String>, localRuntime: Bool = true, send: @escaping ([String: Any]) throws -> Void) throws {
@@ -65,7 +73,7 @@ public struct NativeDesktopSession {
         } else { followed.remove(key); awaitingSnapshot.removeValue(forKey: key) }
     }
     private mutating func drain() throws {
-        for key in waiting where followed.filter({ $0.host == key.host && dormant[$0] == nil }).count < 32 {
+        for key in waiting where allows(key) && followed.filter({ $0.host == key.host && dormant[$0] == nil }).count < 32 {
             if !excluded.contains(key) && !followed.contains(key) { try follow(key, value: true) }
         }
         waiting.removeAll { followed.contains($0) || excluded.contains($0) }
@@ -109,10 +117,35 @@ public struct NativeDesktopSession {
     var dormantSubscriptionCount: Int { dormant.count }
     var retainedItemCount: Int { streams.values.reduce(0) { $0 + $1.retainedItemCount } }
     var observedTurnIDs: Set<String> { Set(streams.values.compactMap(\.currentTurnID)) }
+    mutating func setDurableCatalog(_ value: DurableActivityCatalog?, at now: Date) throws {
+        let host = DurableActivityCatalog.hostID
+        let old = durableCatalog
+        durableCatalog = hosts.contains(host) ? value : nil
+        let allowed = durableCatalog?.threadIDs ?? []
+        waiting.removeAll { $0.host == host && !allowed.contains($0.thread) }
+        if old?.scope != durableCatalog?.scope {
+            events.removeAll { $0.host == host }
+            waiting.removeAll { $0.host == host }
+            for key in Array(followed) where key.host == host { try follow(key, value: false) }
+            streams = streams.filter { $0.key.host != host }
+            dormant = dormant.filter { $0.key.host != host }
+            excluded = excluded.filter { $0.host != host }
+            try frame(["kind": "durableScope", "hostId": host, "scope": durableCatalog.map { $0.scope as Any } ?? NSNull()])
+        } else {
+            for key in Array(followed) where key.host == host && !allows(key) {
+                if streams[key]?.requests.isEmpty == false {
+                    try frame(["kind": "attention", "hostId": host, "threadId": key.thread, "requests": []])
+                }
+                try release(key, at: now)
+            }
+        }
+        try discover((durableCatalog?.threadIDs ?? []).sorted().map { Key(host: host, thread: $0) })
+    }
     mutating func setHosts(_ wanted: Set<String>, resetting resets: Set<String> = [], at now: Date = Date()) throws {
         guard wanted != hosts || !resets.isEmpty else { return }
         try publishEvents()
         hosts = wanted
+        if !wanted.contains(DurableActivityCatalog.hostID), durableCatalog != nil { try setDurableCatalog(nil, at: now) }
         waiting.removeAll { !wanted.contains($0.host) }
         let renewed = followed.filter { wanted.contains($0.host) && resets.contains($0.host) }
         for key in Array(followed) where !wanted.contains(key.host) || resets.contains(key.host) { try release(key, at: now) }
@@ -129,15 +162,16 @@ public struct NativeDesktopSession {
         // without waiting for another packet; expire orphan hints to free slots.
         for (key, wait) in awaitingSnapshot where now >= wait.next {
             let retry = wait.retry + 1
-            if retry < Self.snapshotDelays.count {
-                awaitingSnapshot[key] = SnapshotWait(retry: retry, next: now.addingTimeInterval(Self.snapshotDelays[retry]))
+            let delays = key.host == DurableActivityCatalog.hostID ? Self.durableSnapshotDelays : Self.snapshotDelays
+            if retry < delays.count {
+                awaitingSnapshot[key] = SnapshotWait(retry: retry, next: now.addingTimeInterval(delays[retry]))
                 try follow(key, value: true)
             } else { try release(key, at: now) }
         }
     }
     mutating func discover(_ keys: [Key]) throws {
         var added: [Key] = []
-        for key in keys where hosts.contains(key.host) && Self.valid(key.thread) != nil {
+        for key in keys where allows(key) && Self.valid(key.thread) != nil {
             if originExcluded.contains(key), let metadata = localOrigin(key.thread), !metadata.origin.ignored {
                 excluded.remove(key); originExcluded.remove(key)
             }
@@ -188,6 +222,7 @@ public struct NativeDesktopSession {
         let p = try params.fields(["conversationId", "hostId", "following", "change"])
         guard let host = p["hostId"]?.string(), hosts.contains(host), let thread = Self.valid(p["conversationId"]?.string()) else { return }
         let key = Key(host: host, thread: thread)
+        guard allows(key) else { return }
         // Existing owners may publish targeted patches before asking a newly
         // connected observer for its following status. Use routing metadata to
         // request our own snapshot; never consume another client's patch stream.

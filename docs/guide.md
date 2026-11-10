@@ -74,6 +74,8 @@ Codex, Claude Code and DeepSeek Harness each report how much of your request is 
 
 Estimates are the agent's own guess, so a ring can move back. Rings are on by default; turn them off for each service with **Progress Ring** on its page in the main window. Start a new session after turning a ring on.
 
+On macOS, Pacer can show Dot's Durable Codex tasks assigned to this Mac while their chats stay closed. The same Codex **Progress Ring** switch sets up percentage reporting. A busy executor applies the change when it can refresh or reconnect. Turning the ring off stops reporting immediately; the Codex module can still show task state.
+
 ## Quota and balance
 
 **Codex and Claude.** Each service has one ring: the upper arc is the 5-hour quota and the lower arc the weekly quota, each with its percentage left and a reset countdown. A white tick marks how much of the time is left: if the arc reaches past the tick, you're ahead of an even pace. Values turn amber when they run low or fast. With only one service on, Pacer also shows its pace and a forecast for the reset.

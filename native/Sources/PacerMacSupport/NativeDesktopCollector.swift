@@ -15,6 +15,9 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     private var hosts: Set<String>
     private var hostsChanged = false
     private var removedHosts: Set<String> = []
+    private var durableCatalog: DurableActivityCatalog?
+    private var durableChanged = false
+    private var peer: pid_t?
     private let localRuntime: Bool
     private var batchInterval: TimeInterval
     public func setBatchInterval(_ value: TimeInterval, flushPending: Bool = false) {
@@ -38,10 +41,22 @@ public final class NativeDesktopCollector: @unchecked Sendable {
         }
     }
     private func currentHosts() -> Set<String> { lock.lock(); defer { lock.unlock() }; return hosts }
-    private func batchUpdate() -> (interval: TimeInterval, flush: Bool, hosts: Set<String>?, resetHosts: Set<String>) {
+    var peerProcessID: pid_t? { lock.lock(); defer { lock.unlock() }; return peer }
+    func setDurableCatalog(_ value: DurableActivityCatalog?) {
         lock.lock(); defer { lock.unlock() }
-        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts)
-        flushRequested = false; hostsChanged = false; removedHosts.removeAll(); return result
+        guard !cancelled, value != nil || durableCatalog != nil else { return }
+        durableCatalog = value; durableChanged = true
+        if eventQueue >= 0 {
+            var trigger = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
+            _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
+        }
+    }
+    private func batchUpdate() -> (interval: TimeInterval, flush: Bool, hosts: Set<String>?, resetHosts: Set<String>, durable: DurableActivityCatalog??) {
+        lock.lock(); defer { lock.unlock() }
+        let update: DurableActivityCatalog?? = durableChanged ? .some(durableCatalog) : nil
+        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts, update)
+        flushRequested = false; hostsChanged = false; removedHosts.removeAll(); durableChanged = false
+        return result
     }
     private let onFrame: @Sendable (Data) -> Void
     private let onClosed: @Sendable () -> Void
@@ -50,7 +65,7 @@ public final class NativeDesktopCollector: @unchecked Sendable {
         self.id = id; self.home = home; self.hosts = hosts; self.localRuntime = localRuntime
         self.batchInterval = min(5, max(0.1, batchInterval)); self.onFrame = onFrame; self.onClosed = onClosed
     }
-    public func start() throws {
+    static func connect(home: URL) throws -> Int32 {
         let path = home.appendingPathComponent("ipc/ipc.sock")
         for (url, type) in [(path.deletingLastPathComponent(), FileAttributeType.typeDirectory), (path, .typeSocket)] {
             let fields = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -74,7 +89,19 @@ public final class NativeDesktopCollector: @unchecked Sendable {
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         guard connected == 0 else { let error = errno; Darwin.close(fd); throw POSIXError(POSIXErrorCode(rawValue: error) ?? .EIO) }
-        lock.lock(); descriptor = fd; let stopped = cancelled; lock.unlock()
+        return fd
+    }
+    static func peerPID(_ fd: Int32) -> pid_t? {
+        var owner: uid_t = 0, group: gid_t = 0, pid: pid_t = 0
+        var size = socklen_t(MemoryLayout<pid_t>.size)
+        guard getpeereid(fd, &owner, &group) == 0, owner == getuid(),
+              getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0, pid > 1 else { return nil }
+        return pid
+    }
+    public func start() throws {
+        let fd = try Self.connect(home: home)
+        let owner = Self.peerPID(fd)
+        lock.lock(); descriptor = fd; peer = owner; let stopped = cancelled; lock.unlock()
         if stopped { finish(fd); return }
         DispatchQueue.global(qos: .utility).async { [self] in run(fd) }
     }
@@ -173,6 +200,7 @@ public final class NativeDesktopCollector: @unchecked Sendable {
                         try session.setHosts(hosts, resetting: batch.resetHosts, at: now)
                         routing = DesktopRouteHints(files: MacFileSystem(), owned: Self.owned); routingDirty = true
                     }
+                    if let catalog = batch.durable { try session.setDurableCatalog(catalog, at: now) }
                     try session.setBatchInterval(batch.interval, at: now)
                     var discovered: [NativeDesktopSession.Key] = []
                     if routingDirty && now >= nextRoutingRead {

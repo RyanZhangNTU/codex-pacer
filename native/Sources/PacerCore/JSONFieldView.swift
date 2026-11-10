@@ -138,7 +138,7 @@ package struct JSONFieldView {
               let value = try? JSONDecoder().decode(String.self, from: data.subdata(in: range)) else { return nil }
         return String(value.prefix(limit))
     }
-    func integer() -> Int? {
+    package func integer() -> Int? {
         guard range.count <= 24, let text = String(data: data.subdata(in: range), encoding: .utf8),
               !text.contains(".") && !text.contains("e") && !text.contains("E") else { return nil }
         return Int(text)

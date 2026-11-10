@@ -213,7 +213,7 @@ public struct CodexProgressCommand: Codable, Equatable, Sendable {
             arguments == [CodexProgressReporter.argument, home.path]
     }
 
-    var value: [String: Any] { ["command": executable, "args": arguments, "env": Self.owner, "omit_tools_from": Self.omittedSurfaces] }
+    package var value: [String: Any] { ["command": executable, "args": arguments, "env": Self.owner, "omit_tools_from": Self.omittedSurfaces] }
 
     /// Recognizes Pacer's entry, including the earlier shape without
     /// `omit_tools_from`, so setup can update it in place. Any other change makes

@@ -107,6 +107,7 @@ Available banked resets are deduplicated, grouped by exact expiry and sorted ear
 | Local rollout logs | Incremental reader over `sessions/` rollouts | 32 file plus four directory watches; 512 KiB on attach, 128 KiB per append. Fallback scans every 120 s while IPC is connected, 60 s otherwise. |
 | SSH | Owned Python 3.6+ helper over existing non-interactive SSH and known host keys, with agent and port forwarding disabled | Runtime events are authoritative for SSH; Desktop views only help discovery. At most 64 rollout cursors and 32 active subscriptions (idle and review threads take none); 15-second status heartbeat. |
 | Remote Control (`remote-control:`) | The Desktop owner's versioned stream, plus a read-only GET of the paired-environment directory for device names | At most eight devices. Only public client and account-user identifiers are read from the enrollment index, never signing keys or enrollment credentials; authorization stays in memory. Codex must stay open and connected: there is no remote runtime or log fallback. |
+| Dot Durable Codex (macOS) | The same Desktop stream, seeded by the current account's read-only Durable `thread/list` | The IPC peer identifies the Desktop executor. Only Dot threads bound to its environment ID can be followed. Catalog entries do not create activity. Closed chats get longer bounded snapshot retries, and completion acknowledgments stay scoped to the account. |
 
 Ordinary updates coalesce at one second expanded and five seconds collapsed; expanding flushes pending events and rereads known cursors without rediscovery. First output, turn and tool boundaries and attention bypass batching. Idle collectors block on events rather than polling.
 
@@ -308,6 +309,8 @@ The rings are on by default (`claudeProgressRing`, `codexProgressRing`, `deepsee
 | DeepSeek | Pacer's reporter, run by Harness's own Node runtime | An entry in the home-level `cordis.patch.yml` between `Codex Pacer DeepSeek progress` markers. A checksum in the begin marker and an ownership line in the reporter let Pacer replace its own entry but report an edited or foreign one as a conflict. Turning off restores what the entry replaced. |
 
 Claude loads plugins at session start, so only sessions that started with it enabled get the one-line request for estimates on a typed prompt. `ProgressSetupQueue` runs Codex and DeepSeek setup one at a time off the main thread and publishes only the newest status; shutdown lets the latest setup finish within the deadline.
+
+The Mac Codex switch also owns a private local marketplace in the selected Desktop profile, with the same reporter and revocation flag. A plugin change queues one executor refresh. Only a supported signed Desktop build with consecutive quiet catalog checks and no executor children receives a graceful termination request. Desktop owns the replacement and its registration. Otherwise the change waits for Desktop's next executor registration. An IPC failure never triggers this refresh.
 
 Request scope:
 

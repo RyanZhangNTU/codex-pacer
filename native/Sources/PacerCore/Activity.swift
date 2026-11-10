@@ -68,7 +68,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 String(sourceHostID.dropFirst(sshPrefix.count)).range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil
             let validControl = sourceHostID.hasPrefix(controlPrefix) &&
                 String(sourceHostID.dropFirst(controlPrefix.count)).range(of: #"^[A-Za-z0-9_-]{1,128}\z"#, options: .regularExpression) != nil
-            guard validSSH || validControl else { return nil }
+            guard validSSH || validControl || sourceHostID == DurableActivityCatalog.hostID else { return nil }
             url.queryItems = [URLQueryItem(name: "hostId", value: sourceHostID)]
         }
         return url.url
