@@ -334,8 +334,11 @@ final class ClaudeHookInstallerTests: XCTestCase {
             ["hook_event_name": "PostToolUse", "tool_use_id": "tool-1", "tool_response": "PRIVATE output"],
             ["hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "PRIVATE notification"],
             ["hook_event_name": "SubagentStart", "agent_id": "agent-1", "agent_type": "PRIVATE agent nickname"],
-            ["hook_event_name": "SubagentStop", "agent_id": "agent-1", "last_assistant_message": "PRIVATE agent response"],
-            ["hook_event_name": "Stop", "last_assistant_message": "PRIVATE response"]
+            ["hook_event_name": "SubagentStop", "agent_id": "agent-1", "last_assistant_message": "PRIVATE agent response",
+             "background_tasks": [["id": "b1", "type": "subagent", "status": "running", "description": "PRIVATE"]]],
+            ["hook_event_name": "Stop", "last_assistant_message": "PRIVATE response",
+             "background_tasks": [["id": "b1", "type": "shell", "status": "running", "command": "PRIVATE"],
+                                  ["id": "b2", "type": "subagent", "status": "running", "description": "PRIVATE"]]]
         ]
         for input in inputs {
             let common: [String: Any] = ["session_id": "session-1", "cwd": "/PRIVATE/fixture-project", "transcript_path": "/PRIVATE/transcript.jsonl"]
@@ -355,6 +358,8 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertEqual(child["sessionId"] as? String, "agent-1")
         XCTAssertEqual(child["parentId"] as? String, "session-1")
         XCTAssertEqual(child["promptId"] as? String, "prompt-1")
+        // Only the main thread's Stop counts the agents still in flight; a shell runs none.
+        XCTAssertEqual(events.filter { $0["kind"] as? String == "stopRequested" }.map { $0["agents"] as? Int }, [nil, 1])
         XCTAssertTrue(rows.allSatisfy { $0["project"] as? String == "fixture-project" })
         let state = try Data(contentsOf: fixture.home.appendingPathComponent("pacer/hook-state.json"))
         XCTAssertFalse(String(decoding: state, as: UTF8.self).contains("PRIVATE"))
