@@ -85,9 +85,16 @@ final class ClaudeObservedRequestTests: XCTestCase {
         }
         var state = ClaudeActivityState()
         state.consume(ClaudeActivityRecord.encode(["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": turn, "at": start.timeIntervalSince1970])!, now: start)
-        state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": [block("req-1", 1, terminal: false)]])!, now: at(1.1))
+        func batch(_ records: [[String: Any]], drained: Bool = true) -> Data {
+            ClaudeActivityRecord.encode(["kind": "claudeBatch", "baselineFinal": drained, "records": records])!
+        }
+        state.consume(batch([block("req-1", 1, terminal: false)]), now: at(1.1))
         XCTAssertNil(try XCTUnwrap(state.activities.first).displayedOutputEstimate(at: at(1.1)))
-        state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": [block("req-1", 2, terminal: true)]])!, now: at(2.1))
+        // A read budget can split one request's blocks, each carrying the stop
+        // reason; nothing settles until the read has drained.
+        state.consume(batch([block("req-1", 1.5, terminal: true)], drained: false), now: at(1.6))
+        XCTAssertNil(try XCTUnwrap(state.activities.first).displayedOutputEstimate(at: at(1.6)))
+        state.consume(batch([block("req-1", 2, terminal: true)]), now: at(2.1))
         let running = try XCTUnwrap(state.activities.first)
         XCTAssertEqual(running.phase, .running); XCTAssertEqual(running.displayedOutputEstimate(at: at(2.1))?.value, 50)
         // A source with request spans keeps estimates out of the way.
@@ -95,7 +102,7 @@ final class ClaudeObservedRequestTests: XCTestCase {
         exact.consume(ClaudeActivityRecord.encode(["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": turn, "at": start.timeIntervalSince1970])!, now: start)
         exact.consume(ClaudeActivityRecord.encode(["kind": "request", "sessionId": session, "promptId": turn, "requestId": "req-0", "startedAt": at(0.5).timeIntervalSince1970,
             "at": at(1).timeIntervalSince1970, "outputTokens": 40, "durationMs": 500.0])!, now: at(1))
-        exact.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": [block("req-1", 2, terminal: true)]])!, now: at(2.1))
+        exact.consume(batch([block("req-1", 2, terminal: true)]), now: at(2.1))
         XCTAssertEqual(try XCTUnwrap(exact.activities.first).displayedOutputEstimate(at: at(2.1))?.value, 80, "Only the exact span's 80 t/s shows")
         XCTAssertEqual(try XCTUnwrap(exact.activities.first).responsePerformance?.source, .requestUsage)
     }

@@ -10,15 +10,21 @@ public enum ClaudeTelemetryConflict: String, Codable, Sendable { case none, exis
 /// Claude Code: managed settings files, managed preferences, the policy
 /// registry key and the cached server-managed settings. Only environment
 /// strings and whether a headers helper is set are kept.
+///
+/// Claude Code takes each `env` variable from the highest-priority managed
+/// source that sets it: server-managed settings, then MDM or HKLM policy, then
+/// the managed files (drop-ins after `managed-settings.json`, later names
+/// winning), and HKCU only without any of those. Callers `fill` sources in that
+/// order. A headers helper from any source counts, which can only over-report.
 public struct ClaudeManagedTelemetry: Equatable, Sendable {
     public var environment: [String: String]
     public var headersHelper: Bool
     public init(environment: [String: String] = [:], headersHelper: Bool = false) {
         self.environment = environment; self.headersHelper = headersHelper
     }
-    /// Adds one settings document. A cache may wrap the document in
-    /// `settings`; both shapes are read. Any claim counts, so documents are
-    /// united rather than ranked.
+    /// Adds one settings document over the ones before it, as Claude Code
+    /// layers files within one source. A cache may wrap the document in
+    /// `settings`; both shapes are read.
     public mutating func merge(settings value: [String: Any]) {
         for document in [value, value["settings"] as? [String: Any] ?? [:]] {
             if let env = document["env"] as? [String: Any] {
@@ -32,10 +38,36 @@ public struct ClaudeManagedTelemetry: Equatable, Sendable {
             }
         }
     }
-    /// Adds a JSON settings document; anything else is ignored.
-    public mutating func merge(json data: Data) {
-        guard data.count <= 2 * 1024 * 1024, let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        merge(settings: value)
+    /// Adds a JSON settings document; anything else is ignored. Returns
+    /// whether `data` held a settings document.
+    @discardableResult public mutating func merge(json data: Data) -> Bool {
+        guard data.count <= 2 * 1024 * 1024, let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        merge(settings: value); return true
+    }
+    /// The managed files in `folder` as one source: `managed-settings.json`,
+    /// then visible `managed-settings.d/*.json` drop-ins by name, later files
+    /// winning. `found` says whether any of them held a settings document.
+    public static func files(in folder: URL) -> (value: ClaudeManagedTelemetry, found: Bool) {
+        var result = ClaudeManagedTelemetry(), found = false
+        let dropIns = folder.appendingPathComponent("managed-settings.d")
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dropIns.path)) ?? [])
+            .filter { $0.hasSuffix(".json") && !$0.hasPrefix(".") }.sorted().prefix(64)
+        for url in [folder.appendingPathComponent("managed-settings.json")] + names.map(dropIns.appendingPathComponent) {
+            if let data = small(url), result.merge(json: data) { found = true }
+        }
+        return (result, found)
+    }
+    /// A regular file of at most 2 MiB.
+    public static func small(_ url: URL) -> Data? {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber,
+              size.intValue <= 2 * 1024 * 1024 else { return nil }
+        return try? Data(contentsOf: url)
+    }
+    /// Adds a lower-priority source: it supplies only variables no
+    /// higher-priority source set.
+    public mutating func fill(_ lower: ClaudeManagedTelemetry) {
+        environment.merge(lower.environment) { higher, _ in higher }
+        headersHelper = headersHelper || lower.headersHelper
     }
 }
 
@@ -58,6 +90,9 @@ enum ClaudeTelemetryRules {
     private static let flags: Set<String> = ["CLAUDE_CODE_ENABLE_TELEMETRY", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"]
     private static let otlp = "OTEL_EXPORTER_OTLP_"
     private static let credentials: Set<String> = ["HEADERS", "CLIENT_KEY", "CLIENT_CERTIFICATE"]
+    static let enableKey = "CLAUDE_CODE_ENABLE_TELEMETRY", endpointKey = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+    /// Exporters that the telemetry switch also turns on.
+    private static let otherExporters = ["OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER"]
 
     static func trimmed(_ value: String) -> String { value.trimmingCharacters(in: .whitespacesAndNewlines) }
     /// Claude Code reads its switches as truthy words and exporter lists as
@@ -69,11 +104,23 @@ enum ClaudeTelemetryRules {
         return trimmed(value) == wanted
     }
     static func configured(_ env: [String: String]) -> Bool { required.keys.allSatisfy { key in env[key].map { matches(key, $0) } ?? false } }
+    /// A metrics or logs exporter is set to something other than `none`.
+    static func exportsOtherSignals(_ env: [String: String]) -> Bool {
+        otherExporters.contains { key in
+            env[key].map { value in value.split(separator: ",").map { trimmed(String($0)).lowercased() }.contains { !$0.isEmpty && $0 != "none" } } ?? false
+        }
+    }
 
     static func conflict(user env: [String: String], headersHelper: Bool, managed: ClaudeManagedTelemetry,
                          owned: [String: String], process: [String: String] = [:]) -> ClaudeTelemetryConflict {
         if claims(managed: managed) { return .managed }
         if claims(user: env, headersHelper: headersHelper, owned: owned) || claims(user: process, headersHelper: false, owned: [:]) { return .existing }
+        // Pacer's switch would also start metrics or logs exporters that sit
+        // configured but off; whoever configured them decides.
+        if [env, managed.environment, process].allSatisfy({ $0[enableKey] == nil }) {
+            if exportsOtherSignals(managed.environment) { return .managed }
+            if exportsOtherSignals(env) || exportsOtherSignals(process) { return .existing }
+        }
         return .none
     }
     /// Managed settings that change Pacer's keys, or that make Claude Code

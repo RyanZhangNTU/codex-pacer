@@ -20,6 +20,8 @@ public actor ClaudeActivityMonitor {
     private var localGeneration = UUID()
     private var discovery: Task<Void, Never>?
     private var catchup: Task<Void, Never>?
+    /// Records arrived since ended requests last settled.
+    private var localReleasePending = false
     private var pendingPublish: Task<Void, Never>?
     private var policy: ActivityRefreshPolicy = .collapsed
     private let sshExecutable: URL
@@ -173,7 +175,10 @@ public actor ClaudeActivityMonitor {
             }
         }
         for bytes in result.records { local.consume(bytes, now: clock()) }
-        if !result.records.isEmpty { local.releaseCompletedRequests(now: clock()) }
+        // A request's blocks can straddle a read budget, so ended requests
+        // settle only once the reader has caught up.
+        if !result.records.isEmpty { localReleasePending = true }
+        if result.caughtUp, localReleasePending { local.releaseCompletedRequests(now: clock()); localReleasePending = false }
         if result.caughtUp { local.finalizeHistoricalBaseline(now: clock()) }
         if let status = ClaudeActivityRecord.encode(["kind": "status", "connected": result.available, "watchingLogs": !watchURLs.isEmpty, "scans": localReader.scans]) { local.consume(status, now: clock()) }
         if !result.available { local.unavailable() }

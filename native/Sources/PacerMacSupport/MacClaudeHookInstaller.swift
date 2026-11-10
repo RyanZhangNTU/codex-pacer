@@ -45,17 +45,15 @@ public struct MacClaudeHookStorage: ClaudeHookStorage {
 public enum MacClaudeManagedSettings {
     public static let folder = URL(fileURLWithPath: "/Library/Application Support/ClaudeCode")
     public static let domain = "com.anthropic.claudecode"
+    /// MDM preferences outrank the managed files, variable by variable.
     public static func telemetry(folder: URL = folder, preferences: [URL] = preferenceFiles()) -> ClaudeManagedTelemetry {
         var result = ClaudeManagedTelemetry()
         for url in preferences {
-            guard let data = small(url), let value = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { continue }
-            result.merge(settings: value)
+            guard let data = ClaudeManagedTelemetry.small(url),
+                  let value = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { continue }
+            var source = ClaudeManagedTelemetry(); source.merge(settings: value); result.fill(source)
         }
-        if let data = small(folder.appendingPathComponent("managed-settings.json")) { result.merge(json: data) }
-        let dropIns = folder.appendingPathComponent("managed-settings.d")
-        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dropIns.path)) ?? [])
-            .filter { $0.hasSuffix(".json") && !$0.hasPrefix(".") }.sorted().prefix(64)
-        for name in names { if let data = small(dropIns.appendingPathComponent(name)) { result.merge(json: data) } }
+        result.fill(ClaudeManagedTelemetry.files(in: folder).value)
         return result
     }
     public static func preferenceFiles() -> [URL] {
@@ -63,11 +61,6 @@ public enum MacClaudeManagedSettings {
         let user = NSUserName()
         return (user.isEmpty || user.contains("/") ? [] : [root.appendingPathComponent(user).appendingPathComponent(domain + ".plist")])
             + [root.appendingPathComponent(domain + ".plist")]
-    }
-    private static func small(_ url: URL) -> Data? {
-        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber,
-              size.intValue <= 2 * 1024 * 1024 else { return nil }
-        return try? Data(contentsOf: url)
     }
 }
 

@@ -735,6 +735,11 @@ final class IslandModel: ObservableObject {
     @Published private(set) var claudeRemoteSetupStatus: [String: ClaudeHookInstaller.Status] = [:]
     @Published private(set) var claudeRemoteSetupFailures: [String: String] = [:]
     private var claudeRemoteSetupFailedAt: [String: Date] = [:]
+    /// This launch's successful setups, so current hosts are checked again.
+    private var claudeRemoteCheckedAt: [String: Date] = [:]
+    /// Rechecks of current hosts run quietly: the row stays connected and a
+    /// failed recheck only backs off.
+    private var recheckingClaudeHosts: Set<String> = []
     private lazy var claudeAdapterDigests: (off: String, on: String)? = {
         guard let off = try? ClaudeRemoteSetup.adapterDigest(), let on = try? ClaudeRemoteSetup.adapterDigest(progressRing: true) else { return nil }
         return (off, on)
@@ -751,15 +756,16 @@ final class IslandModel: ObservableObject {
     }
     /// Setup never creates a Claude home on a host without one. Success records
     /// the adapter digest so later checks stay quiet until an update changes it.
-    func configureClaudeRemote(targetID: String) async -> String? {
+    /// `automatic` runs keep telemetry keys the user removed on the host removed.
+    func configureClaudeRemote(targetID: String, automatic: Bool = false) async -> String? {
         guard isModuleEnabled(.claude), monitorsSSH, !sleeping, !stopped, !Task.isCancelled,
               let target = claudeRemoteTargets.first(where: { $0.id == targetID }),
-              !configuringClaudeHosts.contains(targetID) else { return nil }
-        let generation = claudeGeneration, requestID = UUID()
+              !configuringClaudeHosts.contains(targetID), !recheckingClaudeHosts.contains(targetID) else { return nil }
+        let generation = claudeGeneration, requestID = UUID(), quiet = automatic && claudeRemoteConfigured(target)
         let setup = claudeRemoteSetup
         // The setup remembers what it installs, so a ring switched meanwhile sets the host up again.
         let progressRing = showsClaudeProgressRing, digest = claudeAdapterDigest
-        let task = Task { try await setup.install(target: target, requireHome: true, progressRing: progressRing) }
+        let task = Task { try await setup.install(target: target, requireHome: true, progressRing: progressRing, automatic: automatic) }
         launchOwnedWork(.init(.setup, provider: .claude, identifier: targetID)) { _ in
             await withTaskCancellationHandler {
                 _ = try? await task.value
@@ -767,7 +773,7 @@ final class IslandModel: ObservableObject {
         }
         claudeRemoteSetupTasks[targetID] = task
         claudeRemoteSetupIDs[targetID] = requestID
-        configuringClaudeHosts.insert(targetID)
+        if quiet { recheckingClaudeHosts.insert(targetID) } else { configuringClaudeHosts.insert(targetID) }
         // Runs after the defer below has cleared this host's in-flight state.
         var outdated = false
         defer { if outdated { scheduleClaudeRemoteSetup() } }
@@ -776,7 +782,7 @@ final class IslandModel: ObservableObject {
             if generation == claudeGeneration, claudeRemoteSetupIDs[targetID] == requestID {
                 claudeRemoteSetupTasks.removeValue(forKey: targetID)
                 claudeRemoteSetupIDs.removeValue(forKey: targetID)
-                configuringClaudeHosts.remove(targetID)
+                if quiet { recheckingClaudeHosts.remove(targetID) } else { configuringClaudeHosts.remove(targetID) }
             }
         }
         do {
@@ -787,6 +793,7 @@ final class IslandModel: ObservableObject {
                   claudeRemoteTargets.contains(target), claudeRemoteSetupIDs[targetID] == requestID else { return nil }
             claudeRemoteSetupStatus[targetID] = status
             claudeRemoteSetupFailures.removeValue(forKey: targetID); claudeRemoteSetupFailedAt.removeValue(forKey: targetID)
+            claudeRemoteCheckedAt[targetID] = Date()
             if let digest {
                 ClaudeRemoteAutoSetup.recordConfigured(alias: target.alias, digest: digest, conflict: status.telemetryConflictReason, defaults: defaults)
             }
@@ -797,8 +804,10 @@ final class IslandModel: ObservableObject {
             guard !Task.isCancelled, generation == claudeGeneration, claudeRemoteSetupIDs[targetID] == requestID,
                   claudeRemoteTargets.contains(target),
                   error as? ClaudeRemoteSetup.Failure != .cancelled else { return nil }
+            claudeRemoteSetupFailedAt[targetID] = Date()
+            if quiet { return nil }
             let message = L10n.text(error as? ClaudeRemoteSetup.Failure == .missingHome ? "provider.remote_source_missing" : "provider.remote_configure_failed")
-            claudeRemoteSetupFailedAt[targetID] = Date(); claudeRemoteSetupFailures[targetID] = message
+            claudeRemoteSetupFailures[targetID] = message
             return message
         }
     }
@@ -811,7 +820,7 @@ final class IslandModel: ObservableObject {
         }
         claudeRemoteSetupTasks.removeAll()
         claudeRemoteSetupIDs.removeAll()
-        configuringClaudeHosts.removeAll()
+        configuringClaudeHosts.removeAll(); recheckingClaudeHosts.removeAll()
     }
     /// A client-side removal/replacement retires only its owned collector/setup.
     func reconcileClaudeRemoteTargets(_ targets: [RemoteActivityTarget]) {
@@ -819,10 +828,11 @@ final class IslandModel: ObservableObject {
             claudeRemoteSetupTasks.removeValue(forKey: previous.id)?.cancel()
             cancelOwnedWork(.init(.setup, provider: .claude, identifier: previous.id))
             claudeRemoteSetupIDs.removeValue(forKey: previous.id)
-            configuringClaudeHosts.remove(previous.id)
+            configuringClaudeHosts.remove(previous.id); recheckingClaudeHosts.remove(previous.id)
             claudeRemoteSetupStatus.removeValue(forKey: previous.id)
             claudeRemoteSetupFailures.removeValue(forKey: previous.id)
             claudeRemoteSetupFailedAt.removeValue(forKey: previous.id)
+            claudeRemoteCheckedAt.removeValue(forKey: previous.id)
             claudeStreamStatuses.removeValue(forKey: previous.id)
         }
         if claudeRemoteTargets != targets { claudeRemoteTargets = targets }
@@ -850,12 +860,13 @@ final class IslandModel: ObservableObject {
               !demo, !sleeping, !stopped, let digest = claudeAdapterDigest else { return }
         let pending = ClaudeRemoteAutoSetup.pending(targets: claudeRemoteTargets, statuses: claudeStreamStatuses,
             configured: ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults), digest: digest,
-            failures: claudeRemoteSetupFailedAt, inFlight: configuringClaudeHosts, now: Date())
+            failures: claudeRemoteSetupFailedAt, inFlight: configuringClaudeHosts.union(recheckingClaudeHosts), now: Date(),
+            checkedAt: claudeRemoteCheckedAt, conflicts: ClaudeRemoteAutoSetup.telemetryConflicts(defaults: defaults))
         let generation = claudeGeneration
         for target in pending {
             launchOwnedWork(.init(.setup, provider: .claude, identifier: "auto:" + target.id)) { [weak self] _ in
                 guard let self, generation == self.claudeGeneration else { return }
-                _ = await self.configureClaudeRemote(targetID: target.id)
+                _ = await self.configureClaudeRemote(targetID: target.id, automatic: true)
             }
         }
     }
@@ -1780,7 +1791,7 @@ final class IslandModel: ObservableObject {
         if !versionInvalidated { lifecycle.invalidateSources([.claude]) }
         stopClaudeCloudMonitor()
         cancelClaudeRemoteSetup()
-        claudeRemoteSetupStatus.removeAll(); claudeRemoteSetupFailures.removeAll(); claudeRemoteSetupFailedAt.removeAll()
+        claudeRemoteSetupStatus.removeAll(); claudeRemoteSetupFailures.removeAll(); claudeRemoteSetupFailedAt.removeAll(); claudeRemoteCheckedAt.removeAll()
         claudeQuotaRestartTask?.cancel(); cancelOwnedWork(.init(.quotaRestart, provider: .claude))
         claudeQuotaTask?.cancel(); claudeActivityTask?.cancel(); cancelOwnedWork(.init(.activity, provider: .claude))
         let previous = detachClaudeQuota(preservingCadence: false)

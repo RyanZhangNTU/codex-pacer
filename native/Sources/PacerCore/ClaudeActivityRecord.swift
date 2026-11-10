@@ -363,7 +363,9 @@ struct ClaudeActivityState: Sendable {
             // A helper batch is one read: the hooks come first, so its child
             // records apply before the root's ending ends their runs.
             else if live { endOutlivedChildren(Array(sessions.keys), now: now, historical: false) }
-            if live { releaseCompletedRequests(now: now) }
+            // A request's blocks can straddle a read budget. Only a batch that
+            // ends a fully drained read (`baselineFinal`) has all of them.
+            if live, frame["baselineFinal"] as? Bool == true { releaseCompletedRequests(now: now) }
         } else { consumeRecord(frame, now: now, attaching: attaching) }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
         if sessions.count > 128 {

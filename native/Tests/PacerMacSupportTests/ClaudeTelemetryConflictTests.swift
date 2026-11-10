@@ -35,7 +35,12 @@ final class ClaudeTelemetryConflictTests: XCTestCase {
         Case(name: "managed telemetry off", managed: ["env": ["CLAUDE_CODE_ENABLE_TELEMETRY": "0"]], expected: .managed),
         Case(name: "wrapped managed cache", managed: ["settings": ["env": ["OTEL_EXPORTER_OTLP_HEADERS": "authorization=synthetic"]]], expected: .managed),
         Case(name: "managed metrics endpoint only", managed: ["env": ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://collector.invalid"]], expected: .none),
-        Case(name: "managed copy of Pacer's own endpoint", managed: ["env": ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": ClaudeTelemetryRules.endpoint]], expected: .none)
+        Case(name: "managed copy of Pacer's own endpoint", managed: ["env": ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": ClaudeTelemetryRules.endpoint]], expected: .none),
+        Case(name: "metrics exporter waiting for the switch", env: [
+            "OTEL_METRICS_EXPORTER": "otlp", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://collector.invalid"], expected: .existing),
+        Case(name: "exporters turned off", env: ["OTEL_METRICS_EXPORTER": "none", "OTEL_LOGS_EXPORTER": " none "], expected: .none),
+        Case(name: "managed logs exporter waiting for the switch", managed: ["env": ["OTEL_LOGS_EXPORTER": "otlp"]], expected: .managed),
+        Case(name: "managed logs exporter already on", managed: ["env": ["CLAUDE_CODE_ENABLE_TELEMETRY": "1", "OTEL_LOGS_EXPORTER": "otlp"]], expected: .none)
     ]
 
     private func home() throws -> (root: URL, home: URL) {
@@ -56,9 +61,11 @@ final class ClaudeTelemetryConflictTests: XCTestCase {
         let value = try JSONSerialization.jsonObject(with: Data(contentsOf: home.appendingPathComponent("settings.json"))) as? [String: Any]
         return value?["env"] as? [String: String] ?? [:]
     }
-    private func runRemote(home: URL) throws -> ClaudeHookInstaller.Status {
+    private func runRemote(home: URL, automatic: Bool = false) throws -> ClaudeHookInstaller.Status {
         let resources = try ClaudeRemoteSetup.resources()
-        let payload = try JSONSerialization.data(withJSONObject: ["home": home.path, "hook": resources.hook.base64EncodedString()])
+        var request: [String: Any] = ["home": home.path, "hook": resources.hook.base64EncodedString()]
+        if automatic { request["automatic"] = true }
+        let payload = try JSONSerialization.data(withJSONObject: request)
         let process = Process(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["python3", "-u", "-c", "import base64;exec(base64.b64decode('\(resources.installer.base64EncodedString())').decode())", payload.base64EncodedString()]
@@ -106,6 +113,29 @@ final class ClaudeTelemetryConflictTests: XCTestCase {
         XCTAssertEqual(try env(fixture.home)["USER_SETTING"], "retained")
     }
 
+    /// The remote script follows the local lifecycle: headers withdraw
+    /// Pacer's endpoint even after an equivalent edit, and automatic runs
+    /// keep a key the user removed removed until an explicit run.
+    func testRemoteSetupWithdrawsItsEndpointAndKeepsRemovalsOnAutomaticRuns() throws {
+        let fixture = try home(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let settings = fixture.home.appendingPathComponent("settings.json")
+        XCTAssertTrue(try runRemote(home: fixture.home).telemetryConfigured)
+        var env = try env(fixture.home)
+        env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "true"; env["OTEL_EXPORTER_OTLP_HEADERS"] = "authorization=synthetic"
+        try JSONSerialization.data(withJSONObject: ["env": env]).write(to: settings)
+        XCTAssertEqual(try runRemote(home: fixture.home, automatic: true).telemetryConflictReason, .existing)
+        XCTAssertEqual(try self.env(fixture.home), ["CLAUDE_CODE_ENABLE_TELEMETRY": "true", "OTEL_EXPORTER_OTLP_HEADERS": "authorization=synthetic"])
+
+        try JSONSerialization.data(withJSONObject: [String: Any]()).write(to: settings)
+        XCTAssertTrue(try runRemote(home: fixture.home).telemetryConfigured)
+        env = try self.env(fixture.home); env.removeValue(forKey: "OTEL_TRACES_EXPORT_INTERVAL")
+        try JSONSerialization.data(withJSONObject: ["env": env]).write(to: settings)
+        _ = try runRemote(home: fixture.home, automatic: true)
+        XCTAssertNil(try self.env(fixture.home)["OTEL_TRACES_EXPORT_INTERVAL"], "An automatic run keeps the removal")
+        _ = try runRemote(home: fixture.home)
+        XCTAssertEqual(try self.env(fixture.home)["OTEL_TRACES_EXPORT_INTERVAL"], "1000", "An explicit run restores it")
+    }
+
     func testMacManagedSettingsReadFilesDropInsAndPreferences() throws {
         let fixture = try home(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         let folder = fixture.root.appendingPathComponent("ClaudeCode"), dropIns = folder.appendingPathComponent("managed-settings.d")
@@ -114,10 +144,12 @@ final class ClaudeTelemetryConflictTests: XCTestCase {
         try Data(#"{"otelHeadersHelper":"/synthetic/helper"}"#.utf8).write(to: dropIns.appendingPathComponent("20-helper.json"))
         try Data(#"{"env":{"IGNORED":"hidden"}}"#.utf8).write(to: dropIns.appendingPathComponent(".hidden.json"))
         let plist = fixture.root.appendingPathComponent("com.anthropic.claudecode.plist")
-        try PropertyListSerialization.data(fromPropertyList: ["env": ["OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"]], format: .xml, options: 0).write(to: plist)
+        try Data(#"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_LOGS_EXPORTER":"otlp"}}"#.utf8).write(to: dropIns.appendingPathComponent("10-switch.json"))
+        try PropertyListSerialization.data(fromPropertyList: ["env": ["OTEL_EXPORTER_OTLP_PROTOCOL": "grpc", "CLAUDE_CODE_ENABLE_TELEMETRY": "0"]], format: .xml, options: 0).write(to: plist)
         let managed = MacClaudeManagedSettings.telemetry(folder: folder, preferences: [plist, fixture.root.appendingPathComponent("missing.plist")])
         XCTAssertTrue(managed.headersHelper)
-        XCTAssertEqual(managed.environment, ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://collector.invalid", "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"])
+        XCTAssertEqual(managed.environment, ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://collector.invalid", "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "0", "OTEL_LOGS_EXPORTER": "otlp"], "MDM preferences outrank the files, variable by variable")
         XCTAssertEqual(MacClaudeManagedSettings.telemetry(folder: fixture.root.appendingPathComponent("absent"), preferences: []), ClaudeManagedTelemetry())
     }
 }

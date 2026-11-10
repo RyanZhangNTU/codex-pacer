@@ -51,10 +51,14 @@ public actor ClaudeRemoteSetup {
 
     /// `requireHome` is set for automatic setup so a host without Claude is skipped.
     /// `progressRing` installs the ring's switch and Pacer's plugin there, or removes them.
-    @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false) async throws -> ClaudeHookInstaller.Status {
+    /// `automatic` marks a run nobody asked for: telemetry keys the user removed
+    /// stay removed. A custom `argumentBuilder` does not pass it.
+    @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false,
+                                           automatic: Bool = false) async throws -> ClaudeHookInstaller.Status {
         let arguments: [String]
         if let argumentBuilder { arguments = try argumentBuilder(target, requireHome, progressRing) }
-        else { arguments = try Self.arguments(target: target, requireHome: requireHome, progressRing: progressRing, validDestination: validDestination, validIdentityFile: validIdentityFile) }
+        else { arguments = try Self.arguments(target: target, requireHome: requireHome, progressRing: progressRing, automatic: automatic,
+                                              validDestination: validDestination, validIdentityFile: validIdentityFile) }
         let identifier = UUID()
         let operation = makeOperation(executable, arguments)
         operations[identifier] = operation
@@ -85,20 +89,21 @@ public actor ClaudeRemoteSetup {
         operations.removeAll()
     }
 
-    public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false,
+    public static func arguments(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false, automatic: Bool = false,
                                  validDestination: (String) -> Bool, validIdentityFile: ((String) -> Bool)? = nil) throws -> [String] {
         guard let arguments = target.sshArguments(validDestination: validDestination, validIdentityFile: validIdentityFile) else { throw Failure.invalidTarget }
-        return arguments + [try command(requireHome: requireHome, progressRing: progressRing)]
+        return arguments + [try command(requireHome: requireHome, progressRing: progressRing, automatic: automatic)]
     }
     /// Hosts with another transport can use the same additive installer. The
     /// default keeps SSH's original home and serialized command unchanged.
-    public static func command(home: String = "~/.claude", requireHome: Bool = false, progressRing: Bool = false) throws -> String {
+    public static func command(home: String = "~/.claude", requireHome: Bool = false, progressRing: Bool = false, automatic: Bool = false) throws -> String {
         guard !home.isEmpty, home.utf8.count <= 4096, !home.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Failure.invalidTarget }
         let (installer, hook) = try resources()
         // SSH keeps its original default. Other transports must select their
         // bound Claude root; a Codex target is never a Claude home.
         var request: [String: Any] = ["home": home, "hook": hook.base64EncodedString()]
         if requireHome { request["requireHome"] = true }
+        if automatic { request["automatic"] = true }
         // Off is stated too, so a host that had the ring loses its switch and plugin.
         request["progressRing"] = progressRing
         if progressRing { request["progressServer"] = try progressServer().base64EncodedString() }

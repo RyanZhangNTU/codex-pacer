@@ -26,7 +26,7 @@ final class WindowsClaudeManagedSettingsTests: XCTestCase {
         try FileManager.default.createDirectory(at: dropIns.appendingPathComponent("70-folder.json"), withIntermediateDirectories: true)
 
         let result = WindowsClaudeManagedSettings.telemetry(folder: base,
-            policies: [#"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"0"}}"#, "not a settings document"])
+            machine: #"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"0"}}"#, user: "not a settings document")
         XCTAssertEqual(result.environment, [
             "OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.invalid", "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
             "OTEL_METRIC_EXPORT_INTERVAL": "5000", "CLAUDE_CODE_ENABLE_TELEMETRY": "0"
@@ -37,29 +37,45 @@ final class WindowsClaudeManagedSettingsTests: XCTestCase {
 
     func testMissingFolderAndNoPoliciesClaimNothing() throws {
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-managed-missing-" + UUID().uuidString)
-        let result = WindowsClaudeManagedSettings.telemetry(folder: missing, policies: [])
+        let result = WindowsClaudeManagedSettings.telemetry(folder: missing, machine: nil, user: nil)
         XCTAssertEqual(result, ClaudeManagedTelemetry())
         XCTAssertEqual(ClaudeTelemetryRules.conflict(user: [:], headersHelper: false, managed: result, owned: [:]), .none)
     }
 
     func testManagedSettingsUnrelatedToTracesLeavePacerTelemetryOn() throws {
         let base = try folder()
-        try write(#"{"env":{"OTEL_METRICS_EXPORTER":"otlp","OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://metrics.invalid"},"permissions":{"deny":["WebFetch"]}}"#,
+        try write(#"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_METRICS_EXPORTER":"otlp","OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://metrics.invalid"},"permissions":{"deny":["WebFetch"]}}"#,
             base.appendingPathComponent("managed-settings.json"))
-        let result = WindowsClaudeManagedSettings.telemetry(folder: base, policies: [])
+        let result = WindowsClaudeManagedSettings.telemetry(folder: base, machine: nil, user: nil)
         XCTAssertFalse(result.environment.isEmpty)
         XCTAssertEqual(ClaudeTelemetryRules.conflict(user: [:], headersHelper: false, managed: result, owned: [:]), .none,
-            "Metrics-only managed settings do not claim the trace exporter")
+            "Managed metrics with telemetry already on do not claim the trace exporter")
+        var dormant = result; dormant.environment.removeValue(forKey: "CLAUDE_CODE_ENABLE_TELEMETRY")
+        XCTAssertEqual(ClaudeTelemetryRules.conflict(user: [:], headersHelper: false, managed: dormant, owned: [:]), .managed,
+            "Pacer's switch must not start the organization's metrics export")
+    }
+
+    func testMachinePolicyOutranksFilesAndUserPolicyOnlyFillsAnEmptyAdminScope() throws {
+        let base = try folder()
+        try write(#"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_LOGS_EXPORTER":"none"}}"#, base.appendingPathComponent("managed-settings.json"))
+        try write(#"{"env":{"OTEL_LOGS_EXPORTER":"otlp"}}"#, base.appendingPathComponent("managed-settings.d").appendingPathComponent("10-logs.json"))
+        let user = #"{"env":{"OTEL_EXPORTER_OTLP_PROTOCOL":"grpc"}}"#
+        let ranked = WindowsClaudeManagedSettings.telemetry(folder: base, machine: #"{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"0"}}"#, user: user)
+        XCTAssertEqual(ranked.environment, ["CLAUDE_CODE_ENABLE_TELEMETRY": "0", "OTEL_LOGS_EXPORTER": "otlp"],
+            "HKLM wins per variable, a later drop-in overrides the base file, and HKCU is ignored beside admin sources")
+        XCTAssertEqual(ClaudeTelemetryRules.conflict(user: [:], headersHelper: false, managed: ranked, owned: [:]), .managed)
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-managed-missing-" + UUID().uuidString)
+        XCTAssertEqual(WindowsClaudeManagedSettings.telemetry(folder: missing, machine: nil, user: user).environment,
+            ["OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"], "HKCU applies when no admin source holds a document")
     }
 
     func testRegistryReadsStringValuesFromTheMachineAndUserRootsOnly() {
         // Read-only: a value every Windows installation has under HKLM and not under HKCU.
         let key = #"SOFTWARE\Microsoft\Windows NT\CurrentVersion"#
-        let names = WindowsClaudeManagedSettings.policyDocuments(key: key, value: "ProductName")
-        XCTAssertEqual(names.count, 1)
-        XCTAssertTrue(names.first?.hasPrefix("Windows") == true)
-        XCTAssertEqual(WindowsClaudeManagedSettings.policyDocuments(key: key, value: "CurrentMajorVersionNumber"), [], "A DWORD is not a settings document")
-        XCTAssertEqual(WindowsClaudeManagedSettings.policyDocuments(key: #"SOFTWARE\Policies\PacerSyntheticMissing"#, value: "Settings"), [])
+        XCTAssertTrue(WindowsClaudeManagedSettings.policyDocument(.machine, key: key, value: "ProductName")?.hasPrefix("Windows") == true)
+        XCTAssertNil(WindowsClaudeManagedSettings.policyDocument(.user, key: key, value: "ProductName"))
+        XCTAssertNil(WindowsClaudeManagedSettings.policyDocument(.machine, key: key, value: "CurrentMajorVersionNumber"), "A DWORD is not a settings document")
+        XCTAssertNil(WindowsClaudeManagedSettings.policyDocument(.machine, key: #"SOFTWARE\Policies\PacerSyntheticMissing"#, value: "Settings"))
     }
 
     func testHelperReportCarriesTheConflictReasonIntoTheEngineSnapshot() throws {

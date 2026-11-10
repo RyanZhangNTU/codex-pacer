@@ -11,6 +11,11 @@ public enum ClaudeRemoteAutoSetup {
     /// Hosts whose setup kept Pacer's request telemetry off, and why.
     public static let telemetryConflictsKey = "claudeRemoteTelemetryConflicts"
     public static let retryInterval: TimeInterval = 30 * 60
+    /// A current host is checked again so telemetry settings that changed
+    /// there take effect: every 30 minutes while its setup kept telemetry
+    /// off, so it recovers on its own, and every six hours otherwise.
+    public static let conflictRecheckInterval: TimeInterval = 30 * 60
+    public static let recheckInterval: TimeInterval = 6 * 60 * 60
 
     /// Configured digests are keyed by SSH alias, the identity setup acts on.
     public static func configuredDigests(defaults: UserDefaults = .standard) -> [String: String] {
@@ -33,11 +38,23 @@ public enum ClaudeRemoteAutoSetup {
         (defaults.dictionary(forKey: telemetryConflictsKey) as? [String: String] ?? [:]).compactMapValues(ClaudeTelemetryConflict.init(rawValue:))
     }
 
+    /// `checkedAt` holds this launch's successful setups by target ID. With
+    /// it, a current host is also due once per launch and then after its
+    /// recheck interval; without it, only a changed digest makes a host due.
     public static func pending(targets: [RemoteActivityTarget], statuses: [String: RuntimeStreamStatus], configured: [String: String],
-                               digest: String, failures: [String: Date], inFlight: Set<String>, now: Date) -> [RemoteActivityTarget] {
+                               digest: String, failures: [String: Date], inFlight: Set<String>, now: Date,
+                               checkedAt: [String: Date]? = nil, conflicts: [String: ClaudeTelemetryConflict] = [:]) -> [RemoteActivityTarget] {
         targets.filter { target in
             guard let status = statuses[target.id], status.connected, status.sourceAvailable != false,
-                  configured[target.alias] != digest, !inFlight.contains(target.id) else { return false }
+                  !inFlight.contains(target.id) else { return false }
+            if configured[target.alias] == digest {
+                guard let checkedAt else { return false }
+                if let last = checkedAt[target.id] {
+                    let keptOff = conflicts[target.alias].map { $0 != ClaudeTelemetryConflict.none } ?? false
+                    let interval = keptOff ? conflictRecheckInterval : recheckInterval
+                    guard now.timeIntervalSince(last) >= interval else { return false }
+                }
+            }
             return failures[target.id].map { now.timeIntervalSince($0) >= retryInterval } ?? true
         }
     }

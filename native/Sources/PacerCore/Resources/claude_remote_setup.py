@@ -35,6 +35,9 @@ ENVIRONMENT = dict(REQUIRED, **OPTIONAL)
 FLAGS = ('CLAUDE_CODE_ENABLE_TELEMETRY', 'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA')
 OTLP = 'OTEL_EXPORTER_OTLP_'
 CREDENTIALS = ('HEADERS', 'CLIENT_KEY', 'CLIENT_CERTIFICATE')
+ENABLE = 'CLAUDE_CODE_ENABLE_TELEMETRY'
+ENDPOINT = OTLP + 'TRACES_ENDPOINT'
+OTHER_EXPORTERS = ('OTEL_METRICS_EXPORTER', 'OTEL_LOGS_EXPORTER')
 # Where Claude Code reads settings an organization manages on this host.
 MANAGED_FOLDERS = {'darwin': ('/Library/Application Support/ClaudeCode',)}
 MANAGED_PLIST = 'com.anthropic.claudecode.plist'
@@ -185,8 +188,22 @@ def merge_managed(value, managed):
             managed['helper'] = True
 
 
+def fill_managed(managed, lower):
+    # A lower-priority source supplies only variables no higher one set.
+    for key, value in lower['env'].items():
+        managed['env'].setdefault(key, value)
+    managed['helper'] = managed['helper'] or lower['helper']
+
+
 def managed_telemetry(home):
+    # Claude Code takes each env variable from the highest-priority managed
+    # source that sets it: server-managed settings, then MDM policy, then the
+    # managed files (drop-ins after managed-settings.json, later names winning).
     managed = {'env': {}, 'helper': False}
+    try:
+        merge_managed(object_bytes(read_bytes(home / 'remote-settings.json')), managed)
+    except Failure:
+        pass
     if sys.platform == 'darwin':
         folders = MANAGED_FOLDERS['darwin']
         user = os.environ.get('USER') or ''
@@ -194,7 +211,9 @@ def managed_telemetry(home):
         if user and '/' not in user:
             plists.insert(0, '/Library/Managed Preferences/' + user + '/' + MANAGED_PLIST)
         for path in plists:
-            read_managed(path, managed)
+            source = {'env': {}, 'helper': False}
+            read_managed(path, source)
+            fill_managed(managed, source)
     else:
         folders = ('/etc/claude-code',)
         try:
@@ -204,19 +223,26 @@ def managed_telemetry(home):
         except OSError:
             pass
     for folder in folders:
-        read_managed(os.path.join(folder, 'managed-settings.json'), managed)
+        source = {'env': {}, 'helper': False}
+        read_managed(os.path.join(folder, 'managed-settings.json'), source)
         try:
             names = sorted(name for name in os.listdir(os.path.join(folder, 'managed-settings.d'))
                            if name.endswith('.json') and not name.startswith('.'))[:64]
         except OSError:
             names = []
         for name in names:
-            read_managed(os.path.join(folder, 'managed-settings.d', name), managed)
-    try:
-        merge_managed(object_bytes(read_bytes(home / 'remote-settings.json')), managed)
-    except Failure:
-        pass
+            read_managed(os.path.join(folder, 'managed-settings.d', name), source)
+        fill_managed(managed, source)
     return managed
+
+
+def exports_other_signals(env):
+    # A metrics or logs exporter that the telemetry switch would also start.
+    for key in OTHER_EXPORTERS:
+        names = [name.strip().lower() for name in str(env.get(key) or '').split(',')]
+        if any(name and name != 'none' for name in names):
+            return True
+    return False
 
 
 def managed_claims(managed):
@@ -256,21 +282,34 @@ def telemetry_conflict(env, helper, managed, owned, process):
         return 'managed'
     if user_claims(env, helper, owned) or user_claims(process, False, {}):
         return 'existing'
+    # Pacer's switch would also start metrics or logs exporters that sit
+    # configured but off; whoever configured them decides.
+    if all(ENABLE not in source for source in (env, managed['env'], process)):
+        if exports_other_signals(managed['env']):
+            return 'managed'
+        if exports_other_signals(env) or exports_other_signals(process):
+            return 'existing'
     return 'none'
 
 
-def reconcile_environment(env, added, conflict):
-    # Pacer's trace keys follow the conflict state. While a conflict lasts,
-    # unchanged keys Pacer added are withdrawn; a user who changed a required
-    # one owns the whole set. Without a conflict, missing keys are added.
+def reconcile_environment(env, added, conflict, automatic=False):
+    # Pacer's trace keys follow the conflict state. While a conflict lasts and
+    # Pacer's own endpoint is still in place, keys Pacer added that still hold
+    # its values are withdrawn, so no header reaches Pacer's port; edited keys
+    # stay, and a user who repointed the endpoint owns the whole set. The
+    # switch stays while it runs the user's metrics or logs exporters. Without
+    # a conflict, missing keys are added; automatic runs skip keys the user
+    # removed after Pacer added them.
     if conflict != 'none':
-        owned_required = {key: value for key, value in added.items() if key in REQUIRED}
-        if not owned_required or any(env.get(key) != value for key, value in owned_required.items()):
+        if ENDPOINT not in added or env.get(ENDPOINT) != added[ENDPOINT]:
             return added
+        keep_switch = exports_other_signals(env)
         for key, value in added.items():
-            if env.get(key) == value:
+            if env.get(key) == value and not (keep_switch and key == ENABLE):
                 del env[key]
         return {}
+    if automatic and any(key not in env and key in added for key in ENVIRONMENT):
+        return added
     for key, setting in ENVIRONMENT.items():
         if key not in env:
             env[key] = setting
@@ -413,6 +452,7 @@ def install(payload):
     emitter = payload.get('hook')
     require_home = payload.get('requireHome', False)
     progress_ring = payload.get('progressRing', False)
+    automatic = payload.get('automatic', False) is True
     server = payload.get('progressServer')
     if not isinstance(path, str) or len(path) > 4096 or not isinstance(emitter, str) or len(emitter) > LIMIT or not isinstance(require_home, bool):
         raise Failure('invalidPayload')
@@ -478,7 +518,7 @@ def install(payload):
     helper = isinstance(helper, str) and bool(helper.strip())
     conflict = telemetry_conflict(env, helper, managed_telemetry(home), added, os.environ)
     before = dict(env)
-    added = reconcile_environment(env, added, conflict)
+    added = reconcile_environment(env, added, conflict, automatic)
     if env != before:
         if env:
             value['env'] = env
