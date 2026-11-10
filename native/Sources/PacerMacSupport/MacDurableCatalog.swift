@@ -18,6 +18,7 @@ enum MacDurableCatalog {
         var connection: Connection?
         var previous: DurableActivityCatalog?
         var polls: [String: Poll] = [:]
+        let mailbox = MacDurableProgressMailbox(home: home)
         var since = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
         defer { connection?.close() }
         await MacDurableRefresh.shared.interrupt(home: home)
@@ -72,6 +73,7 @@ enum MacDurableCatalog {
                 }.sorted {
                     (polls[$0.id]?.checkedAt ?? .distantPast) < (polls[$1.id]?.checkedAt ?? .distantPast)
                 }
+                let receipts = candidates.isEmpty ? [:] : mailbox.read(at: now)
                 var history: [DurableTurnHistory] = []
                 for entry in candidates.prefix(4) {
                     try Task.checkCancellation()
@@ -85,8 +87,16 @@ enum MacDurableCatalog {
                         poll.settled = !active
                         poll.activeTurn = active ? turn.turnID : nil
                         if active || (turn.completedAt ?? turn.startedAt).map({ $0 >= since }) == true || previous?.activeTurn == turn.turnID {
-                            // A failed item page cannot erase the verified turn.
-                            turn.report = try? await connection.latestReport(turn, thread: entry.id)
+                            if let receipt = receipts[entry.id + ":" + turn.turnID.lowercased()] {
+                                _ = turn.useLocalReceipt(receipt)
+                            }
+                            // The Mac receipt can arrive before Durable history persists the
+                            // call. A failed item page cannot erase the verified turn.
+                            if turn.report == nil || !active,
+                               let persisted = try? await connection.latestReport(turn, thread: entry.id),
+                               turn.report == nil || (persisted.at ?? .distantPast) >= (turn.report?.at ?? .distantPast) {
+                                turn.report = persisted
+                            }
                             history.append(turn)
                         }
                         polls[entry.id] = poll

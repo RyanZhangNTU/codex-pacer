@@ -43,6 +43,7 @@ public enum MacDurableProgressSetup {
             let marketFile = marketDirectory.appendingPathComponent("marketplace.json")
             let pluginFile = metadata.appendingPathComponent("plugin.json")
             let mcp = pluginDirectory.appendingPathComponent(".mcp.json")
+            let mailbox = MacDurableProgressMailbox(home: home)
             let directories = [marketDirectory.deletingLastPathComponent(), marketDirectory, pluginDirectory.deletingLastPathComponent(), pluginDirectory, metadata]
             for path in directories + [marketFile, pluginFile, mcp] { try storage.validate(path) }
             var matches = false
@@ -52,7 +53,8 @@ public enum MacDurableProgressSetup {
                     try storage.replace(owner, with: marker, permissions: 0o600)
                 }
                 for directory in directories where !storage.exists(directory) { try storage.createDirectory(directory, permissions: 0o700) }
-                let tool = CodexProgressCommand.native(executable: reporter, home: home)
+                try mailbox.prepare()
+                let tool = CodexProgressCommand.durable(executable: reporter, home: home)
                 let server = try JSONSerialization.data(withJSONObject: ["mcpServers": ["pacer_progress": tool.value]], options: [.sortedKeys])
                 try write(server, to: mcp, storage: storage)
                 try write(JSONSerialization.data(withJSONObject: [
@@ -81,6 +83,7 @@ public enum MacDurableProgressSetup {
             }
             await client.shutdown()
             if reporter == nil {
+                try mailbox.discard()
                 for path in [marketFile, pluginFile, mcp, owner] where storage.exists(path) {
                     try storage.validate(path); try storage.remove(path)
                 }

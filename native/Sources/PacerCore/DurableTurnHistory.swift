@@ -1,5 +1,34 @@
 import Foundation
 
+/// Identity comes from Codex's MCP envelope. The model supplies only percent.
+package struct DurableProgressReceipt: Codable, Sendable {
+    package let threadID: String
+    package let turnID: String
+    package let callID: String
+    package let percent: Int
+    package let at: Date
+
+    init?(parameters: [String: Any], percent: Int) {
+        guard let metadata = parameters["_meta"] as? [String: Any],
+              let context = metadata["x-codex-turn-metadata"] as? [String: Any],
+              let thread = (metadata["threadId"] as? String).flatMap(UUID.init(uuidString:)),
+              (context["thread_id"] as? String).flatMap(UUID.init(uuidString:)) == thread,
+              let turn = (context["turn_id"] as? String).flatMap(UUID.init(uuidString:)),
+              let call = CodexProgressEvidence.identifier(metadata["callId"]),
+              (0...100).contains(percent) else { return nil }
+        threadID = thread.uuidString.lowercased()
+        turnID = turn.uuidString.lowercased()
+        callID = call; self.percent = percent; at = Date()
+    }
+
+    package func isRecent(at now: Date) -> Bool {
+        UUID(uuidString: threadID)?.uuidString.lowercased() == threadID &&
+            UUID(uuidString: turnID)?.uuidString.lowercased() == turnID &&
+            CodexProgressEvidence.identifier(callID) != nil && (0...100).contains(percent) &&
+            (-5...900).contains(now.timeIntervalSince(at))
+    }
+}
+
 /// Metadata from the Durable app server's read-only turn and item pages.
 /// The parser retains no transcript or tool output.
 package struct DurableTurnHistory: Sendable {
@@ -10,7 +39,7 @@ package struct DurableTurnHistory: Sendable {
     package struct Report: Sendable {
         let id: String
         let percent: Int
-        let at: Date?
+        package let at: Date?
     }
 
     let threadID: String
@@ -21,6 +50,14 @@ package struct DurableTurnHistory: Sendable {
     package let startedAt: Date?
     package let completedAt: Date?
     package var report: Report?
+
+    package mutating func useLocalReceipt(_ receipt: DurableProgressReceipt) -> Bool {
+        guard receipt.threadID == threadID, receipt.turnID == turnID.lowercased(),
+              receipt.at >= (startedAt ?? .distantPast),
+              receipt.at < (completedAt?.addingTimeInterval(1) ?? .distantFuture) else { return false }
+        report = Report(id: receipt.callID, percent: receipt.percent, at: receipt.at)
+        return true
+    }
 
     package static func latest(_ result: JSONFieldView, thread: DurableActivityCatalog.Entry,
                                now: Date = Date()) throws -> Self? {

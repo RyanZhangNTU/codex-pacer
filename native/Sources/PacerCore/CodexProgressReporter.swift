@@ -1,15 +1,27 @@
 import Foundation
 
-/// The stdio server runs in a separate Pacer process owned by Codex. It keeps
-/// no turn state. The successful tool result is the evidence Pacer observes.
+/// The stdio server runs in a separate Pacer process owned by Codex. A private
+/// Durable registration can also deliver the accepted receipt on this Mac.
 public struct CodexProgressReporter {
     public static let argument = "--codex-progress-mcp"
+    package static let durableArgument = "--durable"
     private static let limit = 1024 * 1024
     private static let instructions = "Report your best estimate of how much of the user's current request is done. Call this tool with your first useful tool batch, after meaningful progress, and before a long wait. Use an integer from 0 to 100 and revise it downward when needed. Skip reports for short replies that need no tools."
     private let flag: URL
+    private let capturesDurableReceipts: Bool
     private var pending = Data()
+    private var durableReceipts: [DurableProgressReceipt] = []
 
-    public init(home: URL) { flag = CodexProgressSetup.flag(home) }
+    public init(home: URL) { self.init(home: home, capturesDurableReceipts: false) }
+    package init(home: URL, capturesDurableReceipts: Bool) {
+        flag = CodexProgressSetup.flag(home)
+        self.capturesDurableReceipts = capturesDurableReceipts
+    }
+
+    package mutating func takeDurableReceipts() -> [DurableProgressReceipt] {
+        defer { durableReceipts.removeAll(keepingCapacity: true) }
+        return durableReceipts
+    }
 
     public mutating func receive(_ bytes: Data) throws -> [Data] {
         var replies: [Data] = []
@@ -36,7 +48,7 @@ public struct CodexProgressReporter {
         return (try? input.read(upToCount: CodexProgressSetup.on.count + 1)) == CodexProgressSetup.on
     }
 
-    private func response(_ data: Data) -> [String: Any]? {
+    private mutating func response(_ data: Data) -> [String: Any]? {
         guard let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               message["jsonrpc"] as? String == "2.0", let id = message["id"],
               id is String || id is NSNumber, let method = message["method"] as? String else { return nil }
@@ -60,8 +72,12 @@ public struct CodexProgressReporter {
             reply["result"] = ["tools": enabled ? [tool] : []]
         case "tools/call":
             let active = enabled
-            let valid = active && params["name"] as? String == CodexProgressEvidence.tool &&
-                CodexProgressEvidence.percent(params["arguments"] as? [String: Any]) != nil
+            let percent = CodexProgressEvidence.percent(params["arguments"] as? [String: Any])
+            let valid = active && params["name"] as? String == CodexProgressEvidence.tool && percent != nil
+            if valid, capturesDurableReceipts, let percent, let receipt = DurableProgressReceipt(parameters: params, percent: percent),
+               durableReceipts.count < 64 {
+                durableReceipts.append(receipt)
+            }
             let text = valid ? CodexProgressEvidence.acknowledgment : active ? "Expected an integer from 0 to 100." : "Pacer task progress is disabled."
             reply["result"] = ["content": [["type": "text", "text": text]], "isError": !valid]
         default: reply["error"] = ["code": -32601, "message": "Method not found"]
@@ -206,6 +222,9 @@ public struct CodexProgressCommand: Codable, Equatable, Sendable {
 
     public static func native(executable: URL, home: URL) -> Self {
         .init(executable: executable, arguments: [CodexProgressReporter.argument, home.path])
+    }
+    package static func durable(executable: URL, home: URL) -> Self {
+        .init(executable: executable, arguments: [CodexProgressReporter.argument, home.path, CodexProgressReporter.durableArgument])
     }
 
     public func isNative(named name: String, home: URL) -> Bool {
