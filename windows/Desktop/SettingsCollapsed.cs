@@ -26,10 +26,16 @@ internal sealed partial class SettingsWindow
 
     private void OnShellProjectionChanged(string method)
     {
-        if (method.Length > 0 && method != "projectCompactBar") return;
+        if (method.Length > 0 && method != "projectCompactBar" && method != "projectExpandedPanel") return;
         _ = Dispatcher.InvokeAsync(() =>
         {
             if (!IsVisible) return;
+            if (activePane == "expandedPanel")
+            {
+                if (panelEditor == null || panelTiles.Count == 0) RebuildPane("expandedPanel");
+                RefreshValues(); return;
+            }
+            if (method == "projectExpandedPanel") return;
             if (activePane is "notifications" or "deepseek") { RefreshValues(); return; }
             if (activePane != "collapsed") return;
             if (compactEditor == null || compactChecks.Count == 0) { RebuildPane("collapsed"); RefreshValues(); }

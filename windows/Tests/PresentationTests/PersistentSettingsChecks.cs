@@ -38,23 +38,29 @@ internal static class PersistentSettingsChecks
         try
         {
             first.Show(); await Pump();
-            // The main window opens on Overview; privacy lives on General and app buttons on Appearance.
+            // The main window opens on Overview; privacy lives on General and app buttons with the Expanded Panel's buttons.
             await first.NavigateAsync("general"); await Pump();
             Toggle(Find<CheckBox>(first, "settings.hide_projects"));
             await Until(() => session.Current.HideProjects && Find<CheckBox>(first, "settings.hide_projects").IsEnabled);
             second = new SettingsWindow(ui, session, new DemoStartupRegistration(), true, dark, engine) { ShowActivated = false, IsHitTestVisible = false };
-            second.Show(); await Pump(); await second.NavigateAsync("appearance"); await Pump(); Toggle(Find<CheckBox>(second, "settings.app_buttons"));
-            await Until(() => !session.Current.ShowAppButtons && Find<CheckBox>(second, "settings.app_buttons").IsEnabled);
-            Check(Find<CheckBox>(first, "settings.app_buttons").IsChecked == false && session.Current.HideProjects,
+            second.Show(); await Pump(); await second.NavigateAsync("expandedPanel");
+            await Until(() => Descendants(second).OfType<CheckBox>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.option.action.apps"));
+            second.SelectPanelBlock("actions"); await Pump(); Toggle(Find<CheckBox>(second, "panel.option.action.apps"));
+            await Until(() => !session.Current.ShowAppButtons && Find<CheckBox>(second, "panel.option.action.apps").IsEnabled);
+            await Until(() => Descendants(first).OfType<CheckBox>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.option.action.apps"));
+            Check(Find<CheckBox>(first, "panel.option.action.apps").IsChecked == false && session.Current.HideProjects,
                 "Two settings windows share acknowledged edits without losing privacy");
             // Both windows follow the shared page; the language picker is on General.
             await first.NavigateAsync("general"); await Pump();
             var languagePicker = Find<ComboBox>(first, "settings.language");
             languagePicker.SelectedValue = language;
             await Until(() => session.Current.Language == language && languagePicker.IsEnabled);
+            await first.NavigateAsync("expandedPanel");
+            await Until(() => Descendants(first).OfType<RadioButton>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.option.codex.style.classic"));
+            first.SelectPanelBlock("codex"); await Pump();
+            Select(Find<RadioButton>(first, "panel.option.codex.style.classic"));
+            await Until(() => session.Current.ExpandedQuotaStyle == "classic" && Find<RadioButton>(first, "panel.option.codex.style.classic").IsEnabled);
             await first.NavigateAsync("appearance"); await Pump();
-            Select(Find<RadioButton>(first, "appearance.quota.classic"));
-            await Until(() => session.Current.ExpandedQuotaStyle == "classic" && Find<RadioButton>(first, "appearance.quota.classic").IsEnabled);
             Select(Find<RadioButton>(first, "appearance.mode.notch"));
             await Until(() => session.Current.DisplayMode == "notch" && Find<RadioButton>(first, "appearance.mode.notch").IsEnabled);
             Select(Find<RadioButton>(first, "appearance.mode.free"));

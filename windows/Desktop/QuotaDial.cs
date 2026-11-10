@@ -40,11 +40,15 @@ internal sealed class QuotaDial : FrameworkElement
     private readonly bool classic;
     private readonly DashboardProvider? dashboard;
     private readonly double? dialSize;
+    private readonly PanelGauge? gauge;
+    private readonly bool paceTick;
+    /// <param name="gauge">Core's choice of window for the panel's chosen periods; without it 5 hours splits the ring when reported.</param>
+    /// <param name="paceTick">The white tick where an even pace would be.</param>
     internal QuotaDial(string provider, EngineQuota? quota, EngineWallet? wallet, bool classic = false,
-        DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null)
+        DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null, PanelGauge? gauge = null, bool paceTick = true)
     {
         this.provider = provider; this.wallet = wallet; this.classic = classic; this.dashboard = dashboard;
-        this.classicPeriod = classicPeriod; this.dialSize = dialSize;
+        this.classicPeriod = classicPeriod; this.dialSize = dialSize; this.gauge = gauge; this.paceTick = paceTick;
         _ = quota; // Raw transport data cannot replace a shared display projection.
     }
     private readonly Typeface regular = new(PacerFonts.Interface, FontStyles.Normal, FontWeights.Medium, FontStretches.Normal);
@@ -53,13 +57,18 @@ internal sealed class QuotaDial : FrameworkElement
     internal Typeface ValueTypeface => semibold;
     private double Side => dialSize ?? (classic ? 88 : 104);
     private QuotaWindow? Short => dashboard == null ? null : Projected(dashboard.FiveHour);
-    internal bool Split => !classic && Short != null;
+    internal bool Split => !classic && (gauge?.Split ?? Short != null);
+    /// The window a ring without the split draws: the week, or 5 hours when only that is chosen.
+    internal bool ShortGauge => !classic && !Split && gauge?.Period == "5h";
     internal QuotaWindow? Weekly => dashboard == null ? null : Projected(dashboard.Weekly);
+    /// The single ring's reading; the week unless the panel chose 5 hours alone.
+    internal DashboardReading? GaugeReading => ShortGauge ? dashboard?.FiveHour : dashboard?.Weekly;
+    internal QuotaWindow? GaugeWindow => ShortGauge ? Short : Weekly;
     private DashboardReading? ClassicReading => classicPeriod == "5h" ? dashboard?.FiveHour : dashboard?.Weekly;
-    internal QuotaWindow? Selected => classic ? classicPeriod == "5h" ? Short : Weekly : Weekly;
+    internal QuotaWindow? Selected => classic ? classicPeriod == "5h" ? Short : Weekly : GaugeWindow;
     internal string AccessibleName => provider == "deepseek" ? wallet?.Dial?.AccessibilityLabel ?? provider
         : classic && ClassicReading != null ? ClassicReading.ClassicAccessibilityLabel
-        : dashboard != null ? string.Join("\n", Split ? new[] { dashboard.FiveHour.AccessibilityLabel, dashboard.Weekly.AccessibilityLabel } : new[] { dashboard.Weekly.AccessibilityLabel })
+        : dashboard != null ? string.Join("\n", Split ? new[] { dashboard.FiveHour.AccessibilityLabel, dashboard.Weekly.AccessibilityLabel } : new[] { GaugeReading!.AccessibilityLabel })
         : provider;
     private static QuotaWindow? Projected(DashboardReading value) => value.WindowID == null ? null : new(value.WindowID, value.Period,
         value.RemainingPercent, value.RemainingTimePercent, value.PacePercent, value.DurationMinutes, value.ResetsAt,
@@ -77,7 +86,7 @@ internal sealed class QuotaDial : FrameworkElement
     {
         base.OnRender(drawing);
         if (provider == "deepseek") { DrawWallet(drawing); return; }
-        if (dashboard == null || (classic ? ClassicReading?.Availability == "unavailable" : dashboard.Weekly.Availability == "unavailable" && !Split))
+        if (dashboard == null || (classic ? ClassicReading?.Availability == "unavailable" : GaugeReading?.Availability == "unavailable" && !Split))
         {
             drawing.DrawEllipse(null, new Pen(PacerPalette.Hairline, 1.5), new Point(Side / 2, Side / 2), Side / 2, Side / 2);
             drawing.PushTransform(new TranslateTransform(Side / 2 - 10, Side / 2 - 10));
@@ -109,10 +118,11 @@ internal sealed class QuotaDial : FrameworkElement
         }
         else
         {
-            drawing.PushOpacity(ReadingOpacity());
-            Gauge(drawing, Weekly, 125, 290, false);
-            Value(drawing, Weekly, 24, 52, null);
-            Centre(drawing, "7d", 10, 90, Weekly?.Pressing == true ? PacerPalette.Attention : PacerPalette.Secondary, true);
+            var window = GaugeWindow;
+            drawing.PushOpacity(ReadingOpacity(ShortGauge));
+            Gauge(drawing, window, 125, 290, ShortGauge);
+            Value(drawing, window, 24, 52, null);
+            Centre(drawing, ShortGauge ? "5h" : "7d", 10, 90, window?.Pressing == true ? PacerPalette.Attention : PacerPalette.Secondary, true);
             drawing.Pop();
         }
     }
@@ -139,7 +149,7 @@ internal sealed class QuotaDial : FrameworkElement
         if (window?.RemainingPercent is double percent && percent > 0)
             RingDrawing.Arc(drawing, centre, radius, start, sweep * Math.Clamp(percent / 100, 0, 1),
                 shortPeriod && window.Pressing ? PacerPalette.Attention : PacerPalette.Provider(provider), 6);
-        if (window?.RemainingTimePercent is double time)
+        if (paceTick && window?.RemainingTimePercent is double time)
         {
             drawing.PushTransform(new RotateTransform(start + sweep * Math.Clamp(time / 100, 0, 1) + 90, radius, radius));
             drawing.DrawRoundedRectangle(Brushes.White, new Pen(PacerPalette.Ink(0, 0, 0, 115), 0.5), new Rect(radius - 1.25, -6, 2.5, 12), 1.25, 1.25);
@@ -244,27 +254,29 @@ internal sealed class QuotaDial : FrameworkElement
 
 internal sealed class QuotaCell : StackPanel
 {
-    internal QuotaCell(string provider, EngineQuota? quota, EngineWallet? wallet, string? help = null, DashboardProvider? dashboard = null, FrameworkElement? status = null)
+    internal QuotaCell(string provider, EngineQuota? quota, EngineWallet? wallet, string? help = null, DashboardProvider? dashboard = null, FrameworkElement? status = null,
+        PanelGauge? gauge = null, bool paceTick = true)
     {
         HorizontalAlignment = HorizontalAlignment.Stretch;
-        var dial = new QuotaDial(provider, quota, wallet, dashboard: dashboard) { Width = 104, Height = 104, HorizontalAlignment = HorizontalAlignment.Center };
+        var dial = new QuotaDial(provider, quota, wallet, dashboard: dashboard, gauge: gauge, paceTick: paceTick) { Width = 104, Height = 104, HorizontalAlignment = HorizontalAlignment.Center };
         Children.Add(dial);
         var caption = new StackPanel { Orientation = Orientation.Horizontal, Height = 15, Margin = new Thickness(0, 8, 0, 6), HorizontalAlignment = HorizontalAlignment.Center };
         caption.Children.Add(new TextBlock { Text = provider switch { "codex" => "Codex", "claude" => "Claude", _ => "DeepSeek" },
             FontSize = 11, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-        string? verdict = dial.Split ? null : dial.Weekly?.VerdictText;
+        var shown = dial.GaugeWindow;
+        string? verdict = dial.Split ? null : shown?.VerdictText;
         if (provider == "deepseek" && wallet?.PeakNow == true) verdict = "×2";
         if (verdict != null)
         {
-            Brush ink = provider == "deepseek" || dial.Weekly?.Verdict == "fast" ? PacerPalette.Attention : PacerPalette.Primary;
+            Brush ink = provider == "deepseek" || shown?.Verdict == "fast" ? PacerPalette.Attention : PacerPalette.Primary;
             caption.Children.Add(new Border { CornerRadius = new CornerRadius(7.5), Height = 15, Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(5, 0, 0, 0),
-                Background = provider == "deepseek" || dial.Weekly?.Verdict == "fast" ? PacerPalette.Ink(255, 189, 97, 36) : PacerPalette.Overlay(36),
+                Background = provider == "deepseek" || shown?.Verdict == "fast" ? PacerPalette.Ink(255, 189, 97, 36) : PacerPalette.Overlay(36),
                 Child = new TextBlock { Text = verdict, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = ink, VerticalAlignment = VerticalAlignment.Center } });
         }
         Children.Add(caption);
         if (status != null) Children.Add(status);
         string details = string.Join("\n\n", new[] { provider != "deepseek" && dial.Split ? dashboard?.FiveHour.SplitHelp : null,
-            provider != "deepseek" ? dashboard?.Weekly.SplitHelp : null, provider != "deepseek" ? dashboard?.Weekly.SourceText : null, help }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            provider != "deepseek" ? dial.GaugeReading?.SplitHelp : null, provider != "deepseek" ? dashboard?.Weekly.SourceText : null, help }.Where(value => !string.IsNullOrWhiteSpace(value)));
         if (!string.IsNullOrWhiteSpace(details)) AutomationProperties.SetHelpText(this, details);
         AutomationProperties.SetName(this, dial.AccessibleName);
     }

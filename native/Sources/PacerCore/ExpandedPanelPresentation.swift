@@ -173,8 +173,9 @@ public enum ExpandedPanelPresentation {
         public let options: ExpandedPanelOptions
     }
 
+    /// Labels follow the request's language, as the collapsed bar's projection does.
     public static func project(_ request: Request) -> Output? {
-        guard AppLanguage(rawValue: request.language) != nil, request.providers.count <= 3,
+        guard let language = AppLanguage(rawValue: request.language), request.providers.count <= 3,
               Set(request.providers).count == request.providers.count,
               request.layout.map({ $0.utf8.count <= ExpandedPanelLayout.byteLimit }) ?? true,
               request.options.map({ $0.utf8.count <= ExpandedPanelOptions.byteLimit }) ?? true else { return nil }
@@ -205,13 +206,13 @@ public enum ExpandedPanelPresentation {
         }
         let budgetDial = options.showsBudgetDial(hasBudget: request.hasBudget)
         let catalog = ExpandedPanelLayout.Block.allCases.map { block in
-            Block(id: block.rawValue, label: block.label, detail: block.detail, symbol: block.symbol, group: block.group.rawValue,
+            Block(id: block.rawValue, label: block.label(in: language), detail: block.detail(in: language), symbol: block.symbol, group: block.group.rawValue,
                 available: block.isAvailable(for: providers), placed: layout.blocks.contains(block),
                 locked: layout.isLastVisible(block, providers: providers))
         }
         return Output(version: 1, layoutJSON: persisted?.json, blocks: layout.blocks.map(\.rawValue),
             visible: layout.visibleBlocks(providers: providers).map(\.rawValue), catalog: catalog,
-            groups: ExpandedPanelLayout.Group.allCases.map { Group(id: $0.rawValue, label: $0.label, blocks: $0.blocks.map(\.rawValue)) },
+            groups: ExpandedPanelLayout.Group.allCases.map { Group(id: $0.rawValue, label: $0.label(in: language), blocks: $0.blocks.map(\.rawValue)) },
             sections: sections(layout: layout, providers: providers, options: options, budgetDial: budgetDial), options: options)
     }
 }

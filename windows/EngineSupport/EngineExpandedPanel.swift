@@ -33,13 +33,14 @@ struct EngineExpandedPanel: Codable, Equatable {
         let detail: String?
         let split: QuotaDashboardPresentation.Layout?
         let classic: QuotaDashboardPresentation.Layout?
-        let gauges: [ExpandedPanelPresentation.Gauge]?
     }
     let schemaVersion: Int
     let options: ExpandedPanelOptions
     /// DeepSeek's dial shows the budgets.
     let budgetDial: Bool
     let sections: [Section]
+    /// The window each enabled quota service's ring draws, in the panel and on Overview.
+    let gauges: [ExpandedPanelPresentation.Gauge]
 
     init(settings: EngineExpandedPanelSettings, enabled: Set<AgentProvider>, snapshots: [AgentProvider: QuotaSnapshot],
          hasBudget: Bool, at now: Date) {
@@ -58,10 +59,10 @@ struct EngineExpandedPanel: Codable, Equatable {
             }
             return Section(kind: section.kind.rawValue, providers: section.providers, actions: section.actions, joined: section.joined,
                 spendBeside: section.spendBeside, showsHeader: section.showsHeader, title: header.title, detail: header.detail,
-                split: layout(.split), classic: layout(.classic),
-                gauges: quota ? section.providers.filter { $0 != .deepseek }.map {
-                    ExpandedPanelPresentation.gauge(provider: $0, snapshot: snapshots[$0], periods: options.periods(for: $0))
-                } : nil)
+                split: layout(.split), classic: layout(.classic))
+        }
+        gauges = AgentProvider.allCases.filter { enabled.contains($0) && $0 != .deepseek }.map {
+            ExpandedPanelPresentation.gauge(provider: $0, snapshot: snapshots[$0], periods: options.periods(for: $0))
         }
     }
 }

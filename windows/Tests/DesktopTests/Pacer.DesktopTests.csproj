@@ -16,11 +16,13 @@
     <Compile Include="../../Desktop/EngineRecovery.cs" Link="EngineRecovery.cs"/>
     <Compile Include="../../Desktop/EngineTimeZone.cs" Link="EngineTimeZone.cs"/>
     <Compile Include="../../Desktop/EngineModels.cs" Link="EngineModels.cs"/>
+    <Compile Include="../../Desktop/ExpandedPanelModels.cs" Link="ExpandedPanelModels.cs"/>
     <Compile Include="../../Desktop/ConnectionActions.cs" Link="ConnectionActions.cs"/>
     <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
     <Compile Include="../../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
     <Compile Include="../../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
     <Compile Include="../../Desktop/CompactChoices.cs" Link="CompactChoices.cs"/>
+    <Compile Include="../../Desktop/PanelChoices.cs" Link="PanelChoices.cs"/>
     <Compile Include="../../Desktop/IslandScreenMemory.cs" Link="IslandScreenMemory.cs"/>
     <Compile Include="../../Desktop/PreferencesStore.cs" Link="PreferencesStore.cs"/>
     <Compile Include="../../Desktop/FileQuarantine.cs" Link="FileQuarantine.cs"/>

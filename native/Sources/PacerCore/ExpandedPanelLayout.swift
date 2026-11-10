@@ -10,6 +10,8 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
         public var id: String { rawValue }
         public var label: String { L10n.text("panel.block." + rawValue) }
         public var detail: String { L10n.text("panel.block_detail." + rawValue) }
+        public func label(in language: AppLanguage) -> String { L10n.text("panel.block." + rawValue, language: language) }
+        public func detail(in language: AppLanguage) -> String { L10n.text("panel.block_detail." + rawValue, language: language) }
         /// The service a block reads; a disabled service hides its blocks but keeps their places.
         public var provider: AgentProvider? {
             switch self {
@@ -40,6 +42,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
     public enum Group: String, CaseIterable, Sendable {
         case tasks, quota, deepseek
         public var label: String { L10n.text("panel.group." + rawValue) }
+        public func label(in language: AppLanguage) -> String { L10n.text("panel.group." + rawValue, language: language) }
         public var blocks: [Block] { Block.allCases.filter { $0.group == self } }
     }
 

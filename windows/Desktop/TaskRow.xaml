@@ -21,19 +21,20 @@
  </Button.Template>
  <Border CornerRadius="12" Padding="9,8" Background="Transparent">
   <Grid VerticalAlignment="Center">
-   <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <Grid.ColumnDefinitions><ColumnDefinition Width="{Binding IconColumn}"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
    <local:TaskStatusIcon x:Name="Icon" HorizontalAlignment="Center" VerticalAlignment="Center"/>
    <Grid Grid.Column="2">
-    <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="3"/><RowDefinition Height="15"/></Grid.RowDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="{Binding GapRow}"/><RowDefinition Height="{Binding DetailRow}"/></Grid.RowDefinitions>
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <TextBlock Text="{Binding Value.Title}" FontSize="13" FontWeight="SemiBold" Foreground="{Binding TitleInk}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-    <TextBlock Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" TextOptions.TextFormattingMode="Ideal">
-     <Run Text="{Binding RateText, Mode=OneWay}" FontSize="{Binding RateSize}" FontWeight="SemiBold" Foreground="{Binding RateInk}"/>
-     <Run Text="{Binding RateUnit, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
-     <Run Text="{Binding RateSeparator, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
-     <Run Text="{Binding Value.TurnTime, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{Binding DurationInk}"/>
+    <TextBlock Grid.Column="2" Text="{Binding Value.Status}" FontSize="11" FontWeight="Medium" Foreground="{Binding DetailInk}" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Visibility="{Binding OneLineStatusVisible}"/>
+    <TextBlock Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" TextOptions.TextFormattingMode="Ideal" Visibility="{Binding RateLineVisible}">
+     <Run Text="{Binding ShownRateText, Mode=OneWay}" FontSize="{Binding RateSize}" FontWeight="SemiBold" Foreground="{Binding RateInk}"/>
+     <Run Text="{Binding ShownRateUnit, Mode=OneWay}" FontSize="10" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
+     <Run Text="{Binding ShownSeparator, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}"/>
+     <Run Text="{Binding ShownTurnTime, Mode=OneWay}" FontSize="11" FontWeight="Medium" Foreground="{Binding DurationInk}"/>
     </TextBlock>
-    <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center">
+    <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center" Visibility="{Binding SecondLineVisible}">
      <TextBlock Text="{Binding Value.Status}" FontSize="11" FontWeight="Medium" Foreground="{Binding DetailInk}" TextTrimming="CharacterEllipsis"/>
      <StackPanel Orientation="Horizontal" Margin="10,0,0,0" Visibility="{Binding SubagentsVisible}">
       <local:IconGlyph Symbol="person.2" Ink="{DynamicResource Island.Secondary}" Width="11" Height="11" VerticalAlignment="Center"/>
@@ -44,12 +45,12 @@
       <TextBlock Text="{Binding Value.SourceLabel}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Secondary}"/>
      </StackPanel>
     </StackPanel>
-    <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="{Binding ModelOpacity}">
+    <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="{Binding ModelOpacity}" Visibility="{Binding SecondLineVisible}">
      <StackPanel Orientation="Horizontal" Margin="0,0,7,0" Visibility="{Binding CostVisible}">
       <Ellipse Fill="{DynamicResource Island.Attention}" Width="5" Height="5" Margin="0,0,4,0" VerticalAlignment="Center" Visibility="{Binding PeakVisible}"/>
       <TextBlock Text="{Binding Value.Cost}" Foreground="{DynamicResource Island.Soft}" FontSize="11" FontWeight="Medium"/>
      </StackPanel>
-     <TextBlock Text="{Binding Value.Model}" Foreground="{Binding ProviderInk}" FontSize="11" FontWeight="Medium"/>
+     <TextBlock Text="{Binding Value.Model}" Foreground="{Binding ProviderInk}" FontSize="11" FontWeight="Medium" Visibility="{Binding ModelVisible}"/>
      <TextBlock Text="{Binding Value.Effort}" Foreground="{Binding ProviderInk}" Opacity="0.62" FontSize="11" FontWeight="Medium" Margin="4,0,0,0" Visibility="{Binding EffortVisible}"/>
     </StackPanel>
    </Grid>

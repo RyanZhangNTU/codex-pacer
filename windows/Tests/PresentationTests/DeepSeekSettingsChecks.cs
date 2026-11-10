@@ -42,7 +42,6 @@ internal static class DeepSeekSettingsChecks
             var module = Find<CheckBox>(window, "settings.deepseek.enabled"); var daily = Find<TextBox>(window, "settings.deepseek.budget.daily"); var weekly = Find<TextBox>(window, "settings.deepseek.budget.weekly");
             var progress = Find<CheckBox>(window, "settings.deepseek.progress_ring");
             var budget = Find<RadioButton>(window, "settings.deepseek.mode.budget"); var balance = Find<RadioButton>(window, "settings.deepseek.mode.balance");
-            RadioButton simple, detailed;
             Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5 && module.IsChecked == true,
                 "DeepSeek must retain the original settings canvas and acknowledged module state");
             Check(!Find<Button>(window, "settings.deepseek.sign_in").IsEnabled, "The page must keep the unsupported account connection action disabled");
@@ -106,15 +105,18 @@ internal static class DeepSeekSettingsChecks
             await window.NavigateAsync("deepseek"); await Pump();
             daily = Find<TextBox>(window, "settings.deepseek.budget.daily"); weekly = Find<TextBox>(window, "settings.deepseek.budget.weekly");
             budget = Find<RadioButton>(window, "settings.deepseek.mode.budget"); balance = Find<RadioButton>(window, "settings.deepseek.mode.balance");
-            // The panel style moved to Appearance, shown while DeepSeek is the only module, as on the Mac.
-            await window.NavigateAsync("appearance"); await Pump();
-            simple = Find<RadioButton>(window, "settings.deepseek.panel.simple"); detailed = Find<RadioButton>(window, "settings.deepseek.panel.detailed");
-            ulong sequence = engine.LatestSnapshot!.Sequence; int beforeStyle = configurations;
-            Select(simple); await Until(() => session.Current.DeepSeekPanelStyle == "simple" && simple.IsEnabled); await island.WaitForPresentationAsync();
-            Check(configurations == beforeStyle && engine.LatestSnapshot!.Sequence == sequence && !Descendants(island).OfType<DeepSeekWeekView>().Any() && !Descendants(island).OfType<DeepSeekDistributionView>().Any(),
-                "The original simple panel must hide distribution/history without reconfiguring collectors");
-            Select(detailed); await Until(() => session.Current.DeepSeekPanelStyle == "detailed" && detailed.IsEnabled); await island.WaitForPresentationAsync();
-            Check(configurations == beforeStyle && Descendants(island).OfType<DeepSeekWeekView>().Any(), "Detailed must restore the existing live history without an engine command");
+            // Where the money went and the week are blocks on the Expanded Panel page, as on the Mac.
+            await window.NavigateAsync("expandedPanel"); await Until(() => Descendants(window).OfType<CheckBox>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.block.deepseekWeek"));
+            var week = Find<CheckBox>(window, "panel.block.deepseekWeek"); var spend = Find<CheckBox>(window, "panel.block.deepseekSpend");
+            Check(week.IsChecked == true && spend.IsChecked == true && session.Current.ExpandedPanelLayout == null,
+                "DeepSeek alone starts from the automatic layout with its charts, as the panel was before blocks");
+            Toggle(week); await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekWeek", StringComparison.Ordinal) == false);
+            Toggle(Find<CheckBox>(window, "panel.block.deepseekSpend"));
+            await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekSpend", StringComparison.Ordinal) == false);
+            await Until(() => !Descendants(island).OfType<DeepSeekWeekView>().Any() && !Descendants(island).OfType<DeepSeekDistributionView>().Any());
+            Check(Descendants(island).OfType<DeepSeekSoloView>().Count() == 1, "Removing the charts keeps the dial and what sits beside it");
+            Invoke(Find<Button>(window, "panel.restore")); await Until(() => session.Current.ExpandedPanelLayout == null);
+            await Until(() => Descendants(island).OfType<DeepSeekWeekView>().Any() && Descendants(island).OfType<DeepSeekDistributionView>().Any());
             await window.NavigateAsync("deepseek"); await Pump();
             daily = Find<TextBox>(window, "settings.deepseek.budget.daily"); weekly = Find<TextBox>(window, "settings.deepseek.budget.weekly");
             budget = Find<RadioButton>(window, "settings.deepseek.mode.budget"); balance = Find<RadioButton>(window, "settings.deepseek.mode.balance");

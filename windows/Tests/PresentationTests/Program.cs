@@ -23,7 +23,7 @@ internal static class Program
     // The groups "all" runs. CI splits them across parallel jobs, and the
     // platform contract checks that each one is in exactly one of them.
     internal static readonly string[] AllGroups = ["recovery", "responsive", "quota", "web", "host", "idle", "display", "accessibility",
-        "island", "conversation", "harness", "pages", "updates", "settings", "collapsed", "connection"];
+        "island", "conversation", "harness", "pages", "updates", "settings", "collapsed", "panel", "connection"];
     [STAThread]
     private static int Main(string[] args)
     {
@@ -131,6 +131,7 @@ internal static class Program
                         }
                         if (Has("ssh")) await Attempt(nameof(SettingsPresentationChecks), () => SettingsPresentationChecks.Run(language, dark, output));
                         if (All("collapsed")) foreach (bool motion in new[] { false, true }) await Attempt(nameof(CollapsedLayoutChecks), () => CollapsedLayoutChecks.Run(language, dark, motion, output));
+                        if (All("panel")) await Attempt(nameof(ExpandedPanelChecks), () => ExpandedPanelChecks.Run(language, dark, output));
                         if (All("quota")) { await Attempt(nameof(QuotaHistoryChecks), () => QuotaHistoryChecks.Run(language, dark, output)); await Attempt(nameof(ProviderHistoryChecks), () => ProviderHistoryChecks.Run(language, dark, output)); }
                         if (All("connection"))
                         {

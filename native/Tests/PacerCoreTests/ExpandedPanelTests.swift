@@ -276,6 +276,10 @@ final class ExpandedPanelTests: XCTestCase {
         }
         var language = request; language.language = "fr"
         XCTAssertNil(P.project(language))
+        language.language = "zh-Hans"
+        let chinese = try XCTUnwrap(P.project(language))
+        XCTAssertEqual(chinese.catalog.first?.label, "任务列表", "Labels follow the request's language, not the engine's")
+        XCTAssertEqual(chinese.groups.first?.label, "任务")
         var repeated = request; repeated.providers = [.codex, .codex]
         XCTAssertNil(P.project(repeated))
         var damaged = request; damaged.layout = "{"

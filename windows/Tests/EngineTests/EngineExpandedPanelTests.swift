@@ -31,7 +31,7 @@ final class EngineExpandedPanelTests: XCTestCase {
         XCTAssertEqual(automatic.sections.first?.actions, true)
         XCTAssertEqual(automatic.sections.last?.providers, [.codex, .claude])
         XCTAssertNotNil(automatic.sections.last?.split); XCTAssertNotNil(automatic.sections.last?.classic)
-        XCTAssertEqual(automatic.sections.last?.gauges?.map(\.provider), [.codex, .claude])
+        XCTAssertEqual(automatic.gauges.map(\.provider), [.codex, .claude])
         XCTAssertEqual(frames.last?.presentation.pageSize, 3)
 
         var options = ExpandedPanelOptions(); options.quotaArrange = .stack; options.pageSize = 5; options.claudePeriods = .weekly
@@ -42,7 +42,7 @@ final class EngineExpandedPanelTests: XCTestCase {
         XCTAssertEqual(chosen.sections.map(\.providers), [[.claude], [], [.codex]])
         XCTAssertEqual(chosen.sections.map(\.actions), [true, false, false], "The first section carries the buttons")
         XCTAssertEqual(chosen.sections.first?.title, L10n.text("layout.group.quota")); XCTAssertEqual(chosen.sections.first?.detail, "Claude")
-        XCTAssertEqual(chosen.sections.first?.gauges?.first, .init(provider: .claude, period: .weekly, split: false))
+        XCTAssertEqual(chosen.gauges.last, .init(provider: .claude, period: .weekly, split: false))
         XCTAssertEqual(chosen.options, options)
         XCTAssertEqual(frames.last?.presentation.pageSize, 5)
 
