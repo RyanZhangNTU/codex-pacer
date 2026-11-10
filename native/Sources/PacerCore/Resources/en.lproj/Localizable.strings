@@ -1169,12 +1169,9 @@
 "layout.option.time_style" = "Written as";
 "layout.option.time_style.percent" = "Percent";
 "layout.option.time_style.countdown" = "Countdown";
-"layout.option.warning_kinds" = "Warnings to show";
 "layout.option.warning_style" = "Style";
 "layout.option.warning_style.capsule" = "Capsule";
 "layout.option.warning_style.dot" = "Dot";
 "layout.option.warning_limit" = "Show at most";
 "layout.option.warning_limit.two" = "2";
 "layout.option.warning_limit.all" = "All";
-"main.notify.bar_in_collapsed" = "Choose which warnings the bar shows in Collapsed Bar › Warnings.";
-"main.notify.choose_in_collapsed" = "Choose the bar's warnings in Collapsed Bar";

@@ -44,7 +44,7 @@ internal sealed partial class SettingsWindow
         compactAutomatic = null; compactProjection = null; compactProviderSignature = "";
         compactTiles.Clear(); compactInspector = null; compactInspectorTitle = compactInspectorDetail = null; compactInspectorToggle = null; compactInspectorIcon = null;
         compactInspectorPanels.Clear(); compactWindowsPanel = null; compactRingsCustom = null;
-        compactSegments.Clear(); compactOptionRows.Clear(); compactWarningKinds.Clear();
+        compactSegments.Clear(); compactOptionRows.Clear();
         if (activePane != "collapsed") revealQuotaGauge = false;
     }
     private async Task NavigateToQuotaGaugeAsync()
@@ -52,16 +52,6 @@ internal sealed partial class SettingsWindow
         await NavigateAsync("collapsed");
         if (sourceClosed || activePane != "collapsed") return;
         revealQuotaGauge = true; RevealQuotaGauge();
-    }
-    /// Notifications sends its warnings here, where the bar's warnings are chosen.
-    private async Task NavigateToCompactComponentAsync(string id)
-    {
-        await NavigateAsync("collapsed");
-        if (sourceClosed || activePane != "collapsed" || compactInspector == null) return;
-        SelectCompactComponent(id);
-        var inspector = compactInspector;
-        _ = Dispatcher.InvokeAsync(() => { if (!sourceClosed && activePane == "collapsed" && ReferenceEquals(compactInspector, inspector)) inspector.BringIntoView(); },
-            System.Windows.Threading.DispatcherPriority.Loaded);
     }
     /// The DeepSeek page's ring link lands on the rings' settings, as on the Mac.
     private void RevealQuotaGauge()
@@ -99,7 +89,6 @@ internal sealed partial class SettingsWindow
     // Each component choice's segments, by option and value.
     private readonly Dictionary<string, Dictionary<string, RadioButton>> compactSegments = new();
     private readonly Dictionary<string, FrameworkElement> compactOptionRows = new();
-    private readonly Dictionary<string, CheckBox> compactWarningKinds = new();
 
     /// As on the Mac: the bar to click and drag, every component by group to add
     /// or remove, and the settings of the one selected. What each component is
@@ -318,26 +307,18 @@ internal sealed partial class SettingsWindow
             compactWindowRows[provider] = host; compactWindowsPanel.Children.Add(host);
         }
         body.Children.Add(compactWindowsPanel);
-        // Which warnings the bar shows, chosen here with the rest of the warnings' settings.
+        // Which warnings the bar shows is chosen in Notifications, beside their
+        // system notifications; this card keeps their style and limit.
         var warnings = new StackPanel(); warnings.Children.Add(Hair());
-        var kindsTitle = Label(ui.Text("layout.option.warning_kinds"), 12.5); kindsTitle.Margin = new Thickness(14, 10, 14, 4);
-        warnings.Children.Add(kindsTitle);
-        var kinds = new StackPanel { Margin = new Thickness(14, 0, 14, 8) };
-        foreach (var (kind, key) in new[] { ("fiveHour", "warning.fiveHour"), ("quotaDelay", "warning.quotaDelay"), ("ssh", "warning.ssh"),
-            ("lowBalance", "main.notify.low_balance"), ("spendSpike", "main.notify.spike"), ("budget", "main.notify.budget") })
-        {
-            var check = new CheckBox { Content = ui.Text(key), Margin = new Thickness(0, 3, 0, 3) };
-            Identify(check, "compact.warning." + kind, ui.Text(key)); editors.Add(check); compactWarningKinds[kind] = check; kinds.Children.Add(check);
-            RoutedEventHandler toggled = async (_, _) =>
-            {
-                if (synchronizing || !check.IsVisible || !check.IsEnabled || activePane != "collapsed") return;
-                await Change(p => NativeCompactBar.Shared.EditAsync(p, ui.Language, NativeCompactBar.Providers(p, engine?.LatestSnapshot),
-                    new(check.IsChecked == true ? "warning" : "warningOff", kind)));
-                RefreshValues();
-            };
-            check.Checked += toggled; check.Unchecked += toggled;
-        }
-        warnings.Children.Add(kinds);
+        var chooseRow = new Grid();
+        chooseRow.ColumnDefinitions.Add(new ColumnDefinition()); chooseRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        chooseRow.Children.Add(Label(ui.Text("main.collapsed.warnings_choose"), 13));
+        var chevron = new IconGlyph { Symbol = "chevron.right", Width = 10, Height = 10, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) };
+        chevron.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary"); Grid.SetColumn(chevron, 1); chooseRow.Children.Add(chevron);
+        var chooseWarnings = new Button { Style = (Style)FindResource("SettingsRowButton"), Content = chooseRow };
+        Identify(chooseWarnings, "compact.warnings.choose", ui.Text("main.collapsed.warnings_choose"));
+        chooseWarnings.Click += async (_, _) => { if (activePane == "collapsed") await NavigateAsync("reminders"); };
+        warnings.Children.Add(chooseWarnings);
         warnings.Children.Add(Choice("warningStyle", "layout.option.warning_style", CompactOptionSegments("warningStyle", "layout.option.warning_style",
             [("capsule", "layout.option.warning_style.capsule"), ("dot", "layout.option.warning_style.dot")], value => Choose("warningStyle", value))));
         warnings.Children.Add(Choice("warningLimit", "layout.option.warning_limit", CompactOptionSegments("warningLimit", "layout.option.warning_limit",
@@ -466,13 +447,6 @@ internal sealed partial class SettingsWindow
         foreach (var segment in compactSegments["multiCore"].Values) segment.IsEnabled = choices.MultiRing == "average";
         compactOptionRows["deepseekRing"].Visibility = providers.Contains("deepseek") && session.Current.DeepSeekDailyBudget != null
             && session.Current.DeepSeekWeeklyBudget != null ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var kind in compactWarningKinds)
-        {
-            bool wallet = kind.Key is "lowBalance" or "spendSpike" or "budget";
-            kind.Value.Visibility = (wallet ? providers.Contains("deepseek") : providers.Any(value => value is "codex" or "claude") || kind.Key == "ssh") ? Visibility.Visible : Visibility.Collapsed;
-            kind.Value.IsChecked = session.Current.WarningKinds.Contains(kind.Key);
-            kind.Value.IsEnabled = !busy && !session.RequiresRestart && engine != null;
-        }
         string nextProviders = string.Join(",", providers);
         if (compactProviderSignature != nextProviders || compactChoices["ring.0"].Items.Count == 0)
         {

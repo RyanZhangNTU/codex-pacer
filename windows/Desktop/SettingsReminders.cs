@@ -49,14 +49,13 @@ internal sealed partial class SettingsWindow
     private TextBlock AlwaysCell() { var text = Label(ui.Text("main.notify.always"), 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); return text; }
     private TextBlock NoneCell()
     { var text = Label("—", 13); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsDisabled"); AutomationProperties.SetName(text, ui.Text("main.notify.unavailable")); return text; }
-    /// Whether the collapsed bar shows this warning. It is chosen with the
-    /// rest of the warnings' settings in Collapsed Bar, so here it only shows.
+    /// A collapsed-bar warning the user chooses here; Collapsed Bar's warnings
+    /// card keeps their style and limit and links back to this page.
     private CheckBox BarCell(string kind, string title)
     {
-        var check = new CheckBox { Style = (Style)FindResource("SettingsCheck"), IsEnabled = false, ToolTip = ui.Text("main.notify.bar_in_collapsed") };
-        ToolTipService.SetShowOnDisabled(check, true);
-        Identify(check, "settings.reminders." + kind, title + " · " + ui.Text("main.notify.bar"));
-        AutomationProperties.SetHelpText(check, ui.Text("main.notify.bar_in_collapsed")); reminderKinds[kind] = check;
+        var check = new CheckBox { Style = (Style)FindResource("SettingsCheck") };
+        Identify(check, "settings.reminders." + kind, title + " · " + ui.Text("main.notify.bar")); editors.Add(check); reminderKinds[kind] = check;
+        BindToggle(check, (p, value) => NativeCompactBar.Shared.EditAsync(p, ui.Language, NativeCompactBar.Providers(p, engine?.LatestSnapshot), new(value ? "warning" : "warningOff", kind)));
         return check;
     }
     /// System notifications still follow their one switch (DeepSeek's also its
@@ -118,11 +117,6 @@ internal sealed partial class SettingsWindow
         reminderQuotaRows.Children.Add(SectionTitle(ui.Text("main.pane.remote")));
         reminderQuotaRows.Children.Add(Card(MatrixRow(ui.Text("warning.ssh"), BarCell("ssh", ui.Text("warning.ssh")), NoneCell())));
         form.Children.Add(reminderQuotaRows);
-        var chooseWarnings = new Button { Content = ui.Text("main.notify.choose_in_collapsed"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5,
-            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(4, 0, 0, 10) };
-        Identify(chooseWarnings, "settings.reminders.choose_in_collapsed", ui.Text("main.notify.choose_in_collapsed"));
-        chooseWarnings.Click += async (_, _) => await NavigateToCompactComponentAsync("warnings");
-        form.Children.Add(chooseWarnings);
 
         reminderWalletRows = new StackPanel();
         reminderWalletRows.Children.Add(SectionTitle("DeepSeek"));
@@ -195,7 +189,7 @@ internal sealed partial class SettingsWindow
         bool Module(string provider) => snapshot?.Modules?.FirstOrDefault(value => value.Provider == provider)?.Enabled
             ?? snapshot?.QuotaDashboard?.Providers.Any(value => value.Provider == provider) ?? preferences.ProviderModes[provider] != "disabled";
         var warnings = NativeCompactBar.Shared.Read(preferences, ui.Language, NativeCompactBar.Providers(preferences, snapshot)).Components.FirstOrDefault(value => value.Id == "warnings");
-        foreach (var pair in reminderKinds) pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key);
+        foreach (var pair in reminderKinds) { pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && warnings != null; }
         reminderQuotaRows!.Visibility = Module("codex") || Module("claude") ? Visibility.Visible : Visibility.Collapsed;
         reminderWalletRows!.Visibility = Module("deepseek") ? Visibility.Visible : Visibility.Collapsed;
         bool system = notifications?.DesiredEnabled ?? preferences.SystemNotifications;

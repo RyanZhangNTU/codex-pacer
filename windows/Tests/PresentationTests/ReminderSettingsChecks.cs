@@ -40,14 +40,10 @@ internal static class ReminderSettingsChecks
             var low = Find<TextBox>(window, "settings.reminders.lowLine"); var spike = Find<TextBox>(window, "settings.reminders.spikeLine");
             var lowSwitch = Find<CheckBox>(window, "settings.reminders.lowBalance"); var budget = Find<CheckBox>(window, "settings.reminders.budget");
             Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5 && low.Tag is string { Length: > 0 } && spike.Tag is string { Length: > 0 }, "Reminder geometry and automatic thresholds follow the original page and Core rules");
-            // The bar's warnings are chosen in Collapsed Bar; this page mirrors them read-only.
-            Task Kind(string kind, bool on) => session.ChangeAsync(p => NativeCompactBar.Shared.EditAsync(p, language,
-                NativeCompactBar.Providers(p, engine.LatestSnapshot), new(on ? "warning" : "warningOff", kind)));
             var ssh = Find<CheckBox>(window, "settings.reminders.ssh"); bool sshShown = session.Current.WarningKinds.Contains("ssh");
-            Check(!ssh.IsEnabled && ssh.ToolTip is string { Length: > 0 } && !Find<CheckBox>(window, "settings.reminders.fiveHour").IsEnabled
-                && Find<Button>(window, "settings.reminders.choose_in_collapsed").IsVisible, "Notifications mirrors the bar's warnings and links to where they are chosen");
-            await Kind("ssh", !sshShown); await Until(() => ssh.IsChecked == !sshShown);
-            await Kind("ssh", sshShown); await Until(() => ssh.IsChecked == sshShown);
+            Check(ssh.IsEnabled && ssh.ToolTip == null && Find<CheckBox>(window, "settings.reminders.fiveHour").IsEnabled, "The SSH reminder is configurable like the quota reminders");
+            Toggle(ssh); await Until(() => session.Current.WarningKinds.Contains("ssh") != sshShown && ssh.IsEnabled);
+            Toggle(ssh); await Until(() => session.Current.WarningKinds.Contains("ssh") == sshShown && ssh.IsEnabled);
             window.CapturePreview(Path.Combine(output, "settings-" + scenario + "-reminders.png"));
             low.Text = "90"; Enter(window, low); await Until(() => session.Current.DeepSeekLowBalanceLine == 90 && low.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet?.Alert?.Kind == "lowBalance", "The saved threshold changes the real wallet state");
@@ -58,7 +54,7 @@ internal static class ReminderSettingsChecks
             Check(warnings.Visibility == Visibility.Visible && warnings.Children.OfType<Border>().All(value => value.ActualHeight == 15), "The live capsule is 15 points high at the standard size");
             var peer = UIElementAutomationPeer.CreatePeerForElement(warnings);
             Check(peer?.GetAutomationControlType() == AutomationControlType.Group && peer.GetChildren() is not { Count: > 0 } && peer.GetName().Contains("DeepSeek"), "The warning slot exposes one summary without duplicate glyph names");
-            await Kind("lowBalance", false); await Until(() => !session.Current.WarningKinds.Contains("lowBalance") && lowSwitch.IsChecked == false);
+            Toggle(lowSwitch); await Until(() => !session.Current.WarningKinds.Contains("lowBalance") && lowSwitch.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet?.Alert == null, "Turning a warning off changes the live header");
             low.Text = "2.5"; Enter(window, low); spike.Text = "7.25"; Enter(window, spike);
             await Until(() => session.Current.DeepSeekLowBalanceLine == 2.5 && session.Current.DeepSeekSpikeLimit == 7.25 && spike.IsEnabled);
@@ -70,7 +66,7 @@ internal static class ReminderSettingsChecks
             var wallet = engine.LatestSnapshot!.Wallet!; double spent = wallet.Today + wallet.Elsewhere;
             await session.ChangeAsync(p => p with { DeepSeekMode = "budget", DeepSeekDailyBudget = spent / 0.9, DeepSeekWeeklyBudget = null }); await Pump();
             Check(engine.LatestSnapshot!.Wallet?.Alert?.Kind == "nearingBudget", "A budget crossing reaches the compact warning slot");
-            await Kind("budget", false); await Until(() => !session.Current.WarningKinds.Contains("budget") && budget.IsChecked == false);
+            Toggle(budget); await Until(() => !session.Current.WarningKinds.Contains("budget") && budget.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet?.Alert == null, "The budget switch controls the live alert");
             var retention = Find<ComboBox>(window, "settings.reminders.retention"); retention.SelectedValue = 0;
             await Until(() => session.Current.RetentionMinutes == 0 && retention.IsEnabled);

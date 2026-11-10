@@ -145,20 +145,21 @@ internal static class CollapsedLayoutChecks
             await Until(() => warning.IsChecked == false && warning.IsEnabled);
             await window.NavigateAsync("reminders"); await Pump();
             var fiveHour = Find<CheckBox>(window, "settings.reminders.fiveHour");
-            Check(!fiveHour.IsChecked.GetValueOrDefault() && !fiveHour.IsEnabled,
-                "Notifications mirrors the bar's warnings read-only once the slot is removed; Collapsed Bar chooses them");
+            await Until(() => fiveHour.IsEnabled);
+            Check(!fiveHour.IsChecked.GetValueOrDefault(), "Removing the warnings slot must make its reminder switches read off");
+            Toggle(fiveHour);
+            await Until(() => session.Current.WarningKinds.SequenceEqual(new[] { "fiveHour" }));
+            Check((await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"])).EditorTrailing.First() == "warnings",
+                "Choosing one reminder must restore the slot at the start with only that kind");
             await window.NavigateAsync("collapsed"); await Pump();
-            // The warnings' own card chooses the kinds, beside their style and limit.
-            Toggle(Find<CheckBox>(window, "compact.component.warnings"));
-            await Until(() => Find<CheckBox>(window, "compact.component.warnings").IsChecked == true);
+            // The warnings card keeps their style and limit and links to Notifications for the kinds.
             window.SelectCompactComponent("warnings"); await Pump();
-            var ssh = Find<CheckBox>(window, "compact.warning.ssh");
-            await Until(() => ssh.IsVisible && ssh.IsEnabled);
-            bool hadSSH = session.Current.WarningKinds.Contains("ssh");
-            Toggle(ssh);
-            await Until(() => session.Current.WarningKinds.Contains("ssh") != hadSSH);
-            Check((await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"])).Components.Single(value => value.Id == "warnings").Shown,
-                "Choosing a kind in the warnings card keeps the slot on the bar");
+            var chooseKinds = Find<Button>(window, "compact.warnings.choose");
+            await Until(() => chooseKinds.IsVisible);
+            Invoke(chooseKinds);
+            await Until(() => Find<RadioButton>(window, "settings.pane.notifications").IsChecked == true);
+            await window.NavigateAsync("collapsed"); await Pump();
+            window.SelectCompactComponent("warnings"); await Pump();
             var dot = Find<RadioButton>(window, "compact.option.warningStyle.dot"); Select(dot);
             await Until(() => CompactChoices.Parse(session.Current.CompactComponentOptions).WarningStyle == "dot");
             Check(CompactChoices.Parse(session.Current.CompactComponentOptions).WarningLimit == 2, "Each choice is saved on its own, keeping the others");

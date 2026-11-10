@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "3429bfe69c9eef72f7145d4c63fa8fdb9eae4a95e4a2378c7277a21689adaaf8",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "27f31b3d8e6f46d9f703fa7f1f6b2d688fb52889e3cdf39d771a2db7b4c5a4be",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "98a252b85bca9a791ab59d47bc80d386ba230d0d1483822c0456951a989a79fa"
   },
   "strings": {
@@ -702,7 +702,6 @@
     "layout.option.time_style": "\u5199\u6cd5",
     "layout.option.time_style.countdown": "\u5012\u8ba1\u65f6",
     "layout.option.time_style.percent": "\u767e\u5206\u6bd4",
-    "layout.option.warning_kinds": "\u663e\u793a\u54ea\u4e9b\u8b66\u544a",
     "layout.option.warning_limit": "\u6700\u591a\u663e\u793a",
     "layout.option.warning_limit.all": "\u5168\u90e8",
     "layout.option.warning_limit.two": "2 \u4e2a",
@@ -784,10 +783,8 @@
     "main.needs_attention": "\u9700\u8981\u5904\u7406",
     "main.notify.always": "\u59cb\u7ec8",
     "main.notify.bar": "\u6298\u53e0\u680f",
-    "main.notify.bar_in_collapsed": "\u5728\u300c\u6298\u53e0\u680f \u203a \u8b66\u544a\u300d\u4e2d\u9009\u62e9\u6298\u53e0\u680f\u663e\u793a\u54ea\u4e9b\u8b66\u544a\u3002",
     "main.notify.budget": "\u9884\u7b97\u7528\u5230 80% \u6216\u8d85\u51fa",
     "main.notify.budget_link": "\u8bbe\u7f6e\u9884\u7b97",
-    "main.notify.choose_in_collapsed": "\u5728\u6298\u53e0\u680f\u4e2d\u9009\u62e9\u8b66\u544a",
     "main.notify.deepseek_one": "DeepSeek \u4e00\u6b21\u53ea\u663e\u793a\u6700\u7d27\u6025\u7684\u4e00\u4e2a\u63d0\u9192\uff1b\u52fe\u9009\u4e86\u6298\u53e0\u680f\u8b66\u544a\u624d\u4f1a\u53d1\u7cfb\u7edf\u901a\u77e5\u3002",
     "main.notify.end": "\u4efb\u52a1\u7ed3\u675f\u6216\u4e2d\u65ad",
     "main.notify.follows": "\u6682\u65f6\u8ddf\u968f\u7cfb\u7edf\u901a\u77e5\u5f00\u5173",

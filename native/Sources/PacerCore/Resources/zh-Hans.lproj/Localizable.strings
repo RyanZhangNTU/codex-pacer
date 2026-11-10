@@ -1169,12 +1169,9 @@
 "layout.option.time_style" = "写法";
 "layout.option.time_style.percent" = "百分比";
 "layout.option.time_style.countdown" = "倒计时";
-"layout.option.warning_kinds" = "显示哪些警告";
 "layout.option.warning_style" = "样式";
 "layout.option.warning_style.capsule" = "胶囊";
 "layout.option.warning_style.dot" = "圆点";
 "layout.option.warning_limit" = "最多显示";
 "layout.option.warning_limit.two" = "2 个";
 "layout.option.warning_limit.all" = "全部";
-"main.notify.bar_in_collapsed" = "在「折叠栏 › 警告」中选择折叠栏显示哪些警告。";
-"main.notify.choose_in_collapsed" = "在折叠栏中选择警告";

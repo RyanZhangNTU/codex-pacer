@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "7b18a3c8541cc8795b0c55b8361995940e71cad32f39dd25df816d149682135e",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "687c884cfa55e011b3c7adc462e54ba9fa1ff08bcd8b5acd00f712c128a32812",
     "windows/EngineSupport/Resources/Localization/en.json": "23bd4e6629e9a665f4d03692b962b51b2a2f93a20fd1379517367849fa50b31b"
   },
   "strings": {
@@ -702,7 +702,6 @@
     "layout.option.time_style": "Written as",
     "layout.option.time_style.countdown": "Countdown",
     "layout.option.time_style.percent": "Percent",
-    "layout.option.warning_kinds": "Warnings to show",
     "layout.option.warning_limit": "Show at most",
     "layout.option.warning_limit.all": "All",
     "layout.option.warning_limit.two": "2",
@@ -784,10 +783,8 @@
     "main.needs_attention": "Needs attention",
     "main.notify.always": "Always",
     "main.notify.bar": "Collapsed Bar",
-    "main.notify.bar_in_collapsed": "Choose which warnings the bar shows in Collapsed Bar \u203a Warnings.",
     "main.notify.budget": "Budget at 80% or over",
     "main.notify.budget_link": "Set Budgets",
-    "main.notify.choose_in_collapsed": "Choose the bar's warnings in Collapsed Bar",
     "main.notify.deepseek_one": "DeepSeek shows only its most urgent alert, and notifies only when its collapsed-bar warning is on.",
     "main.notify.end": "Task ends or stops",
     "main.notify.follows": "Follows System Notifications for now",
