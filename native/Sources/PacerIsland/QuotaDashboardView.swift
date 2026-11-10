@@ -1,6 +1,15 @@
 import SwiftUI
 import PacerCore
 
+/// The white tick on Codex's and Claude's rings that marks an even pace.
+private struct QuotaPaceTickKey: EnvironmentKey { static let defaultValue = true }
+extension EnvironmentValues {
+    var quotaPaceTick: Bool {
+        get { self[QuotaPaceTickKey.self] }
+        set { self[QuotaPaceTickKey.self] = newValue }
+    }
+}
+
 struct QuotaDashboardSlot: Equatable, Identifiable, Sendable {
     let provider: AgentProvider
     var id: AgentProvider { provider }
@@ -23,56 +32,78 @@ enum QuotaDashboardLayout {
 
 struct QuotaDashboardView: View {
     @ObservedObject var model: IslandModel
-    /// Overview shows one service per card; the island shows every enabled one.
-    var providers: [AgentProvider]? = nil
-    private var shown: [AgentProvider] { providers ?? model.enabledProviders }
-    private var layout: QuotaDashboardPresentation.Layout {
-        QuotaDashboardPresentation.layout(providers: shown,
-            snapshots: Dictionary(uniqueKeysWithValues: shown.compactMap { provider in
-                model.providerQuota(provider).map { (provider, $0) }
-            }), style: model.expandedQuotaStyle, now: model.now)
+    /// A quota block's services in the panel's order; Overview shows one per card.
+    let providers: [AgentProvider]
+    /// A lone DeepSeek day dial draws today's spend in its column.
+    var spendBeside = false
+
+    init(model: IslandModel, providers: [AgentProvider]) {
+        self.model = model; self.providers = providers
     }
-    private var slots: [QuotaDashboardPresentation.Slot] { layout.slots }
+
+    init(model: IslandModel, section: ExpandedPanelPresentation.Section) {
+        self.model = model; providers = section.providers; spendBeside = section.spendBeside
+    }
+
+    private var options: ExpandedPanelOptions { model.panelOptions }
+    private var layout: QuotaDashboardPresentation.Layout {
+        let options = options
+        return QuotaDashboardPresentation.layout(providers: providers,
+            snapshots: Dictionary(uniqueKeysWithValues: providers.compactMap { provider in
+                model.providerQuota(provider).map { (provider, $0) }
+            }), style: model.expandedQuotaStyle, now: model.now, preservingOrder: true, details: options.quotaDetails,
+            periods: { options.periods(for: $0) })
+    }
 
     var body: some View {
-        switch layout.kind {
-        case .legacyCodex:
-            if let snapshot = model.providerQuota(.codex) { LegacyCodexQuotaView(model: model, snapshot: snapshot) }
-        case .deepseekSolo: DeepSeekSoloDashboard(model: model)
-        case .classicRings: ClassicQuotaDashboardView(model: model, providers: providers)
-        case .splitSingle:
-            if let provider = layout.slots.first?.provider { single(provider) }
-        case .splitRings: rings
+        let layout = layout
+        Group {
+            switch layout.kind {
+            case .legacyCodex:
+                if let snapshot = model.providerQuota(.codex) { LegacyCodexQuotaView(model: model, snapshot: snapshot) }
+            case .deepseekSolo: DeepSeekSoloDashboard(model: model, spendBeside: spendBeside)
+            case .classicRings: ClassicQuotaDashboardView(model: model, providers: providers, slots: layout.slots)
+            case .splitSingle:
+                if let provider = layout.slots.first?.provider { single(provider) }
+            case .splitRings: rings(layout.slots)
+            }
         }
+        .environment(\.quotaPaceTick, options.paceTick)
+    }
+
+    /// The window a service's ring draws, and the 5-hour quota when the ring splits.
+    private func gauge(_ provider: AgentProvider) -> (main: QuotaDashboardQuota, fiveHour: QuotaDashboardQuota?) {
+        let gauge = ExpandedPanelPresentation.gauge(provider: provider, snapshot: model.providerQuota(provider),
+            periods: options.periods(for: provider))
+        return (model.dashboardQuota(provider: provider, period: gauge.period),
+                gauge.split ? model.dashboardQuota(provider: provider, period: .fiveHour) : nil)
     }
 
     /// One service: the ring on the left, and beside it what the ring has no
     /// room for. The header above already names the provider.
     private func single(_ provider: AgentProvider) -> some View {
-        let weekly = model.dashboardQuota(provider: provider, period: .weekly)
-        let fiveHour = model.dashboardQuota(provider: provider, period: .fiveHour)
-        let ring = QuotaDashboardRingView(quota: weekly, fiveHourQuota: fiveHour, providerHelp: providerHelp(provider),
+        let (main, fiveHour) = gauge(provider)
+        let ring = QuotaDashboardRingView(quota: main, fiveHourQuota: fiveHour, providerHelp: providerHelp(provider),
                                           now: model.now, showsCaption: false)
         return VStack(spacing: 6) {
             HStack(spacing: 20) {
                 ring
-                QuotaDashboardDetailsView(quota: weekly, fiveHourQuota: ring.showsSplitRing ? fiveHour : nil, now: model.now)
+                QuotaDashboardDetailsView(quota: main, fiveHourQuota: ring.showsSplitRing ? fiveHour : nil, now: model.now)
             }
             .padding(.horizontal, IslandMetrics.rowInset)
             QuotaProviderStatusView(model: model, provider: provider)
         }.padding(.bottom, 4)
     }
 
-    private var rings: some View {
+    private func rings(_ slots: [QuotaDashboardPresentation.Slot]) -> some View {
         HStack(alignment: .top, spacing: 16) {
             ForEach(slots) { slot in
                 if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 104) } else {
-                VStack(spacing: 6) {
-                    QuotaDashboardRingView(quota: model.dashboardQuota(provider: slot.provider, period: .weekly),
-                        fiveHourQuota: model.dashboardQuota(provider: slot.provider, period: .fiveHour),
-                        providerHelp: providerHelp(slot.provider), now: model.now)
-                    QuotaProviderStatusView(model: model, provider: slot.provider)
-                }.frame(maxWidth: .infinity, alignment: .top)
+                    let (main, fiveHour) = gauge(slot.provider)
+                    VStack(spacing: 6) {
+                        QuotaDashboardRingView(quota: main, fiveHourQuota: fiveHour, providerHelp: providerHelp(slot.provider), now: model.now)
+                        QuotaProviderStatusView(model: model, provider: slot.provider)
+                    }.frame(maxWidth: .infinity, alignment: .top)
                 }
             }
         }.padding(.bottom, 4)
@@ -241,6 +272,7 @@ private struct QuotaRingArc: Shape {
 private struct QuotaRingGauge: View {
     let reading: QuotaRingReading
     let geometry: QuotaRingGeometry
+    @Environment(\.quotaPaceTick) private var paceTick
     private static let stroke: CGFloat = 6
 
     var body: some View {
@@ -252,7 +284,7 @@ private struct QuotaRingGauge: View {
                     QuotaRingArc(geometry: geometry).trim(from: 0, to: CGFloat(fraction))
                         .stroke(reading.tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
                 }
-                if let time = reading.timeFraction {
+                if paceTick, let time = reading.timeFraction {
                     Capsule().fill(PacerPalette.tick)
                         .overlay(Capsule().stroke(PacerPalette.tickEdge, lineWidth: 0.5))
                         .frame(width: 2.5, height: Self.stroke + 6)

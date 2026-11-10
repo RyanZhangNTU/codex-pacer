@@ -11,15 +11,13 @@ extension QuotaDashboardPresentation.Style {
     func save(to defaults: UserDefaults = .standard) { defaults.set(rawValue, forKey: Self.defaultsKey) }
 }
 
-/// DeepSeek alone: the full dashboard, or only the dial and what sits beside it.
-enum DeepSeekPanelStyle: String, CaseIterable, Identifiable {
+/// DeepSeek's former Content choice, read only: without a saved panel layout,
+/// Detailed (the default) adds spend and week when DeepSeek is the only service.
+enum DeepSeekPanelStyle: String, CaseIterable {
     case detailed, simple
     static let defaultsKey = "deepseekPanelStyle"
-    var id: String { rawValue }
-    var label: String { L10n.text("deepseek.panel_style." + rawValue) }
 
     static func load(from defaults: UserDefaults = .standard) -> Self {
         defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .detailed
     }
-    func save(to defaults: UserDefaults = .standard) { defaults.set(rawValue, forKey: Self.defaultsKey) }
 }
