@@ -63,6 +63,22 @@ internal static class AccessibilitySettingsChecks
                 "The dark theme overrides a light Windows and the accent tints the controls");
             Check(((SolidColorBrush)PacerPalette.Codex).Color == Color.FromRgb(0xBF, 0x5A, 0xF2) && ((SolidColorBrush)PacerPalette.Claude).Color == AccentPalette.Lighten(Color.FromRgb(0xBF, 0x5A, 0xF2), .42),
                 "A single accent turns the services into its shades");
+            // On light glass every accent keeps readable shades, darkest for Codex, with the Mac's values.
+            var lightFace = Color.FromRgb(0xEC, 0xEC, 0xF0);
+            foreach (string accent in AccentPalette.Choices.Where(value => AccentPalette.Fixed(value) != null))
+            {
+                var shades = new[] { "codex", "claude", "deepseek" }.Select(provider => AccentPalette.ProviderShade(accent, provider, light: true)!.Value).ToArray();
+                Check(shades.All(shade => SettingsPalette.Contrast(shade, lightFace) >= 3.5)
+                    && SettingsPalette.Contrast(shades[0], Colors.Black) < SettingsPalette.Contrast(shades[1], Colors.Black)
+                    && SettingsPalette.Contrast(shades[1], Colors.Black) < SettingsPalette.Contrast(shades[2], Colors.Black),
+                    "The " + accent + " accent keeps readable shades on light glass, lightening from Codex to DeepSeek");
+            }
+            Check(AccentPalette.ProviderShade("yellow", "codex", true) == Color.FromRgb(89, 74, 1) && AccentPalette.ProviderShade("blue", "deepseek", true) == Color.FromRgb(8, 122, 236)
+                && AccentPalette.ProviderShade("graphite", "claude", true) == Color.FromRgb(97, 97, 100), "The light shades match the Mac's");
+            PacerPalette.ApplyTone(true);
+            bool lightPurple = ((SolidColorBrush)PacerPalette.Codex).Color == Color.FromRgb(107, 47, 137);
+            PacerPalette.ApplyTone(false);
+            Check(lightPurple, "Light glass shades the services from the accent");
             await session.ChangeAsync(p => p with { AppTheme = "light" }); await Drain();
             Check(ColorOf(window.Resources["SettingsBackground"]) == Color.FromRgb(244, 244, 246), "The light theme applies at once");
             Check(SettingsPalette.Contrast(ColorOf(window.Resources["SettingsLinkText"]), ColorOf(window.Resources["SettingsCard"])) >= 4.5, "Links keep readable contrast on light cards");

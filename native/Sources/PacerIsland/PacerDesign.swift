@@ -1,24 +1,60 @@
 import SwiftUI
 import PacerCore
 
-/// Shared tokens for the always-dark island surface. Settings keep system colors.
+/// Shared tokens for the island surface. The island is dark, except under
+/// Light Liquid Glass, where the neutral inks, the services' shades and every
+/// overlay switch to their light tone together. Settings keep system colors;
+/// only their island previews follow the island's tone.
 enum PacerPalette {
-    static let primary = Color(white: 0.96)
-    static let secondary = Color(white: 0.62)
-    static let tertiary = Color(white: 0.42)
-    static let hairline = Color.white.opacity(0.08)
-    static let track = Color.white.opacity(0.08)
-    static let fill = Color.white.opacity(0.05)
-    static let hover = Color.white.opacity(0.08)
-    static let attention = Color(red: 1.0, green: 0.74, blue: 0.38)
-    static let danger = Color(red: 1.0, green: 0.45, blue: 0.42)
-    static let paused = Color(red: 0.86, green: 0.77, blue: 0.6)
+    /// The island draws its light tone. The model sets it whenever settings
+    /// apply or the black notch bar covers or uncovers light glass, before the
+    /// island redraws.
+    static var light = IslandAppearance.stored.isLight
+    static var primary: Color { light ? Color(red: 29 / 255, green: 29 / 255, blue: 31 / 255) : Color(white: 0.96) }
+    static var secondary: Color { light ? Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255).opacity(0.72) : Color(white: 0.62) }
+    static var tertiary: Color { light ? Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255).opacity(0.47) : Color(white: 0.42) }
+    static var hairline: Color { overlay(0.08) }
+    static var track: Color { overlay(0.08) }
+    static var fill: Color { overlay(0.05) }
+    static var hover: Color { overlay(0.08) }
+    static var attention: Color { light ? Color(red: 178 / 255, green: 106 / 255, blue: 0) : Color(red: 1.0, green: 0.74, blue: 0.38) }
+    static var danger: Color { light ? Color(red: 211 / 255, green: 58 / 255, blue: 47 / 255) : Color(red: 1.0, green: 0.45, blue: 0.42) }
+    static var paused: Color { light ? Color(red: 140 / 255, green: 109 / 255, blue: 46 / 255) : Color(red: 0.86, green: 0.77, blue: 0.6) }
+    /// A neutral wash over the island: white on the dark tone, black on the light one.
+    static func overlay(_ opacity: Double) -> Color { (light ? Color.black : Color.white).opacity(opacity) }
+    static func overlayInk(_ opacity: Double) -> NSColor { (light ? NSColor.black : NSColor.white).withAlphaComponent(opacity) }
+    /// Marks drawn over arcs, such as the pace tick and the clock hand.
+    static var tick: Color { light ? primary : .white }
+    static var tickInk: NSColor { light ? NSColor(srgbRed: 29 / 255, green: 29 / 255, blue: 31 / 255, alpha: 1) : .white }
+    /// The fine outline that keeps a tick apart from the arc under it.
+    static var tickEdge: Color { (light ? Color.white : Color.black).opacity(0.45) }
+    /// Units beside a value: 60% of the primary ink.
+    static var unit: Color { light ? Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255).opacity(0.72) : Color(red: 235 / 255, green: 235 / 255, blue: 245 / 255).opacity(0.6) }
+    /// The island's own opaque face in its current tone, for previews of it
+    /// elsewhere: black while the notch bar covers light glass.
+    static var surface: Color { light ? IslandAppearance.lightFace : face(IslandAppearance.stored.isLight ? .classic : IslandAppearance.stored) }
+    static func face(_ appearance: IslandAppearance) -> Color {
+        appearance == .graphite ? IslandAppearance.graphiteFace : appearance.isLight ? IslandAppearance.lightFace : .black
+    }
 }
 
 extension AgentProvider {
     /// The color the service draws in: its own under Multicolor, otherwise a
-    /// shade of the chosen accent.
-    var tint: Color { PacerAccent.current.tint(for: self) ?? brand }
+    /// shade of the chosen accent. On the light island the brand colors take
+    /// a darker shade, so each service keeps its contrast.
+    var tint: Color { shade(light: PacerPalette.light) }
+    /// The service's shade in either tone: for a preview of a material that is
+    /// not the current one, and dark-tone for window icons that stay the same
+    /// whatever the island's material.
+    func shade(light: Bool) -> Color { PacerAccent.current.tint(for: self, light: light) ?? (light ? lightShade : brand) }
+    /// The brand color one shade darker, for light glass.
+    var lightShade: Color {
+        switch self {
+        case .codex: Color(red: 14 / 255, green: 140 / 255, blue: 120 / 255)
+        case .claude: Color(red: 196 / 255, green: 88 / 255, blue: 31 / 255)
+        case .deepseek: Color(red: 62 / 255, green: 91 / 255, blue: 219 / 255)
+        }
+    }
     /// The service's own color, which its icon keeps whatever the accent.
     var brand: Color {
         switch self {
@@ -71,18 +107,39 @@ enum PacerAccent: String, CaseIterable, Identifiable {
     var color: Color? { components.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } }
     /// Buttons, switches and selection: the system accent under Multicolor.
     var control: Color { color ?? .accentColor }
-    /// Codex at full strength, Claude and DeepSeek lifted toward white, so the
-    /// outer and inner rings stay apart; nil under Multicolor.
-    func tint(for provider: AgentProvider) -> Color? {
+    /// The services' three shades of the color, strongest first; nil under
+    /// Multicolor. On the dark island Codex takes it at full strength and
+    /// Claude and DeepSeek lift toward white, so the rings stay apart. On light
+    /// glass each is the color scaled to a set luminance instead, so even a
+    /// light color such as yellow keeps at least 3.5:1 against the light face.
+    func tint(for provider: AgentProvider, light: Bool = false) -> Color? {
+        guard let base = light ? lightComponents(for: provider) : components.map({ base in
+            let lift = switch provider { case .codex: 0.0; case .claude: 0.42; case .deepseek: 0.66 }
+            func lifted(_ value: Double) -> Double { value + (1 - value) * lift }
+            return (lifted(base.red), lifted(base.green), lifted(base.blue))
+        }) else { return nil }
+        return Color(red: base.red, green: base.green, blue: base.blue)
+    }
+    /// Relative luminance of each service's shade on light glass: Codex 0.07,
+    /// Claude 0.12 and DeepSeek 0.20, about 7.4, 5.2 and 3.6:1 against #ECECF0.
+    static func lightLuminance(for provider: AgentProvider) -> Double {
+        switch provider { case .codex: 0.07; case .claude: 0.12; case .deepseek: 0.2 }
+    }
+    /// The color's linear light scaled evenly to the service's luminance, which
+    /// keeps its hue and saturation.
+    func lightComponents(for provider: AgentProvider) -> (red: Double, green: Double, blue: Double)? {
         guard let base = components else { return nil }
-        let lift = switch provider { case .codex: 0.0; case .claude: 0.42; case .deepseek: 0.66 }
-        func lifted(_ value: Double) -> Double { value + (1 - value) * lift }
-        return Color(red: lifted(base.red), green: lifted(base.green), blue: lifted(base.blue))
+        func linear(_ value: Double) -> Double { value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4) }
+        func encoded(_ value: Double) -> Double { value <= 0.0031308 ? value * 12.92 : 1.055 * pow(value, 1 / 2.4) - 0.055 }
+        let red = linear(base.red), green = linear(base.green), blue = linear(base.blue)
+        let luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        let scale = luminance > 0 ? Self.lightLuminance(for: provider) / luminance : 0
+        return (encoded(min(1, red * scale)), encoded(min(1, green * scale)), encoded(min(1, blue * scale)))
     }
 }
 
 /// Pacer's windows in light, dark or the system's appearance. The island
-/// stays dark in every theme.
+/// follows its own material instead: only Light Liquid Glass turns it light.
 enum AppTheme: String, CaseIterable, Identifiable {
     case auto, light, dark
     static let defaultsKey = "appTheme"

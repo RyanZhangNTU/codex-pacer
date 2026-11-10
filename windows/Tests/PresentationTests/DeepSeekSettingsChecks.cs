@@ -77,7 +77,10 @@ internal static class DeepSeekSettingsChecks
             var savedBudget = engine.LatestSnapshot!.Wallet!.Solo!.Budgets.First(value => value.Kind == "day");
             Check(savedBudget.Exceeded || Math.Abs(savedBudget.Fraction * 12.5 + engine.LatestSnapshot.Wallet.Today + engine.LatestSnapshot.Wallet.Elsewhere - 12.5) < 1e-8,
                 "Save rollback must restore the actual engine budget, not only the field text");
-            Select(Find<RadioButton>(window, "settings.deepseek.ring.week")); await Until(() => session.Current.DeepSeekRingPeriod == "week" && budget.IsEnabled);
+            // The ring's budget period is chosen with the rings in Collapsed Bar.
+            Check(!SelfAndDescendants(window).OfType<RadioButton>().Any(value => AutomationProperties.GetAutomationId(value).StartsWith("settings.deepseek.ring.", StringComparison.Ordinal)),
+                "The DeepSeek page leaves the ring period to the rings' own settings");
+            await session.ChangeAsync(p => p with { DeepSeekRingPeriod = "week" }); await Until(() => session.Current.DeepSeekRingPeriod == "week" && budget.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet!.Settings!.CompactBudgetKind == "week", "The ring period choice must reach the real collapsed budget reading");
             Select(balance); await Until(() => session.Current.DeepSeekMode == "balance" && balance.IsEnabled);
             Check(session.Current.DeepSeekDailyBudget == 12.5 && session.Current.DeepSeekWeeklyBudget == 75 && engine.LatestSnapshot!.Wallet!.Solo!.Budgets.Count == 0,
@@ -97,6 +100,7 @@ internal static class DeepSeekSettingsChecks
             Invoke(Find<Button>(window, "settings.deepseek.ring_link")); await Until(() => session.Current.LastSettingsPane == "collapsed");
             await Until(() => Find<ComboBox>(window, "compact.ring.0").SelectedValue as string == "deepseek");
             Check(Find<ComboBox>(window, "compact.ring.0").SelectedValue as string == "deepseek", "The ring link opens the actual collapsed-bar editor");
+            Check(Find<RadioButton>(window, "compact.option.deepseekRing.week").IsChecked == true, "The rings' card shows the DeepSeek ring's budget period");
             await session.ChangeAsync(value => value with { ProviderModes = originalRings.ProviderModes, QuotaRingOuter = originalRings.QuotaRingOuter,
                 QuotaRingInner = originalRings.QuotaRingInner, CompactLayout = originalRings.CompactLayout, WarningKinds = originalRings.WarningKinds });
             await window.NavigateAsync("deepseek"); await Pump();

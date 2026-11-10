@@ -11,9 +11,16 @@ using System.Windows.Shapes;
 
 namespace CodexPacer.Windows;
 
+/// The badge's component choices: what the core shows for one task and what
+/// the ring shows while several run.
+internal sealed record BadgeOptions(bool SinglePercent = false, string MultiRing = "service", string MultiCore = "count", bool EndMark = true)
+{
+    internal static BadgeOptions Default { get; } = new();
+}
+
 public sealed class ActivityBadge : Grid
 {
-    private readonly Border track = new() { BorderThickness = new Thickness(1.5), BorderBrush = PacerPalette.Ink(255, 255, 255, 26), CornerRadius = new CornerRadius(10) };
+    private readonly Border track = new() { BorderThickness = new Thickness(1.5), BorderBrush = PacerPalette.Overlay(26), CornerRadius = new CornerRadius(10) };
     private readonly Grid clipped = new();
     private readonly OrbitPaint paint = new();
     private readonly Border core = new() { Height = 15, MinWidth = 15, CornerRadius = new CornerRadius(7.5), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -21,6 +28,32 @@ public sealed class ActivityBadge : Grid
         HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, -1, -1, 0) };
     private readonly RotateTransform rotation = new();
     private readonly ScaleTransform bloom = new(1, 1);
+    // A failed ending shakes the badge once from side to side.
+    private readonly TranslateTransform shake = new();
+    private readonly List<AnimationLease> shakeClocks = [];
+    // A request keeps a faint second ring around the amber disc after its ripples.
+    private readonly Ellipse halo = new() { Width = 21.8, Height = 21.8, StrokeThickness = 1.1, Opacity = 0.4, Margin = new Thickness(-0.9),
+        Visibility = Visibility.Collapsed, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    // One arc per running task, filled to its estimate.
+    private readonly SegmentPaint segments = new() { Width = 20, Height = 20, Visibility = Visibility.Collapsed, IsHitTestVisible = false,
+        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    // The whole segments of tasks without an estimate, breathing together over their tracks.
+    private readonly SegmentPaint segmentBreath = new() { Breathing = true, Width = 20, Height = 20, Opacity = 0, Visibility = Visibility.Collapsed,
+        IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    private AnimationLease? segmentBreathLoop;
+    private bool segmentBreathWanted;
+    private static Brush SoftCore => PacerPalette.Overlay(18);
+    private string? estimateProvider;
+    private bool estimateWhite, segmentsShown;
+    /// How the ring reads now: orbit, estimate, average, segments or none; read by the presentation checks.
+    internal string RingMode { get; private set; } = "none";
+    /// Codex's shade in the orbit now, which follows the accent and the island's tone; read by the presentation checks.
+    internal Color OrbitCodexShade => paint.CodexShade;
+    internal string CoreText => core.Child is TextBlock text ? text.Text : "";
+    internal bool ShowsHalo => halo.Visibility == Visibility.Visible;
+    internal int SegmentCount => segmentsShown ? segments.Count : 0;
+    /// Whether segments of tasks without an estimate are breathing; read by the presentation checks.
+    internal bool SegmentBreathing => segmentBreathLoop != null;
     private System.Windows.Shapes.Path? ripple;
     private bool blooming;
     internal (bool Ripple, bool Bloom, double Scale) TransientMotion => (ripple != null, blooming, bloom.ScaleX);
@@ -54,14 +87,15 @@ public sealed class ActivityBadge : Grid
     public ActivityBadge()
     {
         Width = Height = 20; IsHitTestVisible = false;
-        RenderTransform = bloom; RenderTransformOrigin = new Point(0.5, 0.5);
+        RenderTransform = new TransformGroup { Children = { bloom, shake } }; RenderTransformOrigin = new Point(0.5, 0.5);
+        estimateArc.Track = estimateArc.Head = true;
         paint.HorizontalAlignment = HorizontalAlignment.Center; paint.VerticalAlignment = VerticalAlignment.Center;
         paint.RenderTransform = rotation; paint.RenderTransformOrigin = new Point(0.5, 0.5); paint.CacheMode = new BitmapCache(2);
         clipped.Children.Add(paint);
         estimate.Children.Add(estimateArc); estimate.Children.Add(estimateFlow); estimate.Children.Add(estimateStep);
-        Children.Add(track); Children.Add(clipped); Children.Add(estimate); Children.Add(core); Children.Add(ending);
+        Children.Add(halo); Children.Add(track); Children.Add(clipped); Children.Add(segments); Children.Add(segmentBreath); Children.Add(estimate); Children.Add(core); Children.Add(ending);
         SizeChanged += (_, _) => UpdateClip();
-        IsVisibleChanged += (_, _) => { UpdateRotation(); if (!IsVisible) StopTransient(); };
+        IsVisibleChanged += (_, _) => { UpdateRotation(); if (!IsVisible) StopTransient(); UpdateSegmentBreath(); };
         Loaded += (_, _) =>
         {
             orbitSource = PresentationSource.FromVisual(this) as HwndSource; orbitSource?.AddHook(OrbitMessage);
@@ -69,22 +103,59 @@ public sealed class ActivityBadge : Grid
         };
         Unloaded += (_, _) =>
         {
-            StopRotation(); StopTransient(); StopEstimate(); orbit?.Dispose(); orbit = null;
+            StopRotation(); StopTransient(); StopEstimate(); segmentBreathWanted = false; UpdateSegmentBreath(); orbit?.Dispose(); orbit = null;
             if (orbitSource is { IsDisposed: false }) orbitSource.RemoveHook(OrbitMessage); orbitSource = null;
         };
     }
-    internal void Update(EngineHeader value, bool? animations = null)
+    /// Draws the badge at `points` square; the drawing keeps its 20-point
+    /// geometry, so the composed orbit scales with it.
+    internal void SetSize(double points)
     {
-        Width = value.CoreSymbol == null && value.ActiveCount >= 10 ? 27 : 20;
+        double scale = Math.Clamp(double.IsFinite(points) ? points : 20, 10, 80) / 20;
+        if (LayoutTransform is ScaleTransform current && Math.Abs(current.ScaleX - scale) < 0.0001) return;
+        if (Math.Abs(scale - 1) < 0.0001 && LayoutTransform == Transform.Identity) return;
+        LayoutTransform = Math.Abs(scale - 1) < 0.0001 ? Transform.Identity : new ScaleTransform(scale, scale);
+    }
+    internal void Update(EngineHeader value, bool? animations = null, BadgeOptions? options = null)
+    {
+        var choice = options ?? BadgeOptions.Default;
         canAnimate = animations ?? SystemParameters.ClientAreaAnimation;
         bool reduce = !canAnimate;
+        // Several running tasks can show their estimates instead of the services:
+        // the average as one arc, or one arc per task. A request keeps the amber
+        // disc. As Core's HeaderActivity.multiTaskRing: tasks without an estimate
+        // never count toward the average and breathe in their segment; with no
+        // estimate at all the ring shows the services; more tasks than segments
+        // give way to the average.
+        bool several = value.ActiveCount > 1 && value.Attention == null;
+        bool estimates = several && choice.MultiRing != "service" && value.ProgressAverage != null;
+        segmentsShown = estimates && choice.MultiRing == "segments" && value.ProgressSegments == true && value.ProgressTasks is { Count: > 1 };
+        bool average = estimates && !segmentsShown;
+        estimateProvider = average ? value.ProgressAverageProvider : null;
+        estimateWhite = average && value.ProgressAverageProvider == null;
+        var shown = average ? value with { ProgressFraction = value.ProgressAverage, ProgressStale = value.ProgressAverageStale, ProgressLongStep = false } : value;
+        // Only the chosen average shows its percent; segments that give way to it keep the count.
+        string? percent = average && choice.MultiRing == "average" && choice.MultiCore == "percent" ? Percent(value.ProgressAverage!.Value)
+            : choice.SinglePercent && value.ActiveCount == 1 && value.Attention == null && value.ProgressFraction is double single ? Percent(single) : null;
+        Width = percent == null && value.CoreSymbol == null && value.ActiveCount >= 10 ? 27 : 20;
         paint.Update(value.Orbit, !reduce);
-        bool hasOrbit = value.Orbit.Values.Any(count => count > 0) && value.ProgressFraction == null;
+        track.BorderBrush = PacerPalette.Overlay(26);
+        segments.Update(segmentsShown ? value.ProgressTasks : null); segmentBreath.Update(segmentsShown ? value.ProgressTasks : null);
+        segments.Visibility = segmentBreath.Visibility = segmentsShown ? Visibility.Visible : Visibility.Collapsed;
+        segmentBreathWanted = segmentsShown && !reduce && value.ProgressTasks!.Any(task => task.Fraction == null);
+        UpdateSegmentBreath();
+        bool hasOrbit = value.Orbit.Values.Any(count => count > 0) && shown.ProgressFraction == null && !segmentsShown;
         track.Visibility = clipped.Visibility = hasOrbit ? Visibility.Visible : Visibility.Collapsed;
-        UpdateEstimate(value, !reduce);
+        UpdateEstimate(shown, !reduce);
+        RingMode = segmentsShown ? "segments" : average ? "average" : shown.ProgressFraction != null ? "estimate" : hasOrbit ? "orbit" : "none";
         // Everything ended: a solid disc in the ending's colour under a dark mark, as the rows draw it.
         Brush ink = value.Attention != null ? PacerPalette.Ink(66, 38, 5) : value.EndingIsCore ? EndingMarkInk : PacerPalette.Primary;
-        if (value.CoreSymbol is string symbol)
+        bool solid = value.Attention != null || value.EndingIsCore;
+        core.Height = core.MinWidth = solid ? 17 : 15; core.CornerRadius = new CornerRadius(solid ? 8.5 : 7.5);
+        if (percent != null)
+            core.Child = new TextBlock { Text = percent, FontSize = 8, FontWeight = FontWeights.Bold, Foreground = ink,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        else if (value.CoreSymbol is string symbol)
             core.Child = new IconGlyph { Symbol = symbol.EndsWith(".circle", StringComparison.Ordinal) ? symbol[..^7] : symbol, Ink = ink, Width = 11, Height = 11,
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         else if (value.ActiveCount > 0)
@@ -101,26 +172,32 @@ public sealed class ActivityBadge : Grid
             var mark = core.Child; core.Child = null;
             var face = new Grid(); face.Children.Add(sheen); if (mark != null) face.Children.Add(mark); core.Child = face;
         }
-        else core.Background = value.Attention != null ? PacerPalette.Attention : Brushes.Transparent;
+        // Several tasks: the count sits on a faint disc so it reads steadily over the ring.
+        else core.Background = value.Attention != null ? PacerPalette.Attention : several && core.Child is TextBlock ? SoftCore : Brushes.Transparent;
         core.BorderBrush = Brushes.Transparent; core.BorderThickness = new Thickness(0);
+        halo.Stroke = PacerPalette.Attention;
+        halo.Visibility = value.Attention != null ? Visibility.Visible : Visibility.Collapsed;
         ending.Background = EndingInk(value);
-        ending.Visibility = value.Ending != null && !value.EndingIsCore ? Visibility.Visible : Visibility.Collapsed;
+        ending.Visibility = choice.EndMark && value.Ending != null && !value.EndingIsCore ? Visibility.Visible : Visibility.Collapsed;
         if (reduce) StopTransient();
         else if (IsVisible && previous != null)
         {
             if (previous.Attention == null && value.Attention != null) Pulse();
             if (previous.Ending == null && value.Ending != null) Bloom();
+            if (previous.Ending != "xmark.circle" && value.Ending == "xmark.circle") Shake();
         }
-        previous = value;
+        previous = shown;
         UpdateClip(); UpdateRotation();
     }
+    private static string Percent(double fraction) => ((int)Math.Round(Math.Clamp(fraction, 0, 1) * 100)).ToString(System.Globalization.CultureInfo.InvariantCulture);
     /// The arc eases from the value shown to the new estimate and fades in over the orbit; light runs
     /// along a working estimate, and the stretch past its head breathes during a long step.
     private void UpdateEstimate(EngineHeader value, bool animate)
     {
         bool shows = value.ProgressFraction != null, showed = previous?.ProgressFraction != null;
-        string? provider = value.Orbit.Where(pair => pair.Value > 0).Select(pair => pair.Key).FirstOrDefault();
-        var tint = provider != null && PacerPalette.Provider(provider) is SolidColorBrush brush ? brush.Color : Colors.White;
+        // The average of several services is white; one service keeps its colour.
+        string? provider = estimateWhite ? null : estimateProvider ?? value.Orbit.Where(pair => pair.Value > 0).Select(pair => pair.Key).FirstOrDefault();
+        var tint = provider != null && PacerPalette.Provider(provider) is SolidColorBrush brush ? brush.Color : PacerPalette.Neutral;
         estimateArc.Ink = estimateStep.Ink = tint;
         if (!shows)
         {
@@ -173,17 +250,32 @@ public sealed class ActivityBadge : Grid
             estimateStepLoop?.Dispose(); estimateStepLoop = null; estimateStep.BeginAnimation(OpacityProperty, null);
             if (live && step)
             {
-                var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-                var breath = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.StepPeriod), RepeatBehavior = RepeatBehavior.Forever,
-                    BeginTime = TimeSpan.FromSeconds(-(now % EstimatePaint.StepPeriod)) };
-                breath.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-                breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.85, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod / 2)), ease));
-                breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod)), ease));
-                Timeline.SetDesiredFrameRate(breath, 30);
-                estimateStepLoop = new AnimationLease(breath, clock => estimateStep.ApplyAnimationClock(OpacityProperty, clock));
+                estimateStepLoop = new AnimationLease(StepBreath(now), clock => estimateStep.ApplyAnimationClock(OpacityProperty, clock));
             }
         }
         if (estimateStepLoop == null) estimateStep.Opacity = step ? 0.55 : 0;
+    }
+    /// The long step's breath, 0.2 to 0.85 and back over its period, in phase
+    /// with every other breath on the shared clock.
+    private static DoubleAnimationUsingKeyFrames StepBreath(double now)
+    {
+        var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+        var breath = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.StepPeriod), RepeatBehavior = RepeatBehavior.Forever,
+            BeginTime = TimeSpan.FromSeconds(-(now % EstimatePaint.StepPeriod)) };
+        breath.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.85, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod / 2)), ease));
+        breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod)), ease));
+        Timeline.SetDesiredFrameRate(breath, 30);
+        return breath;
+    }
+    /// Segments of tasks without an estimate breathe together while the badge
+    /// shows; reduced motion leaves their tracks, and a hidden badge stops.
+    private void UpdateSegmentBreath()
+    {
+        bool live = segmentBreathWanted && IsVisible;
+        if (live == (segmentBreathLoop != null)) return;
+        segmentBreathLoop?.Dispose(); segmentBreathLoop = null; segmentBreath.BeginAnimation(OpacityProperty, null); segmentBreath.Opacity = 0;
+        if (live) segmentBreathLoop = new AnimationLease(StepBreath(TaskProgressRing.Now), clock => segmentBreath.ApplyAnimationClock(OpacityProperty, clock));
     }
     private void StopEstimate()
     {
@@ -208,7 +300,7 @@ public sealed class ActivityBadge : Grid
     }
     private void UpdateRotation()
     {
-        bool animate = IsLoaded && IsVisible && canAnimate && previous?.Orbit.Values.Any(count => count > 0) == true && previous.ProgressFraction == null;
+        bool animate = IsLoaded && IsVisible && canAnimate && previous?.Orbit.Values.Any(count => count > 0) == true && previous.ProgressFraction == null && !segmentsShown;
         if (animate == rotating) return;
         if (!animate) { StopRotation(); return; }
         if (!compositionFailed && IsLoaded)
@@ -236,12 +328,20 @@ public sealed class ActivityBadge : Grid
         { StopRotation(); compositionFailed = false; UpdateRotation(); }
         return IntPtr.Zero;
     }
+    private void Shake()
+    {
+        foreach (var clock in shakeClocks) clock.Dispose(); shakeClocks.Clear();
+        var motion = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(0.6) };
+        foreach (var (time, offset) in new[] { (0.0, 0.0), (0.1, -2.0), (0.2, 2.0), (0.3, -2.0), (0.4, 2.0), (0.5, -0.9), (0.6, 0.0) })
+            motion.KeyFrames.Add(new LinearDoubleKeyFrame(offset, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(time))));
+        shakeClocks.Add(new(motion, clock => shake.ApplyAnimationClock(TranslateTransform.XProperty, clock), () => shakeClocks.Clear()));
+    }
     private void Pulse()
     {
         StopRipple();
         var scale = new ScaleTransform(1, 1);
-        var ring = new System.Windows.Shapes.Path { Width = Width - 5, Height = 15,
-            Data = new RectangleGeometry(new Rect(0, 0, Width - 5, 15), 7.5, 7.5),
+        var ring = new System.Windows.Shapes.Path { Width = Width - 3, Height = 17,
+            Data = new RectangleGeometry(new Rect(0, 0, Width - 3, 17), 8.5, 8.5),
             Stroke = PacerPalette.Attention, StrokeThickness = 1.5, Opacity = 0,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
             RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5), IsHitTestVisible = false };
@@ -274,8 +374,51 @@ public sealed class ActivityBadge : Grid
     private void StopTransient()
     {
         StopRipple(); blooming = false;
+        foreach (var clock in shakeClocks.ToArray()) clock.Dispose(); shakeClocks.Clear();
+        shake.BeginAnimation(TranslateTransform.XProperty, null); shake.X = 0;
         foreach (var clock in bloomClocks.ToArray()) clock.Dispose(); bloomClocks.Clear();
         bloom.BeginAnimation(ScaleTransform.ScaleXProperty, null); bloom.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+    }
+}
+
+/// <summary>One arc per running task, in the task list's order, each filled to
+/// its estimate over a track in its service's colour.</summary>
+internal sealed class SegmentPaint : FrameworkElement
+{
+    private EngineTaskShare[] tasks = [];
+    internal int Count => tasks.Length;
+    /// The breathing layer: only the whole segments of tasks without an estimate.
+    internal bool Breathing { get; init; }
+    internal void Update(IReadOnlyList<EngineTaskShare>? value)
+    {
+        var next = value?.ToArray() ?? [];
+        if (next.SequenceEqual(tasks)) return;
+        tasks = next; InvalidateVisual();
+    }
+    protected override void OnRender(DrawingContext drawing)
+    {
+        int count = tasks.Length;
+        if (count < 2) return;
+        var center = new Point(ActualWidth / 2, ActualHeight / 2);
+        const double radius = 8.6, stroke = 1.8, gap = 18.0 / 360;
+        double span = (1 - gap * count) / count;
+        for (int index = 0; index < count; index++)
+        {
+            var color = PacerPalette.Provider(tasks[index].Provider) is SolidColorBrush brush ? brush.Color : PacerPalette.Neutral;
+            double start = gap / 2 + index * (span + gap);
+            if (Breathing)
+            {
+                if (tasks[index].Fraction == null) drawing.DrawGeometry(null, Pen(color), EstimatePaint.Arc(center, radius, start, start + span));
+                continue;
+            }
+            drawing.DrawGeometry(null, Pen(EstimatePaint.WithAlpha(color, 0.26)), EstimatePaint.Arc(center, radius, start, start + span));
+            if (tasks[index].Fraction is not double fraction || fraction <= 0.002) continue;
+            // An estimate that has not changed for two minutes fades.
+            drawing.PushOpacity(tasks[index].Stale ? 0.45 : 1);
+            drawing.DrawGeometry(null, Pen(color), EstimatePaint.Arc(center, radius, start, start + span * Math.Clamp(fraction, 0, 1)));
+            drawing.Pop();
+        }
+        static Pen Pen(Color color) => new(new SolidColorBrush(color), stroke) { StartLineCap = PenLineCap.Flat, EndLineCap = PenLineCap.Flat };
     }
 }
 
@@ -288,13 +431,18 @@ internal sealed class OrbitPaint : FrameworkElement
     private Stop[] from = [], to = [];
     private IReadOnlyDictionary<string, int>? weights;
     private bool animated;
+    private (Color Codex, Color Claude, Color DeepSeek) shades;
     private AnimationLease? transition;
     internal event Action? Changed;
     internal OrbitPaint() { SizeChanged += (_, _) => Changed?.Invoke(); Unloaded += (_, _) => { transition?.Dispose(); transition = null; }; }
     internal void Update(IReadOnlyDictionary<string, int> values, bool animate)
     {
-        if (weights != null && animated == animate && weights.Count == values.Count && weights.All(pair => values.TryGetValue(pair.Key, out int count) && count == pair.Value)) return;
+        // The services' shades follow the accent and the island's tone, so a new shade redraws the same weights.
+        var now = (Shade("codex"), Shade("claude"), Shade("deepseek"));
+        if (weights != null && animated == animate && shades == now && weights.Count == values.Count && weights.All(pair => values.TryGetValue(pair.Key, out int count) && count == pair.Value)) return;
+        shades = now;
         var shown = Current();
+        CodexShade = now.Item1;
         var next = Stops(values, animate);
         bool ease = animated && animate && shown.Length == next.Length && shown.Length > 0;
         weights = values; animated = animate; from = shown; to = next;
@@ -316,6 +464,9 @@ internal sealed class OrbitPaint : FrameworkElement
         return to.Select((stop, index) => new Stop(from[index].Position + (stop.Position - from[index].Position) * progress,
             Mix(from[index].Color, stop.Color, progress))).ToArray();
     }
+    /// Codex's shade in the orbit now; read by the presentation checks.
+    internal Color CodexShade { get; private set; }
+    private static Color Shade(string provider) => ((SolidColorBrush)PacerPalette.Provider(provider)).Color;
     private static Color Mix(Color a, Color b, double t) => Color.FromArgb(
         (byte)Math.Clamp(Math.Round(a.A + (b.A - a.A) * t), 0, 255), (byte)Math.Clamp(Math.Round(a.R + (b.R - a.R) * t), 0, 255),
         (byte)Math.Clamp(Math.Round(a.G + (b.G - a.G) * t), 0, 255), (byte)Math.Clamp(Math.Round(a.B + (b.B - a.B) * t), 0, 255));

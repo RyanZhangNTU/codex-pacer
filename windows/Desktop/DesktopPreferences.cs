@@ -33,10 +33,18 @@ internal sealed record DesktopPreferences
     public string DisplayName { get; init; } = "";
     public int DisplayX { get; init; }
     public int DisplayY { get; init; }
+    // Each display keeps its own place while this is on; IslandScreenMemory's JSON holds them.
+    public bool IslandPositionPerDisplay { get; init; } = true;
+    public string? IslandDisplayPlaces { get; init; }
     public bool ShowInFullscreen { get; init; }
     public string IslandAppearance { get; init; } = "liquidGlass";
     public string ExpandedQuotaStyle { get; init; } = "split";
     public string? CompactLayout { get; init; }
+    // Core's CompactComponentOptions as JSON; null keeps every default.
+    public string? CompactComponentOptions { get; init; }
+    public string CompactBarSize { get; init; } = "standard";
+    internal static readonly string[] BarSizes = ["small", "standard", "large", "extraLarge"];
+    internal static readonly string[] Appearances = ["classic", "liquidGlass", "liquidGlassLight", "graphite"];
     public string CompactSingleTask { get; init; } = "stage";
     public string CompactMetric { get; init; } = "remaining";
     public string CodexQuotaWindow { get; init; } = "auto";
@@ -92,10 +100,13 @@ internal sealed record DesktopPreferences
         && DisplaySelection is "automatic" or "primary" or "specified"
         && ValidWindow(DisplayID) && ValidWindow(DisplayName)
         && (DisplaySelection != "specified" || DisplayID is not ("" or "0") || DisplayName.Length > 0)
-        && IslandAppearance is "classic" or "liquidGlass"
+        && Appearances.Contains(IslandAppearance)
         && ExpandedQuotaStyle is "split" or "classic"
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)
-        && CompactSingleTask is "stage" or "count" && CompactMetric is "remaining" or "pace"
+        && (CompactComponentOptions == null || Encoding.UTF8.GetByteCount(CompactComponentOptions) <= CompactChoices.ByteLimit)
+        && (IslandDisplayPlaces == null || Encoding.UTF8.GetByteCount(IslandDisplayPlaces) <= IslandScreenMemory.ByteLimit)
+        && BarSizes.Contains(CompactBarSize)
+        && CompactSingleTask is "stage" or "count" or "percent" && CompactMetric is "remaining" or "pace"
         && ValidWindow(CodexQuotaWindow) && ValidWindow(ClaudeQuotaWindow)
         && ValidRing(QuotaRingOuter) && ValidRing(QuotaRingInner)
         && DeepSeekPanelStyle is "simple" or "detailed" && DeepSeekMode is "balance" or "budget"

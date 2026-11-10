@@ -139,13 +139,7 @@ struct SettingsDeepSeekSections: View {
                     budgetField($budgets.weekly, label: L10n.text("deepseek.budget.weekly"),
                         reference: average.map { L10n.text("deepseek.budget.average_week", DeepSeekWallet.compactSpend($0 * 7)) })
                 }
-                if budgets.daily != nil, budgets.weekly != nil {
-                    CardRow(title: L10n.text("deepseek.budget.ring")) {
-                        MainSegmented(options: [(DeepSeekBudgetPeriod.Kind.day, L10n.text("deepseek.budget.day")),
-                                                (.week, L10n.text("deepseek.budget.week"))],
-                                      selection: $budgets.ringPeriod, label: L10n.text("deepseek.budget.ring"))
-                    }
-                }
+                // Which budget the ring shows is chosen with the rings, in Collapsed Bar.
                 CardRow(title: L10n.text(ringSlot == .outer ? "deepseek.ring_hint.outer" : ringSlot == .inner ? "deepseek.ring_hint.inner" : "deepseek.ring_hint.none")) {
                     Button(L10n.text(ringSlot == nil ? "deepseek.ring_hint.choose" : "deepseek.ring_hint.change"), action: openCollapsedBar)
                         .buttonStyle(.link).font(.system(size: 12.5))

@@ -50,6 +50,30 @@ public partial class IslandWindow
     private IslandScreen.Context? currentDisplay;
     private bool displayRefreshPending, displayRefreshAgain, displayForce;
     private void DisplayTopologyChanged() { CancelMove(); QueueDisplayRefresh(force: true); }
+    /// The display whose place the island preferences hold, while each display keeps its own.
+    private (string Key, string Name)? placeDisplay;
+    internal string? PlaceDisplayKey => placeDisplay?.Key;
+    /// Reaching another display gives the island the place that display
+    /// remembers; a display without one keeps the current place.
+    private void ArriveOnDisplay(DisplayMonitor? display)
+    {
+        if (!compactPreferences.IslandPositionPerDisplay) { placeDisplay = null; return; }
+        if (display == null || SaveIslandPlacement is not { } save || displayedPlacement != null) return;
+        string key = DisplaySelection.PlaceKey(display, displays.Current), name = display.Name;
+        if (placeDisplay?.Key == key) return;
+        placeDisplay = (key, name);
+        var now = DateTimeOffset.UtcNow;
+        _ = save(previous => previous.IslandPositionPerDisplay ? IslandScreenMemory.Arrive(previous, key, name, now) : previous);
+    }
+    /// A place chosen in Settings belongs to the display the island is on.
+    private void RememberDisplayPlace(DesktopPreferences preferences)
+    {
+        if (!preferences.IslandPositionPerDisplay) { placeDisplay = null; return; }
+        if (placeDisplay is not { } shown || SaveIslandPlacement is not { } save || displayedPlacement != null) return;
+        var now = DateTimeOffset.UtcNow;
+        if (IslandScreenMemory.RememberCurrent(preferences, shown.Key, shown.Name, now) == preferences) return;
+        _ = save(previous => previous.IslandPositionPerDisplay ? IslandScreenMemory.RememberCurrent(previous, shown.Key, shown.Name, now) : previous);
+    }
     private void RememberDisplay() { if (screenGeometry == null) currentDisplay = IslandScreen.Read(this); }
     private void QueueDisplayRefresh(bool force = false)
     {
@@ -64,6 +88,7 @@ public partial class IslandWindow
                 if (presentationStopped || !Shell.IsLoaded || move?.Active == true) return;
                 bool requested = displayForce; displayForce = false;
                 var selected = SelectedDisplay.Display;
+                ArriveOnDisplay(selected);
                 var actual = IslandScreen.Read(this);
                 if (selected != null && selected.Handle != actual.Monitor) NativeWindowBounds.MoveToDisplay(this, selected.Bounds);
                 var current = IslandScreen.Read(this, selected);

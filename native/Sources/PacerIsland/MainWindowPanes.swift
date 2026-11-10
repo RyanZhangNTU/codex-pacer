@@ -99,7 +99,7 @@ struct OverviewPane: View {
     private func serviceCard(_ provider: AgentProvider) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72))
+                SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72))
                 Text(provider.displayName).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(PacerPalette.primary)
                 Spacer(minLength: 8)
                 Button(L10n.text("main.overview.details")) { open(SettingsPane(provider: provider)) }
@@ -426,6 +426,8 @@ struct SettingsNotificationsPane: View {
         }
     }
 
+    /// Which warnings the bar shows is chosen here; Collapsed Bar › Warnings
+    /// keeps how they look and links back.
     private func choice(_ warning: CompactIslandLayout.Warning) -> Cell {
         .choice(warningBinding(warning), warning.label + " · " + L10n.text("main.notify.bar"))
     }

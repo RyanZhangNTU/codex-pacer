@@ -101,7 +101,11 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     string? ProgressMode = null);
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
     string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
-    double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null);
+    double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null,
+    IReadOnlyList<EngineTaskShare>? ProgressTasks = null, double? ProgressAverage = null, bool? ProgressAverageStale = null,
+    string? ProgressAverageProvider = null, int? ProgressReported = null, bool? ProgressSegments = null);
+// One running task's share of the badge's multi-task ring.
+internal sealed record EngineTaskShare(string Provider, double? Fraction, bool Stale);
 internal sealed record WalletSpan(double Start, double End);
 internal sealed record EngineWallet(string State, double? Balance, string Whole, string Cents, string Subtitle,
     string? Compact, IReadOnlyList<double> Hourly, IReadOnlyList<WalletSpan> Peak, double Angle, bool PeakNow,

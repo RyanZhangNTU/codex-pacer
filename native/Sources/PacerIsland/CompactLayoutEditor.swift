@@ -67,8 +67,17 @@ struct CompactLayoutEditor: View {
         }
         .padding(.horizontal, 10)
         .frame(height: Self.barHeight)
-        .background(Color.black, in: barShape)
-        .environment(\.colorScheme, .dark)
+        .background(face, in: barShape)
+        // At a hardware notch the bar is pure black with no rim, like the island.
+        .overlay(barShape.stroke(PacerPalette.overlay(PacerPalette.light ? 0.12 : 0.15), lineWidth: 0.75).opacity(notchBlack ? 0 : 1))
+        .environment(\.colorScheme, PacerPalette.light ? .light : .dark)
+    }
+
+    /// Black at a hardware notch whatever the material, unless the island is
+    /// open in light glass, whose light tone the preview then follows.
+    private var notchBlack: Bool { attached && hasNotch && !PacerPalette.light }
+    private var face: Color {
+        notchBlack ? .black : PacerPalette.light ? IslandAppearance.lightFace : PacerPalette.face(model.appearance.isLight ? .classic : model.appearance)
     }
 
     private var barShape: AnyShape {
@@ -79,8 +88,11 @@ struct CompactLayoutEditor: View {
     /// The camera's place on a notched screen; elsewhere a narrow gap.
     @ViewBuilder private var camera: some View {
         if attached && hasNotch {
-            Circle().fill(Color(white: 0.09)).overlay(Circle().strokeBorder(Color(white: 0.16)))
-                .frame(width: 8, height: 8).frame(width: 128).accessibilityHidden(true)
+            // The hardware notch stays black whatever the bar's material.
+            UnevenRoundedRectangle(bottomLeadingRadius: 7, bottomTrailingRadius: 7, style: .continuous).fill(Color.black)
+                .overlay(Circle().fill(Color(white: 0.09)).overlay(Circle().strokeBorder(Color(white: 0.16))).frame(width: 8, height: 8))
+                .frame(width: 120, height: Self.menuBarHeight).frame(width: 128, height: Self.barHeight, alignment: .top)
+                .accessibilityHidden(true)
         } else {
             Color.clear.frame(width: 18)
         }
@@ -96,10 +108,10 @@ struct CompactLayoutEditor: View {
         let components = layout.visibleComponents(in: lane, providers: providers)
         return HStack(spacing: attached ? 4 : 6) {
             if components.isEmpty {
-                Text(L10n.text("layout.drop_here")).font(.system(size: 10.5)).foregroundStyle(Color.white.opacity(0.45))
+                Text(L10n.text("layout.drop_here")).font(.system(size: 10.5)).foregroundStyle(PacerPalette.overlay(0.45))
                     .padding(.horizontal, 8).frame(height: 24)
                     .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                        .strokeBorder(PacerPalette.overlay(0.25), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
             } else {
                 ForEach(components) { component in chip(component) }
             }
@@ -122,7 +134,7 @@ struct CompactLayoutEditor: View {
             }
         }
         .padding(.horizontal, 5)
-        .background(selected ? accent.opacity(0.3) : hovered == component ? Color.white.opacity(0.1) : .clear, in: shape)
+        .background(selected ? accent.opacity(0.3) : hovered == component ? PacerPalette.overlay(0.1) : .clear, in: shape)
         .overlay(shape.strokeBorder(selected || focusedComponent == component ? accent : .clear, lineWidth: 1.5))
         .contentShape(shape)
         .opacity(dragged == component ? 0.35 : 1)
@@ -193,7 +205,7 @@ private struct CompactChipLabelStyle: LabelStyle {
             configuration.icon.font(.system(size: 9.5, weight: .medium))
             configuration.title.font(.system(size: 11, weight: .medium)).fixedSize()
         }
-        .foregroundStyle(Color.white.opacity(0.5))
+        .foregroundStyle(PacerPalette.overlay(0.5))
     }
 }
 

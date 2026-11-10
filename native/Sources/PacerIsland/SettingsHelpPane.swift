@@ -291,8 +291,8 @@ struct IslandSampleSwatch<Content: View>: View {
         HStack(spacing: 6) { content }
             .foregroundStyle(PacerPalette.attention)
             .frame(width: width, height: width < 84 ? 28 : 32)
-            .background(Color.black, in: RoundedRectangle(cornerRadius: width < 84 ? 8 : 9, style: .continuous))
-            .environment(\.colorScheme, .dark)
+            .background(PacerPalette.surface, in: RoundedRectangle(cornerRadius: width < 84 ? 8 : 9, style: .continuous))
+            .environment(\.colorScheme, PacerPalette.light ? .light : .dark)
             .accessibilityHidden(true)
     }
 }

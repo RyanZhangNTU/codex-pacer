@@ -29,7 +29,8 @@ internal sealed class LegacyQuotaView : StackPanel
             foreach (var window in bucket.Windows)
             {
                 var reading = new QuotaReadingHost { Margin = new Thickness(0, group.Children.Count > 0 ? 14 : 0, 0, 0) };
-                reading.Children.Add(new LegacyQuotaHeading(window));
+                // The island draws its headings in its current tone.
+                reading.Children.Add(new LegacyQuotaHeading(window) { Primary = PacerPalette.Primary, Secondary = PacerPalette.Secondary });
                 reading.Children.Add(new LegacyQuotaTrack(window, data.Fresh ? PacerPalette.Codex : PacerPalette.Secondary)
                     { Margin = new Thickness(0, 8, 0, 0) });
                 var footer = new Grid { Margin = new Thickness(0, 8, 0, 0) };
@@ -69,7 +70,7 @@ internal sealed class LegacyQuotaTrack(LegacyQuotaWindow reading, Brush accent) 
         if (reading.RemainingTimePercent is double time)
         {
             double x = Math.Max(0, Math.Min(Math.Max(0, ActualWidth - 2), ActualWidth * Math.Clamp(time / 100, 0, 1) - 1));
-            drawing.DrawRoundedRectangle(Reference == null ? PacerPalette.Ink(255, 255, 255, 166) : QuotaHistoryChart.WithOpacity(Reference, 0.65), null, new Rect(x, 0.5, 2, 11), 1, 1);
+            drawing.DrawRoundedRectangle(Reference == null ? PacerPalette.Overlay(166) : QuotaHistoryChart.WithOpacity(Reference, 0.65), null, new Rect(x, 0.5, 2, 11), 1, 1);
         }
     }
 }

@@ -11,8 +11,9 @@ Every released Windows build (4.2.2 and later) uses schema 2. Schema-1 files com
 | Language | `appLanguage` | `system` |
 | Position and attachment | `islandPlacement`, legacy `islandPosition`, `islandDisplayMode`, legacy `floatingIsland` | No explicit position; `automatic`, then the legacy floating choice |
 | Display and fullscreen | `displayID`, `displayName`, `displayX`, `displayY`, `showInFullscreen` | Main Display, fullscreen off |
-| Surface and quota style | `islandAppearance`, `expandedQuotaStyle` | `liquidGlass`, `split`; the existing platform fallback still applies |
-| Collapsed bar | `compactIslandLayout`, `compactSingleTask`, `compactMetric` | Core's standard layout, `stage`, `remaining` |
+| Place per display | `islandPositionPerDisplay`, `islandDisplayPlaces` | On, no saved places; the places are Core's `IslandScreenMemory` JSON Data in base64, and damaged data reads as none |
+| Surface and quota style | `islandAppearance` (`classic`, `liquidGlass`, `liquidGlassLight`, `graphite`), `expandedQuotaStyle` | `liquidGlass`, `split`; the existing platform fallback still applies |
+| Collapsed bar | `compactIslandLayout`, `compactComponentOptions`, `compactBarSize`, `compactSingleTask`, `compactMetric` | Core's standard layout, every component default, `standard`, `stage`, `remaining` |
 | Quota windows and rings | `quotaWindowID`, `claudeQuotaWindowID`, `quotaRingOuter`, `quotaRingInner` | `auto`; absent ring keys mean automatic |
 | DeepSeek | `deepseekPanelStyle`, `deepseekMode`, `deepseekBalanceSource`, `deepseekDailyBudget`, `deepseekWeeklyBudget`, `deepseekRingPeriod`, `deepseekSpeedSource`, `deepseekShowsTurnCost`, `deepseekLowBalanceLine`, `deepseekSpikeLimit` | `detailed`, `balance`, `automatic`, no amounts, `day`, `local`, turn cost on |
 | Privacy and visible tasks | `hideProjects`, `showAppButtons`, `showEmbeddedCodexSessions`, `showClaudeCloudProjects` | `false`, `true`, `true`, `true` |
@@ -23,7 +24,7 @@ Every released Windows build (4.2.2 and later) uses schema 2. Schema-1 files com
 | Notifications | `systemNotifications` | `false` |
 | Welcome and release notes | `welcomeGuideVersion`, `whatsNewVersion` | `0`, unset; only demo suppresses records when a page is explicitly opened |
 
-The layout is the same UTF-8 JSON Data saved by the Mac, represented as base64 in this JSON file. Its warnings remain inside the layout. An explicit empty layout stays empty. Present empty or unknown ring choices mean no ring; an absent key means automatic. A saved center position is distinct from an untouched position. The desktop pane name `collapsed` is stored as the Mac value `collapsedBar`.
+The layout is the same UTF-8 JSON Data saved by the Mac, represented as base64 in this JSON file. Its warnings remain inside the layout. `compactComponentOptions` is Core's `CompactComponentOptions` JSON Data, also base64; the engine decodes it per field, so a damaged or oversized value reads as the defaults without touching other settings. `compactBarSize` is `small`, `standard`, `large` or `extraLarge`; an unknown size reads as `standard`. `compactSingleTask` adds `percent`. An explicit empty layout stays empty. Present empty or unknown ring choices mean no ring; an absent key means automatic. A saved center position is distinct from an untouched position. The desktop pane name `collapsed` is stored as the Mac value `collapsedBar`.
 
 `islandPlacement` stores `edge` (Free, Top, Bottom, Left, or Right) and the collapsed bar's center as work-area fractions `x` and `y`. A docked edge fixes the coordinate perpendicular to that edge. Old profiles keep their center or corner until the user moves the island or resets the position. An invalid placement falls back to the old position. Notch mode leaves the last free placement saved. Moving the island to another monitor saves its placement and display in one edit. While a disconnected display is shown on Main Display, a move that stays there saves only the placement, so the island still returns to the saved display when it reconnects.
 

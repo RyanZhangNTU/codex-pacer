@@ -22,6 +22,8 @@
     <Compile Include="../Desktop/WindowsInstallationOperations.cs" Link="WindowsInstallationOperations.cs"/>
     <Compile Include="../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
     <Compile Include="../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
+    <Compile Include="../Desktop/CompactChoices.cs" Link="CompactChoices.cs"/>
+    <Compile Include="../Desktop/IslandScreenMemory.cs" Link="IslandScreenMemory.cs"/>
     <Compile Include="../Desktop/PreferencesStore.cs" Link="PreferencesStore.cs"/>
     <Compile Include="../Desktop/FileQuarantine.cs" Link="FileQuarantine.cs"/>
   </ItemGroup>

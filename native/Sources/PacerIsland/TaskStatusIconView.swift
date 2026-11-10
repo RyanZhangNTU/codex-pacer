@@ -96,13 +96,15 @@ final class TaskStatusIconNSView: NSView {
     private static let breathPeriod = 4.0, breathLow = 0.3
     /// The comet's resting opacity; the arc's is 1, or 0.45 once stale.
     private static let pendingOpacity: Float = 1, staleOpacity: Float = 0.45
-    private static let trackInk = NSColor.white.withAlphaComponent(20 / 255).cgColor
+    private static var trackInk: CGColor { PacerPalette.overlayInk(20 / 255).cgColor }
     private static let glyphSide: CGFloat = 14, orbSide: CGFloat = 20, discSide: CGFloat = 26
     /// The disc fills from the ring inwards, then the check is drawn.
     static let fillDuration = 0.42
     private static let darkInk = NSColor.black.withAlphaComponent(0.74).cgColor
-    private static let readDisc = NSColor.white.withAlphaComponent(0.15).cgColor
-    private static let readInk = NSColor.white.withAlphaComponent(0.62).cgColor
+    private static var readDisc: CGColor { PacerPalette.overlayInk(0.15).cgColor }
+    private static var readInk: CGColor { PacerPalette.overlayInk(0.62).cgColor }
+    /// The island's tone the overlays were drawn in.
+    private var drawnLight = PacerPalette.light
 
     enum Ease: Equatable {
         case cubicOut, quadIn, sineInOut
@@ -321,6 +323,17 @@ final class TaskStatusIconNSView: NSView {
     }
 
     func update(_ next: Input) {
+        // Light glass turns the overlays dark; a read disc and its mark follow.
+        if drawnLight != PacerPalette.light {
+            drawnLight = PacerPalette.light
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            track.strokeColor = Self.trackInk; cometTrack.strokeColor = Self.trackInk
+            if let input, let face = input.face {
+                setDiscColors(for: face, color: input.color, animate: false)
+                rebuildGlyph(for: input, animate: false)
+            }
+            CATransaction.commit()
+        }
         waiting = next
         if window != nil { flush() }
     }

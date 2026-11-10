@@ -11,10 +11,12 @@ struct SettingsAppearancePane: View {
     @Binding var theme: AppTheme
     @Binding var appearance: IslandAppearance
     @Binding var accent: PacerAccent
+    @Binding var barSize: CompactBarSize
     @Binding var displayMode: IslandDisplayMode
     @Binding var position: IslandPosition?
     @Binding var displayID: Int
     @Binding var fullscreen: Bool
+    @Binding var positionPerDisplay: Bool
     @Binding var quotaStyle: ExpandedQuotaStyle
     @Binding var deepseekPanelStyle: DeepSeekPanelStyle
     @Binding var showsAppButtons: Bool
@@ -25,12 +27,13 @@ struct SettingsAppearancePane: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.pacerAccent) private var controlAccent
     private var glassAvailable: Bool { IslandAppearance.supportsLiquidGlass }
-    private var attachesHere: Bool {
-        displayMode.layout(safeAreaTop: model.screenNotchSize.height, hardwareNotchWidth: model.screenNotchSize.width).attached
+    private var layout: IslandDisplayMode.Layout {
+        displayMode.layout(safeAreaTop: model.screenNotchSize.height, hardwareNotchWidth: model.screenNotchSize.width, size: barSize)
     }
-    /// Around the camera the collapsed bar keeps a black backing so it reads as
-    /// one shape with the hardware notch; glass shows once it expands.
-    private var collapsedStaysBlack: Bool { appearance == .liquidGlass && glassAvailable && attachesHere }
+    private var attachesHere: Bool { layout.attached }
+    /// At a hardware notch the collapsed bar is black whatever the material, so
+    /// it reads as one shape with the camera housing; glass shows once it opens.
+    private var collapsedStaysBlack: Bool { appearance.isGlass && glassAvailable && layout.atHardwareNotch }
     /// Before a choice, the island attaches only around a notch, so the tile
     /// that matches what the island shows here is the selected one.
     private var customPosition: IslandPosition { .custom(saved: position, attached: attachesHere) }
@@ -45,8 +48,9 @@ struct SettingsAppearancePane: View {
             displayMode = .floating
         })
     }
-    /// The swatches follow the choice at once, before the island applies it.
-    private var ringTint: Color { accent.tint(for: .codex) ?? AgentProvider.codex.brand }
+    /// The swatches follow the choice at once, before the island applies it,
+    /// each in its own tone.
+    private func ringTint(light: Bool) -> Color { accent.tint(for: .codex, light: light) ?? (light ? AgentProvider.codex.lightShade : AgentProvider.codex.brand) }
 
     var body: some View {
         MainCard(title: L10n.text("appearance.theme")) {
@@ -58,18 +62,13 @@ struct SettingsAppearancePane: View {
             .padding(.vertical, 6)
         }
         MainCard(title: L10n.text("appearance.material")) {
-            HStack(spacing: 10) {
-                tile(L10n.text("settings.classic"), selected: appearance == .classic) { appearance = .classic } art: {
-                    StyleSwatch(glass: false, ring: ringTint)
-                }
-                tile(L10n.text("settings.liquid_glass"), selected: appearance == .liquidGlass) { appearance = .liquidGlass } art: {
-                    StyleSwatch(glass: true, ring: ringTint)
-                }
-                .disabled(!glassAvailable)
-                .help(glassAvailable ? "" : L10n.text("settings.glass_requirement"))
+            // Opaque materials above, glass below.
+            VStack(spacing: 10) {
+                HStack(spacing: 10) { material(.classic); material(.graphite) }
+                HStack(spacing: 10) { material(.liquidGlass); material(.liquidGlassLight) }
             }
             .padding(.vertical, 6)
-            if appearance == .liquidGlass, glassAvailable {
+            if appearance.isGlass, glassAvailable {
                 CardRow(title: L10n.text("appearance.glass_transparency"),
                         info: collapsedStaysBlack && !reduceTransparency ? L10n.text("appearance.glass_notch_info") : nil) {
                     if reduceTransparency {
@@ -84,11 +83,21 @@ struct SettingsAppearancePane: View {
             }
         }
         MainCard {
+            CardRow(title: L10n.text("appearance.bar_size"),
+                    detail: layout.sizeAdjustable ? nil : L10n.text("appearance.bar_size_notch"),
+                    info: L10n.text("appearance.bar_size_info")) {
+                MainSegmented(options: CompactBarSize.allCases.map { ($0, $0.label) },
+                              selection: Binding(get: { layout.sizeAdjustable ? barSize : .standard }, set: { barSize = $0 }),
+                              label: L10n.text("appearance.bar_size"))
+                    .disabled(!layout.sizeAdjustable)
+            }
+        }
+        MainCard {
             CardRow(title: L10n.text("appearance.accent"), info: L10n.text("appearance.accent_info")) {
                 AccentPicker(selection: $accent)
             }
         }
-        MainCard(title: L10n.text("appearance.position")) {
+        MainCard(title: L10n.text("appearance.position"), titleTrailing: currentDisplay) {
             HStack(alignment: .top, spacing: 10) {
                 tile(L10n.text("settings.notch"), selected: attachesHere, artHeight: nil) { displayMode = .notch } art: {
                     ModeScene { WelcomeHoverScene(width: $0) }
@@ -110,6 +119,8 @@ struct SettingsAppearancePane: View {
                        options: [(0, L10n.text("settings.main_display"))] + NSScreen.screens.map { screen in
                            ((screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? 0, screen.localizedName)
                        })
+            CardToggle(title: L10n.text("appearance.position_per_display"), info: L10n.text("appearance.position_per_display_info"),
+                       isOn: $positionPerDisplay)
             CardToggle(title: L10n.text("settings.fullscreen"), isOn: $fullscreen)
         }
         MainCard(title: L10n.text("main.appearance.panel")) {
@@ -128,7 +139,26 @@ struct SettingsAppearancePane: View {
         }
     }
 
+    /// While each display keeps its own place, the card names the display
+    /// whose place it shows.
+    private var currentDisplay: AnyView? {
+        guard positionPerDisplay, NSScreen.screens.count > 1, let name = model.currentDisplayName else { return nil }
+        return AnyView(Text(L10n.text("appearance.position_display", name)).font(.system(size: 11.5)).foregroundStyle(.secondary)
+            .lineLimit(1).truncationMode(.middle))
+    }
+
     // MARK: Tiles
+
+    /// A material tile; its description shows on hover. Dark glass needs the
+    /// system material, light glass keeps a light face without it.
+    private func material(_ option: IslandAppearance) -> some View {
+        let unavailable = option == .liquidGlass && !glassAvailable
+        return tile(option.label, selected: appearance == option) { appearance = option } art: {
+            StyleSwatch(material: option, ring: ringTint(light: option.isLight))
+        }
+        .disabled(unavailable)
+        .help(unavailable ? L10n.text("settings.glass_requirement") : option.info)
+    }
 
     /// A picture choice. A nil art height lets the picture size itself, as the
     /// moving position scenes do.
@@ -274,23 +304,35 @@ struct Wallpaper: View {
     }
 }
 
-/// The island over a desktop: solid black, or glass the wallpaper shows through.
+/// The island over a desktop in each material: black, graphite, or dark or
+/// light glass the wallpaper shows through, with its own rim and ink.
 private struct StyleSwatch: View {
-    let glass: Bool
+    let material: IslandAppearance
     let ring: Color
 
+    private var look: (fill: Color, edge: Color, width: CGFloat) {
+        switch material {
+        case .liquidGlass: (.black.opacity(0.3), .white.opacity(0.4), 0.5)
+        case .liquidGlassLight: (Color(red: 248 / 255, green: 248 / 255, blue: 250 / 255).opacity(0.84), .black.opacity(31 / 255), 0.75)
+        case .graphite: (IslandAppearance.graphiteFace, Color(red: 0x30 / 255, green: 0x33 / 255, blue: 0x3A / 255), 1)
+        case .classic: (.black, .white.opacity(38 / 255), 0.75)
+        }
+    }
+
     var body: some View {
-        ZStack {
+        let look = look
+        return ZStack {
             Wallpaper()
             HStack {
-                Capsule().fill(Color.white.opacity(0.75)).frame(width: 20, height: 4)
+                Capsule().fill((material.isLight ? Color(red: 29 / 255, green: 29 / 255, blue: 31 / 255) : .white).opacity(0.75))
+                    .frame(width: 20, height: 4)
                 Spacer(minLength: 0)
                 Circle().strokeBorder(ring, lineWidth: 2).frame(width: 10, height: 10)
             }
             .padding(.horizontal, 9)
             .frame(width: 86, height: 22)
-            .background(Capsule().fill(glass ? Color.black.opacity(0.3) : Color.black))
-            .overlay(Capsule().stroke(.white.opacity(glass ? 0.4 : 0.06), lineWidth: 0.5))
+            .background(Capsule().fill(look.fill))
+            .overlay(Capsule().strokeBorder(look.edge, lineWidth: look.width))
         }
         .frame(width: 132, height: 58)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))

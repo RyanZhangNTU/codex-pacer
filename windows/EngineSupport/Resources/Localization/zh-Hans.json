@@ -126,5 +126,6 @@
   "windows.updates.error_detail": "Pacer 无法检查或下载更新。请检查网络连接后重试。",
   "windows.updates.try_again": "重试",
   "windows.updates.notes_empty": "这个版本没有更新说明。",
-  "windows.main.pane_later": "将在重构的下一步加入。"
+  "windows.main.pane_later": "将在重构的下一步加入。",
+  "windows.appearance.position_per_display_info": "每块屏幕分别记住灵动岛还是自由拖动，以及放在哪里。第一次用的屏幕从现在的位置开始。"
 }

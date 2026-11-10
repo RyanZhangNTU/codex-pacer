@@ -51,7 +51,7 @@ internal static class ReminderSettingsChecks
             await island.WaitForPresentationAsync();
             await Until(() => warnings.Visibility == Visibility.Visible && warnings.Children.OfType<Border>().Any()
                 && warnings.IsMeasureValid && warnings.IsArrangeValid);
-            Check(warnings.Visibility == Visibility.Visible && warnings.Children.OfType<Border>().All(value => value.ActualHeight == 13), "The live capsule retains its 13-point height");
+            Check(warnings.Visibility == Visibility.Visible && warnings.Children.OfType<Border>().All(value => value.ActualHeight == 15), "The live capsule is 15 points high at the standard size");
             var peer = UIElementAutomationPeer.CreatePeerForElement(warnings);
             Check(peer?.GetAutomationControlType() == AutomationControlType.Group && peer.GetChildren() is not { Count: > 0 } && peer.GetName().Contains("DeepSeek"), "The warning slot exposes one summary without duplicate glyph names");
             Toggle(lowSwitch); await Until(() => !session.Current.WarningKinds.Contains("lowBalance") && lowSwitch.IsEnabled);

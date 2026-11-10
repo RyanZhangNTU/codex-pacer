@@ -306,8 +306,14 @@ internal static class Program
             var layout = new NativeLayout(Path.GetDirectoryName(engine)!);
             var corner = layout.Measure(new(-1920, -400, 1920, 1080), new(-1872, -400, 1872, 1040),
                 2, 0, 0, 4, false, 404, 402, 162, 135);
-            Check(corner.Target == new MotionBounds(-32, 495, 32, 135) && corner.Position == 4,
+            Check(corner.Target == new MotionBounds(-32, 495, 32, 135) && corner.Position == 4 && corner.StripWidth == 32,
                 "Original bottom-right strip geometry through the CLR");
+            var wide = layout.Measure(new(-1920, -400, 1920, 1080), new(-1872, -400, 1872, 1040), 2, 0, 0, 4, false, 404, 402, 162, 135, 3);
+            Check(wide.Target == new MotionBounds(-43, 495, 43, 135) && wide.StripWidth == 43, "The extra large size widens the strip through the bridge");
+            var bars = new[] { 0, 1, 2, 3 }.Select(size => layout.Measure(new(0, 0, 1920, 1080), new(0, 0, 1920, 1040), 2, 0, 0, 0, false, 404, 402, 162, 135, size).HeaderHeight).ToArray();
+            var attached = layout.Measure(new(0, 0, 1920, 1080), new(0, 0, 1920, 1040), 1, 0, 0, 0, false, 404, 402, 162, 135, 2);
+            Check(bars.SequenceEqual(new double[] { 32, 36, 42, 48 }) && attached.HeaderHeight == 42 && attached.Attached,
+                "Every bar takes its height from the size, attached ones too without a camera housing");
             return Task.CompletedTask;
         });
         Console.WriteLine($"Desktop integration: {passed} passed, {failed} failed.");

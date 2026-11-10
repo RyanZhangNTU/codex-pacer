@@ -30,7 +30,8 @@ internal sealed partial class SettingsWindow
 
     private static Border IslandCard(UIElement child, Thickness? padding = null)
     {
-        var card = new Border { Background = new SolidColorBrush(Color.FromRgb(36, 36, 40)), BorderBrush = new SolidColorBrush(Color.FromArgb(18, 255, 255, 255)),
+        // The overview shows the island's own views, so its cards take the island's tone.
+        var card = new Border { Background = PacerPalette.Light ? PacerPalette.Ink(242, 242, 245) : new SolidColorBrush(Color.FromRgb(36, 36, 40)), BorderBrush = PacerPalette.Overlay(18),
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Padding = padding ?? new Thickness(16, 14, 16, 14), Child = child, Margin = new Thickness(0, 0, 0, 12) };
         return card;
     }
@@ -228,7 +229,7 @@ internal sealed partial class SettingsWindow
             var row = new Grid { Margin = new Thickness(0, 11, 0, 11) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var mark = new IconGlyph { Symbol = "exclamationmark.circle", Width = 18, Height = 18, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
-            mark.Ink = PacerPalette.Attention; row.Children.Add(mark);
+            mark.SetResourceReference(IconGlyph.InkProperty, "SettingsWarning"); row.Children.Add(mark);
             var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(Label(item.Title, 13, FontWeights.SemiBold)); var detail = Detail(item.Detail); detail.FontSize = 11.5; text.Children.Add(detail);
             Grid.SetColumn(text, 1); row.Children.Add(text);
@@ -342,7 +343,7 @@ internal sealed partial class SettingsWindow
         bool motion = appearance.Current.Animations;
         foreach (var value in rows.Take(8))
         {
-            if (index++ > 0) content.Children.Add(new Border { Height = 1, Margin = new Thickness(9, 4, 9, 4), Background = new SolidColorBrush(Color.FromArgb(15, 255, 255, 255)) });
+            if (index++ > 0) content.Children.Add(new Border { Height = 1, Margin = new Thickness(9, 4, 9, 4), Background = PacerPalette.Overlay(15) });
             var row = new TaskRow(value) { Language = Language, Height = 54 };
             var state = (TaskRowState)row.DataContext;
             if (surfaceWindow?.CanOpenFromWindow(value) == true)

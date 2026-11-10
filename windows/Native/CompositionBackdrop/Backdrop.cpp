@@ -38,6 +38,8 @@ constexpr wchar_t WindowClass[] = L"CodexPacer.CompositionSurface.v1";
 // HostBackdropBrush has no dark-material wash of its own. Keep the lightest
 // wallpaper dark enough for Pacer's existing secondary text.
 constexpr float TintOpacity = .72f;
+// Light Liquid Glass washes the blurred desktop with a near-white tint instead.
+constexpr float LightTintOpacity = .78f;
 
 struct GeometrySource : implements<GeometrySource, IGeometrySource2D, ABI::Windows::Graphics::IGeometrySource2DInterop> {
     com_ptr<ID2D1PathGeometry> geometry;
@@ -125,6 +127,7 @@ struct Surface {
     DesktopWindowTarget target{nullptr};
     ContainerVisual root{nullptr};
     SpriteVisual backdrop{nullptr}, brightness{nullptr}, tint{nullptr}, noise{nullptr};
+    bool light{false};
     CompositionGraphicsDevice graphics{nullptr};
     CompositionDrawingSurface grain{nullptr};
     com_ptr<ID2D1Factory> factory;
@@ -220,7 +223,14 @@ struct Surface {
         if (!compositor || !backdrop) return;
         if (orbitMode) { HideOrbit(); return; }
         solid = true;
-        backdrop.Brush(compositor.CreateColorBrush({255, 11, 12, 14})); brightness.Opacity(0); tint.Opacity(0); noise.Opacity(0);
+        backdrop.Brush(compositor.CreateColorBrush(light ? winrt::Windows::UI::Color{255, 236, 236, 240} : winrt::Windows::UI::Color{255, 11, 12, 14}));
+        brightness.Opacity(0); tint.Opacity(0); noise.Opacity(0);
+    }
+    void Tone(bool value) {
+        if (orbitMode || !compositor || !tint) return;
+        light = value;
+        tint.Brush(compositor.CreateColorBrush(light ? winrt::Windows::UI::Color{255, 246, 246, 248} : winrt::Windows::UI::Color{255, 11, 12, 14}));
+        if (solid) Solid(); else { tint.Opacity(light ? LightTintOpacity : TintOpacity); brightness.Opacity(light ? 0 : .025f); }
     }
     void HideOrbit() {
         if (backdrop) backdrop.StopAnimation(L"RotationAngleInDegrees");
@@ -310,7 +320,7 @@ struct Surface {
             auto parameter = CompositionEffectSourceParameter(L"Backdrop");
             auto effect = compositor.CreateEffectFactory(make<Blur>(parameter, 18 * dpiScale)).CreateBrush();
             effect.SetSourceParameter(L"Backdrop", compositor.CreateHostBackdropBrush()); backdrop.Brush(effect); scale = dpiScale;
-            brightness.Opacity(.025f); tint.Opacity(TintOpacity); noise.Opacity(1); solid = false;
+            brightness.Opacity(light ? 0 : .025f); tint.Opacity(light ? LightTintOpacity : TintOpacity); noise.Opacity(1); solid = false;
         }
         winrt::Windows::Foundation::Numerics::float2 size{static_cast<float>(width), static_cast<float>(height)};
         root.Size(size); backdrop.Size(size); brightness.Size(size); tint.Size(size); noise.Size(size); Grain();
@@ -398,6 +408,10 @@ extern "C" __declspec(dllexport) HRESULT __cdecl pacer_surface_black(void* value
     try { static_cast<Surface*>(value)->Solid(); return S_OK; } catch (...) { return to_hresult(); }
 }
 extern "C" __declspec(dllexport) void __cdecl pacer_surface_destroy(void* value) noexcept { delete static_cast<Surface*>(value); }
+extern "C" __declspec(dllexport) HRESULT __cdecl pacer_surface_tone(void* value, int light) noexcept {
+    if (!value) return E_INVALIDARG;
+    try { static_cast<Surface*>(value)->Tone(light != 0); return S_OK; } catch (...) { return to_hresult(); }
+}
 extern "C" __declspec(dllexport) void __cdecl pacer_surface_test_loss(void* value) noexcept { if (value) SetEvent(static_cast<Surface*>(value)->removalEvent); }
 extern "C" __declspec(dllexport) HRESULT __cdecl pacer_orbit_create(HWND content, UINT notification, void** result) noexcept {
     if (!result || notification < WM_APP || notification > 0xBFFF) return E_INVALIDARG;

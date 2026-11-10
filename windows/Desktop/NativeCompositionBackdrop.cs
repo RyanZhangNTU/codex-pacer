@@ -22,7 +22,7 @@ internal sealed class NativeCompositionBackdrop : ICompositionBackdrop
     private IntPtr handle;
     public IntPtr WindowHandle { get; }
     public event Action? DeviceRemoved;
-    internal NativeCompositionBackdrop(Window content, string? path = null)
+    internal NativeCompositionBackdrop(Window content, string? path = null, bool light = false)
     {
         content.Dispatcher.VerifyAccess(); this.content = content;
         IntPtr library = Library(path);
@@ -37,6 +37,8 @@ internal sealed class NativeCompositionBackdrop : ICompositionBackdrop
         CheckResult(Export<Create>("pacer_surface_create")(hwnd, DeviceRemovedMessage, out handle));
         try
         {
+            // Light Liquid Glass washes the same material light instead of dark.
+            if (light) CheckResult(Export<Tone>("pacer_surface_tone")(handle, 1));
             WindowHandle = getWindow(handle);
             if (WindowHandle == IntPtr.Zero) throw new InvalidDataException("The composition HWND is missing.");
             source.AddHook(Message);
@@ -97,6 +99,7 @@ internal sealed class NativeCompositionBackdrop : ICompositionBackdrop
     }
     [StructLayout(LayoutKind.Sequential)] private struct Rect { internal int Left, Top, Right, Bottom; }
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr hwnd, out Rect value);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Tone(IntPtr handle, int light);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Version();
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Create(IntPtr content, uint message, out IntPtr handle);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate IntPtr GetWindow(IntPtr handle);

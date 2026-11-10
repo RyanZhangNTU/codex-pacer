@@ -47,11 +47,33 @@ internal static class AccentPalette
     internal static Color Controls(string? accent, bool followSystem = true) => Fixed(accent) ?? (followSystem ? SystemAccent() : Color.FromRgb(0, 122, 255));
 
     /// A service's color: its brand color with Multicolor, otherwise a shade of
-    /// the accent. Codex takes the accent itself, Claude 42% and DeepSeek 66%
-    /// of the way to white.
-    internal static Color? ProviderShade(string? accent, string provider) => Fixed(accent) is { } color
-        ? provider switch { "claude" => Lighten(color, .42), "deepseek" => Lighten(color, .66), _ => color }
+    /// the accent. On the dark island Codex takes the accent itself, Claude 42%
+    /// and DeepSeek 66% of the way to white. On light glass each is the accent
+    /// scaled to a set luminance instead, as on the Mac.
+    internal static Color? ProviderShade(string? accent, string provider, bool light = false) => Fixed(accent) is { } color
+        ? light ? LightShade(color, provider)
+            : provider switch { "claude" => Lighten(color, .42), "deepseek" => Lighten(color, .66), _ => color }
         : null;
+
+    /// Relative luminance of each service's shade on light glass: Codex 0.07,
+    /// Claude 0.12 and DeepSeek 0.20, about 7.4, 5.2 and 3.6:1 against #ECECF0.
+    internal static double LightLuminance(string provider) => provider switch { "claude" => .12, "deepseek" => .2, _ => .07 };
+
+    /// The color's linear light scaled evenly to the service's luminance, which
+    /// keeps its hue and saturation; even yellow stays readable on light glass.
+    internal static Color LightShade(Color color, string provider)
+    {
+        static double Linear(byte value) { double v = value / 255.0; return v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4); }
+        static byte Encoded(double value)
+        {
+            double v = value <= 0.0031308 ? value * 12.92 : 1.055 * Math.Pow(value, 1 / 2.4) - 0.055;
+            return (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
+        }
+        double red = Linear(color.R), green = Linear(color.G), blue = Linear(color.B);
+        double luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+        double scale = luminance > 0 ? LightLuminance(provider) / luminance : 0;
+        return Color.FromRgb(Encoded(Math.Min(1, red * scale)), Encoded(Math.Min(1, green * scale)), Encoded(Math.Min(1, blue * scale)));
+    }
 
     internal static Color Lighten(Color color, double amount)
     {

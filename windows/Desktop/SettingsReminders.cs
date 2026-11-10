@@ -49,7 +49,8 @@ internal sealed partial class SettingsWindow
     private TextBlock AlwaysCell() { var text = Label(ui.Text("main.notify.always"), 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); return text; }
     private TextBlock NoneCell()
     { var text = Label("—", 13); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsDisabled"); AutomationProperties.SetName(text, ui.Text("main.notify.unavailable")); return text; }
-    /// A collapsed-bar warning the user chooses here.
+    /// A collapsed-bar warning the user chooses here; Collapsed Bar's warnings
+    /// card keeps their style and limit and links back to this page.
     private CheckBox BarCell(string kind, string title)
     {
         var check = new CheckBox { Style = (Style)FindResource("SettingsCheck") };
@@ -91,7 +92,7 @@ internal sealed partial class SettingsWindow
             RefreshValues();
         };
         check.Checked += toggleNotifications; check.Unchecked += toggleNotifications; editors.Add(check);
-        notificationIssue = Label("", 12); notificationIssue.TextWrapping = TextWrapping.Wrap; notificationIssue.Foreground = PacerPalette.Attention; Identify(notificationIssue, "settings.reminders.notifications.issue", "");
+        notificationIssue = Label("", 12); notificationIssue.TextWrapping = TextWrapping.Wrap; notificationIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Identify(notificationIssue, "settings.reminders.notifications.issue", "");
         var systemSettings = new Button { Content = ui.Text("common.open_settings") };
         Identify(systemSettings, "settings.reminders.notifications.settings", ui.Text("settings.system_notifications") + ": " + ui.Text("common.open_settings"));
         systemSettings.Click += (_, _) =>

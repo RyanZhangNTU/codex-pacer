@@ -16,7 +16,7 @@
     {"provider": "claude","remaining": 20,"age": 301,"expired": false,"failed": false,"delayed": ["codex","claude"],"kinds": ["quotaDelay"],"solid": false},
     {"provider": "claude","remaining": 20,"age": 0,"expired": true,"failed": false,"delayed": ["codex","claude"],"kinds": ["quotaDelay"],"solid": false},
     {"provider": "claude","remaining": 20,"age": 0,"expired": false,"failed": true,"delayed": ["codex","claude"],"kinds": ["quotaDelay"],"solid": false},
-    {"provider": "claude","remaining": 19.9,"age": 0,"expired": false,"failed": false,"delayed": ["codex"],"kinds": ["fiveHour","quotaDelay"],"solid": false},
+    {"provider": "claude","remaining": 19.9,"age": 0,"expired": false,"failed": false,"delayed": ["codex"],"kinds": ["quotaDelay","fiveHour"],"solid": false},
     {"provider": "claude","remaining": 19.9,"age": 301,"expired": false,"failed": false,"delayed": ["codex","claude"],"kinds": ["quotaDelay"],"solid": false},
     {"provider": "claude","remaining": 19.9,"age": 0,"expired": true,"failed": false,"delayed": ["codex","claude"],"kinds": ["quotaDelay"],"solid": false},
     {"provider": "claude","remaining": 19.9,"age": 0,"expired": false,"failed": true,"delayed": ["codex","claude"],"kinds": ["quotaDelay"],"solid": false},

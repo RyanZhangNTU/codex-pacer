@@ -511,13 +511,6 @@
     {"provider": "claude","kind": "past","age": 301,"failed": true,"selection": "week","metric": "remaining","entries": [{"provider": "codex","text": "75%"},{"provider": "claude","text": "75%"}],"ring": null,"dimmed": true,"time": "0%","weeklyOnly": false,"normalized": "7d"},
     {"provider": "claude","kind": "past","age": 301,"failed": true,"selection": "week","metric": "pace","entries": [{"provider": "codex","text": "—"}],"ring": null,"dimmed": true,"time": "0%","weeklyOnly": false,"normalized": "7d"}
   ],
-  "dims": [
-    "quota",
-    "quotaGauge",
-    "quotaLabel",
-    "timeRemaining",
-    "priceClock"
-  ],
   "live": [
     {"stage": 0,"status": "activity.thinking","rate": "102"},
     {"stage": 1,"status": "activity.tool_compact","rate": "83"},

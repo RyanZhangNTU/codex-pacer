@@ -18,7 +18,7 @@ internal static class SettingsPalette
             foreach (string key in new[] { "SettingsPickerStroke", "SettingsPickerHover" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             foreach (string key in new[] { "SettingsPrimary", "SettingsSecondary", "SettingsChartReference", "SettingsChartSecondary", "SettingsSeparator", "SettingsCardBorder" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
-            foreach (string key in new[] { "SettingsAccent", "SettingsLinkText", "SettingsIslandLink", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
+            foreach (string key in new[] { "SettingsAccent", "SettingsLinkText", "SettingsIslandLink", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsExpiry", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
             resources["SettingsAccentSoft"] = DesktopAppearance.Ink(colors.Control);
             resources["SettingsKnob"] = resources["SettingsSelectionText"] = DesktopAppearance.Ink(colors.HighlightText);
             resources["SettingsSidebarSelectionText"] = DesktopAppearance.Ink(colors.HighlightText); return;
@@ -77,6 +77,8 @@ internal static class SettingsPalette
         // Light accents such as yellow need dark text on their fill.
         if (0.299 * tint.R + 0.587 * tint.G + 0.114 * tint.B > 186) Gray("SettingsSelectionText", 20);
         Brush("SettingsWarning", dark ? (byte)255 : (byte)194, dark ? (byte)146 : (byte)95, dark ? (byte)48 : (byte)0);
+        // Expiring resets: the Mac's soft amber on dark, a deeper one that reads on white.
+        Brush("SettingsExpiry", dark ? (byte)232 : (byte)176, dark ? (byte)191 : (byte)118, dark ? (byte)122 : (byte)24);
         Brush("SettingsSuccess", 48, 186, 85);
         if (active) Brush("SettingsSwitchOn", tint.R, tint.G, tint.B);
         else Gray("SettingsSwitchOn", dark ? (byte)81 : (byte)210);

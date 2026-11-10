@@ -72,7 +72,7 @@ internal static class AccessibilityChecks
             hovered.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
             Check(hovered.HasAnimatedProperties, "The current row has a finite hover transition to interrupt");
             appearance.Set(appearance.Current with { Animations = false }); await Drain();
-            Check(window.AccessibilityMotionState is (1, 0, 0), "Disabling animation mid-page removes outgoing content and all finite clocks");
+            Check(window.AccessibilityMotionState is (1, 0), "Disabling animation mid-page removes outgoing content and all finite clocks");
             Check(((RevealHost)pages.Children[0]).Opacity == 1 && !((RevealHost)pages.Children[0]).HasAnimatedProperties,
                 "The incoming page immediately reaches its final opacity without a retained clock");
             Check(!hovered.HasAnimatedProperties && hovered.HoverProgress == 1, "Reduced motion immediately settles the active hover and releases its clock");
@@ -91,7 +91,7 @@ internal static class AccessibilityChecks
             window.FrameApplied += Interrupt; window.CollapseForAutomation(); window.Reveal(); window.CollapseForAutomation();
             await PresentationWait.UntilAsync(() => interrupted, "The window transition presents an intermediate frame");
             await window.WaitForPresentationAsync(); window.FrameApplied -= Interrupt;
-            Check(!window.IsExpandedForAutomation && window.LogicalTarget.Height == 38 && window.AccessibilityMotionState is (1, 0, 0),
+            Check(!window.IsExpandedForAutomation && window.LogicalTarget.Height == 36 && window.AccessibilityMotionState is (1, 0),
                 "Mid-animation reduction settles the latest reversed window target");
             appearance.Set(appearance.Current with { Transparency = false }); await Drain();
             Check(!window.GlassVisible, "The shared appearance snapshot immediately disables transparent material");

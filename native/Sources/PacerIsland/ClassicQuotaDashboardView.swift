@@ -148,8 +148,8 @@ struct ClassicQuotaDashboardRingView: View {
     /// Where the arc would end at an even pace: an arc past the tick is ahead
     /// of the clock, one short of it is spending faster than time passes.
     private func paceTick(at fraction: Double) -> some View {
-        Capsule().fill(Color.white)
-            .overlay(Capsule().stroke(Color.black.opacity(0.45), lineWidth: 0.5))
+        Capsule().fill(PacerPalette.tick)
+            .overlay(Capsule().stroke(PacerPalette.tickEdge, lineWidth: 0.5))
             .frame(width: 2.5, height: Self.stroke + 6)
             .offset(y: -Self.diameter / 2)
             .rotationEffect(.degrees(fraction * 360))

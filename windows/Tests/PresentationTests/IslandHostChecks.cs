@@ -31,7 +31,7 @@ internal static class IslandHostChecks
             Invoke(codex); await Until(() => opened.Count == 1, "The app action must reach the injected Windows activation service");
             await window.WaitForPresentationAsync();
             Check(opened.Single() == "OpenAI.Codex_2p2nqsd0c76g0!App", "The app action must activate the allowlisted application identity");
-            Check(window.LogicalTarget.Height == 38, "Opening a desktop app must release the expanded island");
+            Check(window.LogicalTarget.Height == 36, "Opening a desktop app must release the expanded island");
             window.Reveal(); await window.SynchronizeExpansionAsync(); await window.WaitForPresentationAsync();
             window.ApplyPreferences(new() { IslandAppearance = "classic", ShowAppButtons = false });
             Check(buttons.Children.Count == 0 && buttons.Visibility == Visibility.Collapsed, "The settings choice must immediately remove desktop app actions");
@@ -41,13 +41,13 @@ internal static class IslandHostChecks
             Invoke((Button)window.FindName("SettingsButton"));
             await Until(() => settings == 1, "The native-size gear action must reach the settings owner");
             await window.WaitForPresentationAsync();
-            Check(window.LogicalTarget.Height == 38, "Opening settings must release the expanded island");
+            Check(window.LogicalTarget.Height == 36, "Opening settings must release the expanded island");
             var shell = (Border)window.FindName("Shell");
             foreach (string position in new[] { "topLeft", "bottomLeft", "topRight", "bottomRight", "center" })
             {
                 window.ApplyPreferences(new() { IslandAppearance = "classic", Position = position, PositionChosen = true, DisplayMode = "floating" });
                 await window.WaitForPresentationAsync();
-                Check(position == "center" ? window.VisibleHeight == 38 : window.VisibleWidth == 32,
+                Check(position == "center" ? window.VisibleHeight == 36 : window.VisibleWidth == 32,
                     "Live position changes must switch between the native capsule and strip dimensions");
                 var corners = shell.CornerRadius;
                 Check(position.EndsWith("Left", StringComparison.Ordinal) ? corners.TopLeft == 0 && corners.BottomLeft == 0
@@ -56,7 +56,7 @@ internal static class IslandHostChecks
             }
             window.ApplyPreferences(new() { IslandAppearance = "classic", Position = "bottomRight", PositionChosen = true, DisplayMode = "notch" });
             await window.WaitForPresentationAsync();
-            Check(window.LogicalTarget.Y == 0 && window.VisibleHeight == 32 && ((Grid)window.FindName("Header")).Visibility == Visibility.Visible
+            Check(window.LogicalTarget.Y == 0 && window.VisibleHeight == 36 && ((Grid)window.FindName("Header")).Visibility == Visibility.Visible
                 && shell.CornerRadius.TopLeft == 0 && shell.CornerRadius.TopRight == 0,
                 "Forced notch mode must attach at the screen top and ignore the saved corner");
             window.ApplyPreferences(new() { IslandAppearance = "classic", Position = "bottomRight", PositionChosen = true, DisplayMode = "floating" });

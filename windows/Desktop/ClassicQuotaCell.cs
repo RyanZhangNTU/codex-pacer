@@ -55,7 +55,7 @@ internal sealed class ClassicQuotaCell : StackPanel
     internal static Border Verdict(DashboardReading reading) => new()
     {
         CornerRadius = new CornerRadius(7.5), Height = 15, Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(5, 0, 0, 0),
-        Background = reading.Verdict == "fast" ? PacerPalette.Ink(255, 189, 97, 36) : reading.Verdict == "steady" ? PacerPalette.Ink(158, 158, 158, 36) : PacerPalette.Ink(245, 245, 245, 36),
+        Background = reading.Verdict == "fast" ? PacerPalette.Ink(255, 189, 97, 36) : reading.Verdict == "steady" ? PacerPalette.Ink(158, 158, 158, 36) : PacerPalette.Overlay(36),
         Child = Label(reading.VerdictText ?? "", 10, reading.Verdict == "fast" ? PacerPalette.Attention : reading.Verdict == "steady" ? PacerPalette.Secondary : PacerPalette.Primary, FontWeights.SemiBold)
     };
 }

@@ -370,6 +370,33 @@ final class TaskStatusIconViewTests: XCTestCase {
         }
     }
 
+    /// Segments fill to each task's estimate; a task without one breathes on
+    /// the long-step clock until its estimate arrives.
+    func testSegmentsBreatheForTasksWithoutAnEstimate() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: .borderless, backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        let ring = TaskSegmentsView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
+        window.contentView?.addSubview(ring)
+        typealias Segment = TaskSegmentsView.Segment
+        ring.update(segments: [Segment(color: .systemTeal, fraction: 0.6, stale: false), Segment(color: .systemOrange, fraction: nil, stale: false),
+            Segment(color: .systemOrange, fraction: nil, stale: false)], scale: 1, animates: true)
+        XCTAssertEqual(ring.breathingLanes, [1, 2])
+        XCTAssertEqual(ring.fillFractions, [0.6, 0, 0])
+        ring.update(segments: [Segment(color: .systemTeal, fraction: 0.6, stale: false), Segment(color: .systemOrange, fraction: 0.2, stale: false),
+            Segment(color: .systemOrange, fraction: nil, stale: false)], scale: 1, animates: true)
+        XCTAssertEqual(ring.breathingLanes, [2], "An estimate replaces the breath")
+        XCTAssertEqual(ring.fillFractions, [0.6, 0.2, 0], "and leaves the other arcs as they were")
+        ring.update(segments: [Segment(color: .systemTeal, fraction: 0.6, stale: false), Segment(color: .systemOrange, fraction: nil, stale: false)],
+            scale: 1, animates: false)
+        XCTAssertEqual(ring.breathingLanes, [], "Without motion only the track shows")
+        ring.removeFromSuperview()
+        ring.update(segments: [Segment(color: .systemOrange, fraction: nil, stale: false), Segment(color: .systemTeal, fraction: nil, stale: false)],
+            scale: 1, animates: true)
+        XCTAssertEqual(ring.breathingLanes, [], "Out of a window nothing runs")
+        window.close()
+    }
+
     /// With one task reporting, the badge's comets give way to its estimate.
     func testTheBadgeDrawsTheOnlyTasksEstimateWithTheRowsMotion() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: .borderless, backing: .buffered, defer: true)

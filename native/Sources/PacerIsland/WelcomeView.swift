@@ -106,7 +106,7 @@ struct WelcomeView: View {
     private var attachesNow: Bool {
         _ = displayModeValue
         return IslandDisplayMode.load().layout(safeAreaTop: model.screenNotchSize.height,
-                                               hardwareNotchWidth: model.screenNotchSize.width).attached
+                                               hardwareNotchWidth: model.screenNotchSize.width, size: CompactBarSize.load()).attached
     }
 
     private func chooseMode(attached: Bool) {
@@ -223,7 +223,7 @@ struct WelcomeView: View {
         let status = moduleStatus(provider, enabled: enabled)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72), size: 40)
+                SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72), size: 40)
                     .saturation(enabled ? 1 : 0).opacity(enabled ? 1 : 0.5)
                 Spacer()
                 Toggle(provider.displayName, isOn: Binding(get: { enabled }, set: { setModule(provider, enabled: $0) }))
@@ -257,7 +257,7 @@ struct WelcomeView: View {
         if let action = status.action {
             if action.connects {
                 Button(action.title, action: action.perform)
-                    .buttonStyle(MainButtonStyle(prominent: true, height: 26, fill: provider.tint, label: Color.black.opacity(0.8)))
+                    .buttonStyle(MainButtonStyle(prominent: true, height: 26, fill: provider.shade(light: false), label: Color.black.opacity(0.8)))
             } else {
                 Button(action.title, action: action.perform).buttonStyle(MainButtonStyle(height: 26))
             }
@@ -457,7 +457,11 @@ private struct WelcomeIslandMap: View {
         }
         .foregroundStyle(PacerPalette.primary)
         .frame(height: Self.barHeight)
-        .modifier(IslandSurface(appearance: .classic, attached: true, expanded: false))
+        // The bar under the camera is black, as the island draws it at the
+        // notch, unless the island shows light glass's light tone now.
+        .modifier(IslandSurface(appearance: IslandAppearance.stored, attached: true, expanded: false,
+            notchBlack: PacerPalette.light ? 0 : 1))
+        .environment(\.colorScheme, PacerPalette.light ? .light : .dark)
         .accessibilityHidden(true)
     }
 
@@ -656,7 +660,7 @@ struct WelcomeDragScene: View {
                 .fill(Color.black)
                 .overlay(barContent.opacity(1 - snap))
                 .overlay(RoundedRectangle(cornerRadius: min(frame.width, frame.height) / 2, style: .continuous)
-                    .strokeBorder(AgentProvider.codex.tint.opacity(snap), lineWidth: 3))
+                    .strokeBorder(AgentProvider.codex.shade(light: false).opacity(snap), lineWidth: 3))
                 .frame(width: frame.width, height: frame.height)
                 .offset(x: frame.minX, y: frame.minY)
             WelcomePointer().frame(width: 26, height: 42).offset(x: pointer.x, y: pointer.y)
@@ -668,7 +672,7 @@ struct WelcomeDragScene: View {
     /// A ring and a value, where the collapsed bar shows them.
     private var barContent: some View {
         HStack(spacing: 10) {
-            Circle().trim(from: 0, to: 0.62).stroke(AgentProvider.codex.tint, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+            Circle().trim(from: 0, to: 0.62).stroke(AgentProvider.codex.shade(light: false), style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 .rotationEffect(.degrees(-90)).frame(width: 16, height: 16)
             Capsule().fill(Color.white.opacity(0.7)).frame(width: 34, height: 9)
             Spacer(minLength: 0)

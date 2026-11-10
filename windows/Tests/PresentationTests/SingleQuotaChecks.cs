@@ -30,7 +30,7 @@ internal static class SingleQuotaChecks
                     window.Show(); await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
                     window.Reveal(); await window.WaitForPresentationAsync();
                     var slots = (Grid)window.FindName("QuotaSlots");
-                    Check(slots.Children.Count == 3 && window.LogicalTarget.Height == 440, "The existing multi-provider reference layout must retain its original height");
+                    Check(slots.Children.Count == 3 && window.LogicalTarget.Height == 438, "The existing multi-provider reference layout must retain its original height");
                     foreach (string name in new[] { "claude", "codex" })
                     {
                         var modes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled" };
@@ -55,7 +55,7 @@ internal static class SingleQuotaChecks
                     await engine.SendAsync("configure", new { providerModes = new { codex = "enabled", claude = "enabled", deepseek = "enabled" } });
                     await Until(() => slots.Children.Count == 3, "Restoring all modules must return to the original multi-provider rings");
                     await window.WaitForPresentationAsync();
-                    Check(window.LogicalTarget.Height == 440, "Changing provider count must not leave a stale single-provider content height");
+                    Check(window.LogicalTarget.Height == 438, "Changing provider count must not leave a stale single-provider content height");
                 }
                 finally { window.StopPresentation(); window.AllowClose = true; window.Close(); }
             }

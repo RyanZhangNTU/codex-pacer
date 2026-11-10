@@ -2,11 +2,14 @@
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="clr-namespace:CodexPacer.Windows"
- Title="Codex Pacer" Width="162" Height="38" WindowStyle="None" ResizeMode="NoResize"
+ Title="Codex Pacer" Width="162" Height="36" WindowStyle="None" ResizeMode="NoResize"
  AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False" Topmost="True"
  ShowActivated="False" MouseEnter="OnMouseEnter" MouseLeave="OnMouseLeave" KeyDown="OnKeyDown"
  TextOptions.TextFormattingMode="Ideal">
  <Window.Resources>
+  <!-- Text and glyphs take the island's tone; Light Liquid Glass switches it. -->
+  <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="Foreground" Value="{DynamicResource Island.Primary}"/></Style>
+  <Style TargetType="local:IconGlyph"><Setter Property="Ink" Value="{DynamicResource Island.Primary}"/></Style>
   <Style x:Key="IslandMainAction" TargetType="Button">
    <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/>
    <Setter Property="Padding" Value="0"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
@@ -16,7 +19,7 @@
    </ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="CompactComponentButton" TargetType="Button">
-   <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#F5F5F5"/>
+   <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{DynamicResource Island.Primary}"/>
    <Setter Property="Padding" Value="0,4"/><Setter Property="BorderThickness" Value="0"/>
    <Setter Property="HorizontalContentAlignment" Value="Center"/><Setter Property="VerticalContentAlignment" Value="Center"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
@@ -24,20 +27,20 @@
      <Border x:Name="Focus" BorderThickness="1" BorderBrush="Transparent" CornerRadius="5"/>
      <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
     </Grid>
-    <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="#99FFFFFF"/></Trigger></ControlTemplate.Triggers>
+    <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource Island.Focus}"/></Trigger></ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="IconButton" TargetType="Button">
    <Setter Property="Width" Value="28"/><Setter Property="Height" Value="28"/>
    <Setter Property="Margin" Value="0"/><Setter Property="Padding" Value="0"/>
-   <Setter Property="Foreground" Value="#9E9E9E"/><Setter Property="Background" Value="Transparent"/>
+   <Setter Property="Foreground" Value="{DynamicResource Island.Secondary}"/><Setter Property="Background" Value="Transparent"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
     <Border x:Name="Circle" Background="{TemplateBinding Background}" CornerRadius="14" BorderThickness="0.5">
      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Border>
     <ControlTemplate.Triggers>
-     <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="#F5F5F5"/><Setter TargetName="Circle" Property="Background" Value="#14FFFFFF"/></Trigger>
-     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Circle" Property="BorderBrush" Value="#9E9E9E"/></Trigger>
+     <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{DynamicResource Island.Primary}"/><Setter TargetName="Circle" Property="Background" Value="{DynamicResource Island.Overlay08}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Circle" Property="BorderBrush" Value="{DynamicResource Island.Secondary}"/></Trigger>
      <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Circle" Property="Opacity" Value="0.4"/></Trigger>
     </ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
@@ -52,65 +55,61 @@
   <Grid>
    <!-- The attached glass header turns black edge to edge, behind the header's inset content. -->
    <Border x:Name="HeaderBand" Height="{Binding ActualHeight, ElementName=Header}" VerticalAlignment="Top" IsHitTestVisible="False"/>
-   <Grid x:Name="Header" Height="38" Margin="15,0" VerticalAlignment="Top" Cursor="Hand" Background="Transparent">
+   <!-- Sizes here are the standard bar's; the chosen bar size sets them at run time. -->
+   <Grid x:Name="Header" Height="36" Margin="13,0" VerticalAlignment="Top" Cursor="Hand" Background="Transparent">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Button x:Name="HeaderAction" Grid.ColumnSpan="3" Style="{StaticResource IslandMainAction}" Click="OnMainAction" KeyboardNavigation.TabIndex="0"/>
     <StackPanel x:Name="HeaderLeading" Orientation="Horizontal" VerticalAlignment="Center">
      <local:ActivityBadge x:Name="Badge"/>
-     <StackPanel x:Name="RatePanel" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
-      <TextBlock x:Name="RateLabel" FontSize="12" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" VerticalAlignment="Center"/>
-      <TextBlock x:Name="RateUnit" Text="t/s" FontSize="9" FontWeight="Medium" Foreground="#6B6B6B" Margin="2,0,0,0" VerticalAlignment="Center"/>
-     </StackPanel>
     </StackPanel>
+    <Border x:Name="HeaderDivider" Grid.Column="1" Width="1" Height="14" Background="{DynamicResource Island.Overlay16}" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False"/>
     <StackPanel x:Name="HeaderTrailing" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-      <local:CompactWarningsView x:Name="WarningGlyphs" Margin="0,0,8,0" VerticalAlignment="Center"/>
-     <local:CompactQuotaGlyph x:Name="QuotaGlyph" Width="18" Height="18" VerticalAlignment="Center"/>
-     <local:AlternatingQuotaText x:Name="QuotaLabel" Margin="8,0,0,0" FontSize="12" VerticalAlignment="Center"/>
+     <local:CompactWarningsView x:Name="WarningGlyphs" VerticalAlignment="Center"/>
+     <local:CompactQuotaGlyph x:Name="QuotaGlyph" Width="20" Height="20" VerticalAlignment="Center"/>
+     <local:AlternatingQuotaText x:Name="QuotaLabel" FontSize="13" VerticalAlignment="Center"/>
     </StackPanel>
    </Grid>
    <Grid x:Name="Strip" Width="32" Visibility="Collapsed" Cursor="Hand" Background="Transparent">
     <Button x:Name="StripAction" Style="{StaticResource IslandMainAction}" Click="OnMainAction" KeyboardNavigation.TabIndex="0"/>
-    <StackPanel x:Name="StripLeading" VerticalAlignment="Top" Margin="0,12,0,0" HorizontalAlignment="Center">
+    <StackPanel x:Name="StripLeading" VerticalAlignment="Top" Margin="0,10,0,0" HorizontalAlignment="Center">
      <local:ActivityBadge x:Name="StripBadge"/>
-     <StackPanel x:Name="StripRatePanel" Margin="0,4,0,0" HorizontalAlignment="Center">
-      <TextBlock x:Name="StripRate" FontSize="10" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" HorizontalAlignment="Center"/>
-      <TextBlock Text="t/s" FontSize="9" FontWeight="Medium" Foreground="#6B6B6B" HorizontalAlignment="Center"/>
-     </StackPanel>
     </StackPanel>
-    <Border x:Name="StripDivider" Width="16" Height="1" Background="#14FFFFFF" VerticalAlignment="Bottom" HorizontalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False"/>
-    <StackPanel x:Name="StripTrailing" VerticalAlignment="Bottom" Margin="0,0,0,12" HorizontalAlignment="Center">
-      <local:CompactWarningsView x:Name="StripWarnings" Orientation="Vertical" Margin="0,0,0,6" HorizontalAlignment="Center"/>
-     <Border Width="16" Height="1" Background="#14FFFFFF" Margin="0,0,0,6"/>
-     <local:CompactQuotaGlyph x:Name="StripQuotaGlyph" Width="18" Height="18" HorizontalAlignment="Center"/>
-     <local:AlternatingQuotaText x:Name="StripQuota" FontSize="10" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+    <Border x:Name="StripDivider" Width="14" Height="1" Background="{DynamicResource Island.Overlay16}" VerticalAlignment="Bottom" HorizontalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False"/>
+    <StackPanel x:Name="StripTrailing" VerticalAlignment="Bottom" Margin="0,0,0,10" HorizontalAlignment="Center">
+     <local:CompactWarningsView x:Name="StripWarnings" Orientation="Vertical" HorizontalAlignment="Center"/>
+     <local:CompactQuotaGlyph x:Name="StripQuotaGlyph" Width="20" Height="20" HorizontalAlignment="Center"/>
+     <local:AlternatingQuotaText x:Name="StripQuota" FontSize="11.5" HorizontalAlignment="Center"/>
     </StackPanel>
    </Grid>
-   <local:RevealHost x:Name="Expanded" Visibility="Collapsed" Margin="6,38,6,0" VerticalAlignment="Top" HorizontalAlignment="Center">
+   <!-- The material's fine edge along the free sides, above the content's own edges. -->
+   <Path x:Name="Rim" IsHitTestVisible="False" Panel.ZIndex="5" StrokeLineJoin="Round"/>
+   <Path x:Name="RimHighlight" IsHitTestVisible="False" Panel.ZIndex="5" StrokeThickness="1"/>
+   <local:RevealHost x:Name="Expanded" Visibility="Collapsed" Margin="6,36,6,0" VerticalAlignment="Top" HorizontalAlignment="Center">
     <local:RevealHost.RenderTransform><TranslateTransform x:Name="RevealOffset"/></local:RevealHost.RenderTransform>
     <ScrollViewer x:Name="ExpandedScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
      <StackPanel Margin="0,4,0,14">
       <Grid x:Name="TaskToolbar" Height="24" Margin="9,0">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock x:Name="TasksTitle" FontSize="11" FontWeight="SemiBold" Foreground="#9E9E9E"/>
-        <TextBlock x:Name="TasksCount" FontSize="11" FontWeight="Medium" Foreground="#6B6B6B" Margin="6,0,0,0"/>
+        <TextBlock x:Name="TasksTitle" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Island.Secondary}"/>
+        <TextBlock x:Name="TasksCount" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}" Margin="6,0,0,0"/>
        </StackPanel>
        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,-2,0,-2">
         <StackPanel x:Name="PageControls" Orientation="Horizontal" VerticalAlignment="Center">
          <Button x:Name="PreviousPage" Style="{StaticResource PageButton}" Click="OnPreviousPage">
           <local:IconGlyph Symbol="chevron.left" Width="12" Height="12" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
          </Button>
-         <TextBlock x:Name="PageNumber" FontSize="11" FontWeight="Medium" Foreground="#9E9E9E" MinWidth="30" TextAlignment="Center" VerticalAlignment="Center" Margin="2,0"/>
-         <Button x:Name="NextPage" Style="{StaticResource PageButton}" Click="OnNextPage" Background="#0DFFFFFF">
+         <TextBlock x:Name="PageNumber" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Secondary}" MinWidth="30" TextAlignment="Center" VerticalAlignment="Center" Margin="2,0"/>
+         <Button x:Name="NextPage" Style="{StaticResource PageButton}" Click="OnNextPage" Background="{DynamicResource Island.Overlay05}">
           <local:IconGlyph Symbol="chevron.right" Width="12" Height="12" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
          </Button>
-         <Border Width="1" Height="14" Background="#14FFFFFF" Margin="4,0"/>
+         <Border Width="1" Height="14" Background="{DynamicResource Island.Overlay08}" Margin="4,0"/>
         </StackPanel>
-        <Border x:Name="DemoTag" CornerRadius="10" Background="#0DFFFFFF" Padding="7,3" Margin="0,0,4,0" VerticalAlignment="Center">
-         <TextBlock x:Name="DemoLabel" FontSize="10" FontWeight="SemiBold" Foreground="#9E9E9E"/>
+        <Border x:Name="DemoTag" CornerRadius="10" Background="{DynamicResource Island.Overlay05}" Padding="7,3" Margin="0,0,4,0" VerticalAlignment="Center">
+         <TextBlock x:Name="DemoLabel" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource Island.Secondary}"/>
         </Border>
         <StackPanel x:Name="AppButtons" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed"/>
-        <Border x:Name="AppButtonsDivider" Width="1" Height="14" Background="#14FFFFFF" Margin="4,0" Visibility="Collapsed"/>
+        <Border x:Name="AppButtonsDivider" Width="1" Height="14" Background="{DynamicResource Island.Overlay08}" Margin="4,0" Visibility="Collapsed"/>
         <Button x:Name="MarkReadButton" Style="{StaticResource IconButton}" Click="OnMarkRead">
          <local:IconGlyph Symbol="checkmark.rectangle.stack" Width="14" Height="14" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
         </Button>
@@ -132,10 +131,10 @@
        </StackPanel>
       </Grid>
       <Grid x:Name="TaskPages" Margin="0,4,0,0" ClipToBounds="True" PreviewMouseWheel="OnTaskWheel" PreviewMouseLeftButtonDown="OnTaskPointerDown" PreviewMouseLeftButtonUp="OnTaskPointerUp"/>
-      <TextBlock x:Name="StatusLabel" Visibility="Collapsed" Foreground="#FFBD61" FontSize="11" TextWrapping="Wrap" Margin="9,6,9,0"/>
-      <Border Background="#14FFFFFF" Height="1" Margin="9,10"/>
+      <TextBlock x:Name="StatusLabel" Visibility="Collapsed" Foreground="{DynamicResource Island.Attention}" FontSize="11" TextWrapping="Wrap" Margin="9,6,9,0"/>
+      <Border Background="{DynamicResource Island.Overlay08}" Height="1" Margin="9,10"/>
       <Grid Height="24" Margin="9,0">
-       <TextBlock x:Name="QuotaTitle" Foreground="#9E9E9E" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+       <TextBlock x:Name="QuotaTitle" Foreground="{DynamicResource Island.Secondary}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
       </Grid>
       <Grid x:Name="QuotaSlots" Margin="0,8,0,4"/>
      </StackPanel>

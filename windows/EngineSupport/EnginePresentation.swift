@@ -115,6 +115,13 @@ struct EngineHeader: Codable, Equatable {
     let progressFraction: Double?
     let progressLongStep: Bool?
     let progressStale: Bool?
+    /// Several running tasks, in the task list's order, for the average and segment rings.
+    let progressTasks: [EngineTaskShare]?
+    let progressAverage: Double?
+    let progressAverageStale: Bool?
+    let progressAverageProvider: String?
+    let progressReported: Int?
+    let progressSegments: Bool?
 
     init(groups: [ActivityTaskGroup], requests: [PendingAttentionRequest], inbox: CompletionInbox, at now: Date) {
         self.init(ActivityTaskPresentation(activities: groups.flatMap(\.members), requests: requests, inbox: inbox,
@@ -132,7 +139,22 @@ struct EngineHeader: Codable, Equatable {
         endingIsCore = value.endingIsCore
         if case .symbol(let glyph) = value.core { coreSymbol = glyph } else { coreSymbol = nil }
         progressFraction = value.progress?.fraction
-        progressLongStep = value.progress.map { $0.mode == .longStep }
+        // Waiting for background work holds the light like a long step: the request goes on, the agent does not.
+        progressLongStep = value.progress.map { [.longStep, .waiting].contains($0.mode) }
         progressStale = value.progress?.stale
+        let several = value.tasks.count > 1
+        progressTasks = several ? value.tasks.map(EngineTaskShare.init) : nil
+        progressAverage = several ? value.averageProgress : nil
+        progressAverageStale = several && value.averageProgress != nil ? value.averageStale : nil
+        progressAverageProvider = several ? value.averageProvider?.rawValue : nil
+        progressReported = several ? value.reportedCount : nil
+        progressSegments = several ? value.showsSegments : nil
     }
+}
+
+struct EngineTaskShare: Codable, Equatable {
+    let provider: String
+    let fraction: Double?
+    let stale: Bool
+    init(_ value: HeaderActivity.TaskShare) { provider = value.provider.rawValue; fraction = value.fraction; stale = value.stale }
 }

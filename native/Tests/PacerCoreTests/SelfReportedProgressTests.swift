@@ -152,6 +152,11 @@ final class SelfReportedProgressTests: XCTestCase {
         let waiting = try ring(at: 300)
         XCTAssertEqual(waiting.mode, .waiting); XCTAssertEqual(waiting.percent, 70); XCTAssertFalse(waiting.stale, "Expected silence never fades")
         XCTAssertEqual(waiting.accessibilityText, L10n.text("activity.progress_waiting", 70))
+        // The request is not done, so the collapsed badge keeps its estimate and counts it in the average.
+        let header = ActivityTaskPresentation(activities: state.activities, requests: [], inbox: CompletionInbox(),
+            options: .init(progressRingProviders: [.claude]), at: now.addingTimeInterval(300)).header(symbol: { $0.rawValue })
+        XCTAssertEqual(header.progress?.percent, 70); XCTAssertEqual(header.progress?.mode, .waiting)
+        XCTAssertEqual(header.tasks.map(\.fraction), [0.7]); XCTAssertEqual(header.reportedCount, 1)
         func status(at offset: Double) throws -> String {
             ActivityTaskRowPresentation(activity: try XCTUnwrap(state.activities.first), unread: false, at: now.addingTimeInterval(offset)).status
         }

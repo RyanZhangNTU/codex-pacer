@@ -23,42 +23,89 @@ extension HeaderActivity.Ending {
     }
 }
 
+/// The badge's component choices: what the core shows for one task and what
+/// the ring shows while several run.
+struct ActivityBadgeOptions: Equatable {
+    var singlePercent = false
+    var multiRing: CompactComponentOptions.MultiRing = .service
+    var multiCore: CompactComponentOptions.MultiCore = .count
+    var endMark = true
+}
+
 struct ActivityBadge: View {
     let activity: HeaderActivity
+    var options = ActivityBadgeOptions()
+    /// The badge's side; its drawing keeps the 20-point geometry and scales.
+    var size: CGFloat = 20
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandLayoutProbe) private var layoutProbe
     @State private var ripples = 0
     @State private var blooms = 0
+    @State private var shakes = 0
     private static let attentionInk = Color(red: 0.26, green: 0.15, blue: 0.02)
     /// Ink on a solid ending, as in the task rows.
     private static let endingInk = Color.black.opacity(0.74)
+    private var k: CGFloat { max(0.5, size / 20) }
+
+    /// Several running tasks can show their estimates instead of the services:
+    /// the average as one arc, or one arc per task. A request keeps the amber disc.
+    private var several: Bool { activity.activeCount > 1 && activity.attention == nil }
+    private var multiRing: HeaderActivity.MultiTaskRing? { activity.multiTaskRing(options.multiRing) }
+    private var average: Double? { multiRing == .average ? activity.averageProgress : nil }
+    private var segmented: Bool { multiRing == .segments }
+    private var estimate: ActivityOrbit.Progress? {
+        if let average { return .init(fraction: average, longStep: false, stale: activity.averageStale) }
+        if segmented { return nil }
+        return activity.progress.map { .init(fraction: $0.fraction, longStep: [.longStep, .waiting].contains($0.mode), stale: $0.stale) }
+    }
+    /// The average of several services is drawn in the neutral ink; one service keeps its color.
+    private var estimateInk: NSColor? {
+        guard average != nil else { return nil }
+        return activity.averageProvider.map { NSColor($0.tint) } ?? PacerPalette.tickInk
+    }
+    private var percent: String? {
+        func text(_ fraction: Double) -> String { String(Int((min(1, max(0, fraction)) * 100).rounded())) }
+        // The core's percent is the average's choice; segments that give way to it keep the count.
+        if let average, options.multiRing == .average, options.multiCore == .percent { return text(average) }
+        if options.singlePercent, activity.activeCount == 1, activity.attention == nil, let progress = activity.progress { return text(progress.fraction) }
+        return nil
+    }
+    private var solid: Bool { activity.attention != nil || activity.endingIsCore }
 
     var body: some View {
+        let core: CGFloat = solid ? 17 : 15, k = k
         // The stack keeps the core's count/symbol switch inside it. In the
         // island's nesting, a switch at the root of this chain recreated the
         // orbit as well, which dropped its easing and restarted its rotation.
         ZStack { coreView }
-            .frame(minWidth: 15, minHeight: 15)
-            .padding(.horizontal, isWide ? 3.5 : 0)
+            .frame(minWidth: core * k, minHeight: core * k)
+            .padding(.horizontal, isWide ? 3.5 * k : 0)
             .background { fill }
             .overlay { ripple }
-            .padding(2.5)
-            .frame(minWidth: 20, minHeight: 20)
+            .padding((20 - core) / 2 * k)
+            .frame(minWidth: 20 * k, minHeight: 20 * k)
             .background {
-                if !activity.orbit.isEmpty {
+                if segmented {
+                    TaskSegmentsRing(tasks: activity.tasks, scale: k, animates: !reduceMotion && !layoutProbe).transition(.opacity)
+                } else if !activity.orbit.isEmpty || estimate != nil {
                     ActivityOrbit(segments: AgentProvider.allCases.map { provider in
                         ActivityOrbit.Segment(color: NSColor(provider.tint), weight: activity.orbit[provider] ?? 0)
-                    }, progress: activity.progress.map {
-                        ActivityOrbit.Progress(fraction: $0.fraction, longStep: $0.mode == .longStep, stale: $0.stale)
-                    }, animates: !reduceMotion && !layoutProbe)
+                    }, progress: estimate, ink: estimateInk, lineWidth: 2 * k, light: PacerPalette.light,
+                        animates: !reduceMotion && !layoutProbe)
                     .transition(.opacity)
                 }
             }
+            .background {
+                // A request keeps a faint second ring around the amber disc after its ripples.
+                if activity.attention != nil {
+                    Circle().stroke(PacerPalette.attention, lineWidth: 1.1 * k).frame(width: 21.8 * k, height: 21.8 * k).opacity(0.4)
+                }
+            }
             .overlay(alignment: .topTrailing) {
-                if activity.showsEndingMark, let ending = activity.ending {
-                    Circle().fill(ending.tint).frame(width: 6, height: 6)
-                        .overlay(Circle().stroke(Color.black.opacity(0.85), lineWidth: 1.5))
-                        .offset(x: 1, y: -1)
+                if options.endMark, activity.showsEndingMark, let ending = activity.ending {
+                    Circle().fill(ending.tint).frame(width: 6 * k, height: 6 * k)
+                        .overlay(Circle().stroke(Color.black.opacity(0.85), lineWidth: 1.5 * k))
+                        .offset(x: k, y: -k)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
@@ -70,6 +117,15 @@ struct ActivityBadge: View {
                     SpringKeyframe(1.0, duration: 0.4, spring: .bouncy)
                 }
             }
+            // A failed ending shakes the badge once from side to side.
+            .keyframeAnimator(initialValue: 0.0, trigger: shakes) { content, offset in
+                content.offset(x: offset * k)
+            } keyframes: { _ in
+                KeyframeTrack {
+                    LinearKeyframe(-2, duration: 0.1); LinearKeyframe(2, duration: 0.1); LinearKeyframe(-2, duration: 0.1)
+                    LinearKeyframe(2, duration: 0.1); LinearKeyframe(-0.9, duration: 0.1); LinearKeyframe(0, duration: 0.1)
+                }
+            }
             .fixedSize()
             .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.2), value: activity)
             .onChange(of: activity.attention) { previous, current in
@@ -77,11 +133,14 @@ struct ActivityBadge: View {
             }
             .onChange(of: activity.ending) { previous, current in
                 if previous == nil, current != nil, !reduceMotion { blooms += 1 }
+                if case .failed = current, !reduceMotion, !layoutProbe {
+                    if case .failed = previous {} else { shakes += 1 }
+                }
             }
     }
 
     private var isWide: Bool {
-        if case .count(let count) = activity.core { return count >= 10 }
+        if percent == nil, case .count(let count) = activity.core { return count >= 10 }
         return false
     }
     private var ink: Color {
@@ -90,15 +149,20 @@ struct ActivityBadge: View {
         return PacerPalette.primary
     }
     @ViewBuilder private var coreView: some View {
-        switch activity.core {
-        case .idle:
-            Circle().fill(PacerPalette.tertiary).frame(width: 5, height: 5)
-        case .symbol(let name):
-            Image(systemName: StatusSymbols.enclosed(name)).font(.system(size: 9, weight: .bold))
-                .foregroundStyle(ink).contentTransition(.symbolEffect(.replace))
-        case .count(let count):
-            Text(HeaderActivity.countText(count)).font(.system(size: 10, weight: .bold, design: .rounded))
-                .monospacedDigit().foregroundStyle(ink).contentTransition(.numericText(value: Double(count)))
+        if let percent {
+            Text(percent).font(.system(size: 8 * k, weight: .bold, design: .rounded)).monospacedDigit().foregroundStyle(ink)
+                .contentTransition(.numericText())
+        } else {
+            switch activity.core {
+            case .idle:
+                Circle().fill(PacerPalette.tertiary).frame(width: 5 * k, height: 5 * k)
+            case .symbol(let name):
+                Image(systemName: StatusSymbols.enclosed(name)).font(.system(size: 9 * k, weight: .bold))
+                    .foregroundStyle(ink).contentTransition(.symbolEffect(.replace))
+            case .count(let count):
+                Text(HeaderActivity.countText(count)).font(.system(size: 10 * k, weight: .bold, design: .rounded))
+                    .monospacedDigit().foregroundStyle(ink).contentTransition(.numericText(value: Double(count)))
+            }
         }
     }
     @ViewBuilder private var fill: some View {
@@ -108,11 +172,19 @@ struct ActivityBadge: View {
             // Everything ended: a solid disc in the ending's colour, lit from the top like a row's.
             Capsule().fill(LinearGradient(colors: [Color(nsColor: NSColor(ending.tint).blended(withFraction: 0.28, of: .white) ?? NSColor(ending.tint)), ending.tint], startPoint: .top, endPoint: .bottom))
                 .overlay(Capsule().fill(LinearGradient(colors: [.white.opacity(0.26), .white.opacity(0)], startPoint: .top, endPoint: .center)))
+        } else if several, showsText {
+            // Several tasks: the count sits on a faint disc so it reads steadily over the ring.
+            Capsule().fill(PacerPalette.overlay(18 / 255))
         }
+    }
+    private var showsText: Bool {
+        if percent != nil { return true }
+        if case .count = activity.core { return true }
+        return false
     }
     /// Two pings when attention arrives, then a steady solid fill.
     private var ripple: some View {
-        Capsule().stroke(PacerPalette.attention, lineWidth: 1.5)
+        Capsule().stroke(PacerPalette.attention, lineWidth: 1.5 * k)
             .keyframeAnimator(initialValue: RippleFrame(), trigger: ripples) { content, frame in
                 content.scaleEffect(frame.scale).opacity(frame.opacity)
             } keyframes: { _ in
@@ -132,6 +204,151 @@ struct ActivityBadge: View {
 private struct RippleFrame {
     var scale = 1.0
     var opacity = 0.0
+}
+
+/// One arc per running task, in the task list's order, each filled to its
+/// estimate over a track in its service's colour. An estimate that has not
+/// changed for a while fades; a task without one breathes along its whole arc,
+/// in step with a long step's breath, and its estimate replaces the breath.
+struct TaskSegmentsRing: View {
+    let tasks: [HeaderActivity.TaskShare]
+    var scale: CGFloat = 1
+    let animates: Bool
+
+    var body: some View {
+        TaskSegmentsLayer(segments: tasks.map { TaskSegmentsView.Segment(color: NSColor($0.provider.tint), fraction: $0.fraction, stale: $0.stale) },
+            scale: scale, animates: animates)
+            .frame(width: 20 * scale, height: 20 * scale)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Core Animation runs the breath in the render server, so the island does
+/// not redraw SwiftUI every frame; it pauses while the window is occluded and
+/// holds still with Reduce Motion, leaving the track.
+private struct TaskSegmentsLayer: NSViewRepresentable {
+    let segments: [TaskSegmentsView.Segment]
+    let scale: CGFloat
+    let animates: Bool
+    func makeNSView(context: Context) -> TaskSegmentsView { TaskSegmentsView() }
+    func updateNSView(_ view: TaskSegmentsView, context: Context) { view.update(segments: segments, scale: scale, animates: animates) }
+}
+
+final class TaskSegmentsView: NSView {
+    struct Segment: Equatable {
+        let color: NSColor
+        /// The task's estimate; nil breathes.
+        let fraction: Double?
+        let stale: Bool
+    }
+    private struct Lane {
+        let track = CAShapeLayer(), fill = CAShapeLayer(), breath = CAShapeLayer()
+        var layers: [CAShapeLayer] { [track, fill, breath] }
+    }
+    static let trackOpacity = 0.26, staleOpacity: Float = 0.45
+    /// The gap between two arcs, as a share of the circle.
+    static let gap = 18.0 / 360
+    private var segments: [Segment] = []
+    private var lanes: [Lane] = []
+    private var scale: CGFloat = 1
+    private var animates = true
+    private var occlusionObserver: NSObjectProtocol?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+    required init?(coder: NSCoder) { nil }
+    deinit { if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) } }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func update(segments: [Segment], scale: CGFloat, animates: Bool) {
+        let previous = self.segments, reshaped = segments.count != lanes.count || scale != self.scale
+        self.segments = segments; self.scale = scale; self.animates = animates
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        while lanes.count < segments.count {
+            let lane = Lane()
+            for shape in lane.layers {
+                shape.fillColor = nil; shape.lineCap = .butt; shape.strokeStart = 0
+                layer?.addSublayer(shape)
+            }
+            lane.breath.opacity = 0
+            lanes.append(lane)
+        }
+        while lanes.count > segments.count { lanes.removeLast().layers.forEach { $0.removeFromSuperlayer() } }
+        for (index, (lane, segment)) in zip(lanes, segments).enumerated() {
+            lane.track.strokeColor = segment.color.withAlphaComponent(Self.trackOpacity).cgColor
+            lane.fill.strokeColor = segment.color.cgColor
+            lane.breath.strokeColor = segment.color.cgColor
+            lane.layers.forEach { $0.lineWidth = 1.8 * scale }
+            let target = segment.fraction.map { min(1, max(0, $0)) } ?? 0
+            let shown = index < previous.count && !reshaped ? Double((lane.fill.presentation() ?? lane.fill).strokeEnd) : target
+            lane.fill.strokeEnd = target
+            lane.fill.opacity = segment.stale ? Self.staleOpacity : 1
+            // A new estimate eases from the value on screen, as the badge's arc does.
+            if animates, abs(target - shown) > 0.0005 {
+                let sweep = CABasicAnimation(keyPath: "strokeEnd")
+                sweep.fromValue = shown; sweep.toValue = target; sweep.duration = 0.3 + 0.3 * abs(target - shown)
+                sweep.timingFunction = CAMediaTimingFunction(controlPoints: 0.33, 1, 0.68, 1)
+                lane.fill.add(sweep, forKey: "sweep")
+            }
+        }
+        CATransaction.commit()
+        if reshaped { needsLayout = true }
+        refreshBreath()
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let count = lanes.count, span = (1 - Self.gap * Double(count)) / Double(max(1, count))
+        let center = CGPoint(x: bounds.midX, y: bounds.midY), radius = 8.6 * scale
+        let flipped = layer?.contentsAreFlipped() == true
+        for (index, lane) in lanes.enumerated() {
+            // Each arc starts at its place from the top and runs clockwise on screen.
+            let start = Self.gap / 2 + Double(index) * (span + Self.gap), path = CGMutablePath()
+            if flipped {
+                path.addArc(center: center, radius: radius, startAngle: -.pi / 2 + start * 2 * .pi,
+                    endAngle: -.pi / 2 + (start + span) * 2 * .pi, clockwise: false)
+            } else {
+                path.addArc(center: center, radius: radius, startAngle: .pi / 2 - start * 2 * .pi,
+                    endAngle: .pi / 2 - (start + span) * 2 * .pi, clockwise: true)
+            }
+            for shape in lane.layers { shape.frame = bounds; shape.path = path }
+        }
+        CATransaction.commit()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        occlusionObserver = window.map { window in
+            NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
+                object: window, queue: .main) { [weak self] _ in
+                    Task { @MainActor in self?.refreshBreath() }
+                }
+        }
+        refreshBreath()
+    }
+
+    /// The tasks without an estimate breathe on the shared long-step clock.
+    private func refreshBreath() {
+        let live = animates && window.map { $0.occlusionState.contains(.visible) || !$0.isVisible } == true
+        let now = CACurrentMediaTime()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        for (lane, segment) in zip(lanes, segments) {
+            if live && segment.fraction == nil {
+                if lane.breath.animation(forKey: "breath") == nil {
+                    lane.breath.add(TaskStatusIconNSView.stepBreath(on: lane.breath, now: now), forKey: "breath")
+                }
+            } else { lane.breath.removeAnimation(forKey: "breath") }
+        }
+    }
+    /// The lanes that breathe now, by index; read by tests.
+    var breathingLanes: [Int] { lanes.indices.filter { lanes[$0].breath.animation(forKey: "breath") != nil } }
+    var fillFractions: [Double] { lanes.map { Double($0.fill.strokeEnd) } }
 }
 
 /// A comet that circles the badge while work runs. Core Animation drives it in
@@ -156,6 +373,11 @@ struct ActivityOrbit: NSViewRepresentable {
     }
     let segments: [Segment]
     var progress: Progress? = nil
+    /// The estimate's color when it is not the first running service's.
+    var ink: NSColor? = nil
+    var lineWidth: CGFloat = 2
+    /// The island's tone, so overlays redraw when it changes.
+    var light = PacerPalette.light
     let animates: Bool
 
     /// The running providers' comets start evenly spaced, in provider order:
@@ -191,14 +413,18 @@ struct ActivityOrbit: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> ActivityOrbitView { ActivityOrbitView() }
-    func updateNSView(_ view: ActivityOrbitView, context: Context) { view.update(segments: segments, progress: progress, animates: animates) }
+    func updateNSView(_ view: ActivityOrbitView, context: Context) {
+        view.update(segments: segments, progress: progress, ink: ink, lineWidth: lineWidth, light: light, animates: animates)
+    }
 }
 
 /// With one task reporting an estimate, the comets give way to an arc from
 /// the top, clockwise, with the task rows' motion: light runs along it while
 /// the task works, and the stretch past its head breathes during a long step.
 final class ActivityOrbitView: NSView {
-    private static let lineWidth: CGFloat = 2
+    private var lineWidth: CGFloat = 2
+    private var ink: NSColor?
+    private var light = PacerPalette.light
     private let track = CAShapeLayer()
     private let ring = CALayer()
     private let ringMask = CAShapeLayer()
@@ -216,21 +442,21 @@ final class ActivityOrbitView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         track.fillColor = nil
-        track.strokeColor = NSColor.white.withAlphaComponent(0.1).cgColor
-        track.lineWidth = Self.lineWidth
+        track.strokeColor = PacerPalette.overlayInk(0.1).cgColor
+        track.lineWidth = lineWidth
         ringMask.fillColor = nil
         ringMask.strokeColor = NSColor.black.cgColor
-        ringMask.lineWidth = Self.lineWidth
+        ringMask.lineWidth = lineWidth
         ring.mask = ringMask
         comet.type = .conic
         comet.startPoint = CGPoint(x: 0.5, y: 0.5)
         comet.endPoint = CGPoint(x: 0.5, y: 0)
         ring.addSublayer(comet)
         for shape in [arcGlow, arc, step] + flowBands {
-            shape.fillColor = nil; shape.lineWidth = Self.lineWidth; shape.strokeStart = 0; shape.strokeEnd = 0
+            shape.fillColor = nil; shape.lineWidth = lineWidth; shape.strokeStart = 0; shape.strokeEnd = 0
             estimate.addSublayer(shape)
         }
-        arc.lineCap = .round; arcGlow.lineCap = .round; arcGlow.lineWidth = 4; arcGlow.opacity = 0.22
+        arc.lineCap = .round; arcGlow.lineCap = .round; arcGlow.lineWidth = 2 * lineWidth; arcGlow.opacity = 0.22
         for (band, alpha) in zip(flowBands, [0.3, 0.45]) { band.strokeColor = NSColor.white.withAlphaComponent(alpha).cgColor }
         step.opacity = 0
         estimate.isHidden = true
@@ -243,8 +469,19 @@ final class ActivityOrbitView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func update(segments: [ActivityOrbit.Segment], progress: ActivityOrbit.Progress? = nil, animates: Bool) {
-        guard segments != self.segments || progress != self.progress || animates != self.animates else { return }
+    func update(segments: [ActivityOrbit.Segment], progress: ActivityOrbit.Progress? = nil, ink: NSColor? = nil,
+                lineWidth: CGFloat = 2, light: Bool = PacerPalette.light, animates: Bool) {
+        let restyle = ink != self.ink || lineWidth != self.lineWidth || light != self.light
+        guard segments != self.segments || progress != self.progress || animates != self.animates || restyle else { return }
+        if restyle {
+            self.ink = ink; self.lineWidth = lineWidth; self.light = light
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            track.strokeColor = PacerPalette.overlayInk(0.1).cgColor
+            for shape in [track, ringMask, arc, step] + flowBands { shape.lineWidth = lineWidth }
+            arcGlow.lineWidth = 2 * lineWidth
+            CATransaction.commit()
+            needsLayout = true
+        }
         if segments != self.segments || animates != self.animates {
             let stops = ActivityOrbit.stops(for: segments, animates: animates)
             // A comet grows from or shrinks into its head; switching to or from
@@ -264,7 +501,7 @@ final class ActivityOrbitView: NSView {
     private func applyProgress(from previous: ActivityOrbit.Progress?) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        let ink = segments.first { $0.weight > 0 }?.color.cgColor ?? NSColor.white.cgColor
+        let ink = (self.ink ?? segments.first { $0.weight > 0 }?.color ?? PacerPalette.tickInk).cgColor
         let crossfade = animates && (previous == nil) != (progress == nil)
         ring.opacity = progress == nil ? 1 : 0
         estimate.isHidden = progress == nil && !crossfade
@@ -308,7 +545,7 @@ final class ActivityOrbitView: NSView {
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        let inset = bounds.insetBy(dx: Self.lineWidth / 2, dy: Self.lineWidth / 2)
+        let inset = bounds.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
         let radius = min(inset.width, inset.height) / 2
         let path = CGPath(roundedRect: inset, cornerWidth: radius, cornerHeight: radius, transform: nil)
         for shape in [track, ringMask] { shape.frame = bounds; shape.path = path }

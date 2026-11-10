@@ -29,8 +29,16 @@ extension IslandModel {
                 .init(provider: $0, snapshot: providerQuota($0), failed: providerQuotaError($0) != nil)
             }, wallet: enabledProviders.contains(.deepseek) ? .init(deepseekWallet, preferred: deepseekRingPeriod) : nil,
             firstOutput: latestFirstOutputLatency, warnings: compactWarningItems,
-            groups: taskGroups, overview: overview, now: now)
+            groups: taskGroups, overview: overview, firstOutputs: activityState.firstOutputHistory.values, now: now)
     }
+    /// Every component's choices, edited in the Collapsed Bar page.
+    var compactComponentOptions: CompactComponentOptions { .load(from: defaults) }
+    /// The bar size the island draws at: the saved one, or standard while
+    /// attached to a hardware notch, whose height the bar keeps.
+    var compactBarSize: CompactBarSize {
+        CompactBarSize.load(from: defaults).effective(attached: isAttached, hardwareNotch: screenNotchSize.height > 0)
+    }
+    var barMetrics: CompactBarMetrics { compactBarSize.metrics }
 
     func compactPresentation(showsStatus: Bool = true) -> CompactBarPresentation.Output {
         var layout = compactLayout
@@ -44,10 +52,12 @@ extension IslandModel {
                 // A present empty or unknown preference previously meant no ring.
                 return AgentProvider(rawValue: saved).map(CompactBarPresentation.RingChoice.init(provider:)) ?? .none
             })
+        let choices = compactComponentOptions
         let request = CompactBarPresentation.Request(providers: enabledProviders, options: options,
-            context: compactContext, attached: isAttached, strip: sideDock != nil)
+            context: compactContext, attached: isAttached, strip: sideDock != nil, componentOptions: choices.json,
+            size: compactBarSize.rawValue)
         if let cached = compactPresentationCache[showsStatus], cached.layout == layout, cached.request == request { return cached.output }
-        guard let output = CompactBarPresentation.project(request, layout: layout) else {
+        guard let output = CompactBarPresentation.project(request, layout: layout, components: choices) else {
             return .empty
         }
         compactPresentationCache[showsStatus] = (layout, request, output)

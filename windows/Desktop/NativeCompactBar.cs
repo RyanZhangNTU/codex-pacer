@@ -8,17 +8,31 @@ using System.Threading.Tasks;
 namespace CodexPacer.Windows;
 
 internal sealed record CompactEdit(string Kind, string? Component = null, string? Lane = null, string? Before = null, int? Offset = null);
-internal sealed record CompactEntry(string Provider, string Text, string StripText, bool Dimmed);
-internal sealed record CompactRing(string Provider, double? Remaining, bool Dimmed);
+internal sealed record CompactEntry(string Provider, string Text, string StripText, bool Dimmed, double? Value = null, bool? Low = null);
+internal sealed record CompactRing(string Provider, double? Remaining, bool Dimmed, double? Time = null, bool? Low = null,
+    bool? Exhausted = null, string? Window = null);
 internal sealed record CompactComponent(string Id, string Label, string ShortLabel, string Detail, string Symbol, string HideLabel,
-    bool Available, bool Shown, bool Visible, bool StripEligible, bool DimsExpanded, string? Text, string? StripText,
-    string? Unit, string? StripUnit, string Help, string Accessibility, CompactEntry[] Entries);
+    bool Available, bool Shown, bool Visible, bool StripEligible, string? Text, string? StripText,
+    string? Unit, string? StripUnit, string Help, string Accessibility, CompactEntry[] Entries,
+    string? Tone = null, double? MaxWidth = null);
 internal sealed record CompactGroup(string Id, string Label, string[] Components);
 internal sealed record CompactWindow(string Provider, string Label, string Selection, bool WeeklyOnly);
+// Points for one bar size, from Core's CompactBarMetrics.
+internal sealed record CompactMetrics(double Scale, double Height, double StripWidth, double Inset, double Gap, double LaneGap,
+    double Divider, double Value, double Unit, double Status, double Badge, double Gauge, double Warning, double StripValue,
+    double StripUnit, double StripInset, double StripGap, double Shoulder, double Radius)
+{
+    internal static CompactMetrics Standard { get; } = new(1, 36, 32, 13, 8, 16, 14, 13, 10, 12.5, 22, 20, 15, 11.5, 9, 10, 8, 8, 19);
+}
 internal sealed record CompactProjection(int Version, string LayoutJSON, string[] Warnings,
     string[] EditorLeading, string[] EditorTrailing, string[] Leading, string[] Trailing,
     CompactComponent[] Components, CompactGroup[] Groups, CompactWindow[] Windows, CompactRing[] Rings,
-    string[] RingChoices, bool GaugeClock, bool SingleTaskCount, double DimDuration, double ExpandedOpacity);
+    string[] RingChoices, bool GaugeClock, bool SingleTaskCount,
+    CompactChoices? ComponentOptions = null, CompactMetrics? Metrics = null, bool? SingleTaskPercent = null)
+{
+    internal CompactChoices Choices => ComponentOptions ?? CompactChoices.Default;
+    internal CompactMetrics Sizes => Metrics ?? CompactMetrics.Standard;
+}
 
 internal sealed class NativeCompactBar
 {
@@ -30,7 +44,7 @@ internal sealed class NativeCompactBar
     private EngineClient? previousClient;
     internal static NativeCompactBar Shared => SharedValue.Value;
     internal NativeCompactBar(string directory) { }
-    private static CompactProjection Empty { get; } = new(1, "", [], [], [], [], [], [], [], [], [], [], false, false, 0, 1);
+    private static CompactProjection Empty { get; } = new(1, "", [], [], [], [], [], [], [], [], [], [], false, false);
     private static bool Valid(CompactProjection value) => value is { Version: 1, Components: not null, Leading: not null, Trailing: not null }
         && value.Components.Length <= 64 && value.Leading.Length <= value.Components.Length && value.Trailing.Length <= value.Components.Length;
     private static object Input(DesktopPreferences preferences, string language, string[] providers, JsonElement? context,
@@ -39,7 +53,8 @@ internal sealed class NativeCompactBar
         compact = new { layout = preferences.CompactLayout, warnings = preferences.WarningKinds, language, providers,
             options = new { singleTask = preferences.CompactSingleTask, metric = preferences.CompactMetric,
                 codexWindow = preferences.CodexQuotaWindow, claudeWindow = preferences.ClaudeQuotaWindow,
-                rings = new[] { preferences.QuotaRingOuter, preferences.QuotaRingInner } }, action, context, attached, strip }
+                rings = new[] { preferences.QuotaRingOuter, preferences.QuotaRingInner } }, action, context, attached, strip,
+            componentOptions = preferences.CompactComponentOptions, size = preferences.CompactBarSize }
     };
     internal CompactProjection Read(DesktopPreferences preferences, string language, string[] providers, JsonElement? context = null,
         bool attached = false, bool strip = false, CompactEdit? action = null)

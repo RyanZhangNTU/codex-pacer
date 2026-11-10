@@ -43,7 +43,7 @@ internal static class PreferencesCodec
             var properties = JsonSerializer.SerializeToNode(new DesktopPreferences(), Json)!.AsObject();
             foreach (string property in properties.Select(pair => pair.Key).ToArray())
             {
-                if (property is "schemaVersion" or "compactLayout" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID" or "islandPlacement") continue;
+                if (property is "schemaVersion" or "compactLayout" or "compactComponentOptions" or "islandDisplayPlaces" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID" or "islandPlacement") continue;
                 if (root.TryGetPropertyValue(Key(property), out var saved)) properties[property] = saved?.DeepClone();
             }
             string displayID = ReadDisplayID(root);
@@ -80,10 +80,37 @@ internal static class PreferencesCodec
                     properties["warningKinds"] = warnings.DeepClone();
             }
             value = Normalize(properties.Deserialize<DesktopPreferences>(Json) ?? throw new JsonException()) with
-            { IslandPlacement = ReadIslandPlacement(root["islandPlacement"]) };
+            {
+                IslandPlacement = ReadIslandPlacement(root["islandPlacement"]), CompactComponentOptions = ReadComponentOptions(root["compactComponentOptions"]),
+                IslandDisplayPlaces = ReadDisplayPlaces(root["islandDisplayPlaces"])
+            };
         }
         if (!value.IsValid) throw new JsonException();
         return value;
+    }
+    // Damaged component choices read as the defaults without touching other settings.
+    private static string? ReadComponentOptions(JsonNode? node)
+    {
+        if (node is not JsonValue value || !value.TryGetValue<string>(out var text)) return null;
+        try
+        {
+            byte[] data = Convert.FromBase64String(text);
+            if (data.Length > CompactChoices.ByteLimit || JsonNode.Parse(data) is not JsonObject) return null;
+            return new UTF8Encoding(false, true).GetString(data);
+        }
+        catch (Exception error) when (error is FormatException or JsonException or DecoderFallbackException or ArgumentException) { return null; }
+    }
+    // Damaged places read as none; each display then starts from the current place.
+    private static string? ReadDisplayPlaces(JsonNode? node)
+    {
+        if (node is not JsonValue value || !value.TryGetValue<string>(out var text)) return null;
+        try
+        {
+            byte[] data = Convert.FromBase64String(text);
+            if (data.Length > IslandScreenMemory.ByteLimit || JsonNode.Parse(data) is not JsonObject) return null;
+            return new UTF8Encoding(false, true).GetString(data);
+        }
+        catch (Exception error) when (error is FormatException or JsonException or DecoderFallbackException or ArgumentException) { return null; }
     }
     private static IslandPlacement? ReadIslandPlacement(JsonNode? node)
     {
@@ -100,14 +127,17 @@ internal static class PreferencesCodec
         AccentColor = DesktopPreferences.ValidAccent(value.AccentColor) ? value.AccentColor : "multicolor",
         Position = value.Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight" ? value.Position : "center",
         DisplayMode = value.DisplayMode is "notch" or "floating" ? value.DisplayMode : "automatic",
-        IslandAppearance = value.IslandAppearance is "classic" ? "classic" : "liquidGlass",
+        IslandAppearance = value.IslandAppearance is "classic" or "graphite" or "liquidGlassLight" ? value.IslandAppearance : "liquidGlass",
+        CompactBarSize = DesktopPreferences.BarSizes.Contains(value.CompactBarSize) ? value.CompactBarSize : "standard",
+        CompactComponentOptions = value.CompactComponentOptions is { } options && Encoding.UTF8.GetByteCount(options) <= CompactChoices.ByteLimit ? options : null,
+        IslandDisplayPlaces = value.IslandDisplayPlaces is { } places && Encoding.UTF8.GetByteCount(places) <= IslandScreenMemory.ByteLimit ? places : null,
         ExpandedQuotaStyle = value.ExpandedQuotaStyle is "classic" ? "classic" : "split",
         DeepSeekPanelStyle = value.DeepSeekPanelStyle is "simple" ? "simple" : "detailed",
         DeepSeekMode = value.DeepSeekMode is "budget" ? "budget" : "balance",
         DeepSeekBalanceSource = value.DeepSeekBalanceSource is "apiKey" or "web" ? value.DeepSeekBalanceSource : "automatic",
         DeepSeekSpeedSource = value.DeepSeekSpeedSource is "account" ? "account" : "local",
         DeepSeekRingPeriod = value.DeepSeekRingPeriod is "week" ? "week" : "day",
-        CompactSingleTask = value.CompactSingleTask is "count" ? "count" : "stage",
+        CompactSingleTask = value.CompactSingleTask is "count" or "percent" ? value.CompactSingleTask : "stage",
         CompactMetric = value.CompactMetric is "pace" ? "pace" : "remaining",
         LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "notifications" or "codex" or "claude" or "deepseek" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew" ? value.LastSettingsPane : "overview"
     };
@@ -123,7 +153,7 @@ internal static class PreferencesCodec
         root["schemaVersion"] = Version;
         foreach (var property in properties)
         {
-            if (property.Key is "schemaVersion" or "compactLayout" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID") continue;
+            if (property.Key is "schemaVersion" or "compactLayout" or "compactComponentOptions" or "islandDisplayPlaces" or "warningKinds" or "providerModes" or "positionChosen" or "displaySelection" or "displayID") continue;
             string key = Key(property.Key);
             if (property.Value == null) root.Remove(key); else root[key] = property.Value.DeepClone();
         }
@@ -151,6 +181,10 @@ internal static class PreferencesCodec
             if (ring.Item2.Length == 0) root.Remove(ring.Item1); else root[ring.Item1] = ring.Item2;
         if (value.CompactLayout == null) root.Remove("compactIslandLayout");
         else root["compactIslandLayout"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(value.CompactLayout));
+        if (value.CompactComponentOptions == null) root.Remove("compactComponentOptions");
+        else root["compactComponentOptions"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(value.CompactComponentOptions));
+        if (value.IslandDisplayPlaces == null) root.Remove("islandDisplayPlaces");
+        else root["islandDisplayPlaces"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(value.IslandDisplayPlaces));
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(root, Json);
         if (bytes.Length > PreferencesStore.MaximumBytes) throw new JsonException();
         // A save must be reversible, including the warnings carried by the layout.

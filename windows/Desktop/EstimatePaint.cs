@@ -26,7 +26,7 @@ internal sealed class EstimatePaint : FrameworkElement
     private readonly Layer layer;
     private readonly double radius, stroke, glow;
     private Color ink = Colors.White;
-    private bool stale, flowing;
+    private bool stale, flowing, track, head;
     /// The light runs only to the estimate even while the arc still sweeps there.
     internal double Limit { get; set; } = 1;
 
@@ -38,6 +38,10 @@ internal sealed class EstimatePaint : FrameworkElement
     internal Color Ink { get => ink; set { if (ink == value) return; ink = value; InvalidateVisual(); } }
     internal bool Stale { get => stale; set { if (stale == value) return; stale = value; InvalidateVisual(); } }
     internal bool Flowing { get => flowing; set { if (flowing == value) return; flowing = value; InvalidateVisual(); } }
+    /// The arc layer also draws the faint full circle under the estimate.
+    internal bool Track { get => track; set { if (track == value) return; track = value; InvalidateVisual(); } }
+    /// The arc layer also marks its head with a small white dot.
+    internal bool Head { get => head; set { if (head == value) return; head = value; InvalidateVisual(); } }
 
     protected override void OnRender(DrawingContext drawing)
     {
@@ -46,10 +50,13 @@ internal sealed class EstimatePaint : FrameworkElement
         switch (layer)
         {
             case Layer.Arc:
+                if (track) drawing.DrawEllipse(null, Pen(WithAlpha(PacerPalette.Neutral, 0.11), stroke, PenLineCap.Flat), center, radius, radius);
                 if (f <= 0.0005) return;
                 // The glow goes once the estimate is stale, as on the Mac.
                 if (!stale && glow > 0) drawing.DrawGeometry(null, Pen(WithAlpha(ink, 0.22), glow, PenLineCap.Round), Arc(center, radius, 0, f));
                 drawing.DrawGeometry(null, Pen(ink, stroke, PenLineCap.Round), Arc(center, radius, 0, f));
+                if (head && f is > 0.02 and < 0.9995)
+                    drawing.DrawEllipse(Brushes.White, null, new Point(center.X + radius * Math.Sin(f * 2 * Math.PI), center.Y - radius * Math.Cos(f * 2 * Math.PI)), 1.25, 1.25);
                 break;
             case Layer.Flow:
                 if (!flowing) return;
@@ -94,7 +101,7 @@ internal sealed class CometPaint : FrameworkElement
         new FrameworkPropertyMetadata(0.5, FrameworkPropertyMetadataOptions.AffectsRender));
     /// The tail as a share of the circle.
     public double Tail { get => (double)GetValue(TailProperty); set => SetValue(TailProperty, value); }
-    private static readonly Brush TrackInk = PacerPalette.Ink(255, 255, 255, 20);
+    private static Brush TrackInk => PacerPalette.Overlay(20);
     private readonly double radius, stroke;
     private Color ink = Colors.White;
     private bool still;

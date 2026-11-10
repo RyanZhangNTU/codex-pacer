@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -62,7 +63,7 @@ internal static class IdleSchedulingChecks
             int controlledFades = 0;
             void FinishFade(TimeSpan duration)
             {
-                Check(quota.Scheduling.Clocks == 2 && duration > TimeSpan.Zero, "The controlled fade must own both actual finite WPF clocks");
+                Check(quota.Scheduling.Clocks == 4 && duration > TimeSpan.Zero, "The controlled switch must own its finite WPF clocks: two fades and two slides");
                 controlledFades++; quota.SeekFadeForAutomation(duration);
             }
             quota.FadeStartedForAutomation += FinishFade;
@@ -83,6 +84,12 @@ internal static class IdleSchedulingChecks
                 "Hidden quotas have no clocks, timers, or continuing render work");
             window.Show(); await Task.Delay(250); Check(quota.Scheduling.Scheduled, "Showing the island restores the original alternating values; quota="
                 + quota.Scheduling + ", visible=" + window.IsVisible + ", occluded=" + window.DecorationsOccluded);
+            // A new reading while the values take turns keeps one value in place.
+            quota.Update([new AlternatingQuotaText.Item("codex", "41%", false), new AlternatingQuotaText.Item("claude", "62%", false)], true);
+            quota.Update([new AlternatingQuotaText.Item("codex", "40%", false), new AlternatingQuotaText.Item("claude", "61%", false)], true);
+            var shownValues = quota.Children.OfType<FrameworkElement>().Where(layer => layer.Opacity > 0.01).ToArray();
+            Check(shownValues.Length == 1 && shownValues[0].Opacity > 0.99 && quota.ShownTexts.SequenceEqual(["40%", "61%"]),
+                "A new reading during the rotation shows one value, never two in one place");
             if (composed)
             {
                 badge.Update(header, true); await Task.Delay(150);

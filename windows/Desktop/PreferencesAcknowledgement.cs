@@ -20,7 +20,8 @@ internal static class PreferencesAcknowledgement
             preferences = json,
             compact = new { layout = value.CompactLayout, warnings = value.WarningKinds, language = "en", providers = new[] { "codex", "claude", "deepseek" }, attached = false, strip = false,
                 options = new { singleTask = value.CompactSingleTask, metric = value.CompactMetric, codexWindow = value.CodexQuotaWindow,
-                    claudeWindow = value.ClaudeQuotaWindow, rings = new[] { value.QuotaRingOuter, value.QuotaRingInner } } }
+                    claudeWindow = value.ClaudeQuotaWindow, rings = new[] { value.QuotaRingOuter, value.QuotaRingInner } },
+                componentOptions = value.CompactComponentOptions, size = value.CompactBarSize }
         } }, timeout ?? TimeSpan.FromSeconds(3));
         string expected = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
         if (reply.Digest != expected || reply.LayoutJSON == null || reply.Warnings == null

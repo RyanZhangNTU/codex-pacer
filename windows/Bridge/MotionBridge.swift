@@ -124,28 +124,32 @@ public func pacerMotionCanvas(_ handle: UnsafeMutableRawPointer?, _ time: Double
 
 // Input: screen x/y/w/h, work area x/y/w/h (Windows coordinates), display
 // mode (automatic/notch/floating), safe top, notch width, position, expanded,
-// measured content width/height, measured header width, measured strip height.
+// measured content width/height, measured header width, measured strip height
+// and, optionally, the bar size (an index into `CompactBarSize.allCases`).
 // Output: target x/y/w/h, expanded canvas w/h, header height, attached,
-// effective position and notch width. All measurements are logical points.
+// effective position and notch width, then the strip width when there is room.
+// All measurements are logical points.
 @_cdecl("pacer_layout_frame")
 public func pacerLayoutFrame(_ input: UnsafePointer<Double>?, _ count: Int32,
                              _ output: UnsafeMutablePointer<Double>?, _ capacity: Int32) -> Int32 {
-    guard let input, count == 17, let output, capacity >= 10 else { return 0 }
-    let values = Array(UnsafeBufferPointer(start: input, count: 17))
+    guard let input, count == 17 || count == 18, let output, capacity >= 10 else { return 0 }
+    let values = Array(UnsafeBufferPointer(start: input, count: Int(count)))
     guard values.allSatisfy(\.isFinite), values[8].rounded() == values[8], (0...2).contains(values[8]),
           values[11].rounded() == values[11], (0...4).contains(values[11]),
+          count == 17 || (values[17].rounded() == values[17] && (0..<Double(CompactBarSize.allCases.count)).contains(values[17])),
           let screen = frame(values[0], values[1], values[2], values[3]),
           let visible = frame(values[4], values[5], values[6], values[7]),
           values[9...10].allSatisfy({ $0 >= 0 && $0 <= 10_000 }),
           values[13...16].allSatisfy({ $0 >= 0 && $0 <= 100_000 }) else { return 0 }
     let mode = [IslandDisplayMode.automatic, .notch, .floating][Int(values[8])]
-    let layout = mode.layout(safeAreaTop: values[9], hardwareNotchWidth: values[10])
+    let size = count == 18 ? CompactBarSize.allCases[Int(values[17])] : .standard
+    let layout = mode.layout(safeAreaTop: values[9], hardwareNotchWidth: values[10], size: size)
     let positionIndex = layout.attached ? 0 : Int(values[11])
     let position = [IslandPosition.center, .topLeft, .bottomLeft, .topRight, .bottomRight][positionIndex]
     func bounds(expanded: Bool) -> CGRect {
         if position.side != nil {
             return IslandGeometry.sideFrame(visible: visible, position: position, stripHeight: values[16], expanded: expanded,
-                panelWidth: IslandWidth.sidePanel(contentWidth: values[13]), contentHeight: values[14])
+                panelWidth: IslandWidth.sidePanel(contentWidth: values[13]), contentHeight: values[14], stripWidth: layout.stripWidth)
         }
         let width = IslandWidth.desired(expanded: expanded, notchWidth: layout.notchWidth, leading: 80, trailing: 65,
             contentWidth: values[13], headerWidth: values[15])
@@ -154,8 +158,9 @@ public func pacerLayoutFrame(_ input: UnsafePointer<Double>?, _ count: Int32,
             contentHeight: values[14], desiredWidth: width)
     }
     let target = bounds(expanded: values[12] != 0), canvas = bounds(expanded: true)
-    let result: [Double] = [target.minX, -target.maxY, target.width, target.height, canvas.width, canvas.height,
+    var result: [Double] = [target.minX, -target.maxY, target.width, target.height, canvas.width, canvas.height,
         layout.topHeight, layout.attached ? 1 : 0, Double(positionIndex), layout.notchWidth]
+    if capacity >= 11 { result.append(layout.stripWidth) }
     for index in result.indices { output[index] = result[index] }
     return 1
 }

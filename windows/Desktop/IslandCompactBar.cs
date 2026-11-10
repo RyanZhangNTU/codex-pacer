@@ -15,24 +15,20 @@ public partial class IslandWindow
 {
     private DesktopPreferences compactPreferences = new();
     private readonly Dictionary<string, Button> compactRow = new(), compactColumn = new();
-    private readonly TextBlock compactStatus = CompactText(12, FontWeights.Medium, PacerPalette.Primary);
-    private readonly TextBlock compactFirst = CompactText(11, FontWeights.Medium, PacerPalette.Secondary);
-    private readonly TextBlock compactStripFirst = CompactText(10, FontWeights.SemiBold, PacerPalette.Secondary);
-    private readonly DeepSeekPriceClock compactClock = new() { Width = 18, Height = 18 }, compactStripClock = new() { Width = 18, Height = 18 };
+    private readonly CompactStatusText compactStatus = new();
+    private readonly CompactValueView compactRate = new(false), compactStripRate = new(true);
+    private readonly CompactValueView compactFirst = new(false, CompactInk.Stopwatch, 11, 12), compactStripFirst = new(true);
+    private readonly DeepSeekPriceClock compactClock = new() { Compact = true, Width = 20, Height = 20 }, compactStripClock = new() { Compact = true, Width = 20, Height = 20 };
     private readonly StackPanel compactTime = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
     private readonly StackPanel compactStripTime = new() { HorizontalAlignment = HorizontalAlignment.Center };
-    private readonly TextBlock compactStripQuotaUnit = CompactText(9, FontWeights.Medium, PacerPalette.Tertiary);
+    private readonly TextBlock compactStripQuotaUnit = CompactInk.Text(9, FontWeights.Medium, CompactInk.Unit);
     private CompactProjection? compactData;
+    private CompactMetrics compactSizes = CompactMetrics.Standard;
+    private bool quotaLinked, stripQuotaLinked;
     private double measuredStripHeight = 135;
-    private bool compactDimmed;
-    private readonly Dictionary<Button, AnimationLease> dimClocks = [];
+    /// The bar size's index in Core's `CompactBarSize.allCases`, for the native layout.
+    private int CompactSizeIndex => Math.Max(0, Array.IndexOf(DesktopPreferences.BarSizes, compactPreferences.CompactBarSize));
 
-    private static TextBlock CompactText(double size, FontWeight weight, Brush ink)
-    {
-        var text = new TextBlock { FontFamily = PacerFonts.Interface, FontSize = size, FontWeight = weight, Foreground = ink,
-            VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
-        System.Windows.Documents.Typography.SetNumeralAlignment(text, FontNumeralAlignment.Tabular); return text;
-    }
     private static StackPanel CompactStack(FrameworkElement value, FrameworkElement unit)
     {
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
@@ -41,15 +37,16 @@ public partial class IslandWindow
     private void InitializeCompactBar()
     {
         HeaderLeading.Children.Clear(); HeaderTrailing.Children.Clear(); StripLeading.Children.Clear(); StripTrailing.Children.Clear();
-        RatePanel.Margin = new Thickness(0); QuotaLabel.Margin = new Thickness(0); StripQuota.Margin = new Thickness(0);
-        WarningGlyphs.Margin = StripWarnings.Margin = StripRatePanel.Margin = new Thickness(0);
-        var firstColumn = CompactStack(compactStripFirst, new TextBlock { Text = "s", FontSize = 9, FontWeight = FontWeights.Medium,
-            Foreground = PacerPalette.Tertiary, HorizontalAlignment = HorizontalAlignment.Center });
+        QuotaLabel.Margin = StripQuota.Margin = WarningGlyphs.Margin = StripWarnings.Margin = new Thickness(0);
+        StripQuota.Vertical = true; compactStripQuotaUnit.HorizontalAlignment = HorizontalAlignment.Center;
         var quotaColumn = CompactStack(StripQuota, compactStripQuotaUnit);
-        Add("activity", Badge, StripBadge); Add("status", compactStatus, new Border()); Add("tps", RatePanel, StripRatePanel);
-        Add("firstOutput", compactFirst, firstColumn); Add("warnings", WarningGlyphs, StripWarnings);
+        Add("activity", Badge, StripBadge); Add("status", compactStatus, new Border()); Add("tps", compactRate, compactStripRate);
+        Add("firstOutput", compactFirst, compactStripFirst); Add("warnings", WarningGlyphs, StripWarnings);
         Add("quotaGauge", QuotaGlyph, StripQuotaGlyph); Add("priceClock", compactClock, compactStripClock);
         Add("quota", QuotaLabel, quotaColumn); Add("timeRemaining", compactTime, compactStripTime);
+        // While the value takes turns, the rings show whose value it is.
+        QuotaLabel.CurrentChanged += provider => QuotaGlyph.Highlighted = quotaLinked ? provider : null;
+        StripQuota.CurrentChanged += provider => StripQuotaGlyph.Highlighted = stripQuotaLinked ? provider : null;
         void Add(string id, FrameworkElement row, FrameworkElement column)
         {
             compactRow[id] = Host(id, row, false); compactColumn[id] = Host(id, column, true);
@@ -83,18 +80,28 @@ public partial class IslandWindow
         // restarting its rotation and retargeting the collapse motion.
         if ((horizontalPending || NativeCompactBar.Shared.LastPending) && compactData is { Components.Length: > 0 }) return;
         compactData = horizontal;
+        var sizes = compactSizes = horizontal.Sizes;
+        var choices = horizontal.Choices;
+        Badge.SetSize(sizes.Badge); StripBadge.SetSize(sizes.Badge);
         if (latest?.Presentation?.Header is EngineHeader header)
         {
             if (horizontal.SingleTaskCount && header.ActiveCount == 1) header = header with { CoreSymbol = null };
-            Badge.Update(header, DecorationsAnimate); StripBadge.Update(header, DecorationsAnimate);
+            var badge = new BadgeOptions(horizontal.SingleTaskPercent == true, choices.MultiRing, choices.MultiCore, choices.EndMark);
+            Badge.Update(header, DecorationsAnimate, badge); StripBadge.Update(header, DecorationsAnimate, badge);
         }
         UpdateValues(horizontal, false); UpdateValues(vertical, true);
-        QuotaGlyph.Update(horizontal, latest?.Wallet); StripQuotaGlyph.Update(vertical, latest?.Wallet);
-        compactClock.Update(latest?.Wallet); compactStripClock.Update(latest?.Wallet);
-        WarningGlyphs.Update(latest?.CompactWarnings); StripWarnings.Update(latest?.CompactWarnings);
-        Fill(HeaderLeading, horizontal.Leading, compactRow, false, attached ? 6 : 8);
-        Fill(HeaderTrailing, horizontal.Trailing, compactRow, false, attached ? 6 : 8);
-        Fill(StripLeading, vertical.Leading, compactColumn, true, 4); Fill(StripTrailing, vertical.Trailing, compactColumn, true, 4);
+        QuotaGlyph.Update(horizontal, latest?.Wallet); StripQuotaGlyph.Update(vertical, latest?.Wallet, strip: true);
+        quotaLinked = Linked(horizontal); stripQuotaLinked = Linked(vertical);
+        QuotaGlyph.Highlighted = quotaLinked ? QuotaLabel.CurrentProvider : null; StripQuotaGlyph.Highlighted = stripQuotaLinked ? StripQuota.CurrentProvider : null;
+        foreach (var clock in new[] { compactClock, compactStripClock }) { clock.Width = clock.Height = sizes.Gauge; clock.Update(latest?.Wallet); }
+        WarningGlyphs.Update(latest?.CompactWarnings, choices.WarningStyle, choices.WarningLimit, sizes.Warning, DecorationsAnimate);
+        StripWarnings.Update(latest?.CompactWarnings, choices.WarningStyle, choices.WarningLimit, sizes.Warning, DecorationsAnimate);
+        Header.Margin = new Thickness(sizes.Inset, 0, sizes.Inset, 0);
+        HeaderDivider.Height = sizes.Divider; StripDivider.Width = sizes.Divider;
+        StripLeading.Margin = new Thickness(0, sizes.StripInset, 0, 0); StripTrailing.Margin = new Thickness(0, 0, 0, sizes.StripInset);
+        Fill(HeaderLeading, horizontal.Leading, compactRow, false, sizes.Gap);
+        Fill(HeaderTrailing, horizontal.Trailing, compactRow, false, sizes.Gap);
+        Fill(StripLeading, vertical.Leading, compactColumn, true, sizes.StripGap); Fill(StripTrailing, vertical.Trailing, compactColumn, true, sizes.StripGap);
         if (horizontal.Components.Length == 0)
         {
             var placeholder = new Button { Name = "enginePlaceholder", IsHitTestVisible = false, IsEnabled = false, Focusable = false, IsTabStop = false,
@@ -103,7 +110,10 @@ public partial class IslandWindow
                 Style = (Style)FindResource("CompactComponentButton") };
             HeaderLeading.Children.Add(placeholder);
         }
-        SetCompactDimState(expanded, false);
+        // The ring the alternating value is not naming dims, unless the rings' card turned that off.
+        static bool Linked(CompactProjection data) => data.Choices.RingDim && data.Choices.QuotaMultiple == "alternate" && data.Rings.Length > 1
+            && data.Rings.All(ring => ring.Window == null) && data.Leading.Concat(data.Trailing).Contains("quota")
+            && data.Leading.Concat(data.Trailing).Contains("quotaGauge");
         void UpdateValues(CompactProjection data, bool column)
         {
             var slots = column ? compactColumn : compactRow;
@@ -111,50 +121,77 @@ public partial class IslandWindow
             foreach (var item in data.Components)
             {
                 if (!slots.TryGetValue(item.Id, out var slot)) continue;
-                slot.Tag = item.DimsExpanded;
                 AutomationProperties.SetName(slot, item.Accessibility); AutomationProperties.SetHelpText(slot, item.Help);
             }
-            var rate = data.Components.Single(value => value.Id == "tps");
-            if (column) { FitStripNumber(StripRate, rate.StripText); StripRatePanel.Visibility = rate.Shown && rate.Visible ? Visibility.Visible : Visibility.Collapsed; }
-            else { RateLabel.Text = rate.Text; RatePanel.Visibility = rate.Shown && rate.Visible ? Visibility.Visible : Visibility.Collapsed; }
-            RateLabel.Foreground = StripRate.Foreground = latest?.RateIsFresh == true ? PacerPalette.Primary : PacerPalette.Secondary;
-            var first = data.Components.Single(value => value.Id == "firstOutput");
-            if (column) FitStripNumber(compactStripFirst, first.StripText); else compactFirst.Text = first.Text;
-            compactStatus.Text = data.Components.Single(value => value.Id == "status").Text;
-            var quota = data.Components.Single(value => value.Id == "quota");
-            var values = quota.Entries.Select(value => (value.Provider, column ? value.StripText : value.Text)).ToArray();
-            var dimmed = quota.Entries.Select(value => value.Dimmed).ToArray();
-            if (column) { StripQuota.MaximumDisplayWidth = 20; StripQuota.Update(values, DecorationsAnimate, dimmed); compactStripQuotaUnit.Text = quota.StripUnit ?? ""; compactStripQuotaUnit.Visibility = quota.StripUnit == null ? Visibility.Collapsed : Visibility.Visible; }
-            else QuotaLabel.Update(values, DecorationsAnimate, dimmed);
-            var time = data.Components.Single(value => value.Id == "timeRemaining");
-            RenderTime(column ? compactStripTime : compactTime, time, column);
+            CompactComponent Item(string id) => data.Components.Single(value => value.Id == id);
+            var metrics = data.Sizes;
+            var rate = Item("tps");
+            var rateView = column ? compactStripRate : compactRate;
+            // A rate without a fresh measurement stays, in the secondary colour.
+            rateView.Update(column ? rate.StripText : rate.Text, column ? rate.StripUnit : rate.Unit,
+                latest?.RateIsFresh == true ? PacerPalette.Primary : PacerPalette.Secondary, metrics);
+            rateView.Visibility = rate.Shown && rate.Visible ? Visibility.Visible : Visibility.Collapsed;
+            var first = Item("firstOutput");
+            (column ? compactStripFirst : compactFirst).Update(column ? first.StripText : first.Text, column ? first.StripUnit : first.Unit,
+                PacerPalette.Primary, metrics);
+            if (!column) { var status = Item("status"); compactStatus.Update(status.Text, status.Tone, status.MaxWidth ?? 108 * metrics.Scale, metrics.Status, DecorationsAnimate); }
+            var quota = Item("quota");
+            var values = column ? StripQuota : QuotaLabel;
+            values.FontSize = column ? metrics.StripValue : metrics.Value; values.UnitSize = column ? metrics.StripUnit : metrics.Unit;
+            values.Pair = data.Choices.QuotaMultiple == "pair";
+            values.MaximumDisplayWidth = column ? Math.Max(16, metrics.StripWidth - 6) : double.PositiveInfinity;
+            values.Update(quota.Entries.Select(entry => new AlternatingQuotaText.Item(entry.Provider, column ? entry.StripText : entry.Text,
+                entry.Dimmed, entry.Low == true)).ToArray(), DecorationsAnimate);
+            if (column)
+            {
+                compactStripQuotaUnit.FontSize = metrics.StripUnit; compactStripQuotaUnit.Text = quota.StripUnit ?? "";
+                compactStripQuotaUnit.Visibility = quota.StripUnit == null ? Visibility.Collapsed : Visibility.Visible;
+            }
+            RenderTime(column ? compactStripTime : compactTime, Item("timeRemaining"), column, metrics);
         }
     }
-    private void RenderTime(StackPanel host, CompactComponent value, bool column)
+    /// The hourglass, then each service's time left in its colour; percentages
+    /// carry a unit, a countdown says its own.
+    internal static void RenderTime(StackPanel host, CompactComponent value, bool column, CompactMetrics sizes)
     {
         host.Children.Clear();
-        host.Children.Add(new IconGlyph { Symbol = "hourglass", Width = 9, Height = 9, Ink = PacerPalette.Tertiary,
-            VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Margin = column ? new Thickness(0) : new Thickness(0, 0, 4, 0) });
-        foreach (var item in value.Entries)
+        var glyph = CompactInk.Glyph(CompactInk.Hourglass, 9, 12, sizes.Scale);
+        glyph.Margin = column ? new Thickness(0, 0, 0, 2 * sizes.Scale) : new Thickness(0, 0, 5 * sizes.Scale, 0);
+        host.Children.Add(glyph);
+        bool percent = value.StripUnit == "%";
+        for (int index = 0; index < value.Entries.Length; index++)
         {
-            if (!column && host.Children.Count > 1)
-                host.Children.Add(new Border { Width = 1, Height = 10, Background = PacerPalette.Hairline, Margin = new Thickness(7, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center });
-            var text = CompactText(column ? 10 : 11, column ? FontWeights.SemiBold : FontWeights.Medium, PacerPalette.Provider(item.Provider));
-            text.Opacity = .85;
-            if (column) text.Margin = new Thickness(0, 1, 0, 0);
-            if (column) FitStripNumber(text, item.StripText); else text.Text = item.Text;
-            host.Children.Add(text);
+            var item = value.Entries[index];
+            var ink = PacerPalette.Provider(item.Provider);
+            if (column)
+            {
+                var text = CompactInk.Text(sizes.StripValue - 0.5, FontWeights.SemiBold, ink); text.Text = item.StripText;
+                host.Children.Add(text);
+                continue;
+            }
+            var entry = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(index == 0 ? 0 : 5 * sizes.Scale, 0, 0, 0) };
+            string shown = item.Text;
+            bool unit = percent && shown.Length > 1 && shown.EndsWith('%');
+            var number = CompactInk.Text(sizes.Value - 1, FontWeights.SemiBold, ink); number.Text = unit ? shown[..^1] : shown;
+            number.VerticalAlignment = VerticalAlignment.Bottom; entry.Children.Add(number);
+            if (unit)
+            {
+                var sign = CompactInk.Text(sizes.Unit, FontWeights.Medium, CompactInk.Unit); sign.Text = "%";
+                sign.VerticalAlignment = VerticalAlignment.Bottom; sign.Margin = new Thickness(1.5 * sizes.Scale, 0, 0, (sizes.Value - 1 - sizes.Unit) * 0.12);
+                entry.Children.Add(sign);
+            }
+            host.Children.Add(entry);
         }
-        if (column) { var unit = CompactText(9, FontWeights.Medium, PacerPalette.Tertiary); unit.Text = "%"; unit.Margin = new Thickness(0, 1, 0, 0); host.Children.Add(unit); }
+        if (column && percent) { var unit = CompactInk.Text(sizes.StripUnit, FontWeights.Medium, CompactInk.Unit); unit.Text = "%"; host.Children.Add(unit); }
     }
-    internal static void FitStripNumber(TextBlock text, string? value)
+    /// Sets a strip number at `size`, shrinking it only if it cannot fit `width`.
+    internal static void FitStripNumber(TextBlock text, string? value, double size = 11.5, double width = 22)
     {
         string number = value ?? "—";
-        var probe = CompactText(10, FontWeights.SemiBold, PacerPalette.Primary); probe.Text = number;
-        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        double width = Math.Max(probe.DesiredSize.Width, NativeTypography.CompactWidth(number, 10) ?? 0);
-        text.Text = number; text.FontSize = 10 * Math.Min(1, 20 / Math.Max(1, width));
-        text.MaxWidth = 20; text.TextTrimming = TextTrimming.None;
+        double natural = Math.Max(CompactInk.Measure(number, size, FontWeights.SemiBold), NativeTypography.CompactWidth(number, size) ?? 0);
+        text.Text = number; text.FontSize = size * Math.Min(1, width / Math.Max(1, natural));
+        text.MaxWidth = width; text.TextTrimming = TextTrimming.None;
     }
     private static void Fill(StackPanel panel, string[] ids, Dictionary<string, Button> slots, bool vertical, double gap)
     {
@@ -175,69 +212,56 @@ public partial class IslandWindow
     }
     private (double Header, double Strip) MeasureCompactBar()
     {
-        double rateWidth = NativeTypography.CompactWidth(RateLabel.Text ?? "", 12) ?? 0;
-        RateLabel.Width = double.NaN; RateLabel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        RateLabel.Width = Math.Max(rateWidth, RateLabel.DesiredSize.Width);
         // Updated values keep the same slots. A panel measured again with the
         // same constraint returns its cached size until the next layout pass.
         foreach (var lane in new[] { HeaderLeading, HeaderTrailing, StripLeading, StripTrailing }) InvalidateLayoutTree(lane);
-        HeaderLeading.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); HeaderTrailing.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        StripLeading.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); StripTrailing.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        bool divided = StripLeading.Children.Count > 0 && StripTrailing.Children.Count > 0;
+        var open = new Size(double.PositiveInfinity, double.PositiveInfinity);
+        HeaderLeading.Measure(open); HeaderTrailing.Measure(open); StripLeading.Measure(open); StripTrailing.Measure(open);
+        var sizes = compactSizes;
+        double top = StripLeading.Children.Count > 0 ? StripLeading.DesiredSize.Height - StripLeading.Margin.Top : 0;
+        double bottom = StripTrailing.Children.Count > 0 ? StripTrailing.DesiredSize.Height - StripTrailing.Margin.Bottom : 0;
+        bool divided = top > 0 && bottom > 0;
         StripDivider.Visibility = divided ? Visibility.Visible : Visibility.Collapsed;
-        StripDivider.Margin = new Thickness(0, 0, 0, 18 + StripTrailing.DesiredSize.Height);
-        measuredStripHeight = 24 + StripLeading.DesiredSize.Height + StripTrailing.DesiredSize.Height + (divided ? 13 : 0);
+        StripDivider.Margin = new Thickness(0, 0, 0, sizes.StripInset + bottom + sizes.LaneGap / 2);
+        measuredStripHeight = 2 * sizes.StripInset + top + bottom + (divided ? sizes.LaneGap : 0);
         double left = HeaderLeading.DesiredSize.Width, right = HeaderTrailing.DesiredSize.Width;
-        return (left + right + (left > 0 && right > 0 ? 10 : 0) + 30, measuredStripHeight);
+        bool both = left > 0 && right > 0;
+        // A hairline sits halfway between the two lanes.
+        HeaderDivider.Visibility = both ? Visibility.Visible : Visibility.Collapsed;
+        return (left + right + (both ? sizes.LaneGap : 0) + 2 * sizes.Inset, measuredStripHeight);
     }
     private static void InvalidateLayoutTree(DependencyObject element)
     {
         if (element is UIElement value) value.InvalidateMeasure();
         for (int index = 0; index < VisualTreeHelper.GetChildrenCount(element); index++) InvalidateLayoutTree(VisualTreeHelper.GetChild(element, index));
     }
-    private void SetCompactDimState(bool value, bool animate)
+    /// Redraws what the island built in its earlier tone: the bar's values,
+    /// marks and drawn glyphs, then everything that renders itself.
+    private void RepaintTone()
     {
-        if (compactData == null) return;
-        if (value == compactDimmed && animate) return;
-        bool changed = value != compactDimmed; compactDimmed = value;
-        foreach (var slot in compactRow.Values.Concat(compactColumn.Values))
+        QuotaLabel.Repaint(); StripQuota.Repaint(); WarningGlyphs.Repaint(); StripWarnings.Repaint(); compactStatus.Repaint();
+        compactStripQuotaUnit.Foreground = CompactInk.Unit;
+        UpdateCompactBar();
+        static void Invalidate(DependencyObject node)
         {
-            double target = value && slot.Tag is true ? compactData.ExpandedOpacity : 1;
-            dimClocks.TryGetValue(slot, out var old);
-            var next = CompactComponentOpacity.Apply(slot, target, !changed && DecorationsAnimate,
-                animate && DecorationsAnimate, compactData.DimDuration, old, () => dimClocks.Remove(slot));
-            if (next == null) dimClocks.Remove(slot); else dimClocks[slot] = next;
+            if (node is UIElement element) element.InvalidateVisual();
+            for (int index = 0; index < VisualTreeHelper.GetChildrenCount(node); index++) Invalidate(VisualTreeHelper.GetChild(node, index));
         }
+        Invalidate(this);
+        RefreshSurface();
     }
-    private bool CompactDimStateMatches()
-        => compactData == null || compactRow.Values.Concat(compactColumn.Values).All(slot =>
-            Math.Abs(slot.Opacity - (expanded && slot.Tag is true ? compactData.ExpandedOpacity : 1)) < .001);
-    private string CompactDimDiagnostics => string.Join(";", compactRow.Values.Concat(compactColumn.Values)
-        .Where(slot => compactData != null && Math.Abs(slot.Opacity - (expanded && slot.Tag is true ? compactData.ExpandedOpacity : 1)) >= .001).Select(slot =>
-        $"{AutomationProperties.GetAutomationId(slot)}:{slot.Opacity:0.000}/{slot.GetAnimationBaseValue(OpacityProperty)},dim={slot.Tag},animated={slot.HasAnimatedProperties}"));
+    /// An attached bar keeps its free corners at the size's radius; a floating
+    /// one is a full capsule and a docked strip rounds half its width.
+    private double CollapsedRadius()
+    {
+        if (layout.Position != 0) return Math.Max(1, layout.StripWidth / 2);
+        double half = Math.Max(1, layout.HeaderHeight / 2);
+        return layout.Attached || layout.Dock is IslandEdge.Top or IslandEdge.Bottom ? Math.Min(compactSizes.Radius, layout.HeaderHeight) : half;
+    }
     private sealed class CompactComponentButton : Button
     {
         protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
         private sealed class Peer(CompactComponentButton owner) : ButtonAutomationPeer(owner)
         { protected override List<AutomationPeer>? GetChildrenCore() => null; }
-    }
-}
-
-internal static class CompactComponentOpacity
-{
-    internal static AnimationLease? Apply(Button slot, double target, bool preserveAnimation, bool animate, double duration,
-        AnimationLease? ownedClock = null, Action? completed = null)
-    {
-        // A completed WPF clock still sets HasAnimatedProperties. Keep it
-        // only while its base target also matches the current projection.
-        if (preserveAnimation && slot.HasAnimatedProperties
-            && Math.Abs((double)slot.GetAnimationBaseValue(UIElement.OpacityProperty) - target) < .001) return ownedClock;
-        double from = slot.Opacity;
-        ownedClock?.Dispose(); slot.ApplyAnimationClock(UIElement.OpacityProperty, null); slot.Opacity = target;
-        if (animate && Math.Abs(from - target) > .001)
-            return new(new DoubleAnimation(from, target, TimeSpan.FromSeconds(duration))
-            { EasingFunction = NativeTaskRowTiming.Shared.Ease, FillBehavior = FillBehavior.Stop },
-                clock => slot.ApplyAnimationClock(UIElement.OpacityProperty, clock), completed);
-        return null;
     }
 }

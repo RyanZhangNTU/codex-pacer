@@ -76,6 +76,6 @@ struct AccountUsageView: View {
         }
         .font(.system(size: 12))
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .background(PacerPalette.overlay(0.04), in: RoundedRectangle(cornerRadius: 10))
     }
 }

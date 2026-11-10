@@ -66,7 +66,7 @@ struct WebLoginBanner: View {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 24)).foregroundStyle(.green)
                     .frame(width: 28, height: 28).accessibilityHidden(true)
             } else {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.tint, glyph: Color.black.opacity(0.72), size: 28)
+                SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72), size: 28)
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(signedIn ? copy.signedIn : copy.prompt).font(.system(size: 13, weight: .semibold))

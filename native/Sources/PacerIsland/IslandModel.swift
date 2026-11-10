@@ -454,6 +454,22 @@ final class IslandModel: ObservableObject {
     @Published var now = Date()
     @Published var settingsRevision = 0
     @Published var isAttached = false
+    /// Attached to a real hardware notch, where the collapsed bar is pure black.
+    @Published var atHardwareNotch = false
+    /// The island's tone: light under Light Liquid Glass, except while the
+    /// black notch bar covers the material. Previews elsewhere follow it.
+    @Published private(set) var lightTone = PacerPalette.light
+    private var toneCovered = false
+    func coverTone(_ covered: Bool) {
+        guard covered != toneCovered else { return }
+        toneCovered = covered
+        syncTone()
+    }
+    private func syncTone() {
+        let light = appearance.isLight && !toneCovered
+        PacerPalette.light = light
+        if lightTone != light { lightTone = light }
+    }
     /// The docked corner while the island floats as a vertical strip; nil for
     /// the centered bar and notch attachment.
     @Published var sideDock: IslandPosition?
@@ -484,8 +500,39 @@ final class IslandModel: ObservableObject {
         IslandPlacement.clear(from: defaults)
         IslandPosition.center.save(to: defaults)
         IslandDisplayMode.floating.save(to: defaults)
+        rememberDisplayPlace()
         placementRevision += 1
         onLayoutChange?()
+    }
+
+    /// The display the island shows on, named in Settings.
+    @Published private(set) var currentDisplayName: String?
+    /// The display whose place the island preferences hold, while each
+    /// display keeps its own.
+    private var currentDisplay: (key: String, name: String)?
+    /// The panel reports the display the island shows on. Reaching another
+    /// display gives the island that display's place; returns true then.
+    func arrive(onDisplay key: String, name: String, hasNotch: Bool) -> Bool {
+        if currentDisplayName != name { currentDisplayName = name }
+        guard IslandScreenMemory.isEnabled(in: defaults) else { currentDisplay = nil; return false }
+        guard currentDisplay?.key != key else { return false }
+        let switched = currentDisplay != nil
+        currentDisplay = (key, name)
+        guard IslandScreenMemory.arrive(at: key, name: name, hasNotch: hasNotch, switched: switched, defaults: defaults) else { return false }
+        // An open Settings window shows the new display's place.
+        placementRevision += 1
+        return true
+    }
+    /// A drag dropped the island on this display; the place belongs to it.
+    func placeMoved(toDisplay key: String, name: String) {
+        guard IslandScreenMemory.isEnabled(in: defaults) else { return }
+        currentDisplay = (key, name)
+        rememberDisplayPlace()
+    }
+    /// Keeps the island's current place for the display it is on.
+    func rememberDisplayPlace() {
+        guard IslandScreenMemory.isEnabled(in: defaults), let currentDisplay else { return }
+        IslandScreenMemory.rememberCurrent(for: currentDisplay.key, name: currentDisplay.name, defaults: defaults)
     }
     /// The mouse-up that ends a drag must not also pin the island or open a task.
     func barClicked(_ action: () -> Void) {
@@ -495,9 +542,19 @@ final class IslandModel: ObservableObject {
     @Published var notchWidth: CGFloat = 0
     /// Physical geometry of the screen hosting Pacer, retained even in Floating mode.
     @Published var screenNotchSize: CGSize = .zero
-    @Published var topHeight: CGFloat = 38
-    @Published var baseHeaderHeight: CGFloat = 38
+    @Published var topHeight: CGFloat = 36
+    @Published var baseHeaderHeight: CGFloat = 36
+    /// Width of the bar turned on its side at a docked edge, for the bar size.
+    @Published var stripWidth: CGFloat = IslandGeometry.stripWidth
     var onLayoutChange: (() -> Void)?
+    /// The collapsed bar's corners: an attached or edge-docked bar keeps its
+    /// free corners at the size's radius, a floating one is a full capsule and
+    /// a side strip rounds half its width.
+    var collapsedCornerRadius: CGFloat {
+        if sideDock != nil { return max(1, stripWidth / 2) }
+        let half = max(1, baseHeaderHeight / 2)
+        return isAttached || dockedEdge == .top || dockedEdge == .bottom ? min(CGFloat(barMetrics.radius), baseHeaderHeight) : half
+    }
     var onStatusChange: (() -> Void)?
     var onSettings: (() -> Void)?
     /// Opens Settings on a module's own page, where its sign-in and locations live.
@@ -876,7 +933,7 @@ final class IslandModel: ObservableObject {
     var displayMode: IslandDisplayMode { .load() }
     var islandPosition: IslandPosition { .load(from: defaults) }
     var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
-    var appearance: IslandAppearance { .stored }
+    var appearance: IslandAppearance { .stored(in: defaults) }
     var expandedQuotaStyle: ExpandedQuotaStyle { .load(from: defaults) }
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
     var hideProjects: Bool { defaults.bool(forKey: "hideProjects") }
@@ -1643,6 +1700,8 @@ final class IslandModel: ObservableObject {
             ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
         modules = .load(from: defaults)
         PacerAccent.current = PacerAccent(defaults: defaults)
+        // Light Liquid Glass turns the whole island light before it redraws.
+        syncTone()
         enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
         syncCodexProgressSwitch()
         syncDeepSeekProgressSwitch()
@@ -1650,6 +1709,8 @@ final class IslandModel: ObservableObject {
         // The header reports its width only when it changes, so the last measurement
         // stays: clearing it would leave the bar at the wider estimate after any setting.
         compactLayout = .load(from: defaults); settingsRevision += 1
+        // A place chosen in Settings belongs to the display the island is on.
+        rememberDisplayPlace()
         if clock != nil { scheduleClock() }
         let plan = lifecycle.settings(.init(enabled: Set(enabledProviders),
             sources: [.codex: currentCodexSourceSignature, .claude: currentClaudeSourceSignature, .deepseek: currentDeepSeekSourceSignature],

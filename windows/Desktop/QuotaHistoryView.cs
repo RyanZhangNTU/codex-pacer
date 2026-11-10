@@ -37,12 +37,12 @@ internal sealed class QuotaHistoryView : StackPanel
         heading.ColumnDefinitions.Add(new()); for (int column = 0; column < 3; column++) heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         source.Margin = new Thickness(0, 0, 8, 0); source.VerticalAlignment = VerticalAlignment.Center; heading.Children.Add(source);
         stale = Status("clock.arrow.circlepath", ui.Text("common.not_updated")); stale.Margin = new Thickness(0, 0, 6, 0); stale.VerticalAlignment = VerticalAlignment.Center;
-        foreach (var part in stale.Children) { if (part is IconGlyph glyph) glyph.Ink = PacerPalette.Attention; else if (part is TextBlock label) { label.Foreground = PacerPalette.Attention; label.FontSize = 11.5; } }
+        foreach (var part in stale.Children) { if (part is IconGlyph glyph) glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsWarning"); else if (part is TextBlock label) { label.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); label.FontSize = 11.5; } }
         Grid.SetColumn(stale, 1); heading.Children.Add(stale);
         freshness.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(freshness, 2); heading.Children.Add(freshness);
         refresh = new Button { Content = ui.Text("common.refresh"), Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(refresh, 3); heading.Children.Add(refresh); Children.Add(heading);
-        error.Margin = new Thickness(0, 0, 0, 8); error.TextWrapping = TextWrapping.Wrap; error.Foreground = PacerPalette.Attention; Children.Add(error);
+        error.Margin = new Thickness(0, 0, 0, 8); error.TextWrapping = TextWrapping.Wrap; error.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); Children.Add(error);
         AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Polite);
         chartHost.Margin = new Thickness(0, 8, 0, 8); Children.Add(chartHost);
         placeholder.Margin = new Thickness(0, 0, 0, 8); Children.Add(placeholder);
@@ -61,7 +61,8 @@ internal sealed class QuotaHistoryView : StackPanel
         balance.SetResourceReference(TextBlock.ForegroundProperty, "SettingsPrimary"); credits.Children.Add(balance);
         var creditLabel = Text(ui.Text("account.credits"), 13); creditLabel.Margin = new Thickness(5, 0, 0, 0); credits.Children.Add(creditLabel);
         Grid.SetColumn(credits, 1); accountRow.Children.Add(credits); Identify(credits, "quota.history.credits", ""); account.Children.Add(accountRow);
-        accountDetails = new Border { Padding = new Thickness(12), CornerRadius = new CornerRadius(10), Background = new SolidColorBrush(Color.FromArgb(10, 255, 255, 255)), Child = expiryDetails, Margin = new Thickness(0, 12, 0, 0) };
+        accountDetails = new Border { Padding = new Thickness(12), CornerRadius = new CornerRadius(10), Child = expiryDetails, Margin = new Thickness(0, 12, 0, 0) };
+        accountDetails.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");
         account.Children.Add(accountDetails);
         // Chart, then the account, then the details, each after a hairline, as on the Mac.
         Children.Add(Hairline(account)); Children.Add(account); Children.Add(Hairline(details)); Children.Add(details);

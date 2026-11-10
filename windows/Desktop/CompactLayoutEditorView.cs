@@ -59,7 +59,7 @@ internal sealed class CompactLayoutEditorView : Grid
             Grid.SetColumn(host, lane == "leading" ? 0 : 2); barGrid.Children.Add(host);
         }
         Grid.SetColumn(cameraGap, 1); barGrid.Children.Add(cameraGap);
-        bar = new Border { Child = barGrid, Height = BarHeight, Padding = new Thickness(10, 0, 10, 0), Background = Brushes.Black, VerticalAlignment = VerticalAlignment.Top,
+        bar = new Border { Child = barGrid, Height = BarHeight, Padding = new Thickness(10, 0, 10, 0), Background = PacerPalette.Surface, VerticalAlignment = VerticalAlignment.Top,
             HorizontalAlignment = HorizontalAlignment.Center };
         // A wide bar shrinks to the page rather than overflowing it.
         scene.Children.Add(new Viewbox { Child = bar, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(10, 0, 10, 0) });
@@ -119,8 +119,8 @@ internal sealed class CompactLayoutEditorView : Grid
     /// A side with nothing on it: a dashed "Drop here", as on the Mac.
     private Border DropHere()
     {
-        var label = new TextBlock { Text = ui.Text("layout.drop_here"), FontSize = 10.5, Foreground = new SolidColorBrush(Color.FromArgb(115, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center };
-        var dashed = new System.Windows.Shapes.Rectangle { RadiusX = 7, RadiusY = 7, StrokeThickness = 1, StrokeDashArray = [3, 3], Stroke = new SolidColorBrush(Color.FromArgb(64, 255, 255, 255)) };
+        var label = new TextBlock { Text = ui.Text("layout.drop_here"), FontSize = 10.5, Foreground = PacerPalette.Overlay(115), VerticalAlignment = VerticalAlignment.Center };
+        var dashed = new System.Windows.Shapes.Rectangle { RadiusX = 7, RadiusY = 7, StrokeThickness = 1, StrokeDashArray = [3, 3], Stroke = PacerPalette.Overlay(64) };
         var grid = new Grid { Height = 24, VerticalAlignment = VerticalAlignment.Center }; grid.Children.Add(dashed);
         label.Margin = new Thickness(8, 0, 8, 0); grid.Children.Add(label);
         return new Border { Child = grid, VerticalAlignment = VerticalAlignment.Center };
@@ -171,48 +171,43 @@ internal sealed class CompactLayoutEditorView : Grid
     }
     private static UIElement FaintLabel(CompactComponent value)
     {
-        var faint = new SolidColorBrush(Color.FromArgb(128, 255, 255, 255));
+        var faint = PacerPalette.Overlay(128);
         var label = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         label.Children.Add(new IconGlyph { Symbol = value.Symbol, Width = 9.5, Height = 9.5, Ink = faint, Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center });
         label.Children.Add(new TextBlock { Text = value.ShortLabel, FontSize = 11, FontWeight = FontWeights.Medium, Foreground = faint, VerticalAlignment = VerticalAlignment.Center });
         return label;
     }
-    private static TextBlock BarText(string? text, double size, FontWeight weight, Brush ink)
-    {
-        var value = new TextBlock { Text = text ?? "", FontFamily = PacerFonts.Interface, FontSize = size, FontWeight = weight, Foreground = ink, VerticalAlignment = VerticalAlignment.Center };
-        System.Windows.Documents.Typography.SetNumeralAlignment(value, FontNumeralAlignment.Tabular); return value;
-    }
-    /// The island's own component for this slot, filled from the same projection and snapshot.
+    /// The island's own component for this slot, filled from the same projection
+    /// and snapshot, at the standard bar size so every choice previews in place.
     private static UIElement? LiveComponent(CompactComponent value, CompactProjection projection, EngineSnapshot? snapshot)
     {
+        var sizes = CompactMetrics.Standard; var choices = projection.Choices;
         switch (value.Id)
         {
             case "activity":
                 if (snapshot?.Presentation?.Header is not EngineHeader header) return null;
                 if (projection.SingleTaskCount && header.ActiveCount == 1) header = header with { CoreSymbol = null };
-                var badge = new ActivityBadge(); badge.Update(header, false); return badge;
-            case "status": return BarText(value.Text, 12, FontWeights.Medium, PacerPalette.Primary);
+                var badge = new ActivityBadge(); badge.SetSize(sizes.Badge);
+                badge.Update(header, false, new BadgeOptions(projection.SingleTaskPercent == true, choices.MultiRing, choices.MultiCore, choices.EndMark)); return badge;
+            case "status":
+                var status = new CompactStatusText(); status.Update(value.Text, value.Tone, value.MaxWidth ?? 108, sizes.Status, false); return status;
             case "tps":
-                var rate = new StackPanel { Orientation = Orientation.Horizontal };
-                rate.Children.Add(BarText(value.Text, 12, FontWeights.SemiBold, snapshot?.RateIsFresh == true ? PacerPalette.Primary : PacerPalette.Secondary));
-                var unit = BarText("t/s", 9, FontWeights.Medium, new SolidColorBrush(Color.FromRgb(0x6B, 0x6B, 0x6B))); unit.Margin = new Thickness(2, 0, 0, 0); rate.Children.Add(unit);
+                var rate = new CompactValueView(false);
+                rate.Update(value.Text, value.Unit, snapshot?.RateIsFresh == true ? PacerPalette.Primary : PacerPalette.Secondary, sizes);
                 return rate;
-            case "firstOutput": return BarText(value.Text, 11, FontWeights.Medium, PacerPalette.Secondary);
-            case "warnings": var warnings = new CompactWarningsView(); warnings.Update(snapshot?.CompactWarnings); return warnings;
-            case "quotaGauge": var gauge = new CompactQuotaGlyph { Width = 18, Height = 18 }; gauge.Update(projection, snapshot?.Wallet); return gauge;
-            case "priceClock": var clock = new DeepSeekPriceClock { Width = 18, Height = 18 }; clock.Update(snapshot?.Wallet); return clock;
+            case "firstOutput":
+                var first = new CompactValueView(false, CompactInk.Stopwatch, 11, 12); first.Update(value.Text, value.Unit, PacerPalette.Primary, sizes); return first;
+            case "warnings":
+                var warnings = new CompactWarningsView(); warnings.Update(snapshot?.CompactWarnings, choices.WarningStyle, choices.WarningLimit, sizes.Warning); return warnings;
+            case "quotaGauge": var gauge = new CompactQuotaGlyph(); gauge.Update(projection with { Metrics = sizes }, snapshot?.Wallet); return gauge;
+            case "priceClock": var clock = new DeepSeekPriceClock { Compact = true, Width = sizes.Gauge, Height = sizes.Gauge }; clock.Update(snapshot?.Wallet); return clock;
             case "quota":
-                var quota = new AlternatingQuotaText { FontSize = 12 };
-                quota.Update(value.Entries.Select(entry => (entry.Provider, entry.Text)).ToArray(), false, value.Entries.Select(entry => entry.Dimmed).ToArray()); return quota;
+                var quota = new AlternatingQuotaText { FontSize = sizes.Value, UnitSize = sizes.Unit, Pair = choices.QuotaMultiple == "pair" };
+                quota.Update(value.Entries.Select(entry => new AlternatingQuotaText.Item(entry.Provider, entry.Text, entry.Dimmed, entry.Low == true)).ToArray(), false);
+                return quota;
             case "timeRemaining":
-                var time = new StackPanel { Orientation = Orientation.Horizontal };
-                time.Children.Add(new IconGlyph { Symbol = "hourglass", Width = 9, Height = 9, Ink = PacerPalette.Tertiary, Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center });
-                foreach (var entry in value.Entries)
-                {
-                    if (time.Children.Count > 1) time.Children.Add(new Border { Width = 1, Height = 10, Background = PacerPalette.Hairline, Margin = new Thickness(7, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center });
-                    var text = BarText(entry.Text, 11, FontWeights.Medium, PacerPalette.Provider(entry.Provider)); text.Opacity = .85; time.Children.Add(text);
-                }
-                return time;
+                var time = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                IslandWindow.RenderTime(time, value, false, sizes); return time;
             default: return null;
         }
     }
@@ -225,7 +220,7 @@ internal sealed class CompactLayoutEditorView : Grid
         {
             bool isSelected = chip.Key == selected;
             chip.Value.Background = isSelected ? new SolidColorBrush(Color.FromArgb(77, accent.Color.R, accent.Color.G, accent.Color.B))
-                : chip.Key == hovered ? new SolidColorBrush(Color.FromArgb(26, 255, 255, 255)) : Brushes.Transparent;
+                : chip.Key == hovered ? PacerPalette.Overlay(26) : Brushes.Transparent;
             chip.Value.BorderBrush = isSelected || chip.Value.IsKeyboardFocused ? accent : Brushes.Transparent;
             chip.Value.Opacity = chip.Key == dragged ? .35 : 1;
         }

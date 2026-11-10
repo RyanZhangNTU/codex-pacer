@@ -1,5 +1,17 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:CodexPacer.Windows">
+<!-- The island's inks; PacerPalette.ApplyTone swaps them for Light Liquid Glass. -->
+<SolidColorBrush x:Key="Island.Primary" Color="#F5F5F5"/>
+<!-- Settings windows replace this with their theme's shade. -->
+<SolidColorBrush x:Key="SettingsExpiry" Color="#E8BF7A"/>
+<SolidColorBrush x:Key="Island.Secondary" Color="#9E9E9E"/>
+<SolidColorBrush x:Key="Island.Tertiary" Color="#6B6B6B"/>
+<SolidColorBrush x:Key="Island.Soft" Color="#D3D3D3"/>
+<SolidColorBrush x:Key="Island.Attention" Color="#FFBD61"/>
+<SolidColorBrush x:Key="Island.Overlay05" Color="#0DFFFFFF"/>
+<SolidColorBrush x:Key="Island.Overlay08" Color="#14FFFFFF"/>
+<SolidColorBrush x:Key="Island.Overlay16" Color="#29FFFFFF"/>
+<SolidColorBrush x:Key="Island.Focus" Color="#99FFFFFF"/>
 <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#F5F5F5"/><Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/></Style>
   <Style TargetType="Button">
    <Setter Property="Margin" Value="3"/><Setter Property="Padding" Value="9,5"/>
@@ -34,8 +46,8 @@
      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Border>
     <ControlTemplate.Triggers>
-     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Mark" Property="Background" Value="#14FFFFFF"/></Trigger>
-     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Mark" Property="BorderBrush" Value="#9E9E9E"/></Trigger>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Mark" Property="Background" Value="{DynamicResource Island.Overlay08}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Mark" Property="BorderBrush" Value="{DynamicResource Island.Secondary}"/></Trigger>
     </ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
   </Style>
@@ -44,13 +56,13 @@
    <Setter Property="Height" Value="22"/><Setter Property="Margin" Value="0"/><Setter Property="Padding" Value="9,0"/>
    <Setter Property="FontFamily" Value="pack://application:,,,/CodexPacer;component/Assets/Fonts/#Inter"/>
    <Setter Property="FontSize" Value="11"/><Setter Property="FontWeight" Value="Medium"/>
-   <Setter Property="Foreground" Value="#F5F5F5"/><Setter Property="Background" Value="#0DFFFFFF"/>
+   <Setter Property="Foreground" Value="{DynamicResource Island.Primary}"/><Setter Property="Background" Value="{DynamicResource Island.Overlay05}"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
     <Border x:Name="Capsule" Background="{TemplateBinding Background}" CornerRadius="11" Padding="{TemplateBinding Padding}">
      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
     </Border>
     <ControlTemplate.Triggers>
-     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Capsule" Property="Background" Value="#14FFFFFF"/></Trigger>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Capsule" Property="Background" Value="{DynamicResource Island.Overlay08}"/></Trigger>
      <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Capsule" Property="Opacity" Value="0.45"/></Trigger>
     </ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
