@@ -1,4 +1,5 @@
 import XCTest
+import PacerCore
 @testable import PacerIsland
 import PacerTestSupport
 
@@ -36,6 +37,15 @@ final class MainWindowPreferenceTests: XCTestCase {
         XCTAssertEqual(AboutTab.load(from: defaults), .help, "The old Help page opens on its tab")
         defaults.set(AboutTab.whatsNew.rawValue, forKey: AboutTab.defaultsKey)
         XCTAssertEqual(AboutTab.load(from: defaults), .whatsNew, "A chosen tab wins over the old page")
+    }
+
+    func testHighlightLinksOpenThePageTheyIntroduce() {
+        let links = WhatsNew.releases.flatMap(\.items).compactMap { item in item.control?.settingsPane.map { (item.titleKey, $0) } }
+        XCTAssertEqual(links.map(\.0), ["whats_new.arrange_items", "whats_new.bar_upgrade", "whats_new.fresh_look"])
+        XCTAssertEqual(links.map(\.1), [.expandedPanel, .collapsedBar, .appearance])
+        for control: WhatsNew.Item.Control in [.openAtLogin, .showEmbeddedSessions, .showAppButtons] {
+            XCTAssertNil(control.settingsPane, "A switch stays in place")
+        }
     }
 
     func testDockIconFollowsTheWindowOnlyByDefault() {

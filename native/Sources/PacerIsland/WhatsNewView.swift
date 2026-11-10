@@ -3,8 +3,9 @@ import PacerCore
 import SwiftUI
 
 /// The once-per-update note, drawn like the main window: the app icon and a
-/// large title, each highlight with its symbol and the setting it introduces
-/// offered in place, then one wide Continue. Release Notes has the full list.
+/// large title, each highlight with its symbol, its explanation behind ⓘ and
+/// the setting it introduces offered in place, then one wide Continue.
+/// Release Notes has the full list.
 struct WhatsNewView: View {
     static let width: CGFloat = 480
     private static let repository = "https://github.com/RyanZhangNTU/codex-pacer"
@@ -16,6 +17,11 @@ struct WhatsNewView: View {
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     /// Applies a preference changed here to the running island.
     var onSettingsChange: () -> Void = {}
+    /// Opens the main window on the page a highlight introduces.
+    var onOpenPane: (SettingsPane) -> Void = { _ in }
+    /// The height the note needs, reported as explanations open and close
+    /// so its window can grow to fit them.
+    var onNaturalHeight: (CGFloat) -> Void = { _ in }
     let onDone: () -> Void
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showsEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showsEmbeddedCodexSessions = true
@@ -24,19 +30,23 @@ struct WhatsNewView: View {
     var body: some View {
         VStack(spacing: 0) {
             if height != nil {
-                ScrollView(.vertical) { content }
+                ScrollView(.vertical) { content.background(Self.naturalHeight) }
                     .scrollIndicators(.automatic)
                     .frame(maxHeight: .infinity)
             } else {
                 content
             }
-            footer
+            footer.background(Self.naturalHeight)
         }
         .frame(width: Self.width, height: height)
         .fixedSize(horizontal: false, vertical: true)
         .background(MainPalette.page)
         .environment(\.locale, L10n.locale)
         .modifier(SavedPacerAccent())
+        .onPreferenceChange(WhatsNewNaturalHeight.self) { natural in
+            guard natural > 0 else { return }
+            DispatchQueue.main.async { onNaturalHeight(natural) }
+        }
         .onChange(of: [showsEmbeddedClaudeSessions, showsEmbeddedCodexSessions]) { _, _ in onSettingsChange() }
         .onChange(of: showsAppButtons) { _, _ in onSettingsChange() }
     }
@@ -50,14 +60,15 @@ struct WhatsNewView: View {
                 .padding(.top, 8).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(releases, id: \.version) { release in
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 14) {
                         // Skipped updates keep their own headings, newest first.
                         if releases.count > 1 {
                             Text(L10n.text("whats_new.version", release.version)).font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
                         }
                         ForEach(Array(release.items.enumerated()), id: \.offset) { _, item in
-                            WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin, large: true)
+                            WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin, large: true, detailInInfo: true,
+                                            openPane: onOpenPane)
                         }
                     }
                 }
@@ -87,18 +98,31 @@ struct WhatsNewView: View {
         .padding(.horizontal, 40).padding(.top, 6).padding(.bottom, 22)
         .fixedSize(horizontal: false, vertical: true)
     }
+
+    private static var naturalHeight: some View {
+        GeometryReader { Color.clear.preference(key: WhatsNewNaturalHeight.self, value: $0.size.height) }
+    }
+}
+
+/// The scrolled content and the footer together.
+private struct WhatsNewNaturalHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value += nextValue() }
 }
 
 /// One highlight, shared by the update note and the Help & Updates page,
-/// with the setting it introduces offered in place.
+/// with the setting it introduces offered in place: a switch, or the way to
+/// the page that holds it.
 struct WhatsNewItemRow: View {
     let item: WhatsNew.Item
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
     /// The update note draws each highlight larger, as a feature list.
     var large = false
-    /// The Help & Updates page keeps each explanation behind ⓘ; a sign-in
-    /// item problem still shows in place.
+    /// Keeps the explanation behind ⓘ; a sign-in item problem still shows in
+    /// place.
     var detailInInfo = false
+    /// Opens the main window on a page; nil leaves page links out.
+    var openPane: ((SettingsPane) -> Void)? = nil
     @State private var showsInfo = false
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showsEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showsEmbeddedCodexSessions = true
@@ -145,8 +169,39 @@ struct WhatsNewItemRow: View {
                 set: { showsEmbeddedClaudeSessions = $0; showsEmbeddedCodexSessions = $0 })).labelsHidden().toggleStyle(.switch)
         case .showAppButtons:
             Toggle(L10n.text(item.titleKey), isOn: $showsAppButtons).labelsHidden().toggleStyle(.switch)
+        case .openExpandedPanel, .openCollapsedBar, .openAppearance:
+            item.control?.settingsPane.map(pageLink)
         case nil:
             EmptyView()
+        }
+    }
+
+    /// "Settings ›" to the page that holds what this highlight introduces.
+    @ViewBuilder private func pageLink(_ pane: SettingsPane) -> some View {
+        if let openPane {
+            Button { openPane(pane) } label: {
+                HStack(spacing: 3) {
+                    Text(L10n.text("whats_new.open_settings")).font(.system(size: 12.5))
+                    Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .semibold))
+                }
+                // Link blue, like Release Notes beside it on Help & Updates.
+                .foregroundStyle(Color(nsColor: .linkColor)).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .accessibilityLabel(L10n.text("whats_new.open_settings_label", L10n.text(item.titleKey)))
+        }
+    }
+}
+
+extension WhatsNew.Item.Control {
+    /// The main window page a highlight's link opens; nil for a switch.
+    var settingsPane: SettingsPane? {
+        switch self {
+        case .openExpandedPanel: .expandedPanel
+        case .openCollapsedBar: .collapsedBar
+        case .openAppearance: .appearance
+        case .openAtLogin, .showEmbeddedSessions, .showAppButtons: nil
         }
     }
 }
