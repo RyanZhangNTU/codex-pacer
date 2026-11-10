@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-import Security
 
 /// A local plugin write needs a new Desktop executor registration. Persist a
 /// single pending request across app restarts; a busy or unfamiliar executor
@@ -62,7 +61,7 @@ actor MacDurableRefresh {
             return
         }
         guard now.timeIntervalSince(observation.since) >= 12,
-              signedCodex(executor.application), MacDurableExecutor.find(peer: executor.desktopPID) == executor,
+              MacDurableExecutor.isSignedCodex(executor.application), MacDurableExecutor.find(peer: executor.desktopPID) == executor,
               MacDurableExecutor.children(of: executor.pid)?.isEmpty == true, read(home: home) == request else { return }
         // This Desktop build's bundled exec-server handles SIGTERM with a
         // graceful drain. Desktop owns the replacement and registers roots
@@ -71,14 +70,6 @@ actor MacDurableRefresh {
         guard (try? write(request, home: home)) != nil else { return }
         _ = Darwin.kill(executor.pid, SIGTERM)
         quiet.removeValue(forKey: home)
-    }
-
-    private func signedCodex(_ application: URL) -> Bool {
-        var code: SecStaticCode?, requirement: SecRequirement?
-        let expression = #"anchor apple generic and identifier "com.openai.codex" and certificate leaf[subject.OU] = "2DC432GLL2""#
-        guard SecStaticCodeCreateWithPath(application as CFURL, [], &code) == errSecSuccess, let code,
-              SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement else { return false }
-        return SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess
     }
 
     private func marker(home: URL) throws -> URL {

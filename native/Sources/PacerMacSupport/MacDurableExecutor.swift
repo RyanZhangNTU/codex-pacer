@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import PacerCore
+import Security
 
 /// A local executor is a child of the Codex Desktop instance serving our IPC
 /// socket. Neither a local-looking cwd nor an arbitrary codex CLI proves that.
@@ -11,7 +12,21 @@ struct MacDurableExecutor: Equatable, Sendable {
     let environmentID: String
     let application: URL
 
-    var cli: URL { application.appendingPathComponent("Contents/Resources/codex-cli/bin/codex") }
+    static func verifiedCLI(in application: URL) -> URL? {
+        let resources = application.resolvingSymlinksInPath().appendingPathComponent("Contents/Resources")
+        let cli = resources.appendingPathComponent("codex-cli/bin/codex")
+        guard cli.resolvingSymlinksInPath().path.hasPrefix(resources.path + "/"),
+              FileManager.default.isExecutableFile(atPath: cli.path), isSignedCodex(application) else { return nil }
+        return cli
+    }
+
+    static func isSignedCodex(_ application: URL) -> Bool {
+        var code: SecStaticCode?, requirement: SecRequirement?
+        let expression = #"anchor apple generic and identifier "com.openai.codex" and certificate leaf[subject.OU] = "2DC432GLL2""#
+        guard SecStaticCodeCreateWithPath(application as CFURL, [], &code) == errSecSuccess, let code,
+              SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement else { return false }
+        return SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess
+    }
 
     static func find(peer: pid_t) -> Self? {
         guard let desktop = executable(peer) else { return nil }

@@ -32,7 +32,8 @@ enum MacDurableCatalog {
                     (connection?.expiresAt ?? .distantPast) <= Date() {
                     connection?.close()
                     connection = nil
-                    let client = CodexClient(executable: executor.cli, home: home, timeout: 8)
+                    guard let cli = MacDurableExecutor.verifiedCLI(in: executor.application) else { throw CodexClientError.disconnected }
+                    let client = CodexClient(executable: cli, home: home, timeout: 8)
                     let credentials: (request: URLRequest, scope: String)
                     do {
                         credentials = try await client.durableCatalogCredentials()

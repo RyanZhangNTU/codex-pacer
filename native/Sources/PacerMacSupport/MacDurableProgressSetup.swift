@@ -27,10 +27,13 @@ public enum MacDurableProgressSetup {
         let owner = root.appendingPathComponent(".pacer-owner")
         let config = home.appendingPathComponent("config.toml")
         if reporter == nil, !storage.exists(root) { return .unchanged }
-        let executor = desktopExecutor(home: home)
-        let cli = executor?.cli ?? CodexApplicationResolver.find()?.appendingPathComponent("Contents/Resources/codex-cli/bin/codex")
-        let executable = cli.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
-            ?? (reporter == nil ? CodexClient.findExecutable(customPath: customExecutable) : nil)
+        let application = desktopExecutor(home: home)?.application ?? CodexApplicationResolver.find()
+        let executable: URL?
+        if let application {
+            executable = MacDurableExecutor.verifiedCLI(in: application)
+        } else {
+            executable = reporter == nil ? CodexClient.findExecutable(customPath: customExecutable) : nil
+        }
         guard let executable else { return reporter != nil || !storage.exists(owner) ? .unchanged : .failed }
         do {
             for path in [home, config, pacer, progress, root, owner] { try storage.validate(path) }

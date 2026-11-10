@@ -1,4 +1,4 @@
-import PacerMacSupport
+@testable import PacerMacSupport
 import XCTest
 @testable import PacerCore
 
@@ -35,7 +35,12 @@ final class SelectionAndApplicationTests: XCTestCase {
         }
         let wrong = try app("Codex", identifier: "test.unrelated")
         let moved = try app("Relocated Codex", identifier: "com.openai.codex")
+        let cli = moved.appendingPathComponent("Contents/Resources/codex-cli/bin/codex")
+        try FileManager.default.createDirectory(at: cli.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: cli)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cli.path)
         XCTAssertEqual(CodexApplicationResolver.find(applicationURLs: [wrong, moved]), moved)
+        XCTAssertNil(MacDurableExecutor.verifiedCLI(in: moved), "Bundle metadata alone cannot authorize a Durable CLI launch")
         XCTAssertNil(CodexApplicationResolver.find(applicationURLs: [wrong]))
         XCTAssertNil(CodexApplicationResolver.find(applicationURLs: [directory.appendingPathComponent("Missing.app")]))
     }
