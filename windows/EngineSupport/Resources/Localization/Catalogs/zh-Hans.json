@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "fb61c672e46d4317bca016c7773af5daf6b55ab7af1dc441d9c8420e3ef13322",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "7c0811c9cba9809e4b76bc51491005ed594b98266fc3357fd702d1d24295d27e",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7669dd5cc3ec3dab401757528d481db0e4b20fd4f564a59cc99a795f3b4ce80a"
   },
   "strings": {
@@ -212,8 +212,8 @@
     "claude.quota.timed_out": "\u8bfb\u53d6 Claude \u989d\u5ea6\u8d85\u65f6\uff0c\u8bf7\u91cd\u8bd5\u3002",
     "claude.quota.unavailable": "Claude \u989d\u5ea6\u6682\u4e0d\u53ef\u7528\u3002",
     "claude.quota.web_challenge": "\u8bf7\u6253\u5f00 Claude \u767b\u5f55\u7a97\u53e3\uff0c\u624b\u52a8\u5b8c\u6210\u7f51\u9875\u9a8c\u8bc1\u3002",
-    "claude.telemetry.kept_existing": "\u5df2\u4fdd\u7559\u4f60\u73b0\u6709\u7684\u9065\u6d4b\u8bbe\u7f6e\uff0cTPS \u4e3a\u4f30\u7b97\u503c",
-    "claude.telemetry.managed": "\u9065\u6d4b\u8bbe\u7f6e\u7531\u4f60\u7684\u7ec4\u7ec7\u7ba1\u7406\uff0cTPS \u4e3a\u4f30\u7b97\u503c",
+    "claude.telemetry.kept_existing": "\u5df2\u4fdd\u7559\u4f60\u73b0\u6709\u7684\u9065\u6d4b\u8bbe\u7f6e\uff0cTPS \u4e3a\u4f30\u7b97\u503c\u3002",
+    "claude.telemetry.managed": "\u9065\u6d4b\u8bbe\u7f6e\u7531\u4f60\u7684\u7ec4\u7ec7\u7ba1\u7406\uff0cTPS \u4e3a\u4f30\u7b97\u503c\u3002",
     "cli.account_mismatch": "\u989d\u5ea6\u54cd\u5e94\u4e0e\u5f53\u524d\u5df2\u6838\u9a8c\u7684\u8d26\u6237\u4e0d\u4e00\u81f4\uff0c\u5df2\u505c\u6b62\u663e\u793a\u8fd9\u4efd\u989d\u5ea6\u3002\n\u8bf7\u68c0\u67e5 Codex \u5f53\u524d\u8d26\u6237\u548c\u6570\u636e\u76ee\u5f55\uff0c\u7136\u540e\u91cd\u8bd5\u3002",
     "cli.account_not_object": "\u767b\u5f55\u72b6\u6001\u54cd\u5e94\u4e0d\u662f JSON \u5bf9\u8c61\u3002",
     "cli.api_key_auth": " API Key \u767b\u5f55",

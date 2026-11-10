@@ -68,8 +68,8 @@
 "claude.quota.connection_failed" = "无法连接 Claude 额度服务。";
 "claude.quota.account_changed" = "Claude 账户已更改，请刷新以读取当前账户。";
 "claude.monitoring_setup_failed" = "无法配置 Claude Code 任务监测，请检查配置目录后重试。";
-"claude.telemetry.kept_existing" = "已保留你现有的遥测设置，TPS 为估算值";
-"claude.telemetry.managed" = "遥测设置由你的组织管理，TPS 为估算值";
+"claude.telemetry.kept_existing" = "已保留你现有的遥测设置，TPS 为估算值。";
+"claude.telemetry.managed" = "遥测设置由你的组织管理，TPS 为估算值。";
 "claude.open_remote_help" = "打开此主机上的 Claude Code 会话";
 "account.credit_balance" = "剩余积分：%@";
 "account.credits" = "积分";
