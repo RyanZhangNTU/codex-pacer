@@ -39,16 +39,16 @@ final class DurableDesktopTests: XCTestCase {
             let cursor = (message["params"] as? [String: Any])?["cursor"] as? String ?? "first"
             let result = message["method"] as? String == "thread/list" ? pages[cursor] ?? [:] : [:]
             let reply = try JSONSerialization.data(withJSONObject: ["id": id, "result": result])
-            lock.lock(); defer { lock.unlock() }
-            if message["method"] as? String == "thread/list" { cursors.append(cursor) }
-            replies.append(reply)
+            locked {
+                if message["method"] as? String == "thread/list" { cursors.append(cursor) }
+                replies.append(reply)
+            }
         }
-        func receive() async throws -> Data {
-            lock.lock(); defer { lock.unlock() }
-            return replies.removeFirst()
-        }
+        func receive() async throws -> Data { locked { replies.removeFirst() } }
         func close() {}
-        func takeCursors() -> [String] { lock.lock(); defer { lock.unlock() }; let value = cursors; cursors = []; return value }
+        func takeCursors() -> [String] { locked { let value = cursors; cursors = []; return value } }
+        /// NSLock may not be taken across an await, so async callers lock here.
+        private func locked<T>(_ body: () throws -> T) rethrows -> T { lock.lock(); defer { lock.unlock() }; return try body() }
     }
 
     func testLaterCatalogReadsStopAtTheFirstOldPageOnceRetainedThreadsAreFound() async throws {
