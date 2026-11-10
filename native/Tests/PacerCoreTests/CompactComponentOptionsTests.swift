@@ -164,6 +164,23 @@ final class CompactComponentOptionsTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(crowd.averageProgress), 0.05, accuracy: 0.0001)
         XCTAssertNil(crowd.averageProvider, "A mix behind the average draws neutral")
         XCTAssertEqual(Share(provider: .codex, fraction: 2).fraction, 1)
+
+        // Which ring several tasks draw: a task without an estimate never moves
+        // the average and breathes as a segment; with no estimate at all the
+        // ring shows the services; more than four segments use the average.
+        let partly = header([.init(provider: .codex, fraction: 0.6), .init(provider: .claude, fraction: nil), .init(provider: .claude, fraction: nil)])
+        XCTAssertEqual(partly.multiTaskRing(.average), .average); XCTAssertEqual(partly.averageProgress, 0.6)
+        XCTAssertEqual(partly.averageProvider, .codex, "Only the tasks with an estimate color the average")
+        XCTAssertEqual(partly.multiTaskRing(.segments), .segments); XCTAssertEqual(partly.tasks.map(\.fraction), [0.6, nil, nil])
+        XCTAssertEqual(partly.multiTaskRing(.service), .services)
+        for choice in CompactComponentOptions.MultiRing.allCases {
+            XCTAssertEqual(none.multiTaskRing(choice), .services, "\(choice) without any estimate shows the services")
+        }
+        let crowded = header([Share(provider: .codex, fraction: 0.3)] + (0..<4).map { _ in Share(provider: .claude, fraction: nil) })
+        XCTAssertEqual(crowded.multiTaskRing(.segments), .average); XCTAssertEqual(crowded.averageProgress, 0.3)
+        XCTAssertEqual(header([.init(provider: .codex, fraction: 0.6)]).multiTaskRing(.segments), nil, "One task keeps its own ring")
+        var asking = partly; asking.attention = .approval
+        XCTAssertNil(asking.multiTaskRing(.average), "A request keeps the amber disc")
     }
 
     func testFirstOutputHistoryKeepsOnlyItsRecentValues() {

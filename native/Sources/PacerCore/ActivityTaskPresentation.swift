@@ -89,6 +89,18 @@ public struct HeaderActivity: Equatable, Sendable {
     }
     /// Segments need several tasks, at most `segmentLimit`, and one estimate.
     public var showsSegments: Bool { (2...Self.segmentLimit).contains(running.count) && !reported.isEmpty }
+    /// What the badge's ring draws while several tasks run.
+    public enum MultiTaskRing: Equatable, Sendable { case services, average, segments }
+    /// The ring for several running tasks, or nil for one task or a request,
+    /// which keep their own rings. Tasks without an estimate never count
+    /// toward the average; a segment of one breathes instead. With no
+    /// estimate at all the ring shows the services, and segments for more
+    /// than `segmentLimit` tasks give way to the average.
+    public func multiTaskRing(_ choice: CompactComponentOptions.MultiRing) -> MultiTaskRing? {
+        guard activeCount > 1, attention == nil else { return nil }
+        guard choice != .service, !reported.isEmpty else { return .services }
+        return choice == .segments && showsSegments ? .segments : .average
+    }
     public var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
     public var showsEndingMark: Bool { ending != nil && !endingIsCore }
     public static func countText(_ count: Int) -> String { count > 99 ? "99+" : String(count) }
