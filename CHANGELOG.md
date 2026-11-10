@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.4.0
+
+- Customize the expanded panel on Mac and Windows. The panel becomes a column of blocks: the task list, Codex and Claude quota, DeepSeek's balance, where today's DeepSeek spend went and its last 7 days. The new **Expanded Panel** page adds, removes and drags them, and sets each block's options: tasks per page, one- or two-line rows and what each row shows, each quota's windows, style, arrangement, details and pace tick, DeepSeek's dial, peak hint, spend list and reference line, and which buttons sit in the header. Until you change anything, the panel follows the services you turn on; **Restore Automatic** returns to that.
+- In the Collapsed Bar and Expanded Panel libraries, clicking an item only selects it; the round button at its end adds or removes it. Settings stay available for an item that is not added and apply once it is.
+- Redesign the collapsed bar. Items share one drawing style and size, each item's options are on the Collapsed Bar page, the bar has four sizes, Appearance adds materials and an edge treatment, and the island remembers its place on each display.
+- Track Codex Dot Durable tasks assigned to this computer, labelled `Dot`, even while their chats are closed. Pacer shows their progress and ending; their speed is not available yet. Codex needs a restart the first time; on Windows this needs Codex Desktop from the Microsoft Store.
+- The What's New note keeps each explanation behind ⓘ and links to the page a new setting lives on.
+- Codex: the progress ring works with third-party APIs, whose models could hide Pacer's progress tool behind tool search.
+- Claude Code: a subagent revived with `SendMessage`, or a background subagent its main conversation outlived, no longer keeps its task on **Working on a task**. Pacer coexists with existing and organization-managed telemetry settings, steps aside only on a real conflict and returns when it clears.
+- Windows: fix an engine crash on Windows 10 while Pacer looked for the process writing a session file. If the engine stops, it writes a short crash report without paths or private content that can be attached to an issue.
+
 ## 4.3.2
 
 - Windows: fix the engine stopping after Pacer had run for about 15 hours, which stopped task updates until Pacer was reopened. Short background commands, such as the WSL check every 30 seconds, each left a file descriptor open, and after about 8,000 of them the engine could not start another command and stopped. If the engine stops unexpectedly after running for at least 10 minutes, Pacer now restarts itself. The engine also no longer keeps a handle for every finished web request, which added about a dozen a minute while Pacer followed Claude in the cloud.

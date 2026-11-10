@@ -628,6 +628,16 @@
 "whats_new.release_notes" = "发布说明";
 "whats_new.earlier" = "更早版本";
 "whats_new.done" = "继续";
+"whats_new.arrange_items" = "组件随心增删、排序";
+"whats_new.arrange_items_detail" = "展开面板和折叠栏都能按你的习惯添加、删除、排序组件，比如展开时只显示任务、不显示额度。";
+"whats_new.bar_upgrade" = "折叠栏品质升级";
+"whats_new.bar_upgrade_detail" = "大小可调，位置按屏幕分别记住，组件也支持更多功能。";
+"whats_new.fresh_look" = "外观全面焕新";
+"whats_new.fresh_look_detail" = "新增多种材质，动画细节也升级了。";
+"whats_new.dot_tasks" = "识别 Codex Dot 管理的任务";
+"whats_new.dot_tasks_detail" = "首次使用需要重启 Codex。Dot 任务在云端运行，目前只显示进度，暂时无法识别速度。";
+"whats_new.open_settings" = "去设置";
+"whats_new.open_settings_label" = "在设置中打开%@";
 "whats_new.mark_all_read" = "全部标为已读";
 "whats_new.mark_all_read_detail" = "点击固定按钮旁的新按钮，即可一次清除所有页面中已结束的任务。运行中以及等你回复或审批的任务不受影响。";
 "whats_new.app_buttons" = "从灵动岛打开 Codex 或 Claude";

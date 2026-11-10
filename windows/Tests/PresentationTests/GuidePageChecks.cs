@@ -23,7 +23,7 @@ internal static class GuidePageChecks
         var ui = UiText.For(language == "zh-Hans"); await using var engine = new EngineClient();
         await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
         await PresentationWait.UntilAsync(() => engine.LatestSnapshot != null, "Guide samples require the first acknowledged demo snapshot");
-        Task<GuideCatalog> Query(string? seen, bool welcome = false) => engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest("4.2.4", seen, 4, language, true, false, welcome, !welcome) } }, TimeSpan.FromSeconds(3));
+        Task<GuideCatalog> Query(string? seen, bool welcome = false, string current = "4.2.4") => engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest(current, seen, 4, language, true, false, welcome, !welcome) } }, TimeSpan.FromSeconds(3));
         var catalog = await Query(null, true); int configured = 0, saved = 0; bool reject = false;
         var session = new PreferencesSession(new(), async value => { configured++; await engine.SendAsync("configure", value); }, _ => { saved++; if (!reject) return true; reject = false; return false; });
         var startup = new Startup(); var links = new List<Uri>(); var settingsActions = new List<string>(); int welcomeActions = 0;
@@ -120,6 +120,22 @@ internal static class GuidePageChecks
             Escape(noteWindow); Check(!noteWindow.IsVisible, "Escape closes What's New");
         }
         finally { noteWindow.Close(); }
+        // 4.4: each highlight shows its title, its explanation waits behind ⓘ, and a setting's page is one link away.
+        var fresh = await Query("4.3.2", current: "4.4.0"); var freshBody = Body(fresh); var freshWindow = new GuideWindow(ui, freshBody, fresh, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            freshWindow.Show(); await Pump();
+            var detail = SelfAndDescendants(freshBody).OfType<TextBlock>().Single(text => text.Text == ui.Text("whats_new.arrange_items_detail"));
+            Check(fresh.Releases[0].Version == "4.4.0" && !detail.IsVisible, "The update note shows titles and keeps explanations closed");
+            Invoke(SelfAndDescendants(freshBody).OfType<Button>().First(button => AutomationProperties.GetName(button) == ui.Text("main.info").Replace("%@", ui.Text("whats_new.arrange_items"), StringComparison.Ordinal)));
+            await Pump(); Check(detail.IsVisible, "Its info button opens the explanation under the row");
+            Capture(freshWindow.ClientContent, Path.Combine(output, "pages-whats-new-4.4-" + language + (dark ? "-dark" : "-light") + ".png"));
+            foreach (var (control, pane) in new[] { ("openExpandedPanel", "expandedPanel"), ("openCollapsedBar", "collapsed"), ("openAppearance", "appearance") })
+            { Invoke(Find<Button>(freshWindow, "guide.control." + control)); await Pump(); Check(settingsActions.Last() == pane, "A highlight's Settings link opens its page"); }
+            Check(SelfAndDescendants(freshBody).OfType<FrameworkElement>().Count(value => AutomationProperties.GetAutomationId(value).StartsWith("guide.control.", StringComparison.Ordinal)) == 3,
+                "Only the three settings highlights carry a link");
+        }
+        finally { freshWindow.Close(); }
         string? copied = null;
         using var appearance = new AppearanceFixture();
         var settings = new SettingsWindow(ui, session, startup, true, dark, engine, notifications: notifications, guideLinkLauncher: uri => { links.Add(uri); return true; }, guideCopyLink: value => copied = value, appearanceSource: appearance) { ShowActivated = false, IsHitTestVisible = false };

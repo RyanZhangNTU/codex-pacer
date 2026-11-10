@@ -628,6 +628,16 @@
 "whats_new.release_notes" = "Release Notes";
 "whats_new.earlier" = "Earlier Versions";
 "whats_new.done" = "Continue";
+"whats_new.arrange_items" = "Add, remove and reorder items";
+"whats_new.arrange_items_detail" = "Arrange the expanded panel and the collapsed bar your way, for example show only tasks when expanded, without quota.";
+"whats_new.bar_upgrade" = "A better collapsed bar";
+"whats_new.bar_upgrade_detail" = "Adjust its size, keep its place on each screen, and get more from each item.";
+"whats_new.fresh_look" = "A fresh look";
+"whats_new.fresh_look_detail" = "New materials and finer animations.";
+"whats_new.dot_tasks" = "Codex Dot tasks";
+"whats_new.dot_tasks_detail" = "Restart Codex the first time. Dot tasks run in the cloud, so Pacer shows their progress but not yet their speed.";
+"whats_new.open_settings" = "Settings";
+"whats_new.open_settings_label" = "Open %@ in Settings";
 "whats_new.mark_all_read" = "Mark all as read";
 "whats_new.mark_all_read_detail" = "Clear every ended task at once, on all pages, with the new button next to the pin. Tasks that are running or waiting for your reply or approval stay in the list.";
 "whats_new.app_buttons" = "Open Codex or Claude from the island";
