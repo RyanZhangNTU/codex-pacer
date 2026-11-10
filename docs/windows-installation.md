@@ -1,67 +1,86 @@
-# Windows 每用户安装
+# Windows installation
 
-Release 工作流（推送 vVERSION tag 时，或手动运行）为 x64 和 ARM64 各生成未签名安装器（windows-installer-ARCH-unsigned）和便携 ZIP（windows-app-ARCH-unsigned）。安装生命周期测试只在 Platforms 的 PR 运行和手动运行中进行；PR 上只在改到安装器、维护、更新、打包脚本、工具链，或这些检查会启动的应用代码（启动、单实例、安装身份、通知和开机启动登记）时运行，见[持续集成](development.md#continuous-integration)。Release 工作流只打包，不重跑测试；tag 运行在同一次运行中用 Sparkle 签名 Windows 更新源，并把安装器与 Mac DMG 一起发布到同一个 GitHub Release，见[发布流程](releasing.md)。便携 ZIP 只用于开发验证：解压整个包后运行 CodexPacer.exe，并保留同目录的 Engine、Maintenance、资源和运行库。
+Pacer for Windows ships as a per-user Inno Setup installer. The Release workflow builds an unsigned installer (`windows-installer-<arch>-unsigned`) and a portable ZIP (`windows-app-<arch>-unsigned`) for x64 and ARM64; a tag run signs the Windows feed and publishes the installers with the Mac DMG ([release workflow](releasing.md)). The Release workflow only packages. Lifecycle tests run in the Platforms workflow on manual runs and on pull requests that touch the installer, maintenance, updates, packaging, the toolchain or the app code these checks start ([continuous integration](development.md#continuous-integration)).
 
-安装器使用 Inno Setup，默认安装到 %LOCALAPPDATA%\Programs\Codex Pacer。注册项和快捷方式属于当前用户，不申请管理员权限。这由 [PrivilegesRequired=lowest](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm) 指定。应用和安装器需要 Windows 10 2004（内部版本 19041）或更新版本。安装器暂未做代码签名：首次运行若 SmartScreen 提示“Windows 已保护你的电脑”，点“更多信息 → 仍要运行”。
+## Installer identity and requirements
 
-安装器按 Windows 显示语言自动使用简体中文或英文；其他语言的系统会先弹出选择框。中文消息来自 Inno Setup 项目的非官方翻译，固定在 `windows/ThirdParty/InnoSetup`（含许可证和来源哈希），打包前会校验。安装完成页提供“创建桌面快捷方式”“添加到开始菜单”和“运行 Codex Pacer”，默认全部勾选，点“完成”后执行；取消勾选只是不新建，不删除已有的快捷方式。应用内更新静默运行，不显示这些选项：只刷新本安装已有的快捷方式，不补回已删除的，并由更新流程自行重新打开应用。静默的全新安装按默认创建两个快捷方式。
+| Item | Value |
+| --- | --- |
+| Inno Setup `AppId` and name | `CodexPacer.Windows`, `Codex Pacer`. QA builds (`-QaScope`) append `.QA.<scope>` and ` QA <scope>` so they install beside the real app. |
+| Default folder | `%LOCALAPPDATA%\Programs\Codex Pacer` |
+| Privileges | [`PrivilegesRequired=lowest`](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm): registry entries and shortcuts belong to the current user; no administrator prompt |
+| Minimum Windows | Windows 10 2004 (build 19041) for the app and installer |
+| User data | `%LOCALAPPDATA%\CodexPacer` (preferences, history, read records, update state) |
 
-安装包包含 .NET、Swift、VC 和 Claude helper 所需的 Python 运行库。应用本体可离线启动，网页登录需要 Windows 提供的 WebView2 Runtime。安装过程不下载运行库、不安装系统服务，也不更改系统或显卡设置。Claude 的路径、所有权与安全更新见 [本机运行时说明](windows-claude-runtime.md)。
+Keep the identity, folder and data path stable: upgrades, updates and uninstall depend on them.
 
-## 升级和修复
+- The installer is not Authenticode-signed yet. SmartScreen may show "Windows protected your PC"; choose More info, then Run anyway.
+- It uses English or Simplified Chinese from the Windows display language and asks otherwise. The Chinese messages are an unofficial Inno Setup translation pinned in `windows/ThirdParty/InnoSetup` with its license and source hash, verified before packaging.
+- The finish page offers a desktop shortcut, a Start menu entry and Run Codex Pacer, all checked. Unchecking only skips creating a shortcut; it never deletes one. A silent in-app update refreshes only the shortcuts that exist and lets the updater relaunch the app. A silent fresh install creates both shortcuts.
+- The package carries the .NET, Swift, VC and Python runtimes, so the app starts offline. Web sign-in needs the WebView2 Runtime that Windows provides. Installing downloads nothing, installs no service and changes no system or graphics settings.
 
-重新运行安装器，选择原安装位置即可覆盖升级或修复。同版本文件也会替换，可修复丢失或损坏的程序文件。偏好、历史、已读记录和登录资料放在应用目录外，覆盖安装保留这些数据。
+## Upgrade and repair
 
-安装器从自身取出新的独立维护程序，检查当前安装后再替换文件。新版本不再包含的旧文件（按已安装清单和内容哈希判断）会在复制完成后删除；内容已变动或清单外的文件保留。
+- Run the installer again into the same folder to upgrade or repair. Files of the same version are replaced too. User data lives outside the app folder and is kept.
+- The installer extracts its new maintenance program and checks the current installation first. After copying, it deletes files the new build no longer lists, judged by the installed manifest and content hashes; changed or unlisted files are kept. Repair works even when the installed .NET main assembly is damaged.
+- Patch installers from in-app updates refuse any installation that is not exactly their base ([patch updates](windows-automatic-updates.md#patch-updates)).
+- Maintenance asks only the app with the same executable path, user and session to exit, then waits a bounded time. It never closes other copies by name. A file still in use fails the install before anything is overwritten; there is no reboot replacement and no forced kill.
+- Only local folders are accepted: network paths, drive roots and paths with reparse points are refused. Do not put task data or other apps' files in the install folder.
 
-应用内更新可能使用补丁安装器：它只带有变化的文件，只能装在它对应的那个旧版本上。动任何文件之前，它先核对已安装清单的哈希，并确认它不带的每个文件都已是新内容；不符合就拒绝安装，原有安装保持不变。复制完成后会按新清单逐个校验文件。详见[自动更新](windows-automatic-updates.md#patch-updates)。即使已安装的 .NET 主程序集损坏，也能开始修复。维护只通知相同可执行文件路径、当前用户和当前会话中的应用退出，随后有界等待；不会按进程名关闭其他副本。文件仍被占用时，在覆盖前失败，不安排重启替换，也不强制结束别的应用。
+## Open at Login
 
-请使用本地目录。网络路径、驱动器根目录和带重解析点的路径会被拒绝。不要把任务数据或其他应用的文件放进安装目录。
+- **Settings > General > Open at Login** manages the HKCU [Run entry](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys) for the current install path. The state is read back from Windows; there is no preference key. Paths with spaces stay quoted; a path over the Run command limit shows a failure.
+- Windows Startup Apps or policy can still block the entry. Settings then shows disabled, blocked by policy or unknown, with a button for [`ms-settings:startupapps`](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-settings). Pacer never rewrites StartupApproved to get around the user's choice.
+- StartupApproved's binary format has no public contract. Values 2 and 6 read as allowed, 3 and 7 as disabled, anything else as unknown.
+- A failed change restores the previous entry and shows an error. The state refreshes when the window is activated; nothing polls.
 
-## 登录时打开
+## Uninstall and data
 
-“设置 > 通用 > 登录时打开”管理当前安装位置的 HKCU Run 项。应用读回系统状态，不在偏好 JSON 中另存一个开关。带空格的路径保留引号；超过 Windows Run 命令长度限制的路径会显示失败。[Run 注册项约定](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys)
+Uninstall from Windows **Installed apps**. Maintenance first checks the Claude configuration, then closes this installation, removes what Pacer owns, and deletes the program files and folder. Finished update downloads are deleted. Preferences, history, read records, update state, the last install log and sign-in data are kept; to clear sign-in data, sign out or delete keys in Settings before uninstalling.
 
-勾选表示已注册启动请求。Windows“启动应用”或策略仍可阻止它运行；设置页会显示禁用、策略阻止或无法确认的状态，并提供“打开启动应用”入口。应用不会改写 StartupApproved 来绕过系统禁用。更改失败时尝试恢复之前的注册值，再读回状态并显示错误。窗口重新激活时刷新，不做后台轮询。
+If cleanup fails, the user can Retry, Continue Uninstall or Cancel:
 
-StartupApproved 的二进制格式没有公开 API 契约。当前识别已观察到的 2/6（允许）和 3/7（禁用）状态；其他值或损坏数据显示“无法确认”。入口使用固定的 [ms-settings:startupapps](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-settings)。
+- Cancel keeps the app files. If the preflight finds invalid JSON, an oversized configuration or an unsafe path, neither Claude configuration nor app registrations change.
+- Continue deletes the app files, removes the owned items it still can, keeps the failed ones and writes manual steps to the uninstall log. A Pacer hook left behind calls a deleted program, so Claude Code may report errors until that entry is removed. Prompts name only the configuration file and where to find it, never its contents.
+- A silent uninstall (`/SILENT`, `/VERYSILENT`) returns a nonzero result on cleanup failure and keeps the app files. `uninstall-cleanup.log` in the data folder records which part failed: Codex configuration, DeepSeek Harness configuration, Claude configuration or Windows registration. Uninstalling from Installed apps enables the Inno log; add `/LOG` when uninstalling from the command line.
 
-## 卸载和数据
+What uninstall removes, and only when Pacer owns it:
 
-从 Windows“已安装的应用”卸载 Codex Pacer。确认卸载后，先预检 Claude 配置，再关闭当前安装、清理自有项并删除程序文件和安装目录。已完成的更新下载会一并删除；偏好、已读记录、更新状态和最近一次的安装日志保留。
+- **Windows:** the install registration, Start menu and desktop shortcuts, the Run entry and the notification registration. Entries for another path, other apps' values and shortcuts the user changed are kept. Notification cleanup checks the activator path before calling [`UnregisterAll`](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.windows.appnotifications.appnotificationmanager.unregisterall) and removes the executable's path mapping.
+- **Claude:** the shared `ClaudeHookInstaller` rules remove only Pacer's current and old hook commands, restore the status line if it is still Pacer's wrapper, and remove only environment values Pacer added that the user has not changed. It covers the default, configured and recorded local Claude homes, not remote ones, and never guesses ownership without an install record. The [shared Python runtime](windows-engine.md#claude-python-runtime) is deleted last, only if owned and unreferenced. Adapter scripts and cleaned bookkeeping in the Claude home stay; nothing references them any more.
+- **Codex progress:** Pacer's `pacer_progress` entry is removed from the Codex configuration, so a running reporter stops accepting estimates. Invalid TOML blocks uninstall. The reporter's runtime (`%LOCALAPPDATA%\CodexPacer\CodexProgressRuntime`) stays with user data.
+- **DeepSeek Harness:** in `%USERPROFILE%\.dsh` (or `DSH_HOME`) and the data folder chosen in Settings, only folders containing `pacer\deepseek-progress` are touched. Pacer's entries in `cordis.patch.yml` whose checksum still matches, the switch file and the marked reporter script are removed. A changed entry is kept and reported, with instructions to delete the two marker lines and everything between them.
 
-清理失败时可选择“重试”“继续卸载”或“取消”。取消会保留应用文件；预检发现无效 JSON、过大配置或不安全路径时，也不会更改 Claude 配置或应用注册。继续卸载会删除应用文件，清理仍能安全处理的自有注册项，保留失败项，并在卸载日志中说明手动清理方法。遗留的 Pacer hook 可能调用已删除的程序，在手动移除这些 Pacer 条目前，Claude Code 可能报错。提示只列配置文件名和定位方式，不显示配置内容或任务资料。
+## Demo
 
-静默卸载（/SILENT 或 /VERYSILENT）遇到清理失败会返回非零结果，保留应用文件。维护程序在数据目录的 uninstall-cleanup.log 中区分 Codex 配置、DeepSeek Harness 配置、Claude 配置和 Windows 注册的清理失败。从 Windows 应用列表启动卸载也会启用 Inno 日志。排查命令行卸载时可另加 /LOG。
+Quit Pacer, then run `CodexPacer.exe --demo` from the install folder. It shows sample data only, reads no real tasks and writes no preferences. All copies share one single-instance lock, so while Pacer runs, the demo only brings the existing window forward. Never share real tasks, accounts, credentials or raw engine traffic in screenshots.
 
-卸载移除当前安装自有的安装登记、开始菜单和桌面快捷方式、启动项和通知注册。不同路径的启动项、其他应用的注册值，以及用户改过的快捷方式会保留。通知清理先核对激活程序路径，再调用 SDK 的 [UnregisterAll](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.windows.appnotifications.appnotificationmanager.unregisterall)，并移除当前可执行文件的路径映射。
+## Installation checks
 
-Claude 配置通过共享 ClaudeHookInstaller 的卸载规则处理：只移除 Pacer 自有的当前或旧版 hook 命令；status-line 仍是 Pacer 包装时恢复原值；只移除安装记录里由 Pacer 添加且未被用户修改的环境值。原有或后来添加的用户 hooks、status-line 和其他配置不删除。处理本机默认、已配置及运行时索引记录的 Claude home，不处理远程 hooks。无安装记录时不推测归属。全部 hook 清理后，再按所有权和引用检查删除共享运行时；未知文件或用户引用会阻止删除。
+Inno Setup 6.7.4 is pinned in `windows/installer-toolchain-lock.json`. The scripts verify the official installer's SHA-256 and publisher signature and unpack it as a portable tool under `output`, without a system install. `PACER_INNO_ROOT` can name an already verified portable copy.
 
-DeepSeek Harness 的进度上报在 `%USERPROFILE%\.dsh`（设置了 `DSH_HOME` 时用它）和 Pacer 设置中选择的数据目录里清理，只处理含 `pacer\deepseek-progress` 的目录。卸载先预检，再在关闭应用后移除 cordis.patch.yml 中校验和仍匹配的 Pacer 条目、开关文件和带 Pacer 标记的上报脚本。条目被改过时保留文件，作为清理失败报告，并给出手动删除两行标记及其之间全部内容的方法。
+After building the desktop:
 
-偏好、历史、已读和登录资料保留。需要清除登录资料时，请在卸载前通过设置中的退出登录或删除 key 操作处理。共享卸载器也保留 Claude home 中的适配脚本与已清理的记账元数据；正常清理后，配置不再引用这些脚本。
+```powershell
+./scripts/windows/package-preview.ps1 -SkipBuild
+./scripts/windows/test-installer.ps1 -Archive <ZIP>
+./scripts/windows/package-installer.ps1 -Archive <ZIP>
+./scripts/windows/test-patch.ps1 -Archive <ZIP>
+```
 
-## 演示数据
+`test-installer.ps1` builds an installer with a QA identity and installs it under a Chinese path with spaces, with its own Run entry, Start menu folder, shortcut names and synthetic Claude configuration. It covers:
 
-需要演示或截图时，先退出 Pacer，再从安装目录运行 `CodexPacer.exe --demo`：它只显示示例数据，不读取真实任务，也不写入正式偏好。所有副本共用同一个单实例锁，Pacer 仍在运行时只会把已有窗口调到前面。不要分享真实任务、账户、凭据或原始引擎通信内容。
+- install with default shortcuts, repair (a silent repair keeps the shortcut choices), a locked file, and overwriting a running app;
+- keeping synthetic preferences and read files, the Run entry, uninstall cleanup and the offline demo;
+- invalid Claude JSON with a silent abort, an interactive cancel, repeated retries and an explicit continue, checking raw bytes and log privacy. QA-only arguments drive the interactive choices through the same maintenance entry.
 
-## 开发验证
+`-CodexExecutable <path>` also runs the local Codex with two isolated configurations to test the progress reporter through an overwrite and an uninstall while it runs, and that invalid TOML blocks uninstall. The test uninstalls and deletes its folders afterwards; screenshots show only demo data.
 
-编译器固定为 Inno Setup 6.7.4。脚本校验官方安装包的 SHA-256 和发布者签名，以便携方式放在工作树的 output 下，不创建系统安装登记。PACER_INNO_ROOT 可指向已验证的便携工具目录。
+Before using the screen, the test waits for other presentation or backdrop test processes to exit, checking each minute for up to 30 minutes. It closes only the app in its own install folder. `-ProtectedProcessId` only checks that the named process still exists and never sends it anything.
 
-构建桌面应用后，依次运行：
+`test-patch.ps1` is described under [patch updates](windows-automatic-updates.md#patch-updates).
 
-    ./scripts/windows/package-preview.ps1 -SkipBuild
-    ./scripts/windows/test-installer.ps1 -Archive <ZIP>
-    ./scripts/windows/package-installer.ps1 -Archive <ZIP>
+Limits:
 
-生命周期测试编译独立 QA 标识的安装器，使用中文路径、独立启动项、开始菜单目录、桌面快捷方式名称和合成 Claude 配置。它验证安装、默认快捷方式、损坏修复（静默修复保持快捷方式选择）、文件占用失败、运行中覆盖安装、合成偏好与已读文件保留、启动项、卸载清理和离线 demo。无效 Claude JSON 场景覆盖静默中止、交互取消、重复重试和明确继续卸载，并检查原始字节及日志隐私；交互选择通过仅限 QA 包的参数调用同一维护入口。测试后卸载并清理测试目录。截图只包含 demo 数据。
-
-可选的 `-CodexExecutable` 参数使用本机 Codex 和两个隔离配置测试进度上报。检查会在上报器仍运行时覆盖安装和卸载，并验证无效 TOML 会阻止卸载。成功卸载会从两个配置中撤销 Pacer 的 `pacer_progress`，让已连接的上报器停止接受估计。上报器运行时位于应用目录之外，随用户数据保留。
-
-使用屏幕前，测试等待其他展示或背景测试进程退出；每分钟检查一次，最多等 30 分钟。测试只关闭自己安装位置的应用。可选 ProtectedProcessId 参数只检查指定进程仍存在，不向它发送消息。
-
-本机 Codex 进程树的 HKCU 被隔离；树内注册表测试不能证明真实系统生效。真实 HKCU 的登记、启动项、通知和卸载检查需在进程树外的当前交互用户任务中补跑，CI 安装生命周期测试也必须通过。文件系统检查仍是实际文件系统。
-
-这些检查不代替重新登录、干净系统、其他 Windows 设备或 ARM64 设备上的实机验证；ARM64 CI 只构建和打包。
+- Inside Codex's process tree HKCU is isolated, so registry results there prove only that view. Real HKCU registration, Run, StartupApproved, notification and uninstall behavior needs CI or a temporary current-user task outside the tree; remove the task and installation afterwards. File-system results are real.
+- These checks do not replace signing out and in, a clean system, other Windows devices or ARM64 devices; ARM64 CI only builds and packages.

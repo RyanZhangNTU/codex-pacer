@@ -5,15 +5,14 @@
 <h1 align="center">Codex Pacer</h1>
 
 <p align="center">
-  A Dynamic Island for your Mac or Windows PC that keeps an eye on <b>Codex</b>, <b>Claude Code</b> and <b>DeepSeek Harness</b>:<br>
-  running tasks, output speed, quota pace and balance, right at the notch.
+  A Dynamic Island for <b>Codex</b>, <b>Claude Code</b> and <b>DeepSeek Harness</b>, on Mac and Windows.<br>
+  See every running task, its progress and your quota without leaving what you're doing.
 </p>
 
 <p align="center">
   <a href="https://github.com/RyanZhangNTU/codex-pacer/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RyanZhangNTU/codex-pacer?label=release&color=2f9e8f"></a>
   <img alt="macOS 14 or later" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple">
-  <img alt="Universal app for Apple Silicon and Intel" src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-universal-555555">
-  <img alt="Windows 10 2004 or later, x64 and ARM64" src="https://img.shields.io/badge/Windows-10%202004%2B%20x64%20%2B%20ARM64-0078D4?logo=windows">
+  <img alt="Windows 10 or later" src="https://img.shields.io/badge/Windows-10%2B-0078D4?logo=windows">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/RyanZhangNTU/codex-pacer?color=555555"></a>
 </p>
 
@@ -23,98 +22,55 @@
   &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-![Codex Pacer at the notch, with sample data: hovering opens a Claude Code task, a Codex task over SSH and a DeepSeek Harness task, each with its speed, model and reasoning effort; an approval request turns the island amber, and clicking the task opens its Claude window; then Codex alone with pace and a forecast, Codex with a Claude cloud thread, DeepSeek alone with daily and weekly budgets, and the same island on Windows](docs/assets/demo.webp)
+![Codex Pacer with sample data: the collapsed bar's badge shows the average progress, then the expanded island shows each task's progress ring as Codex, Claude Code and DeepSeek Harness report their estimates, a task turns amber when it needs approval, the same moment in black, graphite and Liquid Glass, and each service on its own](docs/assets/demo.webp)
 
-## At a glance
+## Features
 
-Collapsed, Pacer is a slim bar around the camera that tells you how your agents are doing without opening anything.
-
-![The collapsed bar: a task badge and output speed on the left of the camera, quota rings and the DeepSeek balance on the right](docs/assets/collapsed-bar.png)
-
-| | What it tells you |
-| --- | --- |
-| **Task badge** | How many tasks are running. An orbit turns while they work, teal for Codex, orange for Claude and blue for DeepSeek. Solid amber means a task is waiting for your reply or approval; a check marks a task that just ended. When the only running task reports its progress, the badge shows it as an arc. |
-| **Speed** | Combined output of the running tasks, in tokens per second. |
-| **Quota** | Remaining quota for Codex and Claude, and the DeepSeek balance or budget. Two rings show the modules you choose; the number alternates between the services. |
-| **Warnings** | Appear only when needed: the 5-hour quota is low, an SSH host is disconnected, quota has not updated, or DeepSeek's balance is low, spending spikes or a budget runs out. |
-
-**Hover** to expand, **move away** to collapse, and click the top to keep it open.
-
-## Everything in one panel
-
-- **Every task in one list.** Codex and Claude Code tasks on this Mac or PC, on your SSH hosts, in WSL on Windows and through Codex Remote Control, threads and coordinators in Claude's cloud Projects, and local DeepSeek Harness tasks, each with its current stage, model and reasoning effort, turn time and output speed. Agents a task spawns are grouped under it.
-- **Progress on every task.** Codex, Claude Code and DeepSeek Harness report how much of your request is done, drawn as a ring around the task's icon. A comet circles until the first estimate, light runs along the arc while the task works, and a task that needs you or has ended fills a solid disc.
-- **Jump back in.** Click a task to open its conversation. An ended task stays as a card until you open it or its retention time passes, so nothing finishes unnoticed.
-- **Quota with pace.** Each service has one ring: a shorter upper arc for 5 hours and a longer lower arc for 7 days, each with its own remaining quota, reset countdown and white pace tick. Accounts without a 5-hour limit get a weekly gauge that opens at the bottom. With one service on, its pace, reset time and a forecast sit beside the ring. Switch to the original Classic layout in **Settings → Appearance → Expanded Quota**.
-- **DeepSeek by balance or budget.** DeepSeek charges a balance instead of quota windows, so its dial is today on a 24-hour face: what each hour cost, the doubled-price peak hours and the balance in the middle. Switch to daily and weekly budgets and the dial paces them like quota. Pacer checks balance changes against its own estimate, so spend not made on this Mac, such as web searches or another device, counts too, and it warns you when 10 minutes cost more than usual. Each task shows its turn's estimated cost, and with DeepSeek alone the panel adds where today's money went and the last 7 days. The balance comes from a DeepSeek platform sign-in in Pacer's own window or an API key, whichever matches how Harness signs in.
-- **An overview and history.** Pacer's main window opens on an Overview of every service and anything that needs you. History keeps each service's quota curve for the current cycle, credits and banked resets when the service reports them, and DeepSeek's last seven days.
-
-![DeepSeek alone, with sample data: the day dial with the balance and a ×2 until 6:00 PM chip, beside today's spend, the last two hours' speed and where today's money went, including a hatched Not on this Mac part, above the last 7 days](docs/assets/deepseek.png)
+- **Progress for every task.** Codex, Claude Code and DeepSeek Harness report how much of your request is done. Each task shows it as a ring around its icon, and the collapsed bar can show the average.
+- **Every task in one place.** Tasks on this computer, on your SSH hosts, in WSL, through Codex Remote Control and in Claude's cloud Projects, each with its stage, model, speed and turn time.
+- **Know when you're needed.** A task waiting for your reply or approval turns the island amber, and a finished task stays until you've seen it. System notifications are optional.
+- **Jump back in.** Click a task to open its conversation in the app that runs it.
+- **Quota with pace.** Each service's 5-hour and weekly quota on one ring, with a tick that shows whether you're ahead of or behind an even pace, and a forecast for the reset.
+- **DeepSeek balance and budgets.** Today's spend on a 24-hour dial with the peak-price hours marked, or daily and weekly budgets paced like quota. Spending elsewhere on your account counts too.
+- **Overview and history.** The main window opens on everything that needs you, with each service's quota history.
+- **English and Simplified Chinese.**
 
 ## Make it yours
 
-![Collapsed Bar in the main window: the bar on a live preview, the component library below and the selected Activity badge's settings](docs/assets/settings-collapsed-bar.png)
+![The collapsed bar around the camera: a task badge and output speed on the left, quota rings and a value on the right](docs/assets/collapsed-bar.png)
 
-- **Arrange the bar.** On a live preview, drag components between the left and right of the camera, hide what you don't need, choose which module each quota ring shows, and pick 5 hours or 7 days for each service's quota. With DeepSeek alone, a price clock shows the peak hours at a glance.
-- **Black or Liquid Glass.** On macOS 26 and later the island can use Liquid Glass, and its clarity follows the system setting.
-- **Theme and accent color.** Pacer's windows follow the system or stay light or dark, and an accent color tints rings, progress and selection.
-- **Place the island where it fits.** Keep it at the top center around the notch, or choose Free Move and drag the status bar anywhere; released near a screen edge, it snaps there. Choose a display and whether the island appears over full-screen apps.
-- **Only what you use.** Turn the Codex, Claude and DeepSeek modules on or off independently.
-- **Notifications, if you want them.** macOS notifications when a task needs you or ends, quota or the balance runs low, DeepSeek spending spikes or a budget runs out.
-- **In your language.** English and Simplified Chinese.
+Collapsed, Pacer is a slim bar around the camera. **Hover** to expand it, **move away** to collapse it.
 
-## Get started
+- Choose what the bar shows and on which side of the camera, on a live preview.
+- Four sizes, and black, graphite or Liquid Glass.
+- Keep it at the top center as an island, or drag it anywhere and let it snap to an edge. Each display remembers its own place.
 
-![The welcome guide's first page: the collapsed bar around the camera, with callouts for tasks, speed, quota left and warnings](docs/assets/welcome.png)
-
-1. [Download the latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest) and install it as described below.
-2. Open Codex Pacer. A short guide explains the island, lets you choose Island or Free Move and the services to follow, and covers progress rings, notifications and opening at login. Open it again from **Settings → Help & Updates**.
-3. To see Claude quota, sign in once in Pacer's own Claude window. Task tracking for Claude Code and SSH hosts sets itself up. For the DeepSeek balance, sign in to the DeepSeek platform in Pacer's window, or paste an API key if Harness uses one.
+![Collapsed Bar settings: the bar on a live preview above the component library, with the selected component's options](docs/assets/settings-collapsed-bar.png)
 
 ## Install
 
-### Mac
+**Mac.** Download the DMG from the [latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest), open it and drag **Codex Pacer** into **Applications**. The app is notarized by Apple.
 
-Codex Pacer is distributed as a universal DMG signed with Developer ID and notarized by Apple.
+**Windows.** Download the `x64` installer, or `arm64` on an ARM PC, and run it. No administrator rights are needed. The installer isn't code signed yet, so if SmartScreen appears, choose **More info → Run anyway**.
 
-1. Double-click the downloaded DMG and drag **Codex Pacer** into **Applications**.
-2. Open Codex Pacer from Applications. macOS asks once to confirm an app downloaded from the internet; click **Open**.
-
-After that, Pacer updates itself: it checks daily, shows a new version in its window and installs it with one click on **Update and Restart**, then shows what changed once. **Settings → Help & Updates → Check for Updates** checks right away. See [Apple's guide to opening apps](https://support.apple.com/102445) for more on Gatekeeper.
-
-### Windows
-
-1. Download `Codex-Pacer-VERSION-windows-x64-setup.exe` from the [latest release](https://github.com/RyanZhangNTU/codex-pacer/releases/latest), or `windows-arm64-setup.exe` on an ARM PC, and run it. It installs for the current user without administrator rights.
-2. The installer is not code signed yet. If SmartScreen says "Windows protected your PC", choose **More info → Run anyway**.
-
-Updates then work as on the Mac, from **Settings → Help & Updates**. Uninstall from Windows **Installed apps**; preferences and read history are kept. For screenshots with sample data, quit Pacer and run `CodexPacer.exe --demo` from its install folder (`%LOCALAPPDATA%\Programs\Codex Pacer` by default). More details are in [Windows installation](docs/windows-installation.md).
+On first launch a short guide helps you pick a layout and the services to follow. Pacer then updates itself; check any time in **Help & Updates**.
 
 ## Requirements
 
-- macOS 14 Sonoma or later, on Apple silicon or Intel. Liquid Glass needs macOS 26.
-- Or Windows 10 2004 (build 19041) or later, x64 or ARM64. The glass surface needs Windows 11 22H2, and Claude and DeepSeek sign-in need the WebView2 Runtime, which Windows 11 includes.
-- Codex (app or CLI), Claude Code or DeepSeek Harness, any combination, installed and signed in.
-- Python 3 for the setup and SSH helpers; SSH hosts need Python 3.6 or later and non-interactive OpenSSH access.
-- For Codex Remote Control tasks, keep the Codex app open and connected to the remote host.
+- macOS 14 or later (Apple silicon or Intel), or Windows 10 version 2004 or later (x64 or ARM64). Liquid Glass needs macOS 26 or Windows 11 22H2.
+- At least one of Codex, Claude Code or DeepSeek Harness, installed and signed in.
+- For SSH hosts: SSH access without a password prompt, and Python 3 on the host.
 
 ## Privacy
 
-- **Local first.** Pacer has no account and no analytics. It reads the session logs that Codex, Claude Code and DeepSeek Harness already write and keeps only what the island shows: task titles, stages, models, timing and token counts, never the content of your prompts or responses.
-- **Your own sign-ins.** Codex quota comes from your Codex CLI. Claude quota comes from Claude Code's status line or a claude.ai session in Pacer's own window, which also follows your cloud Projects. The DeepSeek balance comes from a platform session in Pacer's own window or a key you paste, kept in your keychain. Pacer never reads other apps' Keychain items, credentials or browser cookies.
-- **Reversible setup.** For Claude Code, Pacer adds its own hooks and a local-only telemetry endpoint next to your existing settings, and removes them when you turn the Claude module off. Progress rings add a small local reporting tool to Claude Code, Codex and Harness that sends Pacer only a number; turning a ring off removes it.
-- **Few network requests.** Pacer connects only to your SSH hosts, the services' own quota endpoints and GitHub for updates.
-- **Screen sharing.** *Hide Project Names* in Settings replaces task titles on screen.
+- No account and no analytics. Pacer reads the logs your agents already write and keeps only what the island shows: task titles, stages, timing and token counts. It never keeps your prompts or replies.
+- Claude and DeepSeek sign in inside Pacer's own window. Pacer never reads other apps' passwords or browser cookies.
+- Anything Pacer adds to your agents' settings is removed when you turn that feature off.
+- **Hide Project Names** keeps task titles off screen when you share it.
 
-## Build from source
+## Contributing
 
-Requires Xcode 26 or later. Swift Package Manager fetches the only dependency, Sparkle.
-
-```sh
-make build                                  # builds the app and prints its path
-make test TEST_FILTER='CompletionInboxTests' # runs selected test suites
-```
-
-Read [Contributing](CONTRIBUTING.md) to get started, [development notes](docs/development.md) for architecture and data semantics, and [releasing](docs/releasing.md) for packaging. Report security issues privately as described in [SECURITY.md](SECURITY.md).
+Bug reports and ideas are welcome in [Issues](https://github.com/RyanZhangNTU/codex-pacer/issues). To build from source or send a pull request, start with [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -1,96 +1,171 @@
 # Windows engine development
 
-The root package builds `PacerEngine` and its platform adapters. The WPF host and its CI packages are described in [windows-shell.md](windows-shell.md). The Mac app builds from `native/Package.swift`; pull requests run its full native tests on Apple silicon, and the local release build compiles both architectures ([continuous integration](development.md#continuous-integration)).
+The root `Package.swift` builds `PacerEngine` and its Windows adapters. The WPF host is described in [Windows shell development](windows-shell.md), the installer in [Windows installation](windows-installation.md). The Mac app builds from `native/Package.swift`; see [development](development.md#continuous-integration) for its tests and CI.
 
-Use Windows x64, Visual Studio C++ build tools and a Windows SDK. `windows/toolchain-lock.json` pins Swift 6.4.2 and .NET SDK 10.0.403. The .NET SDK builds the shell and synthetic process/pipe fixtures. `setup-swift.ps1` installs the pinned, verified Swift toolchain under ignored `output/toolchains` when needed.
+## Build and test
+
+Use Windows x64 with the Visual Studio C++ build tools and a Windows SDK. `windows/toolchain-lock.json` pins Swift, the .NET SDK, Windows App SDK, WebView2 and the minimum Windows build (19041). `setup-swift.ps1` installs the pinned, verified Swift toolchain under the ignored `output/toolchains` when needed.
 
 ```powershell
 ./scripts/windows/setup-swift.ps1
 python scripts/windows/check-contract.py
 python scripts/windows/test_contract.py
-./scripts/windows/test-engine.ps1
+./scripts/windows/test-engine.ps1            # -Filter <suite> runs one suite
 ./scripts/windows/build-engine.ps1 -Configuration release
 ```
 
-Builds stage immutable source snapshots outside OneDrive and reuse an isolated SwiftPM cache under the temporary directory. `output/windows/engine-location.json` records the source snapshot, cache and configuration. The executable is under `<scratch>/x86_64-unknown-windows-msvc/<configuration>/PacerEngine.exe`. The pinned toolchain uses SwiftPM's native build system; its deprecation and optional `debug` symlink notices are build-tool notices, separate from compiler warnings. Windows CI checks compiler diagnostics in both test and build logs.
+- Builds stage an immutable source snapshot outside OneDrive and reuse an isolated SwiftPM cache under the temporary directory. `output/windows/engine-location.json` records the snapshot, cache and configuration; the executable is `<scratch>/x86_64-unknown-windows-msvc/<configuration>/PacerEngine.exe`.
+- Parallel worktrees should set `PACER_WINDOWS_SCRATCH_PATH` so one build cannot replace another worktree's test executable or resources.
+- Toolchains outside the worktree are named with `PACER_SWIFT_ROOT`, `PACER_WINDOWS_SDK_ROOT` and `PACER_DOTNET_ROOT`.
+- SwiftPM's native build system prints deprecation and `debug` symlink notices; those are build-tool notices, not compiler warnings. CI fails on compiler warnings in both the test and build logs.
 
-Parallel worktrees can set `PACER_WINDOWS_SCRATCH_PATH` to separate temporary cache directories before running the build/test scripts. This prevents one build from replacing another worktree's test executable or resources.
+## Protocol
 
-The engine speaks bounded newline-delimited JSON on stdin/stdout. Requests carry `protocolVersion: 1`, an `id` and a `method`. An `initialize` request supplies enabled providers and source roots; `shutdown` closes owned work. Do not save live protocol bodies: they can contain task display metadata. Diagnostics and acceptance records must exclude credentials, account identity and private task content.
+The engine speaks bounded newline-delimited JSON on stdin and stdout. Requests carry `protocolVersion: 1`, an `id` and a `method`. `initialize` supplies the enabled providers and source roots; `shutdown` closes owned work. New fields must be optional so existing DTOs stay compatible.
 
-DeepSeek browser requests follow the snapshot that publishes their connection context. While configuration suspends task projection, the engine holds at most four requests. Cancellation and a replacement binding remove old requests; sleep and shutdown clear the queue. The browser host still validates every source context, and the existing read and cleanup deadlines remain in force.
+- Never save live protocol bodies: they carry task display metadata. Diagnostics and acceptance records exclude credentials, account identity and private task content.
+- While configuration suspends task projection, the engine holds at most four DeepSeek browser requests. Cancellation, a new binding, sleep and shutdown clear them.
 
-For an idle check with empty provider homes, run:
+## Shared Core and platform boundaries
+
+- `PacerCore` owns provider parsing, state, projections and lifecycle policy: source versions, work slots, the two-second host-scan cadence, sleep and wake order, and the 650 ms cleanup budget. Hosts run platform IO and connect native timers and power events.
+- `PacerMacSupport` supplies Mac IO. `PacerEngineSupport` (`windows/EngineSupport`) supplies Windows IO and protocol assembly; Win32 calls live under `windows/Native`. Core cannot depend on either host target.
+- Both packages compile the whole `native/Sources/PacerCore` directory, so a new Core file enters both builds; there is no Windows source list. Claude clients, metadata parsing and DeepSeek scripts compile from the Core files; there is no generated Swift copy.
+- Windows adapters implement Core's file, process, executable, installation, credential and localization ports. A file's identity is its volume plus its full file ID.
+- Windows keeps its named mutex and activation channel, named-pipe authentication and writer proofs; the Mac keeps Unix sockets, kevent and the flock singleton.
+- Both platforms run the full `PacerCoreTests` target. Mac-only IO tests live in `PacerMacSupportTests`. Synthetic Python programs take their arguments from temporary files so the Windows command-line limit cannot drop coverage.
+
+The platform contract (`windows/platform-contract.json`, checked by `check-contract.py` in CI) scans every Core source and rejects host imports and platform or business conditionals. Only `FoundationNetworking` and `CoreGraphics` may appear in a conditional import, and only as the import. It also checks package identity, dependency pins, native resources and target wiring, and pins the digests of the Mac shipping files and release scripts (`protectedFiles`), so changing one of those needs a contract update in the same change. Windows CI also compiles a forbidden Windows-type reference with the real Core compiler command and expects it to fail.
+
+## Log paths longer than MAX_PATH
+
+`PacerEngine.exe` embeds an `asInvoker`, `longPathAware` manifest, as does the desktop. File ports and directory watches convert absolute drive and UNC paths to extended Win32 paths only at the IO boundary; canonical URLs, source identities and saved paths keep their normal form.
+
+`WindowsFileSystemTests` and the desktop's `LongPathChecks` cover paths beyond 260 characters. Known limitation: the whole app has only been run with `LongPathsEnabled=1`.
+
+## HTTP through WinHTTP
+
+On Windows, FoundationNetworking's URLSession keeps one worker thread busy for as long as a response stays open: libdispatch re-signals a libcurl socket write source each time it is armed, and `_SocketSources` cancels it only when libcurl removes the socket. Claude's cloud message streams stay open (up to four project and six thread streams) and cloud polling sends up to 16 requests every 30 seconds, so the engine uses WinHTTP's asynchronous API instead, through `WindowsHTTPStream`.
+
+| Client | Used for | Limits |
+| --- | --- | --- |
+| `WindowsClaudeCloudStream` | `GET` on `https://claude.ai` message-stream paths only | 4 MiB line limit, eight-line buffer, 60 s idle, 24 h total |
+| `WindowsHTTPClient` | Claude web usage, Claude cloud polling, Remote Control catalogs, Claude OAuth usage | Claude web: 12 s request, 15 s total, 32 MiB body. Remote Control and OAuth: 8 s and 10 s, 512 KiB and 2 MiB |
+
+Rules both clients keep:
+
+- No redirects are followed; a redirect is returned as the response. Cookies, stored or default credentials and caches are off. Headers that could start another line are rejected.
+- Each request has a dedicated thread waiting on WinHTTP events, started through `WindowsThread`, which closes the thread handle at once. Foundation's `Thread` never closes the handle `_beginthreadex` returns, which leaked one handle per request.
+- EOF is confirmed by a read. Fixed-length bodies are checked against the encoded byte count, so an early disconnect fails even when the prefix is valid JSON. The memory bound applies to decoded bytes.
+- Proxies come from `https_proxy` or `all_proxy`, honoring `no_proxy`. Direct connections and plain HTTP proxies use WinHTTP directly. SOCKS4, SOCKS4a, SOCKS5, SOCKS5h and HTTP proxies with credentials go through `WindowsProxyRelay`, a loopback proxy started for one request that accepts only that request's host and port. TLS stays end to end. A failed proxy request is never retried directly.
+- Only HTTPS proxies and proxy values WinHTTP cannot express keep the URLSession path and its CPU cost. DeepSeek balance reads still use URLSession; they run only with a DeepSeek key and finish within seconds.
+
+`WindowsClaudeCloudStreamTests`, `WindowsHTTPClientTests`, `WindowsRemoteControlHTTPTests` and `WindowsProxyRelayTests` run loopback requests through the real WinHTTP path and assert that an idle open stream, a pending request and an idle relayed stream each use less than 10% of one core. `WindowsURLSessionCompatibilityTests` covers the remaining URLSession path.
+
+## Child processes
+
+Helper commands run through swift-subprocess 1.0.2; launching a task's host application uses `CreateProcessW`.
+
+- Short commands (WSL list and probes, SSH probes, Codex progress setup, Claude hook setup) use `WindowsSubprocess.capture`. It bounds stdout and gives the child two `NUL` descriptors that the engine opens once.
+- Do not pass `.none` input or `.discarded` output on Windows. swift-subprocess then opens `NUL` through the C runtime on every run and never releases the descriptor; the 30-second WSL discovery once exhausted the runtime's 8,192 descriptors in about 15 hours and stopped the engine. `WindowsSubprocessTests` checks that captures keep no descriptors.
+- Long-running helpers (Codex app-server, SSH and WSL helpers) stream `.sequence` output through `WindowsCodexProcess`.
+
+## Writers of a session file
+
+Host tracking, opening a task and the Codex Desktop source binding ask which processes hold a session file open for writing. `WindowsFileOwners.c` asks Restart Manager for candidates, captures each one's handle table with `PssCaptureSnapshot`, and compares the file identity of every handle with write access.
+
+Always request `PSS_CAPTURE_HANDLE_NAME_INFORMATION` with the basic information. Windows 10 (through at least build 19045.7725) clears the capture's name buffer only when names are requested and otherwise leaves stale stack pointers there, which can crash the engine in `ntdll.dll`. Windows 11 and CI clear it either way, so they cannot show the fault. The fix has not been run on a Windows 10 machine. `WindowsProcessOwnershipTests` checks that the capture reports names.
+
+## Crash reports
+
+When the engine stops on an unhandled exception, a damaged heap or `abort()`, `CrashReport.c` writes `%LOCALAPPDATA%\CodexPacer\CrashLogs\engine-crash-<identifier>.txt`. The desktop gives each engine start its own identifier with `--crash-log-id`, `--crash-log-directory` and `--app-version`, so a reused process number cannot mix two starts. After the engine's output ends, the desktop's `EngineCrashLog` appends the exit code and running time, or writes the whole report for a fail-fast exit. The ten newest reports are kept.
+
+Reports are meant to be attached to public issues, so they hold a fixed set of fields and no free text:
+
+- Pacer and Windows versions, the exception and faulting address, and the stack and modules as file names with offsets, plus each module's link time, image size and symbol identity.
+- No memory contents, register values, paths, arguments or environment. The stack walk stops at a frame outside every module.
+- From Swift's error text only the kind, module, file name and line are kept (as `swift:`); the message and the runtime's printed stack are dropped.
+
+The handlers do only what a damaged process still can: the file is opened at install time and marked for deletion, text is built in static storage without the heap, locale or loader lock, and the stack is unwound from the faulting registers. A vectored handler catches heap corruption and a `SIGABRT` handler catches `abort()`, because Windows skips the unhandled-exception filter for both.
+
+```powershell
+PacerEngine.exe --crash-log-directory <existing folder> --diagnose-crash access-violation   # or fatal-error, abort
+python scripts/windows/symbolize-crash-report.py <report> [--binaries <folder with this build>]
+```
+
+The symbolizer fetches Microsoft's symbols by the identities in the report and reads the engine's own modules from `--binaries`. `WindowsCrashReportTests` crashes the real engine each way; `EngineCrashLogChecks` covers the desktop's part.
+
+## SSH sources
+
+Windows reads hosts already saved by Codex or Claude, with the shared discovery, route keys, activity monitors and shutdown deadline. Claude Desktop routes come from `ssh_configs.json` in the [active Desktop data folder](windows-shell.md#claude-desktop-data-folder); the selected Claude home's `settings.json` can override them.
+
+- **Setting:** Monitor Tasks on SSH Hosts uses the Mac key `monitorSSH` (absent means on). Turning it off closes owned helpers. Sleep and exit close stdin and use the shared 650 ms cleanup deadline.
+- **ssh.exe:** `%SystemRoot%\System32\OpenSSH\ssh.exe` first, then absolute PATH entries. Routes resolve through bounded `ssh -G` output.
+- **Connection policy:** `BatchMode=yes` and `StrictHostKeyChecking=yes`; password prompts, host-key updates, local commands, agent and port forwarding and connection sharing are off. Pacer never edits SSH config or `known_hosts`. A host without access stays unavailable until the user sets access up.
+- **Commands:** the shared collector command travels in a bounded, length-prefixed stdin frame that a small remote Python bootstrap reads before running it. This avoids the Windows command-line limit without writing a helper to the remote host.
+- **Opening a task:** a base64 plan goes to a console mode of `PacerEngine.exe` (`--ssh-terminal`), which revalidates the route and UUID before launching SSH with a TTY, in Windows Terminal or else a normal console. Codex runs `codex resume <UUID>`, Claude the shared `ClaudeRemoteResume` program; neither sends a prompt.
+
+### Claude remote hooks
+
+Reachable Claude sources use Core's `ClaudeRemoteAutoSetup` and `ClaudeRemoteSetup`, sharing the installer, digest cache and scheduler with WSL.
+
+- Setup needs an existing remote Claude home, preserves user hooks, wraps the previous status-line renderer and respects telemetry conflicts. The adapter digest controls upgrades.
+- A failed attempt waits 30 minutes or a manual retry, on one sleeping timer. Core limits setup to 15 seconds. Disabling, source replacement, sleep and quit cancel it; late results are discarded.
+- The bounded version-1 cache (`claudeRemoteSetupDigests`) holds only validated SSH aliases and digests. Losing it only makes the idempotent installer check again.
+- Snapshots carry `claudeRemoteSetups` rows (`sourceID`, opaque `context`, `configured`, `inFlight`, `canRetry`, optional `message` and `retryAt`). `retryClaudeRemoteSetup` takes the row's `sourceID` and `context`; the caller can never supply a host or command.
+- Read-only diagnostics and demo never install hooks.
+
+`WindowsSSHTests` and `WindowsClaudeRemoteTests` use a synthetic SSH executable and disposable remotes. They do not cover a real host, Windows Terminal TTY resume or remote sleep and reconnect.
+
+## Claude Python runtime
+
+The package ships the official CPython embeddable runtime for its architecture, so Claude hooks and the status line never depend on a user Python, PATH or the Store alias. Using Python lets Windows run the unchanged shared `claude_hook.py` with the same event, ownership, quota and privacy rules as the Mac. Telemetry stays on the engine's loopback HTTP server.
+
+**Pins.** `windows/InstallerSupport/Resources/python-runtime-lock.json` (x64) and `python-runtime-lock-arm64.json` hold the version, URL, SHA-256, publisher and signed files. The build checks the ZIP hash and the Python Software Foundation Authenticode signatures and writes a per-file manifest. The official ARM64 archive carries an x64 `vcruntime140_1.dll`; `prune-arm64-runtime.py` removes it from the staging copy after confirming nothing references it. To take a security update, update both lock files from the official release, then rerun the shared tests, `test-claude-runtime.ps1` and the installer lifecycle test. Pacer never downloads a runtime at run time.
+
+**Location.** The first time the local Claude module is on, the runtime is deployed to `%LOCALAPPDATA%\CodexPacer\ClaudeRuntime\<version>-<first 12 hex digits of the ZIP SHA-256>\`, shared by every Claude home. Moving the app or using the portable ZIP does not change commands already written. The Codex progress reporter uses the same package under `CodexProgressRuntime`, with its own ownership.
+
+**Ownership.** The root and each version folder carry a `.pacer-owned.json` marker; an unmarked non-empty folder is never taken over. Files are checked by handle for owner, reparse points and hard links before any write or truncation. The owner must be the current user's SID, or BUILTIN\Administrators only when the token is elevated with that group enabled. Locks are a Windows mutex with a 2-second wait.
+
+**Hook command.** Claude Code runs hooks through Git Bash, or PowerShell when Git Bash is missing, so the command is chosen in this order:
+
+1. Unquoted absolute paths (`C:/.../python.exe -S C:/.../pacer/hook.py hook C:/...`) when the paths contain no spaces or shell characters.
+2. Otherwise 8.3 short paths, when the volume provides safe ones. Pacer never changes volume settings.
+3. Otherwise the system PowerShell (`-File`, found through the system directory, `RemoteSigned` for that process only) with a thin forwarding script. This adds about 150 to 400 ms per hook event, and Settings says so; group policy can still block it.
+
+Old `cmd.exe /D/C` wrappers are migrated, because Git Bash can rewrite `/D` into `D:/`. The user's original status line runs through `CLAUDE_CODE_GIT_BASH_PATH`, then Git for Windows' standard location, then the system PowerShell, never through cmd.exe. It keeps byte-exact stdio and a 10-second timeout.
+
+**Limits.** Local drive paths only. Paths with control characters or any of `` " $ ` % ! ^ & | < > `` are refused; spaces and Chinese are fine. Commands are capped at 7,000 UTF-16 units. The root records at most 128 Claude homes.
+
+**Upgrades and removal.** A new runtime goes to a new folder. Old versions are removed file by file only when no recorded home's settings or saved status line still references them; invalid or unreadable configuration keeps them. App start, the module switch and home changes trigger one asynchronous install or removal with a 5-second deadline and a retry in Claude settings. Turning the module off removes the current home's entries; quitting keeps them. Demo and read-only engines never install hooks. Uninstall is described in [Windows installation](windows-installation.md#uninstall-and-data).
+
+`test-claude-runtime.ps1` uses synthetic stdin, isolated `HOME`, `CLAUDE_CONFIG_DIR` and `LOCALAPPDATA`, and a PATH without Python. It covers each command tier with Bash and PowerShell (timing five hook calls per tier), ownership, concurrency, lock timeouts, privacy, repair, moving the app and cross-home uninstall. CI also runs `check-claude-shell.py` from PowerShell and Git Bash before compiling, because Git Bash gives new files a different default owner. Hooks copied by hand into unrecorded homes are not found, and ARM64 devices are not tested.
+
+## Idle CPU checks
+
+Idle work must be driven by events or deadlines, never by polling. Valid data, deadlines and business refreshes still wake the app; do not disable them to improve an idle number.
+
+| Target | Limit (percent of one core) |
+| --- | --- |
+| Engine with empty provider homes | ≤ 1 |
+| Shell, collapsed, unchanged data | ≤ 1 |
+| Shell, expanded, unchanged data | ≤ 2 |
+| Shell, hidden or covered by an opaque fullscreen window | ≤ 0.5 |
+
+Engine with empty homes, for at least 120 seconds. CI runs this; it also changes the Codex source and checks a bounded shutdown:
 
 ```powershell
 python scripts/windows/check-engine-idle.py --engine <engine-path> --output output/windows/engine-idle.json
 ```
 
-This runs for at least two minutes, discards protocol bodies, reports CPU time and both single-core and host percentages, changes the Codex source, then measures shutdown. It does not validate populated sources, browser login or the WPF UI.
-
-For a five-minute check against actual provider homes:
+Engine against real provider homes, read-only (`--read-only-diagnostics`: no quota clients, browser sessions, hooks or persistence; only numeric counters are recorded):
 
 ```powershell
 python scripts/windows/check-engine-idle.py --engine <engine-path> --seconds 300 --real-data --output output/windows/engine-real-idle.json
 ```
 
-This uses `--read-only-diagnostics`: local logs and Desktop observations remain enabled, while quota clients, browser sessions and completion persistence are disabled. It does not install hooks or change provider files. Source paths and protocol bodies are discarded; only numeric CPU/protocol counters are recorded.
+The script cannot sign in to Claude on the web, so the WinHTTP paths are covered only by the loopback tests above. A signed-in engine that falls back to URLSession holds about one full core while idle.
 
-Windows adapters implement the Core file, process, executable, installation, credential and localization ports. File identities use volume plus the full file ID; metadata can describe a reparse point or its target. Win32 calls live under `windows/Native`. Claude clients, account/session metadata parsing, numeric validation and DeepSeek scripts compile from the authoritative Core files. There is no generated Claude Swift copy or generator invocation.
+Shell, in a screen slot of its own: build `windows/Tests/BackdropTests/Pacer.BackdropTests.csproj` in Release, then run `python scripts/windows/check-shell-idle.py --probe <probe> --output <new folder> --seconds 300 --appearance classic|liquidGlass --snapshot <synthetic snapshot>`, optionally with `--states collapsed expanded hidden covered`. CPU is read only at the start and end. Process CPU excludes DWM and GPU work.
 
-## Log paths longer than MAX_PATH
-
-`PacerEngine.exe` embeds an `asInvoker`, `longPathAware` manifest; the desktop already declares `longPathAware`. Windows file ports and directory watches convert absolute drive and UNC paths to extended Win32 paths only at the IO boundary. Canonical URLs, provider source identities and saved paths keep their existing form. FileHandle reads through the file port also use the extended path.
-
-`WindowsFileSystemTests` covers Unicode/UNC conversion and metadata, bounded reads and watches beyond 260 characters. `LongPathChecks` starts the actual engine with isolated Codex, Claude and DeepSeek homes, including Claude's encoded project directory, and checks discovery, initial reads and appended completions without a refresh command. A native PE-resource inspection confirmed the manifest in both executables. Local runs had `LongPathsEnabled=1`; the complete application has not been verified with that system policy disabled.
-
-## HTTP through WinHTTP
-
-FoundationNetworking's URLSession uses libcurl and libdispatch sources on Windows. When libcurl stops asking to write to a socket, URLSession keeps the socket's write source, and libdispatch on Windows signals that source again each time it is armed. A request therefore keeps one worker thread busy until its response ends. In the toolchain pinned here and in upstream `main`, `_SocketSources` cancels its sources only when libcurl removes the socket. A loopback response that stayed open used 84% of one core.
-
-Claude's cloud message streams stay open; up to four project streams and six thread streams can be open at once. Cloud polling also makes up to 16 requests every 30 seconds. On Windows, these and the other periodic reads use WinHTTP's asynchronous API through `WindowsHTTPStream`. A dedicated thread waits on events for each WinHTTP request, so a waiting request uses no CPU. `WindowsThread` starts these threads and closes each thread's handle at once: Foundation's `Thread` on Windows never closes the handle `_beginthreadex` returns, so every finished request used to leave a handle to an exited thread, about a dozen a minute while Claude was followed in the cloud.
-
-- `WindowsClaudeCloudStream` reads message streams. Only `GET` requests to `https://claude.ai` message stream paths are allowed. The parser keeps the 4 MiB line limit and the eight-line buffer. The timeouts stay at 60 seconds idle and 24 hours in total.
-- `WindowsHTTPClient` makes the bounded `GET` requests for Claude web usage, Claude cloud polling, Remote Control catalogs and Claude OAuth usage. Claude web reads keep their 12-second request and 15-second total timeouts, and their bodies are limited to 32 MiB. Remote Control and OAuth reads keep 8 and 10 seconds, and 512 KiB and 2 MiB.
-
-Neither follows redirects: a redirect is returned as the response, as the URLSession delegates did. Cookies, stored or default credentials and caches are disabled. Headers that could start another line are rejected. Both use the proxy named in the `https_proxy` or `all_proxy` environment variables and honor `no_proxy`. Direct connections and plain HTTP proxies use WinHTTP directly. WinHTTP cannot use SOCKS proxies or send proxy credentials it was not challenged for, so SOCKS4, SOCKS4a, SOCKS5, SOCKS5h and HTTP proxies with credentials go through `WindowsProxyRelay`. The relay is a loopback HTTP proxy that the engine starts for one request. It accepts only that request's host and port, opens the tunnel through the configured proxy, and then copies bytes on blocking sockets, so an idle stream through it uses no CPU. Like libcurl, SOCKS4 and SOCKS5 resolve the host locally, SOCKS4a and SOCKS5h let the proxy resolve it, and HTTP proxy credentials are sent with Basic authentication. TLS still runs end to end between WinHTTP and the server. Only HTTPS proxies and proxy values WinHTTP cannot express keep the URLSession transport and its CPU cost. A failed proxy request is never retried directly. DeepSeek balance reads still pass a URLSession to Core; they run only when a DeepSeek key is used and end within seconds.
-
-WinHTTP confirms EOF through a read and verifies fixed-length responses against its completed request's encoded-body byte count. An early disconnect fails even when the received prefix is valid JSON. Compressed lengths are checked against encoded bytes, while the memory bound applies to decoded bytes. Chunked responses keep WinHTTP's framing checks, and bodyless statuses do not require a representation's advertised length.
-
-`WindowsClaudeCloudStreamTests`, `WindowsHTTPClientTests` and `WindowsRemoteControlHTTPTests` send loopback requests through the actual WinHTTP path. They cover headers, split UTF-8, cancellation, invalidation, status and redirect responses, complete and truncated plain/compressed bodies, size limits, slow consumers, timeouts, proxies and rejected requests. `WindowsProxyRelayTests` play SOCKS4a, SOCKS5, SOCKS5h with credentials and an authenticated HTTP proxy on loopback, check origin-form forwarding, all successful CONNECT statuses, refused targets and failed proxies, and check that an idle stream through the relay uses less than 10% of one core. `WindowsURLSessionCompatibilityTests` intercepts the compatibility path to check response handling, cancellation, invalidation and memory limits without a provider account. Its size-limit fixture keeps the response open until cancellation, so a normal completion cannot race the cancellation assertion. The WinHTTP tests also check that an idle open stream and a pending request each use less than 10% of one core. `check-engine-idle.py` cannot make these requests, because they need a Claude web session. Measure a signed-in engine as described in [Windows idle CPU](windows-idle-cpu.md).
-
-## Child processes
-
-Helper commands run through swift-subprocess 1.0.2; launching a task's host application uses `CreateProcessW` directly. Short commands, such as the WSL list and discovery probes, SSH probes, Codex progress setup and Claude hook setup, go through `WindowsSubprocess.capture`. It captures standard output up to the caller's limit and gives the child two `NUL` descriptors for standard input and error, which the engine opens once and the library never closes.
-
-Do not pass `.none` input or `.discarded` output on Windows. For those, swift-subprocess opens `NUL` through the C runtime on every run and later closes only the Win32 handle, so the runtime descriptor is never released. The WSL discovery that runs every 30 seconds used up the runtime's 8,192 descriptors in about 15 hours. After that, the next run could not open `NUL`, and the library stopped the engine while discarding the pipe it had already created. `WindowsSubprocessTests` checks that captures keep no runtime descriptors, that a child reads end of input, and that its errors are dropped.
-
-Long-running helpers (Codex app-server and the SSH and WSL helpers) stream `.sequence` output through `WindowsCodexProcess`. Since 1.0.1, the library closes those pipes when the closure returns, including after a cancelled read stops early.
-
-## Writers of a session file
-
-Host tracking, opening a task and the Codex Desktop source binding ask which processes hold a session file open for writing. `WindowsFileOwners.c` asks Restart Manager which processes use the file, captures each candidate's handle table with `PssCaptureSnapshot`, and compares the file identity of every handle that has write access.
-
-Capture handles with `PSS_CAPTURE_HANDLE_NAME_INFORMATION` as well as the basic information. Windows 10, through at least build 19045.7725, clears the object-name buffer of its capture only when names are requested. Without that flag it copies whatever length and pointer its own stack held there for every handle, so the engine could stop with an access violation in `ntdll.dll` while it looked for the writers of a session file. Windows 11 clears the buffer either way, so neither a Windows 11 machine nor CI shows the fault. A fault reported on Windows 10 is at the instruction this reaches, and a stale value planted in that buffer on Windows 11 reproduces it; neither the fault nor the fix has been run on a Windows 10 machine. `WindowsProcessOwnershipTests` checks that the capture reports the name of a named object.
-
-## Crash reports
-
-When the engine stops on an unhandled exception, a damaged heap or `abort()`, `CrashReport.c` writes a short text report to `%LOCALAPPDATA%\CodexPacer\CrashLogs\engine-crash-<identifier>.txt`. The desktop gives every start of the engine an identifier of its own, the UTC start time and a random part, and passes it with the folder and its own version as `--crash-log-id`, `--crash-log-directory` and `--app-version`; `WindowsCrashReport.install` runs first in `PacerEngine.run`. Both sides name the report by that identifier, and the engine never opens a name that is already taken, so a process number that Windows hands out again cannot put one start's exit into another's report. After the engine's output ends on its own, `EngineCrashLog` adds the exit code and the running time to that file, before the client looks at the last frame: an engine that stops while it writes leaves half a frame, which is a protocol failure and still an exit to record. If the engine was ended without a chance to write, as a fail-fast does, the desktop writes the whole report from the exit code. The ten newest reports are kept.
-
-A report is meant to be attached to a public issue, so it holds a fixed set of fields and no free text. Those are the Pacer and Windows versions with the update revision, the exception with the address it could not read or write, and the stack and modules as file names with offsets. Each module carries its link time and image size, and the identity of its symbol file when it has one; those select the exact binary and symbols on Microsoft's symbol server. It holds no memory contents, register values, paths, arguments or environment: a register can hold the bytes the engine was handling, and a stack frame outside every module is whatever the stack held, so the walk ends there. The engine's error text can quote paths, so the desktop keeps none of it. It reads each line only to see whether Swift named the source line it stopped at, as in `Module/File.swift:12: Fatal error: message`, and records the kind, module, file name and line number as `swift:`; the message is dropped, and so is the stack the Swift runtime prints after it.
-
-The handlers do only what a damaged process still can. The file is opened when they are installed and marked for deletion, so an engine that exits or is ended leaves nothing, and writing a report clears the mark. The text is built in static storage without the heap, the C runtime's locale or the loader lock, and the stack is walked from the faulting registers with each image's own unwind data. Windows ends a process with a damaged heap, or one that called `abort()`, without asking the unhandled-exception filter, so a vectored handler watches for the first and a `SIGABRT` handler for the second.
-
-To see a report on any machine, run `PacerEngine.exe --crash-log-directory <existing folder> --diagnose-crash access-violation`, or `fatal-error` or `abort`; without an identifier the engine names the report by its start time and process. `python scripts/windows/symbolize-crash-report.py <report>` names the functions: it fetches Microsoft's symbols by the identities in the report, and reads a module from `--binaries` when no symbols are available for it and that folder holds the same build, as for the engine's own modules. `WindowsCrashReportTests` stops the real engine in each of those ways and reads its report. `EngineCrashLogChecks` covers the desktop's part, retention, an engine ended from outside and one that stops in the middle of a frame.
-
-## Shared Core and platform boundaries
-
-`PacerCore` owns provider parsing, state, projections and lifecycle policy. `PacerMacSupport` supplies Mac IO. The separate `PacerEngineSupport` target depends on Core and supplies Windows IO and engine protocol assembly; native Windows calls stay in host code. Core cannot depend on either host target. Both packages compile the entire `native/Sources/PacerCore` directory, so new Core files enter both builds automatically; there is no Windows source or test inventory.
-
-Both hosts share watcher scheduling, activity monitors, Realtime reconciliation and helper protocols; activity projections and quota, Cloud and balance coordination; and captured navigation acknowledgments, error expiry, host tracking and lifecycle plans. The flock singleton implementation lives in MacSupport; Windows retains its mutex and activation channel. Windows keeps named-pipe authentication and selected-home writer proofs; Mac keeps Unix socket, kevent and process/application IO.
-
-Core owns source versions, work slots, the two-second host-scan cadence, sleep/wake order and the 650 ms cleanup budget. Hosts execute platform IO and connect native timers and power events. A successful conversation open acknowledges only the captured ending and still-matching descendant chains. Failed opens preserve unread cards. Navigation errors expire through a display-only publication. Protocol 1 includes optional navigation-error and busy-row fields plus sleep/wake commands; existing DTO fields remain compatible.
-
-Both platforms run the complete `PacerCoreTests` target. Mac application discovery, Keychain, POSIX permissions, Unix sockets and actual Unix helper-process tests live in `PacerMacSupportTests`; mixed suites keep their portable cases in Core tests. Synthetic Python programs and arguments use temporary files so Windows command-line limits do not remove test coverage. Claude's initialization backlog and bounded cold-history reads use the shared reader, and Windows runs its new-file/append and cold-history regressions.
-
-The platform contract recursively scans every Core source. Host imports and platform/business conditionals are rejected without exceptions; the conditional-import exceptions (`FoundationNetworking` and `CoreGraphics`) may contain only their guarded import. It also checks shipping package identity, dependency pins, native resources, release/native scripts and full-directory target wiring, while leaving presentation sources available for refactoring. Mac and Windows CI run the same contract tests. Windows also compiles a forbidden Windows-type reference with the actual Core compiler command and verifies that it fails. A successful engine build does not establish UI or installed-app behavior; see [windows-shell.md](windows-shell.md) and [Windows installation](windows-installation.md).
+`QuotaScheduleChecks`, `IdleSchedulingChecks`, `OcclusionPolicyChecks`, `OcclusionSchedulingChecks` and `EngineSnapshotEmissionTests` guard the idle rules in CI. The shell's rules are in [Windows shell development](windows-shell.md#idle-rendering).
