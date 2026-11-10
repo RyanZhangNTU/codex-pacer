@@ -60,7 +60,7 @@ internal sealed class WindowsConversationApplication
         if (provider == "codex")
         {
             if (candidate.Scheme != "codex" || candidate.Host != "threads" || !candidate.AbsolutePath.StartsWith("/", StringComparison.Ordinal) || !Guid.TryParseExact(candidate.AbsolutePath[1..], "D", out _) ||
-                (key != null && (key != "hostId" || !Regex.IsMatch(argument!, @"\Aremote-(?:ssh-discovered:[A-Za-z0-9][A-Za-z0-9._-]{0,128}|control:[A-Za-z0-9_-]{1,128})\z"))) || fallbackValue != null) return false;
+                (key != null && (key != "hostId" || !Regex.IsMatch(argument!, @"\A(?:durable|remote-(?:ssh-discovered:[A-Za-z0-9][A-Za-z0-9._-]{0,128}|control:[A-Za-z0-9_-]{1,128}))\z"))) || fallbackValue != null) return false;
         }
         else if (provider == "claude")
         {

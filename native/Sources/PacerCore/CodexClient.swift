@@ -235,11 +235,16 @@ public actor CodexClient {
 
     /// Configure only the marketplace that points at Pacer's owned source.
     package func setDurableProgressPlugin(market: String, plugin: String, source: URL,
-                                          enabled: Bool, cachedManifestMatches: Bool) async throws -> Bool {
+                                          enabled: Bool, cachedManifestMatches: Bool, checkOnly: Bool = false,
+                                          pathsMatch: ((String, URL) -> Bool)? = nil) async throws -> Bool {
         try await prepareReadConnection()
         let id = plugin + "@" + market
         let manifest = source.appendingPathComponent(".agents/plugins/marketplace.json")
         let configPath = home.appendingPathComponent("config.toml")
+        func matches(_ actual: String?, _ expected: URL) -> Bool {
+            guard let actual else { return false }
+            return pathsMatch?(actual, expected) ?? Self.samePath(actual, expected)
+        }
         let bytes = try await request("config/read", params: ["includeLayers": true])
         let fields = try JSONFieldView.document(bytes).fields(["layers"])
         guard let layers = fields["layers"], layers.isArray else { throw CodexClientError.invalidResponse }
@@ -251,7 +256,7 @@ public actor CodexClient {
             let config = try fields["config"]?.fields(["marketplaces", "plugins"])
             let marketEntry = try config?["marketplaces"]?.fields([market])[market]
             let pluginEntry = try config?["plugins"]?.fields([id])[id]
-            let user = name?["type"]?.string() == "user" && Self.samePath(name?["file"]?.string(limit: 4096), configPath)
+            let user = name?["type"]?.string() == "user" && matches(name?["file"]?.string(limit: 4096), configPath)
             if !user {
                 guard marketEntry == nil, pluginEntry == nil else { throw CodexClientError.invalidResponse }
                 continue
@@ -260,12 +265,13 @@ public actor CodexClient {
             if let marketEntry {
                 let entry = try marketEntry.fields(["source_type", "source"])
                 guard entry["source_type"]?.string() == "local",
-                      Self.samePath(entry["source"]?.string(limit: 4096), source) else { throw CodexClientError.invalidResponse }
+                      matches(entry["source"]?.string(limit: 4096), source) else { throw CodexClientError.invalidResponse }
                 owned = true
             }
             configured = pluginEntry != nil
         }
         guard foundUser, !configured || owned else { throw CodexClientError.invalidResponse }
+        if checkOnly { return false }
         if !enabled {
             guard owned else { return false }
             if configured { _ = try await request("plugin/uninstall", params: ["pluginId": id]) }
@@ -276,14 +282,14 @@ public actor CodexClient {
             let added = try await request("marketplace/add", params: ["source": source.path])
             let reply = try JSONFieldView.document(added).fields(["marketplaceName", "installedRoot"])
             guard reply["marketplaceName"]?.string() == market,
-                  Self.samePath(reply["installedRoot"]?.string(limit: 4096), source) else { throw CodexClientError.invalidResponse }
+                  matches(reply["installedRoot"]?.string(limit: 4096), source) else { throw CodexClientError.invalidResponse }
         }
         if configured {
-            if cachedManifestMatches, try await durablePluginIsEnabled(id: id, market: market, manifest: manifest) { return false }
+            if cachedManifestMatches, try await durablePluginIsEnabled(id: id, market: market, manifest: manifest, pathsMatch: matches) { return false }
             _ = try await request("plugin/uninstall", params: ["pluginId": id])
         }
         _ = try await request("plugin/install", params: ["pluginName": plugin, "marketplacePath": manifest.path])
-        guard try await durablePluginIsEnabled(id: id, market: market, manifest: manifest) else { throw CodexClientError.invalidResponse }
+        guard try await durablePluginIsEnabled(id: id, market: market, manifest: manifest, pathsMatch: matches) else { throw CodexClientError.invalidResponse }
         return true
     }
 
@@ -293,13 +299,13 @@ public actor CodexClient {
             expected.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
-    private func durablePluginIsEnabled(id: String, market: String, manifest: URL) async throws -> Bool {
+    private func durablePluginIsEnabled(id: String, market: String, manifest: URL, pathsMatch: (String?, URL) -> Bool) async throws -> Bool {
         let bytes = try await request("plugin/installed", params: [:])
         let fields = try JSONFieldView.document(bytes).fields(["marketplaces"])
         guard let values = fields["marketplaces"], values.isArray else { throw CodexClientError.invalidResponse }
         for value in try values.elements(maximumCount: 128) {
             let row = try value.fields(["name", "path", "plugins"])
-            guard row["name"]?.string() == market, Self.samePath(row["path"]?.string(limit: 4096), manifest),
+            guard row["name"]?.string() == market, pathsMatch(row["path"]?.string(limit: 4096), manifest),
                   let plugins = row["plugins"], plugins.isArray else { continue }
             for value in try plugins.elements(maximumCount: 512) {
                 let plugin = try value.fields(["id", "installed", "enabled"])

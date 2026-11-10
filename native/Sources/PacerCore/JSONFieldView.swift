@@ -22,7 +22,7 @@ package struct JSONFieldView {
     }
     package var isObject: Bool { data[range.lowerBound] == 123 }
     var isArray: Bool { data[range.lowerBound] == 91 }
-    var isNull: Bool { range.count == 4 && data[range.lowerBound] == 110 }
+    package var isNull: Bool { range.count == 4 && data[range.lowerBound] == 110 }
     var hasNonemptyString: Bool { data[range.lowerBound] == 34 && range.count > 2 }
     /// Compare a reserved protocol literal without decoding a user's text.
     func matchesStringLiteral(_ value: String) -> Bool {

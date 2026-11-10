@@ -1,9 +1,13 @@
 """Read-only stdio MCP reporter for Windows Pacer."""
 
 import json
+import os
 from pathlib import Path
+import re
 import stat
 import sys
+import tempfile
+import time
 
 
 LIMIT = 1024 * 1024
@@ -21,6 +25,97 @@ DEFINITION = {
     "annotations": {"readOnlyHint": True, "openWorldHint": False},
 }
 PROTOCOLS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
+UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+CALL_ID = re.compile(r"[a-zA-Z0-9._:-]{1,256}")
+MARKER = b"codex-pacer-durable-progress-v1\n"
+
+
+def ordinary(path, kind):
+    facts = path.lstat()
+    return kind(facts.st_mode) and not getattr(facts, "st_file_attributes", 0) & 0x400
+
+
+def identifier(value, pattern):
+    return value if isinstance(value, str) and pattern.fullmatch(value) else None
+
+
+def durable_receipt(params, percent):
+    meta = params.get("_meta")
+    context = meta.get("x-codex-turn-metadata") if isinstance(meta, dict) else None
+    if not isinstance(context, dict):
+        return None
+    thread = identifier(meta.get("threadId"), UUID)
+    context_thread = identifier(context.get("thread_id"), UUID)
+    turn = identifier(context.get("turn_id"), UUID)
+    call = identifier(meta.get("callId"), CALL_ID)
+    if not thread or not context_thread or thread.lower() != context_thread.lower() or not turn or not call:
+        return None
+    return {"threadID": thread.lower(), "turnID": turn.lower(), "callID": call, "percent": percent,
+            "at": time.time() - 978307200}  # Swift's Date reference epoch.
+
+
+def record_receipt(receipt, flag):
+    import msvcrt
+
+    root = flag.parents[1] / "durable-marketplace"
+    directory = root / "receipts"
+    marker, lock, snapshot = root / ".pacer-owner", directory / "write.lock", directory / "latest.json"
+    tmp = None
+    try:
+        if not directory.is_absolute() or any(not ordinary(p, stat.S_ISDIR) for p in (directory, *directory.parents)):
+            return
+        if not ordinary(marker, stat.S_ISREG) or not ordinary(lock, stat.S_ISREG):
+            return
+        with marker.open("rb") as source:
+            if source.read(len(MARKER) + 1) != MARKER:
+                return
+        with lock.open("r+b") as lease:
+            for attempt in range(6):
+                try:
+                    msvcrt.locking(lease.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if attempt == 5:
+                        return
+                    time.sleep(0.005)
+            if not enabled(flag):
+                return
+            records = {}
+            try:
+                if not ordinary(snapshot, stat.S_ISREG):
+                    return
+                with snapshot.open("rb") as source:
+                    data = source.read(65537)
+                if len(data) <= 65536:
+                    value = json.loads(data)
+                    if isinstance(value, dict) and len(value) <= 64:
+                        records = {k: v for k, v in value.items() if isinstance(v, dict)
+                                   and type(v.get("at")) in (float, int) and -5 <= receipt["at"] - v["at"] <= 900}
+            except FileNotFoundError:
+                pass
+            key = receipt["threadID"] + ":" + receipt["turnID"]
+            previous = records.get(key)
+            if previous and (previous.get("callID") == receipt["callID"] or previous["at"] > receipt["at"]):
+                return
+            records[key] = receipt
+            recent = dict(sorted(records.items(), key=lambda pair: pair[1]["at"], reverse=True)[:64])
+            data = json.dumps(recent, separators=(",", ":")).encode("utf-8")
+            if len(data) > 65536:
+                return
+            with tempfile.NamedTemporaryFile(dir=directory, prefix=".receipt-", delete=False) as target:
+                tmp = target.name
+                target.write(data)
+            if enabled(flag):
+                os.replace(tmp, snapshot)
+                tmp = None
+    except (OSError, ValueError, RecursionError):
+        pass
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def enabled(flag):
@@ -34,7 +129,7 @@ def enabled(flag):
         return False
 
 
-def respond(message, flag):
+def respond(message, flag, durable=False):
     if (not isinstance(message, dict) or message.get("jsonrpc") != "2.0"
             or type(message.get("id")) not in (str, int)):
         return None
@@ -58,6 +153,10 @@ def respond(message, flag):
         args = params.get("arguments")
         percent = args.get("percent") if isinstance(args, dict) else None
         valid = active and params.get("name") == TOOL and type(percent) is int and 0 <= percent <= 100 and len(args) == 1
+        if valid and durable:
+            receipt = durable_receipt(params, percent)
+            if receipt:
+                record_receipt(receipt, flag)
         text = "pacer-progress:accepted" if valid else (
             "Expected an integer from 0 to 100." if active else "Pacer task progress is disabled."
         )
@@ -69,19 +168,19 @@ def respond(message, flag):
     return reply
 
 
-def serve(home):
+def serve(home, durable=False):
     flag = Path(home) / "pacer" / "codex-progress" / "native" / "enabled"
     while True:
         line = sys.stdin.buffer.readline(LIMIT + 1)
         if not line or len(line) > LIMIT:
             return
         try:
-            reply = respond(json.loads(line), flag)
+            reply = respond(json.loads(line), flag, durable)
         except (ValueError, UnicodeError, RecursionError):
             continue
         if reply is not None:
             print(json.dumps(reply, separators=(",", ":")), flush=True)
 
 
-if __name__ == "__main__" and len(sys.argv) == 2:
-    serve(sys.argv[1])
+if __name__ == "__main__" and (len(sys.argv) == 2 or sys.argv[2:] == ["--durable"]):
+    serve(sys.argv[1], len(sys.argv) == 3)

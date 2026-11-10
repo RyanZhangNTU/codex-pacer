@@ -16,6 +16,12 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
     private var session: DesktopCollectionSession?
     private var gate: WindowsDesktopSourceGate?
     private var remoteGate: WindowsRemoteControlGate?
+    private var durableTask: Task<Void, Never>?
+    private var durableJob: UUID?
+    private var durableBinding: WindowsDurableCatalog.Binding?
+    private var durableThreads: Set<String> = []
+    private var durableRevision = 0
+    private var delivering = false
     private var reader: Task<Void, Never>?, timer: Task<Void, Never>?
     private var timerDate: Date?
     private var threads: [String] = []
@@ -42,18 +48,20 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
             transport = connection
             let access = WindowsDesktopSourceGate(home: home, peer: peer)
             let remote = WindowsRemoteControlGate(authorization: authorization)
-            let allowed = try remote.update(hosts)
+            let allowed = try allowedHosts(remote, transport: connection)
             gate = access
             remoteGate = remote
             let wire = try DesktopCollectionSession(hosts: allowed, localRuntime: localRuntime, batchInterval: interval, localOrigin: { access.origin($0) }) { value in
                 if value["method"] as? String == "thread-stream-following-changed",
                    let params = value["params"] as? [String: Any], params["following"] as? Bool == true {
                     guard let host = params["hostId"] as? String, let thread = params["conversationId"] as? String,
-                          host == "local" ? access.permit(thread) : remote.permit(host) else { throw WindowsDesktopSourceGate.Failure.revoked }
+                          host == DurableActivityCatalog.hostID ||
+                            (host == "local" ? access.permit(thread) : remote.permit(host)) else { throw WindowsDesktopSourceGate.Failure.revoked }
                 }
                 try connection.send(value)
             }
             session = wire
+            updateDurable()
             try discoverNow()
             reader = Task.detached(priority: .utility) { [weak self, connection] in
                 do {
@@ -87,7 +95,11 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
     func setHosts(_ hosts: Set<String>) async {
         guard !finished else { return }
         self.hosts = hosts
-        do { if let remoteGate { try session?.setHosts(remoteGate.update(hosts)) }; try await deliver(); schedule() }
+        do {
+            if let remoteGate, let transport { try session?.setHosts(allowedHosts(remoteGate, transport: transport)) }
+            updateDurable()
+            try await deliver(); schedule()
+        }
         catch { await finish(flush: false) }
     }
     func stop() async { await finish(flush: false) }
@@ -102,6 +114,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         guard !finished, let gate else { return }
         do {
             guard remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
+            try revokeDurableIfStale()
             // Global handshakes are allowed. Every thread-bearing broadcast is
             // bound before it can discover, follow or mutate a projection.
             let root = try JSONFieldView.document(bytes, projectedItems: true)
@@ -110,7 +123,9 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
                 let route = try params.fields(["hostId", "conversationId"])
                 if let thread = route["conversationId"]?.string() {
                     guard let host = route["hostId"]?.string() else { return }
-                    if host != "local" {
+                    if host == DurableActivityCatalog.hostID {
+                        guard durableThreads.contains(thread.lowercased()) else { try await deliver(); return }
+                    } else if host != "local" {
                         guard remoteGate?.permit(host) == true else { return }
                     } else {
                         let owner = fields["method"]?.string() == "thread-stream-state-changed" ? fields["sourceClientId"]?.string() : nil
@@ -131,6 +146,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         guard !finished, session != nil else { return }
         let now = Date()
         guard gate?.validate() == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
+        try revokeDurableIfStale()
         if let gate {
             let ready = gate.dueRetries(at: now).filter { gate.permit($0) }.map { NativeDesktopSession.Key(host: "local", thread: $0) }
             try session?.discover(ready)
@@ -155,17 +171,100 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         timer = nil; timerDate = nil
         do { try await service() } catch { await finish(flush: false) }
     }
-    private func deliver(closing: Bool = false) async throws {
-        let frames = session?.takeFrames() ?? []
-        for bytes in frames {
-            guard closing || !finished else { return }
-            guard gate?.validate() == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
-            await onFrame(bytes)
+    private func deliver() async throws {
+        guard !delivering else { return }
+        delivering = true
+        defer { delivering = false }
+        // A catalog update and a pipe read can arrive while onFrame awaits.
+        // Deliver the scope change before any following events for that scope.
+        while !finished {
+            let frames = session?.takeFrames() ?? []
+            if frames.isEmpty { return }
+            let revision = durableRevision
+            for bytes in frames {
+                guard !finished else { return }
+                guard gate?.validate() == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
+                if durableRevision > 0, let needsBinding = Self.durableFrameNeedsBinding(bytes),
+                   revision != durableRevision || (needsBinding && durableBinding?.isCurrent(home: home) != true) { continue }
+                await onFrame(bytes)
+            }
         }
+    }
+
+    private static func durableFrameNeedsBinding(_ bytes: Data) -> Bool? {
+        guard let fields = try? JSONFieldView.document(bytes).fields(["hostId", "kind", "scope"]),
+              fields["hostId"]?.string() == DurableActivityCatalog.hostID else { return nil }
+        return fields["kind"]?.string() != "durableScope" || fields["scope"]?.isNull != true
+    }
+
+    private func allowedHosts(_ remote: WindowsRemoteControlGate, transport: WindowsDesktopTransport) throws -> Set<String> {
+        var allowed = try remote.update(hosts)
+        if hosts.contains(DurableActivityCatalog.hostID), transport.codexPackage != nil,
+           WindowsActivityNavigation.isDefaultProfile(home, provider: .codex) { allowed.insert(DurableActivityCatalog.hostID) }
+        return allowed
+    }
+
+    private func updateDurable() {
+        guard session?.hosts.contains(DurableActivityCatalog.hostID) == true,
+              let transport, let package = transport.codexPackage, let peer = transport.peerIdentity else {
+            durableTask?.cancel(); durableTask = nil; durableJob = nil
+            if durableBinding != nil { durableBinding = nil; durableThreads = []; durableRevision += 1 }
+            return
+        }
+        guard durableTask == nil else { return }
+        let job = UUID(), home = home
+        durableJob = job
+        durableTask = Task.detached(priority: .utility) { [weak self] in
+            await WindowsDurableCatalog.observe(home: home, desktop: peer, package: package, publish: { [weak self] catalog, binding in
+                await self?.receiveDurable(catalog, binding: binding, job: job)
+            }, ipc: { [weak self] in await self?.durableIPC(job: job) ?? [:] },
+            publishHistory: { [weak self] scope, binding, history in
+                await self?.receiveDurableHistory(history, scope: scope, binding: binding, job: job)
+            })
+        }
+    }
+
+    private func durableIPC(job: UUID) -> [String: Date] {
+        durableJob == job ? session?.durableIPCObservations ?? [:] : [:]
+    }
+
+    private func revokeDurableIfStale() throws {
+        guard durableBinding?.isCurrent(home: home) == false else { return }
+        durableBinding = nil; durableThreads = []; durableRevision += 1
+        try session?.setDurableCatalog(nil)
+    }
+
+    private func receiveDurable(_ catalog: DurableActivityCatalog?, binding: WindowsDurableCatalog.Binding?, job: UUID) async {
+        guard !finished, durableJob == job else { return }
+        do {
+            try revokeDurableIfStale()
+            if binding?.isCurrent(home: home) != false {
+                if durableBinding != binding {
+                    if durableBinding != nil { try session?.setDurableCatalog(nil) }
+                    durableRevision += 1
+                }
+                durableBinding = binding; durableThreads = catalog?.threadIDs ?? []
+                try session?.setDurableCatalog(catalog)
+            }
+            try await deliver(); schedule()
+        } catch { await finish(flush: false) }
+    }
+
+    private func receiveDurableHistory(_ history: [DurableTurnHistory], scope: String,
+                                       binding: WindowsDurableCatalog.Binding, job: UUID) async {
+        guard !finished, durableJob == job else { return }
+        do {
+            try revokeDurableIfStale()
+            if durableBinding == binding {
+                try session?.observeDurableHistory(history, scope: scope, at: Date())
+            }
+            try await deliver(); schedule()
+        } catch { await finish(flush: false) }
     }
     private func finish(flush: Bool) async {
         guard !finished else { return }
         finished = true; timer?.cancel(); timer = nil; reader?.cancel(); reader = nil
+        durableTask?.cancel(); durableTask = nil; durableJob = nil
         // Release the authenticated IO before awaiting a possibly stalled consumer.
         // The last valid batch still precedes EOF; revoked proofs never flush.
         let access = gate
@@ -175,6 +274,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         session = nil; gate = nil; remoteGate = nil; transport = nil
         for bytes in frames {
             guard access?.validate() == true, remote?.validate() != false else { break }
+            if Self.durableFrameNeedsBinding(bytes) == true, durableBinding?.isCurrent(home: home) != true { continue }
             await onFrame(bytes)
         }
         await onClosed()

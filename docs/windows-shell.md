@@ -224,6 +224,14 @@ A Claude task without a live host opens through Desktop's `claude://code/continu
 
 Checks use synthetic catalogs, RPC replies and a private named-pipe fixture; they never send prompts or touch real accounts.
 
+## Dot Durable Codex
+
+The Microsoft Store version of Codex Desktop supplies the named pipe. With the default Codex profile, Pacer checks the pipe's package and looks for one matching executor under that Desktop process. A managed copy of the CLI can identify the executor, but Pacer launches the CLI from the verified package.
+
+The catalog and turn history use WinHTTP over TLS. Pacer checks the executor and the profile's authentication file before publishing either. The Codex **Progress Ring** switch installs or removes Pacer's local plugin. Turning it off revokes connected reporters immediately. Desktop picks up plugin changes on its next executor registration.
+
+`test-engine.ps1 -Filter WindowsDurableTests` checks the socket and packaged reporter with synthetic data. With Store Codex Desktop running a local executor, set `PACER_DURABLE_DESKTOP_QA=1` to also check executor detection and plugin setup in a disposable profile. `PACER_DURABLE_CATALOG_QA=1` checks a read-only catalog request with the current Desktop login. It prints no catalog contents.
+
 ## WSL sources
 
 - Windows lists distributions with the [WSL commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands) and probes only distributions that are already running, as their default user. It never installs WSL, Python or a provider, and never changes a distribution's state. The feature needs an existing `/usr/bin/python3`. The setting is `monitorWSL`.

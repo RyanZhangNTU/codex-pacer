@@ -14,6 +14,7 @@ enum WindowsEnvironment {
 }
 
 enum WindowsCodexExecutableDiscovery {
+    static let packageFamily = "OpenAI.Codex_2p2nqsd0c76g0"
     private static let nativeTargets = [
         "node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/codex/codex.exe",
         "node_modules/@openai/codex/node_modules/@openai/codex-windows-x64/vendor/x86_64-pc-windows-msvc/codex/codex.exe",

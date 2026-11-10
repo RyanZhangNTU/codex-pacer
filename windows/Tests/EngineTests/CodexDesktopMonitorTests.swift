@@ -24,11 +24,12 @@ private actor DesktopTestConnection: CodexDesktopConnection {
 private final class DesktopTestFactory: @unchecked Sendable {
     private let lock = NSLock()
     private var created: [DesktopTestConnection] = []
-    var services: CodexDesktopServices {
-        .init { [self] _, _, frame, closed in
+    var services: CodexDesktopServices { services(supportsDurable: false) }
+    func services(supportsDurable: Bool) -> CodexDesktopServices {
+        .init(makeConnection: { [self] _, _, frame, closed in
             let connection = DesktopTestConnection(frame: frame, closed: closed)
             lock.lock(); created.append(connection); lock.unlock(); return connection
-        }
+        }, supportsDurable: supportsDurable)
     }
     func all() -> [DesktopTestConnection] { lock.lock(); defer { lock.unlock() }; return created }
 }
@@ -44,8 +45,8 @@ private final class DesktopEngineSnapshots: @unchecked Sendable {
 
 final class CodexDesktopMonitorTests: XCTestCase {
     private let thread = "019a0000-0000-7000-8000-000000000001"
-    private func frame(_ kind: String, _ extra: [String: Any] = [:]) throws -> Data {
-        var row = extra; row["kind"] = kind; row["hostId"] = "local"
+    private func frame(_ kind: String, _ extra: [String: Any] = [:], host: String = "local") throws -> Data {
+        var row = extra; row["kind"] = kind; row["hostId"] = host
         return try JSONSerialization.data(withJSONObject: row)
     }
     private func event(_ method: String, at: Date, _ extra: [String: Any] = [:]) -> [String: Any] {
@@ -100,6 +101,36 @@ final class CodexDesktopMonitorTests: XCTestCase {
         let stopped = snapshots.all().count
         try await connection.send(frame("runtimeBatch", ["events": [event("turn/started", at: now.addingTimeInterval(2))]]))
         XCTAssertEqual(snapshots.all().count, stopped)
+    }
+
+    func testDotRowsShowProgressAndCompletionUntilTheAccountIsRevoked() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dot-engine-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let date = Date(), factory = DesktopTestFactory(), snapshots = DesktopEngineSnapshots()
+        let runtime = EngineRuntime(demo: false, now: { date.addingTimeInterval(5) }, dismissalStore: nil,
+            desktopServices: factory.services(supportsDurable: true), output: { snapshots.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"],
+            "codexHome": EngineCodexSourceReport.path(root), "monitorRemoteControl": false, "codexProgressRing": true]))
+        let connection = try XCTUnwrap(factory.all().first)
+        let host = DurableActivityCatalog.hostID
+        let progress = try frame("runtimeBatch", ["events": [event("turn/started", at: date),
+            event("progress/reported", at: date.addingTimeInterval(1), ["percent": 25])]], host: host)
+        await connection.send(progress)
+        XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true)
+        try await connection.send(frame("durableScope", ["scope": String(repeating: "a", count: 64)], host: host))
+        await connection.send(progress)
+        let running = try XCTUnwrap(snapshots.all().last?.presentation.rows.first)
+        XCTAssertEqual(running.sourceLabel, "Dot"); XCTAssertEqual(running.progressFraction, 0.25)
+
+        try await connection.send(frame("runtimeBatch", ["events": [
+            event("turn/completed", at: date.addingTimeInterval(2), ["status": "completed"])]], host: host))
+        let ending = try XCTUnwrap(snapshots.all().last?.presentation.rows.first)
+        XCTAssertEqual(ending.sourceLabel, "Dot"); XCTAssertEqual(ending.phase, "completed"); XCTAssertTrue(ending.unread)
+        try await connection.send(frame("durableScope", ["scope": NSNull()], host: host))
+        await connection.send(progress)
+        XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Revoking the account must remove the ending and reject a late report")
+        await runtime.stop()
     }
 
 }

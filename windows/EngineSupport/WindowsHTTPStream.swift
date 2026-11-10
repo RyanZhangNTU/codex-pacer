@@ -51,7 +51,7 @@ final class WindowsHTTPStream: WindowsHTTPRead, @unchecked Sendable {
 
     /// Waits for the response headers and returns the status code.
     func open(_ target: Target, headers: [(name: String, value: String)], agent: String, proxy: String?,
-              timeout: TimeInterval) -> Result<Int, Failure> {
+              timeout: TimeInterval, webSocket: Bool = false) -> Result<Int, Failure> {
         guard let handle = current(), let header = Self.headerBlock(headers), Self.valid(agent), !target.host.isEmpty,
               Self.valid(target.host), target.port > 0, target.path.hasPrefix("/"), Self.valid(target.path),
               proxy.map(Self.valid) != false else { return .failure(.failed) }
@@ -60,10 +60,10 @@ final class WindowsHTTPStream: WindowsHTTPRead, @unchecked Sendable {
         let result: Int32
         if let proxy {
             result = pacer_http_stream_open(handle, host, target.port, target.secure ? 1 : 0, path, header, name,
-                                            Array(proxy.utf16) + [0], Self.milliseconds(timeout), &status)
+                                            Array(proxy.utf16) + [0], Self.milliseconds(timeout), &status, webSocket ? 1 : 0)
         } else {
             result = pacer_http_stream_open(handle, host, target.port, target.secure ? 1 : 0, path, header, name, nil,
-                                            Self.milliseconds(timeout), &status)
+                                            Self.milliseconds(timeout), &status, webSocket ? 1 : 0)
         }
         return result == 0 ? .success(Int(status)) : .failure(Self.failure(Int64(result)))
     }
@@ -102,6 +102,24 @@ final class WindowsHTTPStream: WindowsHTTPRead, @unchecked Sendable {
             pacer_http_stream_read(handle, $0.baseAddress!, $0.count, Self.milliseconds(timeout))
         }
         return count >= 0 ? .success(Int(count)) : .failure(Self.failure(count))
+    }
+
+    func sendSocket(_ data: Data, timeout: TimeInterval) throws {
+        guard let handle = current(), !data.isEmpty else { throw Failure.failed }
+        let result = data.withUnsafeBytes { bytes in
+            pacer_websocket_send(handle, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, Self.milliseconds(timeout))
+        }
+        guard result == 0 else { throw Self.failure(Int64(result)) }
+    }
+
+    func readSocket(into bytes: inout [UInt8], timeout: TimeInterval) throws -> (count: Int, complete: Bool) {
+        guard let handle = current(), !bytes.isEmpty else { throw Failure.failed }
+        var complete: Int32 = 0
+        let count = bytes.withUnsafeMutableBufferPointer {
+            pacer_websocket_read(handle, $0.baseAddress, $0.count, Self.milliseconds(timeout), &complete)
+        }
+        guard count >= 0 else { throw Self.failure(count) }
+        return (Int(count), complete != 0)
     }
 
     func cancel() {
