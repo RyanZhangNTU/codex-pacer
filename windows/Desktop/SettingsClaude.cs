@@ -101,7 +101,7 @@ internal sealed partial class SettingsWindow
         };
         SetStatus(claudeMonitorDot, claudeLocalState, ui.Text(stateKey), tone);
         claudeSetupState!.Text = ClaudeSetupDescription(ui, setup, snapshot?.ClaudeSetup);
-        claudeSetupState.Visibility = setup == "ready" && snapshot?.ClaudeSetup is not { TelemetryConflict: true } && snapshot?.ClaudeSetup?.LaunchMode != "powershell" ? Visibility.Collapsed : Visibility.Visible;
+        claudeSetupState.Visibility = setup == "ready" && snapshot?.ClaudeSetup is not { SpeedsEstimated: true } && snapshot?.ClaudeSetup?.LaunchMode != "powershell" ? Visibility.Collapsed : Visibility.Visible;
         claudeSetupState.SetResourceReference(TextBlock.ForegroundProperty, setup == "failed" ? "SettingsWarning" : "SettingsSecondary");
         claudeSetupRetry!.Visibility = setup == "failed" ? Visibility.Visible : Visibility.Collapsed;
         claudeSetupRetry.IsEnabled = enabled && connected && !busy && setup != "settingUp" && snapshot?.Demo == false;
@@ -111,7 +111,7 @@ internal sealed partial class SettingsWindow
     internal static string ClaudeSetupDescription(UiText ui, string state, ClaudeHookSetup? setup)
     {
         string message = ui.Text("windows.claude.setup_" + (state switch
-        { "ready" when setup?.TelemetryConflict == true => "conflict", "ready" => "ready", "settingUp" => "working", "missingHome" => "missing", "disabled" => "disabled", _ => "failed" }));
+        { "ready" when setup?.SpeedsEstimated == true => setup.TelemetryConflictReason == "managed" ? "managed" : "conflict", "ready" => "ready", "settingUp" => "working", "missingHome" => "missing", "disabled" => "disabled", _ => "failed" }));
         return state == "ready" && setup?.LaunchMode == "powershell" ? message + " " + ui.Text("windows.claude.setup_slow") : message;
     }
 }

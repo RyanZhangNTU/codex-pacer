@@ -24,7 +24,7 @@ private actor WSLHookJobs {
         calls[target.alias, default: 0] += 1
         if hold.contains(target.alias) { await withCheckedContinuation { waiting[target.alias] = $0 } }
         if fail.contains(target.alias) { throw ClaudeRemoteSetup.Failure.invalidSettings }
-        return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true, telemetryConflict: false)
+        return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true)
     }
     func publish(_ rows: [EngineClaudeRemoteSetup]) { self.rows = rows }
     func release(_ alias: String) { hold.remove(alias); waiting.removeValue(forKey: alias)?.resume() }
@@ -44,7 +44,7 @@ private final class WSLHookChild: ChildProcessConnection, @unchecked Sendable {
     func terminateImmediately() { lock.lock(); kills += 1; lock.unlock(); exited.finish(); ioClosed.finish() }
     func counts() -> (Int, Int) { lock.lock(); defer { lock.unlock() }; return (closes, kills) }
     func complete() async {
-        await output(Data(#"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false}"#.utf8))
+        await output(Data(#"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false,"telemetryConflictReason":"none"}"#.utf8))
         exited.finish(); ioClosed.finish()
     }
 }

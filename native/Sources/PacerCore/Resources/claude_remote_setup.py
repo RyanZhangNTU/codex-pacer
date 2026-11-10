@@ -21,14 +21,23 @@ EVENTS = ('SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
 # Claude holds each displayed batch until its hooks return; numeric telemetry
 # already reports TTFT, so this observer runs only without it, in background.
 DISPLAY_EVENT = 'MessageDisplay'
-ENVIRONMENT = {
+# Pacer's trace keys, as ClaudeTelemetryRules defines them: required values,
+# and an interval added only when absent.
+REQUIRED = {
     'CLAUDE_CODE_ENABLE_TELEMETRY': '1',
     'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA': '1',
     'OTEL_TRACES_EXPORTER': 'otlp',
     'OTEL_EXPORTER_OTLP_TRACES_PROTOCOL': 'http/json',
-    'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT': 'http://127.0.0.1:4319/v1/traces',
-    'OTEL_TRACES_EXPORT_INTERVAL': '1000'
+    'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT': 'http://127.0.0.1:4319/v1/traces'
 }
+OPTIONAL = {'OTEL_TRACES_EXPORT_INTERVAL': '1000'}
+ENVIRONMENT = dict(REQUIRED, **OPTIONAL)
+FLAGS = ('CLAUDE_CODE_ENABLE_TELEMETRY', 'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA')
+OTLP = 'OTEL_EXPORTER_OTLP_'
+CREDENTIALS = ('HEADERS', 'CLIENT_KEY', 'CLIENT_CERTIFICATE')
+# Where Claude Code reads settings an organization manages on this host.
+MANAGED_FOLDERS = {'darwin': ('/Library/Application Support/ClaudeCode',)}
+MANAGED_PLIST = 'com.anthropic.claudecode.plist'
 # The progress ring, as ClaudeHookInstaller manages it locally: a switch file,
 # Pacer's Claude Code plugin in a local marketplace and the entries that list,
 # enable and pre-approve its one tool. Turning it off removes exactly those.
@@ -128,18 +137,145 @@ def quote(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
 
-def telemetry_conflict(env):
-    for source in (env, os.environ):
-        if any(key in source and source[key] != value for key, value in ENVIRONMENT.items()):
+def matches(key, value):
+    # Switches are truthy words and the exporter is a comma-separated list.
+    if not isinstance(value, str):
+        return False
+    if key in FLAGS:
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    if key == 'OTEL_TRACES_EXPORTER':
+        return [part.strip() for part in value.split(',') if part.strip()] == ['otlp']
+    return value.strip() == ENVIRONMENT.get(key)
+
+
+def configured(env):
+    return all(key in env and matches(key, env[key]) for key in REQUIRED)
+
+
+def read_managed(path, managed):
+    # Managed files are read-only input; unreadable or malformed ones are skipped.
+    try:
+        if os.path.getsize(path) > LIMIT:
+            return
+        with open(path, 'rb') as handle:
+            raw = handle.read(LIMIT + 1)
+        if path.endswith('.plist'):
+            import plistlib
+            value = plistlib.loads(raw)
+        else:
+            value = json.loads(raw.decode('utf-8'))
+    except Exception:
+        return
+    merge_managed(value, managed)
+
+
+def merge_managed(value, managed):
+    if not isinstance(value, dict):
+        return
+    for document in (value, value.get('settings')):
+        if not isinstance(document, dict):
+            continue
+        env = document.get('env')
+        if isinstance(env, dict):
+            for key, item in list(env.items())[:512]:
+                if isinstance(key, str) and isinstance(item, (str, int, float)) and not isinstance(item, bool):
+                    managed['env'][key] = str(item)
+        helper = document.get('otelHeadersHelper')
+        if isinstance(helper, str) and helper.strip():
+            managed['helper'] = True
+
+
+def managed_telemetry(home):
+    managed = {'env': {}, 'helper': False}
+    if sys.platform == 'darwin':
+        folders = MANAGED_FOLDERS['darwin']
+        user = os.environ.get('USER') or ''
+        plists = ['/Library/Managed Preferences/' + MANAGED_PLIST]
+        if user and '/' not in user:
+            plists.insert(0, '/Library/Managed Preferences/' + user + '/' + MANAGED_PLIST)
+        for path in plists:
+            read_managed(path, managed)
+    else:
+        folders = ('/etc/claude-code',)
+        try:
+            with open('/proc/version') as handle:
+                if 'microsoft' in handle.read(512).lower():
+                    folders += ('/mnt/c/Program Files/ClaudeCode',)
+        except OSError:
+            pass
+    for folder in folders:
+        read_managed(os.path.join(folder, 'managed-settings.json'), managed)
+        try:
+            names = sorted(name for name in os.listdir(os.path.join(folder, 'managed-settings.d'))
+                           if name.endswith('.json') and not name.startswith('.'))[:64]
+        except OSError:
+            names = []
+        for name in names:
+            read_managed(os.path.join(folder, 'managed-settings.d', name), managed)
+    try:
+        merge_managed(object_bytes(read_bytes(home / 'remote-settings.json')), managed)
+    except Failure:
+        pass
+    return managed
+
+
+def managed_claims(managed):
+    if managed['helper']:
+        return True
+    for raw, value in managed['env'].items():
+        key = raw.upper()
+        if key in REQUIRED:
+            if not matches(key, value):
+                return True
+            continue
+        if not key.startswith(OTLP) or not value.strip():
+            continue
+        rest = key[len(OTLP):]
+        if rest in ('ENDPOINT', 'PROTOCOL') + CREDENTIALS:
             return True
-        if any(source.get(key) for key in ('OTEL_EXPORTER_OTLP_HEADERS', 'OTEL_EXPORTER_OTLP_TRACES_HEADERS')):
-            return True
-        if ('OTEL_EXPORTER_OTLP_ENDPOINT' in source and
-                source['OTEL_EXPORTER_OTLP_ENDPOINT'] not in ('http://127.0.0.1:4319', 'http://127.0.0.1:4319/')):
-            return True
-        if 'OTEL_EXPORTER_OTLP_PROTOCOL' in source and source['OTEL_EXPORTER_OTLP_PROTOCOL'] != 'http/json':
+        if rest.startswith('TRACES_') and rest[len('TRACES_'):] in CREDENTIALS:
             return True
     return False
+
+
+def user_claims(env, helper, owned):
+    if helper:
+        return True
+    if any((env.get(key) or '').strip() for key in (OTLP + 'HEADERS', OTLP + 'TRACES_HEADERS')):
+        return True
+    if any(key in env and not matches(key, env[key]) for key in REQUIRED):
+        return True
+    # An exporter Pacer did not add, without Pacer's trace endpoint, already
+    # sends traces to a generic or default endpoint.
+    exporter = env.get('OTEL_TRACES_EXPORTER')
+    return exporter is not None and owned.get('OTEL_TRACES_EXPORTER') != exporter and OTLP + 'TRACES_ENDPOINT' not in env
+
+
+def telemetry_conflict(env, helper, managed, owned, process):
+    if managed_claims(managed):
+        return 'managed'
+    if user_claims(env, helper, owned) or user_claims(process, False, {}):
+        return 'existing'
+    return 'none'
+
+
+def reconcile_environment(env, added, conflict):
+    # Pacer's trace keys follow the conflict state. While a conflict lasts,
+    # unchanged keys Pacer added are withdrawn; a user who changed a required
+    # one owns the whole set. Without a conflict, missing keys are added.
+    if conflict != 'none':
+        owned_required = {key: value for key, value in added.items() if key in REQUIRED}
+        if not owned_required or any(env.get(key) != value for key, value in owned_required.items()):
+            return added
+        for key, value in added.items():
+            if env.get(key) == value:
+                del env[key]
+        return {}
+    for key, setting in ENVIRONMENT.items():
+        if key not in env:
+            env[key] = setting
+            added[key] = setting
+    return added
 
 
 def ensure_owned(groups, owned, entry):
@@ -335,19 +471,22 @@ def install(payload):
             raise Failure('invalidSettings')
         if event != DISPLAY_EVENT:
             hooks[event] = ensure_owned(groups, owned, entry)
-    conflict = telemetry_conflict(env)
     added = manifest.get('addedEnvironment', {})
     if not isinstance(added, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in added.items()):
         raise Failure('invalidSettings')
-    if not conflict:
-        for key, setting in ENVIRONMENT.items():
-            if key not in env:
-                env[key] = setting
-                added[key] = setting
-        value['env'] = env
+    helper = value.get('otelHeadersHelper')
+    helper = isinstance(helper, str) and bool(helper.strip())
+    conflict = telemetry_conflict(env, helper, managed_telemetry(home), added, os.environ)
+    before = dict(env)
+    added = reconcile_environment(env, added, conflict)
+    if env != before:
+        if env:
+            value['env'] = env
+        else:
+            value.pop('env', None)
     manifest['addedEnvironment'] = added
     display = hooks.get(DISPLAY_EVENT, [])
-    if all(env.get(key) == setting for key, setting in ENVIRONMENT.items()) and not conflict:
+    if configured(env) and conflict == 'none':
         display = removing_owned(display, owned)
     else:
         display = ensure_owned(display, owned, dict(entry, **{'async': True}))
@@ -399,8 +538,8 @@ def install(payload):
                 atomic_bytes(manifest_path, original_manifest)
         raise
     return {'hooksConfigured': True,
-            'telemetryConfigured': all(env.get(key) == setting for key, setting in ENVIRONMENT.items()) and not conflict,
-            'statusLineConfigured': True, 'telemetryConflict': conflict}
+            'telemetryConfigured': configured(env) and conflict == 'none',
+            'statusLineConfigured': True, 'telemetryConflict': conflict != 'none', 'telemetryConflictReason': conflict}
 
 
 def main():

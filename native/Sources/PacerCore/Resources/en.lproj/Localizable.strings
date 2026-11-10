@@ -68,6 +68,8 @@
 "claude.quota.connection_failed" = "Could not connect to the Claude usage service.";
 "claude.quota.account_changed" = "Claude account changed. Refresh to read the current account.";
 "claude.monitoring_setup_failed" = "Could not set up Claude Code task monitoring. Check the configuration folder and try again.";
+"claude.telemetry.kept_existing" = "Kept your existing telemetry settings. TPS is estimated.";
+"claude.telemetry.managed" = "Telemetry is managed by your organization. TPS is estimated.";
 "claude.open_remote_help" = "Open Claude Code on this host";
 "account.credit_balance" = "Credits left: %@";
 "account.credits" = "credits";

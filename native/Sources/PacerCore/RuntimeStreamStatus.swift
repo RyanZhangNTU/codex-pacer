@@ -17,5 +17,8 @@ public struct RuntimeStreamStatus: Equatable, Sendable {
     public var watchingLogs = false
     public var helperCpuSeconds = 0.0
     public var helperLoopIterations = 0
+    /// Claude: this source has delivered an exact request span, so Pacer's
+    /// request telemetry reaches it whatever its settings say.
+    public var exactRequestSpans = false
     public init() {}
 }

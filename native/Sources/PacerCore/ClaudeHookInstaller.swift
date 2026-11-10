@@ -21,20 +21,33 @@ public struct ClaudeHookInstaller {
     private let serialize: @Sendable ([String]) -> String
     private let helperScript: Data?
     private let additionalOwnedCommand: @Sendable (String, URL, CommandKind) -> Bool
+    private let managedTelemetry: @Sendable () -> ClaudeManagedTelemetry
+    /// `managedTelemetry` reads the host's managed Claude Code settings; the
+    /// server-managed cache inside the home is read here.
     public init(storage: any ClaudeHookStorage, python: String, serialize: @escaping @Sendable ([String]) -> String,
                 helperScript: Data? = nil,
-                additionalOwnedCommand: @escaping @Sendable (String, URL, CommandKind) -> Bool = { _, _, _ in false }) {
+                additionalOwnedCommand: @escaping @Sendable (String, URL, CommandKind) -> Bool = { _, _, _ in false },
+                managedTelemetry: @escaping @Sendable () -> ClaudeManagedTelemetry = { ClaudeManagedTelemetry() }) {
         self.storage = storage; self.python = python; self.serialize = serialize
         self.helperScript = helperScript; self.additionalOwnedCommand = additionalOwnedCommand
+        self.managedTelemetry = managedTelemetry
     }
     public enum EnsureResult: Equatable, Sendable { case current, installed, missingHome, failed }
     public struct Status: Equatable, Sendable {
         public let hooksConfigured: Bool
         public let telemetryConfigured: Bool
         public let statusLineConfigured: Bool
-        public let telemetryConflict: Bool
+        /// Why Pacer's request telemetry is off; `.none` when nothing blocks it.
+        public let telemetryConflictReason: ClaudeTelemetryConflict
+        public var telemetryConflict: Bool { telemetryConflictReason != .none }
         /// Owned entries or the installed adapter predate this version.
         public var updateAvailable = false
+        public init(hooksConfigured: Bool, telemetryConfigured: Bool, statusLineConfigured: Bool,
+                    telemetryConflictReason: ClaudeTelemetryConflict = .none, updateAvailable: Bool = false) {
+            self.hooksConfigured = hooksConfigured; self.telemetryConfigured = telemetryConfigured
+            self.statusLineConfigured = statusLineConfigured; self.telemetryConflictReason = telemetryConflictReason
+            self.updateAvailable = updateAvailable
+        }
     }
     public enum Failure: Error, LocalizedError {
         case invalidSettings, unsafePath, changedSettings
@@ -51,11 +64,6 @@ public struct ClaudeHookInstaller {
     /// spans already report TTFT, so the display observer is registered only
     /// without Pacer telemetry, and then runs in the background.
     private let displayEvent = "MessageDisplay"
-    private let environment: [String: String] = [
-        "CLAUDE_CODE_ENABLE_TELEMETRY": "1", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1", "OTEL_TRACES_EXPORTER": "otlp",
-        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/json", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:4319/v1/traces",
-        "OTEL_TRACES_EXPORT_INTERVAL": "1000"
-    ]
     public func status(home: URL) -> Bool { details(home: home).hooksConfigured }
     /// Never creates a Claude home and writes nothing when already current. An
     /// update is applied in place first, so optional entries the user removed
@@ -73,13 +81,11 @@ public struct ClaudeHookInstaller {
         let scriptAvailable = (try? safe(script)) != nil && storage.isReadable(script)
         let configured = scriptAvailable && events.allSatisfy { event in hooks[event]?.contains { containsOwned($0, home: home) } == true }
         let env = value["env"] as? [String: String] ?? [:]
-        let telemetry = environment.allSatisfy { env[$0.key] == $0.value }
-        let conflict = environment.contains { env[$0.key] != nil && env[$0.key] != $0.value } ||
-            telemetryConflict(env)
+        let conflict = telemetryConflict(value, home: home)
         let lineCommand = (value["statusLine"] as? [String: Any])?["command"] as? String
-        var status = Status(hooksConfigured: configured, telemetryConfigured: telemetry,
+        var status = Status(hooksConfigured: configured, telemetryConfigured: conflict == .none && ClaudeTelemetryRules.configured(env),
             statusLineConfigured: ownsStatusLine(lineCommand, home: home),
-            telemetryConflict: conflict)
+            telemetryConflictReason: conflict)
         let needsMigration: Bool
         do { needsMigration = try migrated(value, home: home) != nil }
         catch { needsMigration = true }
@@ -98,13 +104,13 @@ public struct ClaudeHookInstaller {
         for event in events { hooks[event] = ensureOwned(hooks[event] as? [[String: Any]] ?? [], home: home, background: false) }
         if value["env"] != nil && !(value["env"] is [String: String]) { throw Failure.invalidSettings }
         var env = value["env"] as? [String: String] ?? [:]
-        let conflict = environment.contains { env[$0.key] != nil && env[$0.key] != $0.value } ||
-            telemetryConflict(env)
+        let conflict = telemetryConflict(value, home: home)
         var manifest = (try? readObject(manifestURL)) ?? [:]
         var added = manifest["addedEnvironment"] as? [String: String] ?? [:]
-        if !conflict { for (key, setting) in environment where env[key] == nil { env[key] = setting; added[key] = setting }; value["env"] = env }
+        reconcileEnvironment(&env, added: &added, conflict: conflict, automatic: false)
+        if env != value["env"] as? [String: String] ?? [:] { if env.isEmpty { value.removeValue(forKey: "env") } else { value["env"] = env } }
         manifest["addedEnvironment"] = added
-        setDisplayObserver(&hooks, wanted: !environment.allSatisfy { env[$0.key] == $0.value } || progressMode(home: home) == .marker, home: home)
+        setDisplayObserver(&hooks, wanted: conflict != .none || !ClaudeTelemetryRules.configured(env) || progressMode(home: home) == .marker, home: home)
         value["hooks"] = hooks
         let wantsPlugin = progressMode(home: home) == .tool
         try setPlugin(&value, manifest: &manifest, wanted: wantsPlugin, home: home)
@@ -169,7 +175,8 @@ public struct ClaudeHookInstaller {
         try? storage.remove(manifestURL)
     }
     /// Settings with only Pacer-owned entries brought current, or nil when
-    /// nothing differs. Missing events, environment or wrappers stay absent.
+    /// nothing differs. Missing events or wrappers stay absent; Pacer's trace
+    /// keys are added or withdrawn as the telemetry conflict state changes.
     private func migrated(_ value: [String: Any], home: URL) throws -> (value: [String: Any], manifest: [String: Any])? {
         guard var hooks = value["hooks"] as? [String: Any] else { return nil }
         var result = value
@@ -179,9 +186,18 @@ public struct ClaudeHookInstaller {
             guard let groups = hooks[event] as? [[String: Any]], groups.contains(where: { containsOwned($0, home: home) }) else { continue }
             hooks[event] = ensureOwned(groups, home: home, background: false)
         }
-        let env = value["env"] as? [String: String] ?? [:]
+        // Pacer's own trace keys follow the conflict state; see reconcileEnvironment.
+        var env = value["env"] as? [String: String] ?? [:]
+        if value["env"] == nil || value["env"] is [String: String] {
+            let conflict = telemetryConflict(value, home: home)
+            var added = previousManifest["addedEnvironment"] as? [String: String] ?? [:]
+            reconcileEnvironment(&env, added: &added, conflict: conflict, automatic: true)
+            if env != value["env"] as? [String: String] ?? [:] { if env.isEmpty { result.removeValue(forKey: "env") } else { result["env"] = env } }
+            if added.isEmpty && previousManifest["addedEnvironment"] == nil { manifest.removeValue(forKey: "addedEnvironment") }
+            else { manifest["addedEnvironment"] = added }
+        }
         let mode = progressMode(home: home)
-        let wantsDisplay = !environment.allSatisfy { env[$0.key] == $0.value } || mode == .marker
+        let wantsDisplay = telemetryConflict(result, home: home) != .none || !ClaudeTelemetryRules.configured(env) || mode == .marker
         if let groups = hooks[displayEvent] as? [[String: Any]], groups.contains(where: { containsOwned($0, home: home) }) {
             setDisplayObserver(&hooks, wanted: wantsDisplay, home: home)
         } else if mode == .marker {
@@ -368,11 +384,32 @@ public struct ClaudeHookInstaller {
     /// cache and recompiles imported modules on every hook.
     private func hookCommand(home: URL) -> String { serialize([python, "-S", home.appendingPathComponent("pacer/hook.py").path, "hook", home.path]) }
     private func legacyHookCommand(home: URL) -> String { serialize([python, home.appendingPathComponent("pacer/hook.py").path, "hook", home.path]) }
-    private func telemetryConflict(_ env: [String: String]) -> Bool {
-        if ["OTEL_EXPORTER_OTLP_TRACES_HEADERS", "OTEL_EXPORTER_OTLP_HEADERS"].contains(where: { env[$0]?.isEmpty == false }) { return true }
-        if let endpoint = env["OTEL_EXPORTER_OTLP_ENDPOINT"], !["http://127.0.0.1:4319", "http://127.0.0.1:4319/v1/traces"].contains(endpoint) { return true }
-        if let protocolName = env["OTEL_EXPORTER_OTLP_PROTOCOL"], protocolName != "http/json" { return true }
-        return false
+    /// The user's settings, the host's managed settings and the cached
+    /// server-managed settings decide whether Pacer's trace keys belong here.
+    private func telemetryConflict(_ value: [String: Any], home: URL) -> ClaudeTelemetryConflict {
+        var managed = managedTelemetry()
+        if let cached = try? readObject(home.appendingPathComponent("remote-settings.json")) { managed.merge(settings: cached) }
+        let manifest = (try? readObject(home.appendingPathComponent("pacer/installation.json"))) ?? [:]
+        let helper = (value["otelHeadersHelper"] as? String).map { !ClaudeTelemetryRules.trimmed($0).isEmpty } ?? false
+        return ClaudeTelemetryRules.conflict(user: value["env"] as? [String: String] ?? [:], headersHelper: helper, managed: managed,
+            owned: manifest["addedEnvironment"] as? [String: String] ?? [:])
+    }
+    /// Pacer's trace keys follow the conflict state. While a conflict lasts,
+    /// keys Pacer added are withdrawn unless the user changed a required one,
+    /// which hands the whole set to the user. Without a conflict, missing keys
+    /// are added; automatic passes skip keys the user removed after Pacer
+    /// added them, so that removal sticks until an explicit retry.
+    private func reconcileEnvironment(_ env: inout [String: String], added: inout [String: String],
+                                      conflict: ClaudeTelemetryConflict, automatic: Bool) {
+        if conflict != .none {
+            let ownedRequired = added.filter { ClaudeTelemetryRules.required[$0.key] != nil }
+            guard !ownedRequired.isEmpty, ownedRequired.allSatisfy({ env[$0.key] == $0.value }) else { return }
+            for (key, setting) in added where env[key] == setting { env.removeValue(forKey: key) }
+            added = [:]
+            return
+        }
+        if automatic, ClaudeTelemetryRules.environment.keys.contains(where: { env[$0] == nil && added[$0] != nil }) { return }
+        for (key, setting) in ClaudeTelemetryRules.environment where env[key] == nil { env[key] = setting; added[key] = setting }
     }
     private func statusLineCommand(home: URL) -> String { serialize([python, "-S", home.appendingPathComponent("pacer/hook.py").path, "statusline", home.path]) }
     private func legacyStatusLineCommand(home: URL) -> String { serialize([python, home.appendingPathComponent("pacer/hook.py").path, "statusline", home.path]) }

@@ -283,6 +283,14 @@ final class IslandModel: ObservableObject {
     enum ClaudeLocalSetup: Equatable { case checking, configuring, ready, missingHome, failed }
     /// Local hooks follow the Claude module: kept current while it is on.
     @Published private(set) var claudeLocalSetup: ClaudeLocalSetup = .checking
+    /// Why this Mac's Claude request telemetry is off, once setup has run.
+    @Published private(set) var claudeTelemetryConflict: ClaudeTelemetryConflict = .none
+    /// True while the note about estimated speeds belongs on the local row:
+    /// a conflict, and no exact span has arrived this run (a collector can
+    /// still forward them).
+    var claudeLocalSpeedsEstimated: Bool {
+        claudeLocalSetup == .ready && claudeTelemetryConflict != .none && claudeStreamStatuses["local"]?.exactRequestSpans != true
+    }
     /// The latest hook setup; the next one waits for it, so two never edit
     /// Claude's settings at the same time.
     private var claudeHookSetup: Task<ClaudeHookInstaller.EnsureResult, Never>?
@@ -309,6 +317,12 @@ final class IslandModel: ObservableObject {
             guard generation == claudeGeneration else { return }
             if again != .current { result = again }
         }
+        var conflict = ClaudeTelemetryConflict.none
+        if result == .current || result == .installed {
+            conflict = await Task.detached(priority: .utility) { ClaudeHookInstaller.details(home: home).telemetryConflictReason }.value
+            guard generation == claudeGeneration else { return }
+        }
+        if claudeTelemetryConflict != conflict { claudeTelemetryConflict = conflict }
         switch result {
         case .current: claudeLocalSetup = .ready
         case .installed: claudeLocalSetup = .ready; settingsRevision += 1
@@ -727,6 +741,10 @@ final class IslandModel: ObservableObject {
     }()
     /// The digest includes the progress ring, so switching it sets connected hosts up again.
     private var claudeAdapterDigest: String? { claudeAdapterDigests.map { showsClaudeProgressRing ? $0.on : $0.off } }
+    /// Hosts whose current setup kept Pacer's request telemetry off, by alias.
+    func claudeRemoteTelemetryConflicts() -> [String: ClaudeTelemetryConflict] {
+        ClaudeRemoteAutoSetup.telemetryConflicts(defaults: defaults)
+    }
     /// True once this host carries the hooks shipped with this build.
     func claudeRemoteConfigured(_ target: RemoteActivityTarget) -> Bool {
         claudeAdapterDigest.map { ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults)[target.alias] == $0 } ?? false
@@ -769,7 +787,9 @@ final class IslandModel: ObservableObject {
                   claudeRemoteTargets.contains(target), claudeRemoteSetupIDs[targetID] == requestID else { return nil }
             claudeRemoteSetupStatus[targetID] = status
             claudeRemoteSetupFailures.removeValue(forKey: targetID); claudeRemoteSetupFailedAt.removeValue(forKey: targetID)
-            if let digest { ClaudeRemoteAutoSetup.recordConfigured(alias: target.alias, digest: digest, defaults: defaults) }
+            if let digest {
+                ClaudeRemoteAutoSetup.recordConfigured(alias: target.alias, digest: digest, conflict: status.telemetryConflictReason, defaults: defaults)
+            }
             await claudeMonitor.refresh(remoteTargetID: targetID)
             outdated = digest != claudeAdapterDigest
             return nil

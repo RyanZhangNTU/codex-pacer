@@ -146,12 +146,15 @@ public actor ClaudeRemoteSetup {
             }
         }
         guard exitStatus == 0 else { throw Failure.connectionFailed }
-        let keys = ["hooksConfigured", "telemetryConfigured", "statusLineConfigured", "telemetryConflict"]
+        let keys = ["hooksConfigured", "telemetryConfigured", "statusLineConfigured", "telemetryConflict", "telemetryConflictReason"]
         let fields = try? JSONFieldView.document(data).fields(Set(keys))
         guard Set(value.keys) == Set(keys),
               let hooks = fields?["hooksConfigured"]?.boolean(), let telemetry = fields?["telemetryConfigured"]?.boolean(),
-              let line = fields?["statusLineConfigured"]?.boolean(), let conflict = fields?["telemetryConflict"]?.boolean() else { throw Failure.invalidResponse }
-        return ClaudeHookInstaller.Status(hooksConfigured: hooks, telemetryConfigured: telemetry, statusLineConfigured: line, telemetryConflict: conflict)
+              let line = fields?["statusLineConfigured"]?.boolean(), let conflict = fields?["telemetryConflict"]?.boolean(),
+              let reason = fields?["telemetryConflictReason"]?.string(limit: 16).flatMap(ClaudeTelemetryConflict.init(rawValue:)),
+              conflict == (reason != .none) else { throw Failure.invalidResponse }
+        return ClaudeHookInstaller.Status(hooksConfigured: hooks, telemetryConfigured: telemetry, statusLineConfigured: line,
+                                          telemetryConflictReason: reason)
     }
 }
 

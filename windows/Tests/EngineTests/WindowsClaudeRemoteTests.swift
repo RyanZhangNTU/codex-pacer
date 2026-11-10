@@ -19,7 +19,7 @@ private actor RemoteSetupCapture {
         calls += 1
         if hold { await withCheckedContinuation { held = $0 } }
         if let failure { throw failure }
-        return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true, telemetryConflict: false)
+        return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true)
     }
     func setFailure(_ value: ClaudeRemoteSetup.Failure?) { failure = value }
     func setHold() { hold = true }
@@ -268,7 +268,7 @@ final class WindowsClaudeRemoteTests: XCTestCase {
     func testSwitchingTheProgressRingSetsConnectedHostsUpAgain() async throws {
         let capture = RingCapture(), off = String(repeating: "e", count: 64), on = String(repeating: "f", count: 64)
         let coordinator = WindowsClaudeRemoteCoordinator(services: .init(digest: { $0 ? on : off }, install: { _, ring in
-            capture.install(ring); return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true, telemetryConflict: false)
+            capture.install(ring); return .init(hooksConfigured: true, telemetryConfigured: true, statusLineConfigured: true)
         }, shutdown: {}, loadDigests: { [:] }, saveDigests: { capture.save($0) }))
         var connected = RuntimeStreamStatus(); connected.connected = true; connected.sourceAvailable = true
         let alias = target.alias, statuses = [target.id: connected], targets = [target]

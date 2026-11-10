@@ -57,6 +57,48 @@ final class ClaudeObservedRequestTests: XCTestCase {
         let samples = meter.settled(at: at(6))
         XCTAssertEqual(samples.map(\.responseID), ["req-2"]); XCTAssertEqual(samples.first?.startedAt, at(2)); XCTAssertEqual(samples.first?.tokensPerSecond, 20)
     }
+    /// Claude Code writes either all of a response's blocks after it ends,
+    /// each carrying the stop reason, or blocks as they finish with the stop
+    /// reason on the last. Either way a response is released once, in order.
+    func testEndedResponsesReleaseOnceInOrderBeforeTheTurnEnds() throws {
+        var meter = ClaudeObservedRequestMeter(turnID: "prompt-1", observedStart: start)
+        meter.modelBlock(id: "req-1", messageID: "msg-1", outputTokens: 256, toolIDs: [], terminal: true, at: at(1))
+        meter.modelBlock(id: "req-1", messageID: "msg-1", outputTokens: 256, toolIDs: ["tool-a"], terminal: true, at: at(4))
+        let first = meter.releaseCompleted()
+        XCTAssertEqual(first.map(\.responseID), ["req-1"]); XCTAssertEqual(first.first?.tokensPerSecond, 64)
+        XCTAssertTrue(meter.releaseCompleted().isEmpty, "A response is released once")
+        meter.toolStarted("tool-a", at: at(4.5)); meter.toolEnded("tool-a", at: at(5.5))
+        meter.modelBlock(id: "req-2", messageID: "msg-2", outputTokens: 90, toolIDs: [], at: at(6))
+        XCTAssertTrue(meter.releaseCompleted().isEmpty, "A response without its stop reason is still running")
+        meter.modelBlock(id: "req-2", messageID: "msg-2", outputTokens: 90, toolIDs: [], terminal: true, at: at(8.5))
+        let second = try XCTUnwrap(meter.releaseCompleted().first)
+        XCTAssertEqual(second.responseID, "req-2"); XCTAssertEqual(second.startedAt, at(5.5)); XCTAssertEqual(second.tokensPerSecond, 30)
+        XCTAssertEqual(meter.settled(at: at(9)).map(\.responseID), ["req-1", "req-2"], "The turn's ending settles the same samples")
+    }
+    func testLiveReadsSettleEachEndedResponseUnlessExactSpansArrive() throws {
+        let session = "synthetic-session", turn = "prompt-1"
+        func block(_ request: String, _ seconds: Double, terminal: Bool) -> [String: Any] {
+            var value: [String: Any] = ["kind": "modelBlock", "origin": "transcript", "sessionId": session, "promptId": turn, "requestId": request,
+                "messageId": "msg-" + request, "outputTokens": 100, "toolIds": [String](), "at": at(seconds).timeIntervalSince1970]
+            if terminal { value["terminal"] = true }
+            return value
+        }
+        var state = ClaudeActivityState()
+        state.consume(ClaudeActivityRecord.encode(["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": turn, "at": start.timeIntervalSince1970])!, now: start)
+        state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": [block("req-1", 1, terminal: false)]])!, now: at(1.1))
+        XCTAssertNil(try XCTUnwrap(state.activities.first).displayedOutputEstimate(at: at(1.1)))
+        state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": [block("req-1", 2, terminal: true)]])!, now: at(2.1))
+        let running = try XCTUnwrap(state.activities.first)
+        XCTAssertEqual(running.phase, .running); XCTAssertEqual(running.displayedOutputEstimate(at: at(2.1))?.value, 50)
+        // A source with request spans keeps estimates out of the way.
+        var exact = ClaudeActivityState()
+        exact.consume(ClaudeActivityRecord.encode(["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": turn, "at": start.timeIntervalSince1970])!, now: start)
+        exact.consume(ClaudeActivityRecord.encode(["kind": "request", "sessionId": session, "promptId": turn, "requestId": "req-0", "startedAt": at(0.5).timeIntervalSince1970,
+            "at": at(1).timeIntervalSince1970, "outputTokens": 40, "durationMs": 500.0])!, now: at(1))
+        exact.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "records": [block("req-1", 2, terminal: true)]])!, now: at(2.1))
+        XCTAssertEqual(try XCTUnwrap(exact.activities.first).displayedOutputEstimate(at: at(2.1))?.value, 80, "Only the exact span's 80 t/s shows")
+        XCTAssertEqual(try XCTUnwrap(exact.activities.first).responsePerformance?.source, .requestUsage)
+    }
     func testObservedHookStartAllowsNewTranscriptAttachmentToSettleAndNotifyWithoutTTFT() throws {
         var state = ClaudeActivityState(), inbox = CompletionInbox(), attention = AttentionPolicy()
         let session = "synthetic-session", turn = "prompt-1"

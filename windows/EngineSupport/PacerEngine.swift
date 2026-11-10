@@ -2159,7 +2159,9 @@ actor EngineRuntime {
             claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused) },
             claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [],
             notificationProjections: notificationProjections,
-            navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup,
+            navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup.map { setup in
+                var value = setup; value.exactRequestSpans = localStreamStatuses[.claude]?.exactRequestSpans == true; return value
+            },
             claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation(), codexProgressSetup: codexProgressSetup,
             deepseekProgressSetup: deepseekProgressSetup)
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {

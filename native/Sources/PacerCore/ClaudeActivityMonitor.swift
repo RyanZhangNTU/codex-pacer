@@ -173,6 +173,7 @@ public actor ClaudeActivityMonitor {
             }
         }
         for bytes in result.records { local.consume(bytes, now: clock()) }
+        if !result.records.isEmpty { local.releaseCompletedRequests(now: clock()) }
         if result.caughtUp { local.finalizeHistoricalBaseline(now: clock()) }
         if let status = ClaudeActivityRecord.encode(["kind": "status", "connected": result.available, "watchingLogs": !watchURLs.isEmpty, "scans": localReader.scans]) { local.consume(status, now: clock()) }
         if !result.available { local.unavailable() }

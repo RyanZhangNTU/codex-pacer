@@ -4,7 +4,7 @@ import Darwin
 @testable import PacerCore
 
 final class ClaudeRemoteSetupTests: XCTestCase {
-    private let success = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false}"#
+    private let success = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false,"telemetryConflictReason":"none"}"#
     private var target: RemoteActivityTarget { RemoteActivityTarget(id: "fixture-host", name: "Fixture", alias: "fixture-host", home: "/private-codex-home") }
 
     private func fixture() throws -> (root: URL, home: URL) {
@@ -119,7 +119,6 @@ final class ClaudeRemoteSetupTests: XCTestCase {
     func testConflictingTelemetryAndInheritedExporterStayUntouched() throws {
         let conflicts = [
             ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:54321/v1/traces"],
-            ["OTEL_EXPORTER_OTLP_ENDPOINT": "https://private-fixture.invalid"],
             ["OTEL_EXPORTER_OTLP_HEADERS": "PRIVATE fixture header"],
             ["OTEL_EXPORTER_OTLP_TRACES_HEADERS": "PRIVATE fixture header"],
             ["CLAUDE_CODE_ENABLE_TELEMETRY": "0"]

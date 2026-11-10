@@ -7,6 +7,10 @@ struct EngineClaudeHookSetup: Codable, Equatable, Sendable {
     var hooksConfigured = false, telemetryConfigured = false, statusLineConfigured = false
     var telemetryConflict = false, updateAvailable = false
     var launchMode: String?
+    /// Why request telemetry is off: `existing` or `managed`.
+    var telemetryConflictReason: String?
+    /// Set by the engine: exact request spans reach this PC anyway.
+    var exactRequestSpans: Bool?
     init(_ state: State) { self.state = state }
 }
 

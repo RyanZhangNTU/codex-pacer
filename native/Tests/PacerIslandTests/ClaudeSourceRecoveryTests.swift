@@ -50,7 +50,7 @@ final class ClaudeSourceRecoveryTests: XCTestCase {
             (root/(alias+'.settings-mutated')).write_text('simulated remote write')
         (root/(alias+'.command')).write_text(sys.argv[-1])
         (root/(alias+'.ready')).write_text('ready')
-        print(json.dumps({'hooksConfigured':True,'telemetryConfigured':True,'statusLineConfigured':True,'telemetryConflict':False}))
+        print(json.dumps({'hooksConfigured':True,'telemetryConfigured':True,'statusLineConfigured':True,'telemetryConflict':False,'telemetryConflictReason':'none'}))
         """)
         let domain = testDefaultsName("source-recovery-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))

@@ -8,7 +8,7 @@ import XCTest
 @testable import PacerCore
 
 final class ClaudeRemoteSetupContractTests: XCTestCase {
-    private let success = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false}"#
+    private let success = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false,"telemetryConflictReason":"none"}"#
     private var target: RemoteActivityTarget { RemoteActivityTarget(id: "fixture-host", name: "Fixture", alias: "fixture-host", home: "/private-codex-home") }
 
     func testAutomaticSetupRunsOncePerDigestForConnectedHostsAndBacksOffFailures() throws {
@@ -36,6 +36,13 @@ final class ClaudeRemoteSetupContractTests: XCTestCase {
         let recorded = ClaudeRemoteAutoSetup.configuredDigests(defaults: defaults)
         XCTAssertEqual(recorded.count, 32)
         XCTAssertEqual(recorded["host-39"], "digest")
+        ClaudeRemoteAutoSetup.recordConfigured(alias: "host-38", digest: "digest", conflict: .existing, defaults: defaults)
+        ClaudeRemoteAutoSetup.recordConfigured(alias: "host-39", digest: "digest", conflict: .managed, defaults: defaults)
+        XCTAssertEqual(ClaudeRemoteAutoSetup.telemetryConflicts(defaults: defaults), ["host-38": .existing, "host-39": .managed])
+        ClaudeRemoteAutoSetup.recordConfigured(alias: "host-38", digest: "digest", defaults: defaults)
+        XCTAssertEqual(ClaudeRemoteAutoSetup.telemetryConflicts(defaults: defaults), ["host-39": .managed], "A clean setup clears the note")
+        for index in 40..<72 { ClaudeRemoteAutoSetup.recordConfigured(alias: "host-\(index)", digest: "digest", defaults: defaults) }
+        XCTAssertEqual(ClaudeRemoteAutoSetup.telemetryConflicts(defaults: defaults), [:], "A host dropped from the digests loses its note")
         XCTAssertFalse(try ClaudeRemoteSetup.adapterDigest().isEmpty)
         XCTAssertEqual(try ClaudeRemoteSetup.adapterDigest(), try ClaudeRemoteSetup.adapterDigest())
         // Switching the progress ring changes the digest, so configured hosts are set up again.

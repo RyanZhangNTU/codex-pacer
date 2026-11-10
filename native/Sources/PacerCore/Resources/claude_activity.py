@@ -171,7 +171,11 @@ def transcript_record(value, owner, parent=None, prompt=None):
         item = ident(value.get('uuid')) or ident(message.get('id')) or 'assistant'
         request=ident(value.get('requestId')) or ident(message.get('id'));message_id=ident(message.get('id'));usage=message.get('usage',{});usage=usage if isinstance(usage,dict) else {};output=usage.get('output_tokens')
         if request and message_id and isinstance(output,int) and not isinstance(output,bool) and 0<output<=1000000000000:
-            rows.append(dict(base,kind='modelBlock',requestId=request,messageId=message_id,outputTokens=output,toolIds=[item for item,_ in starts]))
+            row=dict(base,kind='modelBlock',requestId=request,messageId=message_id,outputTokens=output,toolIds=[item for item,_ in starts])
+            # Claude Code knows a response's stop reason only after it ends.
+            stop=message.get('stop_reason',value.get('stop_reason'))
+            if isinstance(stop,str) and stop:row['terminal']=True
+            rows.append(row)
         for model_kind in sorted(model_kinds): rows.append(dict(base, kind='thinking' if model_kind == 'thinking' else 'response', itemId=item))
         for item, name in starts:
             row=dict(base, kind='toolStart', itemId=item, attention='input' if name == 'AskUserQuestion' else 'approval' if name == 'ExitPlanMode' else 'none')
