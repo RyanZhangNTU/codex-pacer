@@ -44,7 +44,7 @@ Codex quota needs nothing extra.
 
 **Hover** to expand the island, **move away** to collapse it. Click the top to keep it open, and press Esc to close it.
 
-Choose what the bar shows in **Collapsed Bar**: drag items on the live preview to reorder them or move them to the other side of the camera, and click one to see its options. The badge's ring can show the services that are running, the average progress, or one segment per task.
+Choose what the bar shows in **Collapsed Bar**: drag items on the live preview to reorder them or move them to the other side of the camera, and click one to see its options. In the list of items, the round button at the end of each one adds it to the bar or removes it. The badge's ring can show the services that are running, the average progress, or one segment per task.
 
 To move the island, choose **Free Move** in **Appearance**, then drag the bar by its status area. Release it near a screen edge and it snaps there. **Return to Top Center** puts it back. With several displays, each one remembers its own place.
 
@@ -62,7 +62,7 @@ All your tasks share one list. Tasks that need you come first, then running task
 
 ### Arranging the panel
 
-The panel is a column of blocks: the task list, a quota block for each service, DeepSeek's balance, where today's DeepSeek spend went, and its last 7 days. On the **Expanded Panel** page, drag a block in the outline to move it, click it to see its choices, or add and remove blocks from the list beside it. Until you change anything, the panel follows the services you turn on. **Restore Automatic** goes back to that.
+The panel is a column of blocks: the task list, a quota block for each service, DeepSeek's balance, where today's DeepSeek spend went, and its last 7 days. On the **Expanded Panel** page, drag a block in the outline to move it and click it to see its choices. In the list below, the round button at the end of each block adds it to the panel or removes it. Until you change anything, the panel follows the services you turn on. **Restore Automatic** goes back to that.
 
 - **Task list:** 3 to 6 tasks per page, rows of two lines or one, and which details each row shows.
 - **Quota:** each service can show both windows, only the week or only 5 hours. Quotas next to each other share a row; choose **One row each** to give every service its own row with its pace, reset and forecast beside it. The style and the pace tick are here too.

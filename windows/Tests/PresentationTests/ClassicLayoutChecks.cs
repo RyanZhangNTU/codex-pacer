@@ -31,7 +31,7 @@ internal static class ClassicLayoutChecks
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             ulong sequence = engine.LatestSnapshot!.Sequence;
             // The style is a choice of the quota blocks on the Expanded Panel page.
-            await Until(() => Descendants(settings).OfType<CheckBox>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.block.codex"));
+            await Until(() => Descendants(settings).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.block.codex"));
             settings.SelectPanelBlock("codex"); await Pump();
             var classic = Find<RadioButton>(settings, "panel.option.codex.style.classic"); Select(classic);
             await Until(() => session.Current.ExpandedQuotaStyle == "classic" && Descendants(island).OfType<ClassicQuotaView>().Any());

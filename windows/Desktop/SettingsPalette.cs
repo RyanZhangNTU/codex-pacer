@@ -20,6 +20,14 @@ internal static class SettingsPalette
             resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
             foreach (string key in new[] { "SettingsAccent", "SettingsLinkText", "SettingsIslandLink", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsExpiry", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
             resources["SettingsAccentSoft"] = DesktopAppearance.Ink(colors.Control);
+            foreach (string key in new[] { "SettingsTileAdded", "SettingsNoticeFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
+            resources["SettingsTileIdle"] = DesktopAppearance.Ink(colors.Window);
+            foreach (string key in new[] { "SettingsTileRing", "SettingsNoticeText" }) resources[key] = DesktopAppearance.Ink(colors.Text);
+            foreach (string key in new[] { "SettingsTileRemove", "SettingsChipOn", "SettingsChipOnStroke" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
+            resources["SettingsTileLocked"] = DesktopAppearance.Ink(colors.Disabled);
+            resources["SettingsChipOnText"] = DesktopAppearance.Ink(colors.HighlightText);
+            foreach (string name in new[] { "Codex", "Claude", "DeepSeek", "Neutral" })
+            { resources["SettingsTint" + name] = DesktopAppearance.Ink(colors.Text); resources["SettingsTint" + name + "Soft"] = DesktopAppearance.Ink(colors.Control); }
             resources["SettingsKnob"] = resources["SettingsSelectionText"] = DesktopAppearance.Ink(colors.HighlightText);
             resources["SettingsSidebarSelectionText"] = DesktopAppearance.Ink(colors.HighlightText); return;
         }
@@ -82,6 +90,39 @@ internal static class SettingsPalette
         Brush("SettingsSuccess", 48, 186, 85);
         if (active) Brush("SettingsSwitchOn", tint.R, tint.G, tint.B);
         else Gray("SettingsSwitchOn", dark ? (byte)81 : (byte)210);
+        // Library tiles: plain until added, then a light wash; the round button's
+        // ring while it adds, its gray while it removes, and gray when it cannot.
+        if (dark) Overlay("SettingsTileIdle", 10, 255); else Gray("SettingsTileIdle", 255);
+        if (dark) Overlay("SettingsTileAdded", 20, 255); else Brush("SettingsTileAdded", 242, 242, 245);
+        Overlay("SettingsTileRing", dark ? (byte)77 : (byte)56, dark ? (byte)255 : (byte)0);
+        if (dark) Brush("SettingsTileRemove", 99, 99, 102); else Brush("SettingsTileRemove", 110, 110, 115);
+        if (dark) Brush("SettingsTileLocked", 72, 72, 74); else Brush("SettingsTileLocked", 199, 199, 204);
+        // A component that is not added yet: a soft amber note.
+        if (dark) resources["SettingsNoticeFill"] = new SolidColorBrush(Color.FromArgb(41, 255, 159, 10)); else Brush("SettingsNoticeFill", 255, 244, 229);
+        if (dark) Brush("SettingsNoticeText", 255, 179, 92); else Brush("SettingsNoticeText", 138, 75, 0);
+        // A chosen chip: a tint of the accent with readable accent text.
+        Color card = dark ? main ? Color.FromRgb(36, 36, 40) : Color.FromRgb(36, 36, 36) : Colors.White;
+        Color chip = Blend(tint, dark ? 0.25 : 0.12, card);
+        resources["SettingsChipOn"] = new SolidColorBrush(chip);
+        resources["SettingsChipOnStroke"] = new SolidColorBrush(Color.FromArgb(89, tint.R, tint.G, tint.B));
+        resources["SettingsChipOnText"] = new SolidColorBrush(Readable(tint, chip, dark));
+        // Each service's ink on the cards, deeper than the island's so it reads on white, and its soft tile.
+        void Tint(string name, Color light, Color night)
+        {
+            Color ink = dark ? night : light;
+            resources["SettingsTint" + name] = new SolidColorBrush(ink);
+            resources["SettingsTint" + name + "Soft"] = new SolidColorBrush(dark ? Color.FromArgb(51, ink.R, ink.G, ink.B) : Blend(ink, 0.12, Colors.White));
+        }
+        Tint("Codex", Color.FromRgb(14, 140, 120), Color.FromRgb(125, 214, 196));
+        Tint("Claude", Color.FromRgb(196, 88, 31), Color.FromRgb(242, 156, 107));
+        Tint("DeepSeek", Color.FromRgb(62, 91, 219), Color.FromRgb(123, 147, 255));
+        Tint("Neutral", Color.FromRgb(110, 110, 115), Color.FromRgb(157, 157, 162));
+    }
+
+    private static Color Blend(Color top, double alpha, Color under)
+    {
+        byte Mix(byte over, byte below) => (byte)Math.Round(below + (over - below) * alpha);
+        return Color.FromRgb(Mix(top.R, under.R), Mix(top.G, under.G), Mix(top.B, under.B));
     }
 
     /// The accent moved toward white (or black) just far enough for 4.5:1 text contrast on the background.

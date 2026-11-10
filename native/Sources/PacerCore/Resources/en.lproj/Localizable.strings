@@ -1117,8 +1117,6 @@
 "panel.field.source" = "Source";
 "panel.field.subagents" = "Subagents";
 "panel.field.cost" = "Turn cost";
-"panel.field.source_note" = "App or host";
-"panel.field.cost_note" = "DeepSeek";
 "panel.action.apps" = "Open apps";
 "panel.action.markRead" = "Mark all as read";
 "panel.action.pin" = "Keep expanded";
@@ -1142,7 +1140,6 @@
 "main.panel.row_one" = "One line";
 "main.panel.row_style_help" = "One line keeps the name, speed and time.";
 "main.panel.fields" = "In each row";
-"main.panel.fields_help" = "Screen readers still read hidden details.";
 "main.panel.in_general" = "In General";
 "main.panel.in_deepseek" = "In DeepSeek";
 "main.panel.periods" = "Windows";
@@ -1157,7 +1154,6 @@
 "main.panel.details_help" = "Pace, reset and forecast beside a service with its own row.";
 "main.panel.pace_tick" = "Pace tick";
 "main.panel.pace_tick_help" = "Where an even pace would be.";
-"main.panel.shared_note" = "Style, arrangement, details and pace tick apply to every quota.";
 "main.panel.show" = "Show";
 "main.panel.hide" = "Hide";
 "main.panel.dial" = "Dial";
@@ -1175,7 +1171,6 @@
 "main.panel.week_line" = "Reference line";
 "main.panel.week_line_help" = "The daily budget, or else the daily average.";
 "main.panel.actions" = "In the header";
-"main.panel.actions_help" = "Unchecked buttons move into the ⋯ menu.";
 "main.notifications.retention_moved" = "Keep Ended Tasks is now set in Expanded Panel › Task List.";
 "main.panel.open" = "Open Expanded Panel";
 "main.panel.automatic_short" = "Automatic";

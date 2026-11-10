@@ -1117,8 +1117,6 @@
 "panel.field.source" = "来源";
 "panel.field.subagents" = "子代理数量";
 "panel.field.cost" = "本轮花费";
-"panel.field.source_note" = "应用或主机";
-"panel.field.cost_note" = "DeepSeek";
 "panel.action.apps" = "打开应用";
 "panel.action.markRead" = "全部标为已读";
 "panel.action.pin" = "固定展开";
@@ -1142,7 +1140,6 @@
 "main.panel.row_one" = "一行";
 "main.panel.row_style_help" = "一行只留名称、速度和用时。";
 "main.panel.fields" = "行内显示";
-"main.panel.fields_help" = "没选的信息仍会被读屏读出。";
 "main.panel.in_general" = "在通用页";
 "main.panel.in_deepseek" = "在 DeepSeek 页";
 "main.panel.periods" = "显示周期";
@@ -1157,7 +1154,6 @@
 "main.panel.details_help" = "单独一行时显示配速、重置和预测。";
 "main.panel.pace_tick" = "配速刻度";
 "main.panel.pace_tick_help" = "匀速时该剩下的位置。";
-"main.panel.shared_note" = "样式、排列、详情和配速刻度对所有额度生效。";
 "main.panel.show" = "显示";
 "main.panel.hide" = "隐藏";
 "main.panel.dial" = "表盘";
@@ -1175,7 +1171,6 @@
 "main.panel.week_line" = "参考线";
 "main.panel.week_line_help" = "有每日预算画预算，否则画日均。";
 "main.panel.actions" = "放在标题行";
-"main.panel.actions_help" = "没勾的按钮收进 ⋯ 菜单。";
 "main.notifications.retention_moved" = "「结束的任务保留」移到了「展开面板 › 任务列表」。";
 "main.panel.open" = "打开展开面板";
 "main.panel.automatic_short" = "自动";

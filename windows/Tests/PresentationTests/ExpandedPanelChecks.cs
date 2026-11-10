@@ -39,18 +39,23 @@ internal static class ExpandedPanelChecks
                 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
                 "Without a saved layout the panel keeps the reference tasks-then-quota panel with its buttons in the task header");
 
-            await Until(() => Present<CheckBox>(window, "panel.block.tasks"));
-            Check(Find<CheckBox>(window, "panel.block.codex").IsChecked == true && Find<CheckBox>(window, "panel.block.deepseekWeek").IsChecked == false
-                && Find<TextBlock>(window, "panel.automatic").IsVisible && !Find<Button>(window, "panel.restore").IsVisible,
+            await Until(() => Present<Button>(window, "panel.block.tasks"));
+            Check(Equals(Find<Button>(window, "panel.block.codex.toggle").Tag, "added") && Equals(Find<Button>(window, "panel.block.deepseekWeek.toggle").Tag, "add")
+                && Find<TextBlock>(window, "panel.automatic").Text == ui.Text("main.panel.automatic_short") && !Find<Button>(window, "panel.restore").IsVisible,
                 "The page shows the automatic layout's blocks and offers no restore before an edit");
             Check(Present<Button>(window, "panel.editor.tasks") && Present<Button>(window, "panel.editor.codex") && Present<Button>(window, "panel.editor.actions"),
                 "The outline draws each shown block and the header's buttons");
+            Check(Descendants(Find<Button>(window, "panel.editor.tasks")).OfType<TextBlock>().Any(text => text.Text == AutomationProperties.GetName(Find<Button>(window, "panel.block.tasks"))),
+                "An outline block draws its name, not its content's type");
             window.CapturePreview(Path.Combine(output, "settings-panel-" + name + "-automatic.png"));
 
             // Moving Codex above the tasks splits it from the other quotas and hands it the buttons.
             int before = configurations;
             window.SelectPanelBlock("codex"); await Pump();
-            Invoke(Find<Button>(window, "panel.inspector.up"));
+            // The keyboard moves a block in the outline, as dragging does.
+            var codex = Find<Button>(window, "panel.editor.codex");
+            codex.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(codex), Environment.TickCount,
+                System.Windows.Input.Key.Up) { RoutedEvent = System.Windows.Input.Keyboard.KeyDownEvent });
             await Until(() => session.Current.ExpandedPanelLayout?.StartsWith("{\"blocks\":[\"codex\",\"tasks\"", StringComparison.Ordinal) == true);
             await Until(() => ReferenceEquals(content.Children[0], island.FindName("QuotaSection")));
             await island.WaitForPresentationAsync();
@@ -58,7 +63,7 @@ internal static class ExpandedPanelChecks
                 && ((FrameworkElement)island.FindName("PageDivider")).Visibility == Visibility.Collapsed
                 && ((TextBlock)island.FindName("QuotaDetail")).Text == "Codex" && Descendants(island).OfType<QuotaDial>().Count() == 3,
                 "The first section carries the buttons and a lone service is named beside its title");
-            Check(Find<Button>(window, "panel.restore").IsVisible && !Find<TextBlock>(window, "panel.automatic").IsVisible,
+            Check(Find<Button>(window, "panel.restore").IsVisible && Find<TextBlock>(window, "panel.automatic").Text == ui.Text("main.panel.custom"),
                 "A saved layout offers to restore the automatic one");
 
             // One row each: every quota service gets a section of its own.
@@ -97,7 +102,23 @@ internal static class ExpandedPanelChecks
             Invoke(Find<Button>(window, "panel.inspector.toggle"));
             // With one row each, DeepSeek alone draws its full dial view.
             await Until(() => !Descendants(island).OfType<DeepSeekQuotaCell>().Any() && !Descendants(island).OfType<DeepSeekSoloView>().Any()
-                && Find<CheckBox>(window, "panel.block.deepseek").IsChecked == false);
+                && Equals(Find<Button>(window, "panel.block.deepseek.toggle").Tag, "add"));
+            Check(Find<TextBlock>(window, "panel.inspector.notice").Text == ui.Text("main.library.not_added") && Find<CheckBox>(window, "panel.option.peak").IsVisible,
+                "A removed block keeps its settings open with a note that they apply once it is added");
+
+            // A tile only selects; its round button adds the block and keeps the selection.
+            string? layout = session.Current.ExpandedPanelLayout;
+            var week = Find<Button>(window, "panel.block.deepseekWeek");
+            Invoke(week); await Pump();
+            Check(session.Current.ExpandedPanelLayout == layout && Find<TextBlock>(window, "panel.inspector.title").Text == AutomationProperties.GetName(week)
+                && Find<CheckBox>(window, "panel.option.weekLine").IsVisible && Find<TextBlock>(window, "panel.inspector.notice").IsVisible,
+                "Clicking a tile selects it without adding it");
+            Invoke(Find<Button>(window, "panel.block.deepseekWeek.toggle"));
+            await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekWeek", StringComparison.Ordinal) == true
+                && Equals(Find<Button>(window, "panel.block.deepseekWeek.toggle").Tag, "added"));
+            Check(Find<TextBlock>(window, "panel.inspector.title").Text == AutomationProperties.GetName(week) && !Find<TextBlock>(window, "panel.inspector.notice").IsVisible
+                && Present<Button>(window, "panel.editor.deepseekWeek"),
+                "The round button adds the block to the outline and keeps it selected");
             window.CapturePreview(Path.Combine(output, "settings-panel-" + name + "-edited.png"));
             island.CapturePreview(Path.Combine(output, "panel-" + name + "-edited.png"));
             Invoke(Find<Button>(window, "panel.restore"));
