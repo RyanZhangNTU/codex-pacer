@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace CodexPacer.Windows;
@@ -11,27 +12,28 @@ namespace CodexPacer.Windows;
 /// The folder of engine crash reports and the host's part of each one.
 /// </summary>
 /// <remarks>
-/// The engine writes a report when it stops on a fault it can observe. The host
-/// then adds what only it knows: the exit code and the last text the engine
-/// wrote to standard error, such as a Swift fatal error. When the engine was
-/// ended without a chance to write, the host writes the whole report. A report
-/// is meant to be attached to a public issue, so the user's folder never
-/// appears in it.
+/// Every start of the engine gets an identifier of its own, which names its
+/// report. The engine writes the report when it stops on a fault it can observe.
+/// The host then adds what only it knows: the exit code, the running time and
+/// the source line a Swift fatal error named. When the engine was ended without
+/// a chance to write, the host writes the whole report. A report is meant to be
+/// attached to a public issue, so it holds only these fields and none of the
+/// engine's own text, which can carry paths.
 /// </remarks>
 internal sealed class EngineCrashLog
 {
     internal const string Folder = "CrashLogs", Prefix = "engine-crash-", Title = "Codex Pacer engine crash report 1";
-    internal const int Kept = 10, MaximumOutput = 2000;
+    internal const int Kept = 10;
     internal string Directory { get; }
     internal string Version { get; }
-    private readonly string profile;
-    private static readonly System.Text.RegularExpressions.Regex UserFolder = new(@"([\\/]users[\\/]+)[^\\/\s""']+",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    // What Swift prints before it stops: `Module/File.swift:12: Fatal error: message`.
+    private static readonly Regex SwiftStopLine = new(
+        @"^(?:([A-Za-z0-9_]{1,64})/)?([A-Za-z0-9_+.\-]{1,64}\.swift):([0-9]{1,7}): (Fatal error|Precondition failed|Assertion failed)(?=:|\r?$)",
+        RegexOptions.CultureInvariant);
 
-    internal EngineCrashLog(string directory, string version, string? profile = null)
+    internal EngineCrashLog(string directory, string version)
     {
         Directory = Path.GetFullPath(directory); Version = version;
-        this.profile = profile ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     }
 
     /// <summary>Creates the folder and keeps only the newest reports. Null when the folder cannot be used.</summary>
@@ -47,7 +49,7 @@ internal sealed class EngineCrashLog
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
     }
 
-    /// <summary>Removes empty leftovers and all but the newest reports. Names sort by time.</summary>
+    /// <summary>Removes empty leftovers and all but the newest reports. Names sort by the time their engine started.</summary>
     internal void Prune()
     {
         var reports = new DirectoryInfo(Directory).GetFiles(Prefix + "*.txt").OrderByDescending(file => file.Name, StringComparer.Ordinal).ToList();
@@ -61,24 +63,43 @@ internal sealed class EngineCrashLog
     }
 
     /// <summary>
+    /// The identifier of one start of the engine: its time and a random part.
+    /// The host and the engine both name the report by it, so a process number
+    /// that Windows hands out again cannot point at an older report.
+    /// </summary>
+    internal static string NewIdentifier(DateTimeOffset now)
+        => now.UtcDateTime.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N")[..8];
+
+    internal string ReportPath(string identifier) => Path.Combine(Directory, Prefix + identifier + ".txt");
+
+    /// <summary>
+    /// The source line Swift named when it stopped, or null for any other line.
+    /// Only the module, the file name, the line number and the kind are kept:
+    /// the message after them can quote a path, and so can everything else the
+    /// runtime prints.
+    /// </summary>
+    internal static string? SwiftStop(string line)
+    {
+        Match match = SwiftStopLine.Match(line);
+        if (!match.Success) return null;
+        return match.Groups[4].Value + " at " + (match.Groups[1].Success ? match.Groups[1].Value + " " : "") + match.Groups[2].Value + ":" + match.Groups[3].Value;
+    }
+
+    /// <summary>
     /// Adds the host's part after the engine stopped unexpectedly. Returns the
     /// report, or null when the engine left none and exited without an error.
     /// </summary>
-    internal string? Complete(int processId, int exitCode, TimeSpan uptime, string output, DateTimeOffset now)
+    internal string? Complete(string identifier, int processId, int exitCode, TimeSpan uptime, string? swiftStop, DateTimeOffset now)
     {
         try
         {
-            string suffix = "-" + processId.ToString(CultureInfo.InvariantCulture) + ".txt";
-            string? report = System.IO.Directory.Exists(Directory)
-                ? new DirectoryInfo(Directory).GetFiles(Prefix + "*" + suffix).Where(file => file.Length != 0)
-                    .OrderByDescending(file => file.Name, StringComparer.Ordinal).Select(file => file.FullName).FirstOrDefault()
-                : null;
-            if (report == null && exitCode == 0) return null;
+            string report = ReportPath(identifier);
+            bool written = File.Exists(report) && new FileInfo(report).Length != 0;
+            if (!written && exitCode == 0) return null;
             var text = new StringBuilder();
-            if (report == null)
+            if (!written)
             {
                 System.IO.Directory.CreateDirectory(Directory);
-                report = Path.Combine(Directory, Prefix + now.UtcDateTime.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + suffix);
                 text.Append(Title).Append('\n')
                     .Append("time: ").Append(now.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture)).Append('\n')
                     .Append("app: ").Append(Version).Append('\n')
@@ -89,44 +110,11 @@ internal sealed class EngineCrashLog
             text.Append("host:\n")
                 .Append("  exit: 0x").Append(unchecked((uint)exitCode).ToString("X8", CultureInfo.InvariantCulture)).Append('\n')
                 .Append("  running: ").Append(((long)Math.Max(0, uptime.TotalSeconds)).ToString(CultureInfo.InvariantCulture)).Append(" s\n");
-            string[] lines = Redact(output).Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Length != 0) text.Append("  last output:\n");
-            foreach (string line in lines) text.Append("    ").Append(line).Append('\n');
+            if (swiftStop != null) text.Append("  swift: ").Append(swiftStop).Append('\n');
             File.AppendAllText(report, text.ToString(), new UTF8Encoding(false));
             return report;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
-    }
-
-    /// <summary>
-    /// The end of the engine's error text as printable lines, with the user's
-    /// folder replaced, so a path in a message does not name the account.
-    /// </summary>
-    internal string Redact(string output)
-    {
-        string text = output.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        // After its message the Swift runtime prints a stack of its own: bare addresses, or, where it finds
-        // its backtrace helper, a line of asterisks and then folders and memory. The report has the stack.
-        foreach (string heading in new[] { "***", "Current stack trace:" })
-        {
-            int stack = text.StartsWith(heading, StringComparison.Ordinal) ? 0 : text.IndexOf("\n" + heading, StringComparison.Ordinal);
-            if (stack >= 0) text = text[..stack];
-        }
-        foreach (string form in new[] { profile, profile.Replace('\\', '/') })
-            if (form.Length > 3) text = text.Replace(form, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase);
-        // Other spellings of a user folder, such as escaped or POSIX-style paths.
-        text = UserFolder.Replace(text, "$1%USERNAME%");
-        var clean = new StringBuilder(text.Length);
-        foreach (char character in text) clean.Append(character == '\n' || character == '\t' || !char.IsControl(character) ? character : '?');
-        text = clean.ToString();
-        if (text.Length > MaximumOutput)
-        {
-            // Cut at a line when one starts inside the kept part.
-            text = text[^MaximumOutput..];
-            int line = text.IndexOf('\n');
-            if (line >= 0 && line < text.Length - 1) text = text[(line + 1)..];
-        }
-        return text.Trim('\n');
     }
 
     /// <summary>The Windows version with its update revision, which selects the system binaries.</summary>

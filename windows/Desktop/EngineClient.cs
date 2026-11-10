@@ -29,14 +29,14 @@ internal sealed class EngineClient : IAsyncDisposable
     private OwnedJob? job;
     private Task? reading, drainingErrors;
     private EngineCrashLog? crashLog;
+    private string? crashIdentifier;
     private readonly Stopwatch running = new();
-    // The end of the engine's error text, for its crash report. Where the Swift
-    // runtime finds its backtrace helper it prints folders and memory after a
-    // line of asterisks, and no setting turns that off on Windows, so nothing
-    // from that line on is kept.
-    private readonly byte[] errorTail = new byte[4096];
-    private int errorLength, errorNext, errorStars;
-    private bool errorEnded;
+    // The engine's error text can quote paths, so none of it is kept. Each line
+    // is read only far enough to see whether Swift named the source line it
+    // stopped at, and the crash report gets that location alone.
+    private readonly byte[] errorLine = new byte[256];
+    private int errorLineLength;
+    private string? swiftStop;
     private long request;
     private ulong sequence;
     private volatile bool initialized;
@@ -90,7 +90,9 @@ internal sealed class EngineClient : IAsyncDisposable
         }
         if (crashLog != null)
         {
+            crashIdentifier = EngineCrashLog.NewIdentifier(DateTimeOffset.UtcNow);
             start.ArgumentList.Add("--crash-log-directory"); start.ArgumentList.Add(crashLog.Directory);
+            start.ArgumentList.Add("--crash-log-id"); start.ArgumentList.Add(crashIdentifier);
             start.ArgumentList.Add("--app-version"); start.ArgumentList.Add(crashLog.Version);
         }
         start.ArgumentList.Add("--language"); start.ArgumentList.Add(language);
@@ -195,12 +197,12 @@ internal sealed class EngineClient : IAsyncDisposable
                     }
                 }
             }
+            // The engine's output ended on its own. Its exit is recorded first, whatever its last
+            // frame looks like: an engine that stops while it writes leaves half a frame.
+            bool stopped = !lifetime.IsCancellationRequested && !disposing;
+            if (stopped) await CompleteCrashReportAsync().ConfigureAwait(false);
             if (line.Length != 0) throw new InvalidDataException("Truncated engine frame.");
-            if (!lifetime.IsCancellationRequested && !disposing)
-            {
-                await CompleteCrashReportAsync().ConfigureAwait(false);
-                Publish(() => Status?.Invoke("engineStopped"));
-            }
+            if (stopped) Publish(() => Status?.Invoke("engineStopped"));
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
@@ -277,48 +279,37 @@ internal sealed class EngineClient : IAsyncDisposable
         {
             int count;
             while ((count = await stream.ReadAsync(buffer, lifetime.Token).ConfigureAwait(false)) != 0)
-                lock (errorTail)
-                    for (int i = 0; i < count && !errorEnded; i++)
-                    {
-                        byte value = buffer[i];
-                        // Asterisks at the start of a line wait until the line shows what it is.
-                        if (errorStars >= 0 && value == (byte)'*') { errorEnded = ++errorStars == 3; continue; }
-                        for (; errorStars > 0; errorStars--) KeepError((byte)'*');
-                        errorStars = value == (byte)'\n' ? 0 : -1;
-                        KeepError(value);
-                    }
+                for (int i = 0; i < count; i++)
+                {
+                    if (buffer[i] == 10) { KeepSwiftStop(); errorLineLength = 0; }
+                    // A location fits the start of a line; the rest of a long line is passed over.
+                    else if (errorLineLength < errorLine.Length) errorLine[errorLineLength++] = buffer[i];
+                }
+            KeepSwiftStop();
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (IOException) { }
     }
 
-    private void KeepError(byte value)
+    private void KeepSwiftStop()
     {
-        errorTail[errorNext] = value; errorNext = (errorNext + 1) % errorTail.Length;
-        if (errorLength < errorTail.Length) errorLength++;
+        if (EngineCrashLog.SwiftStop(Encoding.ASCII.GetString(errorLine, 0, errorLineLength)) is { } stop) Volatile.Write(ref swiftStop, stop);
     }
 
     /// <summary>
     /// Runs after the engine's output ended on its own. Its pipes close when the
-    /// process ends, so the exit code is available at once; the report gets that
-    /// code and the end of the engine's error text.
+    /// process ends, so the exit code is available at once; this start's report
+    /// gets that code and the source line Swift named, if it named one.
     /// </summary>
     private async Task CompleteCrashReportAsync()
     {
-        if (crashLog is not { } log || process is not { } child) return;
+        if (crashLog is not { } log || crashIdentifier is not { } identifier || process is not { } child) return;
         try
         {
             await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-            if (drainingErrors != null) await drainingErrors.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-            string output;
-            lock (errorTail)
-            {
-                byte[] ordered = new byte[errorLength];
-                int first = (errorNext - errorLength + errorTail.Length) % errorTail.Length;
-                for (int i = 0; i < errorLength; i++) ordered[i] = errorTail[(first + i) % errorTail.Length];
-                output = Encoding.UTF8.GetString(ordered);
-            }
-            log.Complete(child.Id, child.ExitCode, running.Elapsed, output, DateTimeOffset.UtcNow);
+            // The exit is recorded even when the error text has not ended yet.
+            if (drainingErrors is { } draining) await Task.WhenAny(draining, Task.Delay(TimeSpan.FromSeconds(1))).ConfigureAwait(false);
+            log.Complete(identifier, child.Id, child.ExitCode, running.Elapsed, Volatile.Read(ref swiftStop), DateTimeOffset.UtcNow);
         }
         catch (Exception error) when (error is TimeoutException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
     }

@@ -5,15 +5,16 @@
 A report lists its stack as module file names with offsets, and each module with
 the identity of its symbol file. Microsoft's symbols are fetched from its symbol
 server by that identity and kept under --cache (output/symbols by default).
-Modules without one, such as the engine and the Swift runtime, are read from
---binaries when a file of the same name, link time and size is there: the Engine
-folder of the installed version, or a build of the same commit.
+Modules without usable symbols there, such as the engine and the Swift runtime,
+are read from --binaries when a file of the same name, link time and size is
+there: the Engine folder of the installed version, or a build of the same commit.
 
 The LLVM tools come from the pinned Swift toolchain under output/toolchains, or
 from PATH.
 """
 import argparse
 import bisect
+import functools
 import pathlib
 import re
 import shutil
@@ -71,6 +72,28 @@ def public_symbols(path):
     return sorted(symbols)
 
 
+@functools.lru_cache(maxsize=None)
+def exported_symbols(path):
+    """Sorted (offset in the image, name) pairs from a binary's own export table."""
+    text = run([tool("llvm-readobj"), "--coff-exports", str(path)])
+    return sorted((int(offset, 16), name) for name, offset in re.findall(r"Name: (\S+)\s*\n\s*RVA: 0x([0-9A-Fa-f]+)", text))
+
+
+def nearest(symbols, lookup, offset):
+    """The last symbol at or before an address, with the distance from it."""
+    index = bisect.bisect_right(symbols, (lookup, "￿")) - 1 if symbols else -1
+    return "%s+0x%X" % (symbols[index][1], offset - symbols[index][0]) if index >= 0 else ""
+
+
+def debug_name(path, lookup):
+    """The function and source line from a binary's own debug information."""
+    found = run([tool("llvm-symbolizer"), "--obj=" + str(path), "--relative-address", "--demangle", hex(lookup)]).split("\n")
+    if not found or not found[0] or found[0] == "??":
+        return ""
+    readable = run([tool("swift-demangle"), "--simplified", found[0]]).strip().split("---> ")[-1] if found[0].startswith("$s") else ""
+    return (readable or found[0]) + ("  " + found[1] if len(found) > 1 and not found[1].startswith("??") else "")
+
+
 def identity_of(path):
     """A loaded image's link time and size, as a report prints them."""
     data = path.read_bytes()[:4096]
@@ -89,11 +112,11 @@ def main():
     modules = {match.group(1).lower(): match.groups() for match in map(MODULE.match, lines) if match}
     tables, binaries = {}, {}
     for key, (name, time, size, symbols, identity) in modules.items():
-        if symbols:
-            path = symbol_file(options.cache, symbols, identity, options.offline)
-            if path:
-                tables[key] = public_symbols(path)
-        elif options.binaries and (options.binaries / name).exists():
+        path = symbol_file(options.cache, symbols, identity, options.offline) if symbols else None
+        if path:
+            tables[key] = public_symbols(path)
+        # A module can name a symbol file that is not available: offline, or one no server has.
+        if not tables.get(key) and options.binaries and (options.binaries / name).exists():
             if identity_of(options.binaries / name) == (time, size):
                 binaries[key] = options.binaries / name
             else:
@@ -106,16 +129,10 @@ def main():
         key, offset = match.group(2).lower(), int(match.group(3), 16)
         # A caller's address is the instruction after its call; look up the call itself.
         lookup = offset if match.group(1) in ("address: ", "  0 ") else offset - 1
-        named = ""
-        if key in tables and tables[key]:
-            index = bisect.bisect_right(tables[key], (lookup, "￿")) - 1
-            if index >= 0:
-                named = "%s+0x%X" % (tables[key][index][1], offset - tables[key][index][0])
-        elif key in binaries:
-            found = run([tool("llvm-symbolizer"), "--obj=" + str(binaries[key]), "--relative-address", "--demangle", hex(lookup)]).split("\n")
-            if found and found[0] and found[0] != "??":
-                readable = run([tool("swift-demangle"), "--simplified", found[0]]).strip().split("---> ")[-1] if found[0].startswith("$s") else ""
-                named = (readable or found[0]) + ("  " + found[1] if len(found) > 1 and not found[1].startswith("??") else "")
+        named = nearest(tables.get(key), lookup, offset)
+        if not named and key in binaries:
+            # Without its symbol file a binary still names its exported functions.
+            named = debug_name(binaries[key], lookup) or nearest(exported_symbols(binaries[key]), lookup, offset)
         print(line + ("  " + named if named else ""))
 
 

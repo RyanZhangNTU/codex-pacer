@@ -5,13 +5,14 @@ import WinSDK
 
 /// Opens the engine's crash report before anything else runs.
 ///
-/// The host names the folder and its own version. `CrashReport.c` writes the
-/// report if the engine later stops on an unhandled exception, a damaged heap or
-/// `abort()`; the host then adds the exit code and the engine's last error text.
+/// The host names the folder, this start's identifier and its own version.
+/// `CrashReport.c` writes the report if the engine later stops on an unhandled
+/// exception, a damaged heap or `abort()`; the host then adds the exit code to
+/// the file with the same identifier, so one start's exit never lands in another's report.
 enum WindowsCrashReport {
-    static let directoryFlag = "--crash-log-directory", versionFlag = "--app-version", diagnoseFlag = "--diagnose-crash"
+    static let directoryFlag = "--crash-log-directory", identifierFlag = "--crash-log-id", versionFlag = "--app-version", diagnoseFlag = "--diagnose-crash"
 
-    /// The report's file, or nil when the host named no usable folder.
+    /// The report's file, or nil when the host named no usable folder or identifier.
     @discardableResult
     static func install(_ arguments: [String] = CommandLine.arguments) -> URL? {
         guard let path = value(directoryFlag, in: arguments), path.utf16.count < 1000, WindowsCodexExecutableDiscovery.absolute(path) else { return nil }
@@ -19,10 +20,21 @@ enum WindowsCrashReport {
         guard WindowsFileSystem().metadata(directory, followingSymbolicLinks: false)?.isDirectory == true else { return nil }
         var version = "unknown"
         if let text = value(versionFlag, in: arguments), text.range(of: #"^[0-9]{1,5}(\.[0-9]{1,5}){1,3}$"#, options: .regularExpression) != nil { version = text }
-        var time = SYSTEMTIME(); GetSystemTime(&time)
-        func padded(_ number: UInt16, _ width: Int) -> String { let text = String(number); return String(repeating: "0", count: max(0, width - text.count)) + text }
-        let stamp = padded(time.wYear, 4) + padded(time.wMonth, 2) + padded(time.wDay, 2) + "-" + padded(time.wHour, 2) + padded(time.wMinute, 2) + padded(time.wSecond, 2)
-        let file = directory.appendingPathComponent("engine-crash-" + stamp + "-" + String(GetCurrentProcessId()) + ".txt")
+        func padded(_ text: String, _ width: Int) -> String { String(repeating: "0", count: max(0, width - text.count)) + text }
+        let identifier: String
+        if arguments.contains(identifierFlag) {
+            // The identifier becomes a file name, so only the host's own form is taken.
+            guard let named = value(identifierFlag, in: arguments),
+                  named.range(of: #"^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$"#, options: .regularExpression) != nil else { return nil }
+            identifier = named
+        } else {
+            // Run by hand, without a host: the start time and the process are unique enough.
+            var time = SYSTEMTIME(); GetSystemTime(&time)
+            identifier = padded(String(time.wYear), 4) + padded(String(time.wMonth), 2) + padded(String(time.wDay), 2) + "-"
+                + padded(String(time.wHour), 2) + padded(String(time.wMinute), 2) + padded(String(time.wSecond), 2) + "-"
+                + padded(String(GetCurrentProcessId(), radix: 16), 8)
+        }
+        let file = directory.appendingPathComponent("engine-crash-" + identifier + ".txt")
         #if arch(arm64)
         let architecture = "arm64"
         #else

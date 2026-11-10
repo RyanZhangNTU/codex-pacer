@@ -13,9 +13,11 @@
    is damaged. The file is marked for deletion while the engine runs and kept only
    when a report is written, so an engine that exits or is ended leaves nothing.
 
-   A report holds numbers and module file names: no memory contents, paths,
-   arguments or environment. Each address is a module and an offset, and each module
-   carries the identity that finds its binary and symbols on a symbol server. */
+   A report holds numbers and module file names: no memory contents, register
+   values, paths, arguments or environment. A register can hold the bytes the
+   engine was handling, so only where the code was is recorded. Each address is a
+   module and an offset, and each module carries the identity that finds its binary
+   and symbols on a symbol server. */
 
 enum { PACER_REPORT_CAPACITY = 16 * 1024, PACER_REPORT_FRAMES = 48, PACER_REPORT_MODULES = 24, PACER_REPORT_NAME = 64 };
 
@@ -94,7 +96,13 @@ static void pacer_report_describe(ULONG_PTR base, PacerReportModule *module) {
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
     if (base == pacer_report_executable && pacer_report_executable_name[0] != 0) memcpy(module->name, pacer_report_executable_name, PACER_REPORT_NAME);
-    if (module->name[0] == 0) memcpy(module->name, module->symbol_file[0] != 0 ? module->symbol_file : "unknown", PACER_REPORT_NAME);
+    if (module->name[0] == 0) {
+        // The fallback is shorter than a name, so it is copied by its own length.
+        const char *fallback = module->symbol_file[0] != 0 ? module->symbol_file : "unknown";
+        size_t count = 0;
+        for (; fallback[count] != 0 && count < PACER_REPORT_NAME - 1; count++) module->name[count] = fallback[count];
+        module->name[count] = 0;
+    }
 }
 
 static void pacer_report_address(ULONG_PTR address, ULONG_PTR base) {
@@ -128,6 +136,8 @@ static void pacer_report_stack(const CONTEXT *start) {
         if (address == 0) break;
         DWORD64 base = 0; PRUNTIME_FUNCTION entry = NULL; int walked = 0;
         __try { entry = RtlLookupFunctionEntry(address, &base, NULL); } __except (EXCEPTION_EXECUTE_HANDLER) { entry = NULL; base = 0; }
+        // Past the first frame, an address outside every module is whatever the stack held, not a caller.
+        if (base == 0 && frame > 0) break;
         pacer_report_put("  "); pacer_report_decimal((ULONGLONG)frame, 1); pacer_report_put(" ");
         pacer_report_address(address, (ULONG_PTR)base); pacer_report_put("\n");
         __try {
@@ -148,28 +158,6 @@ static void pacer_report_stack(const CONTEXT *start) {
         if (!walked || (ULONG_PTR)context->Rsp <= stack) break;
 #endif
     }
-}
-
-static void pacer_report_register(const char *name, ULONGLONG value) {
-    pacer_report_put(" "); pacer_report_put(name); pacer_report_put("="); pacer_report_hex(value);
-}
-static void pacer_report_registers(const CONTEXT *context) {
-    pacer_report_put("registers:");
-#if defined(_M_ARM64)
-    static const char *const names[29] = {"x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14",
-        "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"};
-    for (int i = 0; i < 29; i++) pacer_report_register(names[i], context->X[i]);
-    pacer_report_register("fp", context->Fp); pacer_report_register("lr", context->Lr); pacer_report_register("sp", context->Sp);
-    pacer_report_register("pc", context->Pc); pacer_report_register("cpsr", context->Cpsr);
-#else
-    pacer_report_register("rax", context->Rax); pacer_report_register("rbx", context->Rbx); pacer_report_register("rcx", context->Rcx);
-    pacer_report_register("rdx", context->Rdx); pacer_report_register("rsi", context->Rsi); pacer_report_register("rdi", context->Rdi);
-    pacer_report_register("rbp", context->Rbp); pacer_report_register("rsp", context->Rsp); pacer_report_register("r8", context->R8);
-    pacer_report_register("r9", context->R9); pacer_report_register("r10", context->R10); pacer_report_register("r11", context->R11);
-    pacer_report_register("r12", context->R12); pacer_report_register("r13", context->R13); pacer_report_register("r14", context->R14);
-    pacer_report_register("r15", context->R15); pacer_report_register("rip", context->Rip); pacer_report_register("eflags", context->EFlags);
-#endif
-    pacer_report_put("\n");
 }
 
 static void pacer_report_write(const char *reason, const EXCEPTION_RECORD *record, const CONTEXT *context) {
@@ -201,7 +189,7 @@ static void pacer_report_write(const char *reason, const EXCEPTION_RECORD *recor
         pacer_report_address((ULONG_PTR)record->ExceptionAddress, pacer_report_image((ULONG_PTR)record->ExceptionAddress));
         pacer_report_put("\n");
     }
-    if (context != NULL) { pacer_report_registers(context); pacer_report_stack(context); }
+    if (context != NULL) pacer_report_stack(context);
     pacer_report_put("modules:\n");
     for (int i = 0; i < pacer_report_module_count; i++) {
         const PacerReportModule *module = &pacer_report_modules[i];
@@ -266,7 +254,8 @@ int pacer_crash_report_install(const uint16_t *file, const char *header) {
     pacer_report_name(pacer_report_executable_name, narrow, sizeof(narrow));
     pacer_report_executable = (ULONG_PTR)GetModuleHandleW(NULL);
     pacer_report_started = GetTickCount64();
-    HANDLE opened = CreateFileW((LPCWSTR)file, GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, CREATE_ALWAYS,
+    // Each start has a name of its own, so a file that is already there is another start's report and is left alone.
+    HANDLE opened = CreateFileW((LPCWSTR)file, GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, CREATE_NEW,
                                 FILE_ATTRIBUTE_NORMAL, NULL);
     if (opened == INVALID_HANDLE_VALUE) return 0;
     FILE_DISPOSITION_INFO remove = {TRUE};
