@@ -39,6 +39,31 @@ public struct MacClaudeHookStorage: ClaudeHookStorage {
     public func remove(_ url: URL) throws { try FileManager.default.removeItem(at: url) }
 }
 
+/// Settings an organization manages for Claude Code on this Mac: the managed
+/// settings file and its drop-in folder, and the managed preferences domain.
+/// They are read only to learn whether they claim Claude's trace exporter.
+public enum MacClaudeManagedSettings {
+    public static let folder = URL(fileURLWithPath: "/Library/Application Support/ClaudeCode")
+    public static let domain = "com.anthropic.claudecode"
+    /// MDM preferences outrank the managed files, variable by variable.
+    public static func telemetry(folder: URL = folder, preferences: [URL] = preferenceFiles()) -> ClaudeManagedTelemetry {
+        var result = ClaudeManagedTelemetry()
+        for url in preferences {
+            guard let data = ClaudeManagedTelemetry.small(url),
+                  let value = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { continue }
+            var source = ClaudeManagedTelemetry(); source.merge(settings: value); result.fill(source)
+        }
+        result.fill(ClaudeManagedTelemetry.files(in: folder).value)
+        return result
+    }
+    public static func preferenceFiles() -> [URL] {
+        let root = URL(fileURLWithPath: "/Library/Managed Preferences")
+        let user = NSUserName()
+        return (user.isEmpty || user.contains("/") ? [] : [root.appendingPathComponent(user).appendingPathComponent(domain + ".plist")])
+            + [root.appendingPathComponent(domain + ".plist")]
+    }
+}
+
 extension ClaudeHookInstaller {
     private static var mac: Self {
         Self(storage: MacClaudeHookStorage(), python: "python3", serialize: { arguments in
@@ -46,7 +71,7 @@ extension ClaudeHookInstaller {
                 if index == 0 || argument == "-S" || ((argument == "hook" || argument == "statusline") && index == arguments.count - 2) { return argument }
                 return "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
             }.joined(separator: " ")
-        })
+        }, managedTelemetry: { MacClaudeManagedSettings.telemetry() })
     }
     public static func status(home: URL) -> Bool { mac.status(home: home) }
     public static func details(home: URL) -> Status { mac.details(home: home) }

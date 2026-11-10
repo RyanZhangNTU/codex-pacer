@@ -94,6 +94,9 @@ public struct SSHHost: Equatable, Identifiable {
     public let alias: String
     public let name: String
     public let modules: [Module]
+    /// Why Claude's request speeds on this host are estimated, while connected
+    /// and no exact span has arrived; `.none` hides the note.
+    public var claudeTelemetryNote: ClaudeTelemetryConflict = .none
     public var id: String { alias }
     public var claudeSetupFailed: Bool { modules.contains { $0.provider == .claude && $0.state == .setupFailed } }
 
@@ -101,9 +104,10 @@ public struct SSHHost: Equatable, Identifiable {
     /// itself, so a connected host is only "connected" once its hooks are current.
     public static func hosts(codex: [String: RuntimeStreamStatus]?, unavailableCodex: [String],
                       claude: [String: RuntimeStreamStatus]?, claudeAliases: [String], configured: Set<String>,
-                      configuring: Set<String>, failed: Set<String>, names: [String: String] = [:]) -> [SSHHost] {
+                      configuring: Set<String>, failed: Set<String>, names: [String: String] = [:],
+                      telemetryConflicts: [String: ClaudeTelemetryConflict] = [:]) -> [SSHHost] {
         let prefix = ConnectionSource.sshPrefix
-        var modules: [String: [Module]] = [:]
+        var modules: [String: [Module]] = [:], notes: [String: ClaudeTelemetryConflict] = [:]
         if let codex {
             let aliases = codex.keys.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) } + unavailableCodex
             for alias in Set(aliases) {
@@ -121,9 +125,14 @@ public struct SSHHost: Equatable, Identifiable {
                     failed.contains(alias) ? .setupFailed :
                     status?.connected == true ? (configured.contains(alias) ? .connected : .configuring) : .waiting
                 modules[alias, default: []].append(.init(provider: .claude, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
+                if state == .connected, status?.exactRequestSpans != true, let note = telemetryConflicts[alias] { notes[alias] = note }
             }
         }
-        return modules.map { SSHHost(alias: $0.key, name: names[$0.key] ?? $0.key, modules: $0.value.sorted { $0.provider == .codex && $1.provider != .codex }) }
+        return modules.map {
+            var host = SSHHost(alias: $0.key, name: names[$0.key] ?? $0.key, modules: $0.value.sorted { $0.provider == .codex && $1.provider != .codex })
+            host.claudeTelemetryNote = notes[$0.key] ?? .none
+            return host
+        }
             .sorted {
                 let lhs = $0.modules.map(\.state).min()!, rhs = $1.modules.map(\.state).min()!
                 if lhs.isProblem != rhs.isProblem { return lhs.isProblem }

@@ -23,7 +23,12 @@ internal sealed record ConnectionHostRow(string Id, string Name, string Kind, IR
 internal sealed record ConnectionModule(string Id, string Key, string Provider, string Label, string State, string Tone,
     string SessionsText, int Sessions, bool RetrySetup, bool ReadsQuota);
 internal sealed record ClaudeRemoteSetup(string SourceID, string Context, bool Configured, bool InFlight, bool CanRetry, string? Message, double? RetryAt);
-internal sealed record ClaudeHookSetup(string State, bool HooksConfigured, bool TelemetryConfigured, bool StatusLineConfigured, bool TelemetryConflict, bool UpdateAvailable, string? LaunchMode = null);
+internal sealed record ClaudeHookSetup(string State, bool HooksConfigured, bool TelemetryConfigured, bool StatusLineConfigured, bool TelemetryConflict, bool UpdateAvailable, string? LaunchMode = null,
+    string? TelemetryConflictReason = null, bool? ExactRequestSpans = null)
+{
+    /// Speeds are estimated: Pacer kept existing telemetry settings and no exact span has arrived.
+    internal bool SpeedsEstimated => TelemetryConflict && ExactRequestSpans != true;
+}
 internal sealed record EngineNavigationFailure(string Id, string Message);
 internal sealed record EngineActivityLink(string ActivityID, string Provider, string Context);
 internal sealed record EngineNavigationPlan(string Context, string Provider, string Kind, string? Url, string? WebUrl, uint? Pid, ulong? Started, string? Terminal = null);

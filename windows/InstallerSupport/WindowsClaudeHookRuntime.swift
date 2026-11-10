@@ -5,11 +5,14 @@ public struct WindowsClaudeHookRuntime {
     public struct Report: Codable, Sendable {
         public let state: String
         public let hooksConfigured, telemetryConfigured, statusLineConfigured, telemetryConflict, updateAvailable: Bool
+        /// `none`, `existing` or `managed`.
+        public let telemetryConflictReason: String
         public let launchMode: String?
         init(_ state: String, _ status: ClaudeHookInstaller.Status? = nil, launchMode: String? = nil) {
             self.state = state; hooksConfigured = status?.hooksConfigured ?? false
             telemetryConfigured = status?.telemetryConfigured ?? false; statusLineConfigured = status?.statusLineConfigured ?? false
             telemetryConflict = status?.telemetryConflict ?? false; updateAvailable = status?.updateAvailable ?? false
+            telemetryConflictReason = (status?.telemetryConflictReason ?? .none).rawValue
             self.launchMode = launchMode
         }
     }

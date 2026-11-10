@@ -14,24 +14,33 @@ struct EngineClaudeRemoteSetup: Codable, Equatable, Sendable {
 struct EngineClaudeRemoteServices: Sendable {
     /// The adapter digest with the progress ring off (false) or on (true).
     var digest: @Sendable (Bool) -> String
-    /// Installs on one target, with the progress ring on or off.
-    var install: @Sendable (RemoteActivityTarget, Bool) async throws -> ClaudeHookInstaller.Status
+    /// Installs on one target, with the progress ring on or off. The last
+    /// flag marks an automatic run, which keeps telemetry keys the user
+    /// removed on the host removed.
+    var install: @Sendable (RemoteActivityTarget, Bool, Bool) async throws -> ClaudeHookInstaller.Status
     var shutdown: @Sendable () async -> Void
     var loadDigests: @Sendable () -> [String: String]
     var saveDigests: @Sendable ([String: String]) -> Void
+    /// Why each configured alias's setup kept Pacer's request telemetry off.
+    var loadConflicts: @Sendable () -> [String: ClaudeTelemetryConflict] = { [:] }
+    var saveConflicts: @Sendable ([String: ClaudeTelemetryConflict]) -> Void = { _ in }
 }
 
-/// Selection, version comparison and backoff use ClaudeRemoteAutoSetup.
+/// Selection, version comparison, rechecks and backoff use ClaudeRemoteAutoSetup.
 /// The host owns tasks, source tokens and immutable protocol snapshots.
 actor WindowsClaudeRemoteCoordinator {
     typealias Update = @Sendable ([EngineClaudeRemoteSetup], UInt64) async -> Void
     typealias Configured = @Sendable (String, UInt64) async -> Void
     /// A setup remembers the digest it installs, so a ring switched mid-setup is set up again.
-    private struct Job { let ticket: ApplicationWorkRegistry.Ticket; let target: RemoteActivityTarget; let digest: String }
+    /// A quiet job rechecks a current host: its row stays configured and a failure only backs off.
+    private struct Job { let ticket: ApplicationWorkRegistry.Ticket; let target: RemoteActivityTarget; let digest: String; let quiet: Bool }
     private var work = ApplicationWorkRegistry()
     private let services: EngineClaudeRemoteServices
     private let now: @Sendable () -> Date
     private var configured: [String: String]
+    private var conflicts: [String: ClaudeTelemetryConflict]
+    /// This launch's successful setups by target ID, so current hosts are checked again.
+    private var checkedAt: [String: Date] = [:]
     private var targets: [RemoteActivityTarget] = []
     private var statuses: [String: RuntimeStreamStatus] = [:]
     private var failures: [String: Date] = [:]
@@ -47,7 +56,9 @@ actor WindowsClaudeRemoteCoordinator {
     private var retryDate: Date?
     private let maximumTargets: Int
     init(services: EngineClaudeRemoteServices, now: @escaping @Sendable () -> Date = { Date() }, maximumTargets: Int = 8) {
-        self.services = services; self.now = now; configured = services.loadDigests()
+        self.services = services; self.now = now
+        let configured = services.loadDigests()
+        self.configured = configured; conflicts = services.loadConflicts().filter { configured[$0.key] != nil && $0.value != ClaudeTelemetryConflict.none }
         self.maximumTargets = min(16, max(1, maximumTargets))
     }
     /// Switching the progress ring changes the digest, so connected hosts are set up again.
@@ -59,13 +70,13 @@ actor WindowsClaudeRemoteCoordinator {
         let changedWSL = self.targets.filter { $0.id.hasPrefix(ConnectionSource.wslPrefix) && !next.contains($0) }.map(\.id)
         if !changedWSL.isEmpty {
             context = UUID().uuidString.lowercased()
-            for id in changedWSL { failures[id] = nil; messages[id] = nil }
+            for id in changedWSL { failures[id] = nil; messages[id] = nil; checkedAt[id] = nil }
         }
         self.targets = next; self.statuses = statuses
         if replacing {
             context = UUID().uuidString.lowercased()
             retryWake?.cancel(); retryWake = nil; retryDate = nil
-            work.cancel(); jobs.removeAll(); failures.removeAll(); messages.removeAll()
+            work.cancel(); jobs.removeAll(); failures.removeAll(); messages.removeAll(); checkedAt.removeAll()
             if !cleaning {
                 cleaning = true
                 await services.shutdown()
@@ -75,13 +86,14 @@ actor WindowsClaudeRemoteCoordinator {
         for (id, job) in Array(jobs) where !self.targets.contains(job.target) { work.cancel(job.ticket.key); jobs[id] = nil }
         let allowed = Set(self.targets.map(\.id))
         failures = failures.filter { allowed.contains($0.key) }; messages = messages.filter { allowed.contains($0.key) }
+        checkedAt = checkedAt.filter { allowed.contains($0.key) }
         reconcile()
         await publish()
     }
     func retry(sourceID: String, context: String) async -> Bool {
         guard enabled, !cleaning, self.context == context, let target = targets.first(where: { $0.id == sourceID }), jobs[sourceID] == nil else { return false }
         failures[sourceID] = nil; messages[sourceID] = nil
-        start(target); await publish(); return true
+        start(target, automatic: false); await publish(); return true
     }
     func shutdown() async {
         enabled = false; targets = []; statuses = [:]; context = UUID().uuidString.lowercased()
@@ -93,15 +105,26 @@ actor WindowsClaudeRemoteCoordinator {
     private func reconcile() {
         guard enabled, !cleaning else { return }
         for target in ClaudeRemoteAutoSetup.pending(targets: targets, statuses: statuses, configured: configured,
-            digest: digest, failures: failures, inFlight: Set(jobs.keys), now: now()) { start(target) }
+            digest: digest, failures: failures, inFlight: Set(jobs.keys), now: now(),
+            checkedAt: checkedAt, conflicts: conflicts) { start(target, automatic: true) }
         scheduleRetryWake()
     }
+    /// When `pending` next selects a connected, idle target: after its failure
+    /// backoff and, for a host checked this launch, after its recheck interval.
+    /// Nil means it is due now (and was started) or never.
+    private func nextDue(_ target: RemoteActivityTarget) -> Date? {
+        guard jobs[target.id] == nil, let status = statuses[target.id], status.connected, status.sourceAvailable != false else { return nil }
+        var due = failures[target.id]?.addingTimeInterval(ClaudeRemoteAutoSetup.retryInterval)
+        if configured[target.alias] == digest, let last = checkedAt[target.id] {
+            let keptOff = conflicts[target.alias].map { $0 != ClaudeTelemetryConflict.none } ?? false
+            let recheck = last.addingTimeInterval(keptOff ? ClaudeRemoteAutoSetup.conflictRecheckInterval : ClaudeRemoteAutoSetup.recheckInterval)
+            due = max(due ?? recheck, recheck)
+        }
+        return due
+    }
     private func scheduleRetryWake() {
-        let date = targets.compactMap { target -> Date? in
-            guard jobs[target.id] == nil, configured[target.alias] != digest,
-                  let status = statuses[target.id], status.connected, status.sourceAvailable != false else { return nil }
-            return failures[target.id]?.addingTimeInterval(ClaudeRemoteAutoSetup.retryInterval)
-        }.filter { $0 > now() }.min()
+        let current = now()
+        let date = targets.compactMap(nextDue).filter { $0 > current }.min()
         guard date != retryDate else { return }
         retryWake?.cancel(); retryWake = nil; retryDate = date
         guard let date else { return }
@@ -115,26 +138,43 @@ actor WindowsClaudeRemoteCoordinator {
         guard self.context == context, enabled, !cleaning else { return }
         retryWake = nil; retryDate = nil; reconcile(); await publish()
     }
-    private func start(_ target: RemoteActivityTarget) {
+    /// `automatic` runs come from `pending`; one for a host already current is a quiet recheck.
+    private func start(_ target: RemoteActivityTarget, automatic: Bool) {
         let request = work.begin(.init(.setup, provider: .claude, identifier: target.id), version: version), services = self.services, ring = progressRing
         let task = Task { [weak self] in
-            do { _ = try await services.install(target, ring); await self?.finished(target, request: request, failure: nil) }
-            catch { await self?.finished(target, request: request, failure: error as? ClaudeRemoteSetup.Failure ?? .setupFailed) }
+            do {
+                let status = try await services.install(target, ring, automatic)
+                await self?.finished(target, request: request, result: .success(status))
+            } catch { await self?.finished(target, request: request, result: .failure(error as? ClaudeRemoteSetup.Failure ?? .setupFailed)) }
         }
-        work.attach(task, to: request); jobs[target.id] = .init(ticket: request, target: target, digest: digest)
+        work.attach(task, to: request)
+        jobs[target.id] = .init(ticket: request, target: target, digest: digest, quiet: automatic && configured[target.alias] == digest)
     }
-    private func finished(_ target: RemoteActivityTarget, request: ApplicationWorkRegistry.Ticket, failure: ClaudeRemoteSetup.Failure?) async {
+    private func finished(_ target: RemoteActivityTarget, request: ApplicationWorkRegistry.Ticket,
+                          result: Result<ClaudeHookInstaller.Status, ClaudeRemoteSetup.Failure>) async {
         guard enabled, work.owns(request), request.version == version, let job = jobs[target.id], job.ticket == request, targets.contains(target) else { return }
         work.finish(request)
         jobs[target.id] = nil
-        guard failure != .cancelled else { await publish(); return }
-        if let failure {
-            failures[target.id] = now()
-            messages[target.id] = L10n.text(failure == .missingHome ? "provider.remote_source_missing" : "provider.remote_configure_failed")
-        } else {
+        let failure: ClaudeRemoteSetup.Failure?
+        switch result {
+        case .success(let status):
+            failure = nil
+            let previous = (configured, conflicts)
             configured[target.alias] = job.digest
             configured = Dictionary(uniqueKeysWithValues: configured.sorted { $0.key < $1.key }.suffix(32).map { ($0.key, $0.value) })
-            services.saveDigests(configured); failures[target.id] = nil; messages[target.id] = nil
+            conflicts = conflicts.filter { configured[$0.key] != nil }
+            if configured[target.alias] != nil {
+                conflicts[target.alias] = status.telemetryConflictReason == ClaudeTelemetryConflict.none ? nil : status.telemetryConflictReason
+            }
+            if configured != previous.0 { services.saveDigests(configured) }
+            if conflicts != previous.1 { services.saveConflicts(conflicts) }
+            failures[target.id] = nil; messages[target.id] = nil; checkedAt[target.id] = now()
+        case .failure(let error):
+            failure = error
+            guard error != .cancelled else { await publish(); return }
+            failures[target.id] = now()
+            // A quiet recheck of a current host only backs off; its row stays as it was.
+            if !job.quiet { messages[target.id] = L10n.text(error == .missingHome ? "provider.remote_source_missing" : "provider.remote_configure_failed") }
         }
         // A ring switched during this setup leaves the host behind; set it up again.
         if failure == nil, job.digest != digest { reconcile() } else { scheduleRetryWake() }
@@ -143,9 +183,11 @@ actor WindowsClaudeRemoteCoordinator {
     }
     private func publish() async {
         let rows = targets.map { target in
+            // A quiet recheck is not shown as configuring, and its failure shows no retry time.
             EngineClaudeRemoteSetup(sourceID: target.id, context: context, configured: configured[target.alias] == digest,
-                inFlight: jobs[target.id] != nil, canRetry: enabled && !cleaning && jobs[target.id] == nil,
-                message: messages[target.id], retryAt: failures[target.id].map { $0.addingTimeInterval(ClaudeRemoteAutoSetup.retryInterval).timeIntervalSince1970 })
+                inFlight: jobs[target.id].map { !$0.quiet } ?? false, canRetry: enabled && !cleaning && jobs[target.id] == nil,
+                message: messages[target.id], retryAt: messages[target.id] == nil ? nil
+                    : failures[target.id].map { $0.addingTimeInterval(ClaudeRemoteAutoSetup.retryInterval).timeIntervalSince1970 })
         }
         await update?(rows, version)
     }

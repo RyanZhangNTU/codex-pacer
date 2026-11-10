@@ -136,6 +136,7 @@ Changes apply right away. When an update is available, it shows in the sidebar a
 - **Claude quota or the DeepSeek balance asks you to sign in.** The session has ended. Sign in again on the service's page.
 - **A ring keeps circling.** Start a new session of that agent after turning its ring on. Claude cloud Projects can't report estimates, so their ring circles until they finish.
 - **An SSH host is disconnected.** Check that you can connect with `ssh <host>` without typing a password, then click **Retry** on the **Remote** page.
+- **Settings says Claude's TPS is estimated.** Your own or your organization's telemetry settings already use the same Claude Code feature Pacer needs, so Pacer kept them as they are. Speeds are estimated but still update while a task runs. If those settings go away, Pacer switches back on its own.
 - **Speeds look high right after Pacer starts.** The first reading can include earlier output. It settles within a moment.
 - **On Windows, tasks stop updating and Pacer asks you to reopen it.** Reopen Pacer. Please also [open an issue](https://github.com/RyanZhangNTU/codex-pacer/issues) and attach the newest file from `%LOCALAPPDATA%\CodexPacer\CrashLogs`. It holds no task content.
 - **Windows says the installer is unrecognized.** Choose **More info → Run anyway**. The installer isn't code signed yet.

@@ -171,7 +171,11 @@ def transcript_record(value, owner, parent=None, prompt=None):
         item = ident(value.get('uuid')) or ident(message.get('id')) or 'assistant'
         request=ident(value.get('requestId')) or ident(message.get('id'));message_id=ident(message.get('id'));usage=message.get('usage',{});usage=usage if isinstance(usage,dict) else {};output=usage.get('output_tokens')
         if request and message_id and isinstance(output,int) and not isinstance(output,bool) and 0<output<=1000000000000:
-            rows.append(dict(base,kind='modelBlock',requestId=request,messageId=message_id,outputTokens=output,toolIds=[item for item,_ in starts]))
+            row=dict(base,kind='modelBlock',requestId=request,messageId=message_id,outputTokens=output,toolIds=[item for item,_ in starts])
+            # Claude Code knows a response's stop reason only after it ends.
+            stop=message.get('stop_reason',value.get('stop_reason'))
+            if isinstance(stop,str) and stop:row['terminal']=True
+            rows.append(row)
         for model_kind in sorted(model_kinds): rows.append(dict(base, kind='thinking' if model_kind == 'thinking' else 'response', itemId=item))
         for item, name in starts:
             row=dict(base, kind='toolStart', itemId=item, attention='input' if name == 'AskUserQuestion' else 'approval' if name == 'ExitPlanMode' else 'none')
@@ -625,8 +629,12 @@ def main():
     def emit(value):
         try: sys.stdout.write(json.dumps(value,separators=(',',':'),ensure_ascii=True)+'\n');sys.stdout.flush()
         except (BrokenPipeError,OSError): raise SystemExit(0)
+    # A batch published while files are still dirty leaves its read open; an
+    # empty drained batch closes it if the rest of the read yields no rows.
+    drain={'open':False}
     def publish(rows,attached=False):
         for i in range(0,len(rows),512):emit({'kind':'claudeBatch','attaching':attached,'baselineFinal':i+512>=len(rows) and not tailer.dirty,'records':rows[i:i+512]})
+        if rows:drain['open']=bool(tailer.dirty)
     try:interval=min(5,max(.1,float(sys.argv[2])))
     except (IndexError,ValueError):interval=5
     pending=[];pending_due=None
@@ -648,6 +656,7 @@ def main():
             if now>=next_scan:tailer.discover();next_scan=now+60
             if now>=next_poll:tailer.poll();next_poll=now+(30 if tailer.fd>=0 else 2)
             if tailer.dirty:queue_rows(tailer.read())
+            if drain['open'] and not tailer.dirty and not pending:emit({'kind':'claudeBatch','attaching':False,'baselineFinal':True,'records':[]});drain['open']=False
             for client,state in list(clients.items()):
                 if now>state['deadline']:otlp_respond(client,408);client.close();clients.pop(client,None)
             inputs=[sys.stdin.fileno()]+list(clients)

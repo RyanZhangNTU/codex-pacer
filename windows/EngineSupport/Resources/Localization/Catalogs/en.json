@@ -2,8 +2,8 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "8bba16f3fe04879b3dfc22362ed9c678f7c92c90559e7c66dac27b5946b283f7",
-    "windows/EngineSupport/Resources/Localization/en.json": "60fbb00b0cd35907aa861081a115ca792ee7d881a0b441e3cf7ab085494eb4d7"
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "af20d70892c4937d1e41c8f4edbe2199790b9d27409acd9d42671093ee57c1ca",
+    "windows/EngineSupport/Resources/Localization/en.json": "65c35113fedb2aecec350a0b346b9f6b5919f266b8a1cbc5ca48a5c8cb8aaf5b"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -212,6 +212,8 @@
     "claude.quota.timed_out": "Reading Claude usage timed out. Try again.",
     "claude.quota.unavailable": "Claude usage is unavailable.",
     "claude.quota.web_challenge": "Open Claude sign-in to complete the website's verification.",
+    "claude.telemetry.kept_existing": "Kept your existing telemetry settings. TPS is estimated.",
+    "claude.telemetry.managed": "Telemetry is managed by your organization. TPS is estimated.",
     "cli.account_mismatch": "The quota response does not match the verified account, so it is no longer displayed.\nCheck the current Codex account and data folder, then retry.",
     "cli.account_not_object": "The sign-in response is not a JSON object.",
     "cli.api_key_auth": "API Key authentication",
@@ -1278,7 +1280,6 @@
     "windows.claude.login.instructions": "Sign in to show Claude quota. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
     "windows.claude.retry_setup": "Retry setup",
     "windows.claude.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
-    "windows.claude.setup_conflict": "Activity tracking is ready. Existing telemetry settings were kept; some rate readings may be unavailable.",
     "windows.claude.setup_disabled": "Claude activity is off.",
     "windows.claude.setup_failed": "Claude activity setup failed. Retry setup or repair the app.",
     "windows.claude.setup_missing": "Choose an existing Claude folder to enable activity tracking.",

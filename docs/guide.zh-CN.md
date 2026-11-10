@@ -136,6 +136,7 @@ Codex、Claude Code 和 DeepSeek Harness 都会报告你的请求完成了多少
 - **Claude 额度或 DeepSeek 余额要求登录。** 登录已过期，在该服务的页面重新登录即可。
 - **圆环一直在绕圈。** 打开圆环后需要新开一个会话。Claude 云端项目无法报告估计，圆环会一直绕圈直到完成。
 - **SSH 主机断开。** 确认用 `ssh <主机名>` 连接时不需要输入密码，然后在“远程”页点“重试”。
+- **设置里提示 Claude 的 TPS 为估算值。** 你自己或组织的遥测设置已经占用了 Pacer 需要的同一项 Claude Code 功能，所以 Pacer 保留了它们。速度改为估算，任务运行时仍会持续更新。这些设置移除后，Pacer 会自动恢复。
 - **刚启动时速度偏高。** 第一次读数可能包含之前的输出，稍后就会恢复正常。
 - **在 Windows 上任务停止更新，Pacer 提示重新打开。** 重新打开 Pacer 即可。也请[提交 issue](https://github.com/RyanZhangNTU/codex-pacer/issues)，附上 `%LOCALAPPDATA%\CodexPacer\CrashLogs` 里最新的文件，其中不含任务内容。
 - **Windows 提示无法识别安装包。** 点**更多信息 → 仍要运行**。安装包暂未做代码签名。

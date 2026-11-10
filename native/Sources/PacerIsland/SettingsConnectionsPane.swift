@@ -46,7 +46,8 @@ struct SettingsConnectionsPane: View {
             claude: model.isModuleEnabled(.claude) ? model.providerStreamStatuses(.claude) : nil, claudeAliases: targets.map(\.alias),
             configured: Set(targets.filter { model.claudeRemoteConfigured($0) }.map(\.alias)),
             configuring: aliases(model.configuringClaudeHosts), failed: aliases(model.claudeRemoteSetupFailures.keys),
-            names: Dictionary(targets.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }))
+            names: Dictionary(targets.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }),
+            telemetryConflicts: model.claudeRemoteTelemetryConflicts())
     }
 
     /// The page's subtitle: the overall state and how many sources it covers.
@@ -139,6 +140,9 @@ struct SettingsConnectionsPane: View {
                 HStack(spacing: 14) {
                     ForEach(host.modules, id: \.provider) { module in moduleStatus(module) }
                 }.font(.system(size: 11))
+                if let note = SettingsView.claudeTelemetryNote(host.claudeTelemetryNote) {
+                    Text(note).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
             if host.claudeSetupFailed {

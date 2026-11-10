@@ -137,6 +137,10 @@ final class WindowsWSLTests: XCTestCase {
         let payload = try XCTUnwrap(Data(base64Encoded: encoded))
         let settings = try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [String: Any])
         XCTAssertEqual(settings["home"] as? String, profile.claudeHome); XCTAssertEqual(settings["requireHome"] as? Bool, true)
+        XCTAssertNil(settings["automatic"], "Only an automatic run keeps removed telemetry keys removed")
+        let automatic = try services.setupArguments(claude, automatic: true)
+        let automaticPayload = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(automatic.last?.split(separator: " ").last).description))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: automaticPayload) as? [String: Any])?["automatic"] as? Bool, true)
         actor Frames { var count = 0; func receive(_ data: Data) { count += 1 } }
         let frames = Frames(), command = String(repeating: "x", count: 100_000)
         let child = try services.launcher().launch(.init(executable: WindowsExecutables.ssh, arguments: route + [command],

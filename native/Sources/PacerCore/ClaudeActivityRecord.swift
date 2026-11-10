@@ -180,7 +180,10 @@ enum ClaudeActivityRecord {
                let usage = message["usage"].flatMap({ try? $0.fields(["output_tokens"]) }),
                let output = usage["output_tokens"]?.integer(), output > 0, output <= 1_000_000_000_000 {
                 var value = base; value["kind"] = "modelBlock"; value["requestId"] = requestID
-                value["messageId"] = messageID; value["outputTokens"] = output; value["toolIds"] = toolStarts.map { $0.0 }; result.append(value)
+                value["messageId"] = messageID; value["outputTokens"] = output; value["toolIds"] = toolStarts.map { $0.0 }
+                // Claude Code knows a response's stop reason only after it ends.
+                if let stop = message["stop_reason"]?.string(limit: 64) ?? fields["stop_reason"]?.string(limit: 64), !stop.isEmpty { value["terminal"] = true }
+                result.append(value)
             }
             for type in modelKinds.sorted() {
                 var value = base; value["kind"] = type == "thinking" ? "thinking" : "response"
@@ -257,6 +260,10 @@ struct ClaudeActivityState: Sendable {
     /// Endings read before their launch, by child and tool item.
     private struct EarlyNotification: Sendable { let thread: String; let at: Double; let historical: Bool; let status: String }
     private var earlyNotifications: [String: EarlyNotification] = [:]
+    /// When this source last delivered an exact request span.
+    private var lastExactSample: Date?
+    /// Live records arrived since ended requests last settled.
+    private var releasePending = false
     /// When each root's latest Stop listed no agent in flight. Claude Code lists
     /// every background task of the session there, agents that subagents launched
     /// included, so every child run begun before that Stop has ended.
@@ -358,6 +365,11 @@ struct ClaudeActivityState: Sendable {
             // A helper batch is one read: the hooks come first, so its child
             // records apply before the root's ending ends their runs.
             else if live { endOutlivedChildren(Array(sessions.keys), now: now, historical: false) }
+            // A request's blocks can straddle a read budget. Only a batch that
+            // ends a fully drained read (`baselineFinal`) has all of them; the
+            // helper closes a read that ends without rows with an empty one.
+            if live { releasePending = true }
+            if releasePending, frame["baselineFinal"] as? Bool == true { releaseCompletedRequests(now: now); releasePending = false }
         } else { consumeRecord(frame, now: now, attaching: attaching) }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
         if sessions.count > 128 {
@@ -512,7 +524,7 @@ struct ClaudeActivityState: Sendable {
             let ttft = (record["ttftMs"] as? Double).flatMap { $0.isFinite && $0 >= 0 && $0 / 1000 <= sample.duration ? $0 / 1000 : nil }
             let update = SessionPerformanceUpdate(id: key, turnID: turn, response: sample, firstTokenLatency: ttft,
                 firstTokenReportedAt: ttft.map { Date(timeIntervalSince1970: spanStart).addingTimeInterval($0) })
-            if let update { update.apply(to: &value); sessions[key] = value; metrics[key] = update }
+            if let update { update.apply(to: &value); sessions[key] = value; metrics[key] = update; lastExactSample = now; status.exactRequestSpans = true }
             if observedMeters[key]?.turnID == turn { observedMeters[key]?.authoritative(responseID) }
             return
         }
@@ -524,7 +536,7 @@ struct ClaudeActivityState: Sendable {
                   let messageID = ClaudeActivityRecord.identifier(record["messageId"] as? String),
                   let output = record["outputTokens"] as? Int, let tools = record["toolIds"] as? [String], tools.count <= 128,
                   tools.allSatisfy({ ClaudeActivityRecord.identifier($0) != nil }) else { return }
-            meter.modelBlock(id: requestID, messageID: messageID, outputTokens: output, toolIDs: tools, at: date)
+            meter.modelBlock(id: requestID, messageID: messageID, outputTokens: output, toolIDs: tools, terminal: record["terminal"] as? Bool == true, at: date)
             observedMeters[key] = meter
             if value.phase == .completed, let end = agentEnds[key], end.childTurn == meter.turnID {
                 settleAgentUsage(key, at: Date(timeIntervalSince1970: end.at))
@@ -777,6 +789,25 @@ struct ClaudeActivityState: Sendable {
             agentLaunches.removeValue(forKey: key)
             let parentKey = AgentProvider.claude.activityID(sessionID: completion.parent, sourceHostID: sourceID)
             agentTools.removeValue(forKey: parentKey + ":" + completion.item)
+        }
+    }
+    /// Without request spans, transcript-timed responses settle as each one
+    /// ends rather than at the turn's end. Call after a whole read. While this
+    /// source delivers exact spans they decide instead, so an estimate cannot
+    /// show ahead of the span for the same response.
+    mutating func releaseCompletedRequests(now: Date) {
+        if let lastExactSample, now.timeIntervalSince(lastExactSample) < 1800 { return }
+        for key in Array(observedMeters.keys) {
+            guard var meter = observedMeters[key], var value = sessions[key], value.turnID == meter.turnID,
+                  [.running, .waitingForInput].contains(value.phase) else { continue }
+            let samples = meter.releaseCompleted()
+            observedMeters[key] = meter
+            guard !samples.isEmpty else { continue }
+            for sample in samples {
+                SessionPerformanceUpdate(id: key, turnID: meter.turnID, response: sample, firstTokenLatency: nil, firstTokenReportedAt: nil)?.apply(to: &value)
+            }
+            sessions[key] = value
+            if let update = SessionPerformanceUpdate(value) { metrics[key] = update }
         }
     }
     private mutating func settleAgentUsage(_ key: String, at date: Date) {
