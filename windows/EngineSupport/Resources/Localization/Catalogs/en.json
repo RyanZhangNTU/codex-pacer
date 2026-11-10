@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f2cf1fd1007abd16dbe5b4c72286dfdf8b2ec182a70f5861f8e7f63a5f0a9268",
-    "windows/EngineSupport/Resources/Localization/en.json": "54c87234ababb817bcd6bbfb0cba4cf111baf0fce21c113066c3b0f3d37ed6a6"
+    "windows/EngineSupport/Resources/Localization/en.json": "65c35113fedb2aecec350a0b346b9f6b5919f266b8a1cbc5ca48a5c8cb8aaf5b"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -1193,10 +1193,8 @@
     "windows.claude.login.instructions": "Sign in to show Claude quota. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
     "windows.claude.retry_setup": "Retry setup",
     "windows.claude.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
-    "windows.claude.setup_conflict": "Claude activity is ready. Kept your existing telemetry settings. TPS is estimated.",
     "windows.claude.setup_disabled": "Claude activity is off.",
     "windows.claude.setup_failed": "Claude activity setup failed. Retry setup or repair the app.",
-    "windows.claude.setup_managed": "Claude activity is ready. Telemetry is managed by your organization. TPS is estimated.",
     "windows.claude.setup_missing": "Choose an existing Claude folder to enable activity tracking.",
     "windows.claude.setup_ready": "Claude activity is ready.",
     "windows.claude.setup_slow": "These paths require PowerShell. Each tool event may take an extra 150 to 400 ms to start.",

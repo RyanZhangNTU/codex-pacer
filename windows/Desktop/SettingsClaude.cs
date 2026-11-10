@@ -110,10 +110,15 @@ internal sealed partial class SettingsWindow
     }
     internal static string ClaudeSetupDescription(UiText ui, string state, ClaudeHookSetup? setup)
     {
-        string message = ui.Text("windows.claude.setup_" + (state switch
-        { "ready" when setup?.SpeedsEstimated == true => setup.TelemetryConflictReason == "managed" ? "managed" : "conflict", "ready" => "ready", "settingUp" => "working", "missingHome" => "missing", "disabled" => "disabled", _ => "failed" }));
-        return state == "ready" && setup?.LaunchMode == "powershell" ? message + " " + ui.Text("windows.claude.setup_slow") : message;
+        // Estimated speeds use the Mac's note as is: the monitoring row above already says Ready.
+        string message = state == "ready" && setup?.SpeedsEstimated == true
+            ? ui.Text(setup.TelemetryConflictReason == "managed" ? "claude.telemetry.managed" : "claude.telemetry.kept_existing")
+            : ui.Text("windows.claude.setup_" + (state switch
+                { "ready" => "ready", "settingUp" => "working", "missingHome" => "missing", "disabled" => "disabled", _ => "failed" }));
+        return state == "ready" && setup?.LaunchMode == "powershell" ? JoinSentences(message, ui.Text("windows.claude.setup_slow")) : message;
     }
+    /// Chinese sentences follow a full-width full stop directly; other languages take a space.
+    internal static string JoinSentences(string first, string second) => first.EndsWith('。') ? first + second : first + " " + second;
     /// A ready setup stays silent unless speeds are estimated or every hook starts through PowerShell.
     internal static bool ClaudeSetupVisible(string state, ClaudeHookSetup? setup) =>
         state != "ready" || setup is { SpeedsEstimated: true } || setup?.LaunchMode == "powershell";
