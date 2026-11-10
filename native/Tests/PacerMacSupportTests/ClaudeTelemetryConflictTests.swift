@@ -136,6 +136,46 @@ final class ClaudeTelemetryConflictTests: XCTestCase {
         XCTAssertEqual(try self.env(fixture.home)["OTEL_TRACES_EXPORT_INTERVAL"], "1000", "An explicit run restores it")
     }
 
+    /// The remote script remembers a removal through a conflict, withdraws
+    /// the rest when Pacer's endpoint is removed, and groups managed OTLP keys.
+    func testRemoteSetupKeepsRemovalsThroughConflictsAndGroupsManagedOTLP() throws {
+        let fixture = try home(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let settings = fixture.home.appendingPathComponent("settings.json")
+        func write(_ env: [String: String]) throws { try JSONSerialization.data(withJSONObject: env.isEmpty ? [:] : ["env": env]).write(to: settings) }
+        XCTAssertTrue(try runRemote(home: fixture.home).telemetryConfigured)
+        var current = try env(fixture.home); current.removeValue(forKey: "OTEL_TRACES_EXPORTER"); try write(current)
+        _ = try runRemote(home: fixture.home, automatic: true)
+        current["OTEL_EXPORTER_OTLP_HEADERS"] = "authorization=synthetic"; try write(current)
+        _ = try runRemote(home: fixture.home, automatic: true)
+        XCTAssertEqual(try env(fixture.home), ["OTEL_EXPORTER_OTLP_HEADERS": "authorization=synthetic"])
+        try write([:])
+        _ = try runRemote(home: fixture.home, automatic: true)
+        XCTAssertEqual(try env(fixture.home), [:])
+        XCTAssertTrue(try runRemote(home: fixture.home).telemetryConfigured)
+        current = try env(fixture.home); current.removeValue(forKey: "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"); try write(current)
+        _ = try runRemote(home: fixture.home, automatic: true)
+        XCTAssertEqual(try env(fixture.home), [:])
+
+        let source = try ClaudeRemoteSetup.resources().installer
+        let probe = """
+        import json, sys
+        ns = {'__name__': 'pacer_probe'}
+        exec(sys.stdin.read(), ns)
+        managed = {'env': {}, 'helper': False}
+        ns['fill_managed'](managed, {'env': {'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT': 'https://metrics.invalid', 'BLANK': ''}, 'helper': False})
+        ns['fill_managed'](managed, {'env': {'OTEL_EXPORTER_OTLP_ENDPOINT': 'https://old.invalid', 'OTEL_LOGS_EXPORTER': 'otlp', 'OTEL_METRICS_EXPORTER': 'none', 'BLANK': 'later'}, 'helper': False})
+        print(json.dumps(managed, sort_keys=True))
+        """
+        let process = Process(), input = Pipe(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env"); process.arguments = ["python3", "-I", "-c", probe]
+        process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        try process.run(); input.fileHandleForWriting.write(source); try input.fileHandleForWriting.close()
+        let printed = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        let merged = try XCTUnwrap(JSONSerialization.jsonObject(with: printed) as? [String: Any])
+        XCTAssertEqual(merged["env"] as? [String: String], ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://metrics.invalid", "BLANK": "", "OTEL_METRICS_EXPORTER": "none"],
+            "Python takes the OTLP group whole from the first source, like Swift")
+    }
+
     func testMacManagedSettingsReadFilesDropInsAndPreferences() throws {
         let fixture = try home(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         let folder = fixture.root.appendingPathComponent("ClaudeCode"), dropIns = folder.appendingPathComponent("managed-settings.d")
@@ -148,8 +188,11 @@ final class ClaudeTelemetryConflictTests: XCTestCase {
         try PropertyListSerialization.data(fromPropertyList: ["env": ["OTEL_EXPORTER_OTLP_PROTOCOL": "grpc", "CLAUDE_CODE_ENABLE_TELEMETRY": "0"]], format: .xml, options: 0).write(to: plist)
         let managed = MacClaudeManagedSettings.telemetry(folder: folder, preferences: [plist, fixture.root.appendingPathComponent("missing.plist")])
         XCTAssertTrue(managed.headersHelper)
-        XCTAssertEqual(managed.environment, ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://collector.invalid", "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
-            "CLAUDE_CODE_ENABLE_TELEMETRY": "0", "OTEL_LOGS_EXPORTER": "otlp"], "MDM preferences outrank the files, variable by variable")
+        XCTAssertEqual(managed.environment, ["OTEL_EXPORTER_OTLP_PROTOCOL": "grpc", "CLAUDE_CODE_ENABLE_TELEMETRY": "0"],
+            "MDM preferences outrank the files variable by variable, and their OTLP group hides the files' OTLP keys")
+        let filesOnly = MacClaudeManagedSettings.telemetry(folder: folder, preferences: [])
+        XCTAssertEqual(filesOnly.environment, ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://collector.invalid", "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+            "OTEL_LOGS_EXPORTER": "otlp"], "Without MDM the files supply the group")
         XCTAssertEqual(MacClaudeManagedSettings.telemetry(folder: fixture.root.appendingPathComponent("absent"), preferences: []), ClaudeManagedTelemetry())
     }
 }

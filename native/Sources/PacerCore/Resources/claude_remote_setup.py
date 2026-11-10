@@ -188,10 +188,24 @@ def merge_managed(value, managed):
             managed['helper'] = True
 
 
+OTLP_FAMILY = ('OTEL_LOG_RAW_API_BODIES', 'OTEL_LOG_USER_PROMPTS', 'OTEL_LOG_ASSISTANT_RESPONSES', 'OTEL_LOG_TOOL_CONTENT',
+               'OTEL_LOG_TOOL_DETAILS', 'OTEL_LOG_MANAGED_SETTINGS', 'OTEL_LOGS_EXPORTER', 'ENABLE_BETA_TRACING_DETAILED',
+               'BETA_TRACING_ENDPOINT', 'ANT_OTEL_LOGS_EXPORTER')
+
+
+def otlp_family(key):
+    key = key.upper()
+    return key.startswith(OTLP) or key.startswith('ANT_' + OTLP) or key in OTLP_FAMILY
+
+
 def fill_managed(managed, lower):
-    # A lower-priority source supplies only variables no higher one set.
+    # A lower-priority source supplies only variables no higher one set, and
+    # no OTLP family key once a higher source set one or a headers helper.
+    claimed = managed['helper'] or any(otlp_family(key) and value.strip() for key, value in managed['env'].items())
     for key, value in lower['env'].items():
-        managed['env'].setdefault(key, value)
+        if key in managed['env'] or (otlp_family(key) and (claimed or not value.strip())):
+            continue
+        managed['env'][key] = value
     managed['helper'] = managed['helper'] or lower['helper']
 
 
@@ -200,10 +214,12 @@ def managed_telemetry(home):
     # source that sets it: server-managed settings, then MDM policy, then the
     # managed files (drop-ins after managed-settings.json, later names winning).
     managed = {'env': {}, 'helper': False}
+    server = {'env': {}, 'helper': False}
     try:
-        merge_managed(object_bytes(read_bytes(home / 'remote-settings.json')), managed)
+        merge_managed(object_bytes(read_bytes(home / 'remote-settings.json')), server)
     except Failure:
         pass
+    fill_managed(managed, server)
     if sys.platform == 'darwin':
         folders = MANAGED_FOLDERS['darwin']
         user = os.environ.get('USER') or ''
@@ -293,21 +309,26 @@ def telemetry_conflict(env, helper, managed, owned, process):
 
 
 def reconcile_environment(env, added, conflict, automatic=False):
-    # Pacer's trace keys follow the conflict state. While a conflict lasts and
-    # Pacer's own endpoint is still in place, keys Pacer added that still hold
-    # its values are withdrawn, so no header reaches Pacer's port; edited keys
-    # stay, and a user who repointed the endpoint owns the whole set. The
-    # switch stays while it runs the user's metrics or logs exporters. Without
-    # a conflict, missing keys are added; automatic runs skip keys the user
-    # removed after Pacer added them.
-    if conflict != 'none':
-        if ENDPOINT not in added or env.get(ENDPOINT) != added[ENDPOINT]:
+    # Pacer's trace keys follow the conflict state. While a conflict lasts, or
+    # after the user removed Pacer's endpoint, keys Pacer added that still
+    # hold its values are withdrawn; edited keys stay, keys the user removed
+    # stay recorded, and a user who repointed the endpoint owns the whole set.
+    # The switch stays while it runs the user's metrics or logs exporters.
+    # Without a conflict, missing keys are added; automatic runs skip that
+    # while a key the user removed is recorded.
+    # Without Pacer's endpoint, its other keys would send traces elsewhere.
+    endpoint_removed = ENDPOINT in added and ENDPOINT not in env
+    if conflict != 'none' or (automatic and endpoint_removed):
+        if ENDPOINT not in added or env.get(ENDPOINT, added[ENDPOINT]) != added[ENDPOINT]:
             return added
         keep_switch = exports_other_signals(env)
+        removed = {}
         for key, value in added.items():
-            if env.get(key) == value and not (keep_switch and key == ENABLE):
+            if key not in env:
+                removed[key] = value
+            elif env[key] == value and not (keep_switch and key == ENABLE):
                 del env[key]
-        return {}
+        return removed
     if automatic and any(key not in env and key in added for key in ENVIRONMENT):
         return added
     for key, setting in ENVIRONMENT.items():

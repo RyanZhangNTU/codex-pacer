@@ -388,32 +388,39 @@ public struct ClaudeHookInstaller {
     /// server-managed settings decide whether Pacer's trace keys belong here.
     private func telemetryConflict(_ value: [String: Any], home: URL) -> ClaudeTelemetryConflict {
         // Server-managed settings outrank every host source.
-        var managed = ClaudeManagedTelemetry()
-        if let cached = try? readObject(home.appendingPathComponent("remote-settings.json")) { managed.merge(settings: cached) }
-        managed.fill(managedTelemetry())
+        var managed = ClaudeManagedTelemetry(), server = ClaudeManagedTelemetry()
+        if let cached = try? readObject(home.appendingPathComponent("remote-settings.json")) { server.merge(settings: cached) }
+        managed.fill(server); managed.fill(managedTelemetry())
         let manifest = (try? readObject(home.appendingPathComponent("pacer/installation.json"))) ?? [:]
         let helper = (value["otelHeadersHelper"] as? String).map { !ClaudeTelemetryRules.trimmed($0).isEmpty } ?? false
         return ClaudeTelemetryRules.conflict(user: value["env"] as? [String: String] ?? [:], headersHelper: helper, managed: managed,
             owned: manifest["addedEnvironment"] as? [String: String] ?? [:])
     }
-    /// Pacer's trace keys follow the conflict state. While a conflict lasts
-    /// and Pacer's own endpoint is still in place, every key Pacer added that
+    /// Pacer's trace keys follow the conflict state. While a conflict lasts,
+    /// or after the user removed Pacer's endpoint, every key Pacer added that
     /// still holds Pacer's value is withdrawn, so no header reaches Pacer's
-    /// port; keys the user edited stay. A user who pointed the endpoint
+    /// port and no trace goes elsewhere; keys the user edited stay, and keys
+    /// the user removed stay recorded. A user who pointed the endpoint
     /// elsewhere owns the whole set. The switch also stays while it runs the
     /// user's metrics or logs exporters. Without a conflict, missing keys are
-    /// added; automatic passes skip keys the user removed after Pacer added
-    /// them, so that removal sticks until an explicit retry.
+    /// added; automatic passes skip that while a key the user removed is
+    /// recorded, so the removal sticks until an explicit retry.
     private func reconcileEnvironment(_ env: inout [String: String], added: inout [String: String],
                                       conflict: ClaudeTelemetryConflict, automatic: Bool) {
-        if conflict != .none {
-            let endpoint = ClaudeTelemetryRules.endpointKey
-            guard let ours = added[endpoint], env[endpoint] == ours else { return }
+        let endpoint = ClaudeTelemetryRules.endpointKey
+        // Without Pacer's endpoint, its other keys would send traces to a
+        // generic or default endpoint.
+        let endpointRemoved = added[endpoint] != nil && env[endpoint] == nil
+        if conflict != .none || (automatic && endpointRemoved) {
+            guard let ours = added[endpoint], env[endpoint] == nil || env[endpoint] == ours else { return }
             let keepSwitch = ClaudeTelemetryRules.exportsOtherSignals(env)
-            for (key, setting) in added where env[key] == setting && !(keepSwitch && key == ClaudeTelemetryRules.enableKey) {
-                env.removeValue(forKey: key)
+            var removed: [String: String] = [:]
+            for (key, setting) in added {
+                // A key the user removed stays recorded, so the removal outlasts the conflict.
+                if env[key] == nil { removed[key] = setting }
+                else if env[key] == setting, !(keepSwitch && key == ClaudeTelemetryRules.enableKey) { env.removeValue(forKey: key) }
             }
-            added = [:]
+            added = removed
             return
         }
         if automatic, ClaudeTelemetryRules.environment.keys.contains(where: { env[$0] == nil && added[$0] != nil }) { return }

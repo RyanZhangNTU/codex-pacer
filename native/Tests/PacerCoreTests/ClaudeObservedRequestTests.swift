@@ -94,7 +94,10 @@ final class ClaudeObservedRequestTests: XCTestCase {
         // reason; nothing settles until the read has drained.
         state.consume(batch([block("req-1", 1.5, terminal: true)], drained: false), now: at(1.6))
         XCTAssertNil(try XCTUnwrap(state.activities.first).displayedOutputEstimate(at: at(1.6)))
-        state.consume(batch([block("req-1", 2, terminal: true)]), now: at(2.1))
+        state.consume(batch([block("req-1", 2, terminal: true)], drained: false), now: at(2.1))
+        XCTAssertNil(try XCTUnwrap(state.activities.first).displayedOutputEstimate(at: at(2.1)))
+        // The helper closes a read whose rest held no rows with an empty drained batch.
+        state.consume(batch([]), now: at(2.1))
         let running = try XCTUnwrap(state.activities.first)
         XCTAssertEqual(running.phase, .running); XCTAssertEqual(running.displayedOutputEstimate(at: at(2.1))?.value, 50)
         // A source with request spans keeps estimates out of the way.

@@ -14,8 +14,10 @@ public enum ClaudeTelemetryConflict: String, Codable, Sendable { case none, exis
 /// Claude Code takes each `env` variable from the highest-priority managed
 /// source that sets it: server-managed settings, then MDM or HKLM policy, then
 /// the managed files (drop-ins after `managed-settings.json`, later names
-/// winning), and HKCU only without any of those. Callers `fill` sources in that
-/// order. A headers helper from any source counts, which can only over-report.
+/// winning), and HKCU only without any of those. OTLP routing and credentials
+/// (`otlpFamily`) are one group, taken whole from the highest source that sets
+/// any of them or a headers helper. Callers `fill` sources in that order. A
+/// headers helper from any source counts, which can only over-report.
 public struct ClaudeManagedTelemetry: Equatable, Sendable {
     public var environment: [String: String]
     public var headersHelper: Bool
@@ -63,10 +65,25 @@ public struct ClaudeManagedTelemetry: Equatable, Sendable {
               size.intValue <= 2 * 1024 * 1024 else { return nil }
         return try? Data(contentsOf: url)
     }
+    /// Keys Claude Code takes as one group across managed sources.
+    static let otlpFamilyKeys: Set<String> = [
+        "OTEL_LOG_RAW_API_BODIES", "OTEL_LOG_USER_PROMPTS", "OTEL_LOG_ASSISTANT_RESPONSES", "OTEL_LOG_TOOL_CONTENT", "OTEL_LOG_TOOL_DETAILS",
+        "OTEL_LOG_MANAGED_SETTINGS", "OTEL_LOGS_EXPORTER", "ENABLE_BETA_TRACING_DETAILED", "BETA_TRACING_ENDPOINT", "ANT_OTEL_LOGS_EXPORTER"
+    ]
+    static func otlpFamily(_ key: String) -> Bool {
+        let key = key.uppercased()
+        return key.hasPrefix("OTEL_EXPORTER_OTLP_") || key.hasPrefix("ANT_OTEL_EXPORTER_OTLP_") || otlpFamilyKeys.contains(key)
+    }
     /// Adds a lower-priority source: it supplies only variables no
-    /// higher-priority source set.
+    /// higher-priority source set, and no OTLP family key once a higher source
+    /// set one or a headers helper. Empty family values count as unset.
     public mutating func fill(_ lower: ClaudeManagedTelemetry) {
-        environment.merge(lower.environment) { higher, _ in higher }
+        func blank(_ value: String) -> Bool { value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let claimed = headersHelper || environment.contains { Self.otlpFamily($0.key) && !blank($0.value) }
+        for (key, value) in lower.environment where environment[key] == nil {
+            if Self.otlpFamily(key), claimed || blank(value) { continue }
+            environment[key] = value
+        }
         headersHelper = headersHelper || lower.headersHelper
     }
 }

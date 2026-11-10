@@ -262,6 +262,8 @@ struct ClaudeActivityState: Sendable {
     private var earlyNotifications: [String: EarlyNotification] = [:]
     /// When this source last delivered an exact request span.
     private var lastExactSample: Date?
+    /// Live records arrived since ended requests last settled.
+    private var releasePending = false
     /// When each root's latest Stop listed no agent in flight. Claude Code lists
     /// every background task of the session there, agents that subagents launched
     /// included, so every child run begun before that Stop has ended.
@@ -364,8 +366,10 @@ struct ClaudeActivityState: Sendable {
             // records apply before the root's ending ends their runs.
             else if live { endOutlivedChildren(Array(sessions.keys), now: now, historical: false) }
             // A request's blocks can straddle a read budget. Only a batch that
-            // ends a fully drained read (`baselineFinal`) has all of them.
-            if live, frame["baselineFinal"] as? Bool == true { releaseCompletedRequests(now: now) }
+            // ends a fully drained read (`baselineFinal`) has all of them; the
+            // helper closes a read that ends without rows with an empty one.
+            if live { releasePending = true }
+            if releasePending, frame["baselineFinal"] as? Bool == true { releaseCompletedRequests(now: now); releasePending = false }
         } else { consumeRecord(frame, now: now, attaching: attaching) }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
         if sessions.count > 128 {
