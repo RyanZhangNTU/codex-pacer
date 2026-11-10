@@ -142,10 +142,10 @@ struct WindowsWSLServices: Sendable {
     func launcher(base: any HelperProcessLauncher = WindowsHelperProcessLauncher()) -> any HelperProcessLauncher {
         WindowsWSLHelperLauncher(services: self, base: base)
     }
-    func setupArguments(_ target: RemoteActivityTarget, requireHome: Bool = true, progressRing: Bool = false) throws -> [String] {
+    func setupArguments(_ target: RemoteActivityTarget, requireHome: Bool = true, progressRing: Bool = false, automatic: Bool = false) throws -> [String] {
         guard let profile = registry.profile(id: target.id, provider: .claude), profile.target(.claude) == target,
               let arguments = registry.arguments(target) else { throw ClaudeRemoteSetup.Failure.invalidTarget }
-        return arguments + [try ClaudeRemoteSetup.command(home: profile.claudeHome, requireHome: requireHome, progressRing: progressRing)]
+        return arguments + [try ClaudeRemoteSetup.command(home: profile.claudeHome, requireHome: requireHome, progressRing: progressRing, automatic: automatic)]
     }
 }
 

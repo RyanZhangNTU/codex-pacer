@@ -27,7 +27,7 @@ Diagnostics print counts and status names only, never credentials, account ident
 | `--diagnose` | Codex CLI discovery and quota protocol, including whether the legacy rate-limit request shape was needed. |
 | `--diagnose-events [--observe-seconds N] [--desktop-only]` | Codex Desktop IPC and SSH source counters. `--desktop-only` skips SSH helpers. |
 | `--diagnose-task --thread-id UUID [--host-id ID]` | One Codex task's grouping and rate status. |
-| `--diagnose-claude [--observe-seconds N] [--skip-quota] [--desktop-only]` | Claude hooks and telemetry setup, quota source and a collector summary. |
+| `--diagnose-claude [--observe-seconds N] [--skip-quota] [--desktop-only]` | Claude hooks and telemetry setup with any conflict reason, quota source, and a collector summary that says per source whether exact request spans arrived. |
 | `--diagnose-claude-cloud` | Claude cloud Project counts and statuses, threads reporting a speed, and whether the message stream opens. Use after a Claude update. |
 | `--diagnose-claude-cache prepare\|read\|cleanup` | QA for Keychain access to a dedicated QA item, never a real credential. |
 
@@ -190,7 +190,7 @@ Subagent runs (`ClaudeAgentNotification` and the activity state):
 ### Telemetry and first output
 
 - OTLP `llm_request` spans supply exact request duration, output tokens and TTFT. They carry no prompt ID, so a span binds to the current turn only when `llm_request.context` is `interaction` and it starts at or after the observed turn start.
-- Without OTLP, an observed estimate (`observedRequest`) pairs transcript request counts with a complete output window after a verified stop; a matching OTLP sample outranks it.
+- Without OTLP, an observed estimate (`observedRequest`) pairs transcript request counts with a complete output window; a matching OTLP sample outranks it. A block with a nonempty `stop_reason` ends its request. Ended requests settle in order, each once, after a read that has drained (the local reader caught up, or a helper batch marked `baselineFinal`; the helper closes a split read whose rest held no rows with an empty one), so speeds update during a turn. Settling per record, or after a read cut short by its budget, would split a request whose blocks are written together with its ending, or whose tools ran while it was still streaming. A verified stop settles the rest. A source that delivered an exact span in the last 30 minutes skips the per-request release, so an estimate does not flash before the span.
 - A `MessageDisplay` callback can mark first output only with a matching prompt ID, `final == false`, `index == 0` and nonempty text. Claude holds each displayed batch until its hooks return, so Pacer registers it as an `async` hook and only when its own telemetry is off.
 - Receivers accept identity or gzip bodies of at most 1 MiB compressed and expanded; a malformed body publishes nothing, and fractions, booleans or non-finite values never become token counts.
 - Numeric measurements only enrich the matching turn: they create no task, replay no reminder and extend no retention.
@@ -199,14 +199,39 @@ Subagent runs (`ClaudeAgentNotification` and the activity state):
 
 - Each Claude source start calls `ClaudeHookInstaller.ensureInstalled`. It skips a missing Claude home, writes nothing when current, migrates outdated Pacer entries in place, and restores missing required hooks. Optional entries the user removed stay removed. Settings shows the result as one status row with Retry.
 - Saving the Claude module as explicitly disabled uninstalls Pacer-owned entries; automatic detection changes never do.
-- Setup adds command hooks, a status-line wrapper that passes stdin and output through to an existing renderer, and sanitized spool and quota records under `<Claude home>/pacer`. OTLP settings are added only when no tracing settings conflict; with a conflict, Pacer keeps the user's settings and reports no request metrics. New Claude sessions must start to load changes.
+- Setup adds command hooks, a status-line wrapper that passes stdin and output through to an existing renderer, and sanitized spool and quota records under `<Claude home>/pacer`. OTLP settings follow the coexistence rules below. New Claude sessions must start to load changes.
 - Commands run `python3 -S` with only the standard library, which skips `.pth` processing in conda-style installs. `-E` and `-I` are avoided because macOS's bundled Python then recompiles its standard library on every call. An unchanged status-line sample is rewritten at most every 30 seconds.
+
+### Telemetry coexistence
+
+Pacer's export needs five `env` keys in the home's `settings.json`: both Claude Code telemetry switches, `OTEL_TRACES_EXPORTER=otlp`, and the trace-specific protocol and endpoint (`http/json`, `http://127.0.0.1:4319/v1/traces`). `OTEL_TRACES_EXPORT_INTERVAL=1000` is added when absent; another value only delays exports. Switches accept Claude Code's truthy words and the exporter is a comma list.
+
+`ClaudeTelemetryRules` and `claude_remote_setup.py` return the same reason, `none`, `existing` or `managed`, checked against one shared table in `ClaudeTelemetryConflictTests`. The rules follow Claude Code 2.1.300:
+
+- Trace-specific settings win over generic ones, so a generic endpoint or protocol for metrics and logs leaves room for Pacer.
+- Every OTLP header, static or from `otelHeadersHelper`, is also sent with traces. User headers or a helper are `existing`, because they would reach Pacer's receiver.
+- Managed generic endpoint, protocol, headers, client key or certificate, a managed trace credential or a managed helper make Claude Code drop lower-scope trace overrides, which would send traces to the organization's collector. These, and a managed value that differs for one of Pacer's keys, are `managed`.
+- `existing` also covers a different user value for one of Pacer's keys, and an exporter Pacer did not add with no trace endpoint, which already exports traces to a generic or default endpoint.
+- The telemetry switch also starts metrics and logs exporters. While no source sets `CLAUDE_CODE_ENABLE_TELEMETRY`, a configured metrics or logs exporter (anything but `none`) is a conflict, `managed` or `existing` by where it is set, so Pacer never turns on an export that was waiting.
+
+Claude Code takes each managed `env` variable from the highest-priority source that sets it, and Pacer fills them in that order (`ClaudeManagedTelemetry.fill`). OTLP routing and credentials (`OTEL_EXPORTER_OTLP_*` and a few log and beta-tracing keys) are one group: they come whole from the highest source that sets any of them or a headers helper, and empty values count as unset. Within the file source, drop-ins override `managed-settings.json` by name. A helper from any source counts, which can only over-report. Only `env` strings and whether a helper is set are kept. Sources, highest first:
+
+1. `<Claude home>/remote-settings.json`, the cached server-managed settings.
+2. MDM policy: `com.anthropic.claudecode.plist` under `/Library/Managed Preferences/<user>/`, then `/Library/Managed Preferences/` on macOS; the `Settings` JSON string under `HKLM\SOFTWARE\Policies\ClaudeCode` on Windows.
+3. Files: `managed-settings.json` and `managed-settings.d/*.json` in `/Library/Application Support/ClaudeCode` (macOS), `C:\Program Files\ClaudeCode` (Windows) or `/etc/claude-code` (Linux; WSL then also reads `/mnt/c/Program Files/ClaudeCode`).
+4. Windows only: the `Settings` string under `HKCU`, used only when neither HKLM nor the files hold a document.
+
+Project `.claude/settings*.json` files and the environment of a later Claude session are not inspected. A project-level `otelHeadersHelper` can therefore still send its headers with traces to Pacer's loopback receiver, which reads only content length, type and encoding and never stores a header. The remote script also checks the environment of its own SSH login.
+
+Every setup check reconciles the keys. With no conflict, missing keys are added and recorded in the manifest's `addedEnvironment`. While a conflict lasts, or on an automatic check after the user removed Pacer's trace endpoint, every key Pacer added that still holds Pacer's value is withdrawn, so headers never reach Pacer's port and no trace goes to another endpoint. Keys the user edited stay, keys the user removed stay recorded in `addedEnvironment`, and the switch stays while it runs the user's metrics or logs exporters. A user who pointed the endpoint elsewhere owns the whole set. Automatic checks, local and remote (`automatic` in the setup payload), add nothing while a removed key is recorded, even after a conflict ends; Retry adds everything back. Automatic checks never add the optional `MessageDisplay` observer.
+
+Settings shows one plain line while the reason is not `none` and the source has delivered no exact span (`RuntimeStreamStatus.exactRequestSpans`), saying whether the user's own or the organization's settings were kept. SSH host rows show the same line from `claudeRemoteTelemetryConflicts`, keyed by alias. Windows shows it in the Claude setup status. Because the receiver always listens, a local collector that also forwards traces to `127.0.0.1:4319` restores exact speeds and hides the line.
 
 ### SSH and WSL
 
 - Targets combine enabled Codex SSH hosts with Claude Desktop's `ssh_configs.json` and `sshConfigs` in the selected home's `settings.json`, both read-only. User settings override a Desktop config with the same ID. Canonical host/user/port routing deduplicates them. Routes come from `ssh -G`, cached up to five minutes and invalidated by SSH config changes. At most eight sources are monitored, existing Codex hosts first. Identity files are referenced by path only.
 - A reachable host without a Claude home is a paused source, not an SSH failure; discovery retries it after 30 minutes.
-- `ClaudeRemoteSetup` runs automatically for each connected host with a Claude home whose recorded adapter digest (`claudeRemoteSetupDigests`, keyed by alias) differs from the shipped one, including the progress-ring state. It never creates a Claude home, rewrites only changed files, retries a failed host after 30 minutes, and is cancelled by turning Claude or SSH off, sleep and quit. Running remote sessions need a restart to pick up new hooks.
+- `ClaudeRemoteSetup` runs automatically for each connected host with a Claude home whose recorded adapter digest (`claudeRemoteSetupDigests`, keyed by alias) differs from the shipped one, including the progress-ring state. It never creates a Claude home, rewrites only changed files, retries a failed host after 30 minutes, and is cancelled by turning Claude or SSH off, sleep and quit. The telemetry conflict it reports is kept per alias. A current host is checked again quietly once per launch, then every 30 minutes while its setup kept telemetry off (so it recovers on its own) and every six hours otherwise; a quiet check keeps the row connected and a failure only backs off. Windows SSH and WSL hosts follow the same schedule, with conflicts kept in `setup-v1.json`. Running remote sessions need a restart to pick up new hooks.
 - Remote helpers are read-only and exit on stdin EOF or broken stdout. During cold replay both the helper and the native reader drain the hook spool before transcripts, so a later hook start cannot revive an ended turn.
 
 ### Opening conversations

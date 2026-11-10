@@ -38,6 +38,19 @@ final class ConnectionSummaryTests: XCTestCase {
         XCTAssertEqual(ready.sessions, 11)
     }
 
+    func testTelemetryNoteShowsOnlyOnConnectedHostsWithoutExactSpans() {
+        var exact = status(true, sessions: 1, available: true); exact.exactRequestSpans = true
+        let claude = [prefix + "estimated": status(true, sessions: 1, available: true), prefix + "exact": exact,
+                      prefix + "configuring": status(true, available: true), prefix + "offline": status(false)]
+        let aliases = ["estimated", "exact", "configuring", "offline", "clear"]
+        let hosts = SSHHost.hosts(codex: nil, unavailableCodex: [], claude: claude, claudeAliases: aliases,
+            configured: ["estimated", "exact", "offline", "clear"], configuring: ["configuring"], failed: [],
+            telemetryConflicts: ["estimated": .managed, "exact": .existing, "configuring": .existing, "offline": .managed])
+        let notes = Dictionary(uniqueKeysWithValues: hosts.map { ($0.alias, $0.claudeTelemetryNote) })
+        XCTAssertEqual(notes, ["estimated": .managed, "exact": .none, "configuring": .none, "offline": .none, "clear": .none],
+            "Only a connected host whose speeds are still estimated shows why")
+    }
+
     func testPausedSourcesAndMissingLocalProviderCannotAppearConnected() {
         let statuses: [AgentProvider: [String: RuntimeStreamStatus]] = [
             .codex: ["local": status(true, sessions: 2)],

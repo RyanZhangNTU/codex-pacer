@@ -105,7 +105,7 @@ enum PacerMain {
         print("Claude Desktop installed: \(ClaudeApplicationResolver.find() != nil)")
         print("Claude CLI available: \(ClaudeApplicationResolver.findExecutable() != nil)")
         let setup = ClaudeHookInstaller.details(home: home)
-        print("Task hooks configured: \(setup.hooksConfigured); request telemetry configured: \(setup.telemetryConfigured)")
+        print("Task hooks configured: \(setup.hooksConfigured); request telemetry configured: \(setup.telemetryConfigured); telemetry conflict: \(setup.telemetryConflictReason.rawValue)")
         if !args.contains("--skip-quota") {
             let client = ClaudeQuotaClient(home: home)
             do {
@@ -132,6 +132,7 @@ enum PacerMain {
                     let status = statuses[key]!, own = values.filter { ($0.sourceHostID ?? "local") == key }
                     return ["kind": key == "local" ? "local" : key.hasPrefix("remote-ssh-discovered:") ? "ssh" : "other",
                         "connected": status.connected, "claudeHome": status.sourceAvailable.map { $0 ? 1 : 0 } ?? -1,
+                        "exactSpans": status.exactRequestSpans ? 1 : 0,
                         "running": own.filter { [.running, .waitingForInput].contains($0.phase) }.count,
                         "completed": own.filter { [.completed, .interrupted].contains($0.phase) }.count]
                 }]

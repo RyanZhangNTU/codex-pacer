@@ -119,7 +119,8 @@ enum WindowsClaudeHookCommands {
         let pin = try WindowsPythonPin.load(), root = root.standardizedFileURL
         return ClaudeHookInstaller(storage: storage, python: root.appendingPathComponent(pin.identifier + "/python.exe").path,
             serialize: { arguments in serialize(arguments) }, helperScript: script,
-            additionalOwnedCommand: { command, home, kind in owned(command, home: home, root: root, kind: kind) })
+            additionalOwnedCommand: { command, home, kind in owned(command, home: home, root: root, kind: kind) },
+            managedTelemetry: { WindowsClaudeManagedSettings.telemetry() })
     }
 }
 
