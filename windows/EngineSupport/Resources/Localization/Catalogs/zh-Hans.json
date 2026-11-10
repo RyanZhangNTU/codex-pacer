@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "3811b69ec33a40a385fd84a0162f50998e8ca5ffe5050ef2644e34f413224b58",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "2c33c834b9210a7780af388e49f4b7b3a5f32e3ca268b7efdfb4a16cc40bdba0",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "18d32efd9765c1604bc5c9b8a4a9d1125e36052286d44909a1b6df04680bb11e"
   },
   "strings": {
@@ -261,6 +261,8 @@
     "codex.progress_ring_help": "Pacer \u4f1a\u81ea\u52a8\u4e3a\u672c\u5730 Codex \u4f1a\u8bdd\u914d\u7f6e\u8fdb\u5ea6\u4e0a\u62a5\u3002\u865a\u7ebf\u73af\u8868\u793a\u8fd8\u5728\u7b49 Codex \u7ed9\u51fa\u4f30\u8ba1\u3002",
     "codex.progress_setup.conflict": "Codex \u7684 MCP \u914d\u7f6e\u91cc\u5df2\u6709\u540d\u4e3a pacer_progress \u7684\u6761\u76ee\u3002",
     "codex.progress_setup.failed": "\u65e0\u6cd5\u914d\u7f6e\u8fdb\u5ea6\u4e0a\u62a5\u5de5\u5177\u3002",
+    "codex.progress_setup.mac.ready": "\u5df2\u5c31\u7eea\uff0cDot\u76d1\u6d4b\u9700\u91cd\u542fCodex",
+    "codex.progress_setup.mac.settingUp": "\u914d\u7f6e\u4e2d",
     "codex.progress_setup.missingCLI": "\u627e\u4e0d\u5230 Codex\u3002\u8bf7\u68c0\u67e5\u4e0b\u65b9\u7684\u53ef\u6267\u884c\u6587\u4ef6\u4f4d\u7f6e\u3002",
     "codex.progress_setup.ready": "\u4e0a\u62a5\u5de5\u5177\u5df2\u5c31\u7eea\uff0c\u53ef\u7528\u4e8e\u65b0\u5f00\u7684\u672c\u5730 Codex \u4f1a\u8bdd\u3002",
     "codex.progress_setup.settingUp": "\u6b63\u5728\u914d\u7f6e\u8fdb\u5ea6\u4e0a\u62a5\u2026",

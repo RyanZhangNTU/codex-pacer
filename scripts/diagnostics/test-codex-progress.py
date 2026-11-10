@@ -30,8 +30,8 @@ MAC_OWNER = {"PACER_CODEX_PROGRESS_OWNER": "codex-pacer-progress-v2"}
 OMITTED = ["deferred"]
 QUALIFIED = "mcp__pacer_progress__report_progress"
 MAC_SWITCH = "Progress Ring"
-MAC_SETUP = {"settingUp": "Setting up progress reporting…",
-             "ready": "Progress reporting is ready for new local Codex sessions.",
+MAC_SETUP = {"settingUp": "Configuring",
+             "ready": "Ready. Restart Codex for Dot monitoring.",
              "conflict": "The Codex MCP configuration already has an entry named pacer_progress."}
 MAC_RING = {"working": "Self-reported progress about %d%%", "done": "Request done", "failed": "Failed at a self-reported %d%%"}
 # Lists a process's windows, prints the accessibility text of its windows one

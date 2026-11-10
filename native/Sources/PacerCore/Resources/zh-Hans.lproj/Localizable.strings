@@ -661,6 +661,8 @@
 "codex.progress_ring_help" = "Pacer 会自动为本地 Codex 会话配置进度上报。虚线环表示还在等 Codex 给出估计。";
 "codex.progress_setup.settingUp" = "正在配置进度上报…";
 "codex.progress_setup.ready" = "上报工具已就绪，可用于新开的本地 Codex 会话。";
+"codex.progress_setup.mac.settingUp" = "配置中";
+"codex.progress_setup.mac.ready" = "已就绪，Dot监测需重启Codex";
 "codex.progress_setup.missingCLI" = "找不到 Codex。请检查下方的可执行文件位置。";
 "codex.progress_setup.conflict" = "Codex 的 MCP 配置里已有名为 pacer_progress 的条目。";
 "codex.progress_setup.failed" = "无法配置进度上报工具。";

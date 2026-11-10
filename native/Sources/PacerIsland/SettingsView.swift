@@ -321,11 +321,17 @@ struct SettingsView: View {
                 if provider == .codex {
                     CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.codex_embedded"), isOn: $showEmbeddedCodexSessions)
                     let setup = codexProgressRing ? model.codexProgressSetup : nil
+                    let setupMessage = setup.map { status in
+                        switch status {
+                        case .settingUp, .ready: L10n.text("codex.progress_setup.mac." + status.rawValue)
+                        case .missingCLI, .conflict, .failed: L10n.text("codex.progress_setup." + status.rawValue)
+                        }
+                    }
                     ProgressRingToggle(info: L10n.text("codex.progress_ring_help"), isOn: Binding(get: { codexProgressRing }, set: { value in
                             codexProgressRing = value
                             model.syncCodexProgressSwitch()
                         }),
-                        status: setup.map { L10n.text("codex.progress_setup." + $0.rawValue) },
+                        status: setupMessage,
                         canRetry: setup == .failed || setup == .missingCLI || setup == .conflict,
                         retry: { model.syncCodexProgressSwitch(force: true) })
                 } else {

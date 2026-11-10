@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "02e0ef805d04800cf03b732154d41b36cec77b7e70d5872555cdf79a833c794d",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "e488fbb93ac0f1e35926d1a1e05ed0755b330f58c31d7a2f3a96745729acd368",
     "windows/EngineSupport/Resources/Localization/en.json": "60fbb00b0cd35907aa861081a115ca792ee7d881a0b441e3cf7ab085494eb4d7"
   },
   "strings": {
@@ -261,6 +261,8 @@
     "codex.progress_ring_help": "Pacer sets up progress reporting for local Codex sessions. A dashed ring means Codex has yet to report an estimate.",
     "codex.progress_setup.conflict": "The Codex MCP configuration already has an entry named pacer_progress.",
     "codex.progress_setup.failed": "Pacer couldn\u2019t set up progress reporting.",
+    "codex.progress_setup.mac.ready": "Ready. Restart Codex for Dot monitoring.",
+    "codex.progress_setup.mac.settingUp": "Configuring",
     "codex.progress_setup.missingCLI": "Pacer couldn\u2019t find Codex. Check the executable location below.",
     "codex.progress_setup.ready": "Progress reporting is ready for new local Codex sessions.",
     "codex.progress_setup.settingUp": "Setting up progress reporting\u2026",
