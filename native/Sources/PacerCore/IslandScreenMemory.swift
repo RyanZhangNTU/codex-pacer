@@ -45,7 +45,7 @@ public struct IslandScreenMemory: Equatable, Sendable {
     public init() {}
 
     public static func isEnabled(in defaults: UserDefaults) -> Bool {
-        defaults.object(forKey: enabledKey) as? Bool ?? true
+        defaults.object(forKey: enabledKey) == nil || defaults.bool(forKey: enabledKey)
     }
 
     public func place(for display: String) -> Place? { entries[display]?.place }

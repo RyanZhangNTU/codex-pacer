@@ -1,7 +1,6 @@
 import Foundation
 import XCTest
 @testable import PacerCore
-import PacerTestSupport
 
 /// Each display keeps its own place: Notch or Free Move with its spot.
 final class IslandScreenMemoryTests: XCTestCase {
