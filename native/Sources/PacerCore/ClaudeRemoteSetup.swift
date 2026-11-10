@@ -31,8 +31,9 @@ public actor ClaudeRemoteSetup {
     private let timeout: TimeInterval
     private let validDestination: @Sendable (String) -> Bool
     private let validIdentityFile: (@Sendable (String) -> Bool)?
-    /// Builds a setup command from the target, `requireHome` and whether the progress ring is on.
-    private let argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool) throws -> [String])?
+    /// Builds a setup command from the target, `requireHome`, whether the
+    /// progress ring is on and whether the run is `automatic`.
+    private let argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool, Bool) throws -> [String])?
     private let makeOperation: @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation
     private var operations: [UUID: any ClaudeRemoteSetupOperation] = [:]
 
@@ -40,7 +41,7 @@ public actor ClaudeRemoteSetup {
                 makeOperation: @escaping @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation,
                 validDestination: @escaping @Sendable (String) -> Bool,
                 validIdentityFile: (@Sendable (String) -> Bool)? = nil,
-                argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool) throws -> [String])? = nil) {
+                argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool, Bool) throws -> [String])? = nil) {
         self.executable = executable
         self.timeout = timeout.isFinite ? min(15, max(0.05, timeout)) : 15
         self.makeOperation = makeOperation
@@ -52,11 +53,11 @@ public actor ClaudeRemoteSetup {
     /// `requireHome` is set for automatic setup so a host without Claude is skipped.
     /// `progressRing` installs the ring's switch and Pacer's plugin there, or removes them.
     /// `automatic` marks a run nobody asked for: telemetry keys the user removed
-    /// stay removed. A custom `argumentBuilder` does not pass it.
+    /// stay removed. A custom `argumentBuilder` receives it too.
     @discardableResult public func install(target: RemoteActivityTarget, requireHome: Bool = false, progressRing: Bool = false,
                                            automatic: Bool = false) async throws -> ClaudeHookInstaller.Status {
         let arguments: [String]
-        if let argumentBuilder { arguments = try argumentBuilder(target, requireHome, progressRing) }
+        if let argumentBuilder { arguments = try argumentBuilder(target, requireHome, progressRing, automatic) }
         else { arguments = try Self.arguments(target: target, requireHome: requireHome, progressRing: progressRing, automatic: automatic,
                                               validDestination: validDestination, validIdentityFile: validIdentityFile) }
         let identifier = UUID()
