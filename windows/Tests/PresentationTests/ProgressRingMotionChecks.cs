@@ -185,7 +185,25 @@ internal static class ProgressRingMotionChecks
             Check(badge.EstimateLoops == "step", "A long step breathes past the badge arc's head");
             badge.Update(header with { ProgressFraction = null, ProgressLongStep = null, ProgressStale = null }, true);
             Check(!badge.ShowsEstimate && badge.EstimateLoops == "", "Without an estimate the orbit returns");
+            // Several tasks: a task without an estimate breathes in its segment and stays out of the average.
+            EngineTaskShare reportedShare = new("codex", 0.5, false), waitingShare = new("claude", null, false);
+            var several = new EngineHeader(2, null, new Dictionary<string, int> { ["codex"] = 1, ["claude"] = 1 }, null, null, null, false, "2",
+                ProgressTasks: [reportedShare, waitingShare], ProgressAverage: 0.5, ProgressAverageStale: false, ProgressAverageProvider: "codex", ProgressReported: 1, ProgressSegments: true);
+            badge.Update(several, true, new BadgeOptions(MultiRing: "segments"));
+            Check(badge.RingMode == "segments" && badge.SegmentCount == 2 && badge.SegmentBreathing, "A task without an estimate breathes in its segment");
+            badge.Update(several, false, new BadgeOptions(MultiRing: "segments"));
+            Check(badge.RingMode == "segments" && !badge.SegmentBreathing, "Reduced motion keeps only the segment's track");
+            badge.Update(several with { ProgressTasks = [reportedShare, waitingShare with { Fraction = 0.2 }], ProgressAverage = 0.35, ProgressReported = 2 }, true, new BadgeOptions(MultiRing: "segments"));
+            Check(badge.RingMode == "segments" && !badge.SegmentBreathing, "An estimate stops the segment's breath");
+            badge.Update(several with { ProgressTasks = [reportedShare with { Fraction = null }, waitingShare], ProgressAverage = null, ProgressReported = 0, ProgressSegments = false },
+                true, new BadgeOptions(MultiRing: "average", MultiCore: "percent"));
+            Check(badge.RingMode == "orbit" && badge.CoreText == "2", "With no estimate at all the ring shows the services");
+            badge.Update(several with { ActiveCount = 5, ActiveCountText = "5", ProgressSegments = false }, true, new BadgeOptions(MultiRing: "segments", MultiCore: "percent"));
+            Check(badge.RingMode == "average" && badge.CoreText == "5", "More tasks than segments give way to the average and keep the count");
+            badge.Update(several, true, new BadgeOptions(MultiRing: "average", MultiCore: "percent"));
+            Check(badge.RingMode == "average" && badge.CoreText == "50", "The chosen average counts only reported tasks and shows its percent");
             badge.Update(new EngineHeader(0, "checkmark.circle", new Dictionary<string, int>(), null, "checkmark.circle", "claude", true, "0"), true);
+            Check(!badge.SegmentBreathing, "Leaving the segments stops their breath");
             Check(badge.CoreIsSolid, "When everything has ended the core is a solid disc under a dark mark");
             host.Children.Remove(badge);
             Console.WriteLine("PASS progress ring: comet, running light, long-step breath, breathing, reduced motion, completion sweeps, Codex completion-only pulses, continuous downward rebuilds, one-time arrivals, stage changes, badge estimate and real Unloaded cleanup");

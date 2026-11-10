@@ -37,6 +37,11 @@ public sealed class ActivityBadge : Grid
     // One arc per running task, filled to its estimate.
     private readonly SegmentPaint segments = new() { Width = 20, Height = 20, Visibility = Visibility.Collapsed, IsHitTestVisible = false,
         HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    // The whole segments of tasks without an estimate, breathing together over their tracks.
+    private readonly SegmentPaint segmentBreath = new() { Breathing = true, Width = 20, Height = 20, Opacity = 0, Visibility = Visibility.Collapsed,
+        IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    private AnimationLease? segmentBreathLoop;
+    private bool segmentBreathWanted;
     private static Brush SoftCore => PacerPalette.Overlay(18);
     private string? estimateProvider;
     private bool estimateWhite, segmentsShown;
@@ -47,6 +52,8 @@ public sealed class ActivityBadge : Grid
     internal string CoreText => core.Child is TextBlock text ? text.Text : "";
     internal bool ShowsHalo => halo.Visibility == Visibility.Visible;
     internal int SegmentCount => segmentsShown ? segments.Count : 0;
+    /// Whether segments of tasks without an estimate are breathing; read by the presentation checks.
+    internal bool SegmentBreathing => segmentBreathLoop != null;
     private System.Windows.Shapes.Path? ripple;
     private bool blooming;
     internal (bool Ripple, bool Bloom, double Scale) TransientMotion => (ripple != null, blooming, bloom.ScaleX);
@@ -86,9 +93,9 @@ public sealed class ActivityBadge : Grid
         paint.RenderTransform = rotation; paint.RenderTransformOrigin = new Point(0.5, 0.5); paint.CacheMode = new BitmapCache(2);
         clipped.Children.Add(paint);
         estimate.Children.Add(estimateArc); estimate.Children.Add(estimateFlow); estimate.Children.Add(estimateStep);
-        Children.Add(halo); Children.Add(track); Children.Add(clipped); Children.Add(segments); Children.Add(estimate); Children.Add(core); Children.Add(ending);
+        Children.Add(halo); Children.Add(track); Children.Add(clipped); Children.Add(segments); Children.Add(segmentBreath); Children.Add(estimate); Children.Add(core); Children.Add(ending);
         SizeChanged += (_, _) => UpdateClip();
-        IsVisibleChanged += (_, _) => { UpdateRotation(); if (!IsVisible) StopTransient(); };
+        IsVisibleChanged += (_, _) => { UpdateRotation(); if (!IsVisible) StopTransient(); UpdateSegmentBreath(); };
         Loaded += (_, _) =>
         {
             orbitSource = PresentationSource.FromVisual(this) as HwndSource; orbitSource?.AddHook(OrbitMessage);
@@ -96,7 +103,7 @@ public sealed class ActivityBadge : Grid
         };
         Unloaded += (_, _) =>
         {
-            StopRotation(); StopTransient(); StopEstimate(); orbit?.Dispose(); orbit = null;
+            StopRotation(); StopTransient(); StopEstimate(); segmentBreathWanted = false; UpdateSegmentBreath(); orbit?.Dispose(); orbit = null;
             if (orbitSource is { IsDisposed: false }) orbitSource.RemoveHook(OrbitMessage); orbitSource = null;
         };
     }
@@ -115,20 +122,28 @@ public sealed class ActivityBadge : Grid
         canAnimate = animations ?? SystemParameters.ClientAreaAnimation;
         bool reduce = !canAnimate;
         // Several running tasks can show their estimates instead of the services:
-        // the average as one arc, or one arc per task. A request keeps the amber disc.
+        // the average as one arc, or one arc per task. A request keeps the amber
+        // disc. As Core's HeaderActivity.multiTaskRing: tasks without an estimate
+        // never count toward the average and breathe in their segment; with no
+        // estimate at all the ring shows the services; more tasks than segments
+        // give way to the average.
         bool several = value.ActiveCount > 1 && value.Attention == null;
-        bool average = several && choice.MultiRing == "average" && value.ProgressAverage != null;
-        segmentsShown = several && choice.MultiRing == "segments" && value.ProgressSegments == true && value.ProgressTasks is { Count: > 1 };
+        bool estimates = several && choice.MultiRing != "service" && value.ProgressAverage != null;
+        segmentsShown = estimates && choice.MultiRing == "segments" && value.ProgressSegments == true && value.ProgressTasks is { Count: > 1 };
+        bool average = estimates && !segmentsShown;
         estimateProvider = average ? value.ProgressAverageProvider : null;
         estimateWhite = average && value.ProgressAverageProvider == null;
         var shown = average ? value with { ProgressFraction = value.ProgressAverage, ProgressStale = value.ProgressAverageStale, ProgressLongStep = false } : value;
-        string? percent = average && choice.MultiCore == "percent" ? Percent(value.ProgressAverage!.Value)
+        // Only the chosen average shows its percent; segments that give way to it keep the count.
+        string? percent = average && choice.MultiRing == "average" && choice.MultiCore == "percent" ? Percent(value.ProgressAverage!.Value)
             : choice.SinglePercent && value.ActiveCount == 1 && value.Attention == null && value.ProgressFraction is double single ? Percent(single) : null;
         Width = percent == null && value.CoreSymbol == null && value.ActiveCount >= 10 ? 27 : 20;
         paint.Update(value.Orbit, !reduce);
         track.BorderBrush = PacerPalette.Overlay(26);
-        segments.Update(segmentsShown ? value.ProgressTasks : null);
-        segments.Visibility = segmentsShown ? Visibility.Visible : Visibility.Collapsed;
+        segments.Update(segmentsShown ? value.ProgressTasks : null); segmentBreath.Update(segmentsShown ? value.ProgressTasks : null);
+        segments.Visibility = segmentBreath.Visibility = segmentsShown ? Visibility.Visible : Visibility.Collapsed;
+        segmentBreathWanted = segmentsShown && !reduce && value.ProgressTasks!.Any(task => task.Fraction == null);
+        UpdateSegmentBreath();
         bool hasOrbit = value.Orbit.Values.Any(count => count > 0) && shown.ProgressFraction == null && !segmentsShown;
         track.Visibility = clipped.Visibility = hasOrbit ? Visibility.Visible : Visibility.Collapsed;
         UpdateEstimate(shown, !reduce);
@@ -235,17 +250,32 @@ public sealed class ActivityBadge : Grid
             estimateStepLoop?.Dispose(); estimateStepLoop = null; estimateStep.BeginAnimation(OpacityProperty, null);
             if (live && step)
             {
-                var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-                var breath = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.StepPeriod), RepeatBehavior = RepeatBehavior.Forever,
-                    BeginTime = TimeSpan.FromSeconds(-(now % EstimatePaint.StepPeriod)) };
-                breath.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-                breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.85, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod / 2)), ease));
-                breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod)), ease));
-                Timeline.SetDesiredFrameRate(breath, 30);
-                estimateStepLoop = new AnimationLease(breath, clock => estimateStep.ApplyAnimationClock(OpacityProperty, clock));
+                estimateStepLoop = new AnimationLease(StepBreath(now), clock => estimateStep.ApplyAnimationClock(OpacityProperty, clock));
             }
         }
         if (estimateStepLoop == null) estimateStep.Opacity = step ? 0.55 : 0;
+    }
+    /// The long step's breath, 0.2 to 0.85 and back over its period, in phase
+    /// with every other breath on the shared clock.
+    private static DoubleAnimationUsingKeyFrames StepBreath(double now)
+    {
+        var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+        var breath = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.StepPeriod), RepeatBehavior = RepeatBehavior.Forever,
+            BeginTime = TimeSpan.FromSeconds(-(now % EstimatePaint.StepPeriod)) };
+        breath.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.85, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod / 2)), ease));
+        breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod)), ease));
+        Timeline.SetDesiredFrameRate(breath, 30);
+        return breath;
+    }
+    /// Segments of tasks without an estimate breathe together while the badge
+    /// shows; reduced motion leaves their tracks, and a hidden badge stops.
+    private void UpdateSegmentBreath()
+    {
+        bool live = segmentBreathWanted && IsVisible;
+        if (live == (segmentBreathLoop != null)) return;
+        segmentBreathLoop?.Dispose(); segmentBreathLoop = null; segmentBreath.BeginAnimation(OpacityProperty, null); segmentBreath.Opacity = 0;
+        if (live) segmentBreathLoop = new AnimationLease(StepBreath(TaskProgressRing.Now), clock => segmentBreath.ApplyAnimationClock(OpacityProperty, clock));
     }
     private void StopEstimate()
     {
@@ -357,6 +387,8 @@ internal sealed class SegmentPaint : FrameworkElement
 {
     private EngineTaskShare[] tasks = [];
     internal int Count => tasks.Length;
+    /// The breathing layer: only the whole segments of tasks without an estimate.
+    internal bool Breathing { get; init; }
     internal void Update(IReadOnlyList<EngineTaskShare>? value)
     {
         var next = value?.ToArray() ?? [];
@@ -374,6 +406,11 @@ internal sealed class SegmentPaint : FrameworkElement
         {
             var color = PacerPalette.Provider(tasks[index].Provider) is SolidColorBrush brush ? brush.Color : PacerPalette.Neutral;
             double start = gap / 2 + index * (span + gap);
+            if (Breathing)
+            {
+                if (tasks[index].Fraction == null) drawing.DrawGeometry(null, Pen(color), EstimatePaint.Arc(center, radius, start, start + span));
+                continue;
+            }
             drawing.DrawGeometry(null, Pen(EstimatePaint.WithAlpha(color, 0.26)), EstimatePaint.Arc(center, radius, start, start + span));
             if (tasks[index].Fraction is not double fraction || fraction <= 0.002) continue;
             // An estimate that has not changed for two minutes fades.
