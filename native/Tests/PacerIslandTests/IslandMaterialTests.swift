@@ -217,6 +217,18 @@ final class IslandMaterialTests: XCTestCase {
         XCTAssertEqual(tiny.font.pointSize, 11.5 * AlternatingQuotaText.minimumScale, accuracy: 0.001, "It stops at 60%, as the other numbers do")
     }
 
+    func testPercentKeepsItsDigitsTogetherWithAGapBeforeTheUnit() {
+        let text = AlternatingQuotaText(entries: [], animates: false)
+        let value = text.attributed(.init(text: "298%", color: .white))
+        XCTAssertEqual(value.string, "298%")
+        let kerns = (0..<value.length).map { (value.attribute(.kern, at: $0, effectiveRange: nil) as? CGFloat) ?? 0 }
+        XCTAssertEqual(Array(kerns.prefix(2)), [0, 0], "Digits keep their natural spacing")
+        XCTAssertEqual(kerns[2], 1.5, accuracy: 0.001, "Only the last digit opens the gap before %")
+        XCTAssertEqual(kerns[3], 0)
+        let plain = text.attributed(.init(text: "¥86", color: .white))
+        XCTAssertNil(plain.attribute(.kern, at: 1, effectiveRange: nil), "A value without a unit is not spaced")
+    }
+
     func testRingsDimInStepWithTheValueOnlyWhenAsked() throws {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 24), styleMask: .borderless, backing: .buffered, defer: false)
         let view = QuotaRingsView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))

@@ -73,8 +73,13 @@ struct AlternatingQuotaText: NSViewRepresentable {
         let value = NSMutableAttributedString()
         let percent = entry.splitsUnit && entry.text.count > 1 && entry.text.hasSuffix("%")
         let number = percent ? String(entry.text.dropLast()) : entry.text
-        value.append(NSAttributedString(string: number, attributes: [.font: font, .foregroundColor: entry.color,
-            .kern: percent ? max(1, font.pointSize * 1.5 / 13) : 0]))
+        let digits = NSMutableAttributedString(string: number, attributes: [.font: font, .foregroundColor: entry.color])
+        // The gap before the unit sits on the last digit only; kerning the
+        // whole number would space every digit apart.
+        if percent, let last = number.indices.last {
+            digits.addAttribute(.kern, value: max(1, font.pointSize * 1.5 / 13), range: NSRange(last..., in: number))
+        }
+        value.append(digits)
         if percent {
             value.append(NSAttributedString(string: "%", attributes: [
                 .font: NSFont.systemFont(ofSize: unitSize, weight: .medium), .foregroundColor: unitColor]))
