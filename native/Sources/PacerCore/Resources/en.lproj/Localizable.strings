@@ -1086,8 +1086,6 @@
 "main.collapsed.selected" = "Selected";
 "main.collapsed.add" = "Add";
 "main.collapsed.remove" = "Remove";
-"main.collapsed.shown" = "On the bar";
-"main.collapsed.hidden" = "Not on the bar";
 "main.collapsed.nothing_now" = "%@ has nothing to show right now.";
 "main.collapsed.rings_custom" = "Rings chosen by hand";
 "main.collapsed.warnings_choose" = "Choose Warnings in Notifications";
@@ -1124,14 +1122,11 @@
 "main.panel.subtitle" = "Click a block for its settings. Drag it to change the order.";
 "main.panel.blocks" = "Blocks";
 "main.panel.selected" = "Selected";
-"main.panel.shown" = "In the panel";
-"main.panel.hidden" = "Not in the panel";
 "main.panel.always" = "Always shown";
 "main.panel.unavailable" = "Shows once %@ is on.";
 "main.panel.last" = "The panel keeps at least one block.";
 "main.panel.move_up" = "Move Up";
 "main.panel.move_down" = "Move Down";
-"main.panel.automatic" = "Automatic: follows the services you turn on";
 "main.panel.restore" = "Restore Automatic";
 "main.panel.page_size" = "Tasks per page";
 "main.panel.page_size_help" = "More tasks turn pages.";
@@ -1170,7 +1165,6 @@
 "main.panel.elsewhere_help" = "Charged to the account with no task on this computer.";
 "main.panel.week_line" = "Reference line";
 "main.panel.week_line_help" = "The daily budget, or else the daily average.";
-"main.panel.actions" = "In the header";
 "main.notifications.retention_moved" = "Keep Ended Tasks is now set in Expanded Panel › Task List.";
 "main.panel.open" = "Open Expanded Panel";
 "main.panel.automatic_short" = "Automatic";

@@ -1086,8 +1086,6 @@
 "main.collapsed.selected" = "选中的组件";
 "main.collapsed.add" = "添加";
 "main.collapsed.remove" = "移除";
-"main.collapsed.shown" = "已在折叠栏";
-"main.collapsed.hidden" = "不在折叠栏";
 "main.collapsed.nothing_now" = "%@现在没有内容可显示。";
 "main.collapsed.rings_custom" = "已手动选择圆环";
 "main.collapsed.warnings_choose" = "在“通知”里选择显示哪些警告";
@@ -1124,14 +1122,11 @@
 "main.panel.subtitle" = "点区块查看设置，拖动可以换顺序。";
 "main.panel.blocks" = "区块";
 "main.panel.selected" = "选中的区块";
-"main.panel.shown" = "已在面板";
-"main.panel.hidden" = "不在面板";
 "main.panel.always" = "始终显示";
 "main.panel.unavailable" = "启用 %@ 后显示。";
 "main.panel.last" = "面板至少保留一个区块。";
 "main.panel.move_up" = "上移";
 "main.panel.move_down" = "下移";
-"main.panel.automatic" = "自动：跟随启用的服务";
 "main.panel.restore" = "恢复自动";
 "main.panel.page_size" = "每页任务";
 "main.panel.page_size_help" = "更多任务左右翻页。";
@@ -1170,7 +1165,6 @@
 "main.panel.elsewhere_help" = "账户扣了费、本机没有对应任务。";
 "main.panel.week_line" = "参考线";
 "main.panel.week_line_help" = "有每日预算画预算，否则画日均。";
-"main.panel.actions" = "放在标题行";
 "main.notifications.retention_moved" = "「结束的任务保留」移到了「展开面板 › 任务列表」。";
 "main.panel.open" = "打开展开面板";
 "main.panel.automatic_short" = "自动";
