@@ -34,10 +34,12 @@ void pacer_telemetry_close(void *client);
 void *pacer_http_stream_create(void);
 int pacer_http_stream_open(void *stream, const uint16_t *host, uint16_t port, int secure, const uint16_t *path,
                            const uint16_t *headers, const uint16_t *agent, const uint16_t *proxy,
-                           uint32_t timeout_ms, uint32_t *status);
+                           uint32_t timeout_ms, uint32_t *status, int websocket);
 int pacer_http_stream_header(void *stream, const uint16_t *name, uint16_t *value, size_t capacity);
 int pacer_http_stream_raw_headers(void *stream, uint16_t *value, size_t capacity);
 int64_t pacer_http_stream_read(void *stream, uint8_t *bytes, size_t capacity, uint32_t timeout_ms);
+int pacer_websocket_send(void *stream, const uint8_t *bytes, size_t size, uint32_t timeout_ms);
+int64_t pacer_websocket_read(void *stream, uint8_t *bytes, size_t capacity, uint32_t timeout_ms, int *complete);
 void pacer_http_stream_cancel(void *stream);
 void pacer_http_stream_close(void *stream);
 // A loopback HTTP proxy that tunnels one request target through SOCKS4 (1),
@@ -69,6 +71,7 @@ int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity
 int pacer_process_image(uint32_t pid, uint64_t started, pacer_process_identity *identity,
                         uint16_t *image, size_t image_capacity);
 int pacer_process_parents(pacer_process_identity *identities, size_t capacity);
+int pacer_process_durable_environment(uint32_t pid, uint64_t started, uint16_t *environment, size_t capacity);
 typedef struct { uint64_t volume, low, high, modified, size; } pacer_application_stamp;
 int pacer_process_application(uint32_t pid, uint64_t started, uint16_t *image, size_t capacity,
                               uint16_t *application_id, size_t id_capacity, pacer_application_stamp *stamp);

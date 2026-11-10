@@ -127,6 +127,7 @@ public struct WindowsClaudeRuntimeStore {
             guard data.count == file.bytes, Self.digest(data) == file.sha256 else { throw Failure.invalidRuntime }
             bytes.append((file, data))
         }
+        var identifier = pin.identifier
         if let progressReporter {
             let name = WindowsCodexProgressPaths.scriptName
             guard directoryName == WindowsCodexProgressPaths.directoryName, !package.files.contains(where: { $0.name == name }) else {
@@ -135,6 +136,9 @@ public struct WindowsClaudeRuntimeStore {
             let file = RuntimeFile(name: name, sha256: Self.digest(progressReporter), bytes: progressReporter.count)
             try validate(file)
             bytes.append((file, progressReporter))
+            // Store Codex can prefer a private AppData copy at the previous path.
+            // A reporter change needs a new path even when Python stays pinned.
+            identifier += "-" + file.sha256.prefix(12)
         }
         try createDirectory(root)
         let marker = root.appendingPathComponent(Self.marker)
@@ -148,7 +152,7 @@ public struct WindowsClaudeRuntimeStore {
         if !record.homes.contains(where: { $0.caseInsensitiveCompare(path) == .orderedSame }) { record.homes.append(path) }
         guard record.homes.count <= 128 else { throw Failure.invalidRuntime }
         try write(record, marker)
-        let directory = root.appendingPathComponent(pin.identifier, isDirectory: true)
+        let directory = root.appendingPathComponent(identifier, isDirectory: true)
         try createDirectory(directory)
         let versionMarker = directory.appendingPathComponent(Self.marker)
         if storage.exists(versionMarker) {
@@ -164,7 +168,7 @@ public struct WindowsClaudeRuntimeStore {
             if storage.exists(target), let old = try? WindowsFileSystem().read(target, offset: 0, maximumBytes: file.bytes + 1), old == data { continue }
             try storage.replace(target, with: data, permissions: 0o700)
         }
-        return python(identifier: pin.identifier)
+        return python(identifier: identifier)
     }
     private func validate(_ file: RuntimeFile) throws {
         guard !file.name.isEmpty, file.name.utf16.count < 200, file.name.last != ".", file.name.last != " ",
@@ -177,9 +181,14 @@ public struct WindowsClaudeRuntimeStore {
         let value = try read(VersionClaim.self, directory.appendingPathComponent(Self.marker))
         guard value.schemaVersion == 1, value.owner == "CodexPacer", value.files.count <= 128,
               Set(value.files.map(\.name)).count == value.files.count,
-              directory.lastPathComponent == value.version + "-" + value.archiveSHA256.prefix(12),
               value.archiveSHA256.range(of: #"^[0-9a-f]{64}\z"#, options: .regularExpression) != nil else { throw Failure.unsafeRuntime }
         for file in value.files { try validate(file) }
+        let identifier = value.version + "-" + value.archiveSHA256.prefix(12)
+        if directory.lastPathComponent != identifier {
+            guard directoryName == WindowsCodexProgressPaths.directoryName,
+                  let reporter = value.files.first(where: { $0.name == WindowsCodexProgressPaths.scriptName }),
+                  directory.lastPathComponent == identifier + "-" + reporter.sha256.prefix(12) else { throw Failure.unsafeRuntime }
+        }
         return value
     }
     private func references(homes: [URL], using config: any ClaudeHookStorage) throws -> [String] {

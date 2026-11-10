@@ -5,6 +5,7 @@ struct RemoteControlCatalogAuthorization: Sendable {
     let accountID: String
     let accountUserIDs: [String]
     let backendOrigin: URL
+    let isFedRAMP: Bool
 
     init(account: Data, auth: Data) throws {
         let accountFields = try JSONFieldView.document(account).fields(["account", "workspaceRouting"])
@@ -18,7 +19,8 @@ struct RemoteControlCatalogAuthorization: Sendable {
         let encoded = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         guard let payload = Data(base64Encoded: encoded + String(repeating: "=", count: (4 - encoded.count % 4) % 4)),
               let claims = try JSONFieldView.document(payload).fields(["https://api.openai.com/auth"])["https://api.openai.com/auth"] else { throw CodexClientError.invalidResponse }
-        let fields = try claims.fields(["chatgpt_account_id", "account_id", "chatgpt_account_user_id", "account_user_id", "user_id"])
+        let fields = try claims.fields(["chatgpt_account_id", "account_id", "chatgpt_account_user_id", "account_user_id", "user_id",
+                                       "is_fedramp", "chatgpt_account_is_fedramp"])
         guard let accountID = fields["chatgpt_account_id"]?.string() ?? fields["account_id"]?.string(),
               let user = fields["chatgpt_account_user_id"]?.string() ?? fields["account_user_id"]?.string(),
               !accountID.isEmpty, !user.isEmpty else { throw CodexClientError.invalidResponse }
@@ -30,6 +32,7 @@ struct RemoteControlCatalogAuthorization: Sendable {
               url.port == nil || url.port == 443, url.query == nil, url.fragment == nil,
               url.path.isEmpty || url.path == "/" else { throw CodexClientError.invalidResponse }
         self.token = token; self.accountID = accountID; backendOrigin = url
+        isFedRAMP = fields["is_fedramp"]?.boolean() == true || fields["chatgpt_account_is_fedramp"]?.boolean() == true
         accountUserIDs = [user] + (fields["user_id"]?.string().flatMap { $0 != user ? [$0] : nil } ?? [])
     }
 }

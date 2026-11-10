@@ -126,7 +126,8 @@ internal static class Program
             {
                 await using var client = new EngineClient();
                 EngineSnapshot? latest = null; client.Snapshot += value => latest = value;
-                await client.StartAsync(engine, false, "en", configuration: new { enabledProviders = new[] { "claude" }, claudeHome = root, hideProjects = true });
+                await client.StartAsync(engine, false, "en", configuration: new { enabledProviders = new[] { "claude" },
+                    claudeHome = root, hideProjects = true }, readOnlyDiagnostics: true);
                 await client.SendAsync("setExpanded", new { expanded = true });
                 string session = Guid.NewGuid().ToString("D"), prompt = Guid.NewGuid().ToString("D"), assistant = Guid.NewGuid().ToString("D"), stamp = DateTimeOffset.UtcNow.ToString("O");
                 string Row(object value) => JsonSerializer.Serialize(value) + "\n";

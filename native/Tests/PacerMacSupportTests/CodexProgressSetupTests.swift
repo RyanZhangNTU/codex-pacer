@@ -1,5 +1,5 @@
 import Darwin
-import PacerMacSupport
+@testable import PacerMacSupport
 import XCTest
 @testable import PacerCore
 
@@ -61,6 +61,43 @@ final class CodexProgressSetupTests: XCTestCase {
         XCTAssertEqual(status, .ready)
         XCTAssertTrue(flagged(home))
         XCTAssertTrue(try accepts(home))
+    }
+
+    func testDurableReporterPersistsOnlyAcceptedReceiptsWithMatchingHostIdentity() throws {
+        let home = try profile()
+        try FileManager.default.createDirectory(at: CodexProgressSetup.flag(home).deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try CodexProgressSetup.on.write(to: CodexProgressSetup.flag(home))
+        let mailbox = MacDurableProgressMailbox(home: home)
+        try mailbox.prepare()
+        var reporter = CodexProgressReporter(home: home, capturesDurableReceipts: true)
+        let thread = "019a0000-0000-7000-8000-000000000001"
+        let turn = "019a0000-0000-7000-8000-000000000002"
+        let other = "019a0000-0000-7000-8000-000000000003"
+        func send(percent: Int, contextThread: String, id: String) throws -> Bool {
+            let message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": "tools/call", "params": [
+                "name": "report_progress", "arguments": ["percent": percent],
+                "_meta": ["threadId": thread, "callId": id, "x-codex-turn-metadata": [
+                    "thread_id": contextThread, "turn_id": turn, "workspaces": ["synthetic": "discarded"]
+                ]]
+            ]]
+            let bytes = try JSONSerialization.data(withJSONObject: message) + Data([10])
+            let reply = try XCTUnwrap(reporter.receive(bytes).first)
+            let result = try XCTUnwrap(JSONSerialization.jsonObject(with: reply) as? [String: Any])
+            for receipt in reporter.takeDurableReceipts() { mailbox.record(receipt) }
+            return (result["result"] as? [String: Any])?["isError"] as? Bool == false
+        }
+        XCTAssertTrue(try send(percent: 25, contextThread: thread, id: "first"))
+        XCTAssertEqual(mailbox.read()[thread + ":" + turn]?.percent, 25)
+        XCTAssertTrue(try send(percent: 99, contextThread: other, id: "wrong-thread"))
+        XCTAssertFalse(try send(percent: 101, contextThread: thread, id: "out-of-range"))
+        XCTAssertEqual(mailbox.read()[thread + ":" + turn]?.percent, 25)
+        XCTAssertTrue(try send(percent: 60, contextThread: thread, id: "second"))
+        XCTAssertEqual(mailbox.read()[thread + ":" + turn]?.percent, 60)
+        XCTAssertNil(mailbox.read()[thread + ":" + other])
+        try mailbox.discard()
+        XCTAssertTrue(try send(percent: 90, contextThread: thread, id: "after-remove"))
+        XCTAssertTrue(mailbox.read().isEmpty)
     }
 
     func testTurningOffDuringASlowSetupStopsReportingAndKeepsItOff() async throws {

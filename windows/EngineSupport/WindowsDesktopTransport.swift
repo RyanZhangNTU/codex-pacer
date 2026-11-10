@@ -9,6 +9,7 @@ import CWindowsSupport
 final class WindowsDesktopTransport: @unchecked Sendable {
     enum Failure: Error, Equatable { case unavailable, identityMismatch, invalidEndpoint, closed, timedOut, cancelled, invalidFrame }
     private let handle: UnsafeMutableRawPointer
+    let codexPackage: URL?
     private let reader = NSLock(), writer = NSLock()
     init(endpoint: String, peerRoot: URL, packageFamily: String? = nil, timeout: UInt32 = 1000) throws {
         guard peerRoot.isFileURL else { throw Failure.invalidEndpoint }
@@ -26,6 +27,7 @@ final class WindowsDesktopTransport: @unchecked Sendable {
         } else { connected = pacer_pipe_open(name, folder, nil, timeout, &reason) }
         guard let connected else { throw reason == 2 ? Failure.identityMismatch : Failure.unavailable }
         handle = connected
+        codexPackage = packageFamily == WindowsCodexExecutableDiscovery.packageFamily ? peerRoot.deletingLastPathComponent() : nil
     }
     deinit { pacer_pipe_close(handle) }
     func cancel() { withExtendedLifetime(self) { pacer_pipe_cancel(handle) } }
@@ -37,7 +39,7 @@ final class WindowsDesktopTransport: @unchecked Sendable {
     static func connectCodex(packageLocations: () -> [URL] = WindowsCodexExecutableDiscovery.packageLocations) throws -> WindowsDesktopTransport {
         var identityMismatch = false
         for root in packageLocations().prefix(12) {
-            do { return try WindowsDesktopTransport(endpoint: "codex-ipc", peerRoot: root.appendingPathComponent("app"), packageFamily: "OpenAI.Codex_2p2nqsd0c76g0") }
+            do { return try WindowsDesktopTransport(endpoint: "codex-ipc", peerRoot: root.appendingPathComponent("app"), packageFamily: WindowsCodexExecutableDiscovery.packageFamily) }
             catch Failure.identityMismatch { identityMismatch = true }
         }
         throw identityMismatch ? Failure.identityMismatch : Failure.unavailable

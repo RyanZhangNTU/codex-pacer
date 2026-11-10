@@ -28,7 +28,7 @@ public struct WindowsCodexProgressRuntime {
         do { homes = try runtime.withLock { try runtime.homes(including: explicit) } }
         catch { homes = explicit; failed = true }
         let paths = paths
-        for home in homes where CodexProgressSetup.wasConfigured(in: home) {
+        for home in homes where CodexProgressSetup.wasConfigured(in: home) || WindowsDurableProgressSetup.wasConfigured(in: home) {
             let status = await CodexProgressSetup.apply(home: home, reporter: nil, storage: WindowsLocalProfileStorage(), checkOnly: checkOnly, owns: {
                 paths.owns($0, home: home) || $0.isNative(named: "PacerEngine.exe", home: home)
             }) {
@@ -36,7 +36,8 @@ public struct WindowsCodexProgressRuntime {
                     CodexClient(executable: $0, home: home, timeout: 3)
                 }
             }
-            if status != nil { failed = true }
+            let removedDurable = await WindowsDurableProgressSetup.apply(home: home, reporter: nil, checkOnly: checkOnly, fallbackExecutable: executable)
+            if status != nil || !removedDurable { failed = true }
         }
         if failed { throw WindowsClaudeRuntimeStore.Failure.referenced }
     }

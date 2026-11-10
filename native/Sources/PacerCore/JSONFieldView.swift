@@ -22,7 +22,7 @@ package struct JSONFieldView {
     }
     package var isObject: Bool { data[range.lowerBound] == 123 }
     var isArray: Bool { data[range.lowerBound] == 91 }
-    var isNull: Bool { range.count == 4 && data[range.lowerBound] == 110 }
+    package var isNull: Bool { range.count == 4 && data[range.lowerBound] == 110 }
     var hasNonemptyString: Bool { data[range.lowerBound] == 34 && range.count > 2 }
     /// Compare a reserved protocol literal without decoding a user's text.
     func matchesStringLiteral(_ value: String) -> Bool {
@@ -138,7 +138,7 @@ package struct JSONFieldView {
               let value = try? JSONDecoder().decode(String.self, from: data.subdata(in: range)) else { return nil }
         return String(value.prefix(limit))
     }
-    func integer() -> Int? {
+    package func integer() -> Int? {
         guard range.count <= 24, let text = String(data: data.subdata(in: range), encoding: .utf8),
               !text.contains(".") && !text.contains("e") && !text.contains("E") else { return nil }
         return Int(text)

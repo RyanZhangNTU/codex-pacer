@@ -26,7 +26,8 @@ public struct WindowsCodexProgressPaths: Sendable {
         let version = python.deletingLastPathComponent()
         return python.lastPathComponent == "python.exe" &&
             version.deletingLastPathComponent().path.caseInsensitiveCompare(root.path) == .orderedSame &&
-            version.lastPathComponent.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}-[0-9a-f]{12}\z"#, options: .regularExpression) != nil &&
+            // The Python-only directory is still owned during migration and uninstall.
+            version.lastPathComponent.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}-[0-9a-f]{12}(?:-[0-9a-f]{12})?\z"#, options: .regularExpression) != nil &&
             command.arguments == self.command(python: python, home: home).arguments
     }
 }

@@ -16,6 +16,7 @@ internal static class ConversationNavigationChecks
 {
     internal static async Task Run(string provider, string language, bool motion)
     {
+        if (provider == "codex" && language == "en" && motion) await CheckDotRoute();
         var opened = new List<EngineNavigationPlan>(); bool succeed = false;
         TaskCompletionSource<bool>? dispatch = null;
         await using var engine = new EngineClient();
@@ -99,6 +100,20 @@ internal static class ConversationNavigationChecks
             Check(engine.LatestSnapshot!.Tasks.Count == 0 && island.LogicalTarget.Height > 36, "A disabled source must revoke old launch callbacks");
         }
         finally { dispatch.TrySetResult(false); island.StopPresentation(); island.AllowClose = true; island.Close(); }
+    }
+    private static async Task CheckDotRoute()
+    {
+        const string family = "OpenAI.Codex_2p2nqsd0c76g0";
+        const string thread = "codex://threads/019a0000-0000-7000-8000-000000000011";
+        var launches = new List<(string Family, Uri Destination)>();
+        var apps = new WindowsDesktopApplications(registered: value => value == family,
+            activateProtocol: (target, uri) => { launches.Add((target, uri)); return Task.FromResult(true); });
+        var plan = new EngineNavigationPlan(Guid.NewGuid().ToString(), "codex", "application",
+            thread + "?hostId=durable", null, null, null);
+        Check(await apps.OpenConversationAsync(plan) && launches.Count == 1 && launches[0].Family == family
+            && launches[0].Destination.Query == "?hostId=durable", "Dot must open in the registered Codex Desktop package");
+        Check(!await apps.OpenConversationAsync(plan with { Url = thread + "?hostId=durable:other" }) && launches.Count == 1,
+            "A different host cannot use the Dot route");
     }
     private static bool Unread(EngineClient engine, string id) => engine.LatestSnapshot?.Presentation?.Rows.Any(row => row.Id == id && row.Unread) == true;
     private static EngineTaskRow State(TaskRow row) => ((TaskRowState)row.DataContext).Value;

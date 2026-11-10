@@ -10,14 +10,21 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 @main
 enum PacerMain {
     @MainActor static func main() {
-        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == CodexProgressReporter.argument {
-            var reporter = CodexProgressReporter(home: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true))
+        let arguments = CommandLine.arguments
+        let durableReporter = arguments.count == 4 && arguments[3] == CodexProgressReporter.durableArgument
+        if arguments.count == 3 || durableReporter, arguments[1] == CodexProgressReporter.argument {
+            let home = URL(fileURLWithPath: arguments[2], isDirectory: true)
+            var reporter = CodexProgressReporter(home: home, capturesDurableReceipts: durableReporter)
+            let mailbox = durableReporter ? MacDurableProgressMailbox(home: home) : nil
             var buffer = [UInt8](repeating: 0, count: 4096)
             do {
                 while true {
                     let count = Darwin.read(STDIN_FILENO, &buffer, buffer.count)
                     guard count > 0 else { break }
                     for reply in try reporter.receive(Data(buffer.prefix(count))) { try FileHandle.standardOutput.write(contentsOf: reply) }
+                    if let mailbox {
+                        for receipt in reporter.takeDurableReceipts() { mailbox.record(receipt) }
+                    }
                 }
             } catch { }
             return

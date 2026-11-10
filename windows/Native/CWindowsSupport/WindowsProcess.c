@@ -1,6 +1,7 @@
 #include "CWindowsSupport.h"
 #if defined(_WIN32)
 #include "WindowsProcessInternal.h"
+#include <shellapi.h>
 #include <tlhelp32.h>
 
 static void *pacer_token_user(HANDLE token) {
@@ -69,6 +70,76 @@ int pacer_process_parents(pacer_process_identity *identities, size_t capacity) {
     } while (Process32NextW(table, &entry));
     CloseHandle(table); return valid ? (int)count : -1;
 }
+
+static int pacer_durable_environment(WCHAR **args, int count, uint16_t *out, size_t capacity) {
+    if (count < 4 || count > 128) return 0;
+    int command = 1;
+    while (command < count && wcscmp(args[command], L"exec-server") != 0) {
+        if (wcscmp(args[command], L"--") == 0) return 0;
+        ++command;
+    }
+    if (command == count) return 0;
+    const WCHAR *id = NULL;
+    int remote = 0;
+    for (int i = command + 1; i < count && wcscmp(args[i], L"--") != 0; ++i) {
+        if (wcscmp(args[i], L"--remote") == 0 || wcsncmp(args[i], L"--remote=", 9) == 0) remote = 1;
+        else if (wcscmp(args[i], L"--environment-id") == 0) {
+            if (id != NULL || i + 1 >= count) return 0;
+            id = args[++i];
+        } else if (wcsncmp(args[i], L"--environment-id=", 17) == 0) {
+            if (id != NULL) return 0;
+            id = args[i] + 17;
+        }
+    }
+    if (!remote || id == NULL || *id == 0) return 0;
+    size_t n = 0;
+    for (; id[n] != 0; ++n) {
+        WCHAR c = id[n];
+        if (n == 128 || n + 1 >= capacity ||
+            !((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') || c == L'-' || c == L'_')) return 0;
+    }
+    memcpy(out, id, (n + 1) * sizeof(WCHAR));
+    return 1;
+}
+
+// Windows supplies a local copy of the command line; this does not read the
+// process's address space or environment. Return only a validated executor ID.
+int pacer_process_durable_environment(uint32_t pid, uint64_t started, uint16_t *environment, size_t capacity) {
+    if (started == 0 || environment == NULL || capacity == 0) return 0;
+    HANDLE process = pacer_open_user_process(pid, PROCESS_QUERY_LIMITED_INFORMATION, started);
+    if (process == NULL) return 0;
+    typedef LONG (NTAPI *QueryProcess)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    typedef struct { USHORT length, maximum; WCHAR *text; } ProcessText;
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    QueryProcess query = ntdll != NULL ? (QueryProcess)(void *)GetProcAddress(ntdll, "NtQueryInformationProcess") : NULL;
+    ULONG length = 0;
+    if (query != NULL) query(process, 60 /* ProcessCommandLineInformation */, NULL, 0, &length);
+    void *bytes = length >= sizeof(ProcessText) && length <= 128 * 1024 ? HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, length + sizeof(WCHAR)) : NULL;
+    int matched = 0;
+    if (bytes != NULL) {
+        ULONG used = 0;
+        if (query(process, 60, bytes, length, &used) >= 0) {
+            ProcessText *line = bytes;
+            uintptr_t base = (uintptr_t)bytes, text = (uintptr_t)line->text;
+            if (line->length > 0 && line->length % sizeof(WCHAR) == 0 && text >= base + sizeof(*line) &&
+                text - base <= length && line->length <= length - (text - base)) {
+                line->text[line->length / sizeof(WCHAR)] = 0;
+                int count = 0;
+                WCHAR **args = CommandLineToArgvW(line->text, &count);
+                if (args != NULL) {
+                    matched = pacer_durable_environment(args, count, environment, capacity);
+                    for (int i = 0; i < count; ++i) SecureZeroMemory(args[i], wcslen(args[i]) * sizeof(WCHAR));
+                    LocalFree(args);
+                }
+            }
+        }
+        SecureZeroMemory(bytes, length + sizeof(WCHAR));
+        HeapFree(GetProcessHeap(), 0, bytes);
+    }
+    CloseHandle(process);
+    return matched;
+}
+
 int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity *identity, uint16_t *image, size_t capacity) {
     if (!pacer_process_image(pid, started, identity, image, capacity)) return 0;
     pacer_process_identity *rows = HeapAlloc(GetProcessHeap(), 0, 8192 * sizeof(*rows));

@@ -66,6 +66,7 @@ public actor RealtimeActivityMonitor {
     private var remoteControlBindings = RemoteControlSourceBindings(hostIDs: [], authoritative: false)
     private var controlAccountScope: String?
     private var controlAuthorizationRevision: UInt64 = 0
+    private var durableAccountScope: String?
     public init(controlCatalog: RemoteControlCatalog, services: RealtimeActivityServices, retryInterval: TimeInterval = 30) {
         self.controlCatalog = controlCatalog; self.services = services
         self.retryInterval = retryInterval.isFinite ? min(30, max(0.01, retryInterval)) : 30
@@ -106,6 +107,7 @@ public actor RealtimeActivityMonitor {
         let generation = startGeneration
         if let previous = configuration, previous.home != home {
             controlAccountScope = nil; controlAuthorizationRevision = 0
+            durableAccountScope = nil
             callback = nil
             configuration = nil; retryTask?.cancel(); retryTask = nil; localCandidates = []
             let old = desktop; desktop = nil
@@ -145,9 +147,12 @@ public actor RealtimeActivityMonitor {
         let authorizationChanged = revision != controlAuthorizationRevision || scope != controlAccountScope
         if includeRemoteControl, controlAccountScope != nil, scope != controlAccountScope {
             let old = desktop; desktop = nil
+            durableAccountScope = nil
             if let local = old?.states["local"] { disconnected["local"] = local.activities.filter { [.completed, .interrupted].contains($0.phase) } }
             disconnected = disconnected.filter { !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
-            attentionRequests = attentionRequests.filter { $0.value.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) != true }
+            attentionRequests = attentionRequests.filter {
+                $0.value.sourceHostID != DurableActivityCatalog.hostID && $0.value.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) != true
+            }
             pendingHints = pendingHints.filter { !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
             lastDesktopObservedRuntimeHosts = lastDesktopObservedRuntimeHosts.filter { !$0.hasPrefix(ConnectionSource.controlPrefix) }
             desktopRetryAfter = .distantPast
@@ -171,10 +176,12 @@ public actor RealtimeActivityMonitor {
                                       accountScope: scope)
         let controlTargets = catalog.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }) }
         knownControls = controlTargets
-        let names = Dictionary(targets.map { ($0.id, $0.name) } + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
+        var names = Dictionary(targets.map { ($0.id, $0.name) } + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
+        if services.supportsDurable { names[DurableActivityCatalog.hostID] = "" }
         let desktopAvailable = services.desktopAvailable(home)
         if let current = desktop, current.source != local || !desktopAvailable {
             desktop = nil
+            durableAccountScope = nil
             await ShutdownDeadline().perform([{ await current.collector.stop() }])
             guard generation == startGeneration else { return }
             attentionRequests.removeAll(); desktopRetryAfter = .distantPast
@@ -236,7 +243,7 @@ public actor RealtimeActivityMonitor {
     public func statuses() -> [String: RuntimeStreamStatus] {
         var result = connections.mapValues { $0.state.status }
         if let desktop {
-            for (host, state) in desktop.states where state.status.connected || result[host] == nil {
+            for (host, state) in desktop.states where host != DurableActivityCatalog.hostID && (state.status.connected || result[host] == nil) {
                 // Saved routes are fallback discovery hints, not device entries.
                 // A catalog failure cannot revive deleted hosts in Settings.
                 if host.hasPrefix("remote-control:"), desktop.catalog == nil,
@@ -260,6 +267,7 @@ public actor RealtimeActivityMonitor {
         startGeneration += 1; configuration = nil; retryTask?.cancel(); retryTask = nil
         callback = nil
         let old = desktop; desktop = nil
+        durableAccountScope = nil
         attentionRequests.removeAll()
         for id in Array(connections.keys) { stop(id) }
         failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]
@@ -310,8 +318,27 @@ public actor RealtimeActivityMonitor {
     private func receiveDesktop(_ bytes: Data, id: UUID) async {
         guard var current = desktop, current.id == id,
               let frame = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return }
+        let host = frame["hostId"] as? String ?? "local"
+        let durable = host == DurableActivityCatalog.hostID
+        if durable {
+            guard services.supportsDurable, current.hosts[host] != nil else { return }
+            if frame["kind"] as? String == "durableScope" {
+                let scope = frame["scope"] as? String
+                guard scope == nil || scope?.range(of: #"^[0-9a-f]{64}\z"#, options: .regularExpression) != nil else { return }
+                durableAccountScope = scope
+                current.states.removeValue(forKey: host)
+                current.attentionThreads.removeValue(forKey: host)
+                current.observedRuntimeHosts.remove(host)
+                attentionRequests = attentionRequests.filter { $0.value.sourceHostID != host }
+                desktop = current
+                await publish()
+                return
+            }
+            guard durableAccountScope != nil else { return }
+        }
         if frame["kind"] as? String == "discovery", let host = frame["hostId"] as? String, current.hosts[host] != nil,
            let ids = frame["threadIds"] as? [String], ids.count <= 32 {
+            if durable { return } // Catalog ownership precedes the follow; no log helper.
             if services.diagnostics.enabled { services.diagnostics.record("desktopHint", source: host, frame: frame) }
             let valid = ids.filter { UUID(uuidString: $0) != nil }
             pendingHints[host, default: []].formUnion(valid)
@@ -336,12 +363,11 @@ public actor RealtimeActivityMonitor {
                     value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } ? value : nil
                 }
                 attentionRequests[key] = previous[key].flatMap { $0.kind == kind && $0.questionKey == question ? $0 : nil } ?? PendingAttentionRequest(id: key, threadID: thread.lowercased(),
-                    sourceHostID: host == "local" ? nil : host, sourceName: current.hosts[host], kind: kind, detectedAt: Date(), questionKey: question)
+                    sourceHostID: host == "local" ? nil : host, sourceName: durable ? nil : current.hosts[host], kind: kind, detectedAt: Date(), questionKey: question)
             }
         } else {
-            let host = frame["hostId"] as? String ?? "local"
-            guard host == "local" ? current.localRuntime : current.hosts[host] != nil && host.hasPrefix("remote-control:") else { return }
-            var state = current.states[host] ?? RuntimeEventState(sourceID: host == "local" ? nil : host, sourceName: current.hosts[host])
+            guard durable || (host == "local" ? current.localRuntime : current.hosts[host] != nil && host.hasPrefix("remote-control:")) else { return }
+            var state = current.states[host] ?? RuntimeEventState(sourceID: host == "local" ? nil : host, sourceName: durable ? nil : current.hosts[host])
             if host.hasPrefix("remote-control:"), ["runtimeBatch", "streamInvalidated"].contains(frame["kind"] as? String ?? "") {
                 current.observedControlHosts.insert(host)
             }
@@ -353,7 +379,6 @@ public actor RealtimeActivityMonitor {
             state.consume(frame); current.states[host] = state
             if state.status.connected { disconnected.removeValue(forKey: host) }
         }
-        let host = frame["hostId"] as? String ?? "local"
         if current.states[host]?.activities.contains(where: \.hasLiveEvidence) == true ||
             attentionRequests.values.contains(where: { ($0.sourceHostID ?? "local") == host }) {
             current.observedRuntimeHosts.insert(host)
@@ -362,7 +387,9 @@ public actor RealtimeActivityMonitor {
     }
     private func desktopClosed(id: UUID) async {
         guard let current = desktop, current.id == id else { return }
-        for (host, state) in current.states {
+        durableAccountScope = nil
+        attentionRequests = attentionRequests.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID }
+        for (host, state) in current.states where host != DurableActivityCatalog.hostID {
             disconnected[host] = state.activities.map { value in
                 var value = value
                 if ![.completed, .interrupted].contains(value.phase) { value.markUnconfirmed() }
@@ -493,7 +520,7 @@ public actor RealtimeActivityMonitor {
             unavailable: down.compactMap(\.name).sorted(), unavailableSources: down.map(\.id).sorted(),
             attention: requests.sorted { $0.detectedAt < $1.detectedAt }, names: names,
             performance: connections.values.flatMap { $0.state.performanceUpdates } + (desktop?.states.values.flatMap { $0.performanceUpdates } ?? []),
-            bindings: remoteControlBindings, attentionThreads: desktop?.attentionThreads["local"] ?? [],
+            bindings: remoteControlBindings, durableAccountScope: durableAccountScope, attentionThreads: desktop?.attentionThreads["local"] ?? [],
             observedRuntimeHosts: desktop?.observedRuntimeHosts ?? lastDesktopObservedRuntimeHosts)
         if let hosts = desktop?.states.keys { for host in hosts { desktop?.states[host]?.releasePublishedState() } }
         for id in Array(connections.keys) { connections[id]?.state.releasePublishedState() }
@@ -514,6 +541,7 @@ public struct RealtimeActivitySnapshot: Sendable {
     public let names: [SessionNameUpdate]
     public let performance: [SessionPerformanceUpdate]
     public let bindings: RemoteControlSourceBindings
+    public let durableAccountScope: String?
     public let attentionThreads: Set<String>
     public let observedRuntimeHosts: Set<String>
     /// The engine protocol distinguishes runtime evidence from pipe readiness.

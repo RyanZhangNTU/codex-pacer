@@ -47,6 +47,44 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         let groups = try XCTUnwrap((value["hooks"] as? [String: [[String: Any]]])?["SessionStart"])
         return try XCTUnwrap((groups.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String)
     }
+
+    func testCodexReporterUpgradeUsesANewPathWithTheSamePythonPin() throws {
+        let fixture = try fixture()
+        let root = fixture.root.deletingLastPathComponent().appendingPathComponent("CodexProgressRuntime")
+        let home = fixture.homes[0], package = try self.package
+        let store = WindowsClaudeRuntimeStore(codexProgressRoot: root)
+        let paths = WindowsCodexProgressPaths(root: root)
+        let legacyPython = try store.withLock { try store.ensure(package: package, home: home) }
+        let legacy = paths.command(python: legacyPython, home: home)
+        let legacyScript = URL(fileURLWithPath: legacy.arguments[2])
+        let legacyBytes = Data("# Previous reporter\n".utf8)
+        try legacyBytes.write(to: legacyScript)
+        let legacyMarker = legacyScript.deletingLastPathComponent().appendingPathComponent(".pacer-owned.json")
+        var record = try read(legacyMarker)
+        var files = try XCTUnwrap(record["files"] as? [[String: Any]])
+        files.append(["name": legacyScript.lastPathComponent, "bytes": legacyBytes.count,
+                      "sha256": WindowsClaudeRuntimeStore.digest(legacyBytes)])
+        record["files"] = files
+        try write(record, legacyMarker)
+        let legacyClaim = try Data(contentsOf: legacyMarker)
+
+        let runtime = WindowsCodexProgressRuntime(root: root)
+        let upgraded = try runtime.prepare(home: home, package: package)
+        let script = URL(fileURLWithPath: upgraded.arguments[2])
+        let bytes = try Data(contentsOf: script)
+        let directory = script.deletingLastPathComponent().lastPathComponent
+        XCTAssertEqual(directory, try WindowsPythonPin.load().identifier + "-" + WindowsClaudeRuntimeStore.digest(bytes).prefix(12))
+        XCTAssertNotEqual(upgraded.executable, legacy.executable)
+        XCTAssertTrue(paths.owns(legacy, home: home))
+        XCTAssertTrue(paths.owns(upgraded, home: home))
+        XCTAssertEqual(try Data(contentsOf: legacyScript), legacyBytes)
+        XCTAssertEqual(try Data(contentsOf: legacyMarker), legacyClaim)
+
+        try FileManager.default.removeItem(at: script)
+        XCTAssertEqual(try runtime.prepare(home: home, package: package), upgraded)
+        XCTAssertEqual(try Data(contentsOf: script), bytes)
+    }
+
     func testMultipleHomesShareRuntimeAndUninstallRestoresBoth() throws {
         let fixture = try fixture(), runtime = WindowsClaudeHookRuntime(root: fixture.root)
         for home in fixture.homes {
