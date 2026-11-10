@@ -55,10 +55,18 @@ To move the island, choose **Free Move** in **Appearance**, then drag the bar by
 All your tasks share one list. Tasks that need you come first, then running tasks, then finished ones. Each row shows the task's title and current step, where it runs if not on this computer, its output speed, how long the turn has taken, and the model.
 
 - **Click a task** to open its conversation in the app that runs it.
-- **A finished task** stays as a card until you open it, or until its retention time passes (30 minutes by default, set in **Notifications**). **Mark All as Read** clears every finished card at once.
+- **A finished task** stays as a card until you open it, or until its retention time passes (30 minutes by default, set on the task list in **Expanded Panel**). **Mark All as Read** clears every finished card at once.
 - **Agents a task starts** are grouped under it.
-- **App buttons** in the header open Codex, Claude or DeepSeek Harness directly.
-- With more than three tasks, use the arrows to page through them.
+- **App buttons** in the header open Codex, Claude or DeepSeek Harness directly. Buttons you take out of the header wait in the **⋯** menu, beside **Refresh** and **Quit**.
+- With more tasks than fit on a page (three by default), use the arrows to page through them.
+
+### Arranging the panel
+
+The panel is a column of blocks: the task list, a quota block for each service, DeepSeek's balance, where today's DeepSeek spend went, and its last 7 days. On the **Expanded Panel** page, drag a block in the outline to move it, click it to see its choices, or add and remove blocks from the list beside it. Until you change anything, the panel follows the services you turn on. **Restore Automatic** goes back to that.
+
+- **Task list:** 3 to 6 tasks per page, rows of two lines or one, and which details each row shows.
+- **Quota:** each service can show both windows, only the week or only 5 hours. Quotas next to each other share a row; choose **One row each** to give every service its own row with its pace, reset and forecast beside it. The style and the pace tick are here too.
+- **DeepSeek:** the budget or today's dial, the peak-price chip, how many tasks the spend bar names, whether spend from elsewhere shows, and the 7-day reference line.
 
 ## Progress rings
 
@@ -108,7 +116,8 @@ Click the gear in the expanded island to open the main window.
 | **Remote** | SSH hosts, WSL and Remote Control. |
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
 | **Collapsed Bar** | What the bar shows and each item's options. |
-| **Notifications** | Which events show on the bar or as system notifications, DeepSeek alerts, and how long finished tasks stay. |
+| **Expanded Panel** | The panel's blocks, their order and each block's options, including how long finished tasks stay. |
+| **Notifications** | Which events show on the bar or as system notifications, and DeepSeek alerts. |
 | **General** | Open at Login, the Dock icon, language and **Hide Project Names** for screen sharing. |
 | **Help & Updates** | Updates, What's New and help. |
 
