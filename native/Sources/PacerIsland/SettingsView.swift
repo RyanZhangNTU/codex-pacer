@@ -171,7 +171,10 @@ struct SettingsView: View {
             switch pane {
             case .remote: PageHeader(title: pane.title, subtitle: SettingsConnectionsPane.summaryText(model))
             case .notifications: PageHeader(title: pane.title, subtitle: L10n.text("main.subtitle.notifications"))
-            case .expandedPanel: PageHeader(title: pane.title, subtitle: L10n.text("main.panel.subtitle"))
+            case .expandedPanel: PageHeader(title: pane.title, subtitle: L10n.text("main.panel.subtitle")) {
+                // Only an edited panel has something to restore.
+                if panelLayout != nil { Button(L10n.text("main.panel.restore")) { panelLayout = nil }.buttonStyle(.main) }
+            }
             case .collapsedBar: PageHeader(title: pane.title, subtitle: L10n.text("main.collapsed.subtitle")) {
                 Button(L10n.text("common.restore_defaults")) { compactLayout = .standard }.buttonStyle(.main)
             }
