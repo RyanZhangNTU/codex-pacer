@@ -4,6 +4,7 @@
 #include <RestartManager.h>
 #include <ProcessSnapshot.h>
 #include <winternl.h>
+#include <wchar.h>
 
 typedef NTSTATUS (NTAPI *PacerQueryObject)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 
@@ -29,9 +30,36 @@ int pacer_same_directory(const uint16_t *first, const uint16_t *second) {
     if (right != INVALID_HANDLE_VALUE) CloseHandle(right);
     CloseHandle(left); return same;
 }
+// Windows 10 hands each handle's object-name buffer to its snapshot store but clears
+// that buffer only when names are captured. Without the name flag it copies a stale
+// length and pointer from its own stack and the engine stops with an access violation
+// in ntdll. Windows 11 clears the buffer either way. The capture never asks a File
+// handle for its name, so a busy pipe cannot stall it.
+static DWORD pacer_capture_handles(HANDLE process, HPSS *snapshot) {
+    return PssCaptureSnapshot(process, PSS_CAPTURE_HANDLES | PSS_CAPTURE_HANDLE_NAME_INFORMATION | PSS_CAPTURE_HANDLE_BASIC_INFORMATION,
+                              0, snapshot);
+}
+int pacer_handle_capture_names(const uint16_t *name) {
+    size_t wanted = name == NULL ? 0 : wcsnlen((LPCWSTR)name, 256);
+    if (wanted == 0 || wanted == 256) return -1;
+    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE, FALSE, GetCurrentProcessId());
+    if (process == NULL) return -1;
+    HPSS snapshot = NULL; HPSSWALK marker = NULL; int found = -1;
+    if (pacer_capture_handles(process, &snapshot) == ERROR_SUCCESS && PssWalkMarkerCreate(NULL, &marker) == ERROR_SUCCESS) {
+        PSS_HANDLE_ENTRY entry; found = 0;
+        while (!found && PssWalkSnapshot(snapshot, PSS_WALK_HANDLES, marker, &entry, sizeof(entry)) == ERROR_SUCCESS) {
+            if (!(entry.Flags & PSS_HANDLE_HAVE_NAME) || entry.ObjectName == NULL) continue;
+            size_t length = wcsnlen(entry.ObjectName, entry.ObjectNameLength / sizeof(WCHAR));
+            found = length >= wanted && wcsncmp(entry.ObjectName + length - wanted, (LPCWSTR)name, wanted) == 0;
+        }
+    }
+    if (marker != NULL) PssWalkMarkerFree(marker);
+    if (snapshot != NULL) PssFreeSnapshot(GetCurrentProcess(), snapshot);
+    CloseHandle(process); return found;
+}
 static int pacer_has_write_handle(HANDLE process, const FILE_ID_INFO *wanted, PacerQueryObject query) {
     HPSS snapshot = NULL; HPSSWALK marker = NULL;
-    DWORD status = PssCaptureSnapshot(process, PSS_CAPTURE_HANDLES | PSS_CAPTURE_HANDLE_BASIC_INFORMATION, 0, &snapshot);
+    DWORD status = pacer_capture_handles(process, &snapshot);
     if (status != ERROR_SUCCESS) return -1;
     int matched = 0;
     PSS_HANDLE_INFORMATION counts;
@@ -146,6 +174,7 @@ int pacer_scoped_file_writers(const uint16_t *home, const uint16_t *path, pacer_
     return pacer_writers_within(home, path, writers, capacity);
 }
 #else
+int pacer_handle_capture_names(const uint16_t *name) { return -1; }
 int pacer_same_directory(const uint16_t *first, const uint16_t *second) { return 0; }
 int pacer_source_file_stamp(const uint16_t *home, const uint16_t *path, pacer_source_file_identity *stamp) { return 0; }
 int pacer_file_writers(const uint16_t *path, pacer_process_identity *writers, size_t capacity) { return -1; }
