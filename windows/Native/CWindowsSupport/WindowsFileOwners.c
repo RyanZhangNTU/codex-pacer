@@ -31,10 +31,10 @@ int pacer_same_directory(const uint16_t *first, const uint16_t *second) {
     CloseHandle(left); return same;
 }
 // Windows 10 hands each handle's object-name buffer to its snapshot store but clears
-// that buffer only when names are captured. Without the name flag it copies a stale
-// length and pointer from its own stack and the engine stops with an access violation
-// in ntdll. Windows 11 clears the buffer either way. The capture never asks a File
-// handle for its name, so a busy pipe cannot stall it.
+// that buffer only when names are captured. Without the name flag it copies whatever
+// length and pointer its own stack held there, which can stop the engine with an
+// access violation in ntdll. Windows 11 clears the buffer either way. The capture
+// never asks a File handle for its name, so a busy pipe cannot stall it.
 static DWORD pacer_capture_handles(HANDLE process, HPSS *snapshot) {
     return PssCaptureSnapshot(process, PSS_CAPTURE_HANDLES | PSS_CAPTURE_HANDLE_NAME_INFORMATION | PSS_CAPTURE_HANDLE_BASIC_INFORMATION,
                               0, snapshot);
@@ -46,12 +46,14 @@ int pacer_handle_capture_names(const uint16_t *name) {
     if (process == NULL) return -1;
     HPSS snapshot = NULL; HPSSWALK marker = NULL; int found = -1;
     if (pacer_capture_handles(process, &snapshot) == ERROR_SUCCESS && PssWalkMarkerCreate(NULL, &marker) == ERROR_SUCCESS) {
-        PSS_HANDLE_ENTRY entry; found = 0;
-        while (!found && PssWalkSnapshot(snapshot, PSS_WALK_HANDLES, marker, &entry, sizeof(entry)) == ERROR_SUCCESS) {
+        PSS_HANDLE_ENTRY entry; DWORD status = ERROR_SUCCESS; found = 0;
+        while (!found && (status = PssWalkSnapshot(snapshot, PSS_WALK_HANDLES, marker, &entry, sizeof(entry))) == ERROR_SUCCESS) {
             if (!(entry.Flags & PSS_HANDLE_HAVE_NAME) || entry.ObjectName == NULL) continue;
             size_t length = wcsnlen(entry.ObjectName, entry.ObjectNameLength / sizeof(WCHAR));
             found = length >= wanted && wcsncmp(entry.ObjectName + length - wanted, (LPCWSTR)name, wanted) == 0;
         }
+        // Only the end of the handles shows that the name is absent.
+        if (!found && status != ERROR_NO_MORE_ITEMS) found = -1;
     }
     if (marker != NULL) PssWalkMarkerFree(marker);
     if (snapshot != NULL) PssFreeSnapshot(GetCurrentProcess(), snapshot);
