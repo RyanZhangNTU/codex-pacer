@@ -14,6 +14,37 @@ package enum DurableCatalogPublication: Equatable, Sendable {
     }
 }
 
+/// Catalog reads may retry many times under the same account. Only a new
+/// access boundary needs to be sent to the desktop session.
+package struct DurableAccountPublication {
+    package private(set) var scope: String?
+    private var boundary: DurableCatalogPublication?
+
+    package init() {}
+
+    package mutating func suspend() -> DurableCatalogPublication? {
+        guard boundary == nil else { return nil }
+        boundary = .suspended
+        return boundary
+    }
+
+    package mutating func verify(_ scope: String) -> DurableCatalogPublication? {
+        guard self.scope != scope else { return nil }
+        self.scope = scope
+        boundary = .accountVerified(scope)
+        return boundary
+    }
+
+    package mutating func catalogAvailable() { boundary = nil }
+
+    package mutating func revoke() -> DurableCatalogPublication? {
+        scope = nil
+        guard boundary != .revoked else { return nil }
+        boundary = .revoked
+        return boundary
+    }
+}
+
 /// The catalog grants access to a thread on this executor. Lifecycle and
 /// progress require evidence from IPC or that thread's own Durable history.
 public struct DurableActivityCatalog: Equatable, Sendable {

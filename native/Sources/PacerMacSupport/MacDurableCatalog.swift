@@ -5,33 +5,6 @@ import PacerCore
 /// The Desktop owner supplies live IPC. For an assigned thread without usable
 /// IPC, read bounded turn and tool-result pages over the same catalog connection.
 enum MacDurableCatalog {
-    struct AccountPublication {
-        private(set) var scope: String?
-        private var boundary: DurableCatalogPublication?
-
-        mutating func suspend() -> DurableCatalogPublication? {
-            guard boundary == nil else { return nil }
-            boundary = .suspended
-            return boundary
-        }
-
-        mutating func verify(_ scope: String) -> DurableCatalogPublication? {
-            guard self.scope != scope else { return nil }
-            self.scope = scope
-            boundary = .accountVerified(scope)
-            return boundary
-        }
-
-        mutating func catalogAvailable() { boundary = nil }
-
-        mutating func revoke() -> DurableCatalogPublication? {
-            scope = nil
-            guard boundary != .revoked else { return nil }
-            boundary = .revoked
-            return boundary
-        }
-    }
-
     private struct Binding: Equatable {
         let executor: MacDurableExecutor
         let fingerprint: String?
@@ -48,7 +21,7 @@ enum MacDurableCatalog {
         var connection: Connection?
         var previous: DurableActivityCatalog?
         var verifiedBinding: Binding?
-        var account = AccountPublication()
+        var account = DurableAccountPublication()
         var polls = DurableHistoryPoll()
         func suspend() {
             if let boundary = account.suspend() { publish(boundary) }

@@ -223,6 +223,22 @@ final class ActivityApplicationStateTests: XCTestCase {
         XCTAssertTrue(state.reconcile(at: now.addingTimeInterval(2), retention: 300, visibility: visible).notices.isEmpty)
     }
 
+    func testSuspendedDotEndingExpiresWithoutReplayingAnOldUnreadCard() {
+        let dot = task(1, host: DurableActivityCatalog.hostID, ended: true)
+        for (retention, limit) in [(Double.infinity, 900.0), (300, 300)] {
+            var state = ActivityApplicationState()
+            state.rememberCodexEndings([dot])
+            let suspended = ActivityVisibilityOptions(showsDurableActivities: false)
+            state.reconcile(at: now.addingTimeInterval(limit - 1), retention: retention, visibility: suspended)
+            XCTAssertEqual(Set(state.pendingCodexEndings.keys), [dot.id])
+            state.reconcile(at: now.addingTimeInterval(limit), retention: retention, visibility: suspended)
+            XCTAssertTrue(state.pendingCodexEndings.isEmpty)
+            let resumed = state.reconcile(at: now.addingTimeInterval(limit + 1), retention: retention, visibility: visible)
+            XCTAssertFalse(state.inbox.isUnread(dot))
+            XCTAssertTrue(resumed.notices.isEmpty)
+        }
+    }
+
     func testRateExpiryUsesExactClockAndOnlyInvalidatesTheTimedProjection() throws {
         let thread = "019a0000-0000-7000-8000-000000000001"
         var value = SessionActivity(id: "local:" + thread, phaseAwareRate: true)

@@ -26,10 +26,14 @@ enum WindowsDurableCatalog {
         var connection: Connection?, previous: DurableActivityCatalog?
         var history = DurableHistoryPoll(), retryDelay = 5.0
         var verifiedBinding: Binding?
+        var account = DurableAccountPublication()
+        func suspend(binding: Binding? = nil) async {
+            if let boundary = account.suspend() { await publish(boundary, binding) }
+        }
         func revoke() async {
-            if previous != nil { history.reset(startingNow: true) }
+            if account.scope != nil { history.reset(startingNow: true) }
             previous = nil; verifiedBinding = nil
-            await publish(.revoked, nil)
+            if let boundary = account.revoke() { await publish(boundary, nil) }
         }
         let mailbox = WindowsDurableProgressMailbox(home: home)
         defer { connection?.reader.close() }
@@ -42,7 +46,7 @@ enum WindowsDurableCatalog {
                 }
                 guard let executor = WindowsDurableExecutor.find(desktop: desktop, package: package) else { throw CodexClientError.disconnected }
                 let binding = Binding(executor: executor, fingerprint: fingerprint)
-                if let verifiedBinding, verifiedBinding != binding { await publish(.suspended, nil) }
+                if let verifiedBinding, verifiedBinding != binding { await suspend() }
                 if connection?.binding != binding || (connection?.expires ?? .distantPast) <= Date() {
                     connection?.reader.close()
                     connection = nil
@@ -53,10 +57,11 @@ enum WindowsDurableCatalog {
                     await client.shutdown()
                     try Task.checkCancellation()
                     guard binding.isCurrent(home: home) else { throw CodexClientError.accountMismatch }
-                    if previous?.scope != credentials.scope {
-                        if previous != nil { history.reset(startingNow: true) }
+                    let previousScope = account.scope
+                    if let boundary = account.verify(credentials.scope) {
+                        if previousScope != nil { history.reset(startingNow: true) }
                         previous = nil
-                        await publish(.accountVerified(credentials.scope), binding)
+                        await publish(boundary, binding)
                     }
                     verifiedBinding = binding
                     let reader = DurableCatalogReader(socket: try WindowsDurableSocket(credentials.request),
@@ -71,6 +76,7 @@ enum WindowsDurableCatalog {
                 if previous?.scope != result.catalog.scope { history.reset(startingNow: previous != nil) }
                 previous = result.catalog
                 verifiedBinding = binding
+                account.catalogAvailable()
                 await publish(.available(result.catalog), binding)
                 let now = Date()
                 let updates = try await history.read(result, using: reader, ipc: await ipc(), receipts: mailbox.read(at:), at: now) {
@@ -85,7 +91,7 @@ enum WindowsDurableCatalog {
                 if Task.isCancelled { break }
                 if case CodexClientError.notLoggedIn = error { await revoke() }
                 else if CodexClient.authenticationFingerprint(home: home, files: WindowsFileSystem()) == nil { await revoke() }
-                else { await publish(.suspended, verifiedBinding?.isCurrent(home: home) == true ? verifiedBinding : nil) }
+                else { await suspend(binding: verifiedBinding?.isCurrent(home: home) == true ? verifiedBinding : nil) }
                 delay = retryDelay
                 retryDelay = min(60, retryDelay * 2)
             }

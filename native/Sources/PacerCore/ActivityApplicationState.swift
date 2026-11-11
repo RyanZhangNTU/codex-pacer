@@ -181,6 +181,12 @@ public struct ActivityApplicationState: Sendable {
         let previous = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         // A temporary verification gap must not consume an ending before
         // it can produce an unread card and notice for the same account.
+        // Don't turn a long outage into a batch of newly unread old endings.
+        let durableCutoff = now.addingTimeInterval(-min(retention > 0 ? retention : .infinity, 900))
+        for (id, ending) in pendingCodexEndings where ending.sourceHostID == DurableActivityCatalog.hostID &&
+            (ending.phaseChangedAt ?? .distantPast) <= durableCutoff {
+            pendingCodexEndings.removeValue(forKey: id)
+        }
         let ready = pendingCodexEndings.values.filter { visibility.showsDurableActivities || $0.sourceHostID != DurableActivityCatalog.hostID }
         let streamed = ready.isEmpty ? remoteActivities : ActivitySourceMerger.merge(logged: ready, streamed: remoteActivities)
         let merged = (ActivitySourceMerger.merge(logged: localActivities, streamed: streamed) + claudeActivities + deepseekActivities)

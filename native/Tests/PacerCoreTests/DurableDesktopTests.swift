@@ -2,6 +2,24 @@ import XCTest
 @testable import PacerCore
 
 final class DurableDesktopTests: XCTestCase {
+    func testRetriesKeepTheSameBoundaryUntilTheAccountOrCatalogChanges() {
+        var account = DurableAccountPublication()
+        XCTAssertEqual(account.verify("first"), .accountVerified("first"))
+        XCTAssertNil(account.suspend(), "A verified account without a catalog is already suspended")
+        XCTAssertNil(account.verify("first"), "A socket retry with the same account adds no boundary")
+        account.catalogAvailable()
+        XCTAssertEqual(account.suspend(), .suspended)
+        XCTAssertNil(account.suspend())
+        XCTAssertNil(account.verify("first"))
+        XCTAssertEqual(account.scope, "first")
+        XCTAssertEqual(account.verify("other"), .accountVerified("other"))
+        XCTAssertNil(account.suspend())
+        XCTAssertEqual(account.revoke(), .revoked)
+        XCTAssertNil(account.scope)
+        XCTAssertNil(account.revoke())
+        XCTAssertNil(account.suspend())
+        XCTAssertEqual(account.verify("other"), .accountVerified("other"))
+    }
     private let thread = "019a0000-0000-7000-8000-000000000001"
     private let other = "019a0000-0000-7000-8000-000000000002"
 
