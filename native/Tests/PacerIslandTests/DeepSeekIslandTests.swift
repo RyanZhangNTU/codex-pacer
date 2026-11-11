@@ -29,6 +29,8 @@ final class DeepSeekIslandTests: XCTestCase {
     func testWalletFollowsLedgerAndBudgetChangesBeforeTheNextClockTick() async throws {
         let (defaults, _) = try defaults(.init(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
         let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults)
+        model.deepseekUsage = .init()
+        model.deepseekHistory = .init()
         let start = Calendar.current.startOfDay(for: model.now)
         model.now = start.addingTimeInterval(60)
         XCTAssertEqual(model.deepseekWallet.today, 0)
