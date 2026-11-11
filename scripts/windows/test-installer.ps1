@@ -5,6 +5,7 @@ param(
     [switch]$SmokeOnly
 )
 . (Join-Path $PSScriptRoot 'environment.ps1')
+. (Join-Path $PSScriptRoot 'self-contained-test-environment.ps1')
 $ErrorActionPreference = 'Stop'
 $taskScope = [Guid]::NewGuid().ToString('N')
 $taskFixture = Join-Path $taskRoot ('out/pacer-install-check-' + $taskScope.Substring(0,8))
@@ -53,12 +54,8 @@ function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Ex
     $taskStart.RedirectStandardInput = ![string]::IsNullOrEmpty($StdinJson)
     foreach ($taskArgument in $Arguments) { $taskStart.ArgumentList.Add($taskArgument) }
     if ($Offline) {
-        $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
+        Set-PacerSelfContainedTestEnvironment $taskStart
         $taskStart.Environment['DOTNET_ROOT'] = Join-Path $taskFixture 'no-sdk'
-        foreach ($taskVariable in @('DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) {
-            $taskStart.Environment.Remove($taskVariable) | Out-Null
-        }
-        $taskStart.Environment['DOTNET_MULTILEVEL_LOOKUP'] = '0'
         $taskStart.Environment['HTTP_PROXY'] = 'http://127.0.0.1:1'
         $taskStart.Environment['HTTPS_PROXY'] = 'http://127.0.0.1:1'
     }
@@ -156,7 +153,9 @@ function Start-PacerDemo {
 function Test-PacerOfflineLaunch([string]$Application) {
     Wait-PacerScreen
     $taskCapture = Join-Path $taskFixture 'offline-demo.png'
-    $taskPreviewArguments = @('--demo','--reference-fixture','--language','zh-Hans','--capture-preview',$taskCapture)
+    $taskPreferences = Join-Path $taskFixture 'offline-demo-preferences.json'
+    Write-PacerVisibleTestPreferences $taskPreferences
+    $taskPreviewArguments = @('--demo','--reference-fixture','--language','zh-Hans','--demo-preferences',$taskPreferences,'--capture-preview',$taskCapture)
     if ($taskArchitecture.Name -eq 'arm64') { $taskPreviewArguments += '--preview-reduced-motion' }
     $null = Invoke-PacerTestProcess $Application $taskPreviewArguments -Offline
     $taskMetadata = [IO.Path]::ChangeExtension($taskCapture,'.json')
@@ -222,18 +221,26 @@ try {
     Assert-Pacer ($taskStatus.Effective) 'The enabled approval fixture must read back as effective.'
     Record-Pacer 'live HKCU startup enable/disable and StartupApproved enabled/disabled fixtures; no reboot'
 
-    # Corrupt the installed main assembly. Repair must use Setup's fresh host.
+    # Repair must use Setup's fresh host and tolerate a truncated update state.
     $taskAssembly = Join-Path $taskApp 'CodexPacer.dll'
     $taskAssemblyHash = (Get-FileHash -LiteralPath $taskAssembly).Hash
     [IO.File]::WriteAllText($taskAssembly, 'synthetic damaged assembly', [Text.UTF8Encoding]::new($false))
+    $taskUpdates = Join-Path $taskData 'Updates'
+    $taskUpdateState = Join-Path $taskUpdates 'state-v1.json'
+    New-Item -ItemType Directory -Path $taskUpdates -Force | Out-Null
+    [IO.File]::WriteAllText($taskUpdateState, '{"SchemaVersion":1,"Values":', [Text.UTF8Encoding]::new($false))
+    $taskUpdateHash = (Get-FileHash -LiteralPath $taskUpdateState).Hash
     # A silent run over an installation keeps the shortcut choices as they are.
     Remove-Item -LiteralPath $taskDesktopShortcut
     $null = Invoke-PacerTestProcess $taskSetup $taskFlags
     Assert-Pacer ((Get-FileHash -LiteralPath $taskAssembly).Hash -eq $taskAssemblyHash) 'Repair did not restore the damaged host assembly.'
+    $taskBackups = @(Get-ChildItem -LiteralPath $taskUpdates -Filter 'state-v1.json.damaged-*' -File)
+    Assert-Pacer (!(Test-Path -LiteralPath $taskUpdateState) -and $taskBackups.Count -eq 1 -and
+        (Get-FileHash -LiteralPath $taskBackups[0].FullName).Hash -eq $taskUpdateHash) 'Repair did not preserve the damaged update state aside for a fresh start.'
     Assert-Pacer ((Test-Path -LiteralPath $taskShortcut) -and !(Test-Path -LiteralPath $taskDesktopShortcut)) 'A silent repair must keep owned shortcuts and not restore a deleted one.'
     $null = Invoke-PacerTestProcess $taskMaintenance @('shortcut',$taskScope,$taskApp,'desktop')
     Assert-Pacer (Test-Path -LiteralPath $taskDesktopShortcut) 'The finish-page desktop shortcut entry did not create its shortcut.'
-    Record-Pacer 'same-version repair with a damaged installed .NET main assembly; silent repair keeps shortcut choices'
+    Record-Pacer 'same-version repair restores a damaged main assembly, backs up truncated update state and keeps shortcut choices'
     $taskLock = [IO.FileStream]::new((Join-Path $taskApp 'Assets/Pacer.ico'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     try { $null = Invoke-PacerTestProcess $taskSetup $taskFlags @(7) }
     finally { $taskLock.Dispose() }

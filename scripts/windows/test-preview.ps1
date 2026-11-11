@@ -74,16 +74,16 @@ try {
     $taskReducedMotion = $taskManifest.architecture -eq 'arm64'
     if ($taskReducedMotion) { Test-PacerPreviewEngine }
     $taskCaptureTimeout = if ($taskReducedMotion) { 60000 } else { 30000 }
+    $taskPreferences = Join-Path $taskWork 'preview-preferences.json'
     foreach ($taskLanguage in @('en','zh-Hans')) {
         foreach ($taskScene in @('island','settings','claude-settings')) {
+            $taskPane = switch ($taskScene) { 'settings' { 'deepseek' }; 'claude-settings' { 'claude' }; default { 'overview' } }
+            Write-PacerVisibleTestPreferences $taskPreferences $taskPane
             $taskImage = Join-Path $taskOutput ($taskLanguage + '-' + $taskScene + '.png')
             $taskStart = New-PacerPreviewProcess (Join-Path $taskApp 'CodexPacer.exe')
-            foreach ($taskArgument in @('--demo','--reference-fixture','--language',$taskLanguage,'--capture-preview',$taskImage)) { $taskStart.ArgumentList.Add($taskArgument) }
+            foreach ($taskArgument in @('--demo','--reference-fixture','--language',$taskLanguage,'--demo-preferences',$taskPreferences,'--capture-preview',$taskImage)) { $taskStart.ArgumentList.Add($taskArgument) }
             if ($taskReducedMotion) { $taskStart.ArgumentList.Add('--preview-reduced-motion') }
-            if ($taskScene -ne 'island') {
-                $taskPane = if ($taskScene -eq 'claude-settings') { 'claude' } else { 'deepseek' }
-                foreach ($taskArgument in @('--settings-preview','--settings-pane',$taskPane)) { $taskStart.ArgumentList.Add($taskArgument) }
-            }
+            if ($taskScene -ne 'island') { $taskStart.ArgumentList.Add('--settings-preview') }
             $taskProcess = [Diagnostics.Process]::Start($taskStart)
             try {
                 $taskErrors = $taskProcess.StandardError.ReadToEndAsync(); $taskStdout = $taskProcess.StandardOutput.ReadToEndAsync()

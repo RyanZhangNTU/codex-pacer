@@ -31,9 +31,7 @@ foreach ($taskLanguage in @('en','zh-Hans')) {
             return [Diagnostics.Process]::Start($taskStart)
         }
         try {
-            # Keep the real fullscreen policy on. The synthetic profile asks
-            # the island to stay visible if a runner has a fullscreen window.
-            [IO.File]::WriteAllText($taskPreferences, '{"schemaVersion":1,"islandAppearance":"classic","showInFullscreen":true}', [Text.UTF8Encoding]::new($false))
+            Write-PacerVisibleTestPreferences $taskPreferences
             $taskStarted = [DateTime]::UtcNow
             $taskFirst = Start-InstanceQa $true
             $taskFirstError = $taskFirst.StandardError.ReadToEndAsync(); $taskFirstOutput = $taskFirst.StandardOutput.ReadToEndAsync()

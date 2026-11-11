@@ -5,3 +5,9 @@ function Set-PacerSelfContainedTestEnvironment([Diagnostics.ProcessStartInfo]$St
     }
     $Start.Environment['DOTNET_MULTILEVEL_LOOKUP'] = '0'
 }
+
+function Write-PacerVisibleTestPreferences([string]$Path, [string]$Pane = 'overview') {
+    # The runner's foreground window should not decide whether a preview is visible.
+    $preferences = @{ schemaVersion = 1; showInFullscreen = $true; islandAppearance = 'classic'; lastSettingsPane = $Pane }
+    [IO.File]::WriteAllText($Path, ($preferences | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+}
