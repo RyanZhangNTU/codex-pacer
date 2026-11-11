@@ -8,6 +8,7 @@ import ast,collections,tempfile,uuid
 class FakeInotify:
     def __init__(self):self.next=1;self.masks=[]
     def inotify_add_watch(self,fd,path,mask):
+        if not os.path.exists(os.fsdecode(path)):return -1
         self.masks.append(mask);wd=self.next;self.next+=1;return wd
     def inotify_rm_watch(self,fd,wd):return 0
 
@@ -49,7 +50,7 @@ def finish(tailer):
     rows=[]
     for _ in range(80):
         rows.extend(tailer.read())
-        if not tailer.dirty:return rows
+        if not tailer.read_pending:return rows
     raise AssertionError('bounded synthetic append did not drain')
 
 def finish_discovery(tailer):
@@ -149,23 +150,29 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-efficiency-') as temporary
         let result = try evaluate(#"""
 with tempfile.TemporaryDirectory(prefix='pacer-claude-inventory-') as temporary:
     home=pathlib.Path(temporary);projects=home/'projects';live_project=projects/'live'
-    live_project.mkdir(parents=True);now=time.time();old=now-3600
+    live_project.mkdir(parents=True);now=int(time.time());old=now-3600
+    def stamp_at(at):
+        return datetime.datetime.fromtimestamp(at,datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
     live=live_project/'live-session.jsonl'
     value=prompt('live-session','running')
-    value['timestamp']=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    value['timestamp']=stamp_at(now)
     live.write_bytes(line(value));os.utime(str(live),(old,old))
     baseline=live_project/'baseline-session.jsonl'
     baseline.write_bytes(line(dict(value,sessionId='baseline-session',uuid='baseline')))
     os.utime(str(baseline),(old,old))
+    stopping=live_project/'stopping-session.jsonl'
+    stopping.write_bytes(line(dict(value,sessionId='stopping-session',uuid='will-stop')))
+    os.utime(str(stopping),(old,old))
     tailer=FixtureTailer(home)
     try:
         finish_discovery(tailer);finish(tailer)
-        cursor=tailer.cursors[live];assert not cursor['activityLive']
-        assert not tailer.cursors[baseline]['activityLive']
-        append(live,[dict(value,type='assistant',uuid='working',promptId='running',message={'content':[{'type':'thinking'}]})])
+        cursor=tailer.cursors[live];assert cursor['activeAt']==now
+        assert tailer.cursors[baseline]['activeAt']==now
+        working=dict(value,type='assistant',uuid='working',promptId='running',message={'content':[{'type':'thinking'}]})
+        append(live,[dict(working,timestamp=stamp_at(now+1))])
         os.utime(str(live),(old,old))
         tailer.poll();finish(tailer)
-        assert cursor['activityLive']
+        assert cursor['activeAt']==now+1
         spool=home/'pacer';spool.mkdir();events=spool/'events.jsonl'
         events.write_bytes(b'');os.utime(str(events),(old,old))
         for i in range(265):
@@ -198,7 +205,7 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-inventory-') as temporary:
         def counted(path):
             counts[0]+=1;return CountedEntries(path)
         wall=time.time
-        os.scandir=counted;time.time=lambda:now+3600
+        clock=[now+899];os.scandir=counted;time.time=lambda:clock[0]
         try:
             steps=[];finished=False
             for _ in range(40):
@@ -208,21 +215,155 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-inventory-') as temporary:
                 assert tailer.cursors[live] is cursor
             assert finished and len(steps)>1 and open_handles[0]==0 and peak_handles[0]<=2
             assert tailer.cursors[live] is cursor
-            assert baseline not in tailer.cursors, 'An old baseline alone cannot pin a cursor'
+            assert baseline in tailer.cursors
             assert newest in tailer.cursors and agent in tailer.cursors and events in tailer.cursors
             assert len(tailer.cursors)==Tailer.FILE_LIMIT
-            append(live,[dict(value,type='result',subtype='success',uuid='terminal',promptId='running')])
+            finish(tailer)
+            # Complete inventory at the lease boundary without a watcher or
+            # poll first. The already-tracked logs still have owned work and
+            # a completion on disk. Drain both before taking their slots.
+            clock[0]=now+901
+            append(live,[dict(working,uuid='renewed',timestamp=stamp_at(clock[0]))])
+            append(stopping,[dict(value,type='result',subtype='success',sessionId='stopping-session',
+                                  uuid='terminal',promptId='will-stop',timestamp=stamp_at(clock[0]))])
             os.utime(str(live),(old,old))
-            tailer.poll();finish(tailer)
-            assert 'activeAt' not in cursor
+            os.utime(str(stopping),(old,old))
+            for _ in range(40):
+                assert not tailer.discover(), 'An aged cursor with unread work must defer selection'
+                if tailer.inventory.ready:break
+            else:raise AssertionError('never reached completed inventory')
+            assert {live,stopping}.issubset(tailer.dirty)
+            assert tailer.cursors[live] is cursor
+            scans=tailer.scans
+            drained=finish(tailer)
+            assert cursor['activeAt']==clock[0]
+            assert [row['kind'] for row in drained if row.get('sessionId')=='stopping-session' and row['kind']!='metadata']==['stop']
             finish_discovery(tailer)
-            assert live not in tailer.cursors, 'An explicit end releases the slot'
+            assert tailer.scans==scans, 'The ranked inventory is reused after draining'
+            assert tailer.cursors[live] is cursor
+            assert baseline not in tailer.cursors
+            assert stopping not in tailer.cursors
+            assert not any(row.get('sessionId')=='stopping-session' for row in finish(tailer))
+            clock[0]=now+1801
+            finish_discovery(tailer)
+            assert live not in tailer.cursors, 'An abandoned cursor cannot keep its slot forever'
+            evictions=finish(tailer)
+            assert [row['kind'] for row in evictions if row.get('sessionId')=='live-session']==['unavailable']
+            assert any(row.get('promptId')=='running' for row in evictions)
             print(json.dumps({'slices':len(steps),'maxSteps':max(steps),'limit':Tailer.DISCOVERY_STEPS}))
         finally:os.scandir=scan;time.time=wall
     finally:tailer.close()
 """#)
         XCTAssertGreaterThan(try XCTUnwrap(result["slices"] as? Int), 1)
         XCTAssertLessThanOrEqual(try XCTUnwrap(result["maxSteps"] as? Int), try XCTUnwrap(result["limit"] as? Int))
+    }
+
+    func testStartupWatchesAndFollowUpSeeChangesBehindTheInventory() throws {
+        let result = try evaluate(#"""
+for initially_has_spool in (False,True):
+    with tempfile.TemporaryDirectory(prefix='pacer-claude-startup-') as temporary:
+        home=pathlib.Path(temporary);projects=home/'projects';spool=home/'pacer'
+        watched=projects/'watched';unwatched=projects/'unwatched';later=projects/'later'
+        for folder in (watched,unwatched,later):folder.mkdir(parents=True)
+        for index in range(24):(later/('old-%d.jsonl'%index)).write_bytes(b'')
+        for folder,at in ((watched,1800000003),(unwatched,1800000002),(later,1800000001)):
+            os.utime(str(folder),(at,at))
+        events=spool/'events.jsonl'
+        if initially_has_spool:spool.mkdir();events.write_bytes(b'')
+        tailer=FixtureTailer(home);tailer.DISCOVERY_STEPS=4
+        try:
+            assert not tailer.discover()
+            assert {home,projects}.issubset(set(tailer.watches.values()))
+            if initially_has_spool:
+                assert spool in tailer.watches.values() and events in tailer.cursors
+            else:
+                spool.mkdir();events.write_bytes(b'')
+                assert tailer.notify(home,0x100,b'pacer')
+                assert not tailer.discover()
+                assert spool in tailer.watches.values() and events in tailer.cursors
+            for _ in range(16):
+                assert tailer.discovering
+                if later in tailer.inventory.stamps:break
+                assert not tailer.discover()
+            else:raise AssertionError('never reached final project')
+            assert watched in tailer.watches.values()
+            assert unwatched not in tailer.watches.values()
+            new=unwatched/'new-after-scan.jsonl';new.write_bytes(b'')
+            os.utime(str(unwatched),(1800000004,1800000004))
+            finish_discovery(tailer)
+            assert tailer.inventory_changed and new not in tailer.cursors
+            finish_discovery(tailer)
+            assert new in tailer.cursors and not tailer.inventory_changed
+        finally:tailer.close()
+print(json.dumps({'startupAndFollowUpPassed':True}))
+"""#)
+        XCTAssertEqual(result["startupAndFollowUpPassed"] as? Bool, true)
+    }
+
+    func testDelayedStartupKeepsOwnedAppendedEndingsLiveWithoutRaisingBaselineReminders() throws {
+        let result = try evaluate(#"""
+with tempfile.TemporaryDirectory(prefix='pacer-claude-startup-append-') as temporary:
+    home=pathlib.Path(temporary);project=home/'projects'/'project';project.mkdir(parents=True)
+    cutoff=1800000000;clock=[cutoff];wall=time.time;time.time=lambda:clock[0]
+    def stamp_at(at):return datetime.datetime.fromtimestamp(at,datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    late=project/'late.jsonl';replacement=project/'replaced.jsonl';baseline=project/'baseline.jsonl'
+    late.write_bytes(line(dict(prompt('late','observed-turn'),timestamp=stamp_at(cutoff-1)))+b'{}\n'*512)
+    replacement.write_bytes(line(dict(prompt('replaced','before-replace'),timestamp=stamp_at(cutoff-1))))
+    baseline.write_bytes(line(dict(prompt('baseline','baseline-turn'),timestamp=stamp_at(cutoff-1)))+
+                         line({'type':'result','subtype':'success','sessionId':'baseline','promptId':'baseline-turn','timestamp':stamp_at(cutoff)}))
+    tailer=FixtureTailer(home);tailer.DISCOVERY_STEPS=2
+    try:
+        directory_stamp=project.stat().st_mtime_ns
+        assert not tailer.discover() and not tailer.inventory.files
+        clock[0]=cutoff+2
+        append(late,[{'type':'result','subtype':'success','sessionId':'late','uuid':'finished','parentUuid':'ancestor','timestamp':stamp_at(cutoff+1)},
+                     {'type':'system','sessionId':'late','uuid':'ancestor','promptId':'observed-turn','timestamp':stamp_at(cutoff+2)}])
+        assert project.stat().st_mtime_ns==directory_stamp
+        finish_discovery(tailer)
+        assert not tailer.inventory_changed and 'startupBoundary' in tailer.cursors[late]
+        next_log=project/'replacement.tmp'
+        next_log.write_bytes(line(dict(prompt('replaced','replacement-turn'),timestamp=stamp_at(cutoff+1))))
+        os.replace(str(next_log),str(replacement))
+        initial=tailer.read()
+        assert 'startupBoundary' in tailer.cursors[late], 'Buffered attach records keep their boundary'
+        rows=initial+finish(tailer)
+        assert 'startupBoundary' not in tailer.cursors[late] and 'startupBoundary' not in tailer.cursors[replacement]
+        assert any(row['kind']=='prompt' and row.get('promptId')=='observed-turn' and row['historical'] for row in rows)
+        assert any(row['kind']=='stop' and row.get('promptId')=='baseline-turn' and row['historical'] and
+                   'observedDuringStartup' not in row for row in rows)
+        assert any(row['kind']=='prompt' and row.get('promptId')=='replacement-turn' and row['historical'] and
+                   'observedDuringStartup' not in row for row in rows)
+        recovered=[row for row in rows if row['kind']=='stop' and row.get('promptId')=='observed-turn']
+        assert len(recovered)==1 and recovered[0]['observedDuringStartup'] and not recovered[0]['historical']
+        assert not any(row.get('unownedTurn') and row.get('observedDuringStartup') for row in rows)
+        print(json.dumps({'ownedStartupEndingPassed':True}))
+    finally:tailer.close();time.time=wall
+"""#)
+        XCTAssertEqual(result["ownedStartupEndingPassed"] as? Bool, true)
+    }
+
+    func testHookSessionEndFreesItsCursorAndOlderReplayCannotRenewIt() throws {
+        let result = try evaluate(#"""
+with tempfile.TemporaryDirectory(prefix='pacer-claude-session-end-') as temporary:
+    home=pathlib.Path(temporary);project=home/'projects'/'project';spool=home/'pacer'
+    project.mkdir(parents=True);spool.mkdir()
+    events=spool/'events.jsonl';events.write_bytes(b'')
+    log=project/'live-session.jsonl';value=prompt('live-session','running')
+    log.write_bytes(line(value))
+    tailer=FixtureTailer(home)
+    try:
+        finish_discovery(tailer);finish(tailer)
+        cursor=tailer.cursors[log];at=cursor['activeAt']
+        append(events,[{'kind':'unavailable','origin':'hook','sessionId':'live-session','promptId':'running','at':at+1}])
+        tailer.poll();rows=finish(tailer)
+        assert [row['kind'] for row in rows]==['unavailable'] and 'activeAt' not in cursor
+        append(log,[dict(value,type='assistant',uuid='replayed',promptId='running',message={'content':[{'type':'thinking'}]})])
+        tailer.poll();finish(tailer)
+        assert 'activeAt' not in cursor
+        print(json.dumps({'sessionEndClearedPriority':True}))
+    finally:tailer.close()
+"""#)
+        XCTAssertEqual(result["sessionEndClearedPriority"] as? Bool, true)
     }
 
     func testOneDecodePerLineKeepsWrapperOutputOwnedStopAndPrivateContentOutOfCursorContext() throws {

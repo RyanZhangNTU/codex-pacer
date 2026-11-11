@@ -280,8 +280,12 @@ struct ClaudeActivityState: Sendable {
     var attention: [PendingAttentionRequest] { requests.values.sorted { $0.detectedAt < $1.detectedAt } }
     var performanceUpdates: [SessionPerformanceUpdate] { Array(metrics.values) }
     var knownStartedSessionIDs: Set<String> { excludedSessions.union(sessions.values.filter { $0.turnID != nil }.compactMap(\.threadID)) }
-    var activeSessionIDs: Set<String> {
-        Set(sessions.values.filter { $0.phase == .running || $0.phase == .waitingForInput }.compactMap(\.threadID))
+    func prioritySessionIDs(at now: Date) -> Set<String> {
+        Set(sessions.values.compactMap { value in
+            guard value.phase == .running || value.phase == .waitingForInput,
+                  let observed = value.lastObserved, (-5..<900).contains(now.timeIntervalSince(observed)) else { return nil }
+            return value.threadID
+        })
     }
     var excludedActivityIDs: Set<String> { Set(excludedSessions.map { AgentProvider.claude.activityID(sessionID: $0, sourceHostID: nil) }) }
     /// Applies only to default-home Desktop mirrors, not independent SSH data.
@@ -668,6 +672,14 @@ struct ClaudeActivityState: Sendable {
             // A turn paused for its background work keeps running until the
             // wake; an interrupt or an error still ends it.
             if ["stop", "stopVerified"].contains(kind), value.currentBackgroundWait != nil { sessions[key] = value; return }
+            let observedDuringStartup = !attaching && record["observedDuringStartup"] as? Bool == true
+            if (value.phase == .unknown || (observedDuringStartup && !value.liveTurnStarted)),
+               value.turnID == turn, value.turnStartedAt != nil,
+               ClaudeActivityRecord.identifier(record["promptId"] as? String) == turn {
+                // A matching end can settle a known turn that lost its
+                // cursor, or one that ended while startup was still scanning.
+                value.applyRuntime(event("turn/attached"))
+            }
             let wasLive = [.running, .waitingForInput].contains(value.phase)
             value.applyRuntime(event("turn/completed", ["status": kind == "failure" ? "failed" : kind == "interrupt" ? "interrupted" : "completed"]))
             // Interrupting or failing the main thread's turn aborts its

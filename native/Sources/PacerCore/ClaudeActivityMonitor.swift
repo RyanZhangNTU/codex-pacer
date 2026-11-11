@@ -172,8 +172,9 @@ public actor ClaudeActivityMonitor {
     private func readLocal(discover: Bool, attaching: Bool = false, exclusionsCurrent: Bool = false) async {
         guard let home else { return }
         if discover, !exclusionsCurrent { refreshLocalExclusions(home: home) }
+        let now = clock()
         let result = localReader.read(home: home, discover: discover, excludingSessionIDs: localMirrorRoots,
-            retainingSessionIDs: local.activeSessionIDs)
+            retainingSessionIDs: local.prioritySessionIDs(at: now), now: now)
         var watchURLs = result.watchURLs
         if !discover, !exclusionsCurrent, !result.records.isEmpty {
             let known = local.knownStartedSessionIDs
@@ -194,7 +195,16 @@ public actor ClaudeActivityMonitor {
         if let status = ClaudeActivityRecord.encode(["kind": "status", "connected": result.available, "watchingLogs": !watchURLs.isEmpty, "scans": localReader.scans]) { local.consume(status, now: clock()) }
         if !result.available { local.unavailable() }
         watcher?.update(watchURLs, interval: 0.1)
-        if (!result.caughtUp || result.discoveryPending), catchup == nil {
+        var discoveryPending = result.discoveryPending
+        if result.discoveryFinished, !discoveryPending, let watcher {
+            let generation = localGeneration, scans = localReader.scans
+            // Once the watch queue has installed the new coverage, check
+            // again for changes in the gap between enumeration and watching.
+            _ = await watcher.activeWatchCount()
+            guard localGeneration == generation else { return }
+            if localReader.scans == scans { discoveryPending = localReader.checkCompletedInventory() }
+        }
+        if (!result.caughtUp || discoveryPending), catchup == nil {
             let generation = localGeneration
             catchup = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 100_000_000)

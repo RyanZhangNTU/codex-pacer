@@ -4,12 +4,13 @@ import Foundation
 struct ClaudeActivityReader {
     struct Result {
         let records: [Data], watchURLs: [URL]
-        let available: Bool, caughtUp: Bool, discoveryPending: Bool
+        let available: Bool, caughtUp: Bool, discoveryPending: Bool, discoveryFinished: Bool
     }
     private struct Cursor {
         var identity: String?; var created: Date?; var hasRead = false
         var offset: UInt64 = 0; var fragment = Data(); var session: String; var parent: String?
         var sanitized: Bool; var historicalEnd: UInt64?; var liveAfter: Date?
+        var startupCutover: Date?
         var context = ClaudeTranscriptContext(); var discardingOversize = false
     }
     private struct Transcript {
@@ -31,7 +32,9 @@ struct ClaudeActivityReader {
         mutating func insert(_ value: Value, date: Date, url: URL) {
             let path = url.path
             func precedes(_ entry: Entry) -> Bool {
-                date > entry.date || (date == entry.date && path < entry.path)
+                // Match the SSH helper when a filesystem gives many entries
+                // the same modification time.
+                date > entry.date || (date == entry.date && entry.path.utf8.lexicographicallyPrecedes(path.utf8))
             }
             if let last = entries.last, entries.count == limit, !precedes(last) { return }
             let index = entries.firstIndex(where: precedes) ?? entries.endIndex
@@ -40,6 +43,9 @@ struct ClaudeActivityReader {
         }
     }
     private struct Inventory {
+        let root: URL
+        let rootDate: Date
+        let beganAt: Date
         private let resolvedRoot: String
         private var roots: FileManager.DirectoryEnumerator?
         private var newestProjects = Newest<URL>(limit: ClaudeActivityReader.maximumProjects)
@@ -52,9 +58,13 @@ struct ClaudeActivityReader {
         private(set) var projects: [URL] = []
         private(set) var projectDates: [URL: Date] = [:]
         private(set) var finished = false
+        var requiredContinuation = false
+        var evictionReadBoundaries: [URL: PlatformFileMetadata]?
         var transcripts: [Transcript] { newestLogs.values }
-
-        init(root: URL) {
+        init(root: URL, beganAt: Date) {
+            self.root = root
+            self.beganAt = beganAt
+            rootDate = ClaudeActivityReader.projectDate(root)
             resolvedRoot = root.resolvingSymlinksInPath().path + "/"
             roots = ClaudeActivityReader.children(root)
         }
@@ -125,6 +135,7 @@ struct ClaudeActivityReader {
     private var repeatDiscovery = false
     private var discoveryDirectories: [URL] = []
     private var lastDiscovery: Date?
+    private var projectRootStamp: (url: URL, date: Date)?
     private var projectDates: [URL: Date] = [:]
     private(set) var projectWatchURL: URL?
     private(set) var scans = 0
@@ -143,6 +154,7 @@ struct ClaudeActivityReader {
     mutating func reset() {
         cursors.removeAll(); discoveryDirectories.removeAll(); observationStarted = nil; observedFiles.removeAll()
         lastDiscovery = nil; projectDates.removeAll(); projectWatchURL = nil
+        projectRootStamp = nil
         inventory = nil; repeatDiscovery = false; lastDiscoverySteps = 0
         scans = 0; fileReads = 0; bytesRead = 0; transcriptDocumentParses = 0
     }
@@ -153,9 +165,16 @@ struct ClaudeActivityReader {
         if elapsed < 0 || elapsed >= (watchingProjects ? 300 : 60) { return true }
         // The root watch is not recursive. A new log in an unwatched project
         // changes its directory date, which we can check without listing it.
-        return watchingProjects && projectDates.contains { project, previous in
-            Self.projectDate(project) != previous
-        }
+        return watchingProjects && inventoryDirectoriesChanged()
+    }
+    @discardableResult mutating func checkCompletedInventory() -> Bool {
+        guard inventory == nil else { return false }
+        repeatDiscovery = repeatDiscovery || inventoryDirectoriesChanged()
+        return repeatDiscovery
+    }
+    private func inventoryDirectoriesChanged() -> Bool {
+        if let root = projectRootStamp, Self.projectDate(root.url) != root.date { return true }
+        return projectDates.contains { project, previous in Self.projectDate(project) != previous }
     }
     /// Removing a verified mirror is ownership correction, not a task ending.
     /// If its exclusion later disappears, discovery adds a fresh historical
@@ -190,9 +209,17 @@ struct ClaudeActivityReader {
             let values = rows.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             if !values.isEmpty, let frame = ClaudeActivityRecord.encode(["kind": "claudeBatch", "attaching": true, "records": values]) { records.append(frame) }
         }
+        func markStartup(_ rows: [Data], observed: Bool) -> [Data] {
+            guard observed else { return rows }
+            return rows.map { row in
+                guard var value = (try? JSONSerialization.jsonObject(with: row)) as? [String: Any] else { return row }
+                value["observedDuringStartup"] = true
+                return ClaudeActivityRecord.encode(value) ?? row
+            }
+        }
         if discover, inventory != nil { repeatDiscovery = true }
         if inventory == nil, discover || repeatDiscovery {
-            scans += 1; repeatDiscovery = false; inventory = Inventory(root: root)
+            scans += 1; repeatDiscovery = false; inventory = Inventory(root: root, beganAt: now)
             // Do not make the live hook spool wait for a large inventory.
             if cursors.count < Self.maximumFileWatches, cursors[events] == nil, files.metadata(events)?.isRegularFile == true {
                 attach(hookSpool, initialObservation: initialObservation, at: now)
@@ -200,14 +227,15 @@ struct ClaudeActivityReader {
             if discoveryDirectories.isEmpty { updateDiscoveryWatches(home: home, root: root, spool: spool, projects: [], selected: []) }
         }
         lastDiscoverySteps = 0
+        var discoveryFinished = false
         if var scan = inventory {
             for _ in 0..<Self.discoveryStepLimit where !scan.finished {
                 lastDiscoverySteps += 1
                 if let excluded = scan.step(excluding: excludingSessionIDs) { rememberObserved(excluded, at: now) }
             }
+            if !scan.finished { scan.requiredContinuation = true }
             inventory = scan.finished ? nil : scan
             if scan.finished {
-                lastDiscovery = now; projectDates = scan.projectDates
                 var selected = cursors.keys.sorted { $0.path < $1.path }.compactMap { url -> Transcript? in
                     guard let cursor = cursors[url], cursor.sanitized || retainingSessionIDs.contains(cursor.session) else { return nil }
                     return Transcript(url: url, session: cursor.session, parent: cursor.parent, sanitized: cursor.sanitized)
@@ -222,15 +250,38 @@ struct ClaudeActivityReader {
                           seen.insert(transcript.url).inserted else { continue }
                     selected.append(transcript)
                 }
-                let projects = scan.projects
-                for url in Array(cursors.keys) where !seen.contains(url) {
-                    if let cursor = cursors[url], let row = unavailable(cursor) { records.append(row) }
-                    cursors.removeValue(forKey: url)
+                if scan.evictionReadBoundaries == nil {
+                    scan.evictionReadBoundaries = Dictionary(uniqueKeysWithValues: cursors.compactMap { url, cursor in
+                        guard !seen.contains(url), cursor.hasRead, let metadata = files.metadata(url), metadata.isRegularFile,
+                              cursorNeedsRead(cursor, through: metadata) else { return nil }
+                        return (url, metadata)
+                    })
                 }
-                for transcript in selected {
-                    attach(transcript, initialObservation: initialObservation, at: now)
+                let draining = scan.evictionReadBoundaries?.contains { url, boundary in
+                    guard !seen.contains(url), let cursor = cursors[url], let current = files.metadata(url), current.isRegularFile,
+                          current.identity == boundary.identity, current.created == boundary.created, current.size >= boundary.size else { return false }
+                    return cursorNeedsRead(cursor, through: boundary)
+                } ?? false
+                if draining {
+                    // Let an attached cursor read queued evidence before
+                    // reclaiming its slot. New writes do not extend this read.
+                    inventory = scan
+                } else {
+                    discoveryFinished = true
+                    let startupCutover = lastDiscovery == nil && scan.requiredContinuation ? scan.beganAt : nil
+                    lastDiscovery = now; projectDates = scan.projectDates
+                    projectRootStamp = (scan.root, scan.rootDate)
+                    // The project may have changed before its watch was installed.
+                    checkCompletedInventory()
+                    for url in Array(cursors.keys) where !seen.contains(url) {
+                        if let cursor = cursors[url], let row = unavailable(cursor) { records.append(row) }
+                        cursors.removeValue(forKey: url)
+                    }
+                    for transcript in selected {
+                        attach(transcript, initialObservation: initialObservation, startupCutover: startupCutover, at: now)
+                    }
+                    updateDiscoveryWatches(home: home, root: root, spool: spool, projects: scan.projects, selected: selected)
                 }
-                updateDiscoveryWatches(home: home, root: root, spool: spool, projects: projects, selected: selected)
             }
         }
         var caughtUp = true, ownedBacklog = false
@@ -253,7 +304,7 @@ struct ClaudeActivityReader {
             let reset = firstRead || cursor.identity != metadata.identity || cursor.created != metadata.created || cursor.offset > size
             if reset {
                 if !firstRead {
-                    cursor.liveAfter = nil
+                    cursor.liveAfter = nil; cursor.startupCutover = nil
                     if let row = discontinuity(cursor) { records.append(row) }
                 } else if let boundary = cursor.liveAfter {
                     // A new path alone does not prove that its records are live.
@@ -308,17 +359,25 @@ struct ClaudeActivityReader {
                     } else {
                         transcriptDocumentParses += 1
                         if let parsed = ClaudeTranscriptFields(Data(line)) {
-                            if historical, let boundary = cursor.liveAfter,
-                               let stamp = parsed.values["timestamp"]?.string(limit: 80), let at = ClaudeActivityRecord.date(stamp),
-                               at.timeIntervalSince1970 >= boundary.timeIntervalSince1970 - 0.001 { historical = false }
+                            var observedDuringStartup = false
+                            if historical, cursor.startupCutover != nil || cursor.liveAfter != nil,
+                               let stamp = parsed.values["timestamp"]?.string(limit: 80), let at = ClaudeActivityRecord.date(stamp) {
+                                if let cutoff = cursor.startupCutover {
+                                    observedDuringStartup = at > cutoff
+                                    historical = !observedDuringStartup
+                                } else if let boundary = cursor.liveAfter, at.timeIntervalSince(boundary) >= -0.001 {
+                                    historical = false
+                                }
+                            }
                             let prompt = cursor.context.promptID(for: parsed, sessionID: cursor.session, parentID: cursor.parent)
                             if prompt == nil, cursor.context.awaitedParent != nil {
-                                let owned = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent,
-                                    promptID: ClaudeTranscriptContext.pendingOwner)
+                                let owned = markStartup(ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent,
+                                    promptID: ClaudeTranscriptContext.pendingOwner), observed: observedDuringStartup)
                                 sanitized = ClaudeTranscriptContext.unowned(owned)
                                 cursor.context.deferLast(owned, historical: historical)
                             } else {
-                                sanitized = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent, promptID: prompt)
+                                sanitized = markStartup(ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session,
+                                    parentID: cursor.parent, promptID: prompt), observed: observedDuringStartup)
                             }
                         } else { sanitized = [] }
                     }
@@ -329,7 +388,7 @@ struct ClaudeActivityReader {
                 if cursor.fragment.contains(10) || cursor.offset < size { caughtUp = false; if cursor.sanitized { ownedBacklog = true } }
                 if cursor.offset >= (cursor.historicalEnd ?? UInt64.max),
                    cursor.fragment.isEmpty || cursor.offset - UInt64(cursor.fragment.count) >= (cursor.historicalEnd ?? UInt64.max) {
-                    cursor.historicalEnd = nil; cursor.liveAfter = nil
+                    cursor.historicalEnd = nil; cursor.liveAfter = nil; cursor.startupCutover = nil
                 }
                 if cursor.fragment.count > ClaudeActivityRecord.maximumBytes {
                     cursor.fragment.removeAll(); cursor.context = ClaudeTranscriptContext(); cursor.discardingOversize = true
@@ -339,7 +398,8 @@ struct ClaudeActivityReader {
             } catch { if let row = unavailable(cursor) { records.append(row) }; cursors.removeValue(forKey: url) }
         }
         return Result(records: records, watchURLs: Array(cursors.keys) + discoveryDirectories,
-            available: manager.isReadableFile(atPath: home.path), caughtUp: caughtUp, discoveryPending: inventory != nil || repeatDiscovery)
+            available: manager.isReadableFile(atPath: home.path), caughtUp: caughtUp, discoveryPending: inventory != nil || repeatDiscovery,
+            discoveryFinished: discoveryFinished)
     }
     private static func isNewEvent(_ rows: [Data], after boundary: Date?) -> Bool {
         guard let boundary, let row = rows.first,
@@ -356,14 +416,19 @@ struct ClaudeActivityReader {
         }
         observedFiles.insert(url)
     }
-    private mutating func attach(_ transcript: Transcript, initialObservation: Bool, at now: Date) {
+    private mutating func attach(_ transcript: Transcript, initialObservation: Bool, startupCutover: Date? = nil, at now: Date) {
         let url = transcript.url
         if cursors[url] == nil {
             let boundary = !initialObservation && !observedFiles.contains(url) ? observationStarted : nil
             cursors[url] = Cursor(session: transcript.session, parent: transcript.parent,
-                sanitized: transcript.sanitized, historicalEnd: nil, liveAfter: boundary)
+                sanitized: transcript.sanitized, historicalEnd: nil, liveAfter: boundary, startupCutover: startupCutover)
         }
         rememberObserved(url, at: now)
+    }
+    private func cursorNeedsRead(_ cursor: Cursor, through boundary: PlatformFileMetadata) -> Bool {
+        if cursor.identity != boundary.identity || cursor.created != boundary.created || cursor.offset < boundary.size { return true }
+        let parsed = cursor.offset - UInt64(cursor.fragment.count)
+        return parsed < boundary.size && cursor.fragment.contains(10)
     }
     private mutating func updateDiscoveryWatches(home: URL, root: URL, spool: URL, projects: [URL], selected: [Transcript]) {
         // Vnode watches are not recursive. Watch the selected project's
