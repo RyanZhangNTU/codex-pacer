@@ -1,5 +1,6 @@
 param([string]$Application = '', [string]$OutputDirectory = '', [switch]$SelfContained, [switch]$ReducedMotion)
 . (Join-Path $PSScriptRoot 'environment.ps1')
+. (Join-Path $PSScriptRoot 'self-contained-test-environment.ps1')
 if (!$Application) { $Application = Join-Path $taskRoot 'windows/Desktop/bin/Debug/net10.0-windows/CodexPacer.exe' }
 $taskApplication = [IO.Path]::GetFullPath($Application)
 if (!(Test-Path -LiteralPath $taskApplication -PathType Leaf)) { throw 'Build the desktop before testing its instance activation.' }
@@ -11,19 +12,16 @@ foreach ($taskLanguage in @('en','zh-Hans')) {
         $taskScope = [Guid]::NewGuid()
         $taskName = $taskLanguage + '-' + $taskAction
         $taskImage = Join-Path $taskOutput ($taskName + '.png')
+        $taskPreferences = Join-Path $taskOutput ($taskScope.ToString('N') + '.preferences.json')
         $taskFirst = $null; $taskSecond = $null
         function Start-InstanceQa([bool]$Capture) {
             $taskStart = [Diagnostics.ProcessStartInfo]::new($taskApplication)
             $taskStart.UseShellExecute=$false; $taskStart.CreateNoWindow=$true; $taskStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
             $taskStart.RedirectStandardError=$true; $taskStart.RedirectStandardOutput=$true
-            if ($SelfContained) {
-                $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
-                foreach ($taskVariable in @('DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) { $taskStart.Environment.Remove($taskVariable)|Out-Null }
-                $taskStart.Environment['DOTNET_MULTILEVEL_LOOKUP']='0'
-            }
+            if ($SelfContained) { Set-PacerSelfContainedTestEnvironment $taskStart }
             foreach ($taskArgument in @('--demo','--reference-fixture','--activation-qa',$taskScope.ToString(),'--language',$taskLanguage)) { $taskStart.ArgumentList.Add($taskArgument) }
             if ($Capture) {
-                foreach ($taskArgument in @('--collapsed','--capture-preview',$taskImage)) { $taskStart.ArgumentList.Add($taskArgument) }
+                foreach ($taskArgument in @('--collapsed','--demo-preferences',$taskPreferences,'--capture-preview',$taskImage)) { $taskStart.ArgumentList.Add($taskArgument) }
                 if ($ReducedMotion) { $taskStart.ArgumentList.Add('--preview-reduced-motion') }
                 if ($taskName -eq 'en-show') {
                     foreach ($taskArgument in @('--activation-startup-delay','3000')) { $taskStart.ArgumentList.Add($taskArgument) }
@@ -33,6 +31,9 @@ foreach ($taskLanguage in @('en','zh-Hans')) {
             return [Diagnostics.Process]::Start($taskStart)
         }
         try {
+            # Keep the real fullscreen policy on. The synthetic profile asks
+            # the island to stay visible if a runner has a fullscreen window.
+            [IO.File]::WriteAllText($taskPreferences, '{"schemaVersion":1,"islandAppearance":"classic","showInFullscreen":true}', [Text.UTF8Encoding]::new($false))
             $taskStarted = [DateTime]::UtcNow
             $taskFirst = Start-InstanceQa $true
             $taskFirstError = $taskFirst.StandardError.ReadToEndAsync(); $taskFirstOutput = $taskFirst.StandardOutput.ReadToEndAsync()
@@ -60,7 +61,9 @@ foreach ($taskLanguage in @('en','zh-Hans')) {
             if ($taskAction -eq 'hidden' -and $taskReceipt.wasVisible) { throw 'The hidden-window fixture was visible before activation.' }
             if ($taskAction -eq 'settings' -and !$taskReceipt.settingsVisible) { throw 'The native request did not directly open Settings.' }
             if ($taskAction -ne 'settings' -and (!$taskReceipt.visible -or !$taskReceipt.expanded)) { throw 'The native request did not directly reveal the island.' }
-            if ($taskAction -ne 'settings' -and (!$taskMetadata.expanded -or !$taskMetadata.windowVisible)) { throw 'A second launch did not reveal the existing island.' }
+            if ($taskAction -ne 'settings' -and (!$taskMetadata.expanded -or !$taskMetadata.windowVisible)) {
+                throw "The activated island did not stay visible and expanded ($taskName, visible=$($taskMetadata.windowVisible), expanded=$($taskMetadata.expanded))."
+            }
             if ($taskAction -ne 'settings' -and $ReducedMotion -and $taskMetadata.animations -ne $false) { throw 'The activated island did not use reduced motion.' }
             # A fresh profile opens Settings on Overview, as the Mac's main window does.
             if ($taskAction -eq 'settings' -and $taskMetadata.pane -ne 'overview') { throw 'The Settings activation did not reach the existing Settings window.' }
@@ -70,6 +73,7 @@ foreach ($taskLanguage in @('en','zh-Hans')) {
             foreach ($taskOwned in @($taskSecond,$taskFirst)) {
                 if ($taskOwned) { if (!$taskOwned.HasExited) { $taskOwned.Kill($true); $taskOwned.WaitForExit(5000)|Out-Null }; $taskOwned.Dispose() }
             }
+            if (Test-Path -LiteralPath $taskPreferences -PathType Leaf) { Remove-Item -LiteralPath $taskPreferences -Force }
         }
     }
 }

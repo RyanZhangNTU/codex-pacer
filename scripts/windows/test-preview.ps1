@@ -1,5 +1,6 @@
 param([Parameter(Mandatory)][string]$Archive)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'self-contained-test-environment.ps1')
 $taskRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $taskArchive = [IO.Path]::GetFullPath($Archive)
 $taskArchiveHash = (Get-FileHash -LiteralPath $taskArchive -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -15,11 +16,7 @@ function New-PacerPreviewProcess([string]$Executable) {
     $taskStart = [Diagnostics.ProcessStartInfo]::new($Executable)
     $taskStart.UseShellExecute=$false; $taskStart.CreateNoWindow=$true; $taskStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
     $taskStart.WorkingDirectory=$taskUnrelated; $taskStart.RedirectStandardError=$true; $taskStart.RedirectStandardOutput=$true
-    $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
-    foreach ($taskVariable in @('DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) {
-        $taskStart.Environment.Remove($taskVariable) | Out-Null
-    }
-    $taskStart.Environment['DOTNET_MULTILEVEL_LOOKUP']='0'
+    Set-PacerSelfContainedTestEnvironment $taskStart
     return $taskStart
 }
 

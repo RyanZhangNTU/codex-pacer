@@ -29,7 +29,8 @@ class ChangedPlatformsTests(unittest.TestCase):
                      "scripts/windows/package-installer.ps1", "scripts/windows/test-patch.ps1", "windows/toolchain-lock.json",
                      "global.json", "windows/Desktop/App.xaml.cs", "windows/Desktop/WindowsSystemNotifications.cs",
                      "scripts/windows/build-desktop.ps1", "scripts/windows/environment.ps1", "scripts/windows/architecture.ps1",
-                     "scripts/windows/version.ps1", "scripts/windows/fetch-update-base.ps1", "scripts/windows/test-update-base.ps1"):
+                     "scripts/windows/version.ps1", "scripts/windows/fetch-update-base.ps1", "scripts/windows/test-update-base.ps1",
+                     "scripts/windows/self-contained-test-environment.ps1"):
             self.assertEqual(platforms.classify([path]), (False, True, True), path)
 
     def test_shared_core_runs_both_platforms_without_the_installers(self):

@@ -27,6 +27,7 @@ INSTALLER = ("windows/Installer/", "windows/InstallerHooks/", "windows/Installer
              "scripts/windows/fetch-update-base.ps1", "scripts/windows/build-maintenance.ps1",
              "scripts/windows/environment.ps1", "scripts/windows/architecture.ps1", "scripts/windows/version.ps1",
              "scripts/windows/stage-engine.py", "scripts/windows/check-architecture.py", "scripts/windows/test-instance-activation.ps1",
+             "scripts/windows/self-contained-test-environment.ps1",
              "scripts/windows/build-localization.py", "scripts/windows/build-shell-resources.py",
              "scripts/windows/prune-arm64-runtime.py", "scripts/windows/setup-swift.ps1", "scripts/windows/build-engine.ps1",
              "scripts/windows/build-desktop.ps1", ".github/workflows/", "scripts/ci/",
