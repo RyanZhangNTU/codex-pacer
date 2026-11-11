@@ -221,14 +221,14 @@ try {
     Assert-Pacer ($taskStatus.Effective) 'The enabled approval fixture must read back as effective.'
     Record-Pacer 'live HKCU startup enable/disable and StartupApproved enabled/disabled fixtures; no reboot'
 
-    # Repair must use Setup's fresh host and tolerate a truncated update state.
+    # Repair must use Setup's fresh host and recover oversized update state.
     $taskAssembly = Join-Path $taskApp 'CodexPacer.dll'
     $taskAssemblyHash = (Get-FileHash -LiteralPath $taskAssembly).Hash
     [IO.File]::WriteAllText($taskAssembly, 'synthetic damaged assembly', [Text.UTF8Encoding]::new($false))
     $taskUpdates = Join-Path $taskData 'Updates'
     $taskUpdateState = Join-Path $taskUpdates 'state-v1.json'
     New-Item -ItemType Directory -Path $taskUpdates -Force | Out-Null
-    [IO.File]::WriteAllText($taskUpdateState, '{"SchemaVersion":1,"Values":', [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($taskUpdateState, ('{"SchemaVersion":1,"Values":' + (' ' * 32768)), [Text.UTF8Encoding]::new($false))
     $taskUpdateHash = (Get-FileHash -LiteralPath $taskUpdateState).Hash
     # A silent run over an installation keeps the shortcut choices as they are.
     Remove-Item -LiteralPath $taskDesktopShortcut
@@ -240,7 +240,7 @@ try {
     Assert-Pacer ((Test-Path -LiteralPath $taskShortcut) -and !(Test-Path -LiteralPath $taskDesktopShortcut)) 'A silent repair must keep owned shortcuts and not restore a deleted one.'
     $null = Invoke-PacerTestProcess $taskMaintenance @('shortcut',$taskScope,$taskApp,'desktop')
     Assert-Pacer (Test-Path -LiteralPath $taskDesktopShortcut) 'The finish-page desktop shortcut entry did not create its shortcut.'
-    Record-Pacer 'same-version repair restores a damaged main assembly, backs up truncated update state and keeps shortcut choices'
+    Record-Pacer 'same-version repair restores a damaged main assembly, backs up oversized update state and keeps shortcut choices'
     $taskLock = [IO.FileStream]::new((Join-Path $taskApp 'Assets/Pacer.ico'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     try { $null = Invoke-PacerTestProcess $taskSetup $taskFlags @(7) }
     finally { $taskLock.Dispose() }

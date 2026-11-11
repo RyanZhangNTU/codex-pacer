@@ -53,12 +53,15 @@ internal static class UpdateFiles
     }
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileFacts info);
-    internal static byte[] Read(string path, int limit)
+    internal static byte[] Read(string path, int limit) => ReadFile(path, limit, false, out _);
+    internal static byte[] ReadPrefix(string path, int limit, out long length) => ReadFile(path, limit, true, out length);
+    private static byte[] ReadFile(string path, int limit, bool allowPrefix, out long length)
     {
         Check(path);
         using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        if (file.Length > limit) throw new InvalidDataException("Update data exceeds its limit.");
-        var data = new byte[checked((int)file.Length)]; file.ReadExactly(data); Check(path); return data;
+        length = file.Length;
+        if (!allowPrefix && length > limit) throw new InvalidDataException("Update data exceeds its limit.");
+        var data = new byte[checked((int)Math.Min(length, limit))]; file.ReadExactly(data); Check(path); return data;
     }
     internal static void Write(string path, byte[] bytes)
     {
@@ -104,38 +107,40 @@ internal sealed class WindowsUpdateState(string path)
     {
         lock (sync)
         {
-            byte[] bytes;
-            try { bytes = UpdateFiles.Read(path, MaximumBytes); }
+            byte[] bytes; long length;
+            try { bytes = UpdateFiles.ReadPrefix(path, MaximumBytes, out length); }
             catch (Exception error) when (StateUnavailable(error)) { return null; }
 
-            try { return Version.TryParse(Decode(bytes).GetValueOrDefault(UpdateHandoff.PatchFailedKey), out var build) ? build : null; }
-            catch (Exception error) when (error is JsonException or InvalidDataException)
+            if (length <= MaximumBytes)
             {
-                if (IsKnownOrMalformed(bytes))
-                    try
-                    {
-                        // Keep a file another process has already replaced.
-                        if (UpdateFiles.Read(path, MaximumBytes).AsSpan().SequenceEqual(bytes)) FileQuarantine.Move(path, UpdateFiles.Check);
-                    }
-                    catch (Exception recovery) when (StateUnavailable(recovery)) { }
-                return null;
+                try { return Version.TryParse(Decode(bytes).GetValueOrDefault(UpdateHandoff.PatchFailedKey), out var build) ? build : null; }
+                catch (Exception error) when (error is JsonException or InvalidDataException) { }
             }
+            if (!HasUnsupportedSchema(bytes, complete: length == bytes.Length))
+                try
+                {
+                    // Keep a file another process has already replaced. An
+                    // oversized file needs only a bounded probe and a rename.
+                    byte[] current = UpdateFiles.ReadPrefix(path, MaximumBytes, out long currentLength);
+                    if (currentLength == length && current.AsSpan().SequenceEqual(bytes)) FileQuarantine.Move(path, UpdateFiles.Check);
+                }
+                catch (Exception recovery) when (StateUnavailable(recovery)) { }
+            return null;
         }
     }
-    private static bool IsKnownOrMalformed(byte[] bytes)
+    private static bool HasUnsupportedSchema(byte[] bytes, bool complete)
     {
         try
         {
-            using var document = JsonDocument.Parse(bytes);
-            if (document.RootElement.ValueKind != JsonValueKind.Object) return true;
-            // The writer uses SchemaVersion. Also preserve explicit versions
-            // in other casing if a future writer changes its JSON convention.
-            foreach (var property in document.RootElement.EnumerateObject())
-                if (string.Equals(property.Name, "SchemaVersion", StringComparison.OrdinalIgnoreCase) &&
-                    (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetInt32(out int schema) || schema != 1)) return false;
-            return true;
+            var reader = new Utf8JsonReader(bytes, isFinalBlock: complete, state: default);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return false;
+            while (reader.Read())
+                if (reader.CurrentDepth == 1 && reader.TokenType == JsonTokenType.PropertyName &&
+                    string.Equals(reader.GetString(), "SchemaVersion", StringComparison.OrdinalIgnoreCase) && reader.Read() &&
+                    (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt32(out int schema) || schema != 1)) return true;
         }
-        catch (JsonException) { return true; }
+        catch (JsonException) { }
+        return false;
     }
     internal static bool StateUnavailable(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException;
     internal void ClearVerifiedRepair(Version expected)
@@ -164,7 +169,12 @@ internal sealed class WindowsUpdateState(string path)
             Save(values);
         }
     }
-    private void Save(Dictionary<string, string> values) => UpdateFiles.Write(path, JsonSerializer.SerializeToUtf8Bytes(new State(1, values)));
+    private void Save(Dictionary<string, string> values)
+    {
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new State(1, values));
+        if (bytes.Length > MaximumBytes) throw new InvalidDataException("Update state exceeds its limit.");
+        UpdateFiles.Write(path, bytes);
+    }
     internal bool ClaimNotes(string build)
     {
         lock (sync) { if (Read("LastPresentedBuild") == build) return false; Write("LastPresentedBuild", build); return true; }

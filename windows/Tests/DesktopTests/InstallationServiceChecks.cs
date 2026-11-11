@@ -142,7 +142,8 @@ internal static class InstallationServiceChecks
             catch (IOException) { }
             Check(File.ReadAllBytes(path).SequenceEqual(truncated) && Backups().Length == 0, "Registration must succeed before touching damaged update state");
 
-            foreach (byte[] damaged in new[] { truncated, "{\"SchemaVersion\":1,\"Values\":{\"PacerPatchFailedBuild\":null}}"u8.ToArray() })
+            byte[] Oversize(byte[] prefix) => prefix.Concat(Enumerable.Repeat((byte)' ', 32768)).ToArray();
+            foreach (byte[] damaged in new[] { truncated, "{\"SchemaVersion\":1,\"Values\":{\"PacerPatchFailedBuild\":null}}"u8.ToArray(), Oversize(truncated) })
             {
                 File.WriteAllBytes(path, damaged);
                 Complete();
@@ -153,13 +154,17 @@ internal static class InstallationServiceChecks
             }
 
             byte[] future = "{\"SchemaVersion\":2,\"Values\":{}}"u8.ToArray();
-            File.WriteAllBytes(path, future);
-            Complete();
-            Check(File.ReadAllBytes(path).SequenceEqual(future) && Backups().Length == 2, "Full installation preserves future update state in place");
+            foreach (byte[] versioned in new[] { future, Oversize(future) })
+            {
+                File.WriteAllBytes(path, versioned);
+                Complete();
+                Check(File.ReadAllBytes(path).SequenceEqual(versioned) && Backups().Length == 3,
+                    "Full installation preserves an explicit future schema, even when the current reader cannot load the full file");
+            }
 
             File.WriteAllBytes(path, truncated);
             using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None)) Complete();
-            Check(File.ReadAllBytes(path).SequenceEqual(truncated) && Backups().Length == 2,
+            Check(File.ReadAllBytes(path).SequenceEqual(truncated) && Backups().Length == 3,
                 "A file-sharing denial is not treated as corruption or replaced by the installer");
 
             File.Delete(path);
