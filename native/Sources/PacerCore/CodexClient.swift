@@ -192,12 +192,15 @@ public actor CodexClient {
             snapshot.accountScope = verifiedAccountScope
             return snapshot
         } catch {
-            // A slow reply, even to account/read on a fresh connection, keeps the account
-            // verified before it while the auth file is unchanged, so callers can keep
-            // that account's last reading. Any other failure stays unverified.
-            if case CodexClientError.timeout = error, verifiedAccountScope == nil, let lastVerified,
-               lastVerified.fingerprint == Self.authenticationFingerprint(home: home, files: files) {
-                verifiedAccountScope = lastVerified.scope
+            if case CodexClientError.timeout = error {
+                // The auth file can change after account/read verified the account.
+                let currentFingerprint = Self.authenticationFingerprint(home: home, files: files)
+                if currentFingerprint != authFingerprint {
+                    verifiedAccountScope = nil
+                    lastVerified = nil
+                } else if verifiedAccountScope == nil, let lastVerified, lastVerified.fingerprint == currentFingerprint {
+                    verifiedAccountScope = lastVerified.scope
+                }
             }
             disconnect()
             throw error

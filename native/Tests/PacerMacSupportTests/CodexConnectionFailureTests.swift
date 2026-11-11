@@ -285,6 +285,7 @@ final class CodexConnectionFailureTests: XCTestCase {
     func testSlowRepliesKeepTheVerifiedAccountOnlyWhileTheAuthFileIsUnchanged() async throws {
         let auth = try write("auth.json", #"{"synthetic":"first"}"#)
         let hangAccount = root.appendingPathComponent("hang-account"), count = root.appendingPathComponent("quota-count")
+        let rotateAuth = root.appendingPathComponent("rotate-auth")
         let client = try client(#"""
         while IFS= read -r line; do
           id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -295,7 +296,11 @@ final class CodexConnectionFailureTests: XCTestCase {
               [ -f '\#(hangAccount.path)' ] || printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"pro"},"workspaceRouting":{"chatgptAccountId":"fixture","backendOrigin":"test"}}}\n' "$id" ;;
             *account/rateLimits/read*)
               n=$(($(cat '\#(count.path)' 2>/dev/null || echo 0) + 1)); echo "$n" > '\#(count.path)'
-              [ "$n" -gt 1 ] || printf '{"id":%s,"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300}}}}\n' "$id" ;;
+              if [ -f '\#(rotateAuth.path)' ]; then
+                printf '%s' '{"synthetic":"rotated during quota read"}' > '\#(auth.path)'
+              elif [ "$n" -eq 1 ]; then
+                printf '{"id":%s,"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300}}}}\n' "$id"
+              fi ;;
           esac
         done
         """#, timeout: 0.3)
@@ -317,6 +322,13 @@ final class CodexConnectionFailureTests: XCTestCase {
         await slowRead("account/read")
         let afterSignIn = await client.currentAccountScope()
         XCTAssertNil(afterSignIn, "A changed auth file cannot reuse the earlier account")
+
+        try FileManager.default.removeItem(at: hangAccount)
+        try Data().write(to: rotateAuth)
+        await slowRead("account/rateLimits/read")
+        XCTAssertEqual(try String(contentsOf: auth, encoding: .utf8), #"{"synthetic":"rotated during quota read"}"#)
+        let afterRotation = await client.currentAccountScope()
+        XCTAssertNil(afterRotation, "A timeout cannot keep a scope verified before the auth file changed mid-read")
         XCTAssertEqual(ProviderQuotaRefreshPolicy.replyTimeout, 30)
     }
 

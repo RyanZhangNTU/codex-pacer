@@ -28,9 +28,10 @@ internal sealed class DeepSeekWebSession : ProviderWebSession, IDeepSeekWebSessi
         await page.NavigateReader(new Uri(DeepSeekWebScripts.Origin, ".codex-pacer/balance/" + Guid.NewGuid().ToString("N")), token);
         return ProviderLoginWindow.Fingerprint(await page.Evaluate(DeepSeekWebScripts.Shared.SignedIn, token));
     }, cancellation);
+    // The engine bounds this read and cancels it via the host request token.
     public Task<DeepSeekWebReply> ReadAsync(CancellationToken cancellation) => base.ReadAsync(async (page, token) =>
     {
         await page.NavigateReader(new Uri(DeepSeekWebScripts.Origin, ".codex-pacer/balance/" + Guid.NewGuid().ToString("N")), token);
         return DeepSeekWebReply.FromPage(await page.Evaluate(DeepSeekWebScripts.Shared.Summary, token));
-    }, cancellation);
+    }, cancellation, readTimeout: Timeout.InfiniteTimeSpan);
 }
