@@ -74,13 +74,15 @@ try {
         $taskPath = [IO.Path]::GetFullPath((Join-Path $taskApp $taskFile.path))
         if (!$taskPath.StartsWith($taskPrefix, [StringComparison]::OrdinalIgnoreCase) -or (Get-FileHash -LiteralPath $taskPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $taskFile.sha256) { throw 'A packaged file differs from its recorded hash.' }
     }
-    if ($taskManifest.architecture -eq 'arm64') { Test-PacerPreviewEngine }
-    $taskCaptureTimeout = if ($taskManifest.architecture -eq 'arm64') { 60000 } else { 30000 }
+    $taskReducedMotion = $taskManifest.architecture -eq 'arm64'
+    if ($taskReducedMotion) { Test-PacerPreviewEngine }
+    $taskCaptureTimeout = if ($taskReducedMotion) { 60000 } else { 30000 }
     foreach ($taskLanguage in @('en','zh-Hans')) {
         foreach ($taskScene in @('island','settings','claude-settings')) {
             $taskImage = Join-Path $taskOutput ($taskLanguage + '-' + $taskScene + '.png')
             $taskStart = New-PacerPreviewProcess (Join-Path $taskApp 'CodexPacer.exe')
             foreach ($taskArgument in @('--demo','--reference-fixture','--language',$taskLanguage,'--capture-preview',$taskImage)) { $taskStart.ArgumentList.Add($taskArgument) }
+            if ($taskReducedMotion) { $taskStart.ArgumentList.Add('--preview-reduced-motion') }
             if ($taskScene -ne 'island') {
                 $taskPane = if ($taskScene -eq 'claude-settings') { 'claude' } else { 'deepseek' }
                 foreach ($taskArgument in @('--settings-preview','--settings-pane',$taskPane)) { $taskStart.ArgumentList.Add($taskArgument) }
@@ -98,19 +100,19 @@ try {
                     Write-PacerPreviewDiagnostics $taskErrorText
                     throw ('The extracted preview failed: ' + $taskLanguage + '/' + $taskScene + ', exit ' + $taskProcess.ExitCode)
                 }
+                $taskCapture = Get-Content -LiteralPath ([IO.Path]::ChangeExtension($taskImage, '.json')) -Raw | ConvertFrom-Json
                 if ($taskScene -ne 'island') {
-                    $taskCapture = Get-Content -LiteralPath ([IO.Path]::ChangeExtension($taskImage, '.json')) -Raw | ConvertFrom-Json
                     if ($taskCapture.pane -ne $taskPane -or $taskCapture.sourceInspectionPending) { throw 'The extracted source Settings page did not finish its inspection.' }
-                }
+                } elseif ($taskReducedMotion -and $taskCapture.animations -ne $false) { throw 'The extracted ARM64 island did not use reduced motion.' }
                 $taskChecks += @{language=$taskLanguage;scene=$taskScene;exitCode=$taskProcess.ExitCode;image=[IO.Path]::GetFileName($taskImage)}
             } finally { $taskProcess.Dispose() }
         }
     }
-    & (Join-Path $PSScriptRoot 'test-instance-activation.ps1') -Application (Join-Path $taskApp 'CodexPacer.exe') -OutputDirectory (Join-Path $taskOutput 'activation') -SelfContained
+    & (Join-Path $PSScriptRoot 'test-instance-activation.ps1') -Application (Join-Path $taskApp 'CodexPacer.exe') -OutputDirectory (Join-Path $taskOutput 'activation') -SelfContained -ReducedMotion:$taskReducedMotion
     $taskOS = Get-CimInstance Win32_OperatingSystem
     $taskResult = @{schemaVersion=1;archiveSHA256=$taskArchiveHash;sourceCommit=$taskManifest.sourceCommit;sourceDirty=$taskManifest.sourceDirty;
         windows=@{caption=$taskOS.Caption;version=$taskOS.Version;build=$taskOS.BuildNumber};sanitizedDeveloperEnvironment=$true;
-        extractedUnicodePath=$true;unrelatedWorkingDirectory=$true;syntheticOnly=$true;twoProcessActivation=$true;checks=$taskChecks;result='passed'}
+        extractedUnicodePath=$true;unrelatedWorkingDirectory=$true;syntheticOnly=$true;twoProcessActivation=$true;reducedMotion=$taskReducedMotion;checks=$taskChecks;result='passed'}
     [IO.File]::WriteAllText((Join-Path $taskOutput 'result.json'),($taskResult|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
     Write-Output 'PASS extracted self-contained preview: EN/ZH island, DeepSeek and Claude Settings, no developer PATH, Unicode paths, packaged hashes and graceful exit.'
 } finally {

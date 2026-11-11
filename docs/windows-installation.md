@@ -92,4 +92,4 @@ The first command launches the packaged app and checks activation. The second bu
 Limits:
 
 - Inside Codex's process tree HKCU is isolated, so registry results there prove only that view. Real HKCU registration, Run, StartupApproved, notification and uninstall behavior needs CI or a temporary current-user task outside the tree; remove the task and installation afterwards. File-system results are real.
-- The ARM64 smoke test covers a clean installation and launch. Use a Windows ARM64 device to check upgrade, sign-in and the full lifecycle when those paths change.
+- The ARM64 smoke test covers a clean installation and launch. Its screenshots and activation checks use Pacer's reduced-motion mode so they do not depend on animation ticks from the hosted desktop. Use a Windows ARM64 device to check motion, upgrade, sign-in and the full lifecycle when those paths change.

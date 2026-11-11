@@ -132,6 +132,9 @@ public partial class App : Application
         }
         if (capture >= 0 && (!demo || capture + 1 >= e.Args.Length || !Path.IsPathFullyQualified(e.Args[capture + 1])))
             throw new ArgumentException("Preview capture requires demo mode and an absolute output path.");
+        bool previewReducedMotion = e.Args.Contains("--preview-reduced-motion");
+        if (previewReducedMotion && (!referenceFixture || capture < 0))
+            throw new ArgumentException("Reduced-motion previews require a synthetic reference capture.");
         string previewStage = "desktop startup";
         void PreviewStage(string stage)
         {
@@ -139,7 +142,7 @@ public partial class App : Application
             previewStage = stage;
             Console.Error.WriteLine("Pacer preview: " + stage);
         }
-        PreviewStage(previewStage);
+        PreviewStage(previewReducedMotion ? "desktop startup (reduced motion)" : previewStage);
         Guid? activationQa = null;
         int activationQaIndex = Array.IndexOf(e.Args, "--activation-qa");
         if (activationQaIndex >= 0)
@@ -215,7 +218,8 @@ public partial class App : Application
             { if (!quitting) island?.SetStatus(ui.Text("windows.connection.refresh_failed")); }
         };
         var applications = demo ? new WindowsDesktopApplications(_ => true, _ => true) : new WindowsDesktopApplications();
-        island = new IslandWindow(engine, demo, language == "zh-Hans", position, desktopApplications: applications,
+        island = new IslandWindow(engine, demo, language == "zh-Hans", position, animationOverride: previewReducedMotion ? false : null,
+            desktopApplications: applications,
             displayMode: positionIndex >= 0 ? 2 : Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode),
             canConnectDeepSeekWeb: () => webConnection.Available);
         if (capture < 0 || activationQa != null)
@@ -328,22 +332,25 @@ public partial class App : Application
             if (capture < 0) await StartWindowsUpdaterAsync(e.Args);
             if (capture >= 0)
             {
-                PreviewStage("activation and capture");
                 if (activationQa != null)
                 {
+                    PreviewStage("instance activation");
                     var action = await activationForCapture.Task.WaitAsync(TimeSpan.FromSeconds(15));
                     if (action == InstanceAction.Settings) captureSettings = true;
                     else { island.Reveal(); await island.SynchronizeExpansionAsync(); }
                 }
                 if (captureSettings)
                 {
+                    PreviewStage("settings capture");
                     OpenSettings(); await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ContextIdle);
                     await settings!.WaitForSourceInspectionAsync();
                     settings!.CapturePreview(e.Args[capture + 1]);
                 }
                 else
                 {
+                    PreviewStage("island settle");
                     await island.WaitForPresentationAsync();
+                    PreviewStage("island capture");
                     island.CapturePreview(e.Args[capture + 1]);
                 }
                 PreviewStage("shutdown");
@@ -359,6 +366,8 @@ public partial class App : Application
                 string errorCode = ex is System.ComponentModel.Win32Exception native
                     ? $"Win32 error {native.NativeErrorCode}" : ex.GetType().Name;
                 Console.Error.WriteLine($"Pacer preview: {previewStage} failed ({errorCode}).");
+                if (ex is TimeoutException && previewStage == "island settle")
+                    Console.Error.WriteLine("Pacer preview: " + island.PresentationDiagnostics);
                 Quit(1);
                 return;
             }

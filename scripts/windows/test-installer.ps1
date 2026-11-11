@@ -156,8 +156,15 @@ function Start-PacerDemo {
 function Test-PacerOfflineLaunch([string]$Application) {
     Wait-PacerScreen
     $taskCapture = Join-Path $taskFixture 'offline-demo.png'
-    $null = Invoke-PacerTestProcess $Application @('--demo','--reference-fixture','--language','zh-Hans','--capture-preview',$taskCapture) -Offline
-    Assert-Pacer ((Test-Path -LiteralPath $taskCapture) -and (Test-Path -LiteralPath ([IO.Path]::ChangeExtension($taskCapture,'.json')))) 'The installed offline demo could not render without SDK PATH.'
+    $taskPreviewArguments = @('--demo','--reference-fixture','--language','zh-Hans','--capture-preview',$taskCapture)
+    if ($taskArchitecture.Name -eq 'arm64') { $taskPreviewArguments += '--preview-reduced-motion' }
+    $null = Invoke-PacerTestProcess $Application $taskPreviewArguments -Offline
+    $taskMetadata = [IO.Path]::ChangeExtension($taskCapture,'.json')
+    Assert-Pacer ((Test-Path -LiteralPath $taskCapture) -and (Test-Path -LiteralPath $taskMetadata)) 'The installed offline demo could not render without SDK PATH.'
+    if ($taskArchitecture.Name -eq 'arm64') {
+        $taskPreview = Get-Content -LiteralPath $taskMetadata -Raw | ConvertFrom-Json
+        Assert-Pacer ($taskPreview.animations -eq $false) 'The installed ARM64 island did not use reduced motion.'
+    }
     Record-Pacer 'installed offline demo starts without development PATH or DOTNET_ROOT; synthetic capture only'
 }
 $taskBeforeRun = Get-PacerOtherSnapshot $taskRunKey

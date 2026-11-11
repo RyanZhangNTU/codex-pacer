@@ -1,4 +1,4 @@
-param([string]$Application = '', [string]$OutputDirectory = '', [switch]$SelfContained)
+param([string]$Application = '', [string]$OutputDirectory = '', [switch]$SelfContained, [switch]$ReducedMotion)
 . (Join-Path $PSScriptRoot 'environment.ps1')
 if (!$Application) { $Application = Join-Path $taskRoot 'windows/Desktop/bin/Debug/net10.0-windows/CodexPacer.exe' }
 $taskApplication = [IO.Path]::GetFullPath($Application)
@@ -18,12 +18,13 @@ foreach ($taskLanguage in @('en','zh-Hans')) {
             $taskStart.RedirectStandardError=$true; $taskStart.RedirectStandardOutput=$true
             if ($SelfContained) {
                 $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
-                foreach ($taskVariable in @('DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) { $taskStart.Environment.Remove($taskVariable)|Out-Null }
+                foreach ($taskVariable in @('DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) { $taskStart.Environment.Remove($taskVariable)|Out-Null }
                 $taskStart.Environment['DOTNET_MULTILEVEL_LOOKUP']='0'
             }
             foreach ($taskArgument in @('--demo','--reference-fixture','--activation-qa',$taskScope.ToString(),'--language',$taskLanguage)) { $taskStart.ArgumentList.Add($taskArgument) }
             if ($Capture) {
                 foreach ($taskArgument in @('--collapsed','--capture-preview',$taskImage)) { $taskStart.ArgumentList.Add($taskArgument) }
+                if ($ReducedMotion) { $taskStart.ArgumentList.Add('--preview-reduced-motion') }
                 if ($taskName -eq 'en-show') {
                     foreach ($taskArgument in @('--activation-startup-delay','3000')) { $taskStart.ArgumentList.Add($taskArgument) }
                 }
@@ -60,6 +61,7 @@ foreach ($taskLanguage in @('en','zh-Hans')) {
             if ($taskAction -eq 'settings' -and !$taskReceipt.settingsVisible) { throw 'The native request did not directly open Settings.' }
             if ($taskAction -ne 'settings' -and (!$taskReceipt.visible -or !$taskReceipt.expanded)) { throw 'The native request did not directly reveal the island.' }
             if ($taskAction -ne 'settings' -and (!$taskMetadata.expanded -or !$taskMetadata.windowVisible)) { throw 'A second launch did not reveal the existing island.' }
+            if ($taskAction -ne 'settings' -and $ReducedMotion -and $taskMetadata.animations -ne $false) { throw 'The activated island did not use reduced motion.' }
             # A fresh profile opens Settings on Overview, as the Mac's main window does.
             if ($taskAction -eq 'settings' -and $taskMetadata.pane -ne 'overview') { throw 'The Settings activation did not reach the existing Settings window.' }
             $taskChecks += @{language=$taskLanguage;action=$taskAction;receiver=$taskReceipt.receiver;firstExit=$taskFirst.ExitCode;secondExit=$taskSecond.ExitCode;capture=[IO.Path]::GetFileName($taskImage)}
