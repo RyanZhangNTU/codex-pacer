@@ -337,7 +337,7 @@ internal sealed partial class SettingsWindow
             text.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = chip });
             text.SetBinding(TextBlock.FontWeightProperty, new System.Windows.Data.Binding(nameof(FontWeight)) { Source = chip });
             content.Children.Add(text);
-            chip.Content = content; Identify(chip, "panel.option.field." + field, ui.Text("panel.field." + field)); editors.Add(chip); panelChips[field] = chip;
+            chip.Content = content; Identify(chip, "panel.option.field." + field, ui.Text("panel.field." + field)); panelChips[field] = chip;
             RoutedEventHandler changed = async (_, _) =>
             {
                 if (synchronizing || !CanEditPanel || !chip.IsVisible || !chip.IsEnabled) return;
@@ -396,11 +396,11 @@ internal sealed partial class SettingsWindow
         if (panelEditor == null || activePane != "expandedPanel") return;
         var state = ReadPanel();
         var projection = panelProjection = state.Value;
-        bool ready = projection != null && !session.RequiresRestart;
+        bool ready = projection != null && !session.RequiresRestart && !sourceClosed;
         // Selection stays local during a save or read. Mutations wait for the
         // new projection, and a failed or disconnected read disables selection.
-        panelEditor.IsEnabled = panelLibrary!.IsEnabled = ready || state.Pending && !session.RequiresRestart;
-        panelInspector!.IsEnabled = ready;
+        panelEditor.IsEnabled = panelLibrary!.IsEnabled = ready || state.Pending && !session.RequiresRestart && !sourceClosed;
+        panelInspector!.IsEnabled = ready && !busy;
         foreach (var tile in panelTiles.Values)
             if (tile.Toggle is { } toggle) toggle.IsEnabled = ready && !busy;
         panelRestore!.IsEnabled = ready && !busy;

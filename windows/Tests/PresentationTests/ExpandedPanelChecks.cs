@@ -88,6 +88,8 @@ internal static class ExpandedPanelChecks
                         "Block selection stays enabled while settings writes are blocked");
                     Invoke(tasks);
                     await Until(() => AutomationProperties.GetItemStatus(tasks) == ui.Text("main.panel.selected"));
+                    Check(Find<CheckBox>(window, "panel.option.field.rate") is { IsVisible: true, IsEnabled: false },
+                        "Selecting Tasks during a save leaves its field controls disabled");
                     Invoke(library);
                     await Until(() => AutomationProperties.GetItemStatus(library) == ui.Text("main.panel.selected"));
                     Check(!Find<CheckBox>(window, "panel.option.action.pin").IsEnabled,
@@ -257,6 +259,9 @@ internal static class ExpandedPanelChecks
     {
         var previous = ShellProjection.Client;
         await Until(() => Present<Button>(window, "panel.editor.codex") && Find<Button>(window, "panel.block.codex.toggle").IsEnabled);
+        window.SelectPanelBlock("tasks");
+        await Until(() => Ready<CheckBox>(window, "panel.option.field.rate"));
+        var field = Find<CheckBox>(window, "panel.option.field.rate");
         var block = Find<Button>(window, "panel.editor.codex");
         var toggle = Find<Button>(window, "panel.block.codex.toggle");
         var restore = Find<Button>(window, "panel.restore");
@@ -264,7 +269,7 @@ internal static class ExpandedPanelChecks
         try
         {
             ShellProjection.Client = null;
-            await Until(() => !block.IsEnabled && !toggle.IsEnabled && !restore.IsEnabled);
+            await Until(() => !block.IsEnabled && !toggle.IsEnabled && !restore.IsEnabled && !field.IsEnabled);
             MoveUp(block);
             toggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -272,7 +277,7 @@ internal static class ExpandedPanelChecks
             Check(session.Current == before && configurationCount() == configured, "An unavailable projection blocks stale outline, library and restore edits");
         }
         finally { ShellProjection.Client = previous; }
-        await Until(() => block.IsEnabled && toggle.IsEnabled && restore.IsEnabled);
+        await Until(() => block.IsEnabled && toggle.IsEnabled && restore.IsEnabled && field.IsEnabled);
         Check(ReferenceEquals(block, Find<Button>(window, "panel.editor.codex")), "Restoring the same projection re-enables the existing outline");
         Console.WriteLine("PASS unavailable panel projection: stale edits blocked and existing outline restored");
     }

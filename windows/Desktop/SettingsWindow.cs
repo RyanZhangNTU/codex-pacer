@@ -367,6 +367,8 @@ internal sealed partial class SettingsWindow : Window
     private void SetEditors(bool enabled)
     {
         foreach (var editor in editors) editor.IsEnabled = enabled;
+        // Only a ready panel projection can enable the inspector again.
+        if (!enabled && panelInspector != null) panelInspector.IsEnabled = false;
         RefreshUpdates();
         RefreshBanner();
         codexHistory?.SetInteractionEnabled(enabled);
