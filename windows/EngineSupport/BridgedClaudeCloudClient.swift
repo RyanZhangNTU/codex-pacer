@@ -34,14 +34,17 @@ actor ClaudeCloudCookieProvider {
             return nil
         }
         if !pinned {
-            pinned = true; scope = observed
             guard await input.observedScope(observed), !stopped, !invalidated, !Task.isCancelled else { return nil }
+            pinned = true; scope = observed
         }
         return value
     }
-    func stop() async {
-        stopped = true; pending?.1.cancel(); pending = nil
+    func suspend() async {
+        pending?.1.cancel(); pending = nil; invalidated = false
         await bridge.cancel(context: input.context)
+    }
+    func stop() async {
+        stopped = true; await suspend()
     }
 }
 
@@ -67,6 +70,10 @@ actor BridgedClaudeCloudClient: ClaudeCloudConnection {
     }
     func setExpanded(_ value: Bool) async { guard !stopped else { return }; await monitor.setExpanded(value) }
     func refresh() async { guard !stopped else { return }; await monitor.refresh() }
+    func suspend() async {
+        await monitor.suspend()
+        await cookies.suspend()
+    }
     func shutdown() async {
         stopped = true; await cookies.stop(); await monitor.shutdown()
     }

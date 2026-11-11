@@ -24,6 +24,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
     private var delivering = false
     private var reader: Task<Void, Never>?, timer: Task<Void, Never>?
     private var timerDate: Date?
+    private var nextProofCheck = Date.distantPast
     private var threads: [String] = []
     private var interval: TimeInterval
     private var started = false, finished = false
@@ -143,20 +144,24 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         } catch { await finish(flush: false) }
     }
     private func service() async throws {
-        guard !finished, session != nil else { return }
+        guard !finished, session != nil, let gate else { return }
         let now = Date()
-        guard gate?.validate() == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
-        try revokeDurableIfStale()
-        if let gate {
-            let ready = gate.dueRetries(at: now).filter { gate.permit($0) }.map { NativeDesktopSession.Key(host: "local", thread: $0) }
-            try session?.discover(ready)
+        guard !gate.revoked, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
+        // A heartbeat checks quiet local proofs as well. Shorter batching and
+        // snapshot-retry deadlines only validate the threads they use.
+        if now >= nextProofCheck {
+            guard gate.validate() else { throw WindowsDesktopSourceGate.Failure.revoked }
+            nextProofCheck = now.addingTimeInterval(15)
         }
+        try revokeDurableIfStale()
+        let ready = gate.dueRetries(at: now).filter { gate.permit($0) }.map { NativeDesktopSession.Key(host: "local", thread: $0) }
+        try session?.discover(ready)
         try session?.service(at: now)
         try await deliver(); schedule()
     }
     private func schedule() {
         guard !finished, let session else { return }
-        var next = session.nextServiceDate
+        var next = min(session.nextServiceDate, nextProofCheck)
         if let date = gate?.nextRetryDate { next = min(next, date) }
         if let timerDate, timerDate <= next { return }
         timer?.cancel(); timerDate = next
@@ -183,7 +188,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
             let revision = durableRevision
             for bytes in frames {
                 guard !finished else { return }
-                guard gate?.validate() == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
+                guard try gate?.validateDelivery(bytes) == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
                 if durableRevision > 0, let needsBinding = Self.durableFrameNeedsBinding(bytes),
                    revision != durableRevision || (needsBinding && durableBinding?.isCurrent(home: home) != true) { continue }
                 await onFrame(bytes)
@@ -273,7 +278,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         let frames = session?.finish(flush: flush && access?.validate() == true && remote?.validate() != false) ?? []
         session = nil; gate = nil; remoteGate = nil; transport = nil
         for bytes in frames {
-            guard access?.validate() == true, remote?.validate() != false else { break }
+            guard (try? access?.validateDelivery(bytes)) == true, remote?.validate() != false else { break }
             if Self.durableFrameNeedsBinding(bytes) == true, durableBinding?.isCurrent(home: home) != true { continue }
             await onFrame(bytes)
         }
@@ -341,12 +346,39 @@ private final class WindowsDesktopSourceGate {
         proofs[id] = proof; denied.removeValue(forKey: id); return true
     }
     func origin(_ thread: String) -> CodexRolloutMetadata? {
-        if permit(thread), let proof = proofs[thread.lowercased()], let row = binding.currentMetadata(proof) { return row }
+        let id = thread.lowercased()
+        if !revoked, proofs[id] != nil || permit(id), let proof = proofs[id] {
+            if let row = binding.currentMetadata(proof) { return row }
+            revoked = true
+        }
         return .init(origin: .init(embedded: false, ignored: true), url: binding.home, observedAt: nil, parentThreadID: nil)
     }
     func validate() -> Bool {
         guard !revoked else { return false }
-        if proofs.values.contains(where: { !binding.isCurrent($0) }) { revoked = true }
+        if !binding.allCurrent(proofs.values) { revoked = true }
+        return !revoked
+    }
+
+    func validateDelivery(_ bytes: Data) throws -> Bool {
+        guard !revoked else { return false }
+        let fields = try JSONFieldView.document(bytes).fields(["hostId", "kind", "threadId", "events"])
+        guard (fields["hostId"]?.string() ?? "local") == "local" else { return true }
+        var ids: Set<String> = []
+        switch fields["kind"]?.string() {
+        case "status": return true
+        case "runtimeBatch":
+            guard let events = fields["events"] else { return false }
+            try events.forEachElement(maximumCount: 512) { event in
+                guard let id = try event.fields(["threadId"])["threadId"]?.string() else { throw Failure.revoked }
+                ids.insert(id.lowercased())
+            }
+        case "attention", "streamInvalidated":
+            guard let id = fields["threadId"]?.string() else { return false }
+            ids.insert(id.lowercased())
+        default: return validate()
+        }
+        let relevant = ids.compactMap { proofs[$0] }
+        if relevant.count != ids.count || !binding.allCurrent(relevant) { revoked = true }
         return !revoked
     }
     // A routing hint can precede its rollout header. Retry a bounded number of

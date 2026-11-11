@@ -71,7 +71,7 @@ public actor ClaudeActivityMonitor {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 60_000_000_000)
                     guard !Task.isCancelled else { break }
-                    await self?.maintain()
+                    await self?.maintain(generation: generation)
                 }
             }
         }
@@ -151,20 +151,30 @@ public actor ClaudeActivityMonitor {
         discovery?.cancel(); discovery = nil; catchup?.cancel(); catchup = nil; pendingPublish?.cancel(); pendingPublish = nil
         watcher?.stop(); watcher = nil; telemetry?.stop(); telemetry = nil
     }
-    private func maintain() async {
-        await readLocal(discover: true)
+    private func maintain(generation: UUID) async {
+        guard localGeneration == generation else { return }
+        let watchingProjects: Bool
+        if let project = localReader.projectWatchURL { watchingProjects = await watcher?.isWatching(project) == true }
+        else { watchingProjects = false }
+        guard localGeneration == generation, let home else { return }
+        // Keep reading known files every minute. With a directory watch,
+        // a slower full scan is enough to catch appends to unwatched files.
+        let exclusionsChanged = refreshLocalExclusions(home: home)
+        let discover = exclusionsChanged || localReader.discoveryDue(at: clock(), watchingProjects: watchingProjects)
+        await readLocal(discover: discover, exclusionsCurrent: true)
+        guard localGeneration == generation else { return }
         // Rechecking recent baseline tails rides this existing minute tick.
         local.expireUnconfirmedBaseline(now: clock())
         for id in Array(connections.keys) { connections[id]?.state.expireUnconfirmedBaseline(now: clock()) }
         for (id, connection) in connections where clock().timeIntervalSince(connection.lastFrame) > 45 { closed(id, identity: connection.identity) }
         await connectWanted(); await publish()
     }
-    private func readLocal(discover: Bool, attaching: Bool = false) async {
+    private func readLocal(discover: Bool, attaching: Bool = false, exclusionsCurrent: Bool = false) async {
         guard let home else { return }
-        if discover { refreshLocalExclusions(home: home) }
+        if discover, !exclusionsCurrent { refreshLocalExclusions(home: home) }
         let result = localReader.read(home: home, discover: discover, excludingSessionIDs: localMirrorRoots)
         var watchURLs = result.watchURLs
-        if !discover, !result.records.isEmpty {
+        if !discover, !exclusionsCurrent, !result.records.isEmpty {
             let known = local.knownStartedSessionIDs
             if result.records.contains(where: { Self.startsNewSession($0, known: known) }) {
                 // A Desktop context can gain its CLI UUID just after file
@@ -196,9 +206,12 @@ public actor ClaudeActivityMonitor {
         guard localGeneration == generation else { return }
         await readLocal(discover: discover)
     }
-    private func refreshLocalExclusions(home: URL) {
-        localMirrorRoots = remoteMirrorSessionIDs(home)
+    @discardableResult private func refreshLocalExclusions(home: URL) -> Bool {
+        let roots = remoteMirrorSessionIDs(home)
+        guard roots != localMirrorRoots else { return false }
+        localMirrorRoots = roots
         local.setExcludedSessionIDs(localMirrorRoots)
+        return true
     }
     private func continueRead() async { catchup = nil; await readLocal(discover: false) }
     private func receiveTelemetry(_ bytes: Data, generation: UUID) async {

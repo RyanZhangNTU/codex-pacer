@@ -131,7 +131,10 @@ enum RealtimeProbe {
         tid=p.get('threadId')
         if not valid_id(tid): return None
         now=time.time(); e={'method':method,'threadId':tid.lower(),'at':now}
-        if isinstance(p.get('turnId'),str): e['turnId']=p['turnId'][:256]
+        turn_id=p.get('turnId')
+        if turn_id is not None:
+            if not bounded_turn_id(turn_id):return None
+            e['turnId']=turn_id
         if method in ('item/started','item/completed'):
             item=p.get('item') or {}
             if not isinstance(item,dict): return None
@@ -153,8 +156,8 @@ enum RealtimeProbe {
             if isinstance(stamp,(int,float)) and 0<stamp<=now*1000+5000: e['at']=stamp/1000
         elif method in ('turn/started','turn/completed'):
             turn=p.get('turn') or {}
-            if not isinstance(turn,dict) or not isinstance(turn.get('id'),str): return None
-            e['turnId']=turn['id'][:256]; e['status']=str(turn.get('status',''))[:32]
+            if not isinstance(turn,dict) or not bounded_turn_id(turn.get('id')): return None
+            e['turnId']=turn['id']; e['status']=str(turn.get('status',''))[:32]
             root=progress_id(turn.get('rootTurnId'))
             if root:e['rootTurnId']=root
         elif method=='thread/tokenUsage/updated':

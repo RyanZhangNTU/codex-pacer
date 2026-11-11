@@ -245,7 +245,8 @@ public actor LocalActivityReader {
                     guard line.count <= 1024 * 1024,
                           line.range(of: Data("turn_context".utf8)) != nil || line.range(of: Data("task_started".utf8)) != nil || line.range(of: Data("item_completed".utf8)) != nil,
                           var value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                          var payload = value["payload"] as? [String: Any], let turn = payload["turn_id"] as? String else { continue }
+                          var payload = value["payload"] as? [String: Any],
+                          let turn = CodexProgressEvidence.boundedIdentifier(payload["turn_id"]) else { continue }
                     if value["type"] as? String == "event_msg", payload["type"] as? String == "item_completed",
                        payload["thread_id"] as? String == threadID, let ms = SessionActivity.loggedFirstOutput(payload), ms.isFinite,
                        let stamp = value["timestamp"] as? String, let reported = SessionActivity.parseDate(stamp),

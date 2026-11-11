@@ -103,6 +103,23 @@ final class ClaudeOutlivedChildTests: XCTestCase {
         } } }
     }
 
+    func testHelperWaitsForBackgroundLaunchEvidenceInTheFinalBatch() {
+        for arrives in [true, false] {
+            var state = ClaudeActivityState(sourceID: ssh)
+            func batch(_ rows: [[String: Any]], drained: Bool) {
+                state.consume(ClaudeActivityRecord.encode(["kind": "claudeBatch", "baselineFinal": drained, "records": rows])!,
+                    now: now.addingTimeInterval(10))
+            }
+            batch([row("prompt", 0), row("toolStart", 1, ["itemId": "agent-tool", "agentTool": true, "attention": "none"]),
+                   row("subagentStart", 2, thread: child)], drained: true)
+            batch([row("failure", 5, ["origin": "transcript"])], drained: false)
+            XCTAssertEqual(activity(state, child)?.phase, .running)
+            let launch = row("agentResult", 3, ["origin": "transcript", "itemId": "agent-tool", "agentId": child, "agentStatus": "async_launched"])
+            batch(arrives ? [launch] : [], drained: true)
+            XCTAssertEqual(activity(state, child)?.phase, arrives ? .running : .interrupted)
+        }
+    }
+
     /// Only an interrupt that ends the live main turn counts: one for a turn
     /// that already ended, such as a dismissed next-step box, ends no child.
     func testInterruptOfAnEndedMainTurnEndsNoChild() throws {

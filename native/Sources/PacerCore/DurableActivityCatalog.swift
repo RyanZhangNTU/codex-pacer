@@ -6,13 +6,20 @@ public struct DurableActivityCatalog: Equatable, Sendable {
     public static let hostID = "durable"
     public let scope: String
     public let threadIDs: Set<String>
+    package let activeThreadIDs: Set<String>
+    package static let capacity = 64
 
     public init(scope: String, threadIDs: [String]) {
-        self.scope = scope
-        self.threadIDs = Set(threadIDs.prefix(64).compactMap { UUID(uuidString: $0)?.uuidString.lowercased() })
+        self.init(scope: scope, threadIDs: threadIDs, activeThreadIDs: [])
     }
 
-    /// An idle or finished thread takes part only while it is this recent.
+    package init(scope: String, threadIDs: [String], activeThreadIDs: Set<String>) {
+        self.scope = scope
+        self.threadIDs = Set(threadIDs.prefix(Self.capacity).compactMap { UUID(uuidString: $0)?.uuidString.lowercased() })
+        self.activeThreadIDs = self.threadIDs.intersection(activeThreadIDs)
+    }
+
+    /// Idle rows expire unless the reader is still checking a turn that was active.
     package static let recentWindow: TimeInterval = 180
 
     public struct Page: Sendable {

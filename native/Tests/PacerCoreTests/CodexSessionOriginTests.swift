@@ -48,6 +48,41 @@ final class CodexSessionOriginTests: XCTestCase {
         }
     }
 
+    func testRolloutAndRuntimeRejectOversizedTurnIDsWithoutAliasingValidTurns() throws {
+        let valid = String(repeating: "é", count: 128)
+        let oversized = valid + "x"
+        let time = Date().addingTimeInterval(-5)
+        let formatter = ISO8601DateFormatter()
+        func record(_ id: String, type: String, outer: String, second: Double) -> [String: Any] {
+            ["type": outer, "timestamp": formatter.string(from: time.addingTimeInterval(second)),
+             "payload": ["type": type, "turn_id": id]]
+        }
+        let rows = [record(valid, type: "task_started", outer: "event_msg", second: 0),
+                    record(oversized, type: "task_complete", outer: "event_msg", second: 1),
+                    record(oversized, type: "ignored", outer: "turn_context", second: 2),
+                    record(oversized, type: "task_started", outer: "event_msg", second: 3)]
+        let input = try JSONSerialization.data(withJSONObject: rows).base64EncodedString()
+        let script = "rows=json.loads(base64.b64decode('" + input + "').decode())\nprint(json.dumps([sanitize(v) for v in rows]))"
+        let output = try python(SessionLogProbe.library + "\n" + script)
+        let reduced = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [Any])
+        XCTAssertEqual(reduced.count, 4)
+        XCTAssertTrue(reduced.dropFirst().allSatisfy { $0 is NSNull })
+        for records in [rows, reduced.compactMap { $0 as? [String: Any] }] {
+            var value = SessionActivity(id: session)
+            for row in records { value.consume(row) }
+            XCTAssertEqual(value.turnID, valid)
+            XCTAssertEqual(value.phase, .running)
+            XCTAssertNotNil(value.threadURL)
+        }
+        var runtime = RuntimeEventState(sourceID: nil, sourceName: nil)
+        runtime.consume(["kind": "status", "connected": true])
+        for (second, id) in [valid, oversized].enumerated() {
+            runtime.consume(["kind": "runtime", "event": ["method": "turn/started", "threadId": session,
+                "turnId": id, "at": time.timeIntervalSince1970 + Double(second)]])
+        }
+        XCTAssertEqual(runtime.activities.first?.turnID, valid)
+    }
+
     func testNewestOriginAndParentClassificationWinWithoutCrossingHosts() throws {
         var parent = SessionActivity(id: session), descendant = SessionActivity(id: child)
         parent.consume(try metadata(session, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate"))

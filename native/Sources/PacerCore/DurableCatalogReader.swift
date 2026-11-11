@@ -44,11 +44,16 @@ package final class DurableCatalogReader {
     /// `fullScanInterval` after it, pages up to the limit, so an active thread
     /// with an old update is found within that interval. Other reads stop after
     /// a page older than the recent window once every retained thread has been seen.
-    package func read(retaining previous: DurableActivityCatalog?, now: () -> Date = { Date() }) async throws -> Result {
-        let retained = previous?.scope == scope ? previous?.threadIDs ?? [] : []
+    package func read(retaining previous: DurableActivityCatalog?, activeTurns: Set<String> = [],
+                      now: () -> Date = { Date() }) async throws -> Result {
+        let retained: Set<String>
+        if let previous, previous.scope == scope {
+            retained = previous.activeThreadIDs.union(previous.threadIDs.intersection(activeTurns))
+        } else { retained = [] }
         let started = now()
         let stopsEarly = lastFullScan.map { started.timeIntervalSince($0) < Self.fullScanInterval } ?? false
-        var entries: [DurableActivityCatalog.Entry] = [], cursor: String?, unseen = retained
+        var active: [DurableActivityCatalog.Entry] = [], settling: [DurableActivityCatalog.Entry] = [], idle: [DurableActivityCatalog.Entry] = []
+        var seen: Set<String> = [], cursor: String?, unseen = retained
         for _ in 0..<4 {
             var params: [String: Any] = [
                 "limit": 50, "archived": false, "useStateDbOnly": true, "sortKey": "updated_at", "sortDirection": "desc"
@@ -57,17 +62,20 @@ package final class DurableCatalogReader {
             let date = now()
             let page = try DurableActivityCatalog.page(await request("thread/list", params: params),
                 environmentID: environmentID, retaining: retained, now: date)
-            for entry in page.entries where entries.count < 64 && !entries.contains(where: { $0.id == entry.id }) {
-                entries.append(entry)
+            for entry in page.entries where seen.insert(entry.id).inserted {
+                if entry.active { active.append(entry) }
+                else if retained.contains(entry.id) { settling.append(entry) }
+                else { idle.append(entry) }
             }
             unseen.subtract(page.threadIDs)
-            guard let next = page.nextCursor, entries.count < 64, next != cursor else { break }
+            guard let next = page.nextCursor, active.count < DurableActivityCatalog.capacity, next != cursor else { break }
             if stopsEarly, unseen.isEmpty, let oldest = page.oldestUpdate,
                oldest < date.addingTimeInterval(-DurableActivityCatalog.recentWindow) { break }
             cursor = next
         }
         if !stopsEarly { lastFullScan = started }
-        return Result(catalog: .init(scope: scope, threadIDs: entries.map(\.id)), entries: entries)
+        let entries = Array((active + settling + idle).prefix(DurableActivityCatalog.capacity))
+        return Result(catalog: .init(scope: scope, threadIDs: entries.map(\.id), activeThreadIDs: Set(active.map(\.id))), entries: entries)
     }
 
     package func latestTurn(_ thread: DurableActivityCatalog.Entry) async throws -> DurableTurnHistory? {
@@ -129,6 +137,8 @@ package struct DurableHistoryPoll {
     private var since = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
 
     package init() {}
+
+    package var activeThreads: Set<String> { Set(polls.keys.filter { polls[$0]?.activeTurn != nil }) }
 
     package mutating func reset(startingNow: Bool) {
         polls.removeAll()

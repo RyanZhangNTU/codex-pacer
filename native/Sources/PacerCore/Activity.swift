@@ -641,6 +641,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             return
         }
         guard !isIgnoredCodexSession else { return }
+        let rawTurn = payload["turn_id"]
+        let eventTurn = CodexProgressEvidence.boundedIdentifier(rawTurn)
+        guard rawTurn == nil || rawTurn is NSNull || eventTurn != nil else { return }
         if ignoringInheritedHistory {
             // The first owned settings/item/accounting event proves that the
             // copied prefix has ended. Its body is otherwise ignored normally.
@@ -652,7 +655,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                   date >= (lastObserved ?? .distantPast) else { return }
             // A current turn context is an explicit anchor when the start lies
             // outside the initial tail, or when the app attached mid-turn.
-            if let contextTurn = payload["turn_id"] as? String, contextTurn != turnID {
+            if let contextTurn = eventTurn, contextTurn != turnID {
                 guard !retiredTurns.contains(contextTurn) else { return }
                 beginCodexTurn(contextTurn, root: payload["root_turn_id"], at: date)
             }
@@ -706,7 +709,6 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let date = Self.parseDate(timestamp),
               date >= (lastObserved ?? .distantPast) else { return }
         let kind = payload["type"] as? String
-        let eventTurn = payload["turn_id"] as? String
         if ["task_complete", "turn_aborted"].contains(kind ?? ""), value["type"] as? String == "event_msg" {
             // Without an observed start/context there is no current turn to end.
             guard let turnID, eventTurn == turnID else { return }
@@ -1021,7 +1023,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         guard ["turn/started", "turn/attached", "turn/completed", "item/started", "item/completed", "thread/tokenUsage/updated",
                "item/agentMessage/delta", "item/plan/delta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta"].contains(method),
-              let eventTurn = event["turnId"] as? String, !eventTurn.isEmpty else { return }
+              let eventTurn = CodexProgressEvidence.boundedIdentifier(event["turnId"]) else { return }
         guard !retiredTurns.contains(eventTurn) else { return }
         if method == "turn/completed" {
             guard turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }

@@ -51,6 +51,71 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         XCTAssertTrue(reader.read(home: fixture.home, discover: false).watchURLs.isEmpty)
     }
 
+    func testLargeProjectSelectsNewestLogsBeyondOldDirectoryEntryLimits() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let subagents = fixture.sessionDirectory.appendingPathComponent("subagents")
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        let now = Date(), old = now.addingTimeInterval(-3600)
+        func write(_ url: URL, at modified: Date) throws {
+            try Data().write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+        }
+        for index in 0..<280 { try write(fixture.alpha.appendingPathComponent("old-\(index).jsonl"), at: old) }
+        for index in 0..<70 { try write(subagents.appendingPathComponent("agent-old-\(index).jsonl"), at: old) }
+        let newLog = fixture.alpha.appendingPathComponent("zzz-new-session.jsonl")
+        let newAgent = subagents.appendingPathComponent("agent-zzz-new-agent.jsonl")
+        try write(newLog, at: now)
+        try write(newAgent, at: now)
+        try write(fixture.alpha.appendingPathComponent(rootSession + ".jsonl"), at: old)
+
+        var reader = ClaudeActivityReader(files: TestFileSystem())
+        _ = reader.read(home: fixture.home, discover: true, now: now)
+        XCTAssertEqual(reader.attachedTranscriptCount, 32)
+        XCTAssertEqual(reader.transcriptURL(for: "zzz-new-session")?.path, newLog.path)
+        XCTAssertEqual(reader.transcriptURL(for: "zzz-new-agent")?.path, newAgent.path)
+    }
+
+    func testPeriodicDiscoveryKeepsMinuteFallbackWithoutAProjectWatch() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let start = Date()
+        var reader = ClaudeActivityReader(files: TestFileSystem())
+        _ = reader.read(home: fixture.home, discover: true, now: start)
+        XCTAssertNotNil(reader.projectWatchURL)
+        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(59), watchingProjects: false))
+        XCTAssertTrue(reader.discoveryDue(at: start.addingTimeInterval(60), watchingProjects: false))
+        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(299), watchingProjects: true))
+        XCTAssertTrue(reader.discoveryDue(at: start.addingTimeInterval(300), watchingProjects: true))
+
+        let directoryEvent = start.addingTimeInterval(120)
+        _ = reader.read(home: fixture.home, discover: true, now: directoryEvent)
+        XCTAssertEqual(reader.scans, 2)
+        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(300), watchingProjects: true))
+        XCTAssertTrue(reader.discoveryDue(at: directoryEvent.addingTimeInterval(300), watchingProjects: true))
+    }
+
+    func testPeriodicDiscoveryChecksTrackedProjectDatesWithoutScanningTheirContents() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let start = Date()
+        let manager = FileManager.default
+        let unwatched = fixture.home.appendingPathComponent("projects/unwatched")
+        try manager.createDirectory(at: unwatched, withIntermediateDirectories: true)
+        try manager.setAttributes([.modificationDate: start.addingTimeInterval(-3600)], ofItemAtPath: unwatched.path)
+        var reader = ClaudeActivityReader(files: TestFileSystem())
+        let first = reader.read(home: fixture.home, discover: true, now: start)
+        XCTAssertNotNil(reader.projectWatchURL)
+        XCTAssertFalse(first.watchURLs.map(\.path).contains(unwatched.path))
+        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(60), watchingProjects: true))
+
+        let log = unwatched.appendingPathComponent(newSession + ".jsonl")
+        try Data().write(to: log)
+        try manager.setAttributes([.modificationDate: start.addingTimeInterval(1)], ofItemAtPath: unwatched.path)
+        XCTAssertTrue(reader.discoveryDue(at: start.addingTimeInterval(60), watchingProjects: true))
+        XCTAssertEqual(reader.scans, 1)
+        _ = reader.read(home: fixture.home, discover: true, now: start.addingTimeInterval(60))
+        XCTAssertEqual(reader.transcriptURL(for: newSession)?.path, log.path)
+        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(120), watchingProjects: true))
+    }
+
     private final class Observations: @unchecked Sendable {
         private let lock = NSLock()
         private var delivered: Set<String> = []

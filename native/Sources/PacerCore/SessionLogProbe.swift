@@ -35,6 +35,10 @@ enum SessionLogProbe {
         except (ValueError,AttributeError):return None
     def progress_id(value):
         return value if isinstance(value,str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,256}',value) else None
+    def bounded_turn_id(value):
+        if not isinstance(value,str) or not value or len(value)>256:return None
+        try:return value if len(value.encode('utf-8'))<=256 else None
+        except UnicodeEncodeError:return None
     def progress_arguments(value):
         if isinstance(value,str) and len(value)<=128:
             try:value=json.loads(value)
@@ -66,6 +70,8 @@ enum SessionLogProbe {
     def sanitize(o):
         outer, p = o.get('type'), o.get('payload', {})
         if not isinstance(p, dict): return None
+        turn_id=p.get('turn_id')
+        if turn_id is not None and not bounded_turn_id(turn_id):return None
         kind = p.get('type'); q = {}
         if outer == 'session_meta':
             classification=codex_origin(p.get('originator'),p.get('cwd'))
@@ -82,8 +88,8 @@ enum SessionLogProbe {
                 if sub=='review' or isinstance(sub,dict) and 'review' in sub:q['source']={'subagent':'review'}
                 elif isinstance(role,str):q['source']={'subagent':{'other':role[:80]}}
         elif outer == 'turn_context':
-            for k in ('turn_id','model'):
-                if isinstance(p.get(k),str): q[k] = p[k][:256]
+            if turn_id:q['turn_id']=turn_id
+            if isinstance(p.get('model'),str):q['model']=p['model'][:256]
             if 'effort' in p: q['effort'] = p['effort'][:32] if isinstance(p['effort'],str) else None
             root=progress_id(p.get('root_turn_id'))
             if root:q['root_turn_id']=root
@@ -109,7 +115,7 @@ enum SessionLogProbe {
                 q[k]=p[k]
         elif outer == 'event_msg' and kind in ('task_started','task_complete','turn_aborted','token_count','thread_settings_applied'):
             q['type'] = kind
-            if isinstance(p.get('turn_id'),str): q['turn_id'] = p['turn_id'][:256]
+            if turn_id:q['turn_id']=turn_id
             if kind == 'task_started':
                 attribution=p.get('turn_attribution');root=progress_id(p.get('root_turn_id'))
                 if not root and isinstance(attribution,dict):root=progress_id(attribution.get('root_turn_id'))

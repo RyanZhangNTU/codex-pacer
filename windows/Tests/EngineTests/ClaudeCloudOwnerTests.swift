@@ -23,6 +23,7 @@ private actor CloudOwnerClient: ClaudeCloudConnection {
     func start(expanded: Bool, update: @escaping ClaudeCloudProjectMonitor.Update) { self.expanded = expanded; callback = update }
     func setExpanded(_ value: Bool) { expanded = value }
     func refresh() {}
+    func suspend() {}
     func shutdown() { stopped = true }
     func emit(_ values: [SessionActivity]) async {
         var status = RuntimeStreamStatus(); status.connected = true; status.sourceAvailable = true
@@ -87,6 +88,27 @@ final class ClaudeCloudOwnerTests: XCTestCase {
         await provider.stop(); let value = await pending.value; XCTAssertNil(value)
         let last = try XCTUnwrap(frames.requests.last)
         let accepted = await bridge.complete(id: last.requestID, context: last.context, reply: reply("synthetic-cloud-account-a")); XCTAssertFalse(accepted)
+    }
+    func testBridgedCloudCancelsTheOldCookieReadAndRequestsAgainOnWake() async throws {
+        let frames = CloudOwnerFrames()
+        let bridge = ClaudeWebBridge { frames.host($0) }; await bridge.setAvailable(true)
+        let coordinator = ClaudeCloudCoordinator(services: .live(bridge: bridge)) { _ in }
+        await coordinator.configure(home: home, organization: organization, enabled: true, webAvailable: true, context: 1)
+        await coordinator.startAfterPublication()
+        try await until { frames.requests.count == 1 }
+        let previous = frames.requests[0]
+        await coordinator.suspend()
+        let stale = await bridge.complete(id: previous.requestID, context: previous.context, reply: reply("synthetic-cloud-account-a"))
+        XCTAssertFalse(stale)
+
+        await coordinator.resume(context: 2)
+        try await until { frames.requests.count == 2 }
+        let resumed = frames.requests[1]
+        XCTAssertEqual(resumed.context, previous.context)
+        XCTAssertNotEqual(resumed.requestID, previous.requestID)
+        let state = await coordinator.currentState()
+        XCTAssertEqual(state.context, 2)
+        await coordinator.stop()
     }
     func testMonitorWaitsForPublicationPreservesHiddenAccountAndRevokesOldCallbacks() async throws {
         let factory = CloudOwnerFactory(), frames = CloudOwnerFrames()

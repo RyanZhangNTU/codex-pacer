@@ -67,8 +67,15 @@ enum CodexProgressEvidence {
 
     /// Match modern turn IDs and older bounded IDs without guessing ownership.
     static func identifier(_ raw: Any?) -> String? {
-        guard let value = raw as? String, !value.isEmpty, value.utf8.count <= 256,
+        guard let value = boundedIdentifier(raw),
               value.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || [45, 46, 58, 95].contains($0) }) else { return nil }
+        return value
+    }
+
+    /// Lifecycle identifiers are opaque. Reject oversized values without
+    /// shortening them into another turn's ID.
+    static func boundedIdentifier(_ raw: Any?) -> String? {
+        guard let value = raw as? String, !value.isEmpty, value.utf8.count <= 256 else { return nil }
         return value
     }
 }

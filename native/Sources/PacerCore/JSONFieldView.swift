@@ -76,7 +76,7 @@ package struct JSONFieldView {
         try forEachElement(maximumCount: maximumCount) { result.append($0) }
         return result
     }
-    func forEachElement(maximumCount: Int = 8192, _ body: (Self) throws -> Void) throws {
+    package func forEachElement(maximumCount: Int = 8192, _ body: (Self) throws -> Void) throws {
         try data.withUnsafeBytes { raw in
             var cursor = Cursor(bytes: raw.bindMemory(to: UInt8.self), position: range.lowerBound, end: range.upperBound)
             try cursor.require(91); cursor.whitespace()

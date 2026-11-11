@@ -90,6 +90,94 @@ final class DurableDesktopTests: XCTestCase {
                              "Renewing starts a CLI for a token, so it is far rarer than the rescan")
     }
 
+    func testIdleRowsCannotFillTheCatalogAheadOfAnOlderActiveThread() async throws {
+        let now = Date(timeIntervalSince1970: 10_000)
+        func row(_ id: String, age: Double, status: String) -> [String: Any] {
+            ["id": id, "threadSource": "aeon", "updatedAt": now.timeIntervalSince1970 - age, "status": ["type": status],
+             "environments": [["environmentId": "executor"]]]
+        }
+        let idle = (0..<64).map { _ in row(UUID().uuidString, age: 0, status: "idle") }
+        let socket = CatalogPages([
+            "first": ["data": Array(idle.prefix(50)), "nextCursor": "second"],
+            "second": ["data": Array(idle.dropFirst(50)), "nextCursor": "third"],
+            "third": ["data": [row(thread, age: 600, status: "active")]]
+        ])
+        let reader = DurableCatalogReader(socket: socket, scope: "account", environmentID: "executor")
+        let first = try await reader.read(retaining: nil, now: { now })
+        XCTAssertEqual(first.catalog.threadIDs.count, 64)
+        XCTAssertEqual(first.entries.first?.id, thread)
+        XCTAssertEqual(socket.takeCursors(), ["first", "second", "third"])
+
+        let later = try await reader.read(retaining: first.catalog, now: { now.addingTimeInterval(181) })
+        XCTAssertEqual(later.catalog.threadIDs, [thread], "Previously seen idle rows still expire")
+        XCTAssertEqual(socket.takeCursors(), ["first", "second", "third"])
+    }
+
+    func testUnansweredDurableFollowBacksOffAndAnOwnerHintCanRetryIt() throws {
+        let start = Date(), host = DurableActivityCatalog.hostID
+        var follows: [Bool] = []
+        var session = try NativeDesktopSession(hosts: [host]) { frame in
+            if frame["method"] as? String == "thread-stream-following-changed",
+               let value = (frame["params"] as? [String: Any])?["following"] as? Bool { follows.append(value) }
+        }
+        try initialize(&session, at: start)
+        let catalog = DurableActivityCatalog(scope: "account", threadIDs: [thread])
+        try session.setDurableCatalog(catalog, at: start)
+        var last = start
+        while let next = session.nextServiceDate {
+            last = next
+            try session.service(at: next)
+        }
+        XCTAssertEqual(follows, Array(repeating: true, count: 7) + [false])
+        try session.setDurableCatalog(catalog, at: last.addingTimeInterval(15))
+        XCTAssertEqual(follows.last, false)
+        let hint: [String: Any] = ["type": "broadcast", "method": "thread-stream-following-status-requested", "version": 1,
+            "params": ["hostId": host, "conversationId": thread]]
+        try session.receive(JSONSerialization.data(withJSONObject: hint), at: last.addingTimeInterval(16))
+        XCTAssertEqual(follows.count, 9)
+        XCTAssertEqual(follows.last, true)
+    }
+
+    func testSuspendingVerifiedDurableCatalogPreservesUnreadEndingUntilScopeChanges() throws {
+        let start = Date(timeIntervalSince1970: 10_000), host = DurableActivityCatalog.hostID, scope = "account"
+        let home = URL(fileURLWithPath: FileManager.default.temporaryDirectory.appendingPathComponent("fixture").path)
+        var session = try NativeDesktopSession(hosts: [host]) { _ in }
+        var runtime = RuntimeEventState(sourceID: host, sourceName: nil)
+        var inbox = CompletionInbox()
+        try initialize(&session, at: start)
+        func consume(at now: Date) throws {
+            try session.publishEvents()
+            for bytes in session.takeFrames() {
+                let frame = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+                if frame["kind"] as? String == "durableScope" {
+                    inbox.bindSourceHomes(provider: .codex, localHome: home, durableAccountScope: frame["scope"] as? String)
+                    runtime = RuntimeEventState(sourceID: host, sourceName: nil)
+                }
+                if frame["kind"] as? String == "runtimeBatch" { runtime.consume(["kind": "status", "connected": true]) }
+                runtime.consume(frame)
+            }
+            inbox.observe(runtime.activities, at: now, retention: 1800)
+        }
+        try session.setDurableCatalog(.init(scope: scope, threadIDs: [thread]), at: start)
+        let end = start.addingTimeInterval(120)
+        let completed = try history(thread: thread, start: start, percent: 100, status: .completed)
+        try session.observeDurableHistory([completed], scope: scope, at: end)
+        try consume(at: end)
+        let activity = try XCTUnwrap(runtime.activities.first)
+        XCTAssertTrue(inbox.isUnread(activity))
+
+        try session.setDurableCatalog(.init(scope: scope, threadIDs: []), at: end)
+        runtime.releasePublishedState()
+        try session.observeDurableHistory([try history(thread: thread, start: start, percent: 50)], scope: scope, at: end)
+        try consume(at: end)
+        XCTAssertTrue(runtime.activities.isEmpty, "Suspending the catalog revokes the thread's live permission")
+        XCTAssertTrue(inbox.isUnread(activity))
+
+        try session.setDurableCatalog(.init(scope: "other-account", threadIDs: [thread]), at: end)
+        try consume(at: end)
+        XCTAssertFalse(inbox.isUnread(activity))
+    }
+
     func testClosedTaskWaitsForItsOwnerAndReportsTwoAcceptedPercentages() throws {
         let start = Date(), host = DurableActivityCatalog.hostID
         let owner = "019a0000-0000-7000-8000-000000000020"

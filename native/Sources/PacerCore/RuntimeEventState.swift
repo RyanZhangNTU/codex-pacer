@@ -130,6 +130,8 @@ struct RuntimeEventState: Sendable {
             }
         } else if frame["kind"] as? String == "runtime", let event = frame["event"] as? [String: Any],
                   let thread = event["threadId"] as? String, UUID(uuidString: thread) != nil {
+            let rawTurn = event["turnId"]
+            guard rawTurn == nil || rawTurn is NSNull || CodexProgressEvidence.boundedIdentifier(rawTurn) != nil else { return }
             let id = (sourceID ?? "local") + ":" + thread.lowercased()
             if event["method"] as? String == "metadata" {
                 let at = (event["at"] as? Double).map(Date.init(timeIntervalSince1970:))

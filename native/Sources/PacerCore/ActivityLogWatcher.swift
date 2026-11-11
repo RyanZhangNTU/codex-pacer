@@ -94,5 +94,10 @@ public final class ActivityLogWatcher: @unchecked Sendable {
             queue.async { [self] in continuation.resume(returning: sources.count) }
         }
     }
+    func isWatching(_ url: URL) async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in continuation.resume(returning: sources[url] != nil) }
+        }
+    }
     deinit { pending?.cancel(); for source in sources.values { source.source.stop() } }
 }

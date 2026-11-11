@@ -23,13 +23,16 @@ public struct NativeDesktopSession {
     private var awaitingSnapshot: [Key: SnapshotWait] = [:]
     private static let snapshotDelays: [TimeInterval] = [0.5, 1, 2, 5]
     private static let durableSnapshotDelays: [TimeInterval] = [0.5, 1, 2, 5, 10, 18, 25]
+    private static let durableSnapshotRetryInterval: TimeInterval = 120
     private var durableCatalog: DurableActivityCatalog?
+    private var durableRetryAfter: [String: Date] = [:]
     private var durableHistory: [String: DurableTurnHistory] = [:]
     private var durableIPCActivity: [String: Date] = [:]
     private var durableIPCEndings: [String: String] = [:]
     private struct HostEvent { let host: String; let value: [String: Any] }
+    private struct Frame { let host: String?; let data: Data }
     private var events: [HostEvent] = []
-    private var frames: [Data] = []
+    private var frames: [Frame] = []
     private(set) var notifications = 0
     private(set) var hosts: Set<String>
     let localRuntime: Bool
@@ -53,7 +56,7 @@ public struct NativeDesktopSession {
         return value.lowercased()
     }
     private mutating func frame(_ value: [String: Any]) throws {
-        frames.append(try JSONSerialization.data(withJSONObject: value))
+        frames.append(.init(host: value["hostId"] as? String, data: try JSONSerialization.data(withJSONObject: value)))
         guard frames.count <= 64 else { throw JSONFieldView.Failure.limit }
     }
     private mutating func follow(_ key: Key, value: Bool) throws {
@@ -200,9 +203,11 @@ public struct NativeDesktopSession {
         waiting.removeAll { $0.host == host && !allowed.contains($0.thread) }
         if old?.scope != durableCatalog?.scope {
             events.removeAll { $0.host == host }
+            frames.removeAll { $0.host == host }
             durableHistory.removeAll()
             durableIPCActivity.removeAll()
             durableIPCEndings.removeAll()
+            durableRetryAfter.removeAll()
             waiting.removeAll { $0.host == host }
             for key in Array(followed) where key.host == host { try follow(key, value: false) }
             streams = streams.filter { $0.key.host != host }
@@ -210,6 +215,7 @@ public struct NativeDesktopSession {
             excluded = excluded.filter { $0.host != host }
             try frame(["kind": "durableScope", "hostId": host, "scope": durableCatalog.map { $0.scope as Any } ?? NSNull()])
         } else {
+            durableRetryAfter = durableRetryAfter.filter { allowed.contains($0.key) }
             for thread in durableHistory.keys.filter({ !allowed.contains($0) }) {
                 if durableHistoryIsActive(thread) {
                     try queue(["method": "stream/released", "threadId": thread, "at": now.timeIntervalSince1970], host: host)
@@ -224,7 +230,11 @@ public struct NativeDesktopSession {
                 try release(key, at: now)
             }
         }
-        try discover((durableCatalog?.threadIDs ?? []).sorted().map { Key(host: host, thread: $0) })
+        let active = durableCatalog?.activeThreadIDs ?? []
+        let newlyActive = active.subtracting(old?.activeThreadIDs ?? [])
+        for thread in newlyActive { durableRetryAfter.removeValue(forKey: thread) }
+        let ordered = active.sorted() + allowed.subtracting(active).sorted()
+        try discover(ordered.filter { durableRetryAfter[$0].map { now >= $0 } ?? true }.map { Key(host: host, thread: $0) })
     }
     mutating func setHosts(_ wanted: Set<String>, resetting resets: Set<String> = [], at now: Date = Date()) throws {
         guard wanted != hosts || !resets.isEmpty else { return }
@@ -251,7 +261,14 @@ public struct NativeDesktopSession {
             if retry < delays.count {
                 awaitingSnapshot[key] = SnapshotWait(retry: retry, next: now.addingTimeInterval(delays[retry]))
                 try follow(key, value: true)
-            } else { try release(key, at: now) }
+            } else {
+                // History covers a closed chat while its IPC owner is absent.
+                // A live owner hint may still rediscover it before this retry.
+                if key.host == DurableActivityCatalog.hostID {
+                    durableRetryAfter[key.thread] = now.addingTimeInterval(Self.durableSnapshotRetryInterval)
+                }
+                try release(key, at: now)
+            }
         }
     }
     mutating func discover(_ keys: [Key]) throws {
@@ -439,7 +456,7 @@ public struct NativeDesktopSession {
                 "helperLoopIterations": loopIterations])
         }
     }
-    mutating func takeFrames() -> [Data] { let result = frames; frames.removeAll(keepingCapacity: true); return result }
+    mutating func takeFrames() -> [Data] { let result = frames.map(\.data); frames.removeAll(keepingCapacity: true); return result }
     mutating func close() {
         for key in followed { try? follow(key, value: false) }
         followed.removeAll(); streams.removeAll(); invalidatedRemoteHosts.removeAll(); dormant.removeAll(); awaitingSnapshot.removeAll(); waiting.removeAll(); events.removeAll(); frames.removeAll()

@@ -25,6 +25,12 @@ enum WindowsDurableCatalog {
                         publishHistory: @Sendable (String, Binding, [DurableTurnHistory]) async -> Void) async {
         var connection: Connection?, previous: DurableActivityCatalog?
         var history = DurableHistoryPoll(), retryDelay = 5.0
+        var verifiedBinding: Binding?
+        func revoke() async {
+            if previous != nil { history.reset(startingNow: true) }
+            previous = nil; verifiedBinding = nil
+            await publish(nil, nil)
+        }
         let mailbox = WindowsDurableProgressMailbox(home: home)
         defer { connection?.reader.close() }
         while !Task.isCancelled {
@@ -36,6 +42,7 @@ enum WindowsDurableCatalog {
                     throw CodexClientError.disconnected
                 }
                 let binding = Binding(executor: executor, fingerprint: fingerprint)
+                if let verifiedBinding, verifiedBinding != binding { await revoke() }
                 if connection?.binding != binding || (connection?.expires ?? .distantPast) <= Date() {
                     connection?.reader.close()
                     connection = nil
@@ -46,17 +53,19 @@ enum WindowsDurableCatalog {
                     await client.shutdown()
                     try Task.checkCancellation()
                     guard binding.isCurrent(home: home) else { throw CodexClientError.accountMismatch }
+                    if let scope = previous?.scope, scope != credentials.scope { await revoke() }
                     let reader = DurableCatalogReader(socket: try WindowsDurableSocket(credentials.request),
                         scope: credentials.scope, environmentID: executor.environmentID)
                     connection = Connection(binding: binding, reader: reader)
                     try await reader.initialize()
                 }
                 guard let reader = connection?.reader else { throw CodexClientError.disconnected }
-                let result = try await reader.read(retaining: previous)
+                let result = try await reader.read(retaining: previous, activeTurns: history.activeThreads)
                 try Task.checkCancellation()
                 guard binding.isCurrent(home: home) else { throw CodexClientError.accountMismatch }
                 if previous?.scope != result.catalog.scope { history.reset(startingNow: previous != nil) }
                 previous = result.catalog
+                verifiedBinding = binding
                 await publish(result.catalog, binding)
                 let now = Date()
                 let updates = try await history.read(result, using: reader, ipc: await ipc(), receipts: mailbox.read(at:), at: now)
@@ -69,7 +78,14 @@ enum WindowsDurableCatalog {
                 connection?.reader.close()
                 connection = nil
                 if Task.isCancelled { break }
-                await publish(nil, nil)
+                switch error {
+                case CodexClientError.notLoggedIn, CodexClientError.accountMismatch:
+                    await revoke()
+                default:
+                    if let previous, let verifiedBinding, verifiedBinding.isCurrent(home: home) {
+                        await publish(.init(scope: previous.scope, threadIDs: []), verifiedBinding)
+                    } else { await revoke() }
+                }
                 delay = retryDelay
                 retryDelay = min(60, retryDelay * 2)
             }

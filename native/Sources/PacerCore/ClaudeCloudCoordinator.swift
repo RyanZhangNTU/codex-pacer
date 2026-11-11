@@ -7,7 +7,6 @@ public protocol ClaudeCloudConnection: Sendable {
     func suspend() async
     func shutdown() async
 }
-extension ClaudeCloudConnection { public func suspend() async { await shutdown() } }
 extension ClaudeCloudProjectMonitor: ClaudeCloudConnection {}
 
 public struct ClaudeCloudServices: Sendable {
@@ -56,7 +55,9 @@ public actor ClaudeCloudCoordinator {
     private var context: UInt64 = 0, revision: UInt64 = 0, purgeRevision: UInt64 = 0
     private var connectionContext = UUID().uuidString, lastScope: String?
     private var client: (any ClaudeCloudConnection)?
+    private var scopeBinding: UUID?
     private var starting: Task<Void, Never>?
+    private var suspending: Task<Bool, Never>?
     private var activities: [SessionActivity] = [], attention: [PendingAttentionRequest] = []
     private var status: RuntimeStreamStatus?
     private let generation = QuotaWorkGeneration()
@@ -81,6 +82,7 @@ public actor ClaudeCloudCoordinator {
         revision &+= 1; connectionContext = UUID().uuidString
         generation.invalidate(); epoch = generation.capture(); paused = false
         starting?.cancel(); starting = nil
+        scopeBinding = nil; suspending = nil
         let previous = client; client = nil
         activities = []; attention = []; status = nil
         await emit(); await ShutdownDeadline().perform([{ await previous?.shutdown() }])
@@ -103,9 +105,13 @@ public actor ClaudeCloudCoordinator {
     }
     private func start(_ expected: UInt64) async {
         guard current(expected), let home else { return }
+        let binding = UUID()
+        scopeBinding = binding
+        // Account checks belong to the client. Its data callback changes on
+        // wake, but the same client still owns the account.
         let input = ClaudeCloudServices.Input(home: home, organization: organization, context: connectionContext, localSessions: localSessions,
-            observedScope: { [weak self] scope in await self?.observeScope(scope, revision: expected) ?? false },
-            changedScope: { [weak self] in await self?.scopeChanged(revision: expected) })
+            observedScope: { [weak self] scope in await self?.observeScope(scope, binding: binding) ?? false },
+            changedScope: { [weak self] in await self?.scopeChanged(binding: binding) })
         do {
             let created = try await services.makeClient(input)
             guard current(expected) else { await ShutdownDeadline().perform([{ await created.shutdown() }]); return }
@@ -120,18 +126,19 @@ public actor ClaudeCloudCoordinator {
         }
         if revision == expected { starting = nil }
     }
-    private func observeScope(_ scope: String?, revision: UInt64) async -> Bool {
-        guard current(revision) else { return false }
+    private func observeScope(_ scope: String?, binding: UUID) async -> Bool {
+        let expected = revision
+        guard scopeBinding == binding, current(expected) else { return false }
         scopeVerified = true
         if lastScope != scope {
             lastScope = scope; purgeRevision &+= 1
             activities = []; attention = []; status = nil
             await emit()
         }
-        return current(revision)
+        return scopeBinding == binding && current(expected)
     }
-    private func scopeChanged(revision: UInt64) async {
-        guard current(revision) else { return }
+    private func scopeChanged(binding: UUID) async {
+        guard scopeBinding == binding, current(revision) else { return }
         // This client never accepts the new cookie. A new context first clears
         // the old graph, then binds a new monitor to the newly observed session.
         purgeRevision &+= 1; lastScope = nil
@@ -153,10 +160,14 @@ public actor ClaudeCloudCoordinator {
     }
     public nonisolated func invalidateSource() { generation.invalidate() }
     public func suspend() async {
+        guard !paused else { return }
         invalidateSource(); paused = true; revision &+= 1
         starting?.cancel(); starting = nil
-        let previous = client
-        await ShutdownDeadline().perform([{ await previous?.suspend() }])
+        guard let client else { scopeBinding = nil; return }
+        if suspending == nil {
+            suspending = Task { await ShutdownDeadline().perform([{ await client.suspend() }]) }
+        }
+        _ = await suspending?.value
     }
     public func resume(context: UInt64) {
         self.context = context
@@ -168,7 +179,16 @@ public actor ClaudeCloudCoordinator {
         } else { startIfNeeded() }
     }
     private func restart(_ client: any ClaudeCloudConnection, revision: UInt64) async {
+        let suspended = await suspending?.value ?? true
         guard current(revision) else { return }
+        suspending = nil
+        if !suspended {
+            // A stalled client can still finish its suspension later. Give
+            // the replacement a new binding so that work cannot stop it.
+            await invalidate()
+            startIfNeeded()
+            return
+        }
         await client.start(expanded: expanded) { [weak self] values, status, attention in
             await self?.receive(values, status: status, attention: attention, revision: revision)
         }

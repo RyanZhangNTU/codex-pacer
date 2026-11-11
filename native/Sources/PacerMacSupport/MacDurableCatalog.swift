@@ -5,12 +5,27 @@ import PacerCore
 /// The Desktop owner supplies live IPC. For an assigned thread without usable
 /// IPC, read bounded turn and tool-result pages over the same catalog connection.
 enum MacDurableCatalog {
+    private struct Binding: Equatable {
+        let executor: MacDurableExecutor
+        let fingerprint: String?
+
+        func isCurrent(home: URL, peer: pid_t) -> Bool {
+            MacDurableExecutor.find(peer: peer) == executor &&
+                CodexClient.authenticationFingerprint(home: home, files: MacFileSystem()) == fingerprint
+        }
+    }
+
     static func observe(home: URL, peer: pid_t, publish: @Sendable (DurableActivityCatalog?) -> Void,
                         ipcObservations: @Sendable () -> [String: Date],
                         publishHistory: @Sendable (String, [DurableTurnHistory]) -> Void) async {
         var connection: Connection?
         var previous: DurableActivityCatalog?
+        var verifiedBinding: Binding?
         var polls = DurableHistoryPoll()
+        func revoke() {
+            if previous != nil { polls.reset(startingNow: true) }
+            previous = nil; verifiedBinding = nil; publish(nil)
+        }
         let mailbox = MacDurableProgressMailbox(home: home)
         defer { connection?.close() }
         var retryDelay = 5.0
@@ -19,8 +34,9 @@ enum MacDurableCatalog {
             do {
                 guard let executor = MacDurableExecutor.find(peer: peer) else { throw CodexClientError.disconnected }
                 let fingerprint = CodexClient.authenticationFingerprint(home: home, files: MacFileSystem())
-                if connection?.executor != executor || connection?.fingerprint != fingerprint ||
-                    (connection?.expiresAt ?? .distantPast) <= Date() {
+                let binding = Binding(executor: executor, fingerprint: fingerprint)
+                if let verifiedBinding, verifiedBinding != binding { revoke() }
+                if connection?.binding != binding || (connection?.expiresAt ?? .distantPast) <= Date() {
                     connection?.close()
                     connection = nil
                     guard let cli = MacDurableExecutor.verifiedCLI(in: executor.application) else { throw CodexClientError.disconnected }
@@ -34,30 +50,26 @@ enum MacDurableCatalog {
                     }
                     await client.shutdown()
                     try Task.checkCancellation()
-                    let next = Connection(request: credentials.request, scope: credentials.scope,
-                        executor: executor, fingerprint: fingerprint)
+                    guard binding.isCurrent(home: home, peer: peer) else { throw CodexClientError.accountMismatch }
+                    if let scope = previous?.scope, scope != credentials.scope { revoke() }
+                    let next = Connection(request: credentials.request, scope: credentials.scope, binding: binding)
                     connection = next
                     try await next.reader.initialize()
                 }
                 guard let connection else { throw CodexClientError.disconnected }
-                let result = try await connection.reader.read(retaining: previous)
+                let result = try await connection.reader.read(retaining: previous, activeTurns: polls.activeThreads)
                 try Task.checkCancellation()
-                guard MacDurableExecutor.find(peer: peer) == executor,
-                      CodexClient.authenticationFingerprint(home: home, files: MacFileSystem()) == fingerprint else {
-                    throw CodexClientError.accountMismatch
-                }
+                guard binding.isCurrent(home: home, peer: peer) else { throw CodexClientError.accountMismatch }
                 if previous?.scope != result.catalog.scope { polls.reset(startingNow: previous != nil) }
                 previous = result.catalog
+                verifiedBinding = binding
                 publish(result.catalog)
                 let now = Date()
                 let history = try await polls.read(result, using: connection.reader,
                     ipc: ipcObservations(), receipts: mailbox.read(at:), at: now)
                 if !history.isEmpty {
                     try Task.checkCancellation()
-                    guard MacDurableExecutor.find(peer: peer) == executor,
-                          CodexClient.authenticationFingerprint(home: home, files: MacFileSystem()) == fingerprint else {
-                        throw CodexClientError.accountMismatch
-                    }
+                    guard binding.isCurrent(home: home, peer: peer) else { throw CodexClientError.accountMismatch }
                     publishHistory(result.catalog.scope, history)
                 }
                 retryDelay = 5
@@ -66,7 +78,18 @@ enum MacDurableCatalog {
                 connection?.close()
                 connection = nil
                 if Task.isCancelled { break }
-                publish(nil)
+                switch error {
+                case CodexClientError.notLoggedIn, CodexClientError.accountMismatch:
+                    revoke()
+                default:
+                    if let previous, let verifiedBinding, verifiedBinding.fingerprint != nil,
+                       verifiedBinding.isCurrent(home: home, peer: peer) {
+                        // Drop live permissions during the outage. The verified account still owns its inbox.
+                        publish(.init(scope: previous.scope, threadIDs: []))
+                    } else {
+                        revoke()
+                    }
+                }
                 delay = retryDelay
                 retryDelay = min(60, retryDelay * 2)
             }
@@ -82,14 +105,13 @@ enum MacDurableCatalog {
     }
 
     private final class Connection {
-        let executor: MacDurableExecutor
-        let fingerprint: String?
+        let binding: Binding
         let expiresAt = Date().addingTimeInterval(DurableCatalogReader.connectionLifetime)
         let reader: DurableCatalogReader
 
-        init(request: URLRequest, scope: String, executor: MacDurableExecutor, fingerprint: String?) {
-            self.executor = executor; self.fingerprint = fingerprint
-            reader = DurableCatalogReader(socket: Socket(request), scope: scope, environmentID: executor.environmentID)
+        init(request: URLRequest, scope: String, binding: Binding) {
+            self.binding = binding
+            reader = DurableCatalogReader(socket: Socket(request), scope: scope, environmentID: binding.executor.environmentID)
         }
 
         func close() { reader.close() }

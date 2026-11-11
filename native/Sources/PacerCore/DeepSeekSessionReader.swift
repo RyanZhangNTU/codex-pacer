@@ -20,6 +20,7 @@ struct DeepSeekSessionReader {
     private struct Cursor {
         let url: URL
         var offset: UInt64 = 0
+        var identity: String?
         var session: String?
         var baselineEnd: UInt64
         var modified: Date
@@ -80,7 +81,10 @@ struct DeepSeekSessionReader {
         guard let metadata = files.metadata(cursor.url, followingSymbolicLinks: true) else { return ([], 0, false) }
         let size = metadata.size
         cursor.modified = metadata.modified
-        if size < cursor.offset { cursor.offset = 0; cursor.session = nil; cursor.baselineEnd = size }
+        if cursor.identity.map({ $0 != metadata.identity }) == true || size < cursor.offset {
+            cursor.offset = 0; cursor.session = nil; cursor.baselineEnd = size
+        }
+        cursor.identity = metadata.identity
         guard size > cursor.offset else { return ([], 0, false) }
         let start = cursor.offset
         // One append is one frame. A frame larger than this pass's allowance

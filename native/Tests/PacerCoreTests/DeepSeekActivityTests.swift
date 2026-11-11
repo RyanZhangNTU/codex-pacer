@@ -496,6 +496,40 @@ final class DeepSeekActivityTests: XCTestCase {
         XCTAssertFalse(completion.isHistoricalCompletion, "A post-startup ending must retain its unread reminder")
     }
 
+    func testReaderReattachesAfterEqualSizeAndLargerLogReplacements() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dsh-replacement-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let log = home.appendingPathComponent("sessions/workspace/session/\(DeepSeekSessionReader.logName)")
+        try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let header = try XCTUnwrap(Data(base64Encoded: "KLUv/SCKXQMAIgYWG2Br28NiP9tnLp7uPwAAwWswFrv7O3iAQUjiHIDHmSmaoQxnHfpwK41i6yyWH9okQUoQIOldYLgVZsvvAdzdAarqYmYmIomM+m1i3PyOSKjWuD2dV6PvCAYAUggShBaYhRvD5xZtSxM="))
+        let files = TestFileSystem()
+        var reader = DeepSeekSessionReader(files: files)
+        try header.write(to: log)
+        let before = try XCTUnwrap(files.metadata(log))
+        XCTAssertEqual(reader.read(home: home, discover: true).lines.count, 1)
+
+        try header.write(to: log, options: .atomic)
+        let equal = try XCTUnwrap(files.metadata(log))
+        XCTAssertNotEqual(before.identity, equal.identity)
+        XCTAssertEqual(before.size, equal.size)
+        let replay = reader.read(home: home, discover: false)
+        XCTAssertEqual(replay.lines.count, 1)
+        XCTAssertTrue(replay.lines.allSatisfy(\.attaching))
+
+        try opening.write(to: log, options: .atomic)
+        let larger = try XCTUnwrap(files.metadata(log))
+        XCTAssertNotEqual(equal.identity, larger.identity)
+        XCTAssertGreaterThan(larger.size, equal.size)
+        let replacement = reader.read(home: home, discover: true)
+        XCTAssertEqual(replacement.lines.count, 3)
+        XCTAssertTrue(replacement.lines.allSatisfy(\.attaching))
+        let writer = try FileHandle(forWritingTo: log)
+        try writer.seekToEnd(); try writer.write(contentsOf: closing); try writer.close()
+        let appended = reader.read(home: home, discover: false)
+        XCTAssertEqual(appended.lines.count, 2)
+        XCTAssertFalse(appended.lines.contains(where: \.attaching))
+    }
+
     func testStartupTornFrameKeepsItsBaselineButLaterWholeFramesAreLive() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dsh-torn-baseline-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }

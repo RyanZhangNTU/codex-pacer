@@ -95,6 +95,36 @@ final class WindowsProcessOwnershipTests: XCTestCase {
         try FileManager.default.removeItem(at: holder.file); try Data("replacement\n".utf8).write(to: holder.file)
         XCTAssertFalse(binding.isCurrent(proof), "Replacing the selected file invalidates its original writer proof")
     }
+
+    func testDeliveryReusesProcessAndFileChecksOnlyWithinOnePass() {
+        let home = URL(fileURLWithPath: "C:/fixture", isDirectory: true)
+        let first = home.appendingPathComponent("first.jsonl"), second = home.appendingPathComponent("second.jsonl")
+        let peer = WindowsProcessIdentity(pid: 1, started: 10), writer = WindowsProcessIdentity(pid: 2, started: 20)
+        let firstIdentity = WindowsSourceFileIdentity(fileVolume: 1, fileLow: 1, fileHigh: 0, rootVolume: 1, rootLow: 9, rootHigh: 0)
+        let secondIdentity = WindowsSourceFileIdentity(fileVolume: 1, fileLow: 2, fileHigh: 0, rootVolume: 1, rootLow: 9, rootHigh: 0)
+        var identities = [first: firstIdentity, second: secondIdentity], processChecks: [WindowsProcessIdentity] = [], fileChecks: [URL] = []
+        var live: Set<WindowsProcessIdentity> = [peer, writer]
+        let binding = WindowsDesktopSourceBinding(home: home, peer: peer, metadata: { id in
+            .init(origin: .init(embedded: false, ignored: false), url: id == "first" ? first : second, observedAt: nil, parentThreadID: nil)
+        }, alive: { process in
+            processChecks.append(process); return live.contains(process)
+        }, stamp: { file, _ in
+            fileChecks.append(file); return identities[file]
+        })
+        let proofs: [WindowsDesktopSourceBinding.Proof] = [
+            .init(thread: "first", file: first, writer: writer, peer: peer, stamp: firstIdentity),
+            .init(thread: "second", file: second, writer: writer, peer: peer, stamp: secondIdentity)
+        ]
+        XCTAssertTrue(binding.allCurrent(proofs))
+        XCTAssertEqual(processChecks, [peer, writer])
+        XCTAssertEqual(fileChecks, [first, second])
+
+        identities[second] = firstIdentity
+        XCTAssertFalse(binding.allCurrent(proofs), "The next delivery sees a file replacement")
+        identities[second] = secondIdentity
+        live.remove(writer)
+        XCTAssertFalse(binding.allCurrent(proofs), "The next delivery sees an exited writer")
+    }
     func testHandleCaptureAsksWindowsForObjectNames() throws {
         // Windows 10 copies an uninitialized name for every handle unless the capture asks for names.
         let name = "pacer-capture-" + UUID().uuidString
