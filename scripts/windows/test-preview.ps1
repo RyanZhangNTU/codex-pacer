@@ -10,6 +10,60 @@ $taskUnrelated = Join-Path $taskWork '工作目录'
 $taskOutput = Join-Path $taskRoot ('output/windows/preview-checks/' + [IO.Path]::GetFileNameWithoutExtension($taskArchive))
 New-Item -ItemType Directory -Path $taskApp,$taskUnrelated,$taskOutput -Force | Out-Null
 $taskChecks = @()
+
+function New-PacerPreviewProcess([string]$Executable) {
+    $taskStart = [Diagnostics.ProcessStartInfo]::new($Executable)
+    $taskStart.UseShellExecute=$false; $taskStart.CreateNoWindow=$true; $taskStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
+    $taskStart.WorkingDirectory=$taskUnrelated; $taskStart.RedirectStandardError=$true; $taskStart.RedirectStandardOutput=$true
+    $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
+    foreach ($taskVariable in @('DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) {
+        $taskStart.Environment.Remove($taskVariable) | Out-Null
+    }
+    $taskStart.Environment['DOTNET_MULTILEVEL_LOOKUP']='0'
+    return $taskStart
+}
+
+function Test-PacerPreviewEngine {
+    $taskStart = New-PacerPreviewProcess (Join-Path $taskApp 'Engine/PacerEngine.exe')
+    $taskStart.RedirectStandardInput = $true
+    $taskStart.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+    foreach ($taskArgument in @('--demo','--reference-fixture','--language','en')) { $taskStart.ArgumentList.Add($taskArgument) }
+    $taskEngine = [Diagnostics.Process]::Start($taskStart)
+    try {
+        $taskErrors = $taskEngine.StandardError.ReadToEndAsync()
+        function Wait-PacerFrame([string]$Type, [string]$Id = '') {
+            $taskDeadline = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $taskRemaining = [TimeSpan]::FromSeconds(15) - $taskDeadline.Elapsed
+                if ($taskRemaining.Ticks -le 0) { throw "No $Type frame from the packaged engine." }
+                $taskLine = $taskEngine.StandardOutput.ReadLineAsync().WaitAsync($taskRemaining).GetAwaiter().GetResult()
+                if ($null -eq $taskLine) { throw "The packaged engine closed before its $Type frame." }
+                $taskFrame = $taskLine | ConvertFrom-Json
+                if ($taskFrame.type -eq 'error') { throw "The packaged engine reported a protocol error." }
+            } until ($taskFrame.type -eq $Type -and (!$Id -or $taskFrame.id -eq $Id))
+            return $taskFrame
+        }
+        if ((Wait-PacerFrame 'hello').protocolVersion -ne 1) { throw 'The packaged engine reported an incompatible protocol.' }
+        foreach ($taskMethod in @('initialize','shutdown')) {
+            $taskEngine.StandardInput.WriteLine(('{{"protocolVersion":1,"id":"{0}","method":"{0}"}}' -f $taskMethod))
+            $taskEngine.StandardInput.Flush()
+            if (!(Wait-PacerFrame 'result' $taskMethod).ok) { throw "The packaged engine rejected $taskMethod." }
+        }
+        if (!$taskEngine.WaitForExit(5000) -or $taskEngine.ExitCode -ne 0) { throw 'The packaged engine did not exit successfully.' }
+        Write-Output 'PASS extracted engine: hello, initialize, shutdown and clean exit with the developer PATH removed.'
+    } catch {
+        if ($taskEngine.HasExited) { Write-Host ('Packaged ARM64 engine exit code: ' + $taskEngine.ExitCode) }
+        throw
+    } finally {
+        if (!$taskEngine.HasExited) { $taskEngine.Kill($true); $taskEngine.WaitForExit(5000) | Out-Null }
+        $taskEngine.Dispose()
+    }
+}
+
+function Write-PacerPreviewDiagnostics([string]$ErrorText) {
+    $ErrorText -split "\r?\n" | Where-Object { $_ -match '^Pacer preview: ' } | Select-Object -Last 6 | ForEach-Object { Write-Host $_ }
+}
+
 try {
     [IO.Compression.ZipFile]::ExtractToDirectory($taskArchive, $taskApp)
     $taskManifest = Get-Content -LiteralPath (Join-Path $taskApp 'build-info.json') -Raw | ConvertFrom-Json
@@ -20,15 +74,12 @@ try {
         $taskPath = [IO.Path]::GetFullPath((Join-Path $taskApp $taskFile.path))
         if (!$taskPath.StartsWith($taskPrefix, [StringComparison]::OrdinalIgnoreCase) -or (Get-FileHash -LiteralPath $taskPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $taskFile.sha256) { throw 'A packaged file differs from its recorded hash.' }
     }
+    if ($taskManifest.architecture -eq 'arm64') { Test-PacerPreviewEngine }
+    $taskCaptureTimeout = if ($taskManifest.architecture -eq 'arm64') { 60000 } else { 30000 }
     foreach ($taskLanguage in @('en','zh-Hans')) {
         foreach ($taskScene in @('island','settings','claude-settings')) {
             $taskImage = Join-Path $taskOutput ($taskLanguage + '-' + $taskScene + '.png')
-            $taskStart = [Diagnostics.ProcessStartInfo]::new((Join-Path $taskApp 'CodexPacer.exe'))
-            $taskStart.UseShellExecute=$false; $taskStart.CreateNoWindow=$true; $taskStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
-            $taskStart.WorkingDirectory=$taskUnrelated; $taskStart.RedirectStandardError=$true; $taskStart.RedirectStandardOutput=$true
-            $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
-            foreach ($taskVariable in @('DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) { $taskStart.Environment.Remove($taskVariable) | Out-Null }
-            $taskStart.Environment['DOTNET_MULTILEVEL_LOOKUP']='0'
+            $taskStart = New-PacerPreviewProcess (Join-Path $taskApp 'CodexPacer.exe')
             foreach ($taskArgument in @('--demo','--reference-fixture','--language',$taskLanguage,'--capture-preview',$taskImage)) { $taskStart.ArgumentList.Add($taskArgument) }
             if ($taskScene -ne 'island') {
                 $taskPane = if ($taskScene -eq 'claude-settings') { 'claude' } else { 'deepseek' }
@@ -37,10 +88,14 @@ try {
             $taskProcess = [Diagnostics.Process]::Start($taskStart)
             try {
                 $taskErrors = $taskProcess.StandardError.ReadToEndAsync(); $taskStdout = $taskProcess.StandardOutput.ReadToEndAsync()
-                if (!$taskProcess.WaitForExit(30000)) { $taskProcess.Kill($true); throw 'The extracted preview exceeded its startup deadline.' }
+                if (!$taskProcess.WaitForExit($taskCaptureTimeout)) {
+                    $taskProcess.Kill($true)
+                    if ($taskProcess.WaitForExit(5000) -and $taskErrors.Wait(2000)) { Write-PacerPreviewDiagnostics ($taskErrors.GetAwaiter().GetResult()) }
+                    throw "The extracted preview did not finish for $taskLanguage/$taskScene within $($taskCaptureTimeout / 1000) seconds."
+                }
                 $taskErrorText = $taskErrors.GetAwaiter().GetResult(); $null = $taskStdout.GetAwaiter().GetResult()
                 if ($taskProcess.ExitCode -ne 0 -or !(Test-Path -LiteralPath $taskImage)) {
-                    [IO.File]::WriteAllText(($taskImage + '.error.txt'),$taskErrorText)
+                    Write-PacerPreviewDiagnostics $taskErrorText
                     throw ('The extracted preview failed: ' + $taskLanguage + '/' + $taskScene + ', exit ' + $taskProcess.ExitCode)
                 }
                 if ($taskScene -ne 'island') {

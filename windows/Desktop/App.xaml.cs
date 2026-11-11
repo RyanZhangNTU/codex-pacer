@@ -132,6 +132,14 @@ public partial class App : Application
         }
         if (capture >= 0 && (!demo || capture + 1 >= e.Args.Length || !Path.IsPathFullyQualified(e.Args[capture + 1])))
             throw new ArgumentException("Preview capture requires demo mode and an absolute output path.");
+        string previewStage = "desktop startup";
+        void PreviewStage(string stage)
+        {
+            if (capture < 0) return;
+            previewStage = stage;
+            Console.Error.WriteLine("Pacer preview: " + stage);
+        }
+        PreviewStage(previewStage);
         Guid? activationQa = null;
         int activationQaIndex = Array.IndexOf(e.Args, "--activation-qa");
         if (activationQaIndex >= 0)
@@ -301,14 +309,17 @@ public partial class App : Application
                     crashLog = EngineCrashLog.Prepare(Path.Combine(identity.DataRoot, EngineCrashLog.Folder), typeof(App).Assembly.GetName().Version?.ToString() ?? "0.0.0");
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
+            PreviewStage("engine startup");
             await engine.StartAsync(executable, demo, language, configuration: preferences.EngineConfiguration(), referenceFixture: referenceFixture,
                 claudeRuntimeRoot: runtimeRoot, codexProgressRuntimeRoot: codexProgressRuntimeRoot, crashLog: crashLog);
             ShellProjection.Ready();
             engineReady.TrySetResult();
             engineReadyTicks = Environment.TickCount64;
             if (capture < 0) engine.Status += RestartAfterEngineExit;
+            PreviewStage("provider setup");
             await webConnection.StartAsync();
             await claudeConnection.StartAsync();
+            PreviewStage("island synchronization");
             await island.SynchronizeExpansionAsync();
             if (preferencesUnavailable) island.SetStatus(ui.Text("windows.settings.read_failed"));
             if (demo && stage != 0) await engine.SendAsync("demoStage", new { demoStage = stage });
@@ -317,6 +328,7 @@ public partial class App : Application
             if (capture < 0) await StartWindowsUpdaterAsync(e.Args);
             if (capture >= 0)
             {
+                PreviewStage("activation and capture");
                 if (activationQa != null)
                 {
                     var action = await activationForCapture.Task.WaitAsync(TimeSpan.FromSeconds(15));
@@ -334,11 +346,22 @@ public partial class App : Application
                     await island.WaitForPresentationAsync();
                     island.CapturePreview(e.Args[capture + 1]);
                 }
+                PreviewStage("shutdown");
                 Quit();
             }
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or System.ComponentModel.Win32Exception)
         {
+            if (capture >= 0)
+            {
+                // A preview runs unattended with synthetic inputs. Report a
+                // bounded error without printing exception messages or paths.
+                string errorCode = ex is System.ComponentModel.Win32Exception native
+                    ? $"Win32 error {native.NativeErrorCode}" : ex.GetType().Name;
+                Console.Error.WriteLine($"Pacer preview: {previewStage} failed ({errorCode}).");
+                Quit(1);
+                return;
+            }
             engineReady.TrySetException(new IOException("Engine initialization failed."));
             island.SetStatus(ui.Text("windows.engine.start_failed"));
         }
@@ -412,7 +435,9 @@ public partial class App : Application
         Restart();
     }
 
-    private async void Quit()
+    private void Quit() => Quit(0);
+
+    private async void Quit(int exitCode)
     {
         if (quitting) return;
         quitting = true;
@@ -434,7 +459,7 @@ public partial class App : Application
         trayIcon?.Dispose();
         if (island != null) island.AllowClose = true;
         instance?.Dispose();
-        Shutdown();
+        Shutdown(exitCode);
     }
 
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs change)

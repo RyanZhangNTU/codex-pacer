@@ -154,6 +154,10 @@ Idle work must be driven by events or deadlines, never by polling. Valid data, d
 
 CI measures the engine for 120 seconds with empty homes, then changes the Codex source and checks shutdown. A second run confirms that a synthetic task finishes before it measures an idle engine with that task in its history. The empty fixture fails above 1% of one core and the completed-task fixture fails above 2%. CI keeps the measurements for both passing and failing runs.
 
+Both budgets apply to the collapsed engine with `--read-only-diagnostics` and isolated local homes. The probe exercises log readers, source discovery, snapshots and shutdown. It uses a missing Codex executable and does not connect to signed-in quota, balance or Claude cloud services, start SSH or WSL collection, change hooks, or write user history and notification state. The measured CPU belongs to the engine process. It excludes the WPF shell, DWM, GPU and any subprocesses.
+
+The Windows engine tests exercise the remaining service paths with synthetic inputs. `CodexQuotaMonitorTests` and `EngineClaudeQuotaTests` check quota scheduling, `EngineDeepSeekConnectionTests` and `ClaudeCloudOwnerTests` check provider connection changes, and `WindowsSSHTests` and `WindowsWSLTests` use isolated transport fixtures. The Claude runtime job tests installed hook behavior with a temporary profile. These tests verify behavior independently of the idle CPU budgets.
+
 ```powershell
 python scripts/windows/check-engine-idle.py --engine <engine-path> --read-only --max-core-percent 1 --output output/windows/engine-idle.json
 python scripts/windows/check-engine-idle.py --engine <engine-path> --read-only --completed-task --max-core-percent 2 --output output/windows/engine-idle-completed.json

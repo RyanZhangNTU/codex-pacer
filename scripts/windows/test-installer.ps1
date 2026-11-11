@@ -75,7 +75,12 @@ function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Ex
         if (!$taskFinished) { $taskProcess.Kill($true); throw 'An owned installer test process exceeded three minutes.' }
         $taskText = $taskOut.GetAwaiter().GetResult()
         $taskErrorText = $taskErr.GetAwaiter().GetResult()
-        if ($Expected -notcontains $taskProcess.ExitCode) { throw ('An installer test process returned ' + $taskProcess.ExitCode + '. Diagnostics were retained privately, not forwarded.') }
+        if ($Expected -notcontains $taskProcess.ExitCode) {
+            if ($Offline) {
+                $taskErrorText -split "\r?\n" | Where-Object { $_ -match '^Pacer preview: ' } | Select-Object -Last 6 | ForEach-Object { Write-Host $_ }
+            }
+            throw ('An installer test process returned ' + $taskProcess.ExitCode + '.')
+        }
         Assert-Pacer ($taskText.Length -lt 16384 -and $taskErrorText.Length -lt 16384) 'The maintenance response exceeded its limit.'
         $taskLogFlag = $Arguments | Where-Object { $_.StartsWith('/LOG=', [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
         if ($taskLogFlag) {
