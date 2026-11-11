@@ -128,8 +128,19 @@ try {
     Assert-Pacer ($taskVerifyCode -eq 21 -and [IO.File]::ReadAllText($taskVerifyLog).Contains('Pacer post-install failure 21') -and
         (Get-PacerDigest $taskInstalledManifest) -eq (Get-PacerDigest $taskNext.manifest) -and
         !(Test-Path -LiteralPath (Join-Path $taskApp $taskAdded))) 'Post-install patch verification did not signal failure after replacing files.'
+    # Simulate the relaunch having recorded the failure. Launch the full
+    # installer directly, with no updater helper or result file.
+    $taskUpdates = Join-Path (Split-Path $taskApp -Parent) ('CodexPacer-QA-' + $taskScope + '/Updates')
+    $taskUpdateState = Join-Path $taskUpdates 'state-v1.json'
+    New-Item -ItemType Directory -Path $taskUpdates -Force | Out-Null
+    $taskFailedBuild = [string]$taskExpected.version + '.' + [string]$taskExpected.build
+    @{ SchemaVersion = 1; Values = @{ PacerPatchFailedBuild = $taskFailedBuild; SkipThisVersion = '1.0.0.1' } } |
+        ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $taskUpdateState -Encoding utf8
     Assert-Pacer ((Invoke-PacerSetup $taskNext.installer $taskFlags) -eq 0 -and (Test-Path -LiteralPath (Join-Path $taskApp $taskAdded))) 'The full installer did not repair the failed patch.'
-    Record-Pacer 'a post-install verification failure exits nonzero and the full installer repairs it'
+    $taskAfterRepair = Get-Content -LiteralPath $taskUpdateState -Raw | ConvertFrom-Json -AsHashtable
+    Assert-Pacer (!$taskAfterRepair['Values'].Contains('PacerPatchFailedBuild') -and
+        $taskAfterRepair['Values']['SkipThisVersion'] -eq '1.0.0.1') 'Manual repair did not clear only the failed patch marker.'
+    Record-Pacer 'a post-install verification failure exits nonzero and a manual full repair clears its marker'
 
     # The uninstaller hands over to a temporary copy; its log closes when that copy is done.
     $taskUninstallLog = Join-Path $taskFixture 'uninstall.log'

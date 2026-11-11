@@ -91,6 +91,8 @@ english.PacerPrepareFailed=This installation could not be prepared. Close this c
 chinesesimplified.PacerPrepareFailed=无法准备此安装。请关闭正在运行的 Codex Pacer，检查文件访问权限，然后重试。
 english.PacerRegistrationFailed=Pacer registration failed. Run this installer again to repair the installation.
 chinesesimplified.PacerRegistrationFailed=Pacer 注册失败。请再次运行此安装程序以修复安装。
+english.PacerFullSetupFailed=Pacer could not finish setup. Run this installer again to repair the installation.
+chinesesimplified.PacerFullSetupFailed=Pacer 未能完成安装。请重新运行此安装程序进行修复。
 english.PacerCleanupClaude=Claude configuration could not be cleaned. The affected files are settings.json and pacer\installation.json in the Claude configuration folder: %CLAUDE_CONFIG_DIR%, otherwise %USERPROFILE%\.claude, and any Claude Home selected in Pacer settings.
 chinesesimplified.PacerCleanupClaude=无法清理 Claude 配置。涉及 Claude 配置文件夹中的 settings.json 和 pacer\installation.json：%CLAUDE_CONFIG_DIR%，未设置时为 %USERPROFILE%\.claude，以及 Pacer 设置中选择的 Claude Home。
 english.PacerCleanupClaudeManual=Manual cleanup: in settings.json, remove only Pacer command entries under hooks that launch pacer/hook.py. If statusLine.command launches that Pacer wrapper, restore previousStatusLine from pacer\installation.json (or remove statusLine when the saved value is null). Remove an env value only when it still equals the value recorded in addedEnvironment. Preserve all user and other application entries. Then remove pacer\installation.json.
@@ -233,11 +235,11 @@ begin
       harmless, and a changed or unknown file is kept. }
     if not Maintenance(Bootstrap, 'remove-stale', ExpandConstant('{tmp}\pacer-stale.json')) then
       Log('Pacer stale file removal code ' + IntToStr(MaintenanceExitCode) + '.');
+#ifdef PacerPatch
     if not Maintenance(Bootstrap, 'register', '') then begin
       FailPostInstall('PacerRegistrationFailed', 20);
       Exit;
     end;
-#ifdef PacerPatch
 #if PacerScope != "default"
     { Only QA packages can exercise a file lost after the patch is applied. }
     if ExpandConstant('{param:PACERQADAMAGEPATCH|}') = '1' then
@@ -246,6 +248,9 @@ begin
 #endif
     if not Maintenance(Bootstrap, 'verify', '') then
       FailPostInstall('PacerPatchVerifyFailed', 21);
+#else
+    if not Maintenance(Bootstrap, 'register-full', '') then
+      FailPostInstall('PacerFullSetupFailed', 20);
 #endif
   end;
 end;

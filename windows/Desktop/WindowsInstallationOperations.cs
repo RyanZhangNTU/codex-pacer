@@ -193,6 +193,23 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
             throw;
         }
     }
+
+    internal void CompleteFullInstallation(CancellationToken cancellation)
+    {
+        Register();
+        var state = WindowsUpdateState.ForInstallation(identity);
+        if (!Version.TryParse(state.Read(UpdateHandoff.PatchFailedKey), out var failedBuild)) return;
+        using var manifest = JsonDocument.Parse(WindowsInstallationIdentity.ReadBounded(
+            Path.Combine(identity.Root, UpdateCatalog.ManifestName), 2 * 1024 * 1024));
+        var payload = manifest.RootElement;
+        if (!Version.TryParse(payload.GetProperty("version").GetString() + "." + payload.GetProperty("build"), out var installed) ||
+            installed.Revision < 0) throw new InvalidDataException("The installed package has no valid build version.");
+        if (installed < failedBuild) return;
+        // The full installer may have been launched outside the app. Clear a
+        // repair request only after both registration and file verification.
+        CheckFiles(ManifestFiles(payload), cancellation);
+        state.Write(UpdateHandoff.PatchFailedKey, null);
+    }
     // Creates a requested shortcut for this registered installation. A file
     // already there that this installation does not own is left alone.
     internal void AddShortcut(InstallShortcut kind)

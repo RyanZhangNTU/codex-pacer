@@ -77,6 +77,9 @@ internal static class UpdateFiles
 // here, never in HKCU. Keys keep the names WinSparkle used before 4.2.3.
 internal sealed class WindowsUpdateState(string path)
 {
+    internal static WindowsUpdateState ForInstallation(WindowsInstallationIdentity identity) =>
+        new(Path.Combine(UpdateSessions.Root(identity.DataRoot), "state-v1.json"));
+
     private sealed record State(int SchemaVersion, Dictionary<string, string> Values);
     private readonly object sync = new();
     private Dictionary<string, string> Load()

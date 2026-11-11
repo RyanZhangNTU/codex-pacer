@@ -20,6 +20,7 @@ internal static class Program
             {
                 case "prepare" when args.Length == 4: await operations.PrepareAsync(args[3], deadline.Token); break;
                 case "register" when args.Length == 3: operations.Register(); break;
+                case "register-full" when args.Length == 3: operations.CompleteFullInstallation(deadline.Token); break;
                 case "remove-stale" when args.Length == 4: operations.RemoveStale(args[3]); break;
                 case "prepare-patch" when args.Length == 4: await operations.PreparePatchAsync(args[3], deadline.Token); break;
                 case "verify" when args.Length == 3: operations.Verify(deadline.Token); break;

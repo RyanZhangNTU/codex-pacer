@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -76,7 +75,7 @@ public partial class App
             }
             else channel = demo ? null : WindowsUpdateChannel.Production;
             updateIdentity = identity;
-            updateState = new WindowsUpdateState(Path.Combine(UpdateSessions.Root(identity.DataRoot), "state-v1.json"));
+            updateState = WindowsUpdateState.ForInstallation(identity);
             if (channel == null) return;
             channel.Validate();
             string arch = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "arm64" : "x64";
