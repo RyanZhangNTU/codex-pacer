@@ -30,14 +30,18 @@ final class DurableDesktopTests: XCTestCase {
     private final class CatalogPages: DurableCatalogSocket, @unchecked Sendable {
         private let lock = NSLock()
         private let pages: [String: [String: Any]]
+        private let results: [String: [String: Any]]
         private var replies: [Data] = []
         private(set) var cursors: [String] = []
-        init(_ pages: [String: [String: Any]]) { self.pages = pages }
+        init(_ pages: [String: [String: Any]], results: [String: [String: Any]] = [:]) {
+            self.pages = pages; self.results = results
+        }
         func send(_ bytes: Data) async throws {
             let message = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
             guard let id = message["id"] else { return }
             let cursor = (message["params"] as? [String: Any])?["cursor"] as? String ?? "first"
-            let result = message["method"] as? String == "thread/list" ? pages[cursor] ?? [:] : [:]
+            let method = message["method"] as? String ?? ""
+            let result = method == "thread/list" ? pages[cursor] ?? [:] : results[method] ?? [:]
             let reply = try JSONSerialization.data(withJSONObject: ["id": id, "result": result])
             locked {
                 if message["method"] as? String == "thread/list" { cursors.append(cursor) }
@@ -111,6 +115,36 @@ final class DurableDesktopTests: XCTestCase {
         let later = try await reader.read(retaining: first.catalog, now: { now.addingTimeInterval(181) })
         XCTAssertEqual(later.catalog.threadIDs, [thread], "Previously seen idle rows still expire")
         XCTAssertEqual(socket.takeCursors(), ["first", "second", "third"])
+    }
+
+    func testHistoryPollDoesNotSettleAnEndingUntilTheBindingPassesRevalidation() async throws {
+        let now = Date().addingTimeInterval(1)
+        let startedAt = now.addingTimeInterval(-120), finishedAt = now.addingTimeInterval(-60)
+        func fixture(active: Bool) -> (DurableCatalogReader.Result, DurableCatalogReader) {
+            var turn: [String: Any] = ["id": "turn-1", "status": active ? "inProgress" : "completed", "startedAt": startedAt.timeIntervalSince1970]
+            if !active { turn["completedAt"] = finishedAt.timeIntervalSince1970 }
+            let catalog = DurableActivityCatalog(scope: "account", threadIDs: [thread], activeThreadIDs: active ? [thread] : [])
+            let entry = DurableActivityCatalog.Entry(id: thread, name: nil, updatedAt: startedAt, active: active)
+            let socket = CatalogPages([:], results: ["thread/turns/list": ["data": [turn]], "thread/items/list": ["data": []]])
+            return (.init(catalog: catalog, entries: [entry]), DurableCatalogReader(socket: socket, scope: "account", environmentID: "executor"))
+        }
+        var poll = DurableHistoryPoll()
+        let (active, activeReader) = fixture(active: true)
+        let (completed, endingReader) = fixture(active: false)
+        _ = try await poll.read(active, using: activeReader, ipc: [:], receipts: { _ in [:] }, at: now) {}
+        XCTAssertEqual(poll.activeThreads, [thread])
+        do {
+            _ = try await poll.read(completed, using: endingReader, ipc: [:], receipts: { _ in [:] }, at: now) {
+                throw CodexClientError.accountMismatch
+            }
+            XCTFail("A read from a stale binding cannot publish")
+        } catch CodexClientError.accountMismatch {}
+        XCTAssertEqual(poll.activeThreads, [thread], "The verified retry must still check the running turn")
+        let retried = try await poll.read(completed, using: endingReader, ipc: [:], receipts: { _ in [:] }, at: now) {}
+        XCTAssertEqual(retried.map(\.status), [.completed])
+        XCTAssertTrue(poll.activeThreads.isEmpty)
+        let repeated = try await poll.read(completed, using: endingReader, ipc: [:], receipts: { _ in [:] }, at: now) {}
+        XCTAssertTrue(repeated.isEmpty)
     }
 
     func testUnansweredDurableFollowBacksOffAndAnOwnerHintCanRetryIt() throws {

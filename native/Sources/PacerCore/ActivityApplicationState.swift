@@ -125,6 +125,9 @@ public struct ActivityApplicationState: Sendable {
             }).dropFirst(256) { pendingCodexEndings.removeValue(forKey: id) }
         }
     }
+    public mutating func discardPendingDurableEndings() {
+        pendingCodexEndings = pendingCodexEndings.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID }
+    }
     public mutating func applyCodexMetadata(names: [SessionNameUpdate], performance: [SessionPerformanceUpdate],
                                            at now: Date, visibility: ActivityVisibilityOptions) {
         inbox.updateNames(names); inbox.updatePerformance(performance)
@@ -176,7 +179,10 @@ public struct ActivityApplicationState: Sendable {
         let ignored = ignoredCodexActivityIDs
         inbox.remove(activityIDs: ignored)
         let previous = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-        let streamed = pendingCodexEndings.isEmpty ? remoteActivities : ActivitySourceMerger.merge(logged: Array(pendingCodexEndings.values), streamed: remoteActivities)
+        // A temporary verification gap must not consume an ending before
+        // it can produce an unread card and notice for the same account.
+        let ready = pendingCodexEndings.values.filter { visibility.showsDurableActivities || $0.sourceHostID != DurableActivityCatalog.hostID }
+        let streamed = ready.isEmpty ? remoteActivities : ActivitySourceMerger.merge(logged: ready, streamed: remoteActivities)
         let merged = (ActivitySourceMerger.merge(logged: localActivities, streamed: streamed) + claudeActivities + deepseekActivities)
             .filter { !ignored.contains($0.id) && !$0.codexGoalExpired(at: now) }.map { value in
                 var value = value
@@ -184,7 +190,7 @@ public struct ActivityApplicationState: Sendable {
                 return value
             }
         let observed = inbox.observe(ActivityTaskGroup.make(merged).flatMap(\.members), at: now, retention: retention)
-        pendingCodexEndings = [:]
+        for ending in ready { pendingCodexEndings.removeValue(forKey: ending.id) }
         for ending in inbox.activities where ending.claudeCloud?.readInClaude == true { inbox.dismiss(ending) }
         let hidden = hiddenActivityIDs(visibility), shown = observed.filter { !hidden.contains($0.id) }
         observeFirstOutputs(shown, at: now)

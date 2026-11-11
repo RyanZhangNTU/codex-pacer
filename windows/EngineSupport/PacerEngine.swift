@@ -1673,11 +1673,13 @@ actor EngineRuntime {
     private func receiveDesktop(_ state: CodexDesktopState, binding: UUID) {
         guard active, desktopBinding == binding, state.context == lifecycle.version(.codex), enabled.contains(.codex), !demo else { return }
         if durableAccountScope != state.durableAccountScope || durableAccountVerified != state.durableAccountVerified {
-            durableAccountScope = state.durableAccountScope
-            durableAccountVerified = state.durableAccountVerified
-            pendingDesktopEndings = pendingDesktopEndings.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID }
             activityState.clearFirstOutput()
         }
+        if durableAccountScope != state.durableAccountScope {
+            durableAccountScope = state.durableAccountScope
+            activityState.discardPendingDurableEndings()
+        }
+        durableAccountVerified = state.durableAccountVerified
         if monitorRemoteControl {
             let bindings = state.bindings
             if remoteControlScope != bindings.accountScope {

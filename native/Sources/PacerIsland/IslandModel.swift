@@ -1698,12 +1698,10 @@ final class IslandModel: ObservableObject {
                              unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = [],
                              remoteControlBindings: RemoteControlSourceBindings? = nil, durableAccountScope: String? = nil,
                              durableAccountVerified: Bool = false) {
-        if self.durableAccountVerified != durableAccountVerified || self.durableAccountScope != durableAccountScope {
-            self.durableAccountVerified = durableAccountVerified
-            activityState.pendingCodexEndings = activityState.pendingCodexEndings.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID }
-        }
+        self.durableAccountVerified = durableAccountVerified
         if self.durableAccountScope != durableAccountScope {
             self.durableAccountScope = durableAccountScope
+            activityState.discardPendingDurableEndings()
             bindCompletionSources(.codex)
         }
         if let bindings = remoteControlBindings {
@@ -1803,6 +1801,7 @@ final class IslandModel: ObservableObject {
         completionInbox.remove(provider: .codex)
         remoteControlHostIDs = nil
         durableAccountScope = nil; durableAccountVerified = false
+        activityState.discardPendingDurableEndings()
         bindCompletionSources(.codex)
         codexAttentionRequests = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         activities.removeAll { $0.provider == .codex }

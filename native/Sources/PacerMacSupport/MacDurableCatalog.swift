@@ -5,6 +5,33 @@ import PacerCore
 /// The Desktop owner supplies live IPC. For an assigned thread without usable
 /// IPC, read bounded turn and tool-result pages over the same catalog connection.
 enum MacDurableCatalog {
+    struct AccountPublication {
+        private(set) var scope: String?
+        private var boundary: DurableCatalogPublication?
+
+        mutating func suspend() -> DurableCatalogPublication? {
+            guard boundary == nil else { return nil }
+            boundary = .suspended
+            return boundary
+        }
+
+        mutating func verify(_ scope: String) -> DurableCatalogPublication? {
+            guard self.scope != scope else { return nil }
+            self.scope = scope
+            boundary = .accountVerified(scope)
+            return boundary
+        }
+
+        mutating func catalogAvailable() { boundary = nil }
+
+        mutating func revoke() -> DurableCatalogPublication? {
+            scope = nil
+            guard boundary != .revoked else { return nil }
+            boundary = .revoked
+            return boundary
+        }
+    }
+
     private struct Binding: Equatable {
         let executor: MacDurableExecutor
         let fingerprint: String?
@@ -21,10 +48,15 @@ enum MacDurableCatalog {
         var connection: Connection?
         var previous: DurableActivityCatalog?
         var verifiedBinding: Binding?
+        var account = AccountPublication()
         var polls = DurableHistoryPoll()
+        func suspend() {
+            if let boundary = account.suspend() { publish(boundary) }
+        }
         func revoke() {
-            if previous != nil { polls.reset(startingNow: true) }
-            previous = nil; verifiedBinding = nil; publish(.revoked)
+            if account.scope != nil { polls.reset(startingNow: true) }
+            previous = nil; verifiedBinding = nil
+            if let boundary = account.revoke() { publish(boundary) }
         }
         let mailbox = MacDurableProgressMailbox(home: home)
         defer { connection?.close() }
@@ -36,7 +68,7 @@ enum MacDurableCatalog {
                 let fingerprint = CodexClient.authenticationFingerprint(home: home, files: MacFileSystem())
                 let binding = Binding(executor: executor, fingerprint: fingerprint)
                 if fingerprint == nil, verifiedBinding?.fingerprint != nil { revoke() }
-                else if let verifiedBinding, verifiedBinding != binding { publish(.suspended) }
+                else if let verifiedBinding, verifiedBinding != binding { suspend() }
                 if connection?.binding != binding || (connection?.expiresAt ?? .distantPast) <= Date() {
                     connection?.close()
                     connection = nil
@@ -52,11 +84,15 @@ enum MacDurableCatalog {
                     await client.shutdown()
                     try Task.checkCancellation()
                     guard binding.isCurrent(home: home, peer: peer) else { throw CodexClientError.accountMismatch }
-                    if previous?.scope != credentials.scope {
-                        if previous != nil { polls.reset(startingNow: true) }
+                    let previousScope = account.scope
+                    if let boundary = account.verify(credentials.scope) {
+                        if previousScope != nil { polls.reset(startingNow: true) }
                         previous = nil
-                        publish(.accountVerified(credentials.scope))
+                        publish(boundary)
                     }
+                    // The CLI verified this binding. A catalog failure still
+                    // keeps it suspended until a fresh catalog succeeds.
+                    verifiedBinding = binding
                     let next = Connection(request: credentials.request, scope: credentials.scope, binding: binding)
                     connection = next
                     try await next.reader.initialize()
@@ -68,15 +104,14 @@ enum MacDurableCatalog {
                 if previous?.scope != result.catalog.scope { polls.reset(startingNow: previous != nil) }
                 previous = result.catalog
                 verifiedBinding = binding
+                account.catalogAvailable()
                 publish(.available(result.catalog))
                 let now = Date()
                 let history = try await polls.read(result, using: connection.reader,
-                    ipc: ipcObservations(), receipts: mailbox.read(at:), at: now)
-                if !history.isEmpty {
-                    try Task.checkCancellation()
+                    ipc: ipcObservations(), receipts: mailbox.read(at:), at: now) {
                     guard binding.isCurrent(home: home, peer: peer) else { throw CodexClientError.accountMismatch }
-                    publishHistory(result.catalog.scope, history)
                 }
+                if !history.isEmpty { publishHistory(result.catalog.scope, history) }
                 retryDelay = 5
                 delay = max(1, 15 - Date().timeIntervalSince(now))
             } catch {
@@ -87,7 +122,7 @@ enum MacDurableCatalog {
                     revoke()
                 } else if verifiedBinding?.fingerprint != nil,
                           CodexClient.authenticationFingerprint(home: home, files: MacFileSystem()) == nil { revoke() }
-                else { publish(.suspended) }
+                else { suspend() }
                 delay = retryDelay
                 retryDelay = min(60, retryDelay * 2)
             }

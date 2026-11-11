@@ -6,13 +6,14 @@ import XCTest
 private actor DesktopTestConnection: CodexDesktopConnection {
     let frame: @Sendable (Data) async -> Void
     let closed: @Sendable () async -> Void
+    let initialFrames: [Data]
     var stopped = false
     var interval: TimeInterval = 5
     var flushes = 0
-    init(frame: @escaping @Sendable (Data) async -> Void, closed: @escaping @Sendable () async -> Void) {
-        self.frame = frame; self.closed = closed
+    init(frame: @escaping @Sendable (Data) async -> Void, closed: @escaping @Sendable () async -> Void, initialFrames: [Data]) {
+        self.frame = frame; self.closed = closed; self.initialFrames = initialFrames
     }
-    func start() {}
+    func start() async { for bytes in initialFrames { await frame(bytes) } }
     func discover(_ threads: [String]) {}
     func setHosts(_ hosts: Set<String>) {}
     func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) { interval = seconds; if flushPending { flushes += 1 } }
@@ -24,10 +25,12 @@ private actor DesktopTestConnection: CodexDesktopConnection {
 private final class DesktopTestFactory: @unchecked Sendable {
     private let lock = NSLock()
     private var created: [DesktopTestConnection] = []
+    private let initialFrames: [Data]
+    init(initialFrames: [Data] = []) { self.initialFrames = initialFrames }
     var services: CodexDesktopServices { services(supportsDurable: false) }
     func services(supportsDurable: Bool) -> CodexDesktopServices {
         .init(makeConnection: { [self] _, _, frame, closed in
-            let connection = DesktopTestConnection(frame: frame, closed: closed)
+            let connection = DesktopTestConnection(frame: frame, closed: closed, initialFrames: initialFrames)
             lock.lock(); created.append(connection); lock.unlock(); return connection
         }, supportsDurable: supportsDurable)
     }
@@ -147,6 +150,42 @@ final class CodexDesktopMonitorTests: XCTestCase {
         await connection.send(progress)
         XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Revoking the account must remove the ending and reject a late report")
         await runtime.stop()
+    }
+
+    func testPendingDotEndingSurvivesSuspensionOnlyForTheSameAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dot-pending-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let host = DurableActivityCatalog.hostID, date = Date()
+        let firstScope = String(repeating: "a", count: 64), otherScope = String(repeating: "b", count: 64)
+        for nextScope in [firstScope, otherScope, nil] {
+            let factory = DesktopTestFactory(initialFrames: try [
+                frame("durableScope", ["scope": firstScope], host: host),
+                frame("runtimeBatch", ["events": [event("turn/started", at: date),
+                    event("turn/completed", at: date.addingTimeInterval(1), ["status": "completed"])]], host: host),
+                frame("durableSuspended", host: host)
+            ])
+            let snapshots = DesktopEngineSnapshots()
+            let runtime = EngineRuntime(demo: false, now: { date.addingTimeInterval(2) }, dismissalStore: nil,
+                desktopServices: factory.services(supportsDurable: true), output: { snapshots.append($0) })
+            _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"],
+                "codexHome": EngineCodexSourceReport.path(root), "monitorRemoteControl": false]))
+            let connection = try XCTUnwrap(factory.all().first)
+            XCTAssertTrue(snapshots.all().allSatisfy { $0.tasks.isEmpty && $0.notices.isEmpty && $0.activityLinks?.isEmpty != false },
+                "The buffered ending remains hidden during initialization and suspension")
+            try await connection.send(frame("durableScope", ["scope": nextScope.map { $0 as Any } ?? NSNull()], host: host))
+            if nextScope == firstScope {
+                let restored = try XCTUnwrap(snapshots.all().last?.presentation.rows.first)
+                XCTAssertEqual(restored.phase, "completed")
+                XCTAssertTrue(restored.unread)
+                XCTAssertEqual(snapshots.all().flatMap(\.notices).filter { $0.kind == "completed" }.count, 1)
+            } else {
+                try await connection.send(frame("durableScope", ["scope": firstScope], host: host))
+                XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Changing or revoking the account discards the buffered ending")
+                XCTAssertTrue(snapshots.all().flatMap(\.notices).isEmpty)
+            }
+            await runtime.stop()
+        }
     }
 
 }

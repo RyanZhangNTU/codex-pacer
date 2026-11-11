@@ -204,6 +204,25 @@ final class ActivityApplicationStateTests: XCTestCase {
         XCTAssertEqual(state.inbox.unreadActivities.count, 256)
     }
 
+    func testPendingDotEndingWaitsForTheAccountToBeVerifiedAgain() {
+        var state = ActivityApplicationState()
+        let dot = task(1, host: DurableActivityCatalog.hostID, ended: true)
+        let local = task(2, ended: true)
+        state.rememberCodexEndings([dot, local])
+
+        let suspended = state.reconcile(at: now, retention: 300, visibility: .init(showsDurableActivities: false))
+        XCTAssertEqual(suspended.activities.map(\.id), [local.id])
+        XCTAssertEqual(suspended.notices.filter { $0.kind == .completed }.count, 1)
+        XCTAssertEqual(Set(state.pendingCodexEndings.keys), [dot.id])
+        XCTAssertFalse(state.inbox.isUnread(dot))
+
+        let resumed = state.reconcile(at: now.addingTimeInterval(1), retention: 300, visibility: visible)
+        XCTAssertTrue(state.inbox.isUnread(dot))
+        XCTAssertEqual(resumed.notices.filter { $0.kind == .completed }.count, 1)
+        XCTAssertTrue(state.pendingCodexEndings.isEmpty)
+        XCTAssertTrue(state.reconcile(at: now.addingTimeInterval(2), retention: 300, visibility: visible).notices.isEmpty)
+    }
+
     func testRateExpiryUsesExactClockAndOnlyInvalidatesTheTimedProjection() throws {
         let thread = "019a0000-0000-7000-8000-000000000001"
         var value = SessionActivity(id: "local:" + thread, phaseAwareRate: true)

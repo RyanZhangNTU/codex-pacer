@@ -147,7 +147,20 @@ package struct DurableHistoryPoll {
 
     package mutating func read(_ result: DurableCatalogReader.Result, using connection: DurableCatalogReader,
                                ipc: [String: Date], receipts readReceipts: (Date) -> [String: DurableProgressReceipt],
-                               at now: Date) async throws -> [DurableTurnHistory] {
+                               at now: Date, validate: () throws -> Void) async throws -> [DurableTurnHistory] {
+        // A credential can change while the pages are in flight. Leave the
+        // previous turn eligible if the host cannot publish the new reading.
+        var next = self
+        let observations = try await next.collect(result, using: connection, ipc: ipc, receipts: readReceipts, at: now)
+        try Task.checkCancellation()
+        try validate()
+        self = next
+        return observations
+    }
+
+    private mutating func collect(_ result: DurableCatalogReader.Result, using connection: DurableCatalogReader,
+                                  ipc: [String: Date], receipts readReceipts: (Date) -> [String: DurableProgressReceipt],
+                                  at now: Date) async throws -> [DurableTurnHistory] {
         polls = polls.filter { result.catalog.threadIDs.contains($0.key) }
         let candidates = result.entries.filter { entry in
             let previous = polls[entry.id]
