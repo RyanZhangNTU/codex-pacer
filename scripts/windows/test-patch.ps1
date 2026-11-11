@@ -122,6 +122,15 @@ try {
     Assert-Pacer ((Get-PacerDigest $taskInstalledManifest) -eq (Get-PacerDigest $taskNext.manifest)) 'A refused second patch changed the installation.'
     Record-Pacer 'the same patch refuses an installation that is already the next build'
 
+    Assert-Pacer ((Invoke-PacerSetup $taskBaseSetup $taskFlags) -eq 0) 'Could not reinstall the isolated patch base.'
+    $taskVerifyLog = Join-Path $taskFixture 'patch-verification-failed.log'
+    $taskVerifyCode = Invoke-PacerSetup $taskPatch ($taskFlags + '/PACERQADAMAGEPATCH=1' + ('/LOG=' + $taskVerifyLog))
+    Assert-Pacer ($taskVerifyCode -eq 21 -and [IO.File]::ReadAllText($taskVerifyLog).Contains('Pacer post-install failure 21') -and
+        (Get-PacerDigest $taskInstalledManifest) -eq (Get-PacerDigest $taskNext.manifest) -and
+        !(Test-Path -LiteralPath (Join-Path $taskApp $taskAdded))) 'Post-install patch verification did not signal failure after replacing files.'
+    Assert-Pacer ((Invoke-PacerSetup $taskNext.installer $taskFlags) -eq 0 -and (Test-Path -LiteralPath (Join-Path $taskApp $taskAdded))) 'The full installer did not repair the failed patch.'
+    Record-Pacer 'a post-install verification failure exits nonzero and the full installer repairs it'
+
     # The uninstaller hands over to a temporary copy; its log closes when that copy is done.
     $taskUninstallLog = Join-Path $taskFixture 'uninstall.log'
     Assert-Pacer ((Invoke-PacerSetup (Join-Path $taskApp 'unins000.exe') @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + $taskUninstallLog))) -eq 0) 'Uninstall after a patch failed.'

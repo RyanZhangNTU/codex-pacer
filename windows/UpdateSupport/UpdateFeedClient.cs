@@ -38,10 +38,11 @@ internal sealed class UpdateFeedClient : IDisposable
         if (transport != null) handler.Dispose();
         http = new HttpClient(transport ?? handler) { Timeout = Timeout.InfiniteTimeSpan };
     }
-    /// The newest signed, compatible package above the running build, if any.
-    internal Task<WindowsUpdatePackage?> ReadOfferAsync(CancellationToken cancellation = default) => ReadFeedAsync(notesForCurrentBuild: false, cancellation);
+    /// The newest signed, compatible package, including an exact-build repair after a failed patch.
+    internal Task<WindowsUpdatePackage?> ReadOfferAsync(CancellationToken cancellation = default, Version? failedPatchBuild = null) =>
+        ReadFeedAsync(notesForCurrentBuild: false, cancellation, failedPatchBuild);
     internal async Task<string?> ReadReleaseNotesAsync(CancellationToken cancellation = default) => (await ReadFeedAsync(notesForCurrentBuild: true, cancellation))?.Notes;
-    private async Task<WindowsUpdatePackage?> ReadFeedAsync(bool notesForCurrentBuild, CancellationToken cancellation)
+    private async Task<WindowsUpdatePackage?> ReadFeedAsync(bool notesForCurrentBuild, CancellationToken cancellation, Version? failedPatchBuild = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -49,7 +50,7 @@ internal sealed class UpdateFeedClient : IDisposable
         try
         {
             var feed = await Fetch(channel.Feed, UpdateCatalog.FeedLimit, timeout.Token, missingIsEmpty: true);
-            return feed == null ? null : UpdateCatalog.Parse(feed, channel, architecture, current, windows, language, notesForCurrentBuild);
+            return feed == null ? null : UpdateCatalog.Parse(feed, channel, architecture, current, windows, language, notesForCurrentBuild, failedPatchBuild);
         }
         catch (Exception error) when (error is HttpRequestException or FormatException or System.Xml.XmlException)
         { Fail(error); throw new InvalidDataException("The signed update feed could not be verified.", error); }

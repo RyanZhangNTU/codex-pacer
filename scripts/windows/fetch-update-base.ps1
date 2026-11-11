@@ -46,7 +46,13 @@ try {
     if ($taskDigest -notmatch '^[0-9a-f]{64}$') { Write-Output ('No patch base: ' + $taskVersion + ' publishes no Windows manifest.'); return }
     $taskName = 'Codex-Pacer-' + $taskVersion + '-windows-' + $Architecture + '-manifest.json'
     $taskManifest = Join-Path $taskTemporary $taskName
-    Invoke-WebRequest -Uri ($taskRepository + '/download/v' + $taskVersion + '/' + $taskName) -OutFile $taskManifest -MaximumRedirection 5 -TimeoutSec 60 -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri ($taskRepository + '/download/v' + $taskVersion + '/' + $taskName) -OutFile $taskManifest `
+            -MaximumRedirection 5 -TimeoutSec 30 -MaximumRetryCount 1 -RetryIntervalSec 2 -UseBasicParsing
+    } catch [Microsoft.PowerShell.Commands.HttpResponseException], [System.Net.Http.HttpRequestException], [System.OperationCanceledException] {
+        Write-Output 'No patch base: the published Windows manifest could not be downloaded.'
+        return
+    }
     if ((Get-FileHash -LiteralPath $taskManifest -Algorithm SHA256).Hash.ToLowerInvariant() -ne $taskDigest) { throw 'The published manifest differs from the latest feed.' }
     $taskInfo = Get-Content -LiteralPath $taskManifest -Raw | ConvertFrom-Json
     if ($taskInfo.architecture -ne $Architecture -or ([string]$taskInfo.version + '.' + [string]$taskInfo.build) -ne $taskBuild) { throw 'The published manifest is for another build.' }

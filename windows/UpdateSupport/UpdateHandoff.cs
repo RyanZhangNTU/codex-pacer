@@ -186,9 +186,10 @@ internal static class UpdateHandoff
         string file = Path.Combine(identity.DataRoot, "Updates", session, "result.json");
         if (!File.Exists(file)) return null;
         var value = JsonSerializer.Deserialize<UpdateInstallResult>(UpdateFiles.Read(file, MetadataLimit));
-        if (value?.SchemaVersion != 1 || !Version.TryParse(value.Build, out _) || value.Notes.Length > 128 * 1024) throw new InvalidDataException();
-        if (value.Success && current < Version.Parse(value.Build)) value = value with { Success = false, Notes = "" };
+        if (value?.SchemaVersion != 1 || !Version.TryParse(value.Build, out var installed) || value.Notes.Length > 128 * 1024) throw new InvalidDataException();
+        if (value.Success && current < installed) value = value with { Success = false, Notes = "" };
         if (!value.Success && value.Incremental) state.Write(PatchFailedKey, value.Build);
+        if (value.Success && Version.TryParse(state.Read(PatchFailedKey), out var failed) && installed >= failed) state.Write(PatchFailedKey, null);
         // Claim before presenting. A second launch cannot show this build twice.
         return state.ClaimNotes(value.Success ? value.Build : "failed-" + session) ? value : null;
     }

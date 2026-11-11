@@ -91,7 +91,7 @@ internal static class UpdateCatalog
         catch (Exception error) when (error is FormatException or ArgumentException) { return false; }
     }
     internal static WindowsUpdatePackage? Parse(byte[] signedFeed, WindowsUpdateChannel channel, string architecture,
-        Version currentBuild, Version windows, string language, bool notesForCurrentBuild = false)
+        Version currentBuild, Version windows, string language, bool notesForCurrentBuild = false, Version? failedPatchBuild = null)
     {
         channel.Validate();
         if (signedFeed.Length > FeedLimit || architecture is not ("x64" or "arm64")) throw new InvalidDataException("Invalid update feed.");
@@ -125,7 +125,10 @@ internal static class UpdateCatalog
             string buildText = Required(Sparkle + "version"), display = Required(Sparkle + "shortVersionString");
             if (!Version.TryParse(buildText, out var build) || build.Revision < 0 ||
                 !Version.TryParse(Required(Sparkle + "minimumSystemVersion"), out var minimum) || minimum.Build < 0 ||
-                !Version.TryParse(display, out _) || (notesForCurrentBuild ? build != currentBuild : build <= currentBuild) || minimum > windows) continue;
+                !Version.TryParse(display, out _) || minimum > windows) continue;
+            // A failed patch may already have replaced the executable. Repair
+            // that exact build in full; never allow a downgrade or a second patch.
+            if (notesForCurrentBuild ? build != currentBuild : build < currentBuild || build == currentBuild && build != failedPatchBuild) continue;
             if (!Uri.TryCreate((string?)enclosure.Attribute("url"), UriKind.Absolute, out var url) || !channel.Allows(url) ||
                 !long.TryParse((string?)enclosure.Attribute("length"), NumberStyles.None, CultureInfo.InvariantCulture, out long length) || length is <= 0 or > PackageLimit)
                 throw new InvalidDataException("Invalid update download.");
@@ -134,7 +137,7 @@ internal static class UpdateCatalog
             string notes = item.Elements("description").FirstOrDefault(value => (string?)value.Attribute(XNamespace.Xml + "lang") == language)?.Value
                 ?? item.Elements("description").FirstOrDefault(value => (string?)value.Attribute(XNamespace.Xml + "lang") is null or "en")?.Value ?? "";
             if (Encoding.UTF8.GetByteCount(notes) > 128 * 1024) throw new InvalidDataException("Update notes exceed their limit.");
-            var patch = notesForCurrentBuild ? null : ReadPatch(item, channel, architecture, currentBuild);
+            var patch = build == currentBuild ? null : ReadPatch(item, channel, architecture, currentBuild);
             var candidate = new WindowsUpdatePackage(display, build, architecture, minimum, url, length, payloadSignature, notes, patch);
             if (selected == null || build > selected.Build) selected = candidate;
         }

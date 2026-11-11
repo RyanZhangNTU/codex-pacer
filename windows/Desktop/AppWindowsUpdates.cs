@@ -91,30 +91,43 @@ public partial class App
     }
     private async Task StartWindowsUpdaterAsync(string[] arguments)
     {
-        if (quitting || updates == null || ui == null) return;
+        if (quitting || updates is not { } service || updateIdentity is not { } identity || ui == null) return;
         if (arguments.Contains("--update-failed")) island?.SetStatus(ui.Text("windows.updates.install_failed"));
-        if (updateChannel != null && updateIdentity != null)
-            await updates.InitializeAsync(updateChannel, updateIdentity, ui.Language, preferences.AutomaticUpdates, Quit);
+        var channel = updateChannel;
         int resultIndex = Array.IndexOf(arguments, "--update-result");
+        string? session = resultIndex >= 0 && resultIndex + 1 < arguments.Length ? arguments[resultIndex + 1] : null;
+        if (channel == null && session == null) return;
+        string[] oldSessions = [];
+        try { oldSessions = await Task.Run(() => UpdateSessions.Capture(identity.DataRoot)); }
+        catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { }
         try
         {
-            if (resultIndex < 0 || resultIndex + 1 >= arguments.Length || updateIdentity == null || updateState == null) return;
-            var result = await Task.Run(() => UpdateHandoff.ConsumeResult(updateIdentity, arguments[resultIndex + 1], updateState, WindowsUpdateVersion.Read(typeof(App).Assembly))).WaitAsync(TimeSpan.FromSeconds(3));
-            if (result == null || quitting) return;
-            if (StartupPresentation.Resolve(null, result).Failure is { } failure) island?.SetStatus(ui.Text(failure));
-            // The patch did not apply here: offer the same update in full now.
-            if (!result.Success && result.Incremental) _ = updates.RetryAfterFailedPatchAsync();
+            bool retry = false;
+            // Record a failed patch before an automatic check can read the feed.
+            if (session != null && updateState is { } state && !quitting)
+            {
+                try
+                {
+                    var result = await Task.Run(() => UpdateHandoff.ConsumeResult(identity, session, state,
+                        WindowsUpdateVersion.Read(typeof(App).Assembly))).WaitAsync(TimeSpan.FromSeconds(3));
+                    if (StartupPresentation.Resolve(null, result).Failure is { } failure) island?.SetStatus(ui.Text(failure));
+                    retry = result is { Success: false, Incremental: true };
+                }
+                catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { island?.SetStatus(ui.Text("windows.updates.install_failed")); }
+            }
+            if (quitting || channel == null) return;
+            await service.InitializeAsync(channel, identity, ui.Language, preferences.AutomaticUpdates, Quit);
+            if (!quitting && retry) _ = service.RetryAfterFailedPatchAsync();
         }
-        catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { island?.SetStatus(ui.Text("windows.updates.install_failed")); }
-        finally { if (updateIdentity != null) _ = CleanUpdateSessionsAsync(updateIdentity.DataRoot); }
+        finally { if (oldSessions.Length != 0) _ = CleanUpdateSessionsAsync(identity.DataRoot, oldSessions); }
     }
     // The helper that relaunched this app may still be exiting, so its
     // session can stay locked briefly; anything left goes at the next start.
-    private static async Task CleanUpdateSessionsAsync(string dataRoot)
+    private static async Task CleanUpdateSessionsAsync(string dataRoot, string[] sessions)
     {
         for (int attempt = 0; attempt < 30; attempt++)
         {
-            try { if (await Task.Run(() => UpdateSessions.Clean(dataRoot)) == 0) return; }
+            try { if (await Task.Run(() => UpdateSessions.Clean(dataRoot, sessions)) == 0) return; }
             catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { return; }
             await Task.Delay(TimeSpan.FromSeconds(2));
         }

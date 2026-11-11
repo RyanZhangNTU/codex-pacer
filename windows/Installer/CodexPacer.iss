@@ -137,9 +137,9 @@ Name: "{app}"; Flags: uninsalwaysuninstall
 Filename: "{app}\Maintenance\PacerMaintenance.exe"; Parameters: "shortcut {#PacerScope} ""{app}"" desktop"; Description: "{cm:CreateDesktopIcon}"; Flags: postinstall runhidden waituntilterminated; Check: OfferShortcuts
 Filename: "{app}\Maintenance\PacerMaintenance.exe"; Parameters: "shortcut {#PacerScope} ""{app}"" start-menu"; Description: "{cm:PacerStartMenuShortcut}"; Flags: postinstall runhidden waituntilterminated; Check: OfferShortcuts
 #if PacerScope == "default"
-Filename: "{app}\CodexPacer.exe"; Description: "{cm:LaunchProgram,{#PacerAppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\CodexPacer.exe"; Description: "{cm:LaunchProgram,{#PacerAppName}}"; Flags: nowait postinstall skipifsilent; Check: OfferLaunch
 #else
-Filename: "{app}\CodexPacer.exe"; Parameters: "--demo --reference-fixture --activation-qa {#PacerScope}"; Description: "{cm:LaunchProgram,{#PacerAppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\CodexPacer.exe"; Parameters: "--demo --reference-fixture --activation-qa {#PacerScope}"; Description: "{cm:LaunchProgram,{#PacerAppName}}"; Flags: nowait postinstall skipifsilent; Check: OfferLaunch
 #endif
 
 [Files]
@@ -155,6 +155,8 @@ Source: "{#PacerPatchFile}"; Flags: dontcopy
 var
   Bootstrap: String;
   MaintenanceExitCode: Integer;
+  PostInstallExitCode: Integer;
+  PostInstallMessage: String;
   Upgrading: Boolean;
 
 function InitializeSetup: Boolean;
@@ -165,7 +167,17 @@ end;
 
 function OfferShortcuts: Boolean;
 begin
-  Result := not WizardSilent or not Upgrading;
+  Result := (PostInstallExitCode = 0) and (not WizardSilent or not Upgrading);
+end;
+
+function OfferLaunch: Boolean;
+begin
+  Result := PostInstallExitCode = 0;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  Result := PostInstallExitCode;
 end;
 
 function Maintenance(const Host, Operation, Extra: String): Boolean;
@@ -200,6 +212,20 @@ begin
     Result := '';
 end;
 
+procedure FailPostInstall(const MessageKey: String; const ExitCode: Integer);
+begin
+  { Inno logs exceptions from ssPostInstall but can still exit successfully. }
+  PostInstallExitCode := ExitCode;
+  PostInstallMessage := CustomMessage(MessageKey);
+  Log('Pacer post-install failure ' + IntToStr(ExitCode) + ': ' + PostInstallMessage);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and (PostInstallExitCode <> 0) then
+    WizardForm.FinishedLabel.Caption := PostInstallMessage;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
@@ -207,11 +233,19 @@ begin
       harmless, and a changed or unknown file is kept. }
     if not Maintenance(Bootstrap, 'remove-stale', ExpandConstant('{tmp}\pacer-stale.json')) then
       Log('Pacer stale file removal code ' + IntToStr(MaintenanceExitCode) + '.');
-    if not Maintenance(Bootstrap, 'register', '') then
-      RaiseException(CustomMessage('PacerRegistrationFailed'));
+    if not Maintenance(Bootstrap, 'register', '') then begin
+      FailPostInstall('PacerRegistrationFailed', 20);
+      Exit;
+    end;
 #ifdef PacerPatch
+#if PacerScope != "default"
+    { Only QA packages can exercise a file lost after the patch is applied. }
+    if ExpandConstant('{param:PACERQADAMAGEPATCH|}') = '1' then
+      if not DeleteFile(ExpandConstant('{app}\synthetic-added.txt')) then
+        Log('Pacer QA could not remove its synthetic patch fixture.');
+#endif
     if not Maintenance(Bootstrap, 'verify', '') then
-      RaiseException(CustomMessage('PacerPatchVerifyFailed'));
+      FailPostInstall('PacerPatchVerifyFailed', 21);
 #endif
   end;
 end;

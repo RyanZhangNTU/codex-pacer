@@ -287,7 +287,7 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         catch { failures |= UninstallFailure.Registrations; }
         // Downloaded installers are not preferences: remove them with the app.
         // A locked or unknown session is left; it never changes the result.
-        try { UpdateSessions.Clean(identity.DataRoot); }
+        try { UpdateSessions.Clean(identity.DataRoot, UpdateSessions.Capture(identity.DataRoot)); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         return failures;
     }

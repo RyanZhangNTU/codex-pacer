@@ -56,7 +56,7 @@ The app takes the patch only when all of the following hold:
 
 Otherwise it downloads the full installer. The offer shows the download size and says when only changed files are downloaded. Download, Ed25519 and length verification, and the handoff are the same as for a full installer.
 
-Before changing anything, the patch installer checks that the installation is exactly its base, and that every file the patch does not carry already holds the new content. A modified or different installation is refused and left untouched. The relaunched app then records the failed patch and offers the same update again as the full installer. After copying, the patch verifies every file against the new manifest. Files the new build no longer lists are removed by the usual stale-file pass.
+Before changing anything, the patch installer checks that the installation is exactly its base, and that every file the patch does not carry already holds the new content. It leaves a modified or different installation untouched. After copying, it verifies every file against the new manifest. Setup returns a failure code if that verification or application registration fails. The relaunched app records the failed patch and offers the full installer, even if the patch already replaced the executable with that build. A successful repair clears the record. Files the new build no longer lists are removed by the usual stale-file pass.
 
 `test-patch.ps1` covers this with a synthetic next build in an isolated QA scope. It changes, adds and drops one file each, then checks:
 
@@ -80,7 +80,7 @@ The handoff to the helper:
 
 Cancellation, failed verification or installer failure relaunches the existing application and reports failure. Failure to save the result cannot prevent relaunch. A still-running installer is never killed or overlapped with a relaunch. If damaged application files prevent relaunch, repair is required.
 
-The relaunched app reads the result once, then deletes finished sessions in the background. It retries for a minute while the helper exits, and anything still locked goes at the next start. Cleanup removes only folders named as a session that hold only the files above. Uninstall removes them too; the state file and `last-install.log` stay with the retained preferences.
+The app records which update sessions exist before it enables the updater. After reading the previous result, it cleans up only those sessions, retrying for a minute while the helper exits. A new download stays out of that list. Cleanup removes only folders named as a session that hold only the files above. Uninstall removes them too; the state file and `last-install.log` stay with the retained preferences.
 
 ## Development and QA checks
 

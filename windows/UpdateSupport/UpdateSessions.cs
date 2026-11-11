@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
@@ -18,18 +19,25 @@ internal static class UpdateSessions
         UpdateFiles.Check(directory); Directory.CreateDirectory(directory); UpdateFiles.Check(directory);
         return directory;
     }
-    /// Deletes finished sessions except `keep`. A session holding a file it
-    /// does not own, or one still in use, is left for a later attempt.
-    /// Returns the number of sessions that remain.
-    internal static int Clean(string dataRoot, string? keep = null)
+    /// Freeze the set before enabling a new updater; retries must not see its downloads.
+    internal static string[] Capture(string dataRoot)
     {
         string root = Root(dataRoot);
-        if (!Directory.Exists(root)) return 0;
+        if (!Directory.Exists(root)) return [];
+        UpdateFiles.Check(root);
+        return Directory.EnumerateDirectories(root).Select(Path.GetFileName).OfType<string>()
+            .Where(name => Guid.TryParseExact(name, "N", out _)).ToArray();
+    }
+    /// A session with unknown files or files still in use is left for a later attempt.
+    internal static int Clean(string dataRoot, IReadOnlyCollection<string> sessions, string? keep = null)
+    {
+        string root = Root(dataRoot);
         int remaining = 0;
-        foreach (string directory in Directory.EnumerateDirectories(root))
+        foreach (string name in sessions)
         {
-            string name = Path.GetFileName(directory);
             if (!Guid.TryParseExact(name, "N", out _)) continue;
+            string directory = Path.Combine(root, name);
+            if (!Directory.Exists(directory)) continue;
             if (string.Equals(name, keep, StringComparison.OrdinalIgnoreCase)) { remaining++; continue; }
             try
             {

@@ -28,6 +28,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
         PatchFailedKey = UpdateHandoff.PatchFailedKey;
     private readonly UpdateFeedClient? client;
     private readonly WindowsUpdateState? state;
+    private string? downloadSession;
     private readonly Func<DateTimeOffset> now;
     private readonly Action<Action> post;
     private readonly SemaphoreSlim operations = new(1, 1);
@@ -87,7 +88,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     internal Task<bool> CheckAsync() => CheckCore(manual: true);
     internal Task<bool> CheckAutomaticIfDueAsync() => automatic && now() - lastCheck >= AutomaticInterval
         ? CheckCore(manual: false) : Task.FromResult(false);
-    private async Task<bool> CheckCore(bool manual)
+    private async Task<bool> CheckCore(bool manual, bool retryFailedPatch = false)
     {
         if (client == null || disposed || installing || !Status.Available || Status.Busy || !await operations.WaitAsync(0)) return false;
         try
@@ -97,10 +98,11 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             WindowsUpdatePackage? found;
             try
             {
-                found = await client.ReadOfferAsync(lifetime.Token);
+                var failedPatch = FailedPatchBuild();
+                found = await client.ReadOfferAsync(lifetime.Token, failedPatch);
                 state?.Write(LastCheckKey, lastCheck.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
-                // A manual check can still offer a skipped build.
-                if (found != null && !manual && state?.Read(SkipKey) == found.Build.ToString()) found = null;
+                if (found != null && !manual && !(retryFailedPatch && found.Build == failedPatch) &&
+                    state?.Read(SkipKey) == found.Build.ToString()) found = null;
             }
             catch (Exception error) when (Recoverable(error))
             {
@@ -145,7 +147,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             Publish(Status with { Busy = true, MessageKey = "windows.updates.downloading" });
             if (now() - offeredAt > OfferLifetime)
             {
-                var fresh = await client.ReadOfferAsync(linked.Token);
+                var fresh = await client.ReadOfferAsync(linked.Token, FailedPatchBuild());
                 if (fresh != offer)
                 {
                     bool usePatch = fresh != null && await Task.Run(() => PatchApplies(fresh));
@@ -159,9 +161,11 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             }
             linked.Token.ThrowIfCancellationRequested();
             var item = CurrentOffer ?? throw new InvalidOperationException("No update is offered.");
-            string session = UpdateSessions.Create(identity);
-            try { return await client.DownloadAsync(item, session, progress, linked.Token); }
-            catch { UpdateSessions.Clean(identity.DataRoot); throw; }
+            DiscardDownload();
+            string directory = UpdateSessions.Create(identity), session = Path.GetFileName(directory);
+            downloadSession = session;
+            try { return await client.DownloadAsync(item, directory, progress, linked.Token); }
+            catch { Interlocked.CompareExchange(ref downloadSession, null, session); CleanDownload(session); throw; }
         }
         finally { FinishOperation(Presenter?.KeepsResultOpen == true, offer == null ? "updates.no_update" : "windows.updates.available"); }
     }
@@ -202,9 +206,18 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
         }
         catch (Exception error) when (Recoverable(error)) { return false; }
     }
+    private Version? FailedPatchBuild() => Version.TryParse(state?.Read(PatchFailedKey), out var build) ? build : null;
+    private void DiscardDownload()
+    {
+        if (Interlocked.Exchange(ref downloadSession, null) is { } session) CleanDownload(session);
+    }
+    private void CleanDownload(string session)
+    {
+        if (identity != null) try { UpdateSessions.Clean(identity.DataRoot, [session]); } catch (Exception error) when (Recoverable(error)) { }
+    }
     /// After a patch failed to install, offers the same update again, now as
     /// the full installer, without waiting for the next daily check.
-    internal Task<bool> RetryAfterFailedPatchAsync() => CheckCore(manual: false);
+    internal Task<bool> RetryAfterFailedPatchAsync() => CheckCore(manual: false, retryFailedPatch: true);
     /// Remembers the offered build so automatic checks stay quiet about it.
     internal void Skip()
     {
@@ -217,7 +230,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
         if (disposed || installing) return;
         bool offered = offer != null;
         offer = null; incremental = false;
-        if (identity != null) try { UpdateSessions.Clean(identity.DataRoot); } catch (Exception error) when (Recoverable(error)) { }
+        DiscardDownload();
         Publish(Status with { Busy = false, MessageKey = offered || Status.MessageKey is "updates.checking" or "windows.updates.downloading" ? "updates.cancelled" : Status.MessageKey });
         ArmAutomatic();
     }

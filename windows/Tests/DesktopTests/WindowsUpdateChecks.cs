@@ -414,15 +414,21 @@ internal static class WindowsUpdateChecks
         string named = Make("not-a-session", "setup.exe");
         string locked = Make(Guid.NewGuid().ToString("N"), "setup.exe");
         string kept = Make(Guid.NewGuid().ToString("N"), "result.json");
+        var beforeStartup = UpdateSessions.Capture(data);
         UpdateSessions.PreserveLog(done);
         int remaining;
-        using (new FileStream(Path.Combine(locked, "setup.exe"), FileMode.Open, FileAccess.Read, FileShare.None)) remaining = UpdateSessions.Clean(data, Path.GetFileName(kept));
+        using (new FileStream(Path.Combine(locked, "setup.exe"), FileMode.Open, FileAccess.Read, FileShare.None))
+            remaining = UpdateSessions.Clean(data, beforeStartup, Path.GetFileName(kept));
         Check(!Directory.Exists(done) && Directory.Exists(unknown) && Directory.Exists(named) && Directory.Exists(locked) && Directory.Exists(kept) && remaining == 3,
             "Cleanup removes finished sessions only: unknown files, other folders, locked files and the result being read stay");
         Check(File.ReadAllText(Path.Combine(updates, UpdateSessions.LastLog)) == "install.log" && File.Exists(Path.Combine(updates, "state-v1.json")),
             "The last installer log and the update state outlive their session");
-        Check(UpdateSessions.Clean(data) == 1 && !Directory.Exists(locked) && !Directory.Exists(kept) && Directory.Exists(unknown),
+        string downloading = Make(Guid.NewGuid().ToString("N"));
+        string ready = Make(Guid.NewGuid().ToString("N"), "setup.exe");
+        Check(UpdateSessions.Clean(data, beforeStartup) == 1 && !Directory.Exists(locked) && !Directory.Exists(kept) && Directory.Exists(unknown),
             "A released session goes at the next attempt; a session with an unknown file never does");
+        Check(Directory.Exists(downloading) && File.Exists(Path.Combine(ready, "setup.exe")),
+            "Startup retries cannot remove a later download waiting for headers or installation");
     }
     private static void InstallerIdentityChecks()
     {
@@ -563,8 +569,23 @@ internal static class WindowsUpdateChecks
         var resultState = new WindowsUpdateState(Path.Combine(root, "delta-result-state.json"));
         UpdateFiles.Write(Path.Combine(identity.DataRoot, "Updates", session, "result.json"),
             System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new UpdateInstallResult(1, false, "1.2.3.5", "", Incremental: true)));
-        Check(UpdateHandoff.ConsumeResult(identity, session, resultState, Current) is { Success: false, Incremental: true }
+        Check(UpdateHandoff.ConsumeResult(identity, session, resultState, offer.Build) is { Success: false, Incremental: true }
             && resultState.Read(UpdateHandoff.PatchFailedKey) == "1.2.3.5", "A failed patch is remembered so the retry uses the full installer");
+        resultState.Write(WindowsUpdateService.SkipKey, offer.Build.ToString());
+        await using var repair = new WindowsUpdateService(action => action(),
+            new UpdateFeedClient(channel, "x64", offer.Build, Windows, "en", new Transport(feed)), resultState);
+        await repair.InitializeAsync(channel, identity, "en", false, () => { });
+        Check(await repair.RetryAfterFailedPatchAsync() && repair.CurrentOffer is { Incremental: false, Patch: null } package
+            && package.Build == offer.Build && package.Download.AbsolutePath == "/setup.exe",
+            "The same build is offered in full if a failed patch already replaced the executable");
+        Check(UpdateCatalog.Parse(feed, channel, "x64", offer.Build, Windows, "en") == null
+            && UpdateCatalog.Parse(feed, channel, "x64", new(1, 2, 3, 6), Windows, "en", failedPatchBuild: offer.Build) == null,
+            "Same-build repair requires a failed patch and never downgrades a newer build");
+        string repaired = Guid.NewGuid().ToString("N");
+        UpdateFiles.Write(Path.Combine(identity.DataRoot, "Updates", repaired, "result.json"),
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new UpdateInstallResult(1, true, "1.2.3.5", "")));
+        Check(UpdateHandoff.ConsumeResult(identity, repaired, resultState, offer.Build) is { Success: true }
+            && resultState.Read(UpdateHandoff.PatchFailedKey) == null, "A successful full repair clears the retry marker");
     }
     internal static async Task Serve(string directory, string qaScope, string installer, string architecture, int bytesPerSecond = 0, string? patchInstaller = null)
     {
