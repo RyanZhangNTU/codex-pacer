@@ -25,12 +25,13 @@ public struct NativeDesktopSession {
     private static let durableSnapshotDelays: [TimeInterval] = [0.5, 1, 2, 5, 10, 18, 25]
     private static let durableSnapshotRetryInterval: TimeInterval = 120
     private var durableCatalog: DurableActivityCatalog?
+    private var durablePublication: DurableCatalogPublication?
     private var durableRetryAfter: [String: Date] = [:]
     private var durableHistory: [String: DurableTurnHistory] = [:]
     private var durableIPCActivity: [String: Date] = [:]
     private var durableIPCEndings: [String: String] = [:]
     private struct HostEvent { let host: String; let value: [String: Any] }
-    private struct Frame { let host: String?; let data: Data }
+    private struct Frame { let host: String?; let data: Data; let durableScopeChange: Bool }
     private var events: [HostEvent] = []
     private var frames: [Frame] = []
     private(set) var notifications = 0
@@ -55,8 +56,9 @@ public struct NativeDesktopSession {
         guard let value, let uuid = UUID(uuidString: value), uuid.uuidString.lowercased() == value.lowercased() else { return nil }
         return value.lowercased()
     }
-    private mutating func frame(_ value: [String: Any]) throws {
-        frames.append(.init(host: value["hostId"] as? String, data: try JSONSerialization.data(withJSONObject: value)))
+    private mutating func frame(_ value: [String: Any], durableScopeChange: Bool = false) throws {
+        frames.append(.init(host: value["hostId"] as? String, data: try JSONSerialization.data(withJSONObject: value),
+                            durableScopeChange: durableScopeChange))
         guard frames.count <= 64 else { throw JSONFieldView.Failure.limit }
     }
     private mutating func follow(_ key: Key, value: Bool) throws {
@@ -196,14 +198,21 @@ public struct NativeDesktopSession {
     }
 
     mutating func setDurableCatalog(_ value: DurableActivityCatalog?, at now: Date) throws {
+        try updateDurableCatalog(value.map(DurableCatalogPublication.available) ?? .revoked, at: now)
+    }
+
+    mutating func updateDurableCatalog(_ publication: DurableCatalogPublication, at now: Date) throws {
         let host = DurableActivityCatalog.hostID
         let old = durableCatalog
-        durableCatalog = hosts.contains(host) ? value : nil
+        let next = hosts.contains(host) ? publication : .revoked
+        let changed = durablePublication != next
+        durablePublication = next
+        durableCatalog = next.catalog
         let allowed = durableCatalog?.threadIDs ?? []
         waiting.removeAll { $0.host == host && !allowed.contains($0.thread) }
-        if old?.scope != durableCatalog?.scope {
+        if old?.scope != durableCatalog?.scope || (durableCatalog == nil && changed) {
             events.removeAll { $0.host == host }
-            frames.removeAll { $0.host == host }
+            frames.removeAll { $0.host == host && !$0.durableScopeChange }
             durableHistory.removeAll()
             durableIPCActivity.removeAll()
             durableIPCEndings.removeAll()
@@ -213,7 +222,14 @@ public struct NativeDesktopSession {
             streams = streams.filter { $0.key.host != host }
             dormant = dormant.filter { $0.key.host != host }
             excluded = excluded.filter { $0.host != host }
-            try frame(["kind": "durableScope", "hostId": host, "scope": durableCatalog.map { $0.scope as Any } ?? NSNull()])
+            if case .accountVerified(let scope) = next {
+                try frame(["kind": "durableSuspended", "hostId": host, "scope": scope], durableScopeChange: true)
+            } else if next == .suspended {
+                try frame(["kind": "durableSuspended", "hostId": host])
+            } else {
+                try frame(["kind": "durableScope", "hostId": host, "scope": durableCatalog.map { $0.scope as Any } ?? NSNull()],
+                          durableScopeChange: next == .revoked)
+            }
         } else {
             durableRetryAfter = durableRetryAfter.filter { allowed.contains($0.key) }
             for thread in durableHistory.keys.filter({ !allowed.contains($0) }) {
@@ -240,7 +256,7 @@ public struct NativeDesktopSession {
         guard wanted != hosts || !resets.isEmpty else { return }
         try publishEvents()
         hosts = wanted
-        if !wanted.contains(DurableActivityCatalog.hostID), durableCatalog != nil { try setDurableCatalog(nil, at: now) }
+        if !wanted.contains(DurableActivityCatalog.hostID), durablePublication != nil { try setDurableCatalog(nil, at: now) }
         waiting.removeAll { !wanted.contains($0.host) }
         let renewed = followed.filter { wanted.contains($0.host) && resets.contains($0.host) }
         for key in Array(followed) where !wanted.contains(key.host) || resets.contains(key.host) { try release(key, at: now) }

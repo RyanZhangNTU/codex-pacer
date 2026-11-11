@@ -15,7 +15,7 @@ enum MacDurableCatalog {
         }
     }
 
-    static func observe(home: URL, peer: pid_t, publish: @Sendable (DurableActivityCatalog?) -> Void,
+    static func observe(home: URL, peer: pid_t, publish: @Sendable (DurableCatalogPublication) -> Void,
                         ipcObservations: @Sendable () -> [String: Date],
                         publishHistory: @Sendable (String, [DurableTurnHistory]) -> Void) async {
         var connection: Connection?
@@ -24,7 +24,7 @@ enum MacDurableCatalog {
         var polls = DurableHistoryPoll()
         func revoke() {
             if previous != nil { polls.reset(startingNow: true) }
-            previous = nil; verifiedBinding = nil; publish(nil)
+            previous = nil; verifiedBinding = nil; publish(.revoked)
         }
         let mailbox = MacDurableProgressMailbox(home: home)
         defer { connection?.close() }
@@ -35,7 +35,8 @@ enum MacDurableCatalog {
                 guard let executor = MacDurableExecutor.find(peer: peer) else { throw CodexClientError.disconnected }
                 let fingerprint = CodexClient.authenticationFingerprint(home: home, files: MacFileSystem())
                 let binding = Binding(executor: executor, fingerprint: fingerprint)
-                if let verifiedBinding, verifiedBinding != binding { revoke() }
+                if fingerprint == nil, verifiedBinding?.fingerprint != nil { revoke() }
+                else if let verifiedBinding, verifiedBinding != binding { publish(.suspended) }
                 if connection?.binding != binding || (connection?.expiresAt ?? .distantPast) <= Date() {
                     connection?.close()
                     connection = nil
@@ -51,7 +52,11 @@ enum MacDurableCatalog {
                     await client.shutdown()
                     try Task.checkCancellation()
                     guard binding.isCurrent(home: home, peer: peer) else { throw CodexClientError.accountMismatch }
-                    if let scope = previous?.scope, scope != credentials.scope { revoke() }
+                    if previous?.scope != credentials.scope {
+                        if previous != nil { polls.reset(startingNow: true) }
+                        previous = nil
+                        publish(.accountVerified(credentials.scope))
+                    }
                     let next = Connection(request: credentials.request, scope: credentials.scope, binding: binding)
                     connection = next
                     try await next.reader.initialize()
@@ -63,7 +68,7 @@ enum MacDurableCatalog {
                 if previous?.scope != result.catalog.scope { polls.reset(startingNow: previous != nil) }
                 previous = result.catalog
                 verifiedBinding = binding
-                publish(result.catalog)
+                publish(.available(result.catalog))
                 let now = Date()
                 let history = try await polls.read(result, using: connection.reader,
                     ipc: ipcObservations(), receipts: mailbox.read(at:), at: now)
@@ -78,18 +83,11 @@ enum MacDurableCatalog {
                 connection?.close()
                 connection = nil
                 if Task.isCancelled { break }
-                switch error {
-                case CodexClientError.notLoggedIn, CodexClientError.accountMismatch:
+                if case CodexClientError.notLoggedIn = error {
                     revoke()
-                default:
-                    if let previous, let verifiedBinding, verifiedBinding.fingerprint != nil,
-                       verifiedBinding.isCurrent(home: home, peer: peer) {
-                        // Drop live permissions during the outage. The verified account still owns its inbox.
-                        publish(.init(scope: previous.scope, threadIDs: []))
-                    } else {
-                        revoke()
-                    }
-                }
+                } else if verifiedBinding?.fingerprint != nil,
+                          CodexClient.authenticationFingerprint(home: home, files: MacFileSystem()) == nil { revoke() }
+                else { publish(.suspended) }
                 delay = retryDelay
                 retryDelay = min(60, retryDelay * 2)
             }

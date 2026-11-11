@@ -149,8 +149,11 @@ final class DurableDesktopTests: XCTestCase {
             try session.publishEvents()
             for bytes in session.takeFrames() {
                 let frame = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
-                if frame["kind"] as? String == "durableScope" {
+                let kind = frame["kind"] as? String
+                if kind == "durableScope" || (kind == "durableSuspended" && frame["scope"] != nil) {
                     inbox.bindSourceHomes(provider: .codex, localHome: home, durableAccountScope: frame["scope"] as? String)
+                }
+                if kind == "durableScope" || kind == "durableSuspended" {
                     runtime = RuntimeEventState(sourceID: host, sourceName: nil)
                 }
                 if frame["kind"] as? String == "runtimeBatch" { runtime.consume(["kind": "status", "connected": true]) }
@@ -166,14 +169,15 @@ final class DurableDesktopTests: XCTestCase {
         let activity = try XCTUnwrap(runtime.activities.first)
         XCTAssertTrue(inbox.isUnread(activity))
 
-        try session.setDurableCatalog(.init(scope: scope, threadIDs: []), at: end)
-        runtime.releasePublishedState()
+        let buffered = try history(thread: thread, start: start.addingTimeInterval(1), percent: 60)
+        try session.observeDurableHistory([buffered], scope: scope, at: end)
+        try session.updateDurableCatalog(.suspended, at: end)
         try session.observeDurableHistory([try history(thread: thread, start: start, percent: 50)], scope: scope, at: end)
         try consume(at: end)
         XCTAssertTrue(runtime.activities.isEmpty, "Suspending the catalog revokes the thread's live permission")
         XCTAssertTrue(inbox.isUnread(activity))
 
-        try session.setDurableCatalog(.init(scope: "other-account", threadIDs: [thread]), at: end)
+        try session.updateDurableCatalog(.accountVerified("other-account"), at: end)
         try consume(at: end)
         XCTAssertFalse(inbox.isUnread(activity))
     }

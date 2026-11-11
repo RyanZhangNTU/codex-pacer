@@ -1,5 +1,19 @@
 import Foundation
 
+/// Only a fresh catalog grants live access. Suspension lets the host keep the
+/// account's inbox hidden until its scope is verified again.
+package enum DurableCatalogPublication: Equatable, Sendable {
+    case available(DurableActivityCatalog)
+    case suspended
+    case accountVerified(String)
+    case revoked
+
+    package var catalog: DurableActivityCatalog? {
+        if case .available(let catalog) = self { return catalog }
+        return nil
+    }
+}
+
 /// The catalog grants access to a thread on this executor. Lifecycle and
 /// progress require evidence from IPC or that thread's own Durable history.
 public struct DurableActivityCatalog: Equatable, Sendable {

@@ -114,11 +114,12 @@ final class CodexDesktopMonitorTests: XCTestCase {
             "codexHome": EngineCodexSourceReport.path(root), "monitorRemoteControl": false, "codexProgressRing": true]))
         let connection = try XCTUnwrap(factory.all().first)
         let host = DurableActivityCatalog.hostID
+        let firstScope = String(repeating: "a", count: 64), nextScope = String(repeating: "b", count: 64)
         let progress = try frame("runtimeBatch", ["events": [event("turn/started", at: date),
             event("progress/reported", at: date.addingTimeInterval(1), ["percent": 25])]], host: host)
         await connection.send(progress)
         XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true)
-        try await connection.send(frame("durableScope", ["scope": String(repeating: "a", count: 64)], host: host))
+        try await connection.send(frame("durableScope", ["scope": firstScope], host: host))
         await connection.send(progress)
         let running = try XCTUnwrap(snapshots.all().last?.presentation.rows.first)
         XCTAssertEqual(running.sourceLabel, "Dot"); XCTAssertEqual(running.progressFraction, 0.25)
@@ -127,6 +128,21 @@ final class CodexDesktopMonitorTests: XCTestCase {
             event("turn/completed", at: date.addingTimeInterval(2), ["status": "completed"])]], host: host))
         let ending = try XCTUnwrap(snapshots.all().last?.presentation.rows.first)
         XCTAssertEqual(ending.sourceLabel, "Dot"); XCTAssertEqual(ending.phase, "completed"); XCTAssertTrue(ending.unread)
+
+        try await connection.send(frame("durableSuspended", host: host))
+        await connection.send(progress)
+        XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Unverified credentials expose neither saved nor late live rows")
+        XCTAssertTrue(snapshots.all().last?.activityLinks?.isEmpty == true)
+        try await connection.send(frame("durableScope", ["scope": firstScope], host: host))
+        let restored = try XCTUnwrap(snapshots.all().last?.presentation.rows.first)
+        XCTAssertEqual(restored.phase, "completed"); XCTAssertTrue(restored.unread, "The same account restores the unread ending without history replay")
+
+        try await connection.send(frame("durableSuspended", ["scope": nextScope], host: host))
+        await connection.send(progress)
+        XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Verified credentials do not grant live access before the new catalog")
+        try await connection.send(frame("durableScope", ["scope": nextScope], host: host))
+        XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "The new account cannot inherit an unread ending for the same thread ID")
+
         try await connection.send(frame("durableScope", ["scope": NSNull()], host: host))
         await connection.send(progress)
         XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Revoking the account must remove the ending and reject a late report")

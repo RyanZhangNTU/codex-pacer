@@ -15,7 +15,8 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     private var hosts: Set<String>
     private var hostsChanged = false
     private var removedHosts: Set<String> = []
-    private var durableCatalog: DurableActivityCatalog?
+    private var durablePublication: DurableCatalogPublication?
+    private var durableBoundary: DurableCatalogPublication?
     private var durableChanged = false
     private var durableHistory: (scope: String, turns: [DurableTurnHistory])?
     private var ipcObservations: [String: Date] = [:]
@@ -44,11 +45,16 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     }
     private func currentHosts() -> Set<String> { lock.lock(); defer { lock.unlock() }; return hosts }
     var peerProcessID: pid_t? { lock.lock(); defer { lock.unlock() }; return peer }
-    func setDurableCatalog(_ value: DurableActivityCatalog?) {
+    func updateDurableCatalog(_ value: DurableCatalogPublication) {
         lock.lock(); defer { lock.unlock() }
-        guard !cancelled, value != nil || durableCatalog != nil else { return }
-        if durableCatalog?.scope != value?.scope { durableHistory = nil; ipcObservations.removeAll() }
-        durableCatalog = value; durableChanged = true
+        guard !cancelled else { return }
+        if durablePublication?.catalog?.scope != value.catalog?.scope || value.catalog == nil {
+            durableHistory = nil; ipcObservations.removeAll()
+        }
+        if value.catalog == nil, durableBoundary != .revoked, value != .suspended || durableBoundary == nil {
+            durableBoundary = value
+        }
+        durablePublication = value; durableChanged = true
         if eventQueue >= 0 {
             var trigger = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
             _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
@@ -56,7 +62,7 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     }
     func setDurableHistory(scope: String, turns: [DurableTurnHistory]) {
         lock.lock(); defer { lock.unlock() }
-        guard !cancelled, durableCatalog?.scope == scope, !turns.isEmpty else { return }
+        guard !cancelled, durablePublication?.catalog?.scope == scope, !turns.isEmpty else { return }
         durableHistory = (scope, turns)
         if eventQueue >= 0 {
             var trigger = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
@@ -66,15 +72,17 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     var durableIPCObservations: [String: Date] { lock.lock(); defer { lock.unlock() }; return ipcObservations }
     private func updateDurableIPCObservations(_ values: [String: Date]) {
         lock.lock(); defer { lock.unlock() }
-        if !durableChanged, durableCatalog != nil { ipcObservations = values }
+        if !durableChanged, durablePublication?.catalog != nil { ipcObservations = values }
     }
     private func batchUpdate() -> (interval: TimeInterval, flush: Bool, hosts: Set<String>?, resetHosts: Set<String>,
-                                   durable: DurableActivityCatalog??, history: (scope: String, turns: [DurableTurnHistory])?) {
+                                   durable: [DurableCatalogPublication], history: (scope: String, turns: [DurableTurnHistory])?) {
         lock.lock(); defer { lock.unlock() }
-        let update: DurableActivityCatalog?? = durableChanged ? .some(durableCatalog) : nil
-        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts, update, durableHistory)
+        var updates: [DurableCatalogPublication] = []
+        if let durableBoundary { updates.append(durableBoundary) }
+        if durableChanged, let durablePublication, durablePublication.catalog != nil { updates.append(durablePublication) }
+        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts, updates, durableHistory)
         flushRequested = false; hostsChanged = false; removedHosts.removeAll(); durableChanged = false
-        durableHistory = nil
+        durableBoundary = nil; durableHistory = nil
         return result
     }
     private let onFrame: @Sendable (Data) -> Void
@@ -219,7 +227,7 @@ public final class NativeDesktopCollector: @unchecked Sendable {
                         try session.setHosts(hosts, resetting: batch.resetHosts, at: now)
                         routing = DesktopRouteHints(files: MacFileSystem(), owned: Self.owned); routingDirty = true
                     }
-                    if let catalog = batch.durable { try session.setDurableCatalog(catalog, at: now) }
+                    for update in batch.durable { try session.updateDurableCatalog(update, at: now) }
                     if let history = batch.history { try session.observeDurableHistory(history.turns, scope: history.scope, at: now) }
                     try session.setBatchInterval(batch.interval, at: now)
                     var discovered: [NativeDesktopSession.Key] = []

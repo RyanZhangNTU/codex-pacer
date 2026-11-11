@@ -21,6 +21,8 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
     private var durableBinding: WindowsDurableCatalog.Binding?
     private var durableThreads: Set<String> = []
     private var durableRevision = 0
+    private var durableLiveRevision = 0
+    private var durableLiveScope: String?
     private var delivering = false
     private var reader: Task<Void, Never>?, timer: Task<Void, Never>?
     private var timerDate: Date?
@@ -186,20 +188,28 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
             let frames = session?.takeFrames() ?? []
             if frames.isEmpty { return }
             let revision = durableRevision
+            let liveRevision = durableLiveRevision
             for bytes in frames {
                 guard !finished else { return }
                 guard try gate?.validateDelivery(bytes) == true, remoteGate?.validate() != false else { throw WindowsDesktopSourceGate.Failure.revoked }
-                if durableRevision > 0, let needsBinding = Self.durableFrameNeedsBinding(bytes),
-                   revision != durableRevision || (needsBinding && durableBinding?.isCurrent(home: home) != true) { continue }
+                if durableRevision > 0, let proof = Self.durableFrameProof(bytes) {
+                    guard revision == durableRevision, durableBinding?.isCurrent(home: home) == true else { continue }
+                    if proof == .catalog, durableLiveScope == nil || liveRevision != durableLiveRevision { continue }
+                }
                 await onFrame(bytes)
             }
         }
     }
 
-    private static func durableFrameNeedsBinding(_ bytes: Data) -> Bool? {
+    private enum DurableFrameProof { case account, catalog }
+    private static func durableFrameProof(_ bytes: Data) -> DurableFrameProof? {
         guard let fields = try? JSONFieldView.document(bytes).fields(["hostId", "kind", "scope"]),
               fields["hostId"]?.string() == DurableActivityCatalog.hostID else { return nil }
-        return fields["kind"]?.string() != "durableScope" || fields["scope"]?.isNull != true
+        switch fields["kind"]?.string() {
+        case "durableScope": return fields["scope"]?.string() != nil ? .catalog : nil
+        case "durableSuspended": return fields["scope"]?.string() != nil ? .account : nil
+        default: return .catalog
+        }
     }
 
     private func allowedHosts(_ remote: WindowsRemoteControlGate, transport: WindowsDesktopTransport) throws -> Set<String> {
@@ -214,6 +224,7 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
               let transport, let package = transport.codexPackage, let peer = transport.peerIdentity else {
             durableTask?.cancel(); durableTask = nil; durableJob = nil
             if durableBinding != nil { durableBinding = nil; durableThreads = []; durableRevision += 1 }
+            if durableLiveScope != nil { durableLiveScope = nil; durableLiveRevision += 1 }
             return
         }
         guard durableTask == nil else { return }
@@ -235,21 +246,30 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
 
     private func revokeDurableIfStale() throws {
         guard durableBinding?.isCurrent(home: home) == false else { return }
-        durableBinding = nil; durableThreads = []; durableRevision += 1
-        try session?.setDurableCatalog(nil)
+        let missing = CodexClient.authenticationFingerprint(home: home, files: WindowsFileSystem()) == nil
+        try applyDurable(missing ? .revoked : .suspended, binding: nil)
     }
 
-    private func receiveDurable(_ catalog: DurableActivityCatalog?, binding: WindowsDurableCatalog.Binding?, job: UUID) async {
+    private func applyDurable(_ publication: DurableCatalogPublication, binding: WindowsDurableCatalog.Binding?) throws {
+        if durableBinding != binding { durableRevision += 1 }
+        durableBinding = binding
+        let scope = publication.catalog?.scope
+        if durableLiveScope != scope { durableLiveScope = scope; durableLiveRevision += 1 }
+        durableThreads = publication.catalog?.threadIDs ?? []
+        try session?.updateDurableCatalog(publication)
+    }
+
+    private func receiveDurable(_ publication: DurableCatalogPublication, binding: WindowsDurableCatalog.Binding?, job: UUID) async {
         guard !finished, durableJob == job else { return }
         do {
             try revokeDurableIfStale()
-            if binding?.isCurrent(home: home) != false {
-                if durableBinding != binding {
-                    if durableBinding != nil { try session?.setDurableCatalog(nil) }
-                    durableRevision += 1
-                }
-                durableBinding = binding; durableThreads = catalog?.threadIDs ?? []
-                try session?.setDurableCatalog(catalog)
+            switch publication {
+            case .available, .accountVerified:
+                if let binding, binding.isCurrent(home: home) { try applyDurable(publication, binding: binding) }
+            case .suspended:
+                try applyDurable(publication, binding: binding?.isCurrent(home: home) == true ? binding : nil)
+            case .revoked:
+                try applyDurable(publication, binding: nil)
             }
             try await deliver(); schedule()
         } catch { await finish(flush: false) }
@@ -279,7 +299,8 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
         session = nil; gate = nil; remoteGate = nil; transport = nil
         for bytes in frames {
             guard (try? access?.validateDelivery(bytes)) == true, remote?.validate() != false else { break }
-            if Self.durableFrameNeedsBinding(bytes) == true, durableBinding?.isCurrent(home: home) != true { continue }
+            if let proof = Self.durableFrameProof(bytes),
+               durableBinding?.isCurrent(home: home) != true || (proof == .catalog && durableLiveScope == nil) { continue }
             await onFrame(bytes)
         }
         await onClosed()

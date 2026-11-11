@@ -238,6 +238,7 @@ actor EngineRuntime {
     private var remoteControlHostIDs: Set<String> = []
     private var remoteControlScope: String?
     private var durableAccountScope: String?
+    private var durableAccountVerified = false
     private var desktopBinding = UUID()
     private var desktopConfiguration: String?
     private var showEmbeddedClaudeSessions = true
@@ -1398,7 +1399,7 @@ actor EngineRuntime {
         loggedSources.removeAll { $0.provider == provider.rawValue }
         switch provider {
         case .codex:
-            desktopBinding = UUID(); remoteControlHostIDs = []; remoteControlScope = nil; durableAccountScope = nil
+            desktopBinding = UUID(); remoteControlHostIDs = []; remoteControlScope = nil; durableAccountScope = nil; durableAccountVerified = false
             bindCodexCompletionSources()
             desktopState = nil; pendingDesktopEndings = [:]
             codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
@@ -1634,7 +1635,7 @@ actor EngineRuntime {
         guard !demo, enabled.contains(.codex) else {
             ownedWork.cancel(key); desktopBinding = UUID()
             desktopConfiguration = nil
-            desktopState = nil; durableAccountScope = nil; bindCodexCompletionSources()
+            desktopState = nil; durableAccountScope = nil; durableAccountVerified = false; bindCodexCompletionSources()
             await desktopMonitor?.shutdown(); return
         }
         let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorRemoteControl)|\(monitorWSL)|\(monitorSSH)"
@@ -1653,7 +1654,7 @@ actor EngineRuntime {
                     await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
                         attention: value.attention, attentionThreads: value.attentionThreads, names: value.names,
                         performance: value.performance, status: value.localDesktopStatus, statuses: value.statuses,
-                        bindings: value.bindings, durableAccountScope: value.durableAccountScope,
+                        bindings: value.bindings, durableAccountScope: value.durableAccountScope, durableAccountVerified: value.durableAccountVerified,
                         unavailable: value.unavailableSources), binding: binding)
                 }
         }
@@ -1671,8 +1672,9 @@ actor EngineRuntime {
 
     private func receiveDesktop(_ state: CodexDesktopState, binding: UUID) {
         guard active, desktopBinding == binding, state.context == lifecycle.version(.codex), enabled.contains(.codex), !demo else { return }
-        if durableAccountScope != state.durableAccountScope {
+        if durableAccountScope != state.durableAccountScope || durableAccountVerified != state.durableAccountVerified {
             durableAccountScope = state.durableAccountScope
+            durableAccountVerified = state.durableAccountVerified
             pendingDesktopEndings = pendingDesktopEndings.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID }
             activityState.clearFirstOutput()
         }
@@ -1691,7 +1693,7 @@ actor EngineRuntime {
             attention: state.attention.filter { allowsRemoteSource($0.sourceHostID, provider: .codex) }, attentionThreads: state.attentionThreads,
             names: state.names, performance: state.performance, status: state.status,
             statuses: state.statuses.filter { $0.key == "local" || allowsRemoteSource($0.key, provider: .codex) }, bindings: state.bindings,
-            durableAccountScope: durableAccountScope,
+            durableAccountScope: durableAccountScope, durableAccountVerified: durableAccountVerified,
             unavailable: state.unavailable.filter { allowsRemoteSource($0, provider: .codex) })
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
         if projectionReady { projectCollected(at: now()) }
@@ -1703,7 +1705,7 @@ actor EngineRuntime {
     }
     private func allowsRemoteSource(_ source: String?, provider: AgentProvider) -> Bool {
         guard let source else { return true }
-        if source == DurableActivityCatalog.hostID { return provider == .codex && durableAccountScope != nil }
+        if source == DurableActivityCatalog.hostID { return provider == .codex && durableAccountVerified }
         if source.hasPrefix(ConnectionSource.wslPrefix) { return monitorWSL && wslServices?.registry.profile(id: source, provider: provider) != nil }
         if source.hasPrefix(ConnectionSource.controlPrefix) { return provider == .codex && monitorRemoteControl && remoteControlHostIDs.contains(source) }
         if source == ClaudeCloudProjectState.sourceID { return provider == .claude && showClaudeCloudProjects }
@@ -2024,7 +2026,7 @@ actor EngineRuntime {
         .init(embeddedProviders: Set(AgentProvider.allCases.filter {
                 $0 == .codex ? showEmbeddedCodexSessions : $0 != .claude || showEmbeddedClaudeSessions
             }),
-            showsClaudeCloudProjects: showClaudeCloudProjects)
+            showsClaudeCloudProjects: showClaudeCloudProjects, showsDurableActivities: demo || durableAccountVerified)
     }
     private func scheduleActivityDisplay(at date: Date) {
         let deadline = activityState.nextDisplayDeadline(at: date, retention: retention, progressRingProviders: progressRingProviders)
@@ -2116,7 +2118,8 @@ actor EngineRuntime {
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
             failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, now: date)
-        let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests, completions: inbox.unreadActivities,
+        let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests,
+            completions: inbox.unreadActivities.filter { $0.sourceHostID != DurableActivityCatalog.hostID || demo || durableAccountVerified },
             sources: AgentProvider.allCases.filter { enabled.contains($0) }.map { provider in
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))
             }, wallet: compactWallet, firstOutput: latestFirstOutput?.seconds, warnings: compactWarnings, groups: taskPresentation.groups, overview: taskPresentation.overview,
@@ -2372,7 +2375,7 @@ actor EngineRuntime {
         case .codex:
             fields.append(codexExecutable)
             if scope == DurableActivityCatalog.hostID {
-                guard let durableAccountScope else { return nil }
+                guard durableAccountVerified, let durableAccountScope else { return nil }
                 fields.append(durableAccountScope)
             }
         case .claude:

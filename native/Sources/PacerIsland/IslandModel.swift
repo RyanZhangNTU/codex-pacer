@@ -647,6 +647,7 @@ final class IslandModel: ObservableObject {
     }
     func canOpen(_ activity: SessionActivity) -> Bool {
         guard !activity.isIgnoredCodexSession else { return false }
+        if activity.sourceHostID == DurableActivityCatalog.hostID, !demo, !durableAccountVerified { return false }
         // Harness has no conversation link; its app opens on the session list.
         if activity.provider == .deepseek { return demo || DeepSeekApplicationResolver.cachedApplication() != nil }
         if activity.provider == .codex, activity.sourceHostID == nil, activity.launchedByEmbeddingApp {
@@ -736,6 +737,7 @@ final class IslandModel: ObservableObject {
     private var remoteTask: Task<Void, Never>? { ownedWork.task(.init(.remote, provider: .codex)) }
     private var remoteControlHostIDs: Set<String>?
     private var durableAccountScope: String?
+    private var durableAccountVerified = false
     private var lastRemoteDiscovery = Date.distantPast
     private let historyStore: QuotaHistoryStore
     private let claudeHistoryStore: QuotaHistoryStore
@@ -1214,7 +1216,8 @@ final class IslandModel: ObservableObject {
         activity.claudeCloud == nil ? nil : claudeCloudNavigationScope
     }
     private func acceptsNavigation(_ activity: SessionActivity) -> Bool {
-        !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo)
+        !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo) &&
+            (activity.sourceHostID != DurableActivityCatalog.hostID || demo || durableAccountVerified)
     }
     func open(_ activity: SessionActivity) {
         guard canOpen(activity), let target = conversationTarget(for: activity), let open = onOpenActivity,
@@ -1597,7 +1600,8 @@ final class IslandModel: ObservableObject {
     /// the same visibility rule; hiding never acknowledges or deletes a card.
     private func knownActivities(for provider: AgentProvider) -> [SessionActivity] { activityState.knownActivities(for: provider) }
     private var activityVisibility: ActivityVisibilityOptions {
-        .init(embeddedProviders: Set(AgentProvider.allCases.filter { showsEmbeddedSessions(for: $0) }), showsClaudeCloudProjects: showsClaudeCloudProjects)
+        .init(embeddedProviders: Set(AgentProvider.allCases.filter { showsEmbeddedSessions(for: $0) }),
+              showsClaudeCloudProjects: showsClaudeCloudProjects, showsDurableActivities: demo || durableAccountVerified)
     }
     private var ignoredCodexActivityIDs: Set<String> { activityState.ignoredCodexActivityIDs }
     private var hiddenEmbeddedActivityIDs: Set<String> { activityState.hiddenActivityIDs(activityVisibility) }
@@ -1681,7 +1685,8 @@ final class IslandModel: ObservableObject {
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
                     self.receiveRemoteUpdate(snapshot.activities, statuses: snapshot.statuses, unavailable: snapshot.unavailable,
                         requests: snapshot.attention, names: snapshot.names, performance: snapshot.performance,
-                        remoteControlBindings: snapshot.bindings, durableAccountScope: snapshot.durableAccountScope)
+                        remoteControlBindings: snapshot.bindings, durableAccountScope: snapshot.durableAccountScope,
+                        durableAccountVerified: snapshot.durableAccountVerified)
                 }
             }
             // A hover/collapse can occur while start is awaiting the monitor.
@@ -1691,7 +1696,12 @@ final class IslandModel: ObservableObject {
 
     func receiveRemoteUpdate(_ activities: [SessionActivity], statuses: [String: RuntimeStreamStatus],
                              unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = [],
-                             remoteControlBindings: RemoteControlSourceBindings? = nil, durableAccountScope: String? = nil) {
+                             remoteControlBindings: RemoteControlSourceBindings? = nil, durableAccountScope: String? = nil,
+                             durableAccountVerified: Bool = false) {
+        if self.durableAccountVerified != durableAccountVerified || self.durableAccountScope != durableAccountScope {
+            self.durableAccountVerified = durableAccountVerified
+            activityState.pendingCodexEndings = activityState.pendingCodexEndings.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID }
+        }
         if self.durableAccountScope != durableAccountScope {
             self.durableAccountScope = durableAccountScope
             bindCompletionSources(.codex)
@@ -1792,7 +1802,7 @@ final class IslandModel: ObservableObject {
         quotaCLI = nil; attention = AttentionPolicy()
         completionInbox.remove(provider: .codex)
         remoteControlHostIDs = nil
-        durableAccountScope = nil
+        durableAccountScope = nil; durableAccountVerified = false
         bindCompletionSources(.codex)
         codexAttentionRequests = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         activities.removeAll { $0.provider == .codex }

@@ -3,8 +3,11 @@ import Foundation
 public struct ActivityVisibilityOptions: Equatable, Sendable {
     public var embeddedProviders: Set<AgentProvider>
     public var showsClaudeCloudProjects: Bool
-    public init(embeddedProviders: Set<AgentProvider> = Set(AgentProvider.allCases), showsClaudeCloudProjects: Bool = true) {
+    public var showsDurableActivities: Bool
+    public init(embeddedProviders: Set<AgentProvider> = Set(AgentProvider.allCases), showsClaudeCloudProjects: Bool = true,
+                showsDurableActivities: Bool = true) {
         self.embeddedProviders = embeddedProviders; self.showsClaudeCloudProjects = showsClaudeCloudProjects
+        self.showsDurableActivities = showsDurableActivities
     }
 }
 
@@ -68,6 +71,10 @@ public struct ActivityApplicationState: Sendable {
     }
     public func hiddenActivityIDs(_ visibility: ActivityVisibilityOptions) -> Set<String> {
         var hidden = ignoredCodexActivityIDs
+        if !visibility.showsDurableActivities {
+            hidden.formUnion(knownActivities(for: .codex).filter { $0.sourceHostID == DurableActivityCatalog.hostID }.map(\.id))
+            hidden.formUnion(codexReceivedRequests.filter { $0.sourceHostID == DurableActivityCatalog.hostID }.map { $0.activity.id })
+        }
         if !visibility.showsClaudeCloudProjects {
             hidden.formUnion(knownActivities(for: .claude).filter { $0.claudeCloud != nil }.map(\.id))
             hidden.formUnion(claudeReceivedRequests.filter { $0.claudeCloud != nil }.map { $0.activity.id })

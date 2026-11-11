@@ -13,8 +13,8 @@ private final class MacDesktopChannelSlot: @unchecked Sendable {
     func observeDurable(home: URL, peer: pid_t) {
         lock.lock(); defer { lock.unlock() }
         guard !stopped, catalog == nil, let collector else { return }
-        let publish: @Sendable (DurableActivityCatalog?) -> Void = { [weak collector] value in
-            collector?.setDurableCatalog(value)
+        let publish: @Sendable (DurableCatalogPublication) -> Void = { [weak collector] value in
+            collector?.updateDurableCatalog(value)
         }
         catalog = Task.detached(priority: .utility) {
             await MacDurableCatalog.observe(home: home, peer: peer, publish: publish,
