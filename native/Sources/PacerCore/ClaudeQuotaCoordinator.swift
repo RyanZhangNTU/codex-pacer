@@ -141,10 +141,16 @@ public actor ClaudeQuotaCoordinator {
             guard current(revision, id) else { return }
             if scope == nil { snapshot = nil; history = .init(); warning = nil }
             else if snapshot?.accountScope != scope { snapshot = nil; history = .init(); warning = nil; source = nil }
-            failure = (error as? ClaudeQuotaError) ?? .connectionFailed; self.error = failure?.localizedDescription
-            failures = min(4, failures + 1)
-            await emit()
-            guard current(revision, id) else { return }
+            if error as? ClaudeQuotaError == .timedOut, snapshot != nil {
+                // A slow reply for the same verified account needs no action: keep its last
+                // reading, error state and cadence. The reading's own age marks it as not
+                // updated after ten minutes.
+            } else {
+                failure = (error as? ClaudeQuotaError) ?? .connectionFailed; self.error = failure?.localizedDescription
+                failures = min(4, failures + 1)
+                await emit()
+                guard current(revision, id) else { return }
+            }
         }
         guard current(revision, id) else { return }
         let choices = await client?.organizations() ?? [], readSource = await client?.currentSource()

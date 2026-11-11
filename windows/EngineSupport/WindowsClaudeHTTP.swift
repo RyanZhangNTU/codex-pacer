@@ -18,7 +18,7 @@ extension ClaudeWebQuotaClient {
     public init(cookieProvider: @escaping CookieProvider, home: URL? = nil,
         userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
         selectedOrganizationProvider: @escaping @Sendable () -> String? = { nil },
-        metadataProvider: MetadataProvider? = nil, timeout: TimeInterval = 12) {
+        metadataProvider: MetadataProvider? = nil, timeout: TimeInterval = ProviderQuotaRefreshPolicy.replyTimeout) {
         let home = home ?? userHome.appendingPathComponent(".claude")
         let client = WindowsClaudeHTTP.client(timeout: timeout)
         self.init(cookieProvider: cookieProvider,

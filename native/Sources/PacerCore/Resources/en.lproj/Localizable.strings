@@ -758,6 +758,7 @@
 "deepseek.balance.currency" = "The balance is not in yuan, so Pacer cannot show it.";
 "deepseek.balance.invalid_reply" = "The DeepSeek platform returned an unexpected reply.";
 "deepseek.balance.connection_failed" = "Could not reach DeepSeek. Pacer will try again.";
+"deepseek.balance.timed_out" = "DeepSeek took too long to reply. Pacer will try again.";
 "deepseek.balance.unavailable" = "The balance is not available right now.";
 "deepseek.notice.low" = "Balance low";
 "deepseek.notice.low_detail" = "%@ left on the DeepSeek platform.";

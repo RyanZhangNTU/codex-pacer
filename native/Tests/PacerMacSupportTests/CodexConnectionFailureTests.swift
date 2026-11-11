@@ -282,6 +282,44 @@ final class CodexConnectionFailureTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.first?.remainingPercent, 75)
     }
 
+    func testSlowRepliesKeepTheVerifiedAccountOnlyWhileTheAuthFileIsUnchanged() async throws {
+        let auth = try write("auth.json", #"{"synthetic":"first"}"#)
+        let hangAccount = root.appendingPathComponent("hang-account"), count = root.appendingPathComponent("quota-count")
+        let client = try client(#"""
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+          [ -n "$id" ] || continue
+          case "$line" in
+            *initialize*) printf '{"id":%s,"result":{}}\n' "$id" ;;
+            *account/read*)
+              [ -f '\#(hangAccount.path)' ] || printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"pro"},"workspaceRouting":{"chatgptAccountId":"fixture","backendOrigin":"test"}}}\n' "$id" ;;
+            *account/rateLimits/read*)
+              n=$(($(cat '\#(count.path)' 2>/dev/null || echo 0) + 1)); echo "$n" > '\#(count.path)'
+              [ "$n" -gt 1 ] || printf '{"id":%s,"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300}}}}\n' "$id" ;;
+          esac
+        done
+        """#, timeout: 0.3)
+        defer { Task { await client.disconnect() } }
+        func slowRead(_ method: String) async {
+            do { _ = try await client.readQuota(); XCTFail("expected a slow \(method)") }
+            catch CodexClientError.timeout(let timedOut, _) { XCTAssertEqual(timedOut, method) }
+            catch { XCTFail("unexpected \(error)") }
+        }
+        let verified = try await client.readQuota().accountScope
+        XCTAssertNotNil(verified)
+        await slowRead("account/rateLimits/read")
+        let afterQuota = await client.currentAccountScope(); XCTAssertEqual(afterQuota, verified)
+        _ = FileManager.default.createFile(atPath: hangAccount.path, contents: Data())
+        await slowRead("account/read")
+        let afterAccount = await client.currentAccountScope()
+        XCTAssertEqual(afterAccount, verified, "A fresh connection's slow account read keeps the account verified under the same auth file")
+        try Data(#"{"synthetic":"another sign-in"}"#.utf8).write(to: auth)
+        await slowRead("account/read")
+        let afterSignIn = await client.currentAccountScope()
+        XCTAssertNil(afterSignIn, "A changed auth file cannot reuse the earlier account")
+        XCTAssertEqual(ProviderQuotaRefreshPolicy.replyTimeout, 30)
+    }
+
     func testNonRunnableBinaryReportsLaunchFailureAndPath() async throws {
         let cli = try write("bad-architecture/codex", "not an executable image\n", executable: true)
         let client = CodexClient(executable: cli, home: root, timeout: 1)

@@ -77,7 +77,7 @@ final class CompactBarPresentationTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(value.rings.first).dimmed)
         request.options.metric = .remaining
         XCTAssertEqual(try component("quota", in: XCTUnwrap(CompactBarPresentation.project(request))).entries.first?.text, "80%")
-        request.options.metric = .pace; request.context = context(snapshot: try quota(captured: now.addingTimeInterval(-301)))
+        request.options.metric = .pace; request.context = context(snapshot: try quota(captured: now.addingTimeInterval(-601)))
         XCTAssertEqual(try component("quota", in: XCTUnwrap(CompactBarPresentation.project(request))).entries.first?.text, "—")
         request.context = context(failed: true)
         XCTAssertNil(CompactBarPresentation.project(request)?.rings.first?.remaining, "A failure without a cached reading has no ring value")

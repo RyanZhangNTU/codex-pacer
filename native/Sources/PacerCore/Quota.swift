@@ -80,7 +80,10 @@ public struct QuotaSnapshot: Codable, Equatable, Sendable {
     public var limitingWindow: QuotaWindow? {
         windows.filter { $0.remainingPercent != nil }.min { $0.remainingPercent! < $1.remainingPercent! }
     }
-    public func isStale(at now: Date = Date(), interval: TimeInterval = 300) -> Bool {
+    /// A reading older than this is marked as not updated. Ten minutes outlasts several
+    /// missed polls, so one slow reply never changes what the user sees.
+    public static let staleInterval: TimeInterval = 600
+    public func isStale(at now: Date = Date(), interval: TimeInterval = QuotaSnapshot.staleInterval) -> Bool {
         now.timeIntervalSince(capturedAt) > interval
     }
 
