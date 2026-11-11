@@ -152,10 +152,11 @@ Idle work must be driven by events or deadlines, never by polling. Valid data, d
 | Shell, expanded, unchanged data | ≤ 2 |
 | Shell, hidden or covered by an opaque fullscreen window | ≤ 0.5 |
 
-Engine with empty homes, for at least 120 seconds. CI runs this; it also changes the Codex source and checks a bounded shutdown:
+CI measures the engine for 120 seconds with empty homes, then changes the Codex source and checks shutdown. A second run confirms that a synthetic task finishes before it measures an idle engine with that task in its history. The empty fixture fails above 1% of one core and the completed-task fixture fails above 2%. CI keeps the measurements for both passing and failing runs.
 
 ```powershell
-python scripts/windows/check-engine-idle.py --engine <engine-path> --output output/windows/engine-idle.json
+python scripts/windows/check-engine-idle.py --engine <engine-path> --read-only --max-core-percent 1 --output output/windows/engine-idle.json
+python scripts/windows/check-engine-idle.py --engine <engine-path> --read-only --completed-task --max-core-percent 2 --output output/windows/engine-idle-completed.json
 ```
 
 Engine against real provider homes, read-only (`--read-only-diagnostics`: no quota clients, browser sessions, hooks or persistence; only numeric counters are recorded):

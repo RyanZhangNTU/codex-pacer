@@ -27,6 +27,10 @@ task_dmg="$task_output/$task_name"
 [[ -z "$(git status --porcelain)" ]] || { echo 'Release requires a clean checkout.' >&2; exit 1; }
 [[ "$(git rev-parse HEAD)" == "$(git rev-parse "$task_tag^{commit}")" ]] || { echo 'Tag must match this checkout.' >&2; exit 1; }
 [[ "$(git ls-remote origin "refs/tags/$task_tag" | cut -f1)" == "$(git rev-parse "$task_tag")" ]] || { echo 'Push the release tag first.' >&2; exit 1; }
+if [[ "${GITHUB_ACTIONS:-}" != true ]]; then
+    # The Actions version job checks the same immutable tree before building.
+    python3 scripts/ci/verify-platforms.py
+fi
 python3 - "$task_output/build.json" "$(git rev-parse HEAD)" "$task_version" "$task_mode" "$task_name" <<'PY'
 import json,sys
 m=json.load(open(sys.argv[1]))
@@ -99,4 +103,8 @@ for task_asset in ${task_windows_names[@]+"${task_windows_names[@]}"}; do
     gh release download "$task_tag" --pattern "$task_asset" --dir "$task_verify"
     cmp "$task_output/$task_asset" "$task_verify/$task_asset"
 done
+# A newer release may have become public while the draft's assets were
+# uploaded and checked. Check the stable feeds again before switching them.
+python3 scripts/release/prepare-update.py --check-latest-only --info-plist native/Info.plist
+python3 scripts/release/prepare-windows-update.py --check-latest-only
 gh release edit "$task_tag" --draft=false --latest

@@ -1,6 +1,6 @@
 # Windows installation
 
-Pacer for Windows ships as a per-user Inno Setup installer. The Release workflow builds an unsigned installer (`windows-installer-<arch>-unsigned`) and a portable ZIP (`windows-app-<arch>-unsigned`) for x64 and ARM64; a tag run signs the Windows feed and publishes the installers with the Mac DMG ([release workflow](releasing.md)). The Release workflow only packages. Lifecycle tests run in the Platforms workflow on manual runs and on pull requests that touch the installer, maintenance, updates, packaging, the toolchain or the app code these checks start ([continuous integration](development.md#continuous-integration)).
+Pacer for Windows ships as a per-user Inno Setup installer. The Release workflow builds an unsigned installer (`windows-installer-<arch>-unsigned`) and a portable ZIP (`windows-app-<arch>-unsigned`) for x64 and ARM64. It launches both extracted packages and runs a per-user install, launch and uninstall on ARM64. A tag run signs the Windows feed and publishes the installers with the Mac DMG ([release workflow](releasing.md)). The x64 lifecycle and ARM64 installation smoke tests also run on manual Platforms runs and when a pull request changes installer inputs ([continuous integration](development.md#continuous-integration)).
 
 ## Installer identity and requirements
 
@@ -80,7 +80,16 @@ Before using the screen, the test waits for other presentation or backdrop test 
 
 `test-patch.ps1` is described under [patch updates](windows-automatic-updates.md#patch-updates).
 
+For Windows 10 coverage, use a disposable Windows 10 VM or device and check out the commit used to build the x64 preview ZIP. Copy the ZIP from the Release workflow's `windows-app-x64-unsigned` artifact and run:
+
+```powershell
+./scripts/windows/test-preview.ps1 -Archive <ZIP>
+./scripts/windows/test-installer.ps1 -Archive <ZIP> -SmokeOnly
+```
+
+The first command launches the packaged app and checks activation. The second builds a QA installer, launches the installed app without the developer environment and uninstalls it. It uses the pinned Inno Setup compiler, which the script downloads if needed. Record the Windows build and the preview archive's commit. Hosted Actions runs on newer Windows versions, so it cannot provide this Windows 10 result.
+
 Limits:
 
 - Inside Codex's process tree HKCU is isolated, so registry results there prove only that view. Real HKCU registration, Run, StartupApproved, notification and uninstall behavior needs CI or a temporary current-user task outside the tree; remove the task and installation afterwards. File-system results are real.
-- These checks do not replace signing out and in, a clean system, other Windows devices or ARM64 devices; ARM64 CI only builds and packages.
+- The ARM64 smoke test covers a clean installation and launch. Use a Windows ARM64 device to check upgrade, sign-in and the full lifecycle when those paths change.

@@ -302,18 +302,17 @@ class WindowsArchitectureTests(unittest.TestCase):
         self.assertIn("win-$(PacerArchitecture)", props); self.assertIn("10.0.19041.0</SupportedOSPlatformVersion>", props)
         self.assertIn("MinVersion=10.0.19041", (contract.ROOT / "windows/Installer/CodexPacer.iss").read_text(encoding="utf-8-sig"))
 
-    def test_arm64_ci_only_builds_and_packages(self):
+    def test_arm64_ci_launches_the_extracted_and_installed_application(self):
         workflows = contract.ROOT / ".github/workflows"
-        # Pull requests compile ARM64; the release packages it. Neither runs it.
-        compile_only = contract.workflow_job((workflows / "platforms.yml").read_text(encoding="utf-8"), "windows-arm64")
-        self.assertIn("runs-on: windows-11-arm", compile_only)
-        self.assertNotRegex(compile_only, r"scripts/windows/(test|package)-")
+        platforms = contract.workflow_job((workflows / "platforms.yml").read_text(encoding="utf-8"), "windows-arm64")
         job = contract.workflow_job((workflows / "release.yml").read_text(encoding="utf-8"), "windows-arm64")
-        self.assertIn("runs-on: windows-11-arm", job)
-        self.assertIn("-Architecture arm64 -BuildOnly", job)
+        for body in (platforms, job):
+            self.assertIn("runs-on: windows-11-arm", body)
+            self.assertIn("scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64", body)
+            self.assertNotIn("-BuildOnly", body)
+            self.assertIn("scripts/windows/test-installer.ps1 -Archive $taskArchive -SmokeOnly", body)
         for artifact in ("windows-app-arm64-unsigned", "windows-installer-arm64-unsigned"):
             self.assertIn(artifact, job)
-        self.assertNotRegex(job, r"scripts/windows/test-(engine|desktop|presentation|preview|installer)\.ps1")
 
 
 class WindowsReleaseTests(unittest.TestCase):

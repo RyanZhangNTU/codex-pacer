@@ -425,6 +425,7 @@ def main():
     parser.add_argument("--artifacts", type=Path, help="Installer artifacts already downloaded, one subdirectory per architecture")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--check-latest", action="store_true")
+    parser.add_argument("--check-latest-only", action="store_true")
     parser.add_argument("--enabled", action="store_true", help="Exit 0 when Windows joins this release, 1 otherwise")
     parser.add_argument("--assets", action="store_true", help="Print the prepared Windows asset names, one per line")
     args = parser.parse_args()
@@ -437,6 +438,10 @@ def main():
         return
     if not enabled():
         check_continuity()
+        return
+    if args.check_latest_only:
+        version, build, _ = application_version()
+        check_continuity(f"{version}.{build}")
         return
     if args.output is None or args.tools is None:
         parser.error("--output and --tools are required")

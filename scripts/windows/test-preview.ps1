@@ -27,7 +27,7 @@ try {
             $taskStart.UseShellExecute=$false; $taskStart.CreateNoWindow=$true; $taskStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
             $taskStart.WorkingDirectory=$taskUnrelated; $taskStart.RedirectStandardError=$true; $taskStart.RedirectStandardOutput=$true
             $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
-            foreach ($taskVariable in @('DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) { $taskStart.Environment.Remove($taskVariable) | Out-Null }
+            foreach ($taskVariable in @('DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) { $taskStart.Environment.Remove($taskVariable) | Out-Null }
             $taskStart.Environment['DOTNET_MULTILEVEL_LOOKUP']='0'
             foreach ($taskArgument in @('--demo','--reference-fixture','--language',$taskLanguage,'--capture-preview',$taskImage)) { $taskStart.ArgumentList.Add($taskArgument) }
             if ($taskScene -ne 'island') {

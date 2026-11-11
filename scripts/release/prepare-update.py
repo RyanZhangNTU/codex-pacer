@@ -123,34 +123,44 @@ def verify_release(info_path, archive, tools, check_latest=False):
     sparkle_key.run(tools / "sign_update", "--verify", feed)
     sparkle_key.run(tools / "sign_update", "--verify", archive, signature)
     if check_latest:
-        latest = json.loads(subprocess.check_output(["gh", "api", f"repos/{REPOSITORY}/releases/latest"], text=True))
-        published = next((asset for asset in latest["assets"] if asset["name"] == "appcast.xml"), None)
-        if published:
-            expected_prefix = f"https://github.com/{REPOSITORY}/releases/download/"
-            if not published["browser_download_url"].startswith(expected_prefix):
-                raise ValueError("Latest update feed points outside this repository.")
-            with urlopen(published["browser_download_url"], timeout=30) as response:
-                xml = response.read(2 * 1024 * 1024 + 1)
-            if len(xml) > 2 * 1024 * 1024:
-                raise ValueError("Latest update feed is unexpectedly large.")
-            versions = [item.findtext(f"{{{NAMESPACE}}}version") for item in ET.fromstring(xml).findall("./channel/item")]
-            if not versions or any(not value or not value.isdigit() for value in versions):
-                raise ValueError("Cannot establish the latest published build number.")
-            if max(map(int, versions)) >= int(build):
-                raise ValueError("CFBundleVersion must exceed every build in the latest public feed.")
+        check_continuity(build)
     print(f"Release update signatures and build {build} verified.")
+
+
+def check_continuity(build):
+    latest = json.loads(subprocess.check_output(["gh", "api", f"repos/{REPOSITORY}/releases/latest"], text=True))
+    published = next((asset for asset in latest["assets"] if asset["name"] == "appcast.xml"), None)
+    if published:
+        expected_prefix = f"https://github.com/{REPOSITORY}/releases/download/"
+        if not published["browser_download_url"].startswith(expected_prefix):
+            raise ValueError("Latest update feed points outside this repository.")
+        with urlopen(published["browser_download_url"], timeout=30) as response:
+            xml = response.read(2 * 1024 * 1024 + 1)
+        if len(xml) > 2 * 1024 * 1024:
+            raise ValueError("Latest update feed is unexpectedly large.")
+        versions = [item.findtext(f"{{{NAMESPACE}}}version") for item in ET.fromstring(xml).findall("./channel/item")]
+        if not versions or any(not value or not value.isdigit() for value in versions):
+            raise ValueError("Cannot establish the latest published build number.")
+        if max(map(int, versions)) >= int(build):
+            raise ValueError("CFBundleVersion must exceed every build in the latest public feed.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--info-plist", type=Path, required=True)
-    parser.add_argument("--archive", type=Path, required=True)
-    parser.add_argument("--tools", type=Path, required=True)
+    parser.add_argument("--archive", type=Path)
+    parser.add_argument("--tools", type=Path)
     parser.add_argument("--notes", type=Path, help="English Markdown release notes")
     parser.add_argument("--notes-zh", type=Path, help="Simplified Chinese Markdown release notes")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--check-latest", action="store_true")
+    parser.add_argument("--check-latest-only", action="store_true")
     args = parser.parse_args()
+    if args.check_latest_only:
+        check_continuity(plistlib.loads(args.info_plist.read_bytes())["CFBundleVersion"])
+        return
+    if args.archive is None or args.tools is None:
+        parser.error("--archive and --tools are required")
     if args.verify:
         verify_release(args.info_plist.resolve(), args.archive.resolve(), args.tools.resolve(), args.check_latest)
     else:

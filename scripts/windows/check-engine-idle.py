@@ -2,13 +2,16 @@
 import argparse
 import ctypes
 from ctypes import wintypes
+from datetime import datetime, timedelta, timezone
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import threading
 import time
+import uuid
 
 
 def cpu_seconds(process):
@@ -21,11 +24,39 @@ def cpu_seconds(process):
     return sum((value.dwHighDateTime << 32) + value.dwLowDateTime for value in values[2:]) / 10_000_000
 
 
-def check(engine, seconds, output, real_data=False, quota=False, read_only=False):
+def write_fixture(home):
+    now = datetime.now(timezone.utc)
+    thread = str(uuid.uuid4())
+    folder = Path(home) / "sessions" / now.astimezone().strftime("%Y/%m/%d")
+    folder.mkdir(parents=True, exist_ok=True)
+    rollout = folder / f"rollout-{thread}.jsonl"
+
+    def line(kind, payload, at):
+        return json.dumps({"type": kind, "payload": payload, "timestamp": at.isoformat(timespec="seconds")}) + "\n"
+
+    start = now - timedelta(seconds=10)
+    rollout.write_text(
+        line("session_meta", {"id": thread, "source": "cli", "cwd": "C:/Synthetic"}, start)
+        + line("event_msg", {"type": "task_started", "turn_id": "idle-fixture"}, start),
+        encoding="utf-8",
+    )
+
+    def finish():
+        with rollout.open("a", encoding="utf-8") as stream:
+            stream.write(line("event_msg", {"type": "task_complete", "turn_id": "idle-fixture"}, datetime.now(timezone.utc)))
+
+    return finish
+
+
+def check(engine, seconds, output, real_data=False, quota=False, read_only=False, completed_task=False, max_core_percent=None):
     if quota and not real_data:
         raise ValueError("Quota diagnostics require read-only real-data mode")
     if os.name != "nt" or seconds < 120:
         raise ValueError("Run on Windows for at least 120 seconds")
+    if real_data and completed_task:
+        raise ValueError("The completed-task fixture requires isolated provider homes")
+    if max_core_percent is not None and (not math.isfinite(max_core_percent) or max_core_percent <= 0):
+        raise ValueError("CPU budget must be a positive finite percentage of one core")
     with tempfile.TemporaryDirectory(prefix="pacer-idle-") as temporary:
         root = Path(temporary)
         homes = {}
@@ -33,6 +64,7 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
             home = root / provider
             (home / folder).mkdir(parents=True)
             homes[provider + "Home"] = str(home)
+        finish = write_fixture(homes["codexHome"]) if completed_task else None
         if real_data:
             if seconds < 300:
                 raise ValueError("Real-data checks run for at least five minutes")
@@ -43,6 +75,7 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
         process = subprocess.Popen([str(engine)] + (["--read-only-diagnostics"] if real_data or read_only else []) + (["--quota-diagnostics"] if quota else []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         hello, ready = threading.Event(), threading.Event()
+        task_started, task_completed = threading.Event(), threading.Event()
         counts = {"frames": 0, "stderrBytes": 0, "protocolErrors": 0, "shutdownReplies": 0}
         quota_counts = {}
         measuring = threading.Event()
@@ -60,6 +93,11 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
                     if message.get("type") == "snapshot":
                         running = message.get("runningCount", 0)
                         last_running = running if type(running) is int and running >= 0 else 0
+                        if completed_task:
+                            if last_running == 1:
+                                task_started.set()
+                            if last_running == 0 and any(task.get("phase") == "completed" for task in message.get("tasks", [])):
+                                task_completed.set()
                         if measuring.is_set():
                             sample["snapshots"] += 1
                             sample["runningMin"] = min(sample["runningMin"], last_running)
@@ -109,6 +147,13 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
             send("initialize", parameters)
             if not ready.wait(15):
                 raise RuntimeError("Engine initialization timed out")
+            if finish is not None:
+                if not task_started.wait(15):
+                    raise RuntimeError("The synthetic task did not appear in the engine")
+                finish()
+                send("refresh")
+                if not task_completed.wait(15):
+                    raise RuntimeError("The synthetic task did not reach completion")
             if quota:
                 # Make the injected passive-only Claude client available. It has
                 # no browser bridge, credential provider or HTTP transport.
@@ -125,7 +170,7 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
             measuring.clear()
             if process.poll() is not None:
                 raise RuntimeError("Engine exited during idle measurement")
-            if not real_data:
+            if not real_data and not completed_task:
                 # Only the isolated empty-home check changes a source.
                 replacement = root / "codex-replacement"
                 (replacement / "sessions").mkdir(parents=True)
@@ -137,12 +182,14 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
             shutdown = time.monotonic() - shutdown
             for reader in readers:
                 reader.join(timeout=2)
+            core_percent = cpu / elapsed * 100
             result = {"wallSeconds": round(elapsed, 3), "cpuSeconds": round(cpu, 4),
-                "oneCorePercent": round(cpu / elapsed * 100, 3),
+                "oneCorePercent": round(core_percent, 3),
                 "hostPercent": round(cpu / elapsed / (os.cpu_count() or 1) * 100, 3),
                 "logicalProcessors": os.cpu_count(), "shutdownSeconds": round(shutdown, 4),
-                "exitCode": process.returncode, "isolatedEmptyHomes": not real_data, "readOnlyRealData": real_data,
-                "sourceMutationsRequested": not real_data, **counts}
+                "exitCode": process.returncode, "isolatedEmptyHomes": not real_data and not completed_task, "readOnlyRealData": real_data,
+                "syntheticCompletedTask": task_completed.is_set(), "oneCoreBudgetPercent": max_core_percent,
+                "sourceMutationsRequested": not real_data and not completed_task, **counts}
             result["readOnlyDiagnostics"] = real_data or read_only
             result["measured"] = dict(sample)
             if quota:
@@ -155,6 +202,10 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
             print(json.dumps(result, sort_keys=True), flush=True)
             if process.returncode or counts["protocolErrors"] or counts["shutdownReplies"] != 1 or shutdown > 1:
                 raise RuntimeError("Engine protocol or bounded shutdown check failed")
+            if completed_task and sample["runningMax"] != 0:
+                raise RuntimeError("The completed-task fixture became active during idle measurement")
+            if max_core_percent is not None and core_percent > max_core_percent:
+                raise RuntimeError(f"Engine idle CPU used {core_percent:.3f}% of one core (limit {max_core_percent:g}%)")
         finally:
             if process.poll() is None:
                 process.kill()
@@ -171,5 +222,8 @@ if __name__ == "__main__":
     parser.add_argument("--real-data", action="store_true", help="Read actual provider homes; disable persistence and, unless --quota is set, quota clients")
     parser.add_argument("--quota", action="store_true", help="Include read-only quota/balance clients, no history or credential writes; record numeric refresh counts")
     parser.add_argument("--read-only", action="store_true", help="Disable persistence and quota clients for isolated source fixtures too")
+    parser.add_argument("--completed-task", action="store_true", help="Measure a synthetic completed task in an isolated home")
+    parser.add_argument("--max-core-percent", type=float, help="Fail if the average CPU exceeds this percentage of one core")
     args = parser.parse_args()
-    check(args.engine.resolve(), args.seconds, args.output, args.real_data, args.quota, args.read_only)
+    check(args.engine.resolve(), args.seconds, args.output, args.real_data, args.quota, args.read_only,
+          args.completed_task, args.max_core_percent)

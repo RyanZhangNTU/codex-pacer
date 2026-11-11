@@ -13,9 +13,10 @@ on:
 permissions:
   contents: read
 
-# One run per tag or branch, never cancelled halfway through a publication.
+# All stable tags share the publication lock. Dry runs stay independent.
 concurrency:
-  group: release-${{ github.ref }}
+  group: ${{ github.event_name == 'push' && 'pacer-stable-release' || format('release-dry-run-{0}', github.ref) }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -23,6 +24,9 @@ jobs:
     name: Release version
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -33,12 +37,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$(python3 -c 'import plistlib; print(plistlib.load(open("native/Info.plist", "rb"))["CFBundleShortVersionString"])')"
-          test -f "docs/release-notes-$version.en.md" && test -f "docs/release-notes-$version.zh-CN.md"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          test -f "docs/release-notes-$version.en.md"
+          test -f "docs/release-notes-$version.zh-CN.md"
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = tag ]; then
             test "$GITHUB_REF_NAME" = "v$version" || { echo "::error::Tag $GITHUB_REF_NAME does not match version $version."; exit 1; }
             # Only promoted code is released: main contains the tagged commit.
             status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)"
             case "$status" in identical|behind) ;; *) echo "::error::$GITHUB_REF_NAME is not on main."; exit 1 ;; esac
+            python3 scripts/ci/verify-platforms.py
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -109,7 +115,7 @@ jobs:
             ${{ runner.temp }}/pacer-installer-build.log
           retention-days: 7
 
-  # ARM64 packages without installing: the x64 job's smoke test covers the same sources.
+  # Verify the ARM64 package and a separate per-user QA installation on ARM64.
   windows-arm64:
     name: Windows installer (arm64)
     needs: version
@@ -135,8 +141,8 @@ jobs:
         run: |
           ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-desktop.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 dependency compiler warning.' }
-      - name: Package unsigned ARM64 application without runtime tests
-        run: ./scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64 -BuildOnly
+      - name: Package and launch the unsigned ARM64 application
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64
       - name: Upload unsigned ARM64 application
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
@@ -146,7 +152,7 @@ jobs:
             output/windows/*-windows-arm64-preview-*.zip
             output/windows/*-windows-arm64-preview-*.zip.sha256
           retention-days: 7
-      - name: Package unsigned ARM64 installer without installing
+      - name: Package unsigned ARM64 installer
         run: |
           $taskArchive = (Get-ChildItem output/windows/*-windows-arm64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
           # Also a patch from the latest published release, when that release published its manifest.
@@ -154,6 +160,10 @@ jobs:
           $taskArguments = @{ Archive = $taskArchive; Architecture = 'arm64' }
           if ($taskBase -and (Test-Path -LiteralPath $taskBase)) { $taskArguments.BaseManifest = $taskBase }
           ./scripts/windows/package-installer.ps1 @taskArguments
+      - name: Install, launch and uninstall the ARM64 application
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-arm64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/test-installer.ps1 -Archive $taskArchive -SmokeOnly *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-installer.log"
       - name: Upload unsigned ARM64 installer
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
@@ -174,6 +184,7 @@ jobs:
           path: |
             ${{ runner.temp }}/pacer-arm64-engine.log
             ${{ runner.temp }}/pacer-arm64-desktop.log
+            ${{ runner.temp }}/pacer-arm64-installer.log
           retention-days: 7
 
   # Developer ID signing and notarization. The certificate lives only in a
@@ -255,7 +266,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # The checkout leaves a lightweight tag; the publisher compares the annotated one.
       - name: Release tag
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: git fetch --no-tags --force origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
@@ -278,14 +289,14 @@ jobs:
           tar -xf "$RUNNER_TEMP/mac/mac-release.tar" -C "$output"
           bash scripts/release/sign-updates.sh "$output" "$output/sparkle-tools" "$RUNNER_TEMP/windows"
       - name: Publish the GitHub Release
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: bash scripts/release/publish-github-release.sh
       # A manual run checks what the publisher checks before uploading, without
       # the tag or the newer-than-latest requirements, and keeps the small files.
       - name: Verify without publishing
-        if: github.ref_type != 'tag'
+        if: github.event_name == 'workflow_dispatch'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
@@ -297,7 +308,7 @@ jobs:
           xcrun stapler validate "$dmg"
           codesign --verify --strict "$dmg"
       - name: Keep the signed DMG and feeds
-        if: github.ref_type != 'tag'
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: release-dry-run

@@ -35,6 +35,7 @@ jobs:
         id: platforms
         run: |
           python3 scripts/ci/test_changed_platforms.py
+          python3 scripts/ci/test_verify_platforms.py
           python3 scripts/ci/changed-platforms.py
 
   # Every run, whatever it touches. These checks need no platform, so they run
@@ -50,6 +51,7 @@ jobs:
           python3 scripts/windows/test_contract.py
           python3 scripts/windows/check-contract.py
           python3 scripts/windows/build-localization.py --check
+          python3 scripts/windows/build-shell-resources.py --check
       - name: DeepSeek web identity contract
         run: node scripts/windows/check-deepseek-web-identity.mjs
 
@@ -234,8 +236,23 @@ jobs:
         if: matrix.idle
         run: |
           $taskEngine = 'windows/Desktop/bin/Release/net10.0-windows/Engine/PacerEngine.exe'
-          python scripts/windows/check-engine-idle.py --engine $taskEngine --output "$env:RUNNER_TEMP/pacer-windows-idle.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
+          python scripts/windows/check-engine-idle.py --engine $taskEngine --read-only --max-core-percent 1 --output "$env:RUNNER_TEMP/pacer-windows-idle.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
           if ($LASTEXITCODE -ne 0) { throw 'Engine idle/protocol check failed.' }
+      - name: Engine idle with a completed task
+        if: matrix.idle
+        run: |
+          $taskEngine = 'windows/Desktop/bin/Release/net10.0-windows/Engine/PacerEngine.exe'
+          python scripts/windows/check-engine-idle.py --engine $taskEngine --read-only --completed-task --max-core-percent 2 --output "$env:RUNNER_TEMP/pacer-windows-idle-completed.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle-completed.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Engine idle/protocol check with a completed task failed.' }
+      - name: Keep idle measurements
+        if: always() && matrix.idle
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-engine-idle
+          path: |
+            ${{ runner.temp }}/pacer-windows-idle*.log
+            ${{ runner.temp }}/pacer-windows-idle*.json
+          retention-days: 14
       - name: Upload validation logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -247,8 +264,6 @@ jobs:
             ${{ runner.temp }}/pacer-claude-runtime.log
             output/windows/claude-runtime-tests.json
             ${{ runner.temp }}/pacer-presentation-tests.log
-            ${{ runner.temp }}/pacer-windows-idle.log
-            ${{ runner.temp }}/pacer-windows-idle.json
           retention-days: 7
 
   # Changes to what the installers are built from, or what their checks start:
@@ -270,6 +285,8 @@ jobs:
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: windows-desktop-x64-build
+      - name: Verify optional update base fallback
+        run: ./scripts/windows/test-update-base.ps1
       - name: Package unsigned Windows application
         run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
       - name: Windows installer lifecycle
@@ -293,10 +310,10 @@ jobs:
             output/windows/patch-tests.json
           retention-days: 7
 
-  # ARM64 compiles only; release.yml packages it. No tests run on it: the x64
-  # jobs test the same sources. The engine comes from the cache like x64's.
+  # ARM64 compiles on its own runner. Installer changes also exercise the
+  # extracted package and the per-user installation on native ARM64.
   windows-arm64:
-    name: Windows (arm64 build)
+    name: Windows (arm64)
     needs: changes
     if: needs.changes.outputs.windows == 'true'
     runs-on: windows-11-arm
@@ -332,6 +349,14 @@ jobs:
         run: |
           ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine -SaveEngineProducts output/windows/engine-products-arm64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-desktop.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 dependency compiler warning.' }
+      - name: Package and launch the ARM64 preview
+        if: needs.changes.outputs.installer == 'true'
+        run: ./scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64 *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-package.log"
+      - name: Install, launch and uninstall the ARM64 application
+        if: needs.changes.outputs.installer == 'true'
+        run: |
+          $taskArchive = (Get-ChildItem output/windows/*-windows-arm64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
+          ./scripts/windows/test-installer.ps1 -Archive $taskArchive -SmokeOnly *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-installer.log"
       - name: Upload ARM64 build logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -340,4 +365,27 @@ jobs:
           path: |
             ${{ runner.temp }}/pacer-arm64-engine.log
             ${{ runner.temp }}/pacer-arm64-desktop.log
+            ${{ runner.temp }}/pacer-arm64-package.log
+            ${{ runner.temp }}/pacer-arm64-installer.log
           retention-days: 7
+
+  verified:
+    name: Platforms verified
+    if: always()
+    needs: [changes, contract, macos, windows-engine, windows-build, windows-tests, windows-installer, windows-arm64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Record the tested tree
+        id: receipt
+        env:
+          PLATFORMS_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/verify-platforms.py --record "$RUNNER_TEMP/platforms-tree.json"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: platforms-tree-${{ steps.receipt.outputs.tree }}
+          path: ${{ runner.temp }}/platforms-tree.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 60

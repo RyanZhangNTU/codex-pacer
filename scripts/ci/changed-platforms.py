@@ -21,9 +21,13 @@ WINDOWS = ("windows/", "scripts/windows/", "global.json")
 # What the Windows package, installers and patches are built from, beyond the app itself.
 INSTALLER = ("windows/Installer/", "windows/InstallerHooks/", "windows/InstallerSupport/", "windows/Maintenance/",
              "windows/UpdateSupport/", "windows/ThirdParty/InnoSetup/", "windows/installer-toolchain-lock.json",
-             "windows/toolchain-lock.json", "global.json", "scripts/windows/package-", "scripts/windows/test-installer.ps1",
-             "scripts/windows/test-patch.ps1", "scripts/windows/test-preview.ps1", "scripts/windows/setup-installer.ps1",
+             "windows/toolchain-lock.json", "global.json", "native/Info.plist", "scripts/windows/package-", "scripts/windows/test-installer.ps1",
+             "scripts/windows/test-patch.ps1", "scripts/windows/test-preview.ps1", "scripts/windows/test-update-base.ps1",
+             "scripts/windows/setup-installer.ps1",
              "scripts/windows/fetch-update-base.ps1", "scripts/windows/build-maintenance.ps1",
+             "scripts/windows/environment.ps1", "scripts/windows/architecture.ps1", "scripts/windows/version.ps1",
+             "scripts/windows/stage-engine.py", "scripts/windows/check-architecture.py", "scripts/windows/test-instance-activation.ps1",
+             "scripts/windows/build-localization.py", "scripts/windows/build-shell-resources.py",
              "scripts/windows/prune-arm64-runtime.py", "scripts/windows/setup-swift.ps1", "scripts/windows/build-engine.ps1",
              "scripts/windows/build-desktop.ps1", ".github/workflows/", "scripts/ci/",
              # The app code the installer and package checks start: launch, single instance,
@@ -56,7 +60,9 @@ def classify(paths):
 def main():
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
         # The pull request checkout is its merge commit; its first parent is the base.
-        names = subprocess.check_output(["git", "diff", "--name-only", "HEAD^1", "HEAD"], text=True).split()
+        # Keep both sides of a rename and preserve whitespace in filenames.
+        names = [os.fsdecode(path) for path in subprocess.check_output(
+            ["git", "diff", "--no-renames", "--name-only", "-z", "HEAD^1", "HEAD"]).split(b"\0") if path]
         mac, windows, installer = classify(names)
         print(f"{len(names)} changed files")
     else:

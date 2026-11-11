@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 
 
 def compiler_arguments(command):
@@ -18,6 +19,12 @@ def compiler_arguments(command):
         elif argument not in emission:
             arguments.append(argument)
     return arguments
+
+
+def response_file(arguments):
+    # Swift expands @file arguments before parsing options. Quote every item
+    # so a source path with spaces or backslashes remains one argument.
+    return "".join('"' + argument.replace("\\", "\\\\").replace('"', '\\"') + '"\n' for argument in arguments)
 
 
 def check(scratch):
@@ -36,15 +43,15 @@ def check(scratch):
         raise RuntimeError("EngineSupport is not compiled as an independent host target")
     # Use exactly the Core command, not a manually filtered list. With the old
     # combined target, WindowsFileSystem would be visible and this probe would pass.
-    probe = scratch / "core-boundary-contract.swift"
-    probe.write_text("let forbiddenHostReference = WindowsFileSystem()\n", encoding="utf-8")
-    try:
-        result = subprocess.run([command["executable"], "-typecheck", "-module-name", "PacerCore", "-I", command["importPath"],
-                                 *compiler_arguments(command), *map(str, sources), str(probe)], capture_output=True, text=True, encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="core-boundary-", dir=scratch) as temporary:
+        probe = Path(temporary) / "probe.swift"
+        probe.write_text("let forbiddenHostReference = WindowsFileSystem()\n", encoding="utf-8")
+        args = Path(temporary) / "arguments.rsp"
+        args.write_text(response_file(["-typecheck", "-module-name", "PacerCore", "-I", command["importPath"],
+                                      *compiler_arguments(command), *map(str, sources), str(probe)]), encoding="utf-8")
+        result = subprocess.run([command["executable"], "@" + str(args)], capture_output=True, text=True, encoding="utf-8")
         if result.returncode == 0 or "cannot find 'WindowsFileSystem' in scope" not in result.stderr:
             raise RuntimeError("Core/host boundary probe did not reject the Windows type: " + result.stderr[-4000:])
-    finally:
-        probe.unlink(missing_ok=True)
     print(f"Whole Core target compiled: {len(expected)} source files; separate EngineSupport target; forbidden Windows type rejected", flush=True)
 
 

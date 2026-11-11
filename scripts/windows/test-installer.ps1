@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$Archive,
     [int]$ProtectedProcessId = 0,
-    [string]$CodexExecutable = ''
+    [string]$CodexExecutable = '',
+    [switch]$SmokeOnly
 )
 . (Join-Path $PSScriptRoot 'environment.ps1')
 $ErrorActionPreference = 'Stop'
@@ -54,6 +55,10 @@ function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Ex
     if ($Offline) {
         $taskStart.Environment['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
         $taskStart.Environment['DOTNET_ROOT'] = Join-Path $taskFixture 'no-sdk'
+        foreach ($taskVariable in @('DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_HOST_PATH','DOTNET_STARTUP_HOOKS','DOTNET_ADDITIONAL_DEPS','DOTNET_SHARED_STORE','PACER_SWIFT_ROOT')) {
+            $taskStart.Environment.Remove($taskVariable) | Out-Null
+        }
+        $taskStart.Environment['DOTNET_MULTILEVEL_LOOKUP'] = '0'
         $taskStart.Environment['HTTP_PROXY'] = 'http://127.0.0.1:1'
         $taskStart.Environment['HTTPS_PROXY'] = 'http://127.0.0.1:1'
     }
@@ -143,6 +148,13 @@ function Start-PacerDemo {
     Assert-Pacer (!$taskValue.HasExited) 'The installed demo did not stay running.'
     return $taskValue
 }
+function Test-PacerOfflineLaunch([string]$Application) {
+    Wait-PacerScreen
+    $taskCapture = Join-Path $taskFixture 'offline-demo.png'
+    $null = Invoke-PacerTestProcess $Application @('--demo','--reference-fixture','--language','zh-Hans','--capture-preview',$taskCapture) -Offline
+    Assert-Pacer ((Test-Path -LiteralPath $taskCapture) -and (Test-Path -LiteralPath ([IO.Path]::ChangeExtension($taskCapture,'.json')))) 'The installed offline demo could not render without SDK PATH.'
+    Record-Pacer 'installed offline demo starts without development PATH or DOTNET_ROOT; synthetic capture only'
+}
 $taskBeforeRun = Get-PacerOtherSnapshot $taskRunKey
 $taskBeforeApproval = Get-PacerOtherSnapshot $taskApprovalKey
 $taskElevated = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -162,6 +174,19 @@ try {
     try { Assert-Pacer ($null -eq $taskMachineKey) 'A per-user installer cannot register under LocalMachine.' }
     finally { if ($taskMachineKey) { $taskMachineKey.Dispose() } }
     Record-Pacer 'current-user install, Chinese/space path, default shortcuts, self-contained maintenance and no machine registration'
+
+    if ($SmokeOnly) {
+        Test-PacerOfflineLaunch $taskExe
+        $taskUninstaller = Join-Path $taskApp 'unins000.exe'
+        $taskLog = Join-Path $taskFixture 'uninstall-smoke.log'
+        $null = Invoke-PacerTestProcess $taskUninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + $taskLog))
+        Assert-Pacer (!(Test-Path -LiteralPath $taskExe) -and $null -eq (Get-PacerRegistryValue $taskArpKey 'InstallLocation')) 'The smoke test uninstall left the app or its registration.'
+        $taskUninstalled = $true
+        Record-Pacer 'current-user uninstall removes the app and its QA registration'
+        $taskReport = @{ schemaVersion=1; syntheticOnly=$true; architecture=$taskArchitecture.Name; checks=@($taskPasses) }
+        [IO.File]::WriteAllText((Join-Path $taskRoot 'output/windows/installer-smoke.json'), ($taskReport|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+        return
+    }
 
     New-Item -ItemType Directory -Path $taskData -Force | Out-Null
     $taskPreferences = Join-Path $taskData 'preferences-v1.json'
@@ -210,11 +235,7 @@ try {
     Assert-Pacer ((Get-FileHash -LiteralPath $taskPreferences).Hash -eq $taskPreferenceHash -and (Get-FileHash -LiteralPath $taskReadState).Hash -eq $taskReadHash) 'Overinstall changed retained preferences or read state.'
     Assert-Pacer ((Get-PacerRegistryValue $taskRunKey $taskStartupName) -eq ('"' + $taskExe + '" --launch-at-login')) 'Overinstall lost its startup registration.'
     Record-Pacer 'controlled running-app overinstall retains preferences, read state and startup'
-    Wait-PacerScreen
-    $taskCapture = Join-Path $taskFixture 'offline-demo.png'
-    $null = Invoke-PacerTestProcess $taskExe @('--demo','--reference-fixture','--language','zh-Hans','--capture-preview',$taskCapture) -Offline
-    Assert-Pacer ((Test-Path -LiteralPath $taskCapture) -and (Test-Path -LiteralPath ([IO.Path]::ChangeExtension($taskCapture,'.json')))) 'The installed offline demo could not render without SDK PATH.'
-    Record-Pacer 'installed offline demo starts without development PATH or DOTNET_ROOT; synthetic capture only'
+    Test-PacerOfflineLaunch $taskExe
 
     $taskClaude = Join-Path $taskData 'claude'
     $taskPacerHooks = Join-Path $taskClaude 'pacer'

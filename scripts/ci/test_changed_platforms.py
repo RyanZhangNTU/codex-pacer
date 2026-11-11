@@ -1,4 +1,8 @@
 import importlib.util
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,17 +28,43 @@ class ChangedPlatformsTests(unittest.TestCase):
         for path in ("windows/Installer/CodexPacer.iss", "windows/Maintenance/Program.cs", "windows/UpdateSupport/Patch.cs",
                      "scripts/windows/package-installer.ps1", "scripts/windows/test-patch.ps1", "windows/toolchain-lock.json",
                      "global.json", "windows/Desktop/App.xaml.cs", "windows/Desktop/WindowsSystemNotifications.cs",
-                     "scripts/windows/build-desktop.ps1"):
+                     "scripts/windows/build-desktop.ps1", "scripts/windows/environment.ps1", "scripts/windows/architecture.ps1",
+                     "scripts/windows/version.ps1", "scripts/windows/fetch-update-base.ps1", "scripts/windows/test-update-base.ps1"):
             self.assertEqual(platforms.classify([path]), (False, True, True), path)
 
     def test_shared_core_runs_both_platforms_without_the_installers(self):
         for path in ("native/Sources/PacerCore/IslandGeometry.swift", "native/Tests/PacerCoreTests/IslandPlacementTests.swift",
-                     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings", "native/Info.plist", "Package.swift"):
+                     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings", "Package.swift"):
             self.assertEqual(platforms.classify([path]), (True, True, False), path)
+        self.assertEqual(platforms.classify(["native/Info.plist"]), (True, True, True))
 
     def test_the_workflow_ci_scripts_and_unknown_files_run_everything(self):
         for path in (".github/workflows/platforms.yml", "scripts/ci/changed-platforms.py", "scripts/performance/benchmark-events.py"):
             self.assertEqual(platforms.classify([path]), (True, True, True), path)
+
+    def test_ci_keeps_the_removed_side_of_a_rename_and_preserves_spaces(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def git(*args):
+                subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+            git("init", "-q")
+            git("config", "user.name", "Pacer CI fixture")
+            git("config", "user.email", "pacer-ci@example.invalid")
+            before = root / "windows/Desktop/Panel view.xaml"
+            before.parent.mkdir(parents=True)
+            before.write_text("synthetic XAML\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "Add view")
+            after = root / "docs/Panel view.md"
+            after.parent.mkdir()
+            before.rename(after)
+            git("add", "-A")
+            git("commit", "-qm", "Move view")
+            env = dict(os.environ, GITHUB_EVENT_NAME="pull_request", GITHUB_OUTPUT=str(root / "result"))
+            subprocess.run([sys.executable, platforms.__file__], cwd=root, env=env, check=True, capture_output=True)
+            self.assertEqual((root / "result").read_text(encoding="utf-8"), "mac=false\nwindows=true\ninstaller=false\n")
 
 
 if __name__ == "__main__":
