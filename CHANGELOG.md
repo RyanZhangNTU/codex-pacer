@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.4.1
+
+- Fix high disk reads and energy use on Macs where Codex can run Dot tasks. Every two minutes, Pacer 4.4.0 checked the signature of all of Codex, reading about 1.6 GB each time. It now checks only the Codex command-line tool it starts. On Mac and Windows, Pacer also keeps one connection for Dot tasks instead of reconnecting, and starting Codex's command-line tool, every two minutes. Dot tasks still appear as quickly as before.
+
 ## 4.4.0
 
 - Customize the expanded panel on Mac and Windows. The panel becomes a column of blocks: the task list, Codex and Claude quota, DeepSeek's balance, where today's DeepSeek spend went and its last 7 days. The new **Expanded Panel** page adds, removes and drags them, and sets each block's options: tasks per page, one- or two-line rows and what each row shows, each quota's windows, style, arrangement, details and pace tick, DeepSeek's dial, peak hint, spend list and reference line, and which buttons sit in the header. Until you change anything, the panel follows the services you turn on; **Restore Automatic** returns to that.
