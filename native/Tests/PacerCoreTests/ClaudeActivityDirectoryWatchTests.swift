@@ -115,7 +115,11 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         XCTAssertEqual(reader.scans, 1)
         XCTAssertNil(reader.transcriptURL(for: newSession))
         XCTAssertTrue(completedFirst.discoveryPending, "A creation before watch registration must queue a prompt retry")
-        var next = completedFirst
+        var next = reader.read(home: fixture.home, discover: false, now: start)
+        XCTAssertTrue(next.discoveryPending)
+        // If the directory changes again during the catch-up pass, do not
+        // start an unbounded chain of scans from stamp changes alone.
+        try manager.setAttributes([.modificationDate: start.addingTimeInterval(40)], ofItemAtPath: fixture.alpha.path)
         for _ in 0..<8 where next.discoveryPending { next = reader.read(home: fixture.home, discover: false, now: start) }
         XCTAssertFalse(next.discoveryPending)
         XCTAssertEqual(reader.scans, 2)
@@ -180,6 +184,8 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
     func testAbandonedLiveCursorsYieldToNewerLogsWithoutInventingAnEnding() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
         let start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)), manager = FileManager.default
+        try manager.removeItem(at: fixture.alpha.appendingPathComponent(rootSession + ".jsonl"))
+        try manager.removeItem(at: fixture.beta.appendingPathComponent(otherSession + ".jsonl"))
         let sessions = (0..<ClaudeActivityReader.maximumFileWatches).map { "lease-\($0)" }
         var reader = ClaudeActivityReader(files: TestFileSystem()), state = ClaudeActivityState()
         func event(_ kind: String, _ session: String, _ turn: String, at date: Date) {
@@ -189,14 +195,14 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         for session in sessions {
             let log = fixture.alpha.appendingPathComponent(session + ".jsonl")
             try Data().write(to: log)
-            try manager.setAttributes([.modificationDate: start.addingTimeInterval(20)], ofItemAtPath: log.path)
+            try manager.setAttributes([.modificationDate: start.addingTimeInterval(-20)], ofItemAtPath: log.path)
             event("prompt", session, "owned-turn", at: start)
         }
         _ = reader.read(home: fixture.home, discover: true, retainingSessionIDs: state.prioritySessionIDs(at: start), now: start)
         XCTAssertTrue(sessions.allSatisfy { reader.transcriptURL(for: $0) != nil })
         let newLog = fixture.alpha.appendingPathComponent(newSession + ".jsonl")
         try Data().write(to: newLog)
-        try manager.setAttributes([.modificationDate: start.addingTimeInterval(21)], ofItemAtPath: newLog.path)
+        try manager.setAttributes([.modificationDate: start.addingTimeInterval(-10)], ofItemAtPath: newLog.path)
 
         let beforeExpiry = start.addingTimeInterval(899)
         _ = reader.read(home: fixture.home, discover: true, retainingSessionIDs: state.prioritySessionIDs(at: beforeExpiry), now: beforeExpiry)
@@ -205,7 +211,7 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         XCTAssertTrue(state.activities.allSatisfy { $0.phase == .running }, "Aging a priority does not change task state")
         let oldest = fixture.alpha.appendingPathComponent(sessions[0] + ".jsonl")
         try Data("{}\n".utf8).write(to: oldest)
-        try manager.setAttributes([.modificationDate: start.addingTimeInterval(20)], ofItemAtPath: oldest.path)
+        try manager.setAttributes([.modificationDate: start.addingTimeInterval(-20)], ofItemAtPath: oldest.path)
         let reads = reader.fileReads
         let draining = reader.read(home: fixture.home, discover: true, retainingSessionIDs: state.prioritySessionIDs(at: afterExpiry), now: afterExpiry)
         XCTAssertTrue(draining.discoveryPending, "A displaced cursor must first read its pending bytes")
@@ -223,6 +229,67 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         XCTAssertEqual(releasedPhase(), .unknown)
         event("stopVerified", released, "owned-turn", at: afterExpiry.addingTimeInterval(2))
         XCTAssertEqual(releasedPhase(), .completed)
+    }
+
+    private func completedTranscript(_ session: String, at date: Date) throws -> Data {
+        let clock = ISO8601DateFormatter()
+        let start: [String: Any] = ["type": "user", "uuid": "owned-prompt", "sessionId": session,
+            "timestamp": clock.string(from: date.addingTimeInterval(-1)), "origin": ["kind": "human"], "message": ["content": "synthetic"]]
+        let end: [String: Any] = ["type": "result", "subtype": "success", "uuid": "owned-end", "parentUuid": "owned-prompt",
+            "sessionId": session, "timestamp": clock.string(from: date)]
+        return try JSONSerialization.data(withJSONObject: start) + Data([10]) + JSONSerialization.data(withJSONObject: end) + Data([10])
+    }
+
+    func testFreshLogIsReadBeforeAnEvictedBacklogAndOldApprovalStaysWatched() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)), manager = FileManager.default
+        try manager.removeItem(at: fixture.alpha.appendingPathComponent(rootSession + ".jsonl"))
+        try manager.removeItem(at: fixture.beta.appendingPathComponent(otherSession + ".jsonl"))
+        let approval = "approval", displaced = "lease-00", arrived = start.addingTimeInterval(5)
+        let sessions = [approval] + (0..<31).map { String(format: "lease-%02d", $0) }
+        var reader = ClaudeActivityReader(files: TestFileSystem()), state = ClaudeActivityState()
+        func event(_ kind: String, session: String, at date: Date) {
+            state.consume(ClaudeActivityRecord.encode(["kind": kind, "origin": "hook", "sessionId": session,
+                "promptId": "turn", "itemId": "approval-fixture", "at": date.timeIntervalSince1970])!, now: start)
+        }
+        func log(_ id: String) -> URL { fixture.alpha.appendingPathComponent(id + ".jsonl") }
+        for id in sessions {
+            try Data().write(to: log(id))
+            try manager.setAttributes([.modificationDate: start.addingTimeInterval(id == approval ? -2000 : -20)], ofItemAtPath: log(id).path)
+            event("prompt", session: id, at: start.addingTimeInterval(id == approval ? -1000 : -10))
+        }
+        event("approval", session: approval, at: start.addingTimeInterval(-990))
+        func read(discover: Bool, at date: Date) -> ClaudeActivityReader.Result {
+            let result = reader.read(home: fixture.home, discover: discover, retainingSessionIDs: state.prioritySessionIDs(at: date),
+                waitingSessionIDs: state.waitingSessionIDs, now: date)
+            for record in result.records { state.consume(record, now: date) }
+            return result
+        }
+        _ = read(discover: true, at: start)
+        XCTAssertTrue(sessions.allSatisfy { reader.transcriptURL(for: $0) != nil })
+        let writer = try FileHandle(forWritingTo: log(displaced))
+        try writer.seekToEnd(); try writer.write(contentsOf: Data(String(repeating: "{}\n", count: 4000).utf8)); try writer.close()
+        try manager.setAttributes([.modificationDate: start.addingTimeInterval(-20)], ofItemAtPath: log(displaced).path)
+        try completedTranscript(newSession, at: arrived).write(to: log(newSession))
+        try manager.setAttributes([.modificationDate: arrived], ofItemAtPath: log(newSession).path)
+        let preflight = read(discover: true, at: arrived)
+        XCTAssertTrue(preflight.discoveryPending)
+        let admitted = read(discover: false, at: arrived)
+        XCTAssertTrue(admitted.retirementPending, "The prior file is still draining")
+        XCTAssertTrue(admitted.caughtUp, "The fresh file can publish without waiting for the retired backlog")
+        XCTAssertEqual(reader.attachedTranscriptCount, 32)
+        XCTAssertNotNil(reader.transcriptURL(for: newSession))
+        XCTAssertNotNil(reader.transcriptURL(for: approval))
+        XCTAssertFalse(admitted.watchURLs.contains(log(displaced)), "Finishing old bytes does not keep the old file watch")
+        XCTAssertEqual(state.attention.map(\.threadID), [approval])
+        var app = ActivityApplicationState(); app.claudeActivities = state.activities
+        let update = app.reconcile(at: arrived, retention: 300, visibility: .init())
+        XCTAssertEqual(app.inbox.unreadActivities.map(\.threadID), [newSession])
+        XCTAssertEqual(update.notices.filter { $0.kind == .completed }.count, 1)
+        var remaining = admitted
+        for _ in 0..<12 where remaining.retirementPending { remaining = read(discover: false, at: arrived) }
+        XCTAssertFalse(remaining.retirementPending)
+        XCTAssertEqual(state.attention.map(\.threadID), [approval])
     }
 
     func testNativeAndSSHDiscoveryPickTheSamePathsWhenDatesTie() throws {
@@ -278,45 +345,57 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         XCTAssertEqual(Set(try JSONDecoder().decode([String].self, from: reply)), expected)
     }
 
-    func testPeriodicDiscoveryKeepsMinuteFallbackWithoutAProjectWatch() throws {
+    func testPeriodicDiscoveryKeepsMinuteFallbackEvenWithAProjectWatch() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
         let start = Date()
         var reader = ClaudeActivityReader(files: TestFileSystem())
         _ = reader.read(home: fixture.home, discover: true, now: start)
         XCTAssertNotNil(reader.projectWatchURL)
-        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(59), watchingProjects: false))
-        XCTAssertTrue(reader.discoveryDue(at: start.addingTimeInterval(60), watchingProjects: false))
-        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(299), watchingProjects: true))
-        XCTAssertTrue(reader.discoveryDue(at: start.addingTimeInterval(300), watchingProjects: true))
+        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(59)))
+        XCTAssertTrue(reader.discoveryDue(at: start.addingTimeInterval(60)))
 
         let directoryEvent = start.addingTimeInterval(120)
         _ = reader.read(home: fixture.home, discover: true, now: directoryEvent)
         XCTAssertEqual(reader.scans, 2)
-        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(300), watchingProjects: true))
-        XCTAssertTrue(reader.discoveryDue(at: directoryEvent.addingTimeInterval(300), watchingProjects: true))
+        XCTAssertFalse(reader.discoveryDue(at: directoryEvent.addingTimeInterval(59)))
+        XCTAssertTrue(reader.discoveryDue(at: directoryEvent.addingTimeInterval(60)))
     }
 
-    func testPeriodicDiscoveryChecksTrackedProjectDatesWithoutScanningTheirContents() throws {
+    func testPeriodicDiscoveryFindsAnAppendToAnUnwatchedOldLog() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
-        let start = Date()
+        let start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
         let manager = FileManager.default
         let unwatched = fixture.home.appendingPathComponent("projects/unwatched")
         try manager.createDirectory(at: unwatched, withIntermediateDirectories: true)
+        let log = unwatched.appendingPathComponent(newSession + ".jsonl")
+        try Data().write(to: log)
+        try manager.setAttributes([.modificationDate: start.addingTimeInterval(-7200)], ofItemAtPath: log.path)
+        for index in 0..<32 {
+            let file = fixture.alpha.appendingPathComponent("occupied-\(index).jsonl")
+            try Data().write(to: file)
+            try manager.setAttributes([.modificationDate: start.addingTimeInterval(-10)], ofItemAtPath: file.path)
+        }
         try manager.setAttributes([.modificationDate: start.addingTimeInterval(-3600)], ofItemAtPath: unwatched.path)
         var reader = ClaudeActivityReader(files: TestFileSystem())
         let first = reader.read(home: fixture.home, discover: true, now: start)
         XCTAssertNotNil(reader.projectWatchURL)
         XCTAssertFalse(first.watchURLs.map(\.path).contains(unwatched.path))
-        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(60), watchingProjects: true))
-
-        let log = unwatched.appendingPathComponent(newSession + ".jsonl")
-        try Data().write(to: log)
-        try manager.setAttributes([.modificationDate: start.addingTimeInterval(1)], ofItemAtPath: unwatched.path)
-        XCTAssertTrue(reader.discoveryDue(at: start.addingTimeInterval(60), watchingProjects: true))
+        XCTAssertNil(reader.transcriptURL(for: newSession))
+        let before = try manager.attributesOfItem(atPath: unwatched.path)[.modificationDate] as? Date
+        let now = start.addingTimeInterval(60)
+        let writer = try FileHandle(forWritingTo: log)
+        try writer.seekToEnd(); try writer.write(contentsOf: completedTranscript(newSession, at: now)); try writer.close()
+        try manager.setAttributes([.modificationDate: now], ofItemAtPath: log.path)
+        XCTAssertEqual(try manager.attributesOfItem(atPath: unwatched.path)[.modificationDate] as? Date, before)
+        XCTAssertTrue(reader.discoveryDue(at: now))
         XCTAssertEqual(reader.scans, 1)
-        _ = reader.read(home: fixture.home, discover: true, now: start.addingTimeInterval(60))
+        let result = reader.read(home: fixture.home, discover: true, now: now)
         XCTAssertEqual(reader.transcriptURL(for: newSession)?.path, log.path)
-        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(120), watchingProjects: true))
+        var state = ClaudeActivityState(), inbox = CompletionInbox()
+        for row in result.records { state.consume(row, now: now) }
+        _ = inbox.observe(state.activities, at: now, retention: 300)
+        XCTAssertEqual(inbox.unreadActivities.map(\.threadID), [newSession])
+        XCTAssertFalse(reader.discoveryDue(at: now.addingTimeInterval(59)))
     }
 
     private final class Observations: @unchecked Sendable {

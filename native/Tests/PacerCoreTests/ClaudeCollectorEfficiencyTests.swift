@@ -19,14 +19,14 @@ class FixtureTailer(Tailer):
         if self.fd>=0:os.close(self.fd)
         self.fd,self.write_fd=os.pipe();os.set_blocking(self.fd,False)
         self.libc=FakeInotify();self.work=collections.Counter()
-    def discover(self):
+    def discover(self,follow_up=False):
         scan=os.scandir;modified=globals()['regular_mtime']
         def count_scan(path):
             self.work['entries']+=1;return scan(path)
         def count_modified(path):
             self.work['modified']+=1;return modified(path)
         os.scandir=count_scan;globals()['regular_mtime']=count_modified
-        try:return super().discover()
+        try:return super().discover(follow_up)
         finally:os.scandir=scan;globals()['regular_mtime']=modified
     def notify(self,path,mask,name=b''):
         wd=next(wd for wd,value in self.watches.items() if value==path)
@@ -103,10 +103,10 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-efficiency-') as temporary
         scans=tailer.scans-before;entries=tailer.work['entries'];stats=tailer.work['modified']
         assert scans==0 and entries==0 and stats==0
 
-        # A newly created transcript still reconciles immediately and is history.
+        # A new path can contain old history and still reconciles immediately.
         project=next(path for path in tailer.watches.values() if path.parent==projects)
         session='35857527-1d32-4bc3-881a-0259832b7d61';file=project/(session+'.jsonl')
-        file.write_bytes(line(prompt(session,'new-prompt')))
+        file.write_bytes(line(dict(prompt(session,'new-prompt'),timestamp='2020-01-01T00:00:00Z')))
         assert tailer.notify(project,0x100,file.name.encode()) is True
         finish_discovery(tailer);new_rows=finish(tailer)
         assert file in tailer.cursors and len(tailer.cursors)==32
@@ -292,8 +292,14 @@ for initially_has_spool in (False,True):
             os.utime(str(unwatched),(1800000004,1800000004))
             finish_discovery(tailer)
             assert tailer.inventory_changed and new not in tailer.cursors
+            assert not tailer.discover(follow_up=True)
+            for _ in range(24):
+                if later in tailer.inventory.stamps:break
+                assert not tailer.discover()
+            else:raise AssertionError('never reached final project in follow-up')
+            os.utime(str(unwatched),(1800000005,1800000005))
             finish_discovery(tailer)
-            assert new in tailer.cursors and not tailer.inventory_changed
+            assert new in tailer.cursors and not tailer.inventory_changed, 'A dirty follow-up cannot schedule itself again'
         finally:tailer.close()
 print(json.dumps({'startupAndFollowUpPassed':True}))
 """#)
@@ -320,26 +326,107 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-startup-append-') as tempo
                      {'type':'system','sessionId':'late','uuid':'ancestor','promptId':'observed-turn','timestamp':stamp_at(cutoff+2)}])
         assert project.stat().st_mtime_ns==directory_stamp
         finish_discovery(tailer)
-        assert not tailer.inventory_changed and 'startupBoundary' in tailer.cursors[late]
+        assert not tailer.inventory_changed and tailer.cursors[late]['liveAfter']==cutoff
         next_log=project/'replacement.tmp'
         next_log.write_bytes(line(dict(prompt('replaced','replacement-turn'),timestamp=stamp_at(cutoff+1))))
         os.replace(str(next_log),str(replacement))
         initial=tailer.read()
-        assert 'startupBoundary' in tailer.cursors[late], 'Buffered attach records keep their boundary'
+        assert tailer.cursors[late]['liveAfter']==cutoff, 'Buffered attach records keep their boundary'
         rows=initial+finish(tailer)
-        assert 'startupBoundary' not in tailer.cursors[late] and 'startupBoundary' not in tailer.cursors[replacement]
+        assert tailer.cursors[late]['liveAfter'] is None and tailer.cursors[replacement]['liveAfter'] is None
         assert any(row['kind']=='prompt' and row.get('promptId')=='observed-turn' and row['historical'] for row in rows)
         assert any(row['kind']=='stop' and row.get('promptId')=='baseline-turn' and row['historical'] and
-                   'observedDuringStartup' not in row for row in rows)
+                   'observedWhileUnwatched' not in row for row in rows)
         assert any(row['kind']=='prompt' and row.get('promptId')=='replacement-turn' and row['historical'] and
-                   'observedDuringStartup' not in row for row in rows)
+                   'observedWhileUnwatched' not in row for row in rows)
         recovered=[row for row in rows if row['kind']=='stop' and row.get('promptId')=='observed-turn']
-        assert len(recovered)==1 and recovered[0]['observedDuringStartup'] and not recovered[0]['historical']
-        assert not any(row.get('unownedTurn') and row.get('observedDuringStartup') for row in rows)
+        assert len(recovered)==1 and recovered[0]['observedWhileUnwatched'] and not recovered[0]['historical']
+        assert not any(row.get('unownedTurn') and row.get('observedWhileUnwatched') for row in rows)
         print(json.dumps({'ownedStartupEndingPassed':True}))
     finally:tailer.close();time.time=wall
 """#)
         XCTAssertEqual(result["ownedStartupEndingPassed"] as? Bool, true)
+    }
+
+    func testRemoteAdmissionKeepsOldApprovalAndDrainsInactiveCursorWithoutBlockingNewEnding() throws {
+        let result = try evaluate(#"""
+with tempfile.TemporaryDirectory(prefix='pacer-claude-capacity-') as temporary:
+    home=pathlib.Path(temporary);project=home/'projects'/'project';project.mkdir(parents=True)
+    start=1800000000;clock=[start];wall=time.time;time.time=lambda:clock[0]
+    def stamp_at(at):return datetime.datetime.fromtimestamp(at,datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    def started(session,turn,at):return dict(prompt(session,turn),timestamp=stamp_at(at))
+    def ended(session,turn,at):
+        return {'type':'result','subtype':'success','sessionId':session,'promptId':turn,'uuid':'end-'+turn,'timestamp':stamp_at(at)}
+    def date(path,at):os.utime(str(path),(at,at))
+    approval=project/'approval.jsonl';idle=project/'idle.jsonl'
+    approval.write_bytes(line(started('approval','approval-turn',start-1000)));date(approval,start-1000)
+    idle.write_bytes(line(started('idle','old-turn',start-50))+line(ended('idle','old-turn',start-40)));date(idle,start-40)
+    for index in range(30):
+        session='working-%02d'%index;file=project/(session+'.jsonl')
+        file.write_bytes(line(started(session,'active',start-10)));date(file,start-10)
+    tailer=FixtureTailer(home)
+    try:
+        finish_discovery(tailer);finish(tailer)
+        assert len(tailer.cursors)==Tailer.FILE_LIMIT and 'activeAt' not in tailer.cursors[idle]
+        tailer.waiting={'approval'} # Shared host confirmed a pending request.
+        clock[0]=start+10
+        incoming=project/'new.jsonl'
+        incoming.write_bytes(line(started('new','new-turn',start+8))+line(ended('new','new-turn',start+9)));date(incoming,start+9)
+        with idle.open('ab') as stream:
+            stream.write(b'{}\n'*4000)
+        append(idle,[started('idle','second-turn',start+7),ended('idle','second-turn',start+8)]);date(idle,start-40)
+        assert not tailer.discover(), 'Even an idle cursor gets one bounded preflight read'
+        tailer.read()
+        assert tailer.discover(), 'An unread remainder must not block admission'
+        assert idle in tailer.retiring and idle not in tailer.watches.values()
+        assert approval in tailer.cursors and incoming in tailer.cursors
+        assert len(set(tailer.cursors).difference(tailer.retiring))==Tailer.FILE_LIMIT
+        admitted=tailer.read()
+        assert tailer.retiring and any(row['kind']=='stop' and row.get('promptId')=='new-turn' and not row['historical'] for row in admitted)
+        append(idle,[started('idle','after-freeze',start+10),ended('idle','after-freeze',start+10)])
+        drained=finish(tailer)
+        assert any(row['kind']=='stop' and row.get('promptId')=='second-turn' and not row['historical'] for row in drained)
+        assert not any(row.get('promptId')=='after-freeze' for row in drained) and not tailer.retiring
+        assert not any(row['kind']=='unavailable' and row['sessionId']=='approval' for row in admitted+drained)
+        date(idle,start+10);clock[0]=start+11
+        finish_discovery(tailer)
+        replayed=[row for row in finish(tailer) if row['kind']=='stop' and row['sessionId']=='idle']
+        assert [(row['promptId'],row['historical']) for row in replayed]==[('old-turn',True),('second-turn',True),('after-freeze',False)]
+        print(json.dumps({'capacityPassed':True}))
+    finally:tailer.close();time.time=wall
+"""#)
+        XCTAssertEqual(result["capacityPassed"] as? Bool, true)
+    }
+
+    func testRemoteNewLogGetsASlotEvenWhenAllThirtyTwoLeasesAreFresh() throws {
+        let result = try evaluate(#"""
+with tempfile.TemporaryDirectory(prefix='pacer-claude-full-') as temporary:
+    home=pathlib.Path(temporary);project=home/'projects'/'project';project.mkdir(parents=True)
+    start=1800000000;clock=[start];wall=time.time;time.time=lambda:clock[0]
+    def stamp_at(at):return datetime.datetime.fromtimestamp(at,datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    def dated(session,at):return dict(prompt(session,'prompt'),timestamp=stamp_at(at))
+    paths=[]
+    for index in range(Tailer.FILE_LIMIT):
+        session='working-%02d'%index;file=project/(session+'.jsonl');paths.append(file)
+        file.write_bytes(line(dated(session,start-1)));os.utime(str(file),(start-1,start-1))
+    tailer=FixtureTailer(home)
+    try:
+        finish_discovery(tailer);finish(tailer)
+        assert all(cursor.get('activeAt')==start-1 for cursor in tailer.cursors.values())
+        clock[0]=start+15
+        incoming=project/'new.jsonl'
+        incoming.write_bytes(line(dated('new',start+1))+line({'type':'result','subtype':'success','sessionId':'new','promptId':'prompt','timestamp':stamp_at(start+2)}))
+        os.utime(str(incoming),(start+2,start+2))
+        # Even if every incumbent has a later mtime, the newcomer gets a slot.
+        for file in paths:os.utime(str(file),(start+5,start+5))
+        finish_discovery(tailer)
+        assert incoming in tailer.cursors and len(tailer.cursors)==Tailer.FILE_LIMIT
+        completions=[row for row in finish(tailer) if row['kind']=='stop' and row['sessionId']=='new']
+        assert len(completions)==1 and not completions[0]['historical']
+        print(json.dumps({'fullLeasesPassed':True}))
+    finally:tailer.close();time.time=wall
+"""#)
+        XCTAssertEqual(result["fullLeasesPassed"] as? Bool, true)
     }
 
     func testHookSessionEndFreesItsCursorAndOlderReplayCannotRenewIt() throws {

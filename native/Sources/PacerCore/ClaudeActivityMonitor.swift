@@ -20,6 +20,7 @@ public actor ClaudeActivityMonitor {
     private var localGeneration = UUID()
     private var discovery: Task<Void, Never>?
     private var catchup: Task<Void, Never>?
+    private var watchDiscovery: Task<Void, Never>?
     /// Records arrived since ended requests last settled.
     private var localReleasePending = false
     private var pendingPublish: Task<Void, Never>?
@@ -35,6 +36,7 @@ public actor ClaudeActivityMonitor {
         var buffer = Data()
         var state: ClaudeActivityState
         var lastFrame: Date
+        var waitingSessionIDs: Set<String> = []
     }
     private var connections: [String: Connection] = [:]
     private var disconnected: [String: ClaudeActivityState] = [:]
@@ -149,18 +151,14 @@ public actor ClaudeActivityMonitor {
         localGeneration = UUID()
         localMirrorRoots.removeAll()
         discovery?.cancel(); discovery = nil; catchup?.cancel(); catchup = nil; pendingPublish?.cancel(); pendingPublish = nil
+        watchDiscovery?.cancel(); watchDiscovery = nil
         watcher?.stop(); watcher = nil; telemetry?.stop(); telemetry = nil
     }
     private func maintain(generation: UUID) async {
-        guard localGeneration == generation else { return }
-        let watchingProjects: Bool
-        if let project = localReader.projectWatchURL { watchingProjects = await watcher?.isWatching(project) == true }
-        else { watchingProjects = false }
         guard localGeneration == generation, let home else { return }
-        // Keep reading known files every minute. With a directory watch,
-        // a slower full scan is enough to catch appends to unwatched files.
+        // A resumed, unwatched transcript can append without a directory event.
         let exclusionsChanged = refreshLocalExclusions(home: home)
-        let discover = exclusionsChanged || localReader.discoveryDue(at: clock(), watchingProjects: watchingProjects)
+        let discover = exclusionsChanged || localReader.discoveryDue(at: clock())
         await readLocal(discover: discover, exclusionsCurrent: true)
         guard localGeneration == generation else { return }
         // Rechecking recent baseline tails rides this existing minute tick.
@@ -174,7 +172,7 @@ public actor ClaudeActivityMonitor {
         if discover, !exclusionsCurrent { refreshLocalExclusions(home: home) }
         let now = clock()
         let result = localReader.read(home: home, discover: discover, excludingSessionIDs: localMirrorRoots,
-            retainingSessionIDs: local.prioritySessionIDs(at: now), now: now)
+            retainingSessionIDs: local.prioritySessionIDs(at: now), waitingSessionIDs: local.waitingSessionIDs, now: now)
         var watchURLs = result.watchURLs
         if !discover, !exclusionsCurrent, !result.records.isEmpty {
             let known = local.knownStartedSessionIDs
@@ -190,8 +188,10 @@ public actor ClaudeActivityMonitor {
         // A request's blocks can straddle a read budget, so ended requests
         // settle only once the reader has caught up.
         if !result.records.isEmpty { localReleasePending = true }
-        if result.caughtUp, localReleasePending { local.releaseCompletedRequests(now: clock()); localReleasePending = false }
-        if result.caughtUp { local.finalizeHistoricalBaseline(now: clock()) }
+        if result.caughtUp, !result.retirementPending {
+            if localReleasePending { local.releaseCompletedRequests(now: clock()); localReleasePending = false }
+            local.finalizeHistoricalBaseline(now: clock())
+        }
         if let status = ClaudeActivityRecord.encode(["kind": "status", "connected": result.available, "watchingLogs": !watchURLs.isEmpty, "scans": localReader.scans]) { local.consume(status, now: clock()) }
         if !result.available { local.unavailable() }
         watcher?.update(watchURLs, interval: 0.1)
@@ -216,7 +216,24 @@ public actor ClaudeActivityMonitor {
     }
     private func fileChanged(discover: Bool, generation: UUID) async {
         guard localGeneration == generation else { return }
+        if discover, watchDiscovery != nil { await readLocal(discover: false); return }
+        if discover {
+            let delay = localReader.watchDiscoveryDelay(at: clock())
+            if delay > 0 {
+                watchDiscovery = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(delay))
+                    guard !Task.isCancelled else { return }
+                    await self?.continueWatchDiscovery(generation: generation)
+                }
+                await readLocal(discover: false); return
+            }
+        }
         await readLocal(discover: discover)
+    }
+    private func continueWatchDiscovery(generation: UUID) async {
+        guard localGeneration == generation else { return }
+        watchDiscovery = nil
+        await readLocal(discover: true)
     }
     @discardableResult private func refreshLocalExclusions(home: URL) -> Bool {
         let roots = remoteMirrorSessionIDs(home)
@@ -267,6 +284,12 @@ public actor ClaudeActivityMonitor {
             connection.state.consume(frame, now: clock()); connection.lastFrame = clock(); received = true
             urgent = urgent || Self.urgent(value)
             if value["kind"] as? String == "status" { missingHome = value["claudeHome"] as? Bool == false }
+        }
+        let waiting = connection.state.waitingSessionIDs
+        if waiting != connection.waitingSessionIDs,
+           var data = try? JSONSerialization.data(withJSONObject: ["waitingSessionIDs": waiting.sorted()]) {
+            data.append(10)
+            do { try connection.process.write(data); connection.waitingSessionIDs = waiting } catch { }
         }
         connections[id] = connection
         if missingHome { park(id, identity: identity); await publish(); return }

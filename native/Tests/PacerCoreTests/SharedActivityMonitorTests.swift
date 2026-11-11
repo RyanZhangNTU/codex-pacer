@@ -16,6 +16,7 @@ final class SharedActivityMonitorTests: XCTestCase {
     private final class Child: ChildProcessConnection, @unchecked Sendable {
         private let lock = NSLock()
         private var running = true, closes = 0, kills = 0
+        private var controls: [Data] = []
         let output: @Sendable (Data) async -> Void
         let ended: @Sendable () async -> Void
         let exited = ShutdownSignal(), ioClosed = ShutdownSignal()
@@ -26,7 +27,13 @@ final class SharedActivityMonitorTests: XCTestCase {
         var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return running }
         var terminationStatus: Int32? { isRunning ? nil : 0 }
         func errorMessage() -> String { "" }
-        func write(_ data: Data) throws {}
+        func write(_ data: Data) throws { lock.lock(); controls.append(data); lock.unlock() }
+        var waitingUpdates: [[String]] {
+            lock.lock(); defer { lock.unlock() }
+            return controls.compactMap { data in
+                (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["waitingSessionIDs"] as? [String]
+            }
+        }
         func close() {
             lock.lock(); closes += 1; if !ignoresClose { running = false }; lock.unlock()
             if !ignoresClose { exited.finish(); ioClosed.finish() }
@@ -62,6 +69,20 @@ final class SharedActivityMonitorTests: XCTestCase {
         RemoteActivityTarget(id: "remote-ssh-discovered:" + id, name: "Synthetic SSH", alias: id, home: "~/.claude")
     }
     private func row(_ value: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: value) + Data([10]) }
+    func testRemoteHelperReceivesConfirmedWaitsAndTheirResolutionOnce() async throws {
+        let launcher = Launcher(), monitor = monitor(launcher)
+        await monitor.start(home: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), remoteTargets: [target()]) { _, _, _, _ in }
+        let child = try XCTUnwrap(launcher.children.first), date = Date().timeIntervalSince1970
+        func event(_ kind: String, at: Double) throws -> Data {
+            try row(["kind": kind, "origin": "hook", "sessionId": "fixture-session", "promptId": "fixture-turn", "itemId": "fixture-item", "at": at])
+        }
+        await child.output(try event("prompt", at: date) + event("approval", at: date + 1))
+        await child.output(try event("approval", at: date + 1))
+        XCTAssertEqual(child.waitingUpdates, [["fixture-session"]])
+        await child.output(try event("attentionCleared", at: date + 2))
+        XCTAssertEqual(child.waitingUpdates, [["fixture-session"], []])
+        await monitor.shutdown()
+    }
     func testFragmentedTerminalFramesHeartbeatEOFAndLateResultsShareOneLifecycle() async throws {
         let launcher = Launcher(), monitor = monitor(launcher), target = target(), observations = Observations()
         await monitor.start(home: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), remoteTargets: [target]) { _, _, _, _ in observations.receive() }

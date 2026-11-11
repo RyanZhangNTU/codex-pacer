@@ -280,9 +280,13 @@ struct ClaudeActivityState: Sendable {
     var attention: [PendingAttentionRequest] { requests.values.sorted { $0.detectedAt < $1.detectedAt } }
     var performanceUpdates: [SessionPerformanceUpdate] { Array(metrics.values) }
     var knownStartedSessionIDs: Set<String> { excludedSessions.union(sessions.values.filter { $0.turnID != nil }.compactMap(\.threadID)) }
+    var waitingSessionIDs: Set<String> {
+        Set(sessions.values.filter { $0.phase == .waitingForInput }.compactMap(\.threadID))
+            .union(requests.values.map(\.threadID))
+    }
     func prioritySessionIDs(at now: Date) -> Set<String> {
-        Set(sessions.values.compactMap { value in
-            guard value.phase == .running || value.phase == .waitingForInput,
+        waitingSessionIDs.union(sessions.values.compactMap { value in
+            guard value.phase == .running,
                   let observed = value.lastObserved, (-5..<900).contains(now.timeIntervalSince(observed)) else { return nil }
             return value.threadID
         })
@@ -322,7 +326,7 @@ struct ClaudeActivityState: Sendable {
         // root outlived end once their records of this read applied.
         endOutlivedChildren(Array(sessions.keys), now: now, historical: true)
         for id in historicalRunning where [.running, .waitingForInput].contains(sessions[id]?.phase ?? .unknown) {
-            guard let observed = sessions[id]?.lastObserved, now.timeIntervalSince(observed) <= 900 else { sessions[id]?.markSourceUnavailable(); continue }
+            guard let observed = sessions[id]?.lastObserved, now.timeIntervalSince(observed) <= 900 else { expireBaseline(id); continue }
             unconfirmedBaseline[id] = observed
         }
         historicalRunning.removeAll()
@@ -335,9 +339,13 @@ struct ClaudeActivityState: Sendable {
                 unconfirmedBaseline.removeValue(forKey: id); continue
             }
             guard now.timeIntervalSince(observed) > 900 else { continue }
-            sessions[id]?.markSourceUnavailable(); unconfirmedBaseline.removeValue(forKey: id)
+            expireBaseline(id); unconfirmedBaseline.removeValue(forKey: id)
         }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
+    }
+    private mutating func expireBaseline(_ id: String) {
+        if let thread = sessions[id]?.threadID { requests = requests.filter { $0.value.threadID != thread } }
+        sessions[id]?.markSourceUnavailable()
     }
     mutating func unavailable() {
         status.connected = false; status.sourceAvailable = nil; status.watchingLogs = false
@@ -672,8 +680,8 @@ struct ClaudeActivityState: Sendable {
             // A turn paused for its background work keeps running until the
             // wake; an interrupt or an error still ends it.
             if ["stop", "stopVerified"].contains(kind), value.currentBackgroundWait != nil { sessions[key] = value; return }
-            let observedDuringStartup = !attaching && record["observedDuringStartup"] as? Bool == true
-            if (value.phase == .unknown || (observedDuringStartup && !value.liveTurnStarted)),
+            let observedWhileUnwatched = !attaching && record["observedWhileUnwatched"] as? Bool == true
+            if (value.phase == .unknown || (observedWhileUnwatched && !value.liveTurnStarted)),
                value.turnID == turn, value.turnStartedAt != nil,
                ClaudeActivityRecord.identifier(record["promptId"] as? String) == turn {
                 // A matching end can settle a known turn that lost its
@@ -710,7 +718,10 @@ struct ClaudeActivityState: Sendable {
         if historical {
             value.suppressHistoricalCompletionNotifications()
             if [.running, .waitingForInput].contains(value.phase) { historicalRunning.insert(key) } else { historicalRunning.remove(key) }
-        } else { historicalRunning.remove(key) }
+        } else {
+            historicalRunning.remove(key)
+            unconfirmedBaseline.removeValue(forKey: key)
+        }
         sessions[key] = value.canonicalized(); status.notifications += 1
         if ["prompt", "subagentStart", "toolStart", "thinking", "response"].contains(kind) {
             if let launch = agentLaunches[key] {

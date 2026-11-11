@@ -406,11 +406,11 @@ def regular_mtime(path):
     except OSError: return None
 
 class TranscriptInventory:
-    def __init__(self, root, project_limit, file_limit, watch_project, startup_at):
-        self.projects = []; self.files = []
+    def __init__(self, root, project_limit, file_limit, watch_project, live_after, attached, observed, follow_up):
+        self.projects = []; self.files = []; self.fresh = []
         self.stamps = {}; self.changed = False
-        self.ready = False; self.drain_boundaries = {}
-        self.startup_at = startup_at
+        self.ready = False; self.drain_boundaries = None
+        self.live_after = live_after; self.attached = attached; self.observed = observed; self.follow_up = follow_up
         self.walk = self.entries(root, project_limit, file_limit, watch_project)
     @staticmethod
     def stamp(path):
@@ -437,11 +437,16 @@ class TranscriptInventory:
         row = (date, str(path), details)
         if len(rows) < limit: heapq.heappush(rows, row)
         elif row[:2] > rows[0][:2]: heapq.heapreplace(rows, row)
+    def consider(self, limit, date, path, session, parent):
+        row = (path, session, parent, False)
+        self.keep(self.files, limit, date, path, row)
+        if path not in self.attached and date > max(self.live_after, self.observed.get(path,(None,0,0))[2]):
+            self.keep(self.fresh, Tailer.NEW_LOG_SLOTS, date, path, row)
     def entries(self, root, project_limit, file_limit, watch_project):
         self.stamps[root] = self.stamp(root)
         yield
         for entry in self.directory(root):
-            if entry is not None:
+            if entry is not None and not entry.name.startswith('.'):
                 try:
                     if entry.is_dir(follow_symlinks=False):
                         path = pathlib.Path(entry.path)
@@ -455,14 +460,13 @@ class TranscriptInventory:
             yield
             for entry in self.directory(project):
                 folder = None; parent = None
-                if entry is not None:
+                if entry is not None and not entry.name.startswith('.'):
                     path = pathlib.Path(entry.path)
                     try:
                         if path.suffix == '.jsonl' and entry.is_file(follow_symlinks=False):
                             session = ident(path.stem)
                             if session:
-                                self.keep(self.files, file_limit, entry.stat(follow_symlinks=False).st_mtime,
-                                          path, (path, session, None, False))
+                                self.consider(file_limit, entry.stat(follow_symlinks=False).st_mtime, path, session, None)
                         elif entry.is_dir(follow_symlinks=False):
                             parent = ident(entry.name)
                             subagents = path/'subagents'
@@ -477,8 +481,7 @@ class TranscriptInventory:
                             try:
                                 if aid and agent.is_file(follow_symlinks=False):
                                     path = pathlib.Path(agent.path)
-                                    self.keep(self.files, file_limit, agent.stat(follow_symlinks=False).st_mtime,
-                                              path, (path, aid, parent, False))
+                                    self.consider(file_limit, agent.stat(follow_symlinks=False).st_mtime, path, aid, parent)
                             except OSError: pass
                         yield
         # Directory changes can land after their entries were consumed and
@@ -500,11 +503,13 @@ class Tailer:
     DISCOVERY_STEPS = 512
     PROJECT_LIMIT = 64
     FILE_LIMIT = 32
+    NEW_LOG_SLOTS = 2
     ACTIVITY_LEASE = 900
     pending_unavailable = None
     def __init__(self, home):
         self.home = home; self.cursors = {}; self.watches = {}; self.dirty = set(); self.fd = -1; self.scans = 0
         self.inventory = None; self.inventory_changed = False; self.project_watch = None
+        self.retiring = {}; self.observed = {}; self.waiting = set(); self.live_after = time.time()
         if sys.platform.startswith('linux'):
             try:
                 import ctypes
@@ -514,15 +519,16 @@ class Tailer:
     def discovering(self): return self.inventory is not None
     @property
     def read_pending(self): return bool(self.dirty or self.pending_unavailable)
-    def discover(self):
+    def discover(self, follow_up=False):
+        if self.retiring: return False
         root = self.home/'projects'; spool = self.home/'pacer'; events = spool/'events.jsonl'
         first_slice = self.inventory is None
         watches_changed = first_slice
         if self.inventory is None:
             self.scans += 1
             self.inventory_changed = False
-            startup_at = time.time() if self.scans == 1 else None
-            self.inventory = TranscriptInventory(root, self.PROJECT_LIMIT, self.FILE_LIMIT, self.watch_first_project, startup_at)
+            self.inventory = TranscriptInventory(root, self.PROJECT_LIMIT, self.FILE_LIMIT, self.watch_first_project,
+                                                 self.live_after, set(self.cursors), self.observed.copy(), follow_up)
         # The spool may be created during a long inventory. On startup,
         # neither its presence nor its absence should delay other watches.
         if events not in self.cursors and len(self.cursors) < self.FILE_LIMIT and regular_mtime(events) is not None:
@@ -536,45 +542,55 @@ class Tailer:
         # An abandoned cursor must eventually yield its slot. Expiry only
         # changes discovery priority. It does not establish a turn ending.
         now = time.time()
-        active = [(cursor['activeAt'], str(file), file, cursor) for file, cursor in self.cursors.items()
-                  if 'activeAt' in cursor and -5 <= now-cursor['activeAt'] < self.ACTIVITY_LEASE]
-        for _, _, file, cursor in sorted(active, reverse=True):
-            if len(selected) >= self.FILE_LIMIT: break
-            if file not in selected and regular_mtime(file) is not None:
-                selected[file] = (file, cursor['session'], cursor['parent'], cursor['owned'])
-        for _, _, row in sorted(inventory.files, reverse=True):
-            if len(selected) >= self.FILE_LIMIT: break
-            file = row[0]
-            if file not in selected and regular_mtime(file) is not None: selected[file] = row
+        current = sorted(self.cursors.items(), key=lambda row:(row[1].get('modified',0),str(row[0])), reverse=True)
+        fresh = [row for _,_,row in sorted(inventory.fresh,reverse=True) if regular_mtime(row[0]) is not None]
+        def add(rows, limit=self.FILE_LIMIT):
+            for row in rows:
+                if len(selected) >= limit: break
+                if row[0] not in selected and regular_mtime(row[0]) is not None: selected[row[0]] = row
+        def cursor_row(file,cursor):return file,cursor['session'],cursor['parent'],cursor['owned']
+        add((cursor_row(file,cursor) for file,cursor in current if cursor['session'] in self.waiting),self.FILE_LIMIT-len(fresh))
+        add(fresh)
+        add(cursor_row(file,cursor) for file,cursor in current if 'activeAt' in cursor and -5 <= now-cursor['activeAt'] < self.ACTIVITY_LEASE)
+        add(row for _,_,row in sorted(inventory.files,reverse=True))
         desired = set(selected)
-        deferred = {file for file, cursor in self.cursors.items()
-                    if file not in desired and self.unread_at_selection(inventory, file, cursor)}
-        if deferred:
-            self.dirty.update(deferred)
-            return False
-        self.inventory = None; self.inventory_changed = inventory.changed
+        if inventory.drain_boundaries is None:
+            inventory.drain_boundaries = {}
+            for file,cursor in self.cursors.items():
+                if file in desired:continue
+                boundary = self.file_boundary(file)
+                if boundary and self.unread_through(cursor,boundary):inventory.drain_boundaries[file] = boundary
+            if inventory.drain_boundaries:
+                # Read one chunk before choosing; a queued event may renew
+                # a lease. New files do not wait for the rest of the backlog.
+                self.dirty.update(inventory.drain_boundaries)
+                return False
+        self.inventory = None; self.inventory_changed = inventory.changed and not inventory.follow_up
         for file in list(self.cursors):
-            if file not in desired: self.drop(file, now)
-        self.dirty.intersection_update(desired)
+            if file in desired:continue
+            boundary = inventory.drain_boundaries.get(file) or self.file_boundary(file)
+            if boundary and self.unread_through(self.cursors[file],boundary):
+                self.retiring[file] = boundary; self.dirty.add(file)
+            else:self.drop(file,now)
+        self.dirty.intersection_update(desired.union(self.retiring))
         for file, session, parent, owned in selected.values():
-            self.attach(file, session, parent, owned, inventory.startup_at if not first_slice else None)
+            self.attach(file, session, parent, owned)
         projects = sorted(inventory.projects, reverse=True)
         self.project_watch = projects[0][2] if projects else None
         self.update_discovery_watches()
         return True
     @staticmethod
-    def unread_at_selection(inventory, file, cursor):
-        if not cursor['inode'] or 'activeAt' not in cursor: return False
+    def file_boundary(file):
         try: info = file.lstat()
-        except OSError: return False
-        if not stat.S_ISREG(info.st_mode): return False
-        # Freeze the observed EOF. A writer appending while we catch up
-        # cannot keep a completed inventory pending indefinitely.
-        inode, end = inventory.drain_boundaries.setdefault(file, (info.st_ino, info.st_size))
-        if info.st_ino != inode: return False
-        end = min(end, info.st_size)
+        except OSError: return None
+        if stat.S_ISREG(info.st_mode):return (info.st_dev,info.st_ino),info.st_size,info.st_mtime
+    @staticmethod
+    def unread_through(cursor,boundary):
+        if not cursor['inode']:return False
+        identity,end,_ = boundary
+        if (cursor['device'],cursor['inode']) != identity:return False
         offset = cursor['offset']
-        if cursor['inode'] != inode or info.st_size < offset: return end > 0
+        if offset > end:return False
         if offset < end: return True
         fragment = cursor['fragment']
         return fragment.find(b'\n', 0, max(0, end - offset + len(fragment))) >= 0
@@ -585,27 +601,31 @@ class Tailer:
     def update_discovery_watches(self):
         dirs = [self.home, self.home/'projects', self.home/'pacer']
         if self.project_watch is not None: dirs.append(self.project_watch)
-        self.update_watches(set(self.cursors).union(dirs))
-    def attach(self, file, session, parent, owned, startup_at=None):
+        self.update_watches(set(self.cursors).difference(self.retiring).union(dirs))
+    def attach(self, file, session, parent, owned):
         if file not in self.cursors:
             if self.pending_unavailable: self.pending_unavailable.pop(session,None)
-            cursor = {'inode':0,'offset':0,'fragment':b'','session':session,'parent':parent,'owned':owned,'historicalEnd':None}
-            if startup_at is not None and not owned:
-                try:
-                    info = file.lstat()
-                    if stat.S_ISREG(info.st_mode):
-                        cursor['startupBoundary'] = (info.st_dev,info.st_ino,startup_at)
-                except OSError: pass
+            boundary=self.file_boundary(file)
+            cursor = {'inode':0,'device':0,'offset':0,'fragment':b'','session':session,'parent':parent,'owned':owned,
+                      'historicalEnd':None,'liveAfter':self.live_after if boundary else None,'replay':self.observed.get(file),
+                      'attachedIdentity':boundary[0] if boundary else None}
             self.cursors[file] = cursor
             self.dirty.add(file)
     def drop(self, file, now):
         cursor = self.cursors.pop(file,None)
-        if cursor is None or 'activeAt' not in cursor: return
+        self.retiring.pop(file,None)
+        if cursor is None:return
+        if file not in self.observed and len(self.observed) >= 512:self.observed.pop(next(iter(self.observed)))
+        self.observed.pop(file,None)
+        identity = (cursor['device'],cursor['inode']) if cursor['inode'] else None
+        self.observed[file] = (identity,cursor['offset']-len(cursor['fragment']),cursor.get('modified',now))
+        if cursor['owned'] or 'activeAt' not in cursor and cursor['session'] not in self.waiting:return
         session = cursor['session']
         if self.pending_unavailable is None: self.pending_unavailable = {}
         pending = self.pending_unavailable
         if len(pending) >= self.FILE_LIMIT and session not in pending: pending.pop(next(iter(pending)))
-        pending[session] = {'kind':'unavailable','origin':'reader','sessionId':session,'promptId':cursor['activePrompt'],'at':now}
+        pending[session] = {'kind':'unavailable','origin':'reader','sessionId':session,'at':now}
+        if cursor.get('activePrompt'):pending[session]['promptId'] = cursor['activePrompt']
     def update_watches(self, watches):
         for wd,path in list(self.watches.items()):
             if path not in watches:
@@ -646,9 +666,11 @@ class Tailer:
         return discover
     def poll(self):
         for file,cursor in list(self.cursors.items()):
+            if file in self.retiring:continue
             try:
                 s=file.stat()
-                if s.st_ino != cursor['inode'] or s.st_size != cursor['offset'] or b'\n' in cursor['fragment']: self.dirty.add(file)
+                if (s.st_dev,s.st_ino) != (cursor['device'],cursor['inode']) or s.st_size != cursor['offset'] or b'\n' in cursor['fragment']:
+                    self.dirty.add(file)
             except OSError: self.drop(file,time.time())
     def read(self):
         rows = list(self.pending_unavailable.values()) if self.pending_unavailable else []
@@ -656,29 +678,37 @@ class Tailer:
         # Explicit hooks establish the current turn before transcript fallback
         # endings are correlated. Set iteration otherwise changes cold replay
         # semantics, especially for nonhuman engine continuation prompts.
-        for file in sorted(self.dirty,key=lambda path:(not self.cursors.get(path,{}).get('owned',False),str(path))):
+        for file in sorted(self.dirty,key=lambda path:(not self.cursors.get(path,{}).get('owned',False),path in self.retiring,str(path))):
             cursor=self.cursors.get(file)
             if owned_backlog and cursor is not None and not cursor['owned']:continue
             self.dirty.discard(file)
             if cursor is None: continue
             try:
-                s=file.stat();reset=s.st_ino!=cursor['inode'] or cursor['offset']>s.st_size
+                s=file.lstat();identity=(s.st_dev,s.st_ino);retirement=self.retiring.get(file)
+                if not stat.S_ISREG(s.st_mode) or retirement and (identity!=retirement[0] or s.st_size<retirement[1]):
+                    self.drop(file,time.time());continue
+                preflight=(self.inventory.drain_boundaries or {}).get(file) if self.inventory else None
+                if preflight and (identity!=preflight[0] or s.st_size<preflight[1]):preflight=None
+                boundary=retirement or preflight
+                size=boundary[1] if boundary else s.st_size
+                cursor['modified']=boundary[2] if boundary else s.st_mtime
+                reset=identity!=(cursor['device'],cursor['inode']) or cursor['offset']>size
                 if reset:
-                    startup = cursor.get('startupBoundary')
-                    if startup and (cursor['inode'] or (s.st_dev,s.st_ino) != startup[:2]):
-                        cursor.pop('startupBoundary',None)
-                    cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,context={},contextOrder=[],deferred={},discardingOversize=False)
+                    replay=cursor.get('replay')
+                    if cursor['inode'] or identity!=cursor.pop('attachedIdentity',None) or replay and (identity!=replay[0] or size<replay[1]):
+                        cursor.update(liveAfter=None,replay=None)
+                    cursor.update(inode=s.st_ino,device=s.st_dev,offset=0,fragment=b'',historicalEnd=size,context={},contextOrder=[],deferred={},discardingOversize=False)
                     self.clear_activity(cursor)
-                budget=512*1024 if cursor['offset']==0 else 128*1024
+                budget=512*1024 if reset else 128*1024
                 # Large normal attachment appends must drain sequentially;
                 # the per-read budget is not an actual missing-data boundary.
-                gap=s.st_size-cursor['offset']>(budget if cursor['offset']==0 else 8*1024*1024)
+                gap=size-cursor['offset']>(budget if reset else 8*1024*1024)
                 if gap:
-                    cursor.update(offset=s.st_size-budget,fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=False)
+                    cursor.update(offset=size-budget,fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=False)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                     self.clear_activity(cursor)
                 fragment_start=cursor['offset']-len(cursor['fragment'])
-                with file.open('rb') as handle: handle.seek(cursor['offset']);data=handle.read(budget)
+                with file.open('rb') as handle: handle.seek(cursor['offset']);data=handle.read(min(budget,size-cursor['offset']))
                 cursor['offset']+=len(data);fragment=cursor['fragment']+data
                 if gap:
                     dropped,sep,fragment=fragment.partition(b'\n');fragment_start+=len(dropped)+len(sep)
@@ -692,7 +722,10 @@ class Tailer:
                 if rest: fragment=b'\n'.join(rest)+b'\n'+fragment;self.dirty.add(file)
                 cursor['fragment']=fragment
                 for line in lines:
-                    historical=cursor['historicalEnd'] is not None and fragment_start<cursor['historicalEnd'];fragment_start+=len(line)+1
+                    historical=cursor['historicalEnd'] is not None and fragment_start<cursor['historicalEnd']
+                    replay=cursor.get('replay')
+                    cutoff=cursor['liveAfter'] if historical and (not replay or fragment_start>=replay[1]) else None
+                    fragment_start+=len(line)+1
                     if len(line)>MAX_FRAME:
                         cursor.update(context={},contextOrder=[],deferred={})
                         self.clear_activity(cursor)
@@ -708,34 +741,34 @@ class Tailer:
                         if prompt is None and cursor.get('awaiting'):
                             owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER)
                             values=unowned_rows(owned)
-                            self.defer_record(cursor,self.startup_rows(cursor,owned,historical),historical)
+                            self.defer_record(cursor,self.classify(owned,historical,cutoff),historical)
                         else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt)
                     # A late parent proves the owner of descendants read before it.
                     released = cursor.pop('released',[])
                     if not cursor['owned']:
                         self.note_activity(cursor, values)
                         self.note_activity(cursor, released)
-                    rows.extend(self.startup_rows(cursor,values,historical))
+                    rows.extend(self.classify(values,historical,cutoff))
                     rows.extend(released)
                 if len(cursor['fragment'])>MAX_FRAME:
                     cursor.update(fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=True)
                     self.clear_activity(cursor)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
-                if cursor['offset']<s.st_size:self.dirty.add(file)
+                if cursor['offset']<size:self.dirty.add(file)
                 # Keep both byte/line budgets. Complete owned records must
                 # catch up before fallback logs; an unfinished EOF fragment
                 # alone must neither starve logs nor create a polling loop.
-                if cursor['owned'] and (cursor['offset']<s.st_size or b'\n' in cursor['fragment']):owned_backlog=True
+                if cursor['owned'] and (cursor['offset']<size or b'\n' in cursor['fragment']):owned_backlog=True
                 if cursor['historicalEnd'] is not None and cursor['offset']>=cursor['historicalEnd'] and (not cursor['fragment'] or cursor['offset']-len(cursor['fragment'])>=cursor['historicalEnd']):
-                    cursor['historicalEnd']=None;cursor.pop('startupBoundary',None)
+                    cursor.update(historicalEnd=None,liveAfter=None,replay=None)
+                if retirement and not self.unread_through(cursor,retirement):self.drop(file,time.time())
             except OSError:self.drop(file,time.time())
         return rows
     @staticmethod
-    def startup_rows(cursor, rows, historical):
-        startup = cursor.get('startupBoundary') if historical else None
+    def classify(rows,historical,cutoff):
         for row in rows:
-            if startup and row.get('promptId') and not row.get('unownedTurn') and row['at'] > startup[2]:
-                yield dict(row,historical=False,observedDuringStartup=True)
+            if cutoff is not None and row.get('promptId') and not row.get('unownedTurn') and row['at'] > cutoff:
+                yield dict(row,historical=False,observedWhileUnwatched=True)
             else: yield dict(row,historical=historical)
     @staticmethod
     def clear_activity(cursor):
@@ -866,21 +899,21 @@ def main():
             publish(pending);pending=[];pending_due=None
         elif pending_due is None:pending_due=time.monotonic()+interval
     publish(rows);next_scan=time.monotonic()+60;next_poll=time.monotonic()+2;heartbeat=0;loops=0;stdin=b''
-    next_slice=time.monotonic()+.1;scan_requested=tailer.inventory_changed
+    next_slice=time.monotonic()+.1;next_event_scan=time.monotonic()+1
+    retry_scan=tailer.inventory_changed;scan_requested=False
     try:
         while True:
             now=time.monotonic();loops+=1
             if pending_due is not None and now>=pending_due:publish(pending);pending=[];pending_due=None
             if now>=heartbeat:
                 heartbeat=now+15;emit({'kind':'status','connected':True,'claudeHome':home.is_dir(),'watchingLogs':bool(tailer.cursors),'scans':tailer.scans,'cpuSeconds':time.process_time(),'loopIterations':loops,'telemetry':listener is not None})
-            if now>=next_scan:
-                if not tailer.discovering:scan_requested=True
-                next_scan=now+60
-            if (scan_requested or tailer.discovering) and now>=next_slice:
-                if not tailer.discovering:scan_requested=False
-                if tailer.discover():
-                    cold_inventory=False;next_scan=time.monotonic()+60
-                    scan_requested=scan_requested or tailer.inventory_changed
+            start_scan=not tailer.retiring and (retry_scan or now>=next_scan or scan_requested and now>=next_event_scan)
+            if (start_scan or tailer.discovering) and now>=next_slice:
+                follow_up=not tailer.discovering and retry_scan and now<next_scan
+                if not tailer.discovering:scan_requested=False;retry_scan=False
+                if tailer.discover(follow_up):
+                    cold_inventory=False;next_scan=time.monotonic()+60;next_event_scan=time.monotonic()+1
+                    retry_scan=tailer.inventory_changed
                 next_slice=time.monotonic()+.1
             if now>=next_poll:tailer.poll();next_poll=now+(30 if tailer.fd>=0 else 2)
             if tailer.read_pending:queue_rows(tailer.read())
@@ -890,8 +923,11 @@ def main():
             inputs=[sys.stdin.fileno()]+list(clients)
             if listener:inputs.append(listener)
             if tailer.fd>=0:inputs.append(tailer.fd)
-            deadlines=[heartbeat,next_scan,next_poll]+[s['deadline'] for s in clients.values()]
-            if scan_requested or tailer.discovering:deadlines.append(next_slice)
+            deadlines=[heartbeat,next_poll]+[s['deadline'] for s in clients.values()]
+            if tailer.discovering or retry_scan and not tailer.retiring:deadlines.append(next_slice)
+            if not tailer.discovering and not tailer.retiring:
+                deadlines.append(max(next_scan,next_slice))
+                if scan_requested:deadlines.append(max(next_event_scan,next_slice))
             if pending_due is not None:deadlines.append(pending_due)
             if tailer.read_pending:deadlines.append(now+.1)
             timeout=max(0,min(deadlines)-now)
@@ -911,6 +947,8 @@ def main():
                         if isinstance(settings,dict):
                             value=number(settings.get('batchInterval'))
                             if value is not None:interval=min(5,max(.1,value))
+                            waiting=settings.get('waitingSessionIDs')
+                            if isinstance(waiting,list):tailer.waiting={session for value in waiting[:128] for session in [ident(value)] if session}
                             if settings.get('flushPending'):
                                 if pending:publish(pending);pending=[];pending_due=None
                                 tailer.poll()
