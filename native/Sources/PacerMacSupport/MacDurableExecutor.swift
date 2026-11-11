@@ -12,20 +12,25 @@ struct MacDurableExecutor: Equatable, Sendable {
     let environmentID: String
     let application: URL
 
+    /// The bundle's `bin/codex` wrapper is an unsigned script, so start the
+    /// signed binary itself, as the local Codex collector does.
     static func verifiedCLI(in application: URL) -> URL? {
-        let resources = application.resolvingSymlinksInPath().appendingPathComponent("Contents/Resources")
-        let cli = resources.appendingPathComponent("codex-cli/bin/codex")
-        guard cli.resolvingSymlinksInPath().path.hasPrefix(resources.path + "/"),
-              FileManager.default.isExecutableFile(atPath: cli.path), isSignedCodex(application) else { return nil }
+        let root = application.resolvingSymlinksInPath()
+        guard let cli = MacExecutablePlatform.appExecutables.lazy.map(root.appendingPathComponent)
+                .first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }),
+              cli.resolvingSymlinksInPath().path.hasPrefix(root.path + "/"), isSignedCodex(cli) else { return nil }
         return cli
     }
 
-    static func isSignedCodex(_ application: URL) -> Bool {
+    /// Only the signer is checked. Checking the whole bundle hashed about
+    /// 1.6 GB per connection; macOS checks each page against this signature
+    /// as the CLI runs and stops it if one does not match.
+    static func isSignedCodex(_ executable: URL) -> Bool {
         var code: SecStaticCode?, requirement: SecRequirement?
-        let expression = #"anchor apple generic and identifier "com.openai.codex" and certificate leaf[subject.OU] = "2DC432GLL2""#
-        guard SecStaticCodeCreateWithPath(application as CFURL, [], &code) == errSecSuccess, let code,
+        let expression = #"anchor apple generic and certificate leaf[subject.OU] = "2DC432GLL2""#
+        guard SecStaticCodeCreateWithPath(executable as CFURL, [], &code) == errSecSuccess, let code,
               SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement else { return false }
-        return SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess
+        return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSBasicValidateOnly), requirement) == errSecSuccess
     }
 
     static func find(peer: pid_t) -> Self? {

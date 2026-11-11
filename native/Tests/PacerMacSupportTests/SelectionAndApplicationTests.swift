@@ -44,4 +44,21 @@ final class SelectionAndApplicationTests: XCTestCase {
         XCTAssertNil(CodexApplicationResolver.find(applicationURLs: [wrong]))
         XCTAssertNil(CodexApplicationResolver.find(applicationURLs: [directory.appendingPathComponent("Missing.app")]))
     }
+
+    /// The Durable CLI check reads only the signer, so the binary Pacer starts
+    /// must carry OpenAI's signature itself, not just sit in a Codex bundle.
+    func testDurableCLIMustBeSignedByOpenAI() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let app = directory.appendingPathComponent("Codex.app")
+        let cli = app.appendingPathComponent(MacExecutablePlatform.appExecutables[0])
+        try FileManager.default.createDirectory(at: cli.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: cli)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cli.path)
+        XCTAssertNil(MacDurableExecutor.verifiedCLI(in: app), "An unsigned script is refused")
+        try FileManager.default.removeItem(at: cli)
+        try FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: cli.path)
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: cli.path))
+        XCTAssertNil(MacDurableExecutor.verifiedCLI(in: app), "A binary another team signed is not Codex's CLI")
+    }
 }

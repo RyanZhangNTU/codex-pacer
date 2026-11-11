@@ -16,7 +16,7 @@ enum WindowsDurableCatalog {
     private struct Connection {
         let binding: Binding
         let reader: DurableCatalogReader
-        let expires = Date().addingTimeInterval(120)
+        let expires = Date().addingTimeInterval(DurableCatalogReader.connectionLifetime)
     }
 
     static func observe(home: URL, desktop: WindowsProcessIdentity, package: URL,

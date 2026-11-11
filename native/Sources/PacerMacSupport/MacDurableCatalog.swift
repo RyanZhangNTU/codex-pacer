@@ -84,7 +84,7 @@ enum MacDurableCatalog {
     private final class Connection {
         let executor: MacDurableExecutor
         let fingerprint: String?
-        let expiresAt = Date().addingTimeInterval(120)
+        let expiresAt = Date().addingTimeInterval(DurableCatalogReader.connectionLifetime)
         let reader: DurableCatalogReader
 
         init(request: URLRequest, scope: String, executor: MacDurableExecutor, fingerprint: String?) {
