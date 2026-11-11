@@ -23,10 +23,17 @@ internal static class ExpandedPanelChecks
     internal static async Task Run(string language, bool dark, string output)
     {
         var engine = new EngineClient();
-        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "expandedPanel" };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "expandedPanel", ShowInFullscreen = true };
         int configurations = 0;
-        var session = new PreferencesSession(preferences, async value => { configurations++; await engine.SendAsync("configure", value); }, _ => true);
+        TaskCompletionSource? configurationGate = null;
+        var session = new PreferencesSession(preferences, async value =>
+        {
+            configurations++;
+            if (configurationGate is { } gate) await gate.Task;
+            await engine.SendAsync("configure", value);
+        }, _ => true);
         var island = new IslandWindow(engine, true, language == "zh-Hans", animationOverride: false) { IsHitTestVisible = false, ShowActivated = false };
+        island.ApplyPreferences(preferences);
         session.Changed += island.ApplyPreferences;
         var ui = UiText.For(language == "zh-Hans");
         var window = new SettingsWindow(ui, session, new Startup(), true, dark, engine) { IsHitTestVisible = false, ShowActivated = false };
@@ -40,7 +47,7 @@ internal static class ExpandedPanelChecks
             var actions = (FrameworkElement)island.FindName("PanelActions");
             Check(island.LogicalTarget.Width == 404 && island.LogicalTarget.Height == 438 && ReferenceEquals(content.Children[0], island.FindName("TasksSection"))
                 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
-                "Without a saved layout the panel keeps the reference tasks-then-quota panel with its buttons in the task header");
+                "Without a saved layout the panel keeps the reference tasks-then-quota panel with its buttons in the task header. " + island.PresentationDiagnostics);
             CheckClockSnapshots(island, engine.LatestSnapshot!);
 
             await Until(() => Present<Button>(window, "panel.block.tasks"));
@@ -68,12 +75,35 @@ internal static class ExpandedPanelChecks
             await engine.SendAsync("refresh", new { discover = false }); await Pump();
             Check(ReferenceEquals(codex, Find<Button>(window, "panel.editor.codex")), "A refresh with the same outline keeps its focusable buttons");
             // The keyboard moves a block in the outline, as dragging does.
-            MoveUp(codex);
+            if (checkFocus) configurationGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                MoveUp(codex);
+                if (checkFocus)
+                {
+                    await Until(() => configurations > before);
+                    var tasks = Find<Button>(window, "panel.editor.tasks");
+                    var library = Find<Button>(window, "panel.block.actions");
+                    Check(tasks.IsEnabled && library.IsEnabled && !Find<Button>(window, "panel.block.codex.toggle").IsEnabled,
+                        "Block selection stays enabled while settings writes are blocked");
+                    Invoke(tasks);
+                    await Until(() => AutomationProperties.GetItemStatus(tasks) == ui.Text("main.panel.selected"));
+                    Invoke(library);
+                    await Until(() => AutomationProperties.GetItemStatus(library) == ui.Text("main.panel.selected"));
+                    Check(!Find<CheckBox>(window, "panel.option.action.pin").IsEnabled,
+                        "Selecting another block cannot edit it during a save");
+                }
+            }
+            finally { configurationGate?.TrySetResult(); configurationGate = null; }
             await Until(() => session.Current.ExpandedPanelLayout?.StartsWith("{\"blocks\":[\"codex\",\"tasks\"", StringComparison.Ordinal) == true);
             if (checkFocus)
             {
                 await Until(() => Present<Button>(window, "panel.editor.codex") && !ReferenceEquals(codex, Find<Button>(window, "panel.editor.codex")));
                 Check(Find<Button>(window, "panel.editor.codex").IsKeyboardFocused, "Saving a move returns keyboard focus to the moved outline block");
+                Check(Find<CheckBox>(window, "panel.option.action.pin").IsVisible && Find<CheckBox>(window, "panel.option.action.pin").IsEnabled,
+                    "The newest block selection survives the save and projection refresh");
+                Invoke(Find<Button>(window, "panel.editor.codex"));
+                await Until(() => Find<RadioButton>(window, "panel.option.codex.arrange.stack").IsVisible);
             }
             await Until(() => ReferenceEquals(content.Children[0], island.FindName("QuotaSection")));
             await island.WaitForPresentationAsync();

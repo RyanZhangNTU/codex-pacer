@@ -164,6 +164,8 @@ internal sealed partial class SettingsWindow
                 if (panelProjection?.Catalog.FirstOrDefault(value => value.Id == id) is { Locked: true }) return;
                 await EditPanel(new("toggle", id));
             }), fixedTile ? ui.Text("main.panel.always") : null);
+        // Selecting a block doesn't write preferences.
+        editors.Remove(tile.Body);
         tile.Root.Margin = new Thickness(0, 0, 0, 5);
         panelTiles[id] = tile;
         return tile.Root;
@@ -335,7 +337,7 @@ internal sealed partial class SettingsWindow
             text.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = chip });
             text.SetBinding(TextBlock.FontWeightProperty, new System.Windows.Data.Binding(nameof(FontWeight)) { Source = chip });
             content.Children.Add(text);
-            chip.Content = content; Identify(chip, "panel.option.field." + field, ui.Text("panel.field." + field)); panelChips[field] = chip;
+            chip.Content = content; Identify(chip, "panel.option.field." + field, ui.Text("panel.field." + field)); editors.Add(chip); panelChips[field] = chip;
             RoutedEventHandler changed = async (_, _) =>
             {
                 if (synchronizing || !CanEditPanel || !chip.IsVisible || !chip.IsEnabled) return;
@@ -382,7 +384,7 @@ internal sealed partial class SettingsWindow
 
     internal void SelectPanelBlock(string id)
     {
-        if (!CanEditPanel) return;
+        if (activePane != "expandedPanel" || sourceClosed || panelEditor?.IsEnabled != true || !panelTiles.ContainsKey(id)) return;
         if (id != panelSelected && panelInfoButton != null && panelInspectorDetail?.Parent is Border box) SetInfoShown(panelInfoButton, box, false);
         panelSelected = id;
         bool previous = synchronizing; synchronizing = true;
@@ -395,10 +397,12 @@ internal sealed partial class SettingsWindow
         var state = ReadPanel();
         var projection = panelProjection = state.Value;
         bool ready = projection != null && !session.RequiresRestart;
-        // Keep the outline's focus during a pending read. Its actions wait for
-        // the new projection; a failed or disconnected read disables it.
-        panelEditor.IsEnabled = ready || state.Pending && !session.RequiresRestart;
-        panelLibrary!.IsEnabled = panelInspector!.IsEnabled = ready;
+        // Selection stays local during a save or read. Mutations wait for the
+        // new projection, and a failed or disconnected read disables selection.
+        panelEditor.IsEnabled = panelLibrary!.IsEnabled = ready || state.Pending && !session.RequiresRestart;
+        panelInspector!.IsEnabled = ready;
+        foreach (var tile in panelTiles.Values)
+            if (tile.Toggle is { } toggle) toggle.IsEnabled = ready && !busy;
         panelRestore!.IsEnabled = ready && !busy;
         if (projection == null) return;
         var preferences = session.Current; var options = projection.Options;
@@ -450,7 +454,7 @@ internal sealed partial class SettingsWindow
             chip.IsChecked = options.RowFields.Contains(field);
             // One line keeps only the speed and the turn time; the others wait, faded.
             bool usable = !options.OneLine || field is "rate" or "turnTime";
-            chip.IsEnabled = usable && !session.RequiresRestart;
+            chip.IsEnabled = usable && !busy && !session.RequiresRestart;
             AutomationProperties.SetHelpText(chip, usable ? "" : ui.Text("main.panel.row_style_help"));
         }
         panelPreview?.Update(options);
