@@ -106,16 +106,22 @@ internal static class DeepSeekSettingsChecks
             daily = Find<TextBox>(window, "settings.deepseek.budget.daily"); weekly = Find<TextBox>(window, "settings.deepseek.budget.weekly");
             budget = Find<RadioButton>(window, "settings.deepseek.mode.budget"); balance = Find<RadioButton>(window, "settings.deepseek.mode.balance");
             // Where the money went and the week are blocks on the Expanded Panel page, as on the Mac.
-            await window.NavigateAsync("expandedPanel"); await Until(() => Descendants(window).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == "panel.block.deepseekWeek.toggle"));
-            var week = Find<Button>(window, "panel.block.deepseekWeek.toggle"); var spend = Find<Button>(window, "panel.block.deepseekSpend.toggle");
+            const string weekID = "panel.block.deepseekWeek.toggle", spendID = "panel.block.deepseekSpend.toggle", restoreID = "panel.restore";
+            bool Ready(string id) => Descendants(window).OfType<Button>().Any(value => value.IsVisible && value.IsEnabled && AutomationProperties.GetAutomationId(value) == id);
+            await window.NavigateAsync("expandedPanel"); await Until(() => Ready(weekID) && Ready(spendID));
+            var week = Find<Button>(window, weekID); var spend = Find<Button>(window, spendID);
             Check(Equals(week.Tag, "added") && Equals(spend.Tag, "added") && session.Current.ExpandedPanelLayout == null,
                 "DeepSeek alone starts from the automatic layout with its charts, as the panel was before blocks");
-            Invoke(week); await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekWeek", StringComparison.Ordinal) == false);
-            Invoke(Find<Button>(window, "panel.block.deepseekSpend.toggle"));
-            await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekSpend", StringComparison.Ordinal) == false);
+            // The save can finish before Settings receives the new projection.
+            Invoke(week);
+            await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekWeek", StringComparison.Ordinal) == false
+                && Ready(spendID) && Equals(Find<Button>(window, weekID).Tag, "add"));
+            Invoke(Find<Button>(window, spendID));
+            await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekSpend", StringComparison.Ordinal) == false
+                && Ready(restoreID) && Equals(Find<Button>(window, spendID).Tag, "add"));
             await Until(() => !Descendants(island).OfType<DeepSeekWeekView>().Any() && !Descendants(island).OfType<DeepSeekDistributionView>().Any());
             Check(Descendants(island).OfType<DeepSeekSoloView>().Count() == 1, "Removing the charts keeps the dial and what sits beside it");
-            Invoke(Find<Button>(window, "panel.restore")); await Until(() => session.Current.ExpandedPanelLayout == null);
+            Invoke(Find<Button>(window, restoreID)); await Until(() => session.Current.ExpandedPanelLayout == null);
             await Until(() => Descendants(island).OfType<DeepSeekWeekView>().Any() && Descendants(island).OfType<DeepSeekDistributionView>().Any());
             await window.NavigateAsync("deepseek"); await Pump();
             daily = Find<TextBox>(window, "settings.deepseek.budget.daily"); weekly = Find<TextBox>(window, "settings.deepseek.budget.weekly");

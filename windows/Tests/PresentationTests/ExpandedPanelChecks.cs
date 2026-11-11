@@ -115,6 +115,7 @@ internal static class ExpandedPanelChecks
                 "A saved layout offers to restore the automatic one");
 
             // One row each: every quota service gets a section of its own.
+            await Until(() => Ready<RadioButton>(window, "panel.option.codex.arrange.stack"));
             Select(Find<RadioButton>(window, "panel.option.codex.arrange.stack"));
             await Until(() => island.IsLoaded && Descendants(island).OfType<FrameworkElement>()
                 .Count(value => AutomationProperties.GetAutomationId(value).StartsWith("island.section.quota.", StringComparison.Ordinal)) == 3);
@@ -122,9 +123,9 @@ internal static class ExpandedPanelChecks
             Check(Descendants(island).OfType<SingleQuotaView>().Any(), "A service with a row to itself shows its details beside the ring");
 
             // The task list: five rows of one line.
-            window.SelectPanelBlock("tasks"); await Pump();
+            window.SelectPanelBlock("tasks"); await Until(() => Ready<RadioButton>(window, "panel.option.pageSize.5"));
             Select(Find<RadioButton>(window, "panel.option.pageSize.5"));
-            await Until(() => engine.LatestSnapshot?.Presentation?.PageSize == 5);
+            await Until(() => engine.LatestSnapshot?.Presentation?.PageSize == 5 && Ready<RadioButton>(window, "panel.option.rowStyle.oneLine"));
             Select(Find<RadioButton>(window, "panel.option.rowStyle.oneLine"));
             await Until(() => Descendants(island).OfType<TaskRow>().Any() && Descendants(island).OfType<TaskRow>().All(row => row.Height == TaskRow.OneLineHeight));
             await island.WaitForPresentationAsync();
@@ -136,7 +137,7 @@ internal static class ExpandedPanelChecks
                 "One line keeps only the speed and turn time to choose");
 
             // Unchecked buttons leave the header for the More menu.
-            window.SelectPanelBlock("actions"); await Pump();
+            window.SelectPanelBlock("actions"); await Until(() => Ready<CheckBox>(window, "panel.option.action.pin"));
             Toggle(Find<CheckBox>(window, "panel.option.action.pin"));
             await Until(() => ((Button)island.FindName("PinButton")).Visibility == Visibility.Collapsed);
             var menu = ((Button)island.FindName("MoreButton")).ContextMenu;
@@ -146,7 +147,7 @@ internal static class ExpandedPanelChecks
                 "Keep Expanded joins Refresh in the menu while Settings stays in the header");
 
             // Removing DeepSeek's balance hides it; the automatic layout returns everything.
-            window.SelectPanelBlock("deepseek"); await Pump();
+            window.SelectPanelBlock("deepseek"); await Until(() => Ready<Button>(window, "panel.inspector.toggle") && Ready<CheckBox>(window, "panel.option.peak"));
             Invoke(Find<Button>(window, "panel.inspector.toggle"));
             // With one row each, DeepSeek alone draws its full dial view.
             await Until(() => !Descendants(island).OfType<DeepSeekQuotaCell>().Any() && !Descendants(island).OfType<DeepSeekSoloView>().Any()
@@ -161,6 +162,7 @@ internal static class ExpandedPanelChecks
             Check(session.Current.ExpandedPanelLayout == layout && Find<TextBlock>(window, "panel.inspector.title").Text == AutomationProperties.GetName(week)
                 && Find<CheckBox>(window, "panel.option.weekLine").IsVisible && Find<TextBlock>(window, "panel.inspector.notice").IsVisible,
                 "Clicking a tile selects it without adding it");
+            await Until(() => Ready<Button>(window, "panel.block.deepseekWeek.toggle"));
             Invoke(Find<Button>(window, "panel.block.deepseekWeek.toggle"));
             await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekWeek", StringComparison.Ordinal) == true
                 && Equals(Find<Button>(window, "panel.block.deepseekWeek.toggle").Tag, "added"));
@@ -319,6 +321,8 @@ internal static class ExpandedPanelChecks
         PresentationSource.FromVisual(block), Environment.TickCount, Key.Up) { RoutedEvent = Keyboard.KeyDownEvent });
     private static bool Present<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().Any(value => AutomationProperties.GetAutomationId(value) == id);
+    private static bool Ready<T>(DependencyObject root, string id) where T : FrameworkElement
+        => Descendants(root).OfType<T>().Any(value => value.IsVisible && value.IsEnabled && AutomationProperties.GetAutomationId(value) == id);
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().SingleOrDefault(value => AutomationProperties.GetAutomationId(value) == id)
             ?? throw new InvalidOperationException("Missing " + id);
