@@ -80,6 +80,8 @@ public actor CodexClient {
     private var legacyRateLimitGeneration: Int?
     private var quotaTask: Task<QuotaSnapshot, Error>?
     private var verifiedAccountScope: String?
+    /// The last verified account and the auth file it was verified under.
+    private var lastVerified: (scope: String, fingerprint: String)?
     private var authFingerprint: String?
     private struct Pending {
         let method: String
@@ -93,7 +95,7 @@ public actor CodexClient {
     private let requestTimeout: TimeInterval
     private let inheritedEnvironment: [String: String]
 
-    public init(executable: URL, home: URL, arguments: [String] = ["-s", "read-only", "-a", "never", "app-server", "--listen", "stdio://"], timeout: TimeInterval = 12,
+    public init(executable: URL, home: URL, arguments: [String] = ["-s", "read-only", "-a", "never", "app-server", "--listen", "stdio://"], timeout: TimeInterval = ProviderQuotaRefreshPolicy.replyTimeout,
                 environment: [String: String] = ProcessInfo.processInfo.environment,
                 processes: any ChildProcessLauncher, executables: any ExecutablePlatform,
                 files: any PlatformFileSystem, clientVersion: String = "development") {
@@ -137,6 +139,7 @@ public actor CodexClient {
             guard let accountResponse = try JSONSerialization.jsonObject(with: account) as? [String: Any] else {
                 throw CodexClientError.invalidReply(method: "account/read", reason: L10n.text("cli.account_not_object"))
             }
+            lastVerified = nil
             if accountResponse["account"] is NSNull {
                 if accountResponse["requiresOpenaiAuth"] as? Bool == false {
                     throw CodexClientError.unsupportedAccount(L10n.text("cli.no_openai_auth"))
@@ -156,7 +159,9 @@ public actor CodexClient {
                 verifiedID = accountID
                 let plan = (accountResponse["account"] as? [String: Any])?["planType"] as? String ?? ""
                 let key = accountID + "|" + (routing["backendOrigin"] as? String ?? "") + "|" + plan
-                verifiedAccountScope = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+                let scope = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+                verifiedAccountScope = scope
+                lastVerified = authFingerprint.map { (scope, $0) }
             }
             let data: Data
             let connection = generation
@@ -174,7 +179,7 @@ public actor CodexClient {
             }
             if let usage = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let responseID = usage["accountId"] as? String, let verifiedID, responseID != verifiedID {
-                verifiedAccountScope = nil
+                verifiedAccountScope = nil; lastVerified = nil
                 throw CodexClientError.accountMismatch
             }
             let decoded: QuotaSnapshot
@@ -187,6 +192,16 @@ public actor CodexClient {
             snapshot.accountScope = verifiedAccountScope
             return snapshot
         } catch {
+            if case CodexClientError.timeout = error {
+                // The auth file can change after account/read verified the account.
+                let currentFingerprint = Self.authenticationFingerprint(home: home, files: files)
+                if currentFingerprint != authFingerprint {
+                    verifiedAccountScope = nil
+                    lastVerified = nil
+                } else if verifiedAccountScope == nil, let lastVerified, lastVerified.fingerprint == currentFingerprint {
+                    verifiedAccountScope = lastVerified.scope
+                }
+            }
             disconnect()
             throw error
         }

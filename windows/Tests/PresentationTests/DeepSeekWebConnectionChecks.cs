@@ -59,6 +59,7 @@ internal static class DeepSeekWebConnectionChecks
             Check(!JsonSerializer.Serialize(engine.LatestSnapshot).Contains(DeepSeekWebSessionChecks.Site.Key, StringComparison.Ordinal) &&
                 !JsonSerializer.Serialize(settings.Current).Contains(DeepSeekWebSessionChecks.Site.Key, StringComparison.Ordinal),
                 "Only the reduced wallet can leave the browser profile");
+            if (language == "en" && !dark) await SlowReply(engine, island, site);
             await Recovery(engine, island, site, preferences, ui, language + (dark ? "-dark" : "-light"), output);
             await Menu(window, "settings.deepseek.account.switch");
             login = await Login(site); site.NormalBalance = "35.60"; await Continue(login);
@@ -134,6 +135,22 @@ internal static class DeepSeekWebConnectionChecks
             if (Directory.Exists(target) && new DirectoryInfo(target).LinkTarget != null) throw new InvalidOperationException("Unexpected fixture link");
             await PresentationWait.RemoveBrowserFixtureAsync(target);
         }
+    }
+    private static async Task SlowReply(EngineClient engine, IslandWindow island, DeepSeekWebSessionChecks.Site site)
+    {
+        site.Hold = true;
+        try
+        {
+            await engine.SendAsync("retryDeepSeekBalance", new { balanceContext = engine.LatestSnapshot!.DeepseekConnection!.Context });
+            await Until(() => site.Deferred != null && engine.LatestSnapshot?.DeepseekConnection?.Refreshing == true);
+            await Until(() => engine.LatestSnapshot?.DeepseekConnection?.Refreshing == false);
+            island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
+            Check(engine.LatestSnapshot?.DeepseekConnection is { Status: null } && engine.LatestSnapshot.Wallet?.Balance == 86.4 &&
+                !SelfAndDescendants(island).OfType<DeepSeekBalanceStatusView>().Any(view => view.IsVisible),
+                "The engine deadline must keep the last wallet balance without an offline error in the island");
+            Console.WriteLine("PASS DeepSeek WebView2 timeout retains the wallet without a connection error");
+        }
+        finally { site.Hold = false; site.Release(); }
     }
     private static async Task Recovery(EngineClient engine, IslandWindow island, DeepSeekWebSessionChecks.Site site,
         DesktopPreferences preferences, UiText ui, string name, string output)

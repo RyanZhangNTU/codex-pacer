@@ -41,7 +41,7 @@ extension CodexExecutableResolver {
 
 extension CodexClient {
     public init(executable: URL, home: URL, arguments: [String] = ["-s", "read-only", "-a", "never", "app-server", "--listen", "stdio://"],
-                timeout: TimeInterval = 12, environment: [String: String] = ProcessInfo.processInfo.environment) {
+                timeout: TimeInterval = ProviderQuotaRefreshPolicy.replyTimeout, environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.init(executable: executable, home: home, arguments: arguments, timeout: timeout, environment: environment,
             processes: WindowsChildProcessLauncher(), executables: WindowsExecutablePlatform(), files: WindowsFileSystem())
     }

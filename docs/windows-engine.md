@@ -50,7 +50,7 @@ On Windows, FoundationNetworking's URLSession keeps one worker thread busy for a
 | Client | Used for | Limits |
 | --- | --- | --- |
 | `WindowsClaudeCloudStream` | `GET` on `https://claude.ai` message-stream paths only | 4 MiB line limit, eight-line buffer, 60 s idle, 24 h total |
-| `WindowsHTTPClient` | Claude web usage, Claude cloud polling, Remote Control catalogs, Claude OAuth usage | Claude web: 12 s request, 15 s total, 32 MiB body. Remote Control and OAuth: 8 s and 10 s, 512 KiB and 2 MiB |
+| `WindowsHTTPClient` | Claude web usage, Claude cloud polling, Remote Control catalogs, Claude OAuth usage | Claude web usage: 30 s request, 33 s total, 32 MiB body; cloud polling: 12 s and 15 s. Remote Control: 8 s and 10 s, 512 KiB. Claude OAuth usage: 30 s and 33 s, 2 MiB |
 
 Rules both clients keep:
 

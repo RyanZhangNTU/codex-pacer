@@ -264,8 +264,12 @@ public actor DeepSeekBalanceCoordinator {
                 historyAvailable = false
             }
         case .failure(let failure):
-            error = failure as? DeepSeekBalanceError ?? .connectionFailed
-            if error?.needsConnection == true { balance = nil }
+            let reason = failure as? DeepSeekBalanceError ?? .connectionFailed
+            // A slow reply needs no action while a balance is shown: keep it, the error
+            // state and the cadence. The balance's own age marks it as stale after ten minutes.
+            guard reason != .timedOut || balance == nil else { break }
+            error = reason
+            if reason.needsConnection { balance = nil }
             failures = min(4, failures + 1)
         }
         await emit()

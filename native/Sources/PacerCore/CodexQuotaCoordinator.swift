@@ -193,14 +193,20 @@ public actor CodexQuotaCoordinator {
                 guard current(revision, identifier) else { return }
                 snapshot = restored?.0; history = restored?.1 ?? QuotaCycleHistory(); warning = nil
             }
-            self.error = CodexDiagnosticText.description(of: error)
-            failure = .init(error)
-            failures = min(4, failures + 1)
-            client = nil
-            await emit()
-            guard current(revision, identifier) else { return }
-            await close(previous)
-            guard current(revision, identifier) else { return }
+            if case CodexClientError.timeout = error, snapshot != nil {
+                // A slow reply for a verified account needs no action: keep its last reading,
+                // error state, cadence and client (which reconnects itself and remembers the
+                // account). The reading's own age marks it as not updated after ten minutes.
+            } else {
+                self.error = CodexDiagnosticText.description(of: error)
+                failure = .init(error)
+                failures = min(4, failures + 1)
+                client = nil
+                await emit()
+                guard current(revision, identifier) else { return }
+                await close(previous)
+                guard current(revision, identifier) else { return }
+            }
         }
         guard current(revision, identifier) else { return }
         work = nil; workID = nil

@@ -354,6 +354,7 @@
     "deepseek.balance.invalid_reply": "The DeepSeek platform returned an unexpected reply.",
     "deepseek.balance.missing_key": "Paste an API key in Settings to read the balance.",
     "deepseek.balance.signed_out": "Sign in to the DeepSeek platform to read the balance.",
+    "deepseek.balance.timed_out": "DeepSeek took too long to reply. Pacer will try again.",
     "deepseek.balance.unavailable": "The balance is not available right now.",
     "deepseek.balance_source": "Balance source",
     "deepseek.budget.average_day": "avg %@/day",

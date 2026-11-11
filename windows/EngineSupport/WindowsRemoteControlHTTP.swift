@@ -9,7 +9,8 @@ import PacerCore
 enum WindowsRemoteControlHTTP {
     static let maximumBytes = 512 * 1024
     static let catalog = WindowsHTTPClient(.init(idleTimeout: 8, totalTimeout: 10, maximumBytes: maximumBytes, readsBody: { $0 == 200 }))
-    static let usage = WindowsHTTPClient(.init(idleTimeout: 8, totalTimeout: 10, maximumBytes: 2 * 1024 * 1024))
+    static let usage = WindowsHTTPClient(.init(idleTimeout: ProviderQuotaRefreshPolicy.replyTimeout,
+        totalTimeout: ProviderQuotaRefreshPolicy.replyTimeout + 3, maximumBytes: 2 * 1024 * 1024))
 
     static func fetch(_ request: URLRequest, client: WindowsHTTPClient = catalog) async throws -> Data {
         guard request.httpMethod == "GET", let url = request.url, url.scheme == "https", let host = url.host,

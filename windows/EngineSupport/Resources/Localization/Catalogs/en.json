@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "489be0d42f266e7f3fab5b432e076534f0f9040a8abd0aedcaa9e3eeab8f0aca",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "af9f7d02a4ecfd4932e53774f00a6dc4ca7536f8c670d4274f4c36e2b177eae7",
     "windows/EngineSupport/Resources/Localization/en.json": "65c35113fedb2aecec350a0b346b9f6b5919f266b8a1cbc5ca48a5c8cb8aaf5b"
   },
   "strings": {
@@ -358,6 +358,7 @@
     "deepseek.balance.invalid_reply": "The DeepSeek platform returned an unexpected reply.",
     "deepseek.balance.missing_key": "Paste an API key in Settings to read the balance.",
     "deepseek.balance.signed_out": "Sign in to the DeepSeek platform to read the balance.",
+    "deepseek.balance.timed_out": "DeepSeek took too long to reply. Pacer will try again.",
     "deepseek.balance.unavailable": "The balance is not available right now.",
     "deepseek.balance_source": "Balance source",
     "deepseek.budget.average_day": "avg %@/day",

@@ -109,7 +109,9 @@ final class CompactComponentDisplayTests: XCTestCase {
         XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.fiveHour))
         model.quota = try snapshot(used: 90, at: now, minutes: 100)
         XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "Only the 5h window drives the warning")
-        model.quota = try snapshot(used: 90, at: now.addingTimeInterval(-301), minutes: 300)
+        model.quota = try snapshot(used: 90, at: now.addingTimeInterval(-599), minutes: 300)
+        XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.quotaDelay), "Updates late by under ten minutes stay quiet")
+        model.quota = try snapshot(used: 90, at: now.addingTimeInterval(-601), minutes: 300)
         XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.quotaDelay))
         XCTAssertFalse(CompactIslandComponent.activeWarnings(model).contains(.fiveHour), "Stale quota cannot produce a live low-quota warning")
         model.quota = nil; model.errorMessage = "Synthetic read failure"

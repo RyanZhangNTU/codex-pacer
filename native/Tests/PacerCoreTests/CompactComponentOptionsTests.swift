@@ -11,7 +11,7 @@ final class CompactComponentOptionsTests: XCTestCase {
         var windows = [QuotaWindow(id: "7d", usedPercent: weeklyUsed, durationMinutes: 10080, resetsAt: now.addingTimeInterval(weeklyReset))]
         if let fiveHourUsed { windows.insert(.init(id: "5h", usedPercent: fiveHourUsed, durationMinutes: 300, resetsAt: now.addingTimeInterval(9000)), at: 0) }
         return .init(buckets: [.init(id: provider.rawValue, name: nil, plan: nil, windows: windows, credits: nil)],
-            capturedAt: now.addingTimeInterval(stale ? -301 : 0), resetCredits: nil)
+            capturedAt: now.addingTimeInterval(stale ? -601 : 0), resetCredits: nil)
     }
     /// Codex: 30% left with a quarter of the week to go (pace 120, ahead).
     /// Claude: 10% left with half the week to go (pace 20, fast and low).

@@ -8,7 +8,7 @@ extension ClaudeQuotaClient {
     public init(userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
                 home: URL? = nil, statusLineURL: URL? = nil,
                 environment: [String: String] = ProcessInfo.processInfo.environment,
-                timeout: TimeInterval = 12, allowKeychainInteraction: Bool = false) {
+                timeout: TimeInterval = ProviderQuotaRefreshPolicy.replyTimeout, allowKeychainInteraction: Bool = false) {
         let claudeHome = home ?? environment["CLAUDE_CONFIG_DIR"].flatMap {
             $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : nil
         } ?? userHome.appendingPathComponent(".claude")

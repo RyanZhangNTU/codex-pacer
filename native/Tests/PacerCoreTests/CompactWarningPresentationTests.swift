@@ -8,7 +8,7 @@ final class CompactWarningPresentationTests: XCTestCase {
         .init(buckets: [.init(id: "codex", name: nil, plan: nil, windows: [
             .init(id: "5h", usedPercent: 100 - remaining, durationMinutes: 300, resetsAt: now.addingTimeInterval(expired ? -1 : 3600)),
             .init(id: "7d", usedPercent: 50, durationMinutes: 10080, resetsAt: now.addingTimeInterval(expired ? -1 : 86400))
-        ], credits: nil)], capturedAt: now.addingTimeInterval(stale ? -301 : 0), resetCredits: nil)
+        ], credits: nil)], capturedAt: now.addingTimeInterval(stale ? -601 : 0), resetCredits: nil)
     }
     func testFiveHourWarningUsesFreshProviderWindowAndStrictTwentyPercentBoundary() {
         func items(_ remaining: Double, stale: Bool = false, expired: Bool = false, failed: Bool = false) -> [CompactWarningPresentation.Item] {

@@ -354,6 +354,7 @@
     "deepseek.balance.invalid_reply": "DeepSeek 开放平台返回了无法识别的结果。",
     "deepseek.balance.missing_key": "请在设置中粘贴 API Key 以读取余额。",
     "deepseek.balance.signed_out": "登录 DeepSeek 开放平台后即可读取余额。",
+    "deepseek.balance.timed_out": "DeepSeek 回复太慢，Pacer 会稍后重试。",
     "deepseek.balance.unavailable": "暂时无法读取余额。",
     "deepseek.balance_source": "余额来源",
     "deepseek.budget.average_day": "日均 %@",

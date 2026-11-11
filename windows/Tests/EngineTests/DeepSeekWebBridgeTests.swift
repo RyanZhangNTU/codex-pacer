@@ -95,7 +95,7 @@ final class DeepSeekWebBridgeTests: XCTestCase {
         await bridge.setAvailable(true)
         let task = Task { try await bridge.read(context: UUID().uuidString) }
         do { _ = try await task.value; XCTFail("An unanswered request must time out") }
-        catch { XCTAssertEqual(error as? DeepSeekBalanceError, .connectionFailed) }
+        catch { XCTAssertEqual(error as? DeepSeekBalanceError, .timedOut, "A slow page read is reported as slow, not unreachable") }
         let cancelled = await capture.waitForCancel(); XCTAssertTrue(cancelled)
         let shutdownCapture = Capture()
         let shutdown = DeepSeekWebBridge(now: { at }, output: { await shutdownCapture.add($0) })
