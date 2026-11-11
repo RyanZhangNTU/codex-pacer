@@ -77,6 +77,7 @@ internal static class UpdateFiles
 // here, never in HKCU. Keys keep the names WinSparkle used before 4.2.3.
 internal sealed class WindowsUpdateState(string path)
 {
+    private const int MaximumBytes = 32768;
     internal static WindowsUpdateState ForInstallation(WindowsInstallationIdentity identity) =>
         new(Path.Combine(UpdateSessions.Root(identity.DataRoot), "state-v1.json"));
 
@@ -85,12 +86,72 @@ internal sealed class WindowsUpdateState(string path)
     private Dictionary<string, string> Load()
     {
         if (!File.Exists(path)) return [];
-        var state = JsonSerializer.Deserialize<State>(UpdateFiles.Read(path, 32768));
+        return Decode(UpdateFiles.Read(path, MaximumBytes));
+    }
+    private static Dictionary<string, string> Decode(byte[] bytes)
+    {
+        var state = JsonSerializer.Deserialize<State>(bytes);
         if (state is not { SchemaVersion: 1, Values.Count: <= 32 } || state.Values.Any(pair => !Valid(pair.Key, pair.Value)))
             throw new InvalidDataException("The update state is incompatible.");
         return state.Values;
     }
-    private static bool Valid(string key, string value) => key.Length is > 0 and <= 128 && !key.Any(char.IsControl) && value.Length <= 4096 && !value.Contains('\0');
+    private static bool Valid(string key, string? value) => key.Length is > 0 and <= 128 && !key.Any(char.IsControl) && value is { Length: <= 4096 } && !value.Contains('\0');
+
+    // A full install can repair the app even when its optional update state
+    // is unreadable. Move only checked, demonstrably damaged state aside so
+    // the new app can start checks again. Leave future schemas and IO failures alone.
+    internal Version? RecoverForFullInstallation()
+    {
+        lock (sync)
+        {
+            byte[] bytes;
+            try { bytes = UpdateFiles.Read(path, MaximumBytes); }
+            catch (Exception error) when (StateUnavailable(error)) { return null; }
+
+            try { return Version.TryParse(Decode(bytes).GetValueOrDefault(UpdateHandoff.PatchFailedKey), out var build) ? build : null; }
+            catch (Exception error) when (error is JsonException or InvalidDataException)
+            {
+                if (IsKnownOrMalformed(bytes))
+                    try
+                    {
+                        // Keep a file another process has already replaced.
+                        if (UpdateFiles.Read(path, MaximumBytes).AsSpan().SequenceEqual(bytes)) FileQuarantine.Move(path, UpdateFiles.Check);
+                    }
+                    catch (Exception recovery) when (StateUnavailable(recovery)) { }
+                return null;
+            }
+        }
+    }
+    private static bool IsKnownOrMalformed(byte[] bytes)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(bytes);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return true;
+            // The writer uses SchemaVersion. Also preserve explicit versions
+            // in other casing if a future writer changes its JSON convention.
+            foreach (var property in document.RootElement.EnumerateObject())
+                if (string.Equals(property.Name, "SchemaVersion", StringComparison.OrdinalIgnoreCase) &&
+                    (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetInt32(out int schema) || schema != 1)) return false;
+            return true;
+        }
+        catch (JsonException) { return true; }
+    }
+    internal static bool StateUnavailable(Exception error) => error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException;
+    internal void ClearVerifiedRepair(Version expected)
+    {
+        lock (sync)
+        {
+            try
+            {
+                var values = Load();
+                if (!Version.TryParse(values.GetValueOrDefault(UpdateHandoff.PatchFailedKey), out var build) || build != expected) return;
+                values.Remove(UpdateHandoff.PatchFailedKey);
+                Save(values);
+            }
+            catch (Exception error) when (StateUnavailable(error)) { }
+        }
+    }
     internal string? Read(string key) { lock (sync) { return Load().GetValueOrDefault(key); } }
     internal void Write(string key, string? value)
     {
@@ -100,9 +161,10 @@ internal sealed class WindowsUpdateState(string path)
             var values = Load();
             if (value == null) values.Remove(key); else values[key] = value;
             if (values.Count > 32) throw new InvalidDataException("Too much update state.");
-            UpdateFiles.Write(path, JsonSerializer.SerializeToUtf8Bytes(new State(1, values)));
+            Save(values);
         }
     }
+    private void Save(Dictionary<string, string> values) => UpdateFiles.Write(path, JsonSerializer.SerializeToUtf8Bytes(new State(1, values)));
     internal bool ClaimNotes(string build)
     {
         lock (sync) { if (Read("LastPresentedBuild") == build) return false; Write("LastPresentedBuild", build); return true; }

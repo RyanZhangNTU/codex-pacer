@@ -19,16 +19,17 @@ internal static class FileQuarantine
     }
 
     // Rename, never copy or overwrite: the original bytes survive even if the next write fails.
-    internal static string Move(string file)
+    internal static string Move(string file, Action<string>? validate = null)
     {
-        CheckPath(file);
+        validate ??= CheckPath;
+        validate(file);
         string backup = file + ".damaged-" + DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmssfffffff'Z'", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
         File.Move(file, backup);
         string pattern = "^" + Regex.Escape(Path.GetFileName(file)) + @"\.damaged-\d{8}T\d{13}Z-[0-9a-f]{32}$";
         foreach (string older in Directory.EnumerateFiles(Path.GetDirectoryName(file)!).Where(value => value != backup && Regex.IsMatch(Path.GetFileName(value), pattern))
             .OrderByDescending(Path.GetFileName, StringComparer.Ordinal).Skip(2))
         {
-            CheckPath(older);
+            validate(older);
             File.Delete(older);
         }
         return Path.GetFileName(backup);

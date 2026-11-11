@@ -109,6 +109,87 @@ internal static class InstallationServiceChecks
         NotificationOwnership();
         StaleFiles();
         PatchFiles();
+        FullInstallationUpdateState();
+    }
+    private static void FullInstallationUpdateState()
+    {
+        string fixture = Path.Combine(Path.GetTempPath(), "pacer-full-update-" + Guid.NewGuid().ToString("N"));
+        var identity = new WindowsInstallationIdentity(Path.Combine(fixture, "app space"), Guid.NewGuid());
+        string updates = UpdateSessions.Root(identity.DataRoot), path = Path.Combine(updates, "state-v1.json");
+        var state = WindowsUpdateState.ForInstallation(identity);
+        var store = new StartupRegistrationChecks.Store();
+        var operations = new WindowsInstallationOperations(identity, store, new Links());
+        const string marker = UpdateHandoff.PatchFailedKey;
+        Directory.CreateDirectory(identity.Root); Directory.CreateDirectory(updates);
+        try
+        {
+            File.WriteAllText(Path.Combine(identity.Root, WindowsInstallationIdentity.ContextFile),
+                JsonSerializer.Serialize(new { schemaVersion = 1, qaScope = identity.Scope }));
+            byte[] payload = "synthetic executable"u8.ToArray();
+            File.WriteAllBytes(identity.Executable, payload);
+            File.WriteAllText(Path.Combine(identity.Root, UpdateCatalog.ManifestName), JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1, version = "1.2.3", build = 4, files = new[]
+                { new { path = "CodexPacer.exe", sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(payload)) } }
+            }));
+            void Complete() => operations.CompleteFullInstallation(CancellationToken.None);
+            string[] Backups() => Directory.GetFiles(updates, "state-v1.json.damaged-*");
+
+            byte[] truncated = "{\"SchemaVersion\":1,\"Values\":"u8.ToArray();
+            File.WriteAllBytes(path, truncated);
+            store.FailWriteAfter = (identity.RegistryKey, "Path");
+            try { Complete(); throw new InvalidOperationException("Registration failure was hidden by state recovery."); }
+            catch (IOException) { }
+            Check(File.ReadAllBytes(path).SequenceEqual(truncated) && Backups().Length == 0, "Registration must succeed before touching damaged update state");
+
+            foreach (byte[] damaged in new[] { truncated, "{\"SchemaVersion\":1,\"Values\":{\"PacerPatchFailedBuild\":null}}"u8.ToArray() })
+            {
+                File.WriteAllBytes(path, damaged);
+                Complete();
+                Check(!File.Exists(path) && Backups().Any(backup => File.ReadAllBytes(backup).SequenceEqual(damaged)),
+                    "Full installation preserves the exact damaged bytes and removes them from the updater's active path");
+                state.Write("SkipThisVersion", "1.2.3.1");
+                Check(state.Read("SkipThisVersion") == "1.2.3.1", "Update checks can save state again after a full repair");
+            }
+
+            byte[] future = "{\"SchemaVersion\":2,\"Values\":{}}"u8.ToArray();
+            File.WriteAllBytes(path, future);
+            Complete();
+            Check(File.ReadAllBytes(path).SequenceEqual(future) && Backups().Length == 2, "Full installation preserves future update state in place");
+
+            File.WriteAllBytes(path, truncated);
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None)) Complete();
+            Check(File.ReadAllBytes(path).SequenceEqual(truncated) && Backups().Length == 2,
+                "A file-sharing denial is not treated as corruption or replaced by the installer");
+
+            File.Delete(path);
+            state.Write("SkipThisVersion", "1.2.3.1");
+            state.Write(marker, "1.2.3.5"); Complete();
+            Check(state.Read(marker) == "1.2.3.5", "An older full installer cannot clear a newer repair marker");
+
+            state.Write(marker, "1.2.3.4");
+            File.WriteAllText(identity.Executable, "synthetic damage");
+            try { Complete(); throw new InvalidOperationException("A failed manifest verification was hidden."); }
+            catch (InvalidDataException) { }
+            Check(state.Read(marker) == "1.2.3.4", "Failed verification leaves the repair marker");
+
+            File.WriteAllBytes(identity.Executable, payload);
+            File.SetAttributes(path, FileAttributes.ReadOnly);
+            try
+            {
+                try { state.Write(marker, null); throw new InvalidOperationException("The state fixture was not write-protected."); }
+                catch (UnauthorizedAccessException) { }
+                Complete();
+                Check(state.Read(marker) == "1.2.3.4", "Read-only state keeps its marker after a successful full install");
+            }
+            finally { File.SetAttributes(path, FileAttributes.Normal); }
+
+            Complete();
+            Check(state.Read(marker) == null && state.Read("SkipThisVersion") == "1.2.3.1",
+                "A verified full installation removes only the eligible marker when state is writable");
+            Console.WriteLine("PASS full installation: damaged updater state backed up, inaccessible and future state preserved, verified repair marker cleared");
+        }
+        finally { if (Directory.Exists(fixture)) Directory.Delete(fixture, true); }
     }
     // A patch replaces files only in exactly its base installation, and only
     // when every file it does not carry already holds the new content.

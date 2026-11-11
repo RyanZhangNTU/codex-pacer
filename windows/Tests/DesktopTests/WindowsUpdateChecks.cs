@@ -672,5 +672,10 @@ internal static class WindowsUpdateChecks
         Check(UpdateHandoff.ConsumeResult(identity, session, resultState, new(1, 2, 3, 5))?.Notes.Length == 128 * 1024,
             "Escaped metadata still accepts notes at the existing byte boundary");
         Check(UpdateHandoff.ConsumeResult(identity, session, resultState, new(1, 2, 3, 5)) == null, "A consumed successful build cannot show its notes twice");
+        Check(UpdateHandoff.ConsumeResult(identity, session, state, new(1, 2, 3, 5)) == null,
+            "Unavailable optional state cannot turn a successful install result into an error");
+        UpdateFiles.Write(resultPath, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(notes with { Success = false, Incremental = true, Notes = "" }));
+        Check(UpdateHandoff.ConsumeResult(identity, session, state, new(1, 2, 3, 5)) is { Success: false, Incremental: true }
+            && File.ReadAllBytes(path).SequenceEqual(future), "A real install failure remains visible when its repair marker cannot be saved");
     }
 }

@@ -198,7 +198,7 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
     {
         Register();
         var state = WindowsUpdateState.ForInstallation(identity);
-        if (!Version.TryParse(state.Read(UpdateHandoff.PatchFailedKey), out var failedBuild)) return;
+        if (state.RecoverForFullInstallation() is not { } failedBuild) return;
         using var manifest = JsonDocument.Parse(WindowsInstallationIdentity.ReadBounded(
             Path.Combine(identity.Root, UpdateCatalog.ManifestName), 2 * 1024 * 1024));
         var payload = manifest.RootElement;
@@ -208,7 +208,7 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         // The full installer may have been launched outside the app. Clear a
         // repair request only after both registration and file verification.
         CheckFiles(ManifestFiles(payload), cancellation);
-        state.Write(UpdateHandoff.PatchFailedKey, null);
+        state.ClearVerifiedRepair(failedBuild);
     }
     // Creates a requested shortcut for this registered installation. A file
     // already there that this installation does not own is left alone.
