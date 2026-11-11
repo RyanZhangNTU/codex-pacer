@@ -107,13 +107,16 @@ internal static class DeepSeekWebConnectionChecks
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Reading.Connected: false });
             session.Unavailable = true; await connection.StartAsync();
             await Until(() => engine.LatestSnapshot?.DeepseekConnection?.WebAvailable == false);
-            await island.WaitForPresentationAsync();
+            // Opening Settings from the recovery card collapses the island. Reopen it to render the latest state.
+            island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync();
             Check(!Find<Button>(window, "settings.deepseek.sign_in").IsEnabled, "A missing runtime cannot advertise a working sign-in");
-            Check(!Find<Button>(island, "deepseek.balance.connect").IsEnabled, "The island must also disable web sign-in without a runtime");
+            Check(Find<Button>(island, "deepseek.balance.connect") is { IsVisible: true, IsEnabled: false },
+                "Reopening the island must show web sign-in disabled without a runtime");
             session.Unavailable = false; await connection.StartAsync();
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { WebAvailable: true, Refreshing: false } &&
                 Find<Button>(window, "settings.deepseek.sign_in").IsEnabled);
-            await Pump(); Check(Find<Button>(island, "deepseek.balance.connect").IsEnabled, "Restoring the runtime must restore the actual dial action");
+            await island.WaitForPresentationAsync();
+            Check(Find<Button>(island, "deepseek.balance.connect") is { IsVisible: true, IsEnabled: true }, "Restoring the runtime must restore the actual dial action");
             Check(site.Outside == 0, "The real browser integration must keep all page traffic inside its fixture");
             Console.WriteLine("PASS web connection " + language + (dark ? "-dark" : "-light") +
                 ": actual dial/Settings SDK login, switch/sign-out, API coexistence, stale callbacks, cancellation, runtime availability and failed-clear recovery; isolated data only");
@@ -186,6 +189,7 @@ internal static class DeepSeekWebConnectionChecks
                 int reads = site.Reads; retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Pump();
                 Check(site.Reads == reads, "A detached retry cannot duplicate the current read");
                 requested = null; Invoke(Find<Button>(island, "deepseek.balance.status.settings")); await Until(() => requested == "deepseek");
+                Check(!island.IsExpandedForAutomation, "The recovery Settings action must collapse the island");
                 site.Status = 200; site.Hold = false; site.Release();
                 await Until(() => engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Status: null });
                 reads = site.Reads; requested = null;
