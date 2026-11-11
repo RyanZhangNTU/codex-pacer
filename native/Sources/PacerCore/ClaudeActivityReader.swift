@@ -2,7 +2,10 @@ import Foundation
 
 /// Bounded native transcript tailing. Only sanitized records survive a read.
 struct ClaudeActivityReader {
-    struct Result { let records: [Data]; let watchURLs: [URL]; let available: Bool; let caughtUp: Bool }
+    struct Result {
+        let records: [Data], watchURLs: [URL]
+        let available: Bool, caughtUp: Bool, discoveryPending: Bool
+    }
     private struct Cursor {
         var identity: String?; var created: Date?; var hasRead = false
         var offset: UInt64 = 0; var fragment = Data(); var session: String; var parent: String?
@@ -36,6 +39,76 @@ struct ClaudeActivityReader {
             if entries.count > limit { entries.removeLast() }
         }
     }
+    private struct Inventory {
+        private let resolvedRoot: String
+        private var roots: FileManager.DirectoryEnumerator?
+        private var newestProjects = Newest<URL>(limit: ClaudeActivityReader.maximumProjects)
+        private var remainingProjects: ArraySlice<URL>?
+        private var project: URL?
+        private var entries: FileManager.DirectoryEnumerator?
+        private var agents: FileManager.DirectoryEnumerator?
+        private var parent: String?
+        private var newestLogs = Newest<Transcript>(limit: ClaudeActivityReader.maximumFileWatches)
+        private(set) var projects: [URL] = []
+        private(set) var projectDates: [URL: Date] = [:]
+        private(set) var finished = false
+        var transcripts: [Transcript] { newestLogs.values }
+
+        init(root: URL) {
+            resolvedRoot = root.resolvingSymlinksInPath().path + "/"
+            roots = ClaudeActivityReader.children(root)
+        }
+
+        /// Each step opens one directory or advances one nonrecursive iterator.
+        /// Keeping the iterator avoids repeatedly visiting the same prefix.
+        mutating func step(excluding: Set<String>) -> URL? {
+            if remainingProjects == nil {
+                if let url = roots?.nextObject() as? URL {
+                    if let facts = ClaudeActivityReader.visibleEntry(url), facts.isDirectory == true {
+                        newestProjects.insert(url, date: facts.contentModificationDate ?? .distantPast, url: url)
+                    }
+                } else {
+                    roots = nil
+                    projects = newestProjects.values.filter { $0.resolvingSymlinksInPath().path.hasPrefix(resolvedRoot) }
+                    remainingProjects = projects[...]
+                }
+                return nil
+            }
+            if let agents, let parent {
+                guard let url = agents.nextObject() as? URL else { self.agents = nil; self.parent = nil; return nil }
+                let raw = url.deletingPathExtension().lastPathComponent
+                guard url.pathExtension == "jsonl", raw.hasPrefix("agent-"),
+                      let id = ClaudeActivityRecord.identifier(String(raw.dropFirst(6))),
+                      let facts = ClaudeActivityReader.visibleEntry(url), facts.isDirectory != true else { return nil }
+                if excluding.contains(parent) || excluding.contains(id) { return url }
+                newestLogs.insert(Transcript(url: url, session: id, parent: parent, sanitized: false),
+                    date: facts.contentModificationDate ?? .distantPast, url: url)
+                return nil
+            }
+            if let project, let entries {
+                guard let url = entries.nextObject() as? URL else { self.entries = nil; return nil }
+                guard let facts = ClaudeActivityReader.visibleEntry(url) else { return nil }
+                if facts.isDirectory != true, url.pathExtension == "jsonl",
+                   let session = ClaudeActivityRecord.identifier(url.deletingPathExtension().lastPathComponent) {
+                    if excluding.contains(session) { return url }
+                    newestLogs.insert(Transcript(url: url, session: session, parent: nil, sanitized: false),
+                        date: facts.contentModificationDate ?? .distantPast, url: url)
+                } else if facts.isDirectory == true, let session = ClaudeActivityRecord.identifier(url.lastPathComponent) {
+                    let folder = url.appendingPathComponent("subagents", isDirectory: true)
+                    if let facts = ClaudeActivityReader.visibleEntry(folder), facts.isDirectory == true,
+                       FileManager.default.fileExists(atPath: project.appendingPathComponent(session + ".jsonl").path) {
+                        agents = ClaudeActivityReader.children(folder); parent = session
+                    }
+                }
+                return nil
+            }
+            guard let next = remainingProjects?.popFirst() else { finished = true; return nil }
+            project = next
+            projectDates[next] = ClaudeActivityReader.projectDate(next)
+            entries = ClaudeActivityReader.children(next)
+            return nil
+        }
+    }
     private let files: any PlatformFileSystem
     private let clock: @Sendable () -> Date
     private var cursors: [URL: Cursor] = [:]
@@ -44,12 +117,18 @@ struct ClaudeActivityReader {
     static let initialReadBudget = 512 * 1024
     static let appendReadBudget = 128 * 1024
     static let maximumLiveBacklog = 8 * 1024 * 1024
+    static let maximumProjects = 64
+    static let maximumFileWatches = 32
     static let maximumDirectoryWatches = 99
+    static let discoveryStepLimit = 512
+    private var inventory: Inventory?
+    private var repeatDiscovery = false
     private var discoveryDirectories: [URL] = []
     private var lastDiscovery: Date?
     private var projectDates: [URL: Date] = [:]
     private(set) var projectWatchURL: URL?
     private(set) var scans = 0
+    private(set) var lastDiscoverySteps = 0
     private(set) var fileReads = 0
     private(set) var bytesRead = 0
     private(set) var transcriptDocumentParses = 0
@@ -64,16 +143,18 @@ struct ClaudeActivityReader {
     mutating func reset() {
         cursors.removeAll(); discoveryDirectories.removeAll(); observationStarted = nil; observedFiles.removeAll()
         lastDiscovery = nil; projectDates.removeAll(); projectWatchURL = nil
+        inventory = nil; repeatDiscovery = false; lastDiscoverySteps = 0
         scans = 0; fileReads = 0; bytesRead = 0; transcriptDocumentParses = 0
     }
     func discoveryDue(at now: Date, watchingProjects: Bool) -> Bool {
+        guard inventory == nil, !repeatDiscovery else { return false }
         guard let lastDiscovery else { return true }
         let elapsed = now.timeIntervalSince(lastDiscovery)
         if elapsed < 0 || elapsed >= (watchingProjects ? 300 : 60) { return true }
         // The root watch is not recursive. A new log in an unwatched project
         // changes its directory date, which we can check without listing it.
         return watchingProjects && projectDates.contains { project, previous in
-            projectDate(project) != previous
+            Self.projectDate(project) != previous
         }
     }
     /// Removing a verified mirror is ownership correction, not a task ending.
@@ -86,12 +167,15 @@ struct ClaudeActivityReader {
         for url in removed { cursors.removeValue(forKey: url) }
         return removed
     }
-    mutating func read(home: URL, discover: Bool, excludingSessionIDs: Set<String> = [], now suppliedNow: Date? = nil) -> Result {
+    mutating func read(home: URL, discover: Bool, excludingSessionIDs: Set<String> = [],
+                       retainingSessionIDs: Set<String> = [], now suppliedNow: Date? = nil) -> Result {
         let now = suppliedNow ?? clock()
         let manager = FileManager.default, root = home.appendingPathComponent("projects"), spool = home.appendingPathComponent("pacer")
         let initialObservation = observationStarted == nil
         if initialObservation { observationStarted = now }
         excludeSessionIDs(excludingSessionIDs)
+        let events = spool.appendingPathComponent("events.jsonl")
+        let hookSpool = Transcript(url: events, session: "hooks", parent: nil, sanitized: true)
         var records: [Data] = []
         func unavailable(_ cursor: Cursor) -> Data? {
             guard !cursor.sanitized else { return nil }
@@ -106,41 +190,48 @@ struct ClaudeActivityReader {
             let values = rows.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             if !values.isEmpty, let frame = ClaudeActivityRecord.encode(["kind": "claudeBatch", "attaching": true, "records": values]) { records.append(frame) }
         }
-        if discover {
-            scans += 1; lastDiscovery = now
-            let projects = recentProjects(root)
-            projectDates = Dictionary(uniqueKeysWithValues: projects.map { ($0, projectDate($0)) })
-            let selected = discoverTranscripts(projects: projects, spool: spool, excluding: excludingSessionIDs, at: now)
-            let desired = Set(selected.map(\.url))
-            // Running cursors remain bounded alongside recently discovered
-            // files. Replacing a file cannot replay an inherited old turn.
-            for url in Array(cursors.keys) where !desired.contains(url) {
-                if let cursor = cursors[url], let row = unavailable(cursor) { records.append(row) }; cursors.removeValue(forKey: url)
+        if discover, inventory != nil { repeatDiscovery = true }
+        if inventory == nil, discover || repeatDiscovery {
+            scans += 1; repeatDiscovery = false; inventory = Inventory(root: root)
+            // Do not make the live hook spool wait for a large inventory.
+            if cursors.count < Self.maximumFileWatches, cursors[events] == nil, files.metadata(events)?.isRegularFile == true {
+                attach(hookSpool, initialObservation: initialObservation, at: now)
             }
-            for transcript in selected {
-                let url = transcript.url
-                if cursors[url] == nil {
-                    let boundary = !initialObservation && !observedFiles.contains(url) ? observationStarted : nil
-                    cursors[url] = Cursor(session: transcript.session, parent: transcript.parent,
-                        sanitized: transcript.sanitized, historicalEnd: nil, liveAfter: boundary)
+            if discoveryDirectories.isEmpty { updateDiscoveryWatches(home: home, root: root, spool: spool, projects: [], selected: []) }
+        }
+        lastDiscoverySteps = 0
+        if var scan = inventory {
+            for _ in 0..<Self.discoveryStepLimit where !scan.finished {
+                lastDiscoverySteps += 1
+                if let excluded = scan.step(excluding: excludingSessionIDs) { rememberObserved(excluded, at: now) }
+            }
+            inventory = scan.finished ? nil : scan
+            if scan.finished {
+                lastDiscovery = now; projectDates = scan.projectDates
+                var selected = cursors.keys.sorted { $0.path < $1.path }.compactMap { url -> Transcript? in
+                    guard let cursor = cursors[url], cursor.sanitized || retainingSessionIDs.contains(cursor.session) else { return nil }
+                    return Transcript(url: url, session: cursor.session, parent: cursor.parent, sanitized: cursor.sanitized)
                 }
-                rememberObserved(url, at: now)
+                if selected.count < Self.maximumFileWatches, manager.fileExists(atPath: events.path), !selected.contains(where: { $0.url == events }) {
+                    selected.append(hookSpool)
+                }
+                var seen = Set(selected.map(\.url))
+                for transcript in scan.transcripts where selected.count < Self.maximumFileWatches {
+                    guard !excludingSessionIDs.contains(transcript.session),
+                          transcript.parent.map(excludingSessionIDs.contains) != true,
+                          seen.insert(transcript.url).inserted else { continue }
+                    selected.append(transcript)
+                }
+                let projects = scan.projects
+                for url in Array(cursors.keys) where !seen.contains(url) {
+                    if let cursor = cursors[url], let row = unavailable(cursor) { records.append(row) }
+                    cursors.removeValue(forKey: url)
+                }
+                for transcript in selected {
+                    attach(transcript, initialObservation: initialObservation, at: now)
+                }
+                updateDiscoveryWatches(home: home, root: root, spool: spool, projects: projects, selected: selected)
             }
-            // Vnode directory watches are not recursive. Retain each selected
-            // root's project and nearest existing session/subagent parent so
-            // later creation at either level triggers the same discovery path.
-            var directories = [home, root, spool].map(nearestExistingDirectory)
-            projectWatchURL = directories[1].path == root.path ? directories[1] : nil
-            for transcript in selected where !transcript.sanitized {
-                let file = transcript.url
-                let project = transcript.parent == nil ? file.deletingLastPathComponent() :
-                    file.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-                let sessionDirectory = project.appendingPathComponent(transcript.parent ?? transcript.session)
-                directories += [project, sessionDirectory, sessionDirectory.appendingPathComponent("subagents")].map(nearestExistingDirectory)
-            }
-            directories += projects.prefix(2).map(nearestExistingDirectory)
-            var seen: Set<URL> = []
-            discoveryDirectories = Array(directories.filter { seen.insert($0).inserted }.prefix(Self.maximumDirectoryWatches))
         }
         var caughtUp = true, ownedBacklog = false
         // Hooks establish the current turn before transcript endings are
@@ -248,7 +339,7 @@ struct ClaudeActivityReader {
             } catch { if let row = unavailable(cursor) { records.append(row) }; cursors.removeValue(forKey: url) }
         }
         return Result(records: records, watchURLs: Array(cursors.keys) + discoveryDirectories,
-            available: manager.isReadableFile(atPath: home.path), caughtUp: caughtUp)
+            available: manager.isReadableFile(atPath: home.path), caughtUp: caughtUp, discoveryPending: inventory != nil || repeatDiscovery)
     }
     private static func isNewEvent(_ rows: [Data], after boundary: Date?) -> Bool {
         guard let boundary, let row = rows.first,
@@ -265,71 +356,48 @@ struct ClaudeActivityReader {
         }
         observedFiles.insert(url)
     }
-    private static let discoveryKeys: Set<URLResourceKey> = [.contentModificationDateKey, .isDirectoryKey, .isSymbolicLinkKey]
-    private func children(_ url: URL) -> FileManager.DirectoryEnumerator? {
+    private mutating func attach(_ transcript: Transcript, initialObservation: Bool, at now: Date) {
+        let url = transcript.url
+        if cursors[url] == nil {
+            let boundary = !initialObservation && !observedFiles.contains(url) ? observationStarted : nil
+            cursors[url] = Cursor(session: transcript.session, parent: transcript.parent,
+                sanitized: transcript.sanitized, historicalEnd: nil, liveAfter: boundary)
+        }
+        rememberObserved(url, at: now)
+    }
+    private mutating func updateDiscoveryWatches(home: URL, root: URL, spool: URL, projects: [URL], selected: [Transcript]) {
+        // Vnode watches are not recursive. Watch the selected project's
+        // nearest existing session and subagent parents.
+        var directories = [home, root, spool].map(nearestExistingDirectory)
+        projectWatchURL = directories[1].path == root.path ? directories[1] : nil
+        for transcript in selected where !transcript.sanitized {
+            let file = transcript.url
+            let project = transcript.parent == nil ? file.deletingLastPathComponent() :
+                file.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            let sessionDirectory = project.appendingPathComponent(transcript.parent ?? transcript.session)
+            directories += [project, sessionDirectory, sessionDirectory.appendingPathComponent("subagents")].map(nearestExistingDirectory)
+        }
+        directories += projects.prefix(2).map(nearestExistingDirectory)
+        var seen: Set<URL> = []
+        discoveryDirectories = Array(directories.filter { seen.insert($0).inserted }.prefix(Self.maximumDirectoryWatches))
+    }
+    private static let discoveryKeys: Set<URLResourceKey> = [.contentModificationDateKey, .isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey]
+    private static func children(_ url: URL) -> FileManager.DirectoryEnumerator? {
         FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(Self.discoveryKeys),
-            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])
+            options: [.skipsSubdirectoryDescendants])
     }
-    private func recentProjects(_ root: URL) -> [URL] {
-        guard let children = children(root) else { return [] }
-        let resolvedRoot = root.resolvingSymlinksInPath().path + "/"
-        var projects = Newest<URL>(limit: 64)
-        for case let project as URL in children {
-            guard let facts = try? project.resourceValues(forKeys: Self.discoveryKeys),
-                  facts.isDirectory == true, facts.isSymbolicLink != true else { continue }
-            projects.insert(project, date: facts.contentModificationDate ?? .distantPast, url: project)
-        }
-        return projects.values.filter { $0.resolvingSymlinksInPath().path.hasPrefix(resolvedRoot) }
-    }
-    private mutating func discoverTranscripts(projects: [URL], spool: URL, excluding: Set<String>, at now: Date) -> [Transcript] {
-        var candidates = Newest<Transcript>(limit: 32)
-        for project in projects {
-            guard let projectEntries = children(project) else { continue }
-            // Only session directories can contain agents. Old logs without
-            // that directory take one visit and no additional directory read.
-            for case let entry as URL in projectEntries {
-                guard let facts = try? entry.resourceValues(forKeys: Self.discoveryKeys),
-                      facts.isSymbolicLink != true else { continue }
-                if facts.isDirectory != true, entry.pathExtension == "jsonl",
-                   let session = ClaudeActivityRecord.identifier(entry.deletingPathExtension().lastPathComponent) {
-                    if excluding.contains(session) {
-                        rememberObserved(entry, at: now)
-                    } else {
-                        candidates.insert(Transcript(url: entry, session: session, parent: nil, sanitized: false),
-                            date: facts.contentModificationDate ?? .distantPast, url: entry)
-                    }
-                } else if facts.isDirectory == true, let parent = ClaudeActivityRecord.identifier(entry.lastPathComponent) {
-                    let folder = entry.appendingPathComponent("subagents", isDirectory: true)
-                    guard let folderFacts = try? folder.resourceValues(forKeys: Self.discoveryKeys),
-                          folderFacts.isDirectory == true, folderFacts.isSymbolicLink != true,
-                          FileManager.default.fileExists(atPath: project.appendingPathComponent(parent + ".jsonl").path),
-                          let agents = children(folder) else { continue }
-                    for case let agent as URL in agents where agent.pathExtension == "jsonl" {
-                        let raw = agent.deletingPathExtension().lastPathComponent
-                        guard raw.hasPrefix("agent-"), let id = ClaudeActivityRecord.identifier(String(raw.dropFirst(6))),
-                              let agentFacts = try? agent.resourceValues(forKeys: Self.discoveryKeys),
-                              agentFacts.isDirectory != true, agentFacts.isSymbolicLink != true else { continue }
-                        if excluding.contains(parent) || excluding.contains(id) {
-                            rememberObserved(agent, at: now)
-                        } else {
-                            candidates.insert(Transcript(url: agent, session: id, parent: parent, sanitized: false),
-                                date: agentFacts.contentModificationDate ?? .distantPast, url: agent)
-                        }
-                    }
-                }
-            }
-        }
-        let events = spool.appendingPathComponent("events.jsonl")
-        if FileManager.default.fileExists(atPath: events.path) {
-            candidates.insert(Transcript(url: events, session: "hooks", parent: nil, sanitized: true),
-                date: modified(events), url: events)
-        }
-        return candidates.values
+    private static func visibleEntry(_ url: URL) -> URLResourceValues? {
+        // Count hidden entries too. Asking the iterator to skip them can
+        // hide a long directory traversal inside one nextObject call.
+        guard !url.lastPathComponent.hasPrefix("."), let facts = try? url.resourceValues(forKeys: Self.discoveryKeys),
+              facts.isHidden != true, facts.isSymbolicLink != true else { return nil }
+        return facts
     }
     private func directory(_ url: URL) -> Bool { (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-    private func projectDate(_ url: URL) -> Date {
+    private static func projectDate(_ url: URL) -> Date {
         // The directory enumerator may have cached resource values on the URL.
-        modified(URL(fileURLWithPath: url.path, isDirectory: true))
+        (try? URL(fileURLWithPath: url.path, isDirectory: true)
+            .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
     }
     private func nearestExistingDirectory(_ url: URL) -> URL {
         var candidate = url
@@ -339,5 +407,4 @@ struct ClaudeActivityReader {
         }
         return URL(fileURLWithPath: candidate.path, isDirectory: true)
     }
-    private func modified(_ url: URL) -> Date { (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
 }

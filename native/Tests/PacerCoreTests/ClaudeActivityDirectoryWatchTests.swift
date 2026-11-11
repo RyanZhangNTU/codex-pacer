@@ -51,7 +51,7 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         XCTAssertTrue(reader.read(home: fixture.home, discover: false).watchURLs.isEmpty)
     }
 
-    func testLargeProjectSelectsNewestLogsBeyondOldDirectoryEntryLimits() throws {
+    func testLargeInventoryResumesWithinItsStepBudgetAndKeepsLiveLogs() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
         let subagents = fixture.sessionDirectory.appendingPathComponent("subagents")
         try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
@@ -60,16 +60,35 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
             try Data().write(to: url)
             try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
         }
-        for index in 0..<280 { try write(fixture.alpha.appendingPathComponent("old-\(index).jsonl"), at: old) }
-        for index in 0..<70 { try write(subagents.appendingPathComponent("agent-old-\(index).jsonl"), at: old) }
+        let oldRoot = fixture.alpha.appendingPathComponent(rootSession + ".jsonl")
+        try write(oldRoot, at: old.addingTimeInterval(-100))
+        var reader = ClaudeActivityReader(files: TestFileSystem())
+        _ = reader.read(home: fixture.home, discover: true, now: now)
+        XCTAssertEqual(reader.transcriptURL(for: rootSession)?.path, oldRoot.path)
+        for index in 0..<(ClaudeActivityReader.discoveryStepLimit + 32) {
+            try write(fixture.alpha.appendingPathComponent("old-\(index).jsonl"), at: old)
+            try write(subagents.appendingPathComponent("agent-old-\(index).jsonl"), at: old)
+        }
+        for index in 0..<40 { try write(fixture.alpha.appendingPathComponent(".hidden-\(index).jsonl"), at: now) }
         let newLog = fixture.alpha.appendingPathComponent("zzz-new-session.jsonl")
         let newAgent = subagents.appendingPathComponent("agent-zzz-new-agent.jsonl")
         try write(newLog, at: now)
         try write(newAgent, at: now)
-        try write(fixture.alpha.appendingPathComponent(rootSession + ".jsonl"), at: old)
-
-        var reader = ClaudeActivityReader(files: TestFileSystem())
-        _ = reader.read(home: fixture.home, discover: true, now: now)
+        let first = reader.read(home: fixture.home, discover: true, retainingSessionIDs: [rootSession], now: now)
+        XCTAssertTrue(first.discoveryPending)
+        XCTAssertTrue(first.caughtUp, "An unfinished inventory does not hold back existing transcript updates")
+        XCTAssertEqual(reader.lastDiscoverySteps, ClaudeActivityReader.discoveryStepLimit)
+        XCTAssertEqual(reader.transcriptURL(for: rootSession)?.path, oldRoot.path)
+        // A watch notification queues one follow-up instead of restarting the active scan.
+        var next = reader.read(home: fixture.home, discover: true, retainingSessionIDs: [rootSession], now: now)
+        XCTAssertEqual(reader.scans, 2)
+        for _ in 0..<16 where next.discoveryPending {
+            next = reader.read(home: fixture.home, discover: false, retainingSessionIDs: [rootSession], now: now)
+            XCTAssertLessThanOrEqual(reader.lastDiscoverySteps, ClaudeActivityReader.discoveryStepLimit)
+            XCTAssertEqual(reader.transcriptURL(for: rootSession)?.path, oldRoot.path)
+        }
+        XCTAssertFalse(next.discoveryPending)
+        XCTAssertEqual(reader.scans, 3)
         XCTAssertEqual(reader.attachedTranscriptCount, 32)
         XCTAssertEqual(reader.transcriptURL(for: "zzz-new-session")?.path, newLog.path)
         XCTAssertEqual(reader.transcriptURL(for: "zzz-new-agent")?.path, newAgent.path)

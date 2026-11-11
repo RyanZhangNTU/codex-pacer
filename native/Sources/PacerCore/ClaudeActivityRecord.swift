@@ -280,6 +280,9 @@ struct ClaudeActivityState: Sendable {
     var attention: [PendingAttentionRequest] { requests.values.sorted { $0.detectedAt < $1.detectedAt } }
     var performanceUpdates: [SessionPerformanceUpdate] { Array(metrics.values) }
     var knownStartedSessionIDs: Set<String> { excludedSessions.union(sessions.values.filter { $0.turnID != nil }.compactMap(\.threadID)) }
+    var activeSessionIDs: Set<String> {
+        Set(sessions.values.filter { $0.phase == .running || $0.phase == .waitingForInput }.compactMap(\.threadID))
+    }
     var excludedActivityIDs: Set<String> { Set(excludedSessions.map { AgentProvider.claude.activityID(sessionID: $0, sourceHostID: nil) }) }
     /// Applies only to default-home Desktop mirrors, not independent SSH data.
     mutating func setExcludedSessionIDs(_ ids: Set<String>) {

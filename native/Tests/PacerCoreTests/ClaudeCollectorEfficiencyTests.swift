@@ -14,13 +14,19 @@ class FakeInotify:
 class FixtureTailer(Tailer):
     def __init__(self,home):
         # Real temporary files; injected notifications, no real host/listener.
-        self.home=home;self.cursors={};self.watches={};self.dirty=set();self.scans=0
+        super().__init__(home)
+        if self.fd>=0:os.close(self.fd)
         self.fd,self.write_fd=os.pipe();os.set_blocking(self.fd,False)
         self.libc=FakeInotify();self.work=collections.Counter()
-    def entries(self,path,limit):
-        self.work['entries']+=1;return super().entries(path,limit)
-    def modified(self,path):
-        self.work['modified']+=1;return super().modified(path)
+    def discover(self):
+        scan=os.scandir;modified=globals()['regular_mtime']
+        def count_scan(path):
+            self.work['entries']+=1;return scan(path)
+        def count_modified(path):
+            self.work['modified']+=1;return modified(path)
+        os.scandir=count_scan;globals()['regular_mtime']=count_modified
+        try:return super().discover()
+        finally:os.scandir=scan;globals()['regular_mtime']=modified
     def notify(self,path,mask,name=b''):
         wd=next(wd for wd,value in self.watches.items() if value==path)
         payload=name+b'\0' if name else b''
@@ -45,6 +51,11 @@ def finish(tailer):
         rows.extend(tailer.read())
         if not tailer.dirty:return rows
     raise AssertionError('bounded synthetic append did not drain')
+
+def finish_discovery(tailer):
+    for _ in range(40):
+        if tailer.discover():return
+    raise AssertionError('bounded synthetic inventory did not finish')
 """#
 
     private func evaluate(_ body: String) throws -> [String: Any] {
@@ -77,7 +88,7 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-efficiency-') as temporary
     events=spool/'events.jsonl';events.write_bytes(b'');os.utime(str(events),(1900000000,1900000000))
     tailer=FixtureTailer(home)
     try:
-        tailer.discover();finish(tailer)
+        finish_discovery(tailer);finish(tailer)
         assert len(tailer.cursors)==32 and events in tailer.cursors
         assert all(mask&0x40 and mask&0x80 for mask in tailer.libc.masks)
         tailer.work.clear();before=tailer.scans;rows=[]
@@ -96,7 +107,7 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-efficiency-') as temporary
         session='35857527-1d32-4bc3-881a-0259832b7d61';file=project/(session+'.jsonl')
         file.write_bytes(line(prompt(session,'new-prompt')))
         assert tailer.notify(project,0x100,file.name.encode()) is True
-        tailer.discover();new_rows=finish(tailer)
+        finish_discovery(tailer);new_rows=finish(tailer)
         assert file in tailer.cursors and len(tailer.cursors)==32
         assert any(row['kind']=='prompt' and row['promptId']=='new-prompt' and row['historical'] for row in new_rows)
 
@@ -104,12 +115,12 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-efficiency-') as temporary
         replacement=project/'replacement.tmp';replacement.write_bytes(line(prompt(session,'replacement-prompt')))
         os.replace(str(replacement),str(file))
         assert tailer.notify(project,0x80,file.name.encode()) is True
-        tailer.discover();replaced=finish(tailer)
+        finish_discovery(tailer);replaced=finish(tailer)
         assert any(row['kind']=='prompt' and row['promptId']=='replacement-prompt' and row['historical'] for row in replaced)
         assert 'new-prompt' not in tailer.cursors[file].get('context',{})
         assert tailer.notify(project,0x40,file.name.encode()) is True
         file.unlink();assert tailer.notify(project,0x200,file.name.encode()) is True
-        tailer.discover();finish(tailer);assert file not in tailer.cursors
+        finish_discovery(tailer);finish(tailer);assert file not in tailer.cursors
 
         assert tailer.notify(spool,0x2,b'unknown.jsonl') is True
         assert tailer.notify(spool,0x2,b'../events.jsonl') is True
@@ -132,6 +143,86 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-efficiency-') as temporary
         XCTAssertEqual(result["stats"] as? Int, 0)
         XCTAssertEqual(result["cursorLimit"] as? Int, 32)
         XCTAssertEqual(result["creationRotationOverflowPassed"] as? Bool, true)
+    }
+
+    func testLargeRemoteInventoryResumesPastOldPrefixesAndKeepsALiveCursor() throws {
+        let result = try evaluate(#"""
+with tempfile.TemporaryDirectory(prefix='pacer-claude-inventory-') as temporary:
+    home=pathlib.Path(temporary);projects=home/'projects';live_project=projects/'live'
+    live_project.mkdir(parents=True);now=time.time();old=now-3600
+    live=live_project/'live-session.jsonl'
+    value=prompt('live-session','running')
+    value['timestamp']=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    live.write_bytes(line(value));os.utime(str(live),(old,old))
+    baseline=live_project/'baseline-session.jsonl'
+    baseline.write_bytes(line(dict(value,sessionId='baseline-session',uuid='baseline')))
+    os.utime(str(baseline),(old,old))
+    tailer=FixtureTailer(home)
+    try:
+        finish_discovery(tailer);finish(tailer)
+        cursor=tailer.cursors[live];assert not cursor['activityLive']
+        assert not tailer.cursors[baseline]['activityLive']
+        append(live,[dict(value,type='assistant',uuid='working',promptId='running',message={'content':[{'type':'thinking'}]})])
+        os.utime(str(live),(old,old))
+        tailer.poll();finish(tailer)
+        assert cursor['activityLive']
+        spool=home/'pacer';spool.mkdir();events=spool/'events.jsonl'
+        events.write_bytes(b'');os.utime(str(events),(old,old))
+        for i in range(265):
+            project=projects/('old-%03d'%i);project.mkdir();os.utime(str(project),(old,old))
+        project=projects/'zz-recent-project'
+        agents=project/'zz-agent-parent'/'subagents';agents.mkdir(parents=True)
+        for i in range(620):
+            file=project/('old-%03d.jsonl'%i);file.write_bytes(b'');os.utime(str(file),(old,old))
+        for i in range(82):
+            file=agents/('agent-old-%03d.jsonl'%i);file.write_bytes(b'');os.utime(str(file),(old,old))
+        parent=project/'zz-agent-parent.jsonl';parent.write_bytes(b'')
+        newest=project/'zz-recent-session.jsonl';newest.write_bytes(b'')
+        agent=agents/'agent-zz-recent-agent.jsonl';agent.write_bytes(b'')
+        for path in (project,parent,newest,agent):os.utime(str(path),(now,now))
+
+        # A deterministic directory order puts each new entry beyond the old
+        # prefix. Count opens and every iterator advance, including EOF.
+        scan=os.scandir;tables={}
+        for path in [projects,agents]+list(projects.iterdir()):
+            with scan(str(path)) as entries:tables[str(path)]=sorted(entries,key=lambda entry:entry.name)
+        counts=[0];open_handles=[0];peak_handles=[0]
+        class CountedEntries:
+            def __init__(self,path):self.items=iter(tables[path]);self.closed=False
+            def __enter__(self):
+                open_handles[0]+=1;peak_handles[0]=max(peak_handles[0],open_handles[0]);return self
+            def __exit__(self,*_):
+                if not self.closed:self.closed=True;open_handles[0]-=1
+            def __iter__(self):return self
+            def __next__(self):counts[0]+=1;return next(self.items)
+        def counted(path):
+            counts[0]+=1;return CountedEntries(path)
+        wall=time.time
+        os.scandir=counted;time.time=lambda:now+3600
+        try:
+            steps=[];finished=False
+            for _ in range(40):
+                counts[0]=0;finished=tailer.discover();steps.append(counts[0])
+                assert counts[0]<=Tailer.DISCOVERY_STEPS
+                if finished:break
+                assert tailer.cursors[live] is cursor
+            assert finished and len(steps)>1 and open_handles[0]==0 and peak_handles[0]<=2
+            assert tailer.cursors[live] is cursor
+            assert baseline not in tailer.cursors, 'An old baseline alone cannot pin a cursor'
+            assert newest in tailer.cursors and agent in tailer.cursors and events in tailer.cursors
+            assert len(tailer.cursors)==Tailer.FILE_LIMIT
+            append(live,[dict(value,type='result',subtype='success',uuid='terminal',promptId='running')])
+            os.utime(str(live),(old,old))
+            tailer.poll();finish(tailer)
+            assert 'activeAt' not in cursor
+            finish_discovery(tailer)
+            assert live not in tailer.cursors, 'An explicit end releases the slot'
+            print(json.dumps({'slices':len(steps),'maxSteps':max(steps),'limit':Tailer.DISCOVERY_STEPS}))
+        finally:os.scandir=scan;time.time=wall
+    finally:tailer.close()
+"""#)
+        XCTAssertGreaterThan(try XCTUnwrap(result["slices"] as? Int), 1)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(result["maxSteps"] as? Int), try XCTUnwrap(result["limit"] as? Int))
     }
 
     func testOneDecodePerLineKeepsWrapperOutputOwnedStopAndPrivateContentOutOfCursorContext() throws {

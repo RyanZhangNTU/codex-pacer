@@ -3,7 +3,7 @@
 No prompts, messages, tool arguments/output, account data or absolute paths are
 emitted. The owner's stdin EOF stops watches/listener without a heartbeat wait.
 """
-import base64, datetime, json, math, os, pathlib, re, select, socket, struct, sys, time
+import base64, datetime, heapq, json, math, os, pathlib, re, select, socket, stat, struct, sys, time
 
 MAX_FRAME = 1024 * 1024
 ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$')
@@ -399,49 +399,135 @@ def otlp_respond(stream,status):
     try:stream.send(('HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}'%(status,reasons[status])).encode())
     except OSError:pass
 
+def regular_mtime(path):
+    try:
+        info = path.lstat()
+        return info.st_mtime if stat.S_ISREG(info.st_mode) else None
+    except OSError: return None
+
+class TranscriptInventory:
+    def __init__(self, root, project_limit, file_limit):
+        self.projects = []; self.files = []
+        self.walk = self.entries(root, project_limit, file_limit)
+    @staticmethod
+    def directory(path):
+        # Charge directory opens as well as entries. A run of empty or
+        # inaccessible directories must also yield to the event loop.
+        try:
+            with os.scandir(str(path)) as items:
+                yield None
+                while True:
+                    try: entry = next(items)
+                    except (OSError, StopIteration):
+                        yield None
+                        break
+                    yield entry
+        except OSError: yield None
+    @staticmethod
+    def keep(rows, limit, date, path, details):
+        row = (date, str(path), details)
+        if len(rows) < limit: heapq.heappush(rows, row)
+        elif row[:2] > rows[0][:2]: heapq.heapreplace(rows, row)
+    def entries(self, root, project_limit, file_limit):
+        for entry in self.directory(root):
+            if entry is not None:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        path = pathlib.Path(entry.path)
+                        self.keep(self.projects, project_limit, entry.stat(follow_symlinks=False).st_mtime, path, path)
+                except OSError: pass
+            yield
+        for _, _, project in sorted(self.projects, reverse=True):
+            for entry in self.directory(project):
+                folder = None; parent = None
+                if entry is not None:
+                    path = pathlib.Path(entry.path)
+                    try:
+                        if path.suffix == '.jsonl' and entry.is_file(follow_symlinks=False):
+                            session = ident(path.stem)
+                            if session:
+                                self.keep(self.files, file_limit, entry.stat(follow_symlinks=False).st_mtime,
+                                          path, (path, session, None, False))
+                        elif entry.is_dir(follow_symlinks=False):
+                            parent = ident(entry.name)
+                            subagents = path/'subagents'
+                            if parent and regular_mtime(project/(entry.name+'.jsonl')) is not None and stat.S_ISDIR(subagents.lstat().st_mode):
+                                folder = subagents
+                    except OSError: pass
+                yield
+                if folder is not None:
+                    for agent in self.directory(folder):
+                        if agent is not None and agent.name.startswith('agent-') and agent.name.endswith('.jsonl'):
+                            aid = ident(agent.name[6:-6])
+                            try:
+                                if aid and agent.is_file(follow_symlinks=False):
+                                    path = pathlib.Path(agent.path)
+                                    self.keep(self.files, file_limit, agent.stat(follow_symlinks=False).st_mtime,
+                                              path, (path, aid, parent, False))
+                            except OSError: pass
+                        yield
+    def advance(self, budget):
+        for _ in range(budget):
+            try: next(self.walk)
+            except StopIteration: return True
+        return False
+    def close(self): self.walk.close()
+
 class Tailer:
+    DISCOVERY_STEPS = 512
+    PROJECT_LIMIT = 64
+    FILE_LIMIT = 32
+    BASELINE_ACTIVITY_AGE = 900
     def __init__(self, home):
         self.home = home; self.cursors = {}; self.watches = {}; self.dirty = set(); self.fd = -1; self.scans = 0
+        self.inventory = None
         if sys.platform.startswith('linux'):
             try:
                 import ctypes
                 self.libc = ctypes.CDLL(None, use_errno=True); self.fd = self.libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
             except (OSError, AttributeError): pass
-    def entries(self, path, limit):
-        try:
-            with os.scandir(str(path)) as items:
-                rows = []
-                for item in items:
-                    if len(rows) >= limit: break
-                    if item.is_symlink(): continue
-                    rows.append(pathlib.Path(item.path))
-                return rows
-        except OSError: return []
-    def modified(self, path):
-        try: return path.stat().st_mtime
-        except OSError: return 0
+    @property
+    def discovering(self): return self.inventory is not None
     def discover(self):
-        self.scans += 1; root = self.home / 'projects'; candidates = []; dirs = [self.home, root, self.home/'pacer']
-        for project in sorted(self.entries(root, 256), key=self.modified, reverse=True)[:64]:
-            if not project.is_dir(): continue
-            dirs.append(project)
-            for file in self.entries(project, 256):
-                session = ident(file.stem)
-                if file.suffix != '.jsonl' or not session: continue
-                candidates.append((file, session, None, False))
-                for agent in self.entries(project/session/'subagents',64):
-                    if agent.suffix != '.jsonl' or not agent.stem.startswith('agent-'): continue
-                    aid = ident(agent.stem[6:])
-                    if aid: candidates.append((agent,aid,session,False))
-        events = self.home/'pacer'/'events.jsonl'
-        if events.is_file(): candidates.append((events,'hooks',None,True))
-        selected = sorted(candidates,key=lambda row:self.modified(row[0]),reverse=True)[:32]
-        desired = {row[0] for row in selected}
+        root = self.home/'projects'; spool = self.home/'pacer'; events = spool/'events.jsonl'
+        dirs = [self.home, root, spool]
+        if self.inventory is None:
+            self.scans += 1; self.inventory = TranscriptInventory(root, self.PROJECT_LIMIT, self.FILE_LIMIT)
+            # Attach the spool at once on a cold start, even when the
+            # transcript inventory takes several slices.
+            if not self.cursors:
+                if regular_mtime(events) is not None: self.attach(events, 'hooks', None, True)
+                self.update_watches(set(self.cursors).union(dirs))
+        if not self.inventory.advance(self.DISCOVERY_STEPS): return False
+        inventory = self.inventory; self.inventory = None
+        selected = {}
+        if regular_mtime(events) is not None: selected[events] = (events, 'hooks', None, True)
+        # Keep observed work through quiet periods. Only historical evidence
+        # expires by age, since it cannot confirm a turn is still live.
+        now = time.time()
+        active = [(cursor['activeAt'], str(file), file, cursor) for file, cursor in self.cursors.items()
+                  if 'activeAt' in cursor and (cursor.get('activityLive') or -5 <= now-cursor['activeAt'] <= self.BASELINE_ACTIVITY_AGE)]
+        for _, _, file, cursor in sorted(active, reverse=True):
+            if len(selected) >= self.FILE_LIMIT: break
+            if file not in selected and regular_mtime(file) is not None:
+                selected[file] = (file, cursor['session'], cursor['parent'], cursor['owned'])
+        for _, _, row in sorted(inventory.files, reverse=True):
+            if len(selected) >= self.FILE_LIMIT: break
+            file = row[0]
+            if file not in selected and regular_mtime(file) is not None: selected[file] = row
+        desired = set(selected)
         for file in list(self.cursors):
             if file not in desired: self.cursors.pop(file,None)
-        for file, session, parent, owned in selected:
-            if file not in self.cursors: self.cursors[file] = {'inode':0,'offset':0,'fragment':b'','session':session,'parent':parent,'owned':owned,'historicalEnd':None};self.dirty.add(file)
-        watches = desired.union(dirs[:4])
+        self.dirty.intersection_update(desired)
+        for file, session, parent, owned in selected.values(): self.attach(file, session, parent, owned)
+        dirs.extend(path for _, _, path in sorted(inventory.projects, reverse=True)[:1])
+        self.update_watches(desired.union(dirs))
+        return True
+    def attach(self, file, session, parent, owned):
+        if file not in self.cursors:
+            self.cursors[file] = {'inode':0,'offset':0,'fragment':b'','session':session,'parent':parent,'owned':owned,'historicalEnd':None}
+            self.dirty.add(file)
+    def update_watches(self, watches):
         for wd,path in list(self.watches.items()):
             if path not in watches:
                 self.watches.pop(wd,None)
@@ -497,7 +583,9 @@ class Tailer:
             if cursor is None: continue
             try:
                 s=file.stat();reset=s.st_ino!=cursor['inode'] or cursor['offset']>s.st_size
-                if reset: cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,context={},contextOrder=[],deferred={},discardingOversize=False)
+                if reset:
+                    cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,context={},contextOrder=[],deferred={},discardingOversize=False)
+                    self.clear_activity(cursor)
                 budget=512*1024 if cursor['offset']==0 else 128*1024
                 # Large normal attachment appends must drain sequentially;
                 # the per-read budget is not an actual missing-data boundary.
@@ -505,6 +593,7 @@ class Tailer:
                 if gap:
                     cursor.update(offset=s.st_size-budget,fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=False)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
+                    self.clear_activity(cursor)
                 fragment_start=cursor['offset']-len(cursor['fragment'])
                 with file.open('rb') as handle: handle.seek(cursor['offset']);data=handle.read(budget)
                 cursor['offset']+=len(data);fragment=cursor['fragment']+data
@@ -523,6 +612,7 @@ class Tailer:
                     historical=cursor['historicalEnd'] is not None and fragment_start<cursor['historicalEnd'];fragment_start+=len(line)+1
                     if len(line)>MAX_FRAME:
                         cursor.update(context={},contextOrder=[],deferred={})
+                        self.clear_activity(cursor)
                         if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                         continue
                     if cursor['owned']: values=sanitized(line)
@@ -534,11 +624,16 @@ class Tailer:
                             owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER)
                             values=unowned_rows(owned);self.defer_record(cursor,owned,historical)
                         else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt)
-                    rows.extend(dict(row,historical=historical) for row in values)
                     # A late parent proves the owner of descendants read before it.
-                    rows.extend(cursor.pop('released',[]))
+                    released = cursor.pop('released',[])
+                    if not cursor['owned']:
+                        self.note_activity(cursor, values, historical)
+                        self.note_activity(cursor, released, historical)
+                    rows.extend(dict(row,historical=historical) for row in values)
+                    rows.extend(released)
                 if len(cursor['fragment'])>MAX_FRAME:
                     cursor.update(fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=True)
+                    self.clear_activity(cursor)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 if cursor['offset']<s.st_size:self.dirty.add(file)
                 # Keep both byte/line budgets. Complete owned records must
@@ -548,6 +643,25 @@ class Tailer:
                 if cursor['historicalEnd'] is not None and cursor['offset']>=cursor['historicalEnd'] and (not cursor['fragment'] or cursor['offset']-len(cursor['fragment'])>=cursor['historicalEnd']):cursor['historicalEnd']=None
             except OSError:self.cursors.pop(file,None)
         return rows
+    @staticmethod
+    def clear_activity(cursor):
+        for key in ('activityAt','activityLive','activeAt','activePrompt','endedPrompt'):cursor.pop(key,None)
+    @staticmethod
+    def note_activity(cursor, rows, historical):
+        for row in rows:
+            prompt = row.get('promptId'); kind = row.get('kind'); at = row.get('at')
+            if not prompt or row.get('unownedTurn') or number(at) is None or at < cursor.get('activityAt',0): continue
+            same_turn = prompt == cursor.get('activePrompt')
+            live = not row.get('historical',historical) or (same_turn and cursor.get('activityLive',False))
+            if kind in ('prompt','toolStart','toolEnd','thinking','response','modelBlock'):
+                if prompt == cursor.get('endedPrompt'): continue
+                cursor.update(activeAt=at,activePrompt=prompt,activityAt=at,activityLive=live)
+            elif kind in ('stop','stopVerified','interrupt','failure') and same_turn:
+                if row.get('awaitsReply'):
+                    cursor.update(activeAt=at,activityAt=at,activityLive=live)
+                    continue
+                cursor.update(endedPrompt=prompt,activityAt=at)
+                for key in ('activeAt','activePrompt','activityLive'):cursor.pop(key,None)
     def prompt_context(self,raw,cursor):
         try:value=json.loads(raw)
         except (ValueError,UnicodeError):return None
@@ -616,11 +730,13 @@ class Tailer:
                     released.append(row)
         elif missing:self.enqueue_deferred(cursor,missing,entries)
     def close(self):
+        if self.inventory is not None: self.inventory.close();self.inventory=None
         if self.fd >= 0: os.close(self.fd);self.fd=-1
 
 def main():
     home = pathlib.Path(os.path.expanduser(base64.b64decode(sys.argv[1]).decode()))
     tailer=Tailer(home);tailer.discover();rows=tailer.read();clients={};listener=None
+    cold_inventory=tailer.discovering
     try:
         listener=socket.socket();listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);listener.bind(('127.0.0.1',4319));listener.listen(8);listener.setblocking(False)
     except OSError:
@@ -632,9 +748,10 @@ def main():
     # A batch published while files are still dirty leaves its read open; an
     # empty drained batch closes it if the rest of the read yields no rows.
     drain={'open':False}
+    def read_open(): return bool(tailer.dirty) or cold_inventory
     def publish(rows,attached=False):
-        for i in range(0,len(rows),512):emit({'kind':'claudeBatch','attaching':attached,'baselineFinal':i+512>=len(rows) and not tailer.dirty,'records':rows[i:i+512]})
-        if rows:drain['open']=bool(tailer.dirty)
+        for i in range(0,len(rows),512):emit({'kind':'claudeBatch','attaching':attached,'baselineFinal':i+512>=len(rows) and not read_open(),'records':rows[i:i+512]})
+        if rows:drain['open']=read_open()
     try:interval=min(5,max(.1,float(sys.argv[2])))
     except (IndexError,ValueError):interval=5
     pending=[];pending_due=None
@@ -647,22 +764,30 @@ def main():
             publish(pending);pending=[];pending_due=None
         elif pending_due is None:pending_due=time.monotonic()+interval
     publish(rows);next_scan=time.monotonic()+60;next_poll=time.monotonic()+2;heartbeat=0;loops=0;stdin=b''
+    next_slice=time.monotonic()+.1;scan_requested=False
     try:
         while True:
             now=time.monotonic();loops+=1
             if pending_due is not None and now>=pending_due:publish(pending);pending=[];pending_due=None
             if now>=heartbeat:
                 heartbeat=now+15;emit({'kind':'status','connected':True,'claudeHome':home.is_dir(),'watchingLogs':bool(tailer.cursors),'scans':tailer.scans,'cpuSeconds':time.process_time(),'loopIterations':loops,'telemetry':listener is not None})
-            if now>=next_scan:tailer.discover();next_scan=now+60
+            if now>=next_scan:
+                if not tailer.discovering:scan_requested=True
+                next_scan=now+60
+            if (scan_requested or tailer.discovering) and now>=next_slice:
+                if not tailer.discovering:scan_requested=False
+                if tailer.discover():cold_inventory=False;next_scan=time.monotonic()+60
+                next_slice=time.monotonic()+.1
             if now>=next_poll:tailer.poll();next_poll=now+(30 if tailer.fd>=0 else 2)
             if tailer.dirty:queue_rows(tailer.read())
-            if drain['open'] and not tailer.dirty and not pending:emit({'kind':'claudeBatch','attaching':False,'baselineFinal':True,'records':[]});drain['open']=False
+            if drain['open'] and not read_open() and not pending:emit({'kind':'claudeBatch','attaching':False,'baselineFinal':True,'records':[]});drain['open']=False
             for client,state in list(clients.items()):
                 if now>state['deadline']:otlp_respond(client,408);client.close();clients.pop(client,None)
             inputs=[sys.stdin.fileno()]+list(clients)
             if listener:inputs.append(listener)
             if tailer.fd>=0:inputs.append(tailer.fd)
             deadlines=[heartbeat,next_scan,next_poll]+[s['deadline'] for s in clients.values()]
+            if scan_requested or tailer.discovering:deadlines.append(next_slice)
             if pending_due is not None:deadlines.append(pending_due)
             if tailer.dirty:deadlines.append(now+.1)
             timeout=max(0,min(deadlines)-now)
@@ -686,7 +811,7 @@ def main():
                                 if pending:publish(pending);pending=[];pending_due=None
                                 tailer.poll()
                 elif tailer.fd>=0 and stream==tailer.fd:
-                    if tailer.drain():tailer.discover()
+                    if tailer.drain():scan_requested=True
                 elif stream is listener:
                     client,_=listener.accept();client.setblocking(False)
                     if len(clients)>=8:client.close()

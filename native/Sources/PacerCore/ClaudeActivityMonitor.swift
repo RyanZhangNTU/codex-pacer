@@ -172,7 +172,8 @@ public actor ClaudeActivityMonitor {
     private func readLocal(discover: Bool, attaching: Bool = false, exclusionsCurrent: Bool = false) async {
         guard let home else { return }
         if discover, !exclusionsCurrent { refreshLocalExclusions(home: home) }
-        let result = localReader.read(home: home, discover: discover, excludingSessionIDs: localMirrorRoots)
+        let result = localReader.read(home: home, discover: discover, excludingSessionIDs: localMirrorRoots,
+            retainingSessionIDs: local.activeSessionIDs)
         var watchURLs = result.watchURLs
         if !discover, !exclusionsCurrent, !result.records.isEmpty {
             let known = local.knownStartedSessionIDs
@@ -193,11 +194,12 @@ public actor ClaudeActivityMonitor {
         if let status = ClaudeActivityRecord.encode(["kind": "status", "connected": result.available, "watchingLogs": !watchURLs.isEmpty, "scans": localReader.scans]) { local.consume(status, now: clock()) }
         if !result.available { local.unavailable() }
         watcher?.update(watchURLs, interval: 0.1)
-        if !result.caughtUp, catchup == nil {
+        if (!result.caughtUp || result.discoveryPending), catchup == nil {
+            let generation = localGeneration
             catchup = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 guard !Task.isCancelled else { return }
-                await self?.continueRead()
+                await self?.continueRead(generation: generation)
             }
         }
         if result.caughtUp { await schedulePublish(immediate: attaching || result.records.contains(where: Self.urgent)) }
@@ -213,7 +215,11 @@ public actor ClaudeActivityMonitor {
         local.setExcludedSessionIDs(localMirrorRoots)
         return true
     }
-    private func continueRead() async { catchup = nil; await readLocal(discover: false) }
+    private func continueRead(generation: UUID) async {
+        guard localGeneration == generation else { return }
+        catchup = nil
+        await readLocal(discover: false)
+    }
     private func receiveTelemetry(_ bytes: Data, generation: UUID) async {
         guard localGeneration == generation, home != nil else { return }
         local.consume(bytes, now: clock()); await schedulePublish(immediate: false)
