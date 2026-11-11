@@ -152,6 +152,7 @@ struct ClaudeActivityReader {
     private static let newLogSlots = 2
     static let maximumDirectoryWatches = 99
     static let discoveryStepLimit = 512
+    static let periodicDiscoveryInterval: TimeInterval = 60
     private var inventory: Inventory?
     private var repeatDiscovery = false
     private var lastPassCanFollowUp = false
@@ -180,13 +181,7 @@ struct ClaudeActivityReader {
         inventory = nil; repeatDiscovery = false; lastPassCanFollowUp = false; lastDiscoverySteps = 0
         scans = 0; fileReads = 0; bytesRead = 0; transcriptDocumentParses = 0
     }
-    func discoveryDue(at now: Date) -> Bool {
-        guard inventory == nil, !repeatDiscovery, retiring.isEmpty else { return false }
-        guard let lastDiscovery else { return true }
-        let elapsed = now.timeIntervalSince(lastDiscovery)
-        // Appending to an unwatched file does not change its directory stamp.
-        return elapsed < 0 || elapsed >= 60
-    }
+    var canStartPeriodicDiscovery: Bool { inventory == nil && !repeatDiscovery && retiring.isEmpty }
     func watchDiscoveryDelay(at now: Date) -> TimeInterval {
         guard inventory == nil, let lastDiscovery else { return 0 }
         let elapsed = now.timeIntervalSince(lastDiscovery)
@@ -204,11 +199,19 @@ struct ClaudeActivityReader {
     /// Removing a verified mirror is ownership correction, not a task ending.
     /// If its exclusion later disappears, discovery adds a fresh historical
     /// cursor rather than replaying its previous byte range as live evidence.
-    @discardableResult mutating func excludeSessionIDs(_ ids: Set<String>) -> Set<URL> {
+    @discardableResult mutating func excludeSessionIDs(_ ids: Set<String>, now: Date? = nil) -> Set<URL> {
         let removed = Set(cursors.compactMap { url, cursor in
             !cursor.sanitized && (ids.contains(cursor.session) || cursor.parent.map(ids.contains) == true) ? url : nil
         })
-        for url in removed { cursors.removeValue(forKey: url); retiring.removeValue(forKey: url) }
+        if !removed.isEmpty {
+            let observed = now ?? clock()
+            for url in removed {
+                // The other source owned this file. If it returns, establish
+                // a quiet baseline rather than replaying the mirror.
+                rememberObserved(url, metadata: nil, through: 0, at: observed)
+                cursors.removeValue(forKey: url); retiring.removeValue(forKey: url)
+            }
+        }
         return removed
     }
     mutating func read(home: URL, discover: Bool, excludingSessionIDs: Set<String> = [],
@@ -217,7 +220,7 @@ struct ClaudeActivityReader {
         let manager = FileManager.default, root = home.appendingPathComponent("projects"), spool = home.appendingPathComponent("pacer")
         let cutoff = observationStarted ?? now
         observationStarted = cutoff
-        excludeSessionIDs(excludingSessionIDs)
+        excludeSessionIDs(excludingSessionIDs, now: now)
         let events = spool.appendingPathComponent("events.jsonl")
         let hookSpool = Transcript(url: events, session: "hooks", parent: nil, sanitized: true)
         var records: [Data] = []
@@ -363,6 +366,8 @@ struct ClaudeActivityReader {
                           cursor.replay?.metadata.map({ !Self.sameFile($0, metadata) || size < (cursor.replay?.through ?? 0) }) == true {
                     // A replaced or truncated path is a fresh baseline.
                     cursor.liveAfter = nil; cursor.replay = nil
+                } else if let cutover = cursor.liveAfter, metadata.modified <= cutover, metadata.created.map({ $0 > cutover }) != true {
+                    cursor.liveAfter = nil
                 }
                 cursor.identity = metadata.identity; cursor.created = metadata.created; cursor.offset = 0
                 cursor.fragment.removeAll(); cursor.historicalEnd = size
@@ -372,7 +377,8 @@ struct ClaudeActivityReader {
             // A read budget is not a loss boundary. Desktop can append several
             // hundred KiB of attachments before one small model record; drain
             // those appends in bounded chunks so their ID chain stays intact.
-            let maximumGap = reset ? Self.initialReadBudget : Self.maximumLiveBacklog
+            let observedCreation = cursor.liveAfter.map { cutoff in metadata.created.map { $0 > cutoff } == true } ?? false
+            let maximumGap = reset && !observedCreation ? Self.initialReadBudget : Self.maximumLiveBacklog
             let gap = size - cursor.offset > UInt64(maximumGap)
             if gap {
                 cursor.offset = size - UInt64(budget); cursor.fragment.removeAll()
@@ -381,7 +387,7 @@ struct ClaudeActivityReader {
             }
             do {
                 var fragmentStart = cursor.offset - UInt64(cursor.fragment.count)
-                let maximumBytes = Int(min(UInt64(budget), size - cursor.offset))
+                let maximumBytes = readBoundary == nil ? budget : Int(min(UInt64(budget), size - cursor.offset))
                 let bytes = maximumBytes > 0 ? try files.read(url, offset: cursor.offset, maximumBytes: maximumBytes) : Data()
                 fileReads += 1; bytesRead += bytes.count; cursor.hasRead = true
                 cursor.offset += UInt64(bytes.count); cursor.fragment.append(bytes)
@@ -481,10 +487,10 @@ struct ClaudeActivityReader {
         let url = transcript.url
         if cursors[url] == nil {
             let replay = observedFiles[url]
-            let boundary = replay?.metadata == nil ? max(liveAfter, replay?.at ?? liveAfter) : liveAfter
             let metadata = files.metadata(url)
+            let canClassify = metadata != nil && (replay == nil || replay?.metadata != nil)
             cursors[url] = Cursor(session: transcript.session, parent: transcript.parent,
-                sanitized: transcript.sanitized, historicalEnd: nil, liveAfter: metadata == nil ? nil : boundary, replay: replay, metadata: metadata)
+                sanitized: transcript.sanitized, historicalEnd: nil, liveAfter: canClassify ? liveAfter : nil, replay: replay, metadata: metadata)
         }
     }
     private func cursorNeedsRead(_ cursor: Cursor, through boundary: PlatformFileMetadata) -> Bool {

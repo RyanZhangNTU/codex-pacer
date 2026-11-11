@@ -76,6 +76,7 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         try write(newAgent, at: now)
         let first = reader.read(home: fixture.home, discover: true, retainingSessionIDs: [rootSession], now: now)
         XCTAssertTrue(first.discoveryPending)
+        XCTAssertFalse(reader.canStartPeriodicDiscovery, "A minute tick must not restart an unfinished inventory")
         XCTAssertTrue(first.caughtUp, "An unfinished inventory does not hold back existing transcript updates")
         XCTAssertEqual(reader.lastDiscoverySteps, ClaudeActivityReader.discoveryStepLimit)
         XCTAssertEqual(reader.transcriptURL(for: rootSession)?.path, oldRoot.path)
@@ -345,22 +346,6 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         XCTAssertEqual(Set(try JSONDecoder().decode([String].self, from: reply)), expected)
     }
 
-    func testPeriodicDiscoveryKeepsMinuteFallbackEvenWithAProjectWatch() throws {
-        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
-        let start = Date()
-        var reader = ClaudeActivityReader(files: TestFileSystem())
-        _ = reader.read(home: fixture.home, discover: true, now: start)
-        XCTAssertNotNil(reader.projectWatchURL)
-        XCTAssertFalse(reader.discoveryDue(at: start.addingTimeInterval(59)))
-        XCTAssertTrue(reader.discoveryDue(at: start.addingTimeInterval(60)))
-
-        let directoryEvent = start.addingTimeInterval(120)
-        _ = reader.read(home: fixture.home, discover: true, now: directoryEvent)
-        XCTAssertEqual(reader.scans, 2)
-        XCTAssertFalse(reader.discoveryDue(at: directoryEvent.addingTimeInterval(59)))
-        XCTAssertTrue(reader.discoveryDue(at: directoryEvent.addingTimeInterval(60)))
-    }
-
     func testPeriodicDiscoveryFindsAnAppendToAnUnwatchedOldLog() throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.home) }
         let start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
@@ -379,6 +364,7 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         var reader = ClaudeActivityReader(files: TestFileSystem())
         let first = reader.read(home: fixture.home, discover: true, now: start)
         XCTAssertNotNil(reader.projectWatchURL)
+        XCTAssertEqual(ClaudeActivityReader.periodicDiscoveryInterval, 60)
         XCTAssertFalse(first.watchURLs.map(\.path).contains(unwatched.path))
         XCTAssertNil(reader.transcriptURL(for: newSession))
         let before = try manager.attributesOfItem(atPath: unwatched.path)[.modificationDate] as? Date
@@ -387,7 +373,7 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         try writer.seekToEnd(); try writer.write(contentsOf: completedTranscript(newSession, at: now)); try writer.close()
         try manager.setAttributes([.modificationDate: now], ofItemAtPath: log.path)
         XCTAssertEqual(try manager.attributesOfItem(atPath: unwatched.path)[.modificationDate] as? Date, before)
-        XCTAssertTrue(reader.discoveryDue(at: now))
+        XCTAssertTrue(reader.canStartPeriodicDiscovery)
         XCTAssertEqual(reader.scans, 1)
         let result = reader.read(home: fixture.home, discover: true, now: now)
         XCTAssertEqual(reader.transcriptURL(for: newSession)?.path, log.path)
@@ -395,7 +381,7 @@ final class ClaudeActivityDirectoryWatchTests: XCTestCase {
         for row in result.records { state.consume(row, now: now) }
         _ = inbox.observe(state.activities, at: now, retention: 300)
         XCTAssertEqual(inbox.unreadActivities.map(\.threadID), [newSession])
-        XCTAssertFalse(reader.discoveryDue(at: now.addingTimeInterval(59)))
+        XCTAssertEqual(reader.scans, 2)
     }
 
     private final class Observations: @unchecked Sendable {

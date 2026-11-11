@@ -324,6 +324,7 @@ with tempfile.TemporaryDirectory(prefix='pacer-claude-startup-append-') as tempo
         clock[0]=cutoff+2
         append(late,[{'type':'result','subtype':'success','sessionId':'late','uuid':'finished','parentUuid':'ancestor','timestamp':stamp_at(cutoff+1)},
                      {'type':'system','sessionId':'late','uuid':'ancestor','promptId':'observed-turn','timestamp':stamp_at(cutoff+2)}])
+        os.utime(str(late),(cutoff+2,cutoff+2))
         assert project.stat().st_mtime_ns==directory_stamp
         finish_discovery(tailer)
         assert not tailer.inventory_changed and tailer.cursors[late]['liveAfter']==cutoff

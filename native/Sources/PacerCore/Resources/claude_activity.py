@@ -693,16 +693,21 @@ class Tailer:
                 size=boundary[1] if boundary else s.st_size
                 cursor['modified']=boundary[2] if boundary else s.st_mtime
                 reset=identity!=(cursor['device'],cursor['inode']) or cursor['offset']>size
+                created=getattr(s,'st_birthtime',s.st_ctime if os.name=='nt' else None)
                 if reset:
                     replay=cursor.get('replay')
                     if cursor['inode'] or identity!=cursor.pop('attachedIdentity',None) or replay and (identity!=replay[0] or size<replay[1]):
                         cursor.update(liveAfter=None,replay=None)
+                    cutoff=cursor['liveAfter']
+                    if cutoff is not None and s.st_mtime<=cutoff and (created is None or created<=cutoff):cursor['liveAfter']=None
                     cursor.update(inode=s.st_ino,device=s.st_dev,offset=0,fragment=b'',historicalEnd=size,context={},contextOrder=[],deferred={},discardingOversize=False)
                     self.clear_activity(cursor)
                 budget=512*1024 if reset else 128*1024
                 # Large normal attachment appends must drain sequentially;
                 # the per-read budget is not an actual missing-data boundary.
-                gap=size-cursor['offset']>(budget if reset else 8*1024*1024)
+                cutoff=cursor['liveAfter']
+                observed_creation=cutoff is not None and created is not None and created>cutoff
+                gap=size-cursor['offset']>(budget if reset and not observed_creation else 8*1024*1024)
                 if gap:
                     cursor.update(offset=size-budget,fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=False)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})

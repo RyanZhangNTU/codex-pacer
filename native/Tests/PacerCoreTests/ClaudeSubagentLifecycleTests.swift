@@ -498,13 +498,12 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
         import base64, json, pathlib, sys
         exec(base64.b64decode(sys.argv[1]), globals())
         transcript, spool = map(pathlib.Path, sys.argv[2:4])
-        reader = Tailer.__new__(Tailer)
-        reader.dirty = {transcript, spool}
-        reader.cursors = {path: {'inode': 0, 'offset': 0, 'fragment': b'', 'session': sys.argv[4], 'parent': None, 'owned': owned, 'historicalEnd': None}
-                          for path, owned in ((transcript, False), (spool, True))}
+        reader = Tailer(transcript.parents[2])
+        for path, owned in ((transcript, False), (spool, True)):
+            reader.attach(path, sys.argv[4], None, owned)
         records = reader.read()
         assert not reader.dirty
-        print(json.dumps(records))
+        reader.close(); print(json.dumps(records))
         """
         for samePrompt in [true, false] {
             let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-revival-replay-" + UUID().uuidString)
@@ -846,9 +845,10 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
           if path not in self.paths:self.paths.append(path)
         root=pathlib.Path(sys.argv[2]);spool=pathlib.Path(sys.argv[3]);owner=sys.argv[4]
         order=[root,spool] if sys.argv[5]=='root-first' else [spool,root]
-        tailer=Tailer.__new__(Tailer);tailer.cursors={};tailer.dirty=OrderedDirty(order)
+        tailer=Tailer(root.parents[2])
         for path,owned in ((root,False),(spool,True)):
-         tailer.cursors[path]={'inode':0,'offset':0,'fragment':b'','session':owner,'parent':None,'owned':owned,'historicalEnd':None}
+         tailer.attach(path,owner,None,owned)
+        tailer.dirty=OrderedDirty(order)
         def drain():
          batches=[];deferred=0
          for _ in range(8):
@@ -867,6 +867,7 @@ final class ClaudeSubagentLifecycleTests: XCTestCase {
         with spool.open('ab') as handle:handle.write(b'{"unfinished":')
         with root.open('ab') as handle:handle.write(base64.b64decode(sys.argv[8]))
         tailer.dirty=OrderedDirty(order);partial=tailer.read()
+        tailer.close()
         print(json.dumps({'cold':cold,'appended':appended,'coldDeferred':cold_deferred,'appendDeferred':append_deferred,
          'partialReadRoot':tailer.cursors[root]['offset']==root.stat().st_size,'partialLeftDirty':bool(list(tailer.dirty))},separators=(',',':')))
         """

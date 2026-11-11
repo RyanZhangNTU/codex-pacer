@@ -225,9 +225,9 @@ final class ClaudeOutlivedChildTests: XCTestCase {
         import base64, json, pathlib, sys
         exec(base64.b64decode(sys.argv[1]), globals())
         root, agent, spool = map(pathlib.Path, sys.argv[2:5])
-        reader = Tailer.__new__(Tailer)
-        reader.cursors = {path: {'inode': 0, 'offset': 0, 'fragment': b'', 'session': session, 'parent': owner, 'owned': owned, 'historicalEnd': None}
-                          for path, session, owner, owned in ((root, sys.argv[5], None, False), (agent, sys.argv[6], sys.argv[5], False), (spool, 'hooks', None, True))}
+        reader = Tailer(root.parents[2])
+        for path, session, owner, owned in ((root, sys.argv[5], None, False), (agent, sys.argv[6], sys.argv[5], False), (spool, 'hooks', None, True)):
+            reader.attach(path, session, owner, owned)
         def drain():
             rows = []
             reader.dirty = set(reader.cursors)
@@ -241,7 +241,7 @@ final class ClaudeOutlivedChildTests: XCTestCase {
             for path, data in zip((root, agent, spool), json.loads(base64.b64decode(stage))):
                 with path.open('ab') as handle: handle.write(base64.b64decode(data))
             reads.append(drain())
-        print(json.dumps(reads))
+        reader.close(); print(json.dumps(reads))
         """
         // Stage one appends the last work and the ending; stage two the agent-free Stop.
         func stage(_ main: Data, _ agent: Data, _ spool: Data) throws -> String {

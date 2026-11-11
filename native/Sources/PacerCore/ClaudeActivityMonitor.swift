@@ -71,7 +71,7 @@ public actor ClaudeActivityMonitor {
             guard localGeneration == generation, self.home == home else { return }
             discovery = Task { [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 60_000_000_000)
+                    try? await Task.sleep(for: .seconds(ClaudeActivityReader.periodicDiscoveryInterval))
                     guard !Task.isCancelled else { break }
                     await self?.maintain(generation: generation)
                 }
@@ -158,7 +158,7 @@ public actor ClaudeActivityMonitor {
         guard localGeneration == generation, let home else { return }
         // A resumed, unwatched transcript can append without a directory event.
         let exclusionsChanged = refreshLocalExclusions(home: home)
-        let discover = exclusionsChanged || localReader.discoveryDue(at: clock())
+        let discover = exclusionsChanged || localReader.canStartPeriodicDiscovery
         await readLocal(discover: discover, exclusionsCurrent: true)
         guard localGeneration == generation else { return }
         // Rechecking recent baseline tails rides this existing minute tick.
