@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -8,6 +9,8 @@ using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using CodexPacer.Windows;
 
@@ -53,6 +56,12 @@ internal static class ExpandedPanelChecks
             // Moving Codex above the tasks splits it from the other quotas and hands it the buttons.
             int before = configurations;
             var codex = Find<Button>(window, "panel.editor.codex");
+            bool checkFocus = language == "en" && !dark;
+            if (checkFocus)
+            {
+                window.Activate();
+                Check(codex.Focus(), "The outline block can receive keyboard focus");
+            }
             Invoke(codex); await Pump();
             Check(ReferenceEquals(codex, Find<Button>(window, "panel.editor.codex")) && AutomationProperties.GetItemStatus(codex) == ui.Text("main.panel.selected"),
                 "Selecting an outline block keeps the same focusable button");
@@ -61,6 +70,11 @@ internal static class ExpandedPanelChecks
             // The keyboard moves a block in the outline, as dragging does.
             MoveUp(codex);
             await Until(() => session.Current.ExpandedPanelLayout?.StartsWith("{\"blocks\":[\"codex\",\"tasks\"", StringComparison.Ordinal) == true);
+            if (checkFocus)
+            {
+                await Until(() => Present<Button>(window, "panel.editor.codex") && !ReferenceEquals(codex, Find<Button>(window, "panel.editor.codex")));
+                Check(Find<Button>(window, "panel.editor.codex").IsKeyboardFocused, "Saving a move returns keyboard focus to the moved outline block");
+            }
             await Until(() => ReferenceEquals(content.Children[0], island.FindName("QuotaSection")));
             await island.WaitForPresentationAsync();
             Check(configurations > before && ReferenceEquals(actions.Parent, island.FindName("QuotaHeaderTrailing"))
@@ -144,9 +158,91 @@ internal static class ExpandedPanelChecks
             Check(spend.AllowDrop && spend.IsEnabled, "Merged spend keeps its own enabled drag target in the outline");
             MoveUp(spend);
             await Until(() => session.Current.ExpandedPanelLayout?.Contains("\"deepseekSpend\",\"deepseek\"", StringComparison.Ordinal) == true);
+            if (checkFocus)
+            {
+                await CheckBudgetClock(island, engine, session);
+                await CheckUnavailableProjection(window, session, () => configurations);
+            }
             Console.WriteLine("PASS expanded panel " + name + ": automatic layout, clock updates, focusable blocks, merged spend, rows, buttons and restore");
         }
         finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); await engine.DisposeAsync(); }
+    }
+    private static async Task CheckBudgetClock(IslandWindow island, EngineClient engine, PreferencesSession session)
+    {
+        DeepSeekBudgetDial Dial() => Descendants(island).OfType<DeepSeekBudgetDial>().Single();
+        string[] Glyphs(DeepSeekBudgetDial dial) => DrawingInspection.Render(dial, dial.Width, dial.Height).Select(value => value.Drawing)
+            .OfType<GlyphRunDrawing>().Select(value => string.Join(",", value.GlyphRun.GlyphIndices)).ToArray();
+
+        foreach (bool solo in new[] { true, false })
+        {
+            string blocks = solo ? "\"tasks\",\"deepseek\"" : "\"tasks\",\"codex\",\"deepseek\"";
+            await session.ChangeAsync(p => p with
+            {
+                ExpandedPanelLayout = "{\"blocks\":[" + blocks + "],\"version\":1}", ExpandedPanelOptions = null,
+                DeepSeekMode = "budget", DeepSeekDailyBudget = 20, DeepSeekWeeklyBudget = 80
+            });
+            await Until(() => engine.LatestSnapshot?.Wallet?.Solo?.Budgets.Count == 2 && Descendants(island).OfType<DeepSeekBudgetDial>().Any()
+                && Descendants(island).OfType<DeepSeekBudgetDetails>().Any() == solo);
+            await island.WaitForPresentationAsync();
+            var snapshot = engine.LatestSnapshot!;
+            var wallet = snapshot.Wallet!;
+            var data = wallet.Solo!;
+            var tick = data.Budgets.Select((budget, index) => index == 0 ? budget with
+            {
+                TimeFraction = 0.32, PacePercent = 77.7, PaceText = "78%", Countdown = "13m",
+                ProjectionText = "Clock projection fixture", Help = "Clock accessibility fixture"
+            } : budget with { }).ToArray();
+            EngineSnapshot Project(IReadOnlyList<DeepSeekBudgetPresentation> values) => snapshot with
+            { CapturedAt = snapshot.CapturedAt + 5, Sequence = snapshot.Sequence + 1, Wallet = wallet with { Solo = data with { Budgets = values } } };
+
+            var dial = Dial(); var details = Descendants(island).OfType<DeepSeekBudgetDetails>().SingleOrDefault();
+            string[] before = Glyphs(dial);
+            island.ReceiveSnapshot(Project(tick));
+            Check(ReferenceEquals(dial, Dial()) && !Glyphs(dial).SequenceEqual(before) && AutomationProperties.GetName(dial).Contains(tick[0].Help, StringComparison.Ordinal),
+                "A budget tick redraws countdown glyphs and updates accessibility on the same dial");
+            if (details != null)
+            {
+                Check(ReferenceEquals(details, Descendants(island).OfType<DeepSeekBudgetDetails>().Single()) &&
+                    Descendants(details).OfType<TextBlock>().Any(text => text.Text == tick[0].PaceText) &&
+                    Descendants(details).OfType<TextBlock>().Any(text => text.Text == tick[0].ProjectionText),
+                    "Budget pace and projection advance on the same detail rows");
+            }
+            else
+            {
+                var cell = Descendants(island).OfType<DeepSeekQuotaCell>().Single();
+                Check(AutomationProperties.GetHelpText(cell).Contains(tick[0].Help, StringComparison.Ordinal), "The paired card updates its budget help text");
+            }
+
+            var changed = tick.ToArray(); changed[0] = tick[0] with { Whole = "¥17", Fraction = 0.63 };
+            island.ReceiveSnapshot(Project(changed));
+            Check(!ReferenceEquals(dial, Dial()) && AutomationProperties.GetName(Dial()).Contains("¥17", StringComparison.Ordinal),
+                "A new budget amount refreshes the section and its accessibility reading");
+            island.ReceiveSnapshot(snapshot);
+        }
+        Console.WriteLine("PASS DeepSeek budgets: retained solo and paired dials update their clock and labels; new amounts refresh the section");
+    }
+    private static async Task CheckUnavailableProjection(SettingsWindow window, PreferencesSession session, Func<int> configurationCount)
+    {
+        var previous = ShellProjection.Client;
+        await Until(() => Present<Button>(window, "panel.editor.codex") && Find<Button>(window, "panel.block.codex.toggle").IsEnabled);
+        var block = Find<Button>(window, "panel.editor.codex");
+        var toggle = Find<Button>(window, "panel.block.codex.toggle");
+        var restore = Find<Button>(window, "panel.restore");
+        var before = session.Current; int configured = configurationCount();
+        try
+        {
+            ShellProjection.Client = null;
+            await Until(() => !block.IsEnabled && !toggle.IsEnabled && !restore.IsEnabled);
+            MoveUp(block);
+            toggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Pump();
+            Check(session.Current == before && configurationCount() == configured, "An unavailable projection blocks stale outline, library and restore edits");
+        }
+        finally { ShellProjection.Client = previous; }
+        await Until(() => block.IsEnabled && toggle.IsEnabled && restore.IsEnabled);
+        Check(ReferenceEquals(block, Find<Button>(window, "panel.editor.codex")), "Restoring the same projection re-enables the existing outline");
+        Console.WriteLine("PASS unavailable panel projection: stale edits blocked and existing outline restored");
     }
     private static void CheckClockSnapshots(IslandWindow island, EngineSnapshot snapshot)
     {
@@ -189,8 +285,8 @@ internal static class ExpandedPanelChecks
         Check(Dial("codex").Selected?.RemainingPercent == 62, "Showing an expanded window paints the latest reading");
         island.ReceiveSnapshot(snapshot);
     }
-    private static void MoveUp(Button block) => block.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
-        PresentationSource.FromVisual(block), Environment.TickCount, System.Windows.Input.Key.Up) { RoutedEvent = System.Windows.Input.Keyboard.KeyDownEvent });
+    private static void MoveUp(Button block) => block.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice,
+        PresentationSource.FromVisual(block), Environment.TickCount, Key.Up) { RoutedEvent = Keyboard.KeyDownEvent });
     private static bool Present<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().Any(value => AutomationProperties.GetAutomationId(value) == id);
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement

@@ -25,6 +25,7 @@ public partial class IslandWindow
         internal Grid Slots { get; } = slots;
         internal QuotaPaint? Paint { get; set; }
         internal QuotaDial[] Dials { get; set; } = [];
+        internal IDeepSeekBudgetView? BudgetView { get; set; }
     }
     private sealed class ChartParts(StackPanel section, Grid header, TextBlock title, TextBlock detail, StackPanel trailing, Border content)
     {
@@ -254,69 +255,29 @@ public partial class IslandWindow
         {
             foreach (var dial in parts.Dials)
                 dial.UpdateReading(paint.Providers.FirstOrDefault(provider => provider.Provider == dial.Provider)?.Reading, paint.Wallet?.Angle);
+            if (paint.Budget && paint.Wallet?.Solo?.Budgets is { Count: > 0 } budgets && parts.BudgetView?.UpdateBudgetClock(budgets) == true)
+                panelMeasureDirty = true;
             return;
         }
         parts.Paint = paint;
         parts.Title.Text = section.Title.Length > 0 ? section.Title : ui.Text("layout.group.quota_balance");
         SetDetail(parts.Detail, section.Detail, section.Providers.Count == 1 ? section.Providers[0] : null);
         FillQuota(parts.Slots, section, snapshot);
-        parts.Dials = DialsIn(parts.Slots).ToArray();
+        parts.Dials = ControlsIn<QuotaDial>(parts.Slots).ToArray();
+        parts.BudgetView = ControlsIn<IDeepSeekBudgetView>(parts.Slots).FirstOrDefault();
         AutomationProperties.SetAutomationId(parts.Section, "island.section.quota." + string.Join("-", section.Providers));
         panelMeasureDirty = true;
     }
 
-    private static IEnumerable<QuotaDial> DialsIn(DependencyObject parent)
+    private static IEnumerable<T> ControlsIn<T>(DependencyObject parent) where T : class
     {
         for (int index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
         {
             var child = VisualTreeHelper.GetChild(parent, index);
-            if (child is QuotaDial dial) yield return dial;
-            else foreach (var nested in DialsIn(child)) yield return nested;
+            if (child is T match) yield return match;
+            else foreach (var nested in ControlsIn<T>(child)) yield return nested;
         }
     }
-
-    private static bool SameQuota(QuotaPaint a, QuotaPaint b) =>
-        a == b with { Layout = a.Layout, Providers = a.Providers, Legacy = a.Legacy, Wallet = a.Wallet, BalanceStatus = a.BalanceStatus } &&
-        (a.Layout == b.Layout || a.Layout != null && b.Layout != null && a.Layout == b.Layout with { Slots = a.Layout.Slots } && a.Layout.Slots.SequenceEqual(b.Layout.Slots)) &&
-        a.Providers.Length == b.Providers.Length && a.Providers.Zip(b.Providers).All(pair => SameProvider(pair.First, pair.Second)) &&
-        (a.Legacy == b.Legacy || a.Legacy != null && b.Legacy != null && a.Legacy == b.Legacy with { Buckets = a.Legacy.Buckets } &&
-            a.Legacy.Buckets.Count == b.Legacy.Buckets.Count && a.Legacy.Buckets.Zip(b.Legacy.Buckets).All(pair =>
-                pair.First == pair.Second with { Windows = pair.First.Windows } && pair.First.Windows.SequenceEqual(pair.Second.Windows))) &&
-        SameWallet(a.Wallet, b.Wallet, b.Budget, b.Solo, b.SpendBeside) &&
-        (a.BalanceStatus == b.BalanceStatus || a.BalanceStatus != null && b.BalanceStatus != null &&
-            a.BalanceStatus == b.BalanceStatus with { Actions = a.BalanceStatus.Actions } && a.BalanceStatus.Actions.SequenceEqual(b.BalanceStatus.Actions));
-
-    private static bool SameProvider(ProviderPaint a, ProviderPaint b) => a == b with { Reading = a.Reading } &&
-        (a.Reading == b.Reading || a.Reading != null && b.Reading != null &&
-            SameReading(a.Reading.FiveHour, b.Reading.FiveHour) && SameReading(a.Reading.Weekly, b.Reading.Weekly) &&
-            (a.Reading.Status == b.Reading.Status || a.Reading.Status != null && b.Reading.Status != null &&
-                a.Reading.Status == b.Reading.Status with { Actions = a.Reading.Status.Actions } && a.Reading.Status.Actions.SequenceEqual(b.Reading.Status.Actions)));
-
-    // Only the dial uses the unrounded time and pace. Formatted labels, help and
-    // accessibility still take part in the comparison that decides a rebuild.
-    private static bool SameReading(DashboardReading a, DashboardReading b) => a == b ||
-        a == b with { RemainingTimePercent = a.RemainingTimePercent, PacePercent = a.PacePercent, CapturedAt = a.CapturedAt };
-
-    private static bool SameWallet(EngineWallet? a, EngineWallet? b, bool budget, bool solo, bool spend) =>
-        ReferenceEquals(a, b) || a != null && b != null && a.PeakNow == b.PeakNow &&
-        (budget && a.Solo?.Budgets.Count > 0 && b.Solo?.Budgets.Count > 0 ||
-            a.Balance == b.Balance && a.Whole == b.Whole && a.Cents == b.Cents && a.Dial == b.Dial &&
-            a.Hourly.SequenceEqual(b.Hourly) && a.Peak.SequenceEqual(b.Peak)) &&
-        (!budget || (a.Solo?.Budgets ?? []).SequenceEqual(b.Solo?.Budgets ?? [])) &&
-        (!solo || a.Dial?.PeakHelp == b.Dial?.PeakHelp && SameSolo(a.Solo, b.Solo, spend));
-
-    private static bool SameSolo(DeepSeekSoloPresentation? a, DeepSeekSoloPresentation? b, bool spend) =>
-        ReferenceEquals(a, b) || a != null && b != null &&
-        a.TodayLabel == b.TodayLabel && a.TodayText == b.TodayText && a.TodayHelp == b.TodayHelp && a.PeakUntil == b.PeakUntil &&
-        (a.Speed == b.Speed || a.Speed != null && b.Speed != null && a.Speed == b.Speed with { Fractions = a.Speed.Fractions } &&
-            a.Speed.Fractions.SequenceEqual(b.Speed.Fractions)) && (!spend || SameDistribution(a.Distribution, b.Distribution));
-
-    private static bool SameDistribution(DeepSeekDistribution? a, DeepSeekDistribution? b) => a == b || a != null && b != null &&
-        a == b with { Parts = a.Parts } && a.Parts.SequenceEqual(b.Parts);
-
-    private static bool SameChart(ChartPaint a, ChartPaint b) => a == b with { Distribution = a.Distribution, Week = a.Week } &&
-        SameDistribution(a.Distribution, b.Distribution) && (a.Week == b.Week || a.Week != null && b.Week != null &&
-            a.Week == b.Week with { Days = a.Week.Days } && a.Week.Days.SequenceEqual(b.Week.Days));
 
     /// Measuring the panel with an unchanged width reuses each section's cached
     /// size, so everything that render replaced is marked up to the panel first.

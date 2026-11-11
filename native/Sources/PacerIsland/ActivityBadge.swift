@@ -327,7 +327,7 @@ final class TaskSegmentsView: NSView {
         occlusionObserver = window.map { window in
             NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
                 object: window, queue: .main) { [weak self] _ in
-                    Task { @MainActor in self?.refreshBreath() }
+                    MainActor.assumeIsolated { self?.refreshBreath() }
                 }
         }
         refreshBreath()
@@ -575,7 +575,7 @@ final class ActivityOrbitView: NSView {
         occlusionObserver = window.map { window in
             NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
                 object: window, queue: .main) { [weak self] _ in
-                    Task { @MainActor in self?.refreshAnimation() }
+                    MainActor.assumeIsolated { self?.refreshAnimation() }
                 }
         }
         refreshAnimation()

@@ -1,10 +1,55 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerTestSupport
 
 @MainActor
 final class CompactComponentDisplayTests: XCTestCase {
+    func testHostedPriceClockRedrawsWhenHourlySpendChangesWithTheSameOutput() async throws {
+        _ = NSApplication.shared
+        let domain = testDefaultsName("compact-price-clock")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { removeTestDefaults(domain) }
+        let day = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000))
+        let now = day.addingTimeInterval(12 * 3600)
+        let model = IslandModel(demo: true, demoClock: { now }, demoArguments: nil, defaults: defaults,
+            installation: .init(codexInstalled: false, claudeInstalled: false, deepseekInstalled: true))
+        model.deepseekUsage = .init()
+        model.deepseekHistory = .init()
+
+        let output = model.compactPresentation()
+        let view = CompactIslandComponent(model: model, component: .priceClock, output: output)
+            .frame(width: 40, height: 40).background(Color.black).allowsHitTesting(false)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 40, height: 40),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+
+        func capture() throws -> Data {
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        }
+        let empty = try capture()
+        var ledger = DeepSeekSpendLedger()
+        ledger.record(id: "spend", at: day.addingTimeInterval(5 * 3600), cost: 2, task: "sample")
+        model.deepseekUsage = .init(ledger: ledger)
+        let added = try await TestWait.until { try capture() != empty }
+        XCTAssertTrue(added, "The hosted clock draws the new spend without a new projection")
+
+        model.deepseekUsage = .init()
+        let cleared = try await TestWait.until { try capture() == empty }
+        XCTAssertTrue(cleared, "Clearing the ledger removes the spend arc")
+        await model.shutdown()
+    }
+
     private func activity(_ id: String, turn: String = "turn", start: Date, first: Date?, remote: Bool = false) -> SessionActivity {
         var value = SessionActivity(id: id, sourceHostID: remote ? "remote-ssh-discovered:fixture" : nil, phaseAwareRate: true)
         value.consumeLive(["method": "turn/started", "threadId": id, "turnId": turn, "at": start.timeIntervalSince1970])

@@ -22,6 +22,7 @@ internal sealed partial class SettingsWindow
     private static readonly (string Field, string Symbol)[] PanelFields =
         [("rate", "speedometer"), ("turnTime", "timer"), ("model", "cpu"), ("source", "server.rack"), ("subagents", "person.2"), ("cost", "yensign.circle")];
     private StackPanel? panelEditor;
+    private FrameworkElement? panelLibrary, panelInspector;
     private TextBlock? panelAutomatic;
     private Button? panelRestore;
     private PanelEditorProjection? panelProjection;
@@ -42,7 +43,7 @@ internal sealed partial class SettingsWindow
 
     private void ClearExpandedPanel()
     {
-        panelEditor = null; panelAutomatic = null; panelRestore = null; panelProjection = null;
+        panelEditor = null; panelLibrary = panelInspector = null; panelAutomatic = null; panelRestore = null; panelProjection = null;
         panelOutline.Clear(); panelOutlineKey = panelOutlineSelection = null;
         panelTiles.Clear(); panelInspectorPanels.Clear(); panelSegments.Clear(); panelSwitches.Clear(); panelChips.Clear(); panelRetention = null;
         panelInspectorIcon = panelNotice = null; panelInspectorTitle = panelInspectorDetail = null;
@@ -57,12 +58,13 @@ internal sealed partial class SettingsWindow
             deepseekDetailed = p.DeepSeekPanelStyle != "simple", hasBudget = HasDeepSeekBudget(p), language = ui.Language, action }
     };
     private static bool ValidPanel(PanelEditorProjection value) => value.IsValid;
-    private PanelEditorProjection? ReadPanel() => ShellProjection.Read<PanelEditorProjection>("projectExpandedPanel", PanelInput(session.Current), ValidPanel).Value;
+    private ShellProjection.State<PanelEditorProjection> ReadPanel() => ShellProjection.Read<PanelEditorProjection>("projectExpandedPanel", PanelInput(session.Current), ValidPanel);
+    private bool CanEditPanel => panelProjection != null && activePane == "expandedPanel" && !sourceClosed && !busy && !session.RequiresRestart;
 
     /// One edit to the blocks: Core applies it and returns the layout to save.
     private async Task EditPanel(PanelAction action)
     {
-        if (sourceClosed || activePane != "expandedPanel" || busy) return;
+        if (!CanEditPanel) return;
         await Change(async p =>
         {
             var result = await ShellProjection.QueryAsync<PanelEditorProjection>("projectExpandedPanel", PanelInput(p, action), ValidPanel);
@@ -86,7 +88,7 @@ internal sealed partial class SettingsWindow
     {
         paneSubtitle.Text = ui.Text("main.panel.subtitle"); paneSubtitle.Visibility = Visibility.Visible;
         form.MaxWidth = headerColumn.MaxWidth = PanelPageWidth;
-        panelProjection = ReadPanel();
+        panelProjection = ReadPanel().Value;
         if (panelProjection == null)
         {
             form.Children.Add(Detail(!ShellProjection.HasFailure("projectExpandedPanel") ? "…" : ui.Text("windows.connection.refresh_failed")));
@@ -118,6 +120,7 @@ internal sealed partial class SettingsWindow
         // Every block by group, one per line, to add or remove.
         left.Children.Add(SectionTitle(ui.Text("main.panel.blocks")));
         var groups = new StackPanel { Margin = new Thickness(10) };
+        panelLibrary = groups;
         foreach (var group in panelProjection.Groups.Select(value => (value.Id, value.Label, Blocks: (IEnumerable<string>)value.Blocks))
             .Append(("panel", ui.Text("panel.group.panel"), new[] { ActionsBlock })))
         {
@@ -131,7 +134,7 @@ internal sealed partial class SettingsWindow
 
         var right = new StackPanel(); Grid.SetColumn(right, 2);
         right.Children.Add(SectionTitle(ui.Text("main.panel.selected")));
-        right.Children.Add(Card(BuildPanelInspector()));
+        right.Children.Add(Card(panelInspector = BuildPanelInspector()));
         columns.Children.Add(right);
         form.Children.Add(columns);
     }
@@ -230,7 +233,7 @@ internal sealed partial class SettingsWindow
             panelRetention.Items.Add(new ComboBoxItem { Tag = item.Item1, Content = ui.Text(item.Item2) });
         Identify(panelRetention, "panel.option.retention", ui.Text("reminders.retention")); editors.Add(panelRetention);
         panelRetention.SelectionChanged += async (_, _) =>
-        { if (!synchronizing && activePane == "expandedPanel" && panelRetention.SelectedValue is int minutes) await Change(p => p with { RetentionMinutes = minutes }); };
+        { if (!synchronizing && CanEditPanel && panelRetention.SelectedValue is int minutes) await Change(p => p with { RetentionMinutes = minutes }); };
         tasks.Children.Add(Line(InfoRow(ui.Text("reminders.retention"), panelRetention)));
         tasks.Children.Add(Link("settings.hide_projects", "main.panel.in_general", "panel.link.hide_projects", "general"));
         panelInspectorPanels["tasks"] = tasks; body.Children.Add(tasks);
@@ -295,7 +298,7 @@ internal sealed partial class SettingsWindow
             Identify(choice, "panel.option." + id + "." + value, text); editors.Add(choice); group[value] = choice; row.Children.Add(choice);
             choice.Checked += async (_, _) =>
             {
-                if (synchronizing || activePane != "expandedPanel" || !choice.IsVisible || !choice.IsEnabled || busy) return;
+                if (synchronizing || !CanEditPanel || !choice.IsVisible || !choice.IsEnabled) return;
                 await edit(value);
             };
         }
@@ -308,7 +311,7 @@ internal sealed partial class SettingsWindow
         var check = new CheckBox { Style = (Style)FindResource("SettingsSwitch") };
         Identify(check, "panel.option." + id, title); editors.Add(check); panelSwitches[id] = check;
         RoutedEventHandler changed = async (_, _) =>
-        { if (!synchronizing && activePane == "expandedPanel" && check.IsVisible && check.IsEnabled && !busy) await edit(check.IsChecked == true); };
+        { if (!synchronizing && CanEditPanel && check.IsVisible && check.IsEnabled) await edit(check.IsChecked == true); };
         check.Checked += changed; check.Unchecked += changed;
         return check;
     }
@@ -335,7 +338,7 @@ internal sealed partial class SettingsWindow
             chip.Content = content; Identify(chip, "panel.option.field." + field, ui.Text("panel.field." + field)); panelChips[field] = chip;
             RoutedEventHandler changed = async (_, _) =>
             {
-                if (synchronizing || activePane != "expandedPanel" || !chip.IsVisible || !chip.IsEnabled || busy) return;
+                if (synchronizing || !CanEditPanel || !chip.IsVisible || !chip.IsEnabled) return;
                 var chosen = PanelFields.Select(item => item.Field).Where(name => panelChips.TryGetValue(name, out var box) && box.IsChecked == true).ToArray();
                 await ChoosePanel("rowFields", chosen);
             };
@@ -379,6 +382,7 @@ internal sealed partial class SettingsWindow
 
     internal void SelectPanelBlock(string id)
     {
+        if (!CanEditPanel) return;
         if (id != panelSelected && panelInfoButton != null && panelInspectorDetail?.Parent is Border box) SetInfoShown(panelInfoButton, box, false);
         panelSelected = id;
         bool previous = synchronizing; synchronizing = true;
@@ -388,10 +392,15 @@ internal sealed partial class SettingsWindow
     private void RefreshExpandedPanel()
     {
         if (panelEditor == null || activePane != "expandedPanel") return;
-        var projection = ReadPanel();
-        panelProjection = projection;
+        var state = ReadPanel();
+        var projection = panelProjection = state.Value;
+        bool ready = projection != null && !session.RequiresRestart;
+        // Keep the outline's focus during a pending read. Its actions wait for
+        // the new projection; a failed or disconnected read disables it.
+        panelEditor.IsEnabled = ready || state.Pending && !session.RequiresRestart;
+        panelLibrary!.IsEnabled = panelInspector!.IsEnabled = ready;
+        panelRestore!.IsEnabled = ready && !busy;
         if (projection == null) return;
-        panelEditor.IsEnabled = !session.RequiresRestart;
         var preferences = session.Current; var options = projection.Options;
         var catalog = projection.Catalog.ToDictionary(value => value.Id);
         string selected = panelSelected is { } chosen && (chosen == ActionsBlock || catalog.ContainsKey(chosen)) ? chosen
@@ -640,24 +649,24 @@ internal sealed partial class SettingsWindow
         {
             if (e.Key is not (Key.Up or Key.Down or Key.Left or Key.Right) || Keyboard.Modifiers != ModifierKeys.None) return;
             e.Handled = true;
-            if (busy || panelProjection == null) return;
+            if (!CanEditPanel) return;
             SelectPanelBlock(id);
             await EditPanel(new("shift", id, Offset: e.Key is Key.Up or Key.Left ? -1 : 1));
         };
-        button.PreviewMouseLeftButtonDown += (_, e) => { panelDragStart = e.GetPosition(this); panelDragBlock = null; };
+        button.PreviewMouseLeftButtonDown += (_, e) => { panelDragStart = CanEditPanel ? e.GetPosition(this) : null; panelDragBlock = null; };
         button.PreviewMouseMove += (_, e) =>
         {
-            if (e.LeftButton != MouseButtonState.Pressed || panelDragStart is not Point start || busy) return;
+            if (e.LeftButton != MouseButtonState.Pressed || panelDragStart is not Point start || !CanEditPanel) return;
             var now = e.GetPosition(this);
             if (Math.Abs(now.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance && Math.Abs(now.X - start.X) < SystemParameters.MinimumHorizontalDragDistance) return;
             panelDragBlock = id; panelDragStart = null;
             try { DragDrop.DoDragDrop(button, new DataObject("PacerPanelBlock", id), DragDropEffects.Move); }
             finally { _ = Dispatcher.InvokeAsync(() => panelDragBlock = null, System.Windows.Threading.DispatcherPriority.Background); }
         };
-        button.DragOver += (_, e) => { e.Effects = e.Data.GetDataPresent("PacerPanelBlock") ? DragDropEffects.Move : DragDropEffects.None; e.Handled = true; };
+        button.DragOver += (_, e) => { e.Effects = CanEditPanel && e.Data.GetDataPresent("PacerPanelBlock") ? DragDropEffects.Move : DragDropEffects.None; e.Handled = true; };
         button.Drop += async (_, e) =>
         {
-            if (e.Data.GetData("PacerPanelBlock") is not string dragged || dragged == id || panelProjection == null) return;
+            if (!CanEditPanel || e.Data.GetData("PacerPanelBlock") is not string dragged || dragged == id || panelProjection == null) return;
             e.Handled = true;
             // The upper half drops before this block, the lower half after it.
             var visible = panelProjection.Visible.ToList();

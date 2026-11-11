@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -8,9 +10,10 @@ namespace CodexPacer.Windows;
 
 /// The time dial keeps its original 88/104-point face, provider caption,
 /// stale marker and doubled-price chip in both dashboard styles.
-internal sealed class DeepSeekQuotaCell : StackPanel
+internal sealed class DeepSeekQuotaCell : StackPanel, IDeepSeekBudgetView
 {
     internal Grid Face { get; }
+    private readonly DeepSeekBudgetDial? budgetDialView;
     /// <param name="showsName">Overview's card already names the service, so its dial leaves the name out, as on the Mac.</param>
     /// <param name="budgetDial">The panel shows the budget dial when a budget is set; off keeps today's dial.</param>
     internal DeepSeekQuotaCell(EngineWallet? wallet, UiText ui, double size = 104, Action? connectAction = null, string? connectUnavailable = null, FrameworkElement? balanceStatus = null, bool showsName = true,
@@ -19,7 +22,8 @@ internal sealed class DeepSeekQuotaCell : StackPanel
         var budget = budgetDial ? wallet?.Solo?.Budgets : null;
         var dial = new QuotaDial("deepseek", null, wallet, dialSize: size) { Width = size, Height = size };
         var face = new Grid { Width = size, Height = size, HorizontalAlignment = HorizontalAlignment.Center }; Face = face;
-        face.Children.Add(budget?.Count > 0 ? new DeepSeekBudgetDial(budget, ui, size) : dial); Children.Add(face);
+        if (budget?.Count > 0) budgetDialView = new DeepSeekBudgetDial(budget, ui, size);
+        face.Children.Add((FrameworkElement?)budgetDialView ?? dial); Children.Add(face);
         if (budget?.Count is not > 0 && wallet?.Dial?.ConnectTitle is string title)
         {
             var connect = new Button { Content = title, Style = (Style)FindResource("QuotaLinkButton"), IsEnabled = connectAction != null,
@@ -52,7 +56,14 @@ internal sealed class DeepSeekQuotaCell : StackPanel
         }
         Children.Add(caption);
         if (balanceStatus != null) Children.Add(balanceStatus);
-        string? help = budget?.Count > 0 ? string.Join("\n\n", System.Linq.Enumerable.Select(budget, value => value.Help)) : wallet?.Dial?.Help;
+        string? help = budget?.Count > 0 ? BudgetHelp(budget) : wallet?.Dial?.Help;
         if (help != null) AutomationProperties.SetHelpText(this, help);
     }
+    bool IDeepSeekBudgetView.UpdateBudgetClock(IReadOnlyList<DeepSeekBudgetPresentation> budgets)
+    {
+        if (budgetDialView?.UpdateClock(budgets) == true)
+            AutomationProperties.SetHelpText(this, BudgetHelp(budgets));
+        return false;
+    }
+    private static string BudgetHelp(IReadOnlyList<DeepSeekBudgetPresentation> budgets) => string.Join("\n\n", budgets.Select(value => value.Help));
 }

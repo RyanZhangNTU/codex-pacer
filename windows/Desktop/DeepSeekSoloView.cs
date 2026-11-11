@@ -18,8 +18,10 @@ namespace CodexPacer.Windows;
 /// the spend joins the day dial's column when its block follows the dial.
 /// The engine owns spend, visibility, scale, privacy and formatted readings;
 /// these controls only lay out and draw them.
-internal sealed class DeepSeekSoloView : StackPanel
+internal sealed class DeepSeekSoloView : StackPanel, IDeepSeekBudgetView
 {
+    private readonly DeepSeekBudgetDial? budgetDialView;
+    private readonly DeepSeekBudgetDetails? budgetDetails;
     /// <param name="spendBeside">Today's spend sits in the day dial's column.</param>
     /// <param name="budgetDial">The budget dial shows when a budget is set.</param>
     /// <param name="peak">The ×2 chip under the dial during peak-price hours.</param>
@@ -33,7 +35,7 @@ internal sealed class DeepSeekSoloView : StackPanel
         var top = new Grid(); top.ColumnDefinitions.Add(new() { Width = new GridLength(132) });
         top.ColumnDefinitions.Add(new() { Width = new GridLength(20) }); top.ColumnDefinitions.Add(new());
         var face = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        if (budget) face.Children.Add(new DeepSeekBudgetDial(data!.Budgets, ui, 132));
+        if (budget) face.Children.Add(budgetDialView = new DeepSeekBudgetDial(data!.Budgets, ui, 132));
         else
         {
             var dial = new QuotaDial("deepseek", null, wallet, dialSize: 132) { Width = 132, Height = 132 };
@@ -65,7 +67,7 @@ internal sealed class DeepSeekSoloView : StackPanel
         var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         if (data != null)
         {
-            if (budget) right.Children.Add(new DeepSeekBudgetDetails(data.Budgets, ui));
+            if (budget) right.Children.Add(budgetDetails = new DeepSeekBudgetDetails(data.Budgets, ui));
             else
             {
                 var today = DeepSeekElements.Text(data.TodayLabel, 11, PacerPalette.Tertiary, FontWeights.SemiBold);
@@ -84,6 +86,11 @@ internal sealed class DeepSeekSoloView : StackPanel
             recovery.TextWrapping = TextWrapping.Wrap; recovery.TextAlignment = TextAlignment.Center;
             AddSpaced(this, recovery, 14);
         }
+    }
+    bool IDeepSeekBudgetView.UpdateBudgetClock(IReadOnlyList<DeepSeekBudgetPresentation> budgets)
+    {
+        budgetDialView?.UpdateClock(budgets);
+        return budgetDetails?.UpdateClock(budgets) == true;
     }
     private static void AddSpaced(StackPanel panel, FrameworkElement child, double spacing)
     { child.Margin = new Thickness(0, panel.Children.Count > 0 ? spacing : 0, 0, 0); panel.Children.Add(child); }
@@ -274,43 +281,89 @@ internal sealed class DeepSeekWeekPlot : FrameworkElement
     }
 }
 
+// The parent panel rebuilds when the budget's shape or state changes. Its
+// clocks update the retained budget widgets between those changes.
+internal interface IDeepSeekBudgetView
+{
+    bool UpdateBudgetClock(IReadOnlyList<DeepSeekBudgetPresentation> budgets);
+}
+
 internal sealed class DeepSeekBudgetDetails : StackPanel
 {
+    private readonly List<(QuotaReadingHost? Host, TextBlock Pace, TextBlock Projection)> periods = [];
+    private readonly UiText ui;
+    private IReadOnlyList<DeepSeekBudgetPresentation> lastBudgets = [];
     internal DeepSeekBudgetDetails(IReadOnlyList<DeepSeekBudgetPresentation> budgets, UiText ui)
     {
+        this.ui = ui;
         AutomationProperties.SetAutomationId(this, "deepseek.budget.details");
         if (budgets.Count > 1)
         {
             foreach (var reading in budgets)
             {
                 if (Children.Count > 0) Children.Add(new Border { Height = 1, Background = PacerPalette.Hairline, Margin = new Thickness(0, 9, 0, 9) });
-                var period = new QuotaReadingHost(); AutomationProperties.SetName(period, reading.Help + "\n" + ui.Text("dashboard.pace") + " " + reading.PaceText);
+                var period = new QuotaReadingHost();
                 var title = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
                 title.Children.Add(DeepSeekElements.Text(reading.Label, 11, reading.Exceeded ? PacerPalette.Danger : reading.Pressing ? PacerPalette.Attention : PacerPalette.Secondary, FontWeights.SemiBold));
                 if (reading.Exceeded || reading.Verdict != null) { var chip = Chip(reading, ui); chip.Margin = new Thickness(6, 0, 0, 0); title.Children.Add(chip); }
                 var pace = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
                 var caption = DeepSeekElements.Text(ui.Text("dashboard.pace"), 10, PacerPalette.Secondary); caption.Margin = new Thickness(0, 0, 4, 0); pace.Children.Add(caption);
-                pace.Children.Add(DeepSeekElements.Text(reading.PaceText, 13, reading.Verdict == "fast" ? PacerPalette.Attention : PacerPalette.Primary, FontWeights.SemiBold));
+                var value = DeepSeekElements.Text("", 13, reading.Verdict == "fast" ? PacerPalette.Attention : PacerPalette.Primary, FontWeights.SemiBold);
+                pace.Children.Add(value);
                 period.Children.Add(DeepSeekElements.Row(title, pace, 16));
-                var footer = DeepSeekElements.Row(DeepSeekElements.Text(reading.ResetText, 10, PacerPalette.Tertiary),
-                    DeepSeekElements.Text(reading.ProjectionText ?? "", 10, reading.ProjectionWarns ? PacerPalette.Attention : PacerPalette.Tertiary));
+                var projection = DeepSeekElements.Text("", 10, reading.ProjectionWarns ? PacerPalette.Attention : PacerPalette.Tertiary);
+                var footer = DeepSeekElements.Row(DeepSeekElements.Text(reading.ResetText, 10, PacerPalette.Tertiary), projection);
                 footer.Margin = new Thickness(0, 4, 0, 0); period.Children.Add(footer); Children.Add(period);
+                periods.Add((period, value, projection));
             }
         }
         else if (budgets.Count == 1)
         {
             var reading = budgets[0]; var pace = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             if (reading.Exceeded || reading.Verdict != null) { var chip = Chip(reading, ui); chip.Margin = new Thickness(0, 0, 6, 0); pace.Children.Add(chip); }
-            pace.Children.Add(DeepSeekElements.Text(reading.Exceeded ? reading.SpentText : reading.PaceText, 13,
-                reading.Exceeded ? PacerPalette.Danger : reading.Verdict == "fast" ? PacerPalette.Attention : PacerPalette.Primary, FontWeights.SemiBold));
+            var value = DeepSeekElements.Text("", 13,
+                reading.Exceeded ? PacerPalette.Danger : reading.Verdict == "fast" ? PacerPalette.Attention : PacerPalette.Primary, FontWeights.SemiBold);
+            pace.Children.Add(value);
             Children.Add(DeepSeekElements.Row(DeepSeekElements.Text(reading.Exceeded ? reading.Label : ui.Text("dashboard.pace"), 11, PacerPalette.Secondary), pace, 26));
             Children.Add(new Border { Height = 1, Background = PacerPalette.Hairline });
             Children.Add(DeepSeekElements.Row(DeepSeekElements.Text(ui.Text("dashboard.reset"), 11, PacerPalette.Secondary), DeepSeekElements.Text(reading.ResetText, 11, PacerPalette.Primary, FontWeights.Medium), 26));
             Children.Add(new Border { Height = 1, Background = PacerPalette.Hairline });
-            Children.Add(DeepSeekElements.Row(DeepSeekElements.Text(ui.Text(reading.Exceeded ? "deepseek.reminder_row" : "dashboard.projection"), 11, PacerPalette.Secondary),
-                DeepSeekElements.Text(reading.Exceeded ? ui.Text("deepseek.remind_only") : reading.ProjectionText ?? "—", 11,
-                    reading.Exceeded ? PacerPalette.Secondary : reading.ProjectionWarns ? PacerPalette.Attention : PacerPalette.Primary, reading.Exceeded ? FontWeights.Normal : FontWeights.Medium), 26));
+            var projection = DeepSeekElements.Text("", 11,
+                reading.Exceeded ? PacerPalette.Secondary : reading.ProjectionWarns ? PacerPalette.Attention : PacerPalette.Primary,
+                reading.Exceeded ? FontWeights.Normal : FontWeights.Medium);
+            Children.Add(DeepSeekElements.Row(DeepSeekElements.Text(ui.Text(reading.Exceeded ? "deepseek.reminder_row" : "dashboard.projection"), 11, PacerPalette.Secondary), projection, 26));
+            periods.Add((null, value, projection));
         }
+        UpdateClock(budgets);
+    }
+    internal bool UpdateClock(IReadOnlyList<DeepSeekBudgetPresentation> budgets)
+    {
+        bool textChanged = false;
+        void Write(TextBlock block, string text)
+        {
+            if (block.Text == text) return;
+            block.Text = text; textChanged = true;
+        }
+        for (int index = 0; index < periods.Count; index++)
+        {
+            var (host, pace, projection) = periods[index];
+            var reading = budgets[index];
+            if (host != null)
+            {
+                var previous = index < lastBudgets.Count ? lastBudgets[index] : null;
+                if (previous?.Help != reading.Help || previous?.PaceText != reading.PaceText)
+                    AutomationProperties.SetName(host, reading.Help + "\n" + ui.Text("dashboard.pace") + " " + reading.PaceText);
+                Write(pace, reading.PaceText);
+                Write(projection, reading.ProjectionText ?? "");
+            }
+            else
+            {
+                Write(pace, reading.Exceeded ? reading.SpentText : reading.PaceText);
+                Write(projection, reading.Exceeded ? ui.Text("deepseek.remind_only") : reading.ProjectionText ?? "—");
+            }
+        }
+        lastBudgets = budgets;
+        return textChanged;
     }
     internal static Border Chip(DeepSeekBudgetPresentation reading, UiText ui) => new()
     {
@@ -323,14 +376,29 @@ internal sealed class DeepSeekBudgetDetails : StackPanel
 
 internal sealed class DeepSeekBudgetDial : FrameworkElement
 {
-    private readonly IReadOnlyList<DeepSeekBudgetPresentation> budgets;
+    private IReadOnlyList<DeepSeekBudgetPresentation> budgets;
     private readonly UiText ui;
     private readonly double side;
     internal DeepSeekBudgetDial(IReadOnlyList<DeepSeekBudgetPresentation> values, UiText language, double size)
     {
         budgets = values; ui = language; side = size; Width = size; Height = size;
-        AutomationProperties.SetName(this, string.Join("\n\n", budgets.Select(value => value.Label + " " + value.Whole + value.Cents + "\n" + value.Help)));
         AutomationProperties.SetAutomationId(this, "deepseek.budget.dial");
+        SetName();
+    }
+    private void SetName() => AutomationProperties.SetName(this, string.Join("\n\n", budgets.Select(value => value.Label + " " + value.Whole + value.Cents + "\n" + value.Help)));
+    internal bool UpdateClock(IReadOnlyList<DeepSeekBudgetPresentation> values)
+    {
+        bool draw = false, speak = false;
+        for (int index = 0; index < budgets.Count; index++)
+        {
+            var previous = budgets[index]; var current = values[index];
+            draw |= previous.TimeFraction != current.TimeFraction || previous.Countdown != current.Countdown;
+            speak |= previous.Help != current.Help;
+        }
+        budgets = values;
+        if (draw) InvalidateVisual();
+        if (speak) SetName();
+        return speak;
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new BudgetPeer(this);
     private sealed class BudgetPeer(DeepSeekBudgetDial owner) : FrameworkElementAutomationPeer(owner)

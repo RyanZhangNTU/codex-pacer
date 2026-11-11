@@ -155,7 +155,7 @@ struct CompactIslandStrip: View {
 }
 
 struct CompactIslandComponent: View {
-    let model: IslandModel
+    @ObservedObject var model: IslandModel
     let component: CompactIslandLayout.Component
     let output: CompactBarPresentation.Output
     /// Stacked for the docked strip: values sit above their units, multiple

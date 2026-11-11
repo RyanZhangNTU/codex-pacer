@@ -377,13 +377,14 @@ final class TaskStatusIconViewTests: XCTestCase {
 
     /// Segments fill to each task's estimate; a task without one breathes on
     /// the long-step clock until its estimate arrives.
-    func testSegmentsBreatheForTasksWithoutAnEstimate() async throws {
+    func testSegmentsBreatheForTasksWithoutAnEstimate() {
         let window = simulatedWindow()
         let ring = TaskSegmentsView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
         window.contentView?.addSubview(ring)
         typealias Segment = TaskSegmentsView.Segment
         ring.update(segments: [Segment(color: .systemTeal, fraction: 0.6, stale: false), Segment(color: .systemOrange, fraction: nil, stale: false),
             Segment(color: .systemOrange, fraction: nil, stale: false)], scale: 1, animates: true)
+        ring.layoutSubtreeIfNeeded()
         XCTAssertEqual(ring.breathingLanes, [1, 2])
         XCTAssertEqual(ring.fillFractions, [0.6, 0, 0])
         ring.update(segments: [Segment(color: .systemTeal, fraction: 0.6, stale: false), Segment(color: .systemOrange, fraction: 0.2, stale: false),
@@ -392,12 +393,10 @@ final class TaskStatusIconViewTests: XCTestCase {
         XCTAssertEqual(ring.fillFractions, [0.6, 0.2, 0], "and leaves the other arcs as they were")
         shows = false
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
-        let stopped = try await TestWait.until { ring.breathingLanes.isEmpty }
-        XCTAssertTrue(stopped, "A hidden badge stops breathing")
+        XCTAssertEqual(ring.breathingLanes, [], "A hidden badge stops breathing")
         shows = true
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
-        let resumed = try await TestWait.until { ring.breathingLanes == [2] }
-        XCTAssertTrue(resumed, "Only the segment without an estimate resumes breathing")
+        XCTAssertEqual(ring.breathingLanes, [2], "Only the segment without an estimate resumes breathing")
         ring.update(segments: [Segment(color: .systemTeal, fraction: 0.6, stale: false), Segment(color: .systemOrange, fraction: nil, stale: false)],
             scale: 1, animates: false)
         XCTAssertEqual(ring.breathingLanes, [], "Without motion only the track shows")
@@ -409,7 +408,7 @@ final class TaskStatusIconViewTests: XCTestCase {
     }
 
     /// With one task reporting, the badge's comets give way to its estimate.
-    func testTheBadgeDrawsTheOnlyTasksEstimateWithTheRowsMotion() async throws {
+    func testTheBadgeDrawsTheOnlyTasksEstimateWithTheRowsMotion() {
         let window = simulatedWindow()
         let orbit = ActivityOrbitView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
         window.contentView?.addSubview(orbit)
@@ -424,12 +423,10 @@ final class TaskStatusIconViewTests: XCTestCase {
         XCTAssertEqual(orbit.estimateAnimationKeys, ["flow.travel"], "Light runs along the arc in place of the orbit")
         shows = false
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
-        let stopped = try await TestWait.until { orbit.estimateAnimationKeys.isEmpty }
-        XCTAssertTrue(stopped, "A hidden badge stops the estimate loop")
+        XCTAssertEqual(orbit.estimateAnimationKeys, [], "A hidden badge stops the estimate loop")
         shows = true
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
-        let resumed = try await TestWait.until { orbit.estimateAnimationKeys == ["flow.travel"] }
-        XCTAssertTrue(resumed, "The loop resumes when the badge is visible")
+        XCTAssertEqual(orbit.estimateAnimationKeys, ["flow.travel"], "The loop resumes when the badge is visible")
         orbit.update(segments: codex, progress: .init(fraction: 0.4, longStep: true, stale: false), animates: true)
         XCTAssertEqual(orbit.estimateAnimationKeys, ["step.breath"], "A long step breathes past the head")
         orbit.update(segments: codex, progress: .init(fraction: 0.4, longStep: false, stale: true), animates: true)
