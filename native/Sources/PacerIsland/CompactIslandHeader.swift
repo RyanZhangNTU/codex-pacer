@@ -52,11 +52,12 @@ struct CompactIslandHeader: View {
 
     var body: some View {
         let metrics = model.barMetrics
-        rowView(metrics)
+        let output = model.compactPresentation()
+        rowView(metrics, output: output)
             .padding(.horizontal, metrics.inset)
             .frame(height: baseHeight)
             .background {
-                rowView(metrics).fixedSize().background(GeometryReader { geometry in
+                rowView(metrics, output: output).fixedSize().background(GeometryReader { geometry in
                     Color.clear.preference(key: CompactHeaderIdealWidth.self, value: geometry.size.width + 2 * metrics.inset)
                 }).environment(\.islandLayoutProbe, true).hidden().allowsHitTesting(false).accessibilityHidden(true)
             }
@@ -73,23 +74,22 @@ struct CompactIslandHeader: View {
         .accessibilityLabel(L10n.text("layout.collapsed"))
     }
 
-    private func visible(_ components: [CompactIslandLayout.Component]) -> [CompactIslandLayout.Component] {
-        components.filter { CompactIslandComponent.isVisible($0, model: model, showsStatus: layout.components.contains(.status)) }
-    }
-    private func rowView(_ metrics: CompactBarMetrics) -> some View {
-        let leading = visible(layout.leading), trailing = visible(layout.trailing)
+    private func rowView(_ metrics: CompactBarMetrics, output: CompactBarPresentation.Output) -> some View {
+        let leading = layout.leading.filter { output.component($0).visible }
+        let trailing = layout.trailing.filter { output.component($0).visible }
         let divided = notchWidth == 0 && !leading.isEmpty && !trailing.isEmpty
         return CompactRowLayout(notchWidth: notchWidth, laneGap: metrics.laneGap) {
-            lane(leading, alignment: .leading, gap: metrics.gap)
+            lane(leading, alignment: .leading, gap: metrics.gap, output: output)
             Rectangle().fill(divided ? PacerPalette.overlay(41 / 255) : .clear)
                 .frame(width: divided ? 1 : 0, height: divided ? metrics.divider : 0).accessibilityHidden(true)
-            lane(trailing, alignment: .trailing, gap: metrics.gap)
+            lane(trailing, alignment: .trailing, gap: metrics.gap, output: output)
         }
     }
-    private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment, gap: CGFloat) -> some View {
+    private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment, gap: CGFloat,
+                      output: CompactBarPresentation.Output) -> some View {
         HStack(spacing: gap) {
             ForEach(components) { component in
-                CompactIslandComponent(model: model, component: component)
+                CompactIslandComponent(model: model, component: component, output: output)
             }
         }.fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: alignment).clipped()
@@ -107,11 +107,12 @@ struct CompactIslandStrip: View {
 
     var body: some View {
         let metrics = model.barMetrics
-        column(metrics)
+        let output = model.compactPresentation(showsStatus: false)
+        column(metrics, output: output)
             .frame(width: model.stripWidth)
             .frame(maxHeight: .infinity)
             .background {
-                column(metrics).fixedSize().background(GeometryReader { geometry in
+                column(metrics, output: output).fixedSize().background(GeometryReader { geometry in
                     Color.clear.preference(key: CompactStripIdealHeight.self, value: geometry.size.height)
                 }).environment(\.islandLayoutProbe, true).hidden().allowsHitTesting(false).accessibilityHidden(true)
             }
@@ -128,54 +129,52 @@ struct CompactIslandStrip: View {
             .accessibilityLabel(L10n.text("layout.collapsed"))
     }
 
-    private func column(_ metrics: CompactBarMetrics) -> some View {
-        let leading = visible(layout.leading), trailing = visible(layout.trailing)
+    private func column(_ metrics: CompactBarMetrics, output: CompactBarPresentation.Output) -> some View {
+        let leading = layout.leading.filter { $0.showsInStrip && output.component($0).visible }
+        let trailing = layout.trailing.filter { $0.showsInStrip && output.component($0).visible }
         let divided = !leading.isEmpty && !trailing.isEmpty
         return VStack(spacing: 0) {
-            lane(leading, gap: metrics.stripGap)
+            lane(leading, gap: metrics.stripGap, output: output)
             Spacer(minLength: divided ? metrics.laneGap / 2 : 0)
             if divided {
                 Rectangle().fill(PacerPalette.overlay(41 / 255)).frame(width: metrics.divider, height: 1)
                     .padding(.bottom, metrics.laneGap / 2).accessibilityHidden(true)
             }
-            lane(trailing, gap: metrics.stripGap)
+            lane(trailing, gap: metrics.stripGap, output: output)
         }
         .padding(.vertical, metrics.stripInset)
     }
 
-    private func visible(_ components: [CompactIslandLayout.Component]) -> [CompactIslandLayout.Component] {
-        components.filter { $0.showsInStrip && CompactIslandComponent.isVisible($0, model: model, showsStatus: false) }
-    }
-
-    private func lane(_ components: [CompactIslandLayout.Component], gap: CGFloat) -> some View {
+    private func lane(_ components: [CompactIslandLayout.Component], gap: CGFloat, output: CompactBarPresentation.Output) -> some View {
         VStack(spacing: gap) {
             ForEach(components) { component in
-                CompactIslandComponent(model: model, component: component, vertical: true)
+                CompactIslandComponent(model: model, component: component, output: output, vertical: true)
             }
         }
     }
 }
 
 struct CompactIslandComponent: View {
-    @ObservedObject var model: IslandModel
+    let model: IslandModel
     let component: CompactIslandLayout.Component
+    let output: CompactBarPresentation.Output
     /// Stacked for the docked strip: values sit above their units, multiple
     /// providers one above another.
     var vertical = false
     @Environment(\.islandLayoutProbe) private var layoutProbe
     private var providers: [AgentProvider] { model.enabledProviders }
-    private var output: CompactBarPresentation.Output { model.compactPresentation(showsStatus: !vertical) }
     private var item: CompactBarPresentation.Component { output.component(component) }
     private var metrics: CompactBarMetrics { output.metrics ?? model.barMetrics }
     private var choices: CompactComponentOptions { output.componentOptions ?? CompactComponentOptions() }
     private var scale: CGFloat { CGFloat(metrics.scale) }
 
-    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
+    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true,
+                          output: CompactBarPresentation.Output? = nil) -> Bool {
         if component == .tps {
             return CompactBarPresentation.rateIsVisible(context: model.compactTaskContext, attached: model.isAttached,
                 strip: model.sideDock != nil, showsStatus: showsStatus, language: L10n.language)
         }
-        return model.compactComponent(component, showsStatus: showsStatus).visible
+        return (output ?? model.compactPresentation(showsStatus: showsStatus)).component(component).visible
     }
     /// Alternation skips providers without a value, so an unavailable service
     /// never spends half the time as a dash; with none known, the first shows one.
@@ -304,7 +303,8 @@ struct CompactIslandComponent: View {
     private var priceClock: some View {
         let wallet = model.deepseekWallet
         return PriceClockGlyph(hourly: wallet.hourly, peaks: wallet.peakToday.map { wallet.angle(of: $0.start)...wallet.angle(of: $0.end) },
-            now: wallet.angle(of: model.now), dimmed: model.deepseekWalletDimmed, side: metrics.gauge, compact: true, peakNow: wallet.peakNow)
+            now: wallet.angle(of: model.now), dimmed: [.stale, .disconnected].contains(wallet.state),
+            side: metrics.gauge, compact: true, peakNow: wallet.peakNow)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(L10n.text("deepseek.clock_accessibility", L10n.text(wallet.peakNow ? "deepseek.now.peak" : "deepseek.now.offpeak"),
                 DeepSeekDayDial.amount(wallet.todayTotal)))
@@ -368,7 +368,7 @@ struct CompactIslandComponent: View {
         providers.map { L10n.text("provider.compact_quota", $0.displayName, model.compactQuotaText($0)) }.joined(separator: ", ")
     }
     private var gaugeSummary: String {
-        model.compactRingProviders.map { provider in
+        output.rings.map(\.provider).map { provider in
             if provider == .deepseek {
                 let budget = model.deepseekWallet.ringBudget(prefer: model.deepseekRingPeriod)
                 return L10n.text("provider.compact_quota", provider.displayName, budget.map { DeepSeekWallet.compactRemaining($0.remaining) } ?? "—")

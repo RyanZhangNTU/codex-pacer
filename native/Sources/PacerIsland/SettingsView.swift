@@ -558,7 +558,7 @@ struct SettingsView: View {
         defaults.set(accent.rawValue, forKey: PacerAccent.defaultsKey)
         quotaStyle.save(to: defaults)
         defaults.set(fullscreen, forKey: "showInFullscreen")
-        DisplayIdentity.choose(displayID, in: defaults)
+        if defaults.integer(forKey: "displayID") != displayID { DisplayIdentity.choose(displayID, in: defaults) }
         defaults.set(positionPerDisplay, forKey: IslandScreenMemory.enabledKey)
         defaults.set(metric, forKey: "compactMetric")
         defaults.set(singleTask.rawValue, forKey: ActivityBadgeSingleTask.defaultsKey)

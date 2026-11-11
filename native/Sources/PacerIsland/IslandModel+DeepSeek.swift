@@ -19,6 +19,18 @@ struct DeepSeekBalanceReadDependencies {
     var api: @MainActor (String) async throws -> DeepSeekBalance = { try await DeepSeekAPIBalanceClient.read(key: $0) }
 }
 
+struct DeepSeekWalletInputs: Equatable {
+    let now: Date
+    let calendar: Calendar
+    let balance: DeepSeekBalance?
+    let connected: Bool
+    let historySource: String?
+    let budgets: DeepSeekBudgets
+    let lowLine: Double?
+    let spikeLimit: Double?
+    let speedSource: DeepSeekSpeedSource
+}
+
 typealias DeepSeekBalanceAttention = DeepSeekNoticePolicy
 
 /// Which providers draw the collapsed rings. Unset follows the modules:
@@ -129,14 +141,20 @@ extension IslandModel {
         defaults.string(forKey: Self.deepseekSpeedSourceKey).flatMap(DeepSeekSpeedSource.init(rawValue:)) ?? .local
     }
     var deepseekWallet: DeepSeekWallet {
-        DeepSeekWallet(balance: deepseekBalance, connected: deepseekBalanceError == nil || deepseekBalance != nil,
-            ledger: deepseekUsage.ledger, now: now, lowLine: Self.deepseekLowLine(in: defaults),
-            history: demo || deepseekBalanceBinding?.historySource == deepseekHistory.source ? deepseekHistory : DeepSeekBalanceHistory(),
-            budgets: deepseekBudgets, spikeLimit: amount(Self.deepseekSpikeLimitKey),
+        let inputs = DeepSeekWalletInputs(now: now, calendar: .current, balance: deepseekBalance,
+            connected: deepseekBalanceError == nil || deepseekBalance != nil, historySource: deepseekBalanceBinding?.historySource,
+            budgets: deepseekBudgets, lowLine: Self.deepseekLowLine(in: defaults), spikeLimit: amount(Self.deepseekSpikeLimitKey),
             speedSource: deepseekSpeedSource)
+        if let cached = deepseekWalletCache, cached.inputs == inputs { return cached.wallet }
+        // The bar, its measurement view and the panel share this reading. Ledger
+        // and history assignments invalidate it without comparing their entries.
+        let wallet = DeepSeekWallet(balance: inputs.balance, connected: inputs.connected, ledger: deepseekUsage.ledger,
+            now: inputs.now, lowLine: inputs.lowLine,
+            history: demo || inputs.historySource == deepseekHistory.source ? deepseekHistory : DeepSeekBalanceHistory(),
+            budgets: inputs.budgets, spikeLimit: inputs.spikeLimit, speedSource: inputs.speedSource, calendar: inputs.calendar)
+        deepseekWalletCache = (inputs, wallet)
+        return wallet
     }
-    /// The wallet cannot be read: the collapsed bar dims rather than recolors.
-    var deepseekWalletDimmed: Bool { [.stale, .disconnected].contains(deepseekWallet.state) }
     /// The one collapsed alert, from the reminders that are on.
     var deepseekAlert: DeepSeekAlert? {
         guard isModuleEnabled(.deepseek) else { return nil }

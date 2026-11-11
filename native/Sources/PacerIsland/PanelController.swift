@@ -107,23 +107,7 @@ final class PanelController: NSObject {
     /// chosen or it is gone. A choice saved before the UUID uses its number.
     private var selectedScreen: NSScreen? {
         let screens = NSScreen.screens
-        if model.displayID != 0, let saved = model.defaults.string(forKey: DisplayIdentity.defaultsKey) {
-            return screens.first { DisplayIdentity.uuid($0) == saved } ?? screens.first
-        }
-        return screens.first { Self.number($0) == model.displayID } ?? screens.first
-    }
-    /// Keeps the chosen display's number and UUID in step: a display plugged
-    /// in again may get a new number, and a choice from before the UUID gains one.
-    private func syncDisplayChoice(_ screen: NSScreen) {
-        let defaults = model.defaults, chosen = model.displayID
-        guard chosen != 0, let uuid = DisplayIdentity.uuid(screen) else { return }
-        let saved = defaults.string(forKey: DisplayIdentity.defaultsKey)
-        if saved == uuid, Self.number(screen) != chosen {
-            defaults.set(Self.number(screen), forKey: "displayID")
-            model.islandPlacementSaved()
-        } else if saved == nil, Self.number(screen) == chosen {
-            defaults.set(uuid, forKey: DisplayIdentity.defaultsKey)
-        }
+        return DisplayIdentity.selected(in: model.defaults, among: screens) ?? screens.first
     }
 
     private static var buttonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
@@ -132,9 +116,11 @@ final class PanelController: NSObject {
         if move != nil, !Self.buttonHeld { checkForLostMouseUp() }
         guard move == nil else { return }
         if !model.expanded { panel.resignKey() }
-        guard let screen = selectedScreen else { return }
+        let screens = NSScreen.screens
+        let selected = DisplayIdentity.selected(in: model.defaults, among: screens)
+        guard let screen = selected ?? screens.first else { return }
         let demoNotch = model.isDemo && CommandLine.arguments.contains("--demo-notch")
-        syncDisplayChoice(screen)
+        if selected != nil, DisplayIdentity.sync(screen, in: model.defaults, among: screens) { model.islandPlacementSaved() }
         // Each display can keep its own place; reaching one applies it first.
         _ = model.arrive(onDisplay: DisplayIdentity.key(screen), name: screen.localizedName,
             hasNotch: demoNotch || screen.safeAreaInsets.top > 0)

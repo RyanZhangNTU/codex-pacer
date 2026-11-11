@@ -60,10 +60,11 @@ struct CompactLayoutEditor: View {
     }
 
     private var bar: some View {
-        HStack(spacing: 0) {
-            laneEditor(.leading)
+        let output = model.compactPresentation(showsStatus: layout.components.contains(.status))
+        return HStack(spacing: 0) {
+            laneEditor(.leading, output: output)
             camera
-            laneEditor(.trailing)
+            laneEditor(.trailing, output: output)
         }
         .padding(.horizontal, 10)
         .frame(height: Self.barHeight)
@@ -104,7 +105,7 @@ struct CompactLayoutEditor: View {
         return L10n.text(lane == .leading ? "layout.lane.strip_top" : "layout.lane.strip_bottom")
     }
 
-    private func laneEditor(_ lane: CompactIslandLayout.Lane) -> some View {
+    private func laneEditor(_ lane: CompactIslandLayout.Lane, output: CompactBarPresentation.Output) -> some View {
         let components = layout.visibleComponents(in: lane, providers: providers)
         return HStack(spacing: attached ? 4 : 6) {
             if components.isEmpty {
@@ -113,7 +114,7 @@ struct CompactLayoutEditor: View {
                     .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .strokeBorder(PacerPalette.overlay(0.25), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
             } else {
-                ForEach(components) { component in chip(component) }
+                ForEach(components) { component in chip(component, output: output) }
             }
         }
         .frame(minWidth: 64, minHeight: Self.barHeight, alignment: lane == .leading ? .leading : .trailing)
@@ -121,13 +122,14 @@ struct CompactLayoutEditor: View {
         .accessibilityElement(children: .contain).accessibilityLabel(title(lane))
     }
 
-    private func chip(_ component: CompactIslandLayout.Component) -> some View {
+    private func chip(_ component: CompactIslandLayout.Component, output: CompactBarPresentation.Output) -> some View {
         let selected = selection.wrappedValue == component
-        let showsLive = CompactIslandComponent.isVisible(component, model: model, showsStatus: layout.components.contains(.status))
+        let showsStatus = layout.components.contains(.status)
+        let showsLive = CompactIslandComponent.isVisible(component, model: model, showsStatus: showsStatus, output: output)
         let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
         return Group {
             if showsLive {
-                CompactIslandComponent(model: model, component: component).allowsHitTesting(false)
+                CompactIslandComponent(model: model, component: component, output: output).allowsHitTesting(false)
             } else {
                 Label(component.shortLabel, systemImage: component.symbol).labelStyle(CompactChipLabelStyle())
                     .frame(height: 24)

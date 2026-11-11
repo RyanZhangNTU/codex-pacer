@@ -24,12 +24,20 @@ internal sealed class SingleQuotaView : Grid
         var shown = Dial.GaugeReading ?? provider.Weekly;
         AutomationProperties.SetHelpText(this, string.Join("\n\n", new[] { Dial.Split ? provider.FiveHour.SplitHelp : null, shown.SplitHelp,
             provider.Weekly.SourceText, help }.Where(value => !string.IsNullOrWhiteSpace(value))));
+        var details = Details(Dial.Split ? provider.Weekly : shown, Dial.Split ? provider.FiveHour : null, ui);
+        Grid.SetColumn(details, 2); Children.Add(details);
+        status ??= new Border { Height = 0 };
+        status.Margin = new Thickness(0, 6, 0, 0); Grid.SetRow(status, 1); Grid.SetColumnSpan(status, 3); Children.Add(status);
+    }
+
+    internal static StackPanel Details(DashboardReading shown, DashboardReading? firstPeriod, UiText ui)
+    {
         var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        if (Dial.Split)
+        if (firstPeriod != null)
         {
-            details.Children.Add(Period(provider.FiveHour, ui));
+            details.Children.Add(Period(firstPeriod, ui));
             details.Children.Add(Separator(new Thickness(0, 9, 0, 9)));
-            details.Children.Add(Period(provider.Weekly, ui));
+            details.Children.Add(Period(shown, ui));
         }
         else
         {
@@ -47,9 +55,7 @@ internal sealed class SingleQuotaView : Grid
             Brush ink = weekly.ProjectionWarns ? PacerPalette.Attention : weekly.ProjectionText == null || weekly.ProjectionEarly ? PacerPalette.Tertiary : PacerPalette.Primary;
             details.Children.Add(Row(Text(ui.Text("dashboard.projection"), 11, PacerPalette.Secondary), Text(weekly.ProjectionText ?? "—", 11, ink), 26));
         }
-        Grid.SetColumn(details, 2); Children.Add(details);
-        status ??= new Border { Height = 0 };
-        status.Margin = new Thickness(0, 6, 0, 0); Grid.SetRow(status, 1); Grid.SetColumnSpan(status, 3); Children.Add(status);
+        return details;
     }
     private static StackPanel Period(DashboardReading reading, UiText ui)
     {

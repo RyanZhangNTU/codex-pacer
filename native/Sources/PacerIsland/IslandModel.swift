@@ -109,7 +109,8 @@ final class IslandModel: ObservableObject {
     }
     var deepseekBalanceAttention = DeepSeekBalanceAttention()
     /// Successive balance readings, for what the account was charged beyond this Mac.
-    var deepseekHistory = DeepSeekBalanceHistory()
+    var deepseekHistory = DeepSeekBalanceHistory() { didSet { deepseekWalletCache = nil } }
+    var deepseekWalletCache: (inputs: DeepSeekWalletInputs, wallet: DeepSeekWallet)?
     /// Spend-spike notices stay quiet until this moment after "Not for an hour".
     var deepseekSpikeSnoozedUntil = Date.distantPast
     var deepseekFailureCount = 0
@@ -122,7 +123,7 @@ final class IslandModel: ObservableObject {
     var deepseekCredentialInput: MacDeepSeekCredentialInput?
     var deepseekBalanceStarting = false
     @Published var deepseekStreamStatuses: [String: RuntimeStreamStatus] = [:]
-    @Published var deepseekUsage = DeepSeekLocalUsage()
+    @Published var deepseekUsage = DeepSeekLocalUsage() { didSet { deepseekWalletCache = nil } }
     @Published var deepseekBalance: DeepSeekBalance?
     @Published var deepseekBalanceError: DeepSeekBalanceError?
     @Published var deepseekRefreshing = false
@@ -987,7 +988,6 @@ final class IslandModel: ObservableObject {
     var expandedQuotaStyle: ExpandedQuotaStyle { .load(from: defaults) }
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
     var hideProjects: Bool { defaults.bool(forKey: "hideProjects") }
-    var displayID: Int { defaults.integer(forKey: "displayID") }
     var taskGroups: [ActivityTaskGroup] { activityState.taskGroups() }
     func taskGroup(for activity: SessionActivity) -> ActivityTaskGroup? { taskGroups.first { $0.primary.id == activity.canonicalized().id } }
     var overview: ActivityOverview { activityState.overview(at: now) }

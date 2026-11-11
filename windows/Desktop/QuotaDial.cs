@@ -37,8 +37,9 @@ internal sealed class QuotaDial : FrameworkElement
 {
     private readonly string provider, classicPeriod;
     private readonly EngineWallet? wallet;
+    private double walletAngle;
     private readonly bool classic;
-    private readonly DashboardProvider? dashboard;
+    private DashboardProvider? dashboard;
     private readonly double? dialSize;
     private readonly PanelGauge? gauge;
     private readonly bool paceTick;
@@ -47,7 +48,7 @@ internal sealed class QuotaDial : FrameworkElement
     internal QuotaDial(string provider, EngineQuota? quota, EngineWallet? wallet, bool classic = false,
         DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null, PanelGauge? gauge = null, bool paceTick = true)
     {
-        this.provider = provider; this.wallet = wallet; this.classic = classic; this.dashboard = dashboard;
+        this.provider = provider; this.wallet = wallet; walletAngle = wallet?.Angle ?? 0; this.classic = classic; this.dashboard = dashboard;
         this.classicPeriod = classicPeriod; this.dialSize = dialSize; this.gauge = gauge; this.paceTick = paceTick;
         _ = quota; // Raw transport data cannot replace a shared display projection.
     }
@@ -55,6 +56,21 @@ internal sealed class QuotaDial : FrameworkElement
     private readonly Typeface semibold = new(PacerFonts.Interface, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
     internal Typeface DetailTypeface => regular;
     internal Typeface ValueTypeface => semibold;
+    internal string Provider => provider;
+    internal void UpdateReading(DashboardProvider? reading, double? angle)
+    {
+        if (provider == "deepseek")
+        {
+            if (angle is not double current || current == walletAngle) return;
+            walletAngle = current;
+        }
+        else
+        {
+            if (dashboard?.FiveHour == reading?.FiveHour && dashboard?.Weekly == reading?.Weekly) return;
+            dashboard = reading;
+        }
+        InvalidateVisual();
+    }
     private double Side => dialSize ?? (classic ? 88 : 104);
     private QuotaWindow? Short => dashboard == null ? null : Projected(dashboard.FiveHour);
     internal bool Split => !classic && (gauge?.Split ?? Short != null);
@@ -179,21 +195,21 @@ internal sealed class QuotaDial : FrameworkElement
         var presentation = wallet.Dial;
         drawing.PushOpacity(presentation.DimmedFace ? 0.55 : 1);
         double largest = Math.Max(0.01, wallet.Hourly.Count == 0 ? 0 : wallet.Hourly.Max());
-        int currentHour = (int)(wallet.Angle / 15);
+        int currentHour = (int)(walletAngle / 15);
         for (int hour = 0; hour < 24; hour++)
         {
             double start = hour * 15 + 1.6, end = hour * 15 + 13.4;
             RingDrawing.Arc(drawing, point, radius, start - 90, end - start, PacerPalette.Hairline, 2.2 * k);
             double spent = hour < wallet.Hourly.Count ? wallet.Hourly[hour] : 0;
             if (spent < 0.0005 || hour > currentHour) continue;
-            double stop = hour == currentHour ? Math.Min(end, Math.Max(start + 1, wallet.Angle)) : end;
+            double stop = hour == currentHour ? Math.Min(end, Math.Max(start + 1, walletAngle)) : end;
             RingDrawing.Arc(drawing, point, radius, start - 90, stop - start,
                 WalletInk(presentation.SegmentTone), (2.4 + 4.2 * spent / largest) * k, false);
         }
         foreach (var peak in wallet.Peak.Where(p => p.End - p.Start > 1.6))
             RingDrawing.Arc(drawing, point, radius + 6.2 * k, peak.Start + 0.8 - 90, peak.End - peak.Start - 1.6,
                 PacerPalette.Ink(255, 189, 97, 217), 1.5 * k);
-        double radians = (wallet.Angle - 90) * Math.PI / 180;
+        double radians = (walletAngle - 90) * Math.PI / 180;
         var a = new Point(centre + (radius - 5 * k) * Math.Cos(radians), centre + (radius - 5 * k) * Math.Sin(radians));
         var b = new Point(centre + (radius + 5 * k) * Math.Cos(radians), centre + (radius + 5 * k) * Math.Sin(radians));
         drawing.DrawLine(new Pen(PacerPalette.Ink(0, 0, 0, 115), Math.Max(1.2, 2.4 * k)) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round }, a, b);

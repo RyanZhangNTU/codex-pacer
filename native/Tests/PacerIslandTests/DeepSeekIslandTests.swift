@@ -26,6 +26,22 @@ final class DeepSeekIslandTests: XCTestCase {
         return activity
     }
 
+    func testWalletFollowsLedgerAndBudgetChangesBeforeTheNextClockTick() async throws {
+        let (defaults, _) = try defaults(.init(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults)
+        let start = Calendar.current.startOfDay(for: model.now)
+        model.now = start.addingTimeInterval(60)
+        XCTAssertEqual(model.deepseekWallet.today, 0)
+        var ledger = DeepSeekSpendLedger()
+        ledger.record(id: "one", at: start.addingTimeInterval(10), cost: 2, task: "sample")
+        model.deepseekUsage = .init(ledger: ledger)
+        XCTAssertEqual(model.deepseekWallet.today, 2)
+        defaults.set("budget", forKey: IslandModel.deepseekModeKey)
+        defaults.set(10.0, forKey: IslandModel.deepseekDailyBudgetKey)
+        XCTAssertEqual(model.deepseekWallet.daily?.remaining, 8)
+        await model.shutdown()
+    }
+
     func testTurnCostFollowsItsSettingAndDisablingDeepSeekKeepsTheOtherModule() async throws {
         let (defaults, _) = try defaults(ProviderModules(codexMode: .enabled, claudeMode: .disabled, deepseekMode: .enabled))
         let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults, installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))

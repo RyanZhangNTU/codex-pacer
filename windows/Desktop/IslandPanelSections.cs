@@ -23,6 +23,8 @@ public partial class IslandWindow
         internal TextBlock Detail { get; } = detail;
         internal StackPanel Trailing { get; } = trailing;
         internal Grid Slots { get; } = slots;
+        internal QuotaPaint? Paint { get; set; }
+        internal QuotaDial[] Dials { get; set; } = [];
     }
     private sealed class ChartParts(StackPanel section, Grid header, TextBlock title, TextBlock detail, StackPanel trailing, Border content)
     {
@@ -32,10 +34,16 @@ public partial class IslandWindow
         internal TextBlock Detail { get; } = detail;
         internal StackPanel Trailing { get; } = trailing;
         internal Border Content { get; } = content;
+        internal ChartPaint? Paint { get; set; }
     }
 
+    private sealed record ProviderPaint(string Provider, DashboardProvider? Reading, PanelGauge? Gauge, string? Help, string Periods);
+    private sealed record QuotaPaint(string Key, string Title, string? Detail, DashboardLayout? Layout, bool PaceTick,
+        int Colors, ProviderPaint[] Providers, LegacyQuotaDashboard? Legacy, EngineWallet? Wallet, bool Budget, bool Solo,
+        bool SpendBeside, bool Peak, bool CanConnect, string? ConnectionContext, string? ConnectionMode, DeepSeekBalanceStatus? BalanceStatus);
+    private sealed record ChartPaint(string Title, bool ShowHeader, int Colors, DeepSeekDistribution? Distribution, DeepSeekWeekPresentation? Week);
+
     private PanelOptions panelOptions = PanelOptions.Default;
-    private string panelOptionsKey = PanelOptions.Default.Key;
     private bool panelBudgetDial = true;
     private EngineExpandedPanel? panel;
     private string sectionSignature = "";
@@ -51,15 +59,11 @@ public partial class IslandWindow
     private double RowsHeight(int count) => count == 0 ? 44 : Math.Min(count, PageSize) * RowHeight + (Math.Min(count, PageSize) - 1) * 2;
     private int PageCount => Math.Max(1, (rows.Count + PageSize - 1) / PageSize);
 
-    /// Takes the snapshot's choices; true when rows must be rebuilt.
-    private bool ApplyPanelChoices(EngineSnapshot snapshot)
+    private void ApplyPanelChoices(EngineSnapshot snapshot)
     {
         panel = snapshot.ExpandedPanel ?? DefaultPanel(snapshot);
         panelBudgetDial = panel.BudgetDial;
-        string key = panel.Options.Key;
-        if (key == panelOptionsKey) return false;
-        panelOptions = panel.Options; panelOptionsKey = key;
-        return true;
+        panelOptions = panel.Options;
     }
 
     /// Before an engine sends the panel, the panel keeps its earlier shape.
@@ -135,7 +139,7 @@ public partial class IslandWindow
         else detail.SetResourceReference(TextBlock.ForegroundProperty, "Island.Tertiary");
     }
 
-    /// Fills every section and, only when the shape changed, rebuilds their order.
+    /// Refreshes changed readings and only reparents sections when their order changes.
     private void RenderPanel(EngineSnapshot snapshot)
     {
         var current = panel ?? DefaultPanel(snapshot);
@@ -152,10 +156,7 @@ public partial class IslandWindow
                 {
                     var parts = quotaIndex == 0 ? FirstQuota : ExtraQuota(quotaIndex - 1);
                     quotaIndex++;
-                    parts.Title.Text = section.Title.Length > 0 ? section.Title : ui.Text("layout.group.quota_balance");
-                    SetDetail(parts.Detail, section.Detail, section.Providers.Count == 1 ? section.Providers[0] : null);
-                    FillQuota(parts.Slots, section, snapshot);
-                    AutomationProperties.SetAutomationId(parts.Section, "island.section.quota." + string.Join("-", section.Providers));
+                    RefreshQuota(parts, section, snapshot);
                     placed.Add((section, parts.Section, parts.Trailing, parts.Header));
                     break;
                 }
@@ -163,17 +164,23 @@ public partial class IslandWindow
                 {
                     bool spend = section.Kind == "deepseekSpend";
                     var parts = spend ? Chart(ref spendSection, "spend") : Chart(ref weekSection, "week");
-                    var data = snapshot.Wallet?.Solo;
-                    FrameworkElement? content = spend
-                        ? data?.Distribution is { } distribution ? new DeepSeekDistributionView(distribution, showsTitle: !section.ShowsHeader) : null
-                        : data?.Week is { } week ? new DeepSeekWeekView(week, showsTitle: !section.ShowsHeader) : null;
+                    var distribution = spend ? snapshot.Wallet?.Solo?.Distribution : null;
+                    var week = spend ? null : snapshot.Wallet?.Solo?.Week;
+                    var paint = new ChartPaint(section.Title, section.ShowsHeader, panelPaintRevision, distribution, week);
+                    if (parts.Paint is not { } previous || !SameChart(previous, paint))
+                    {
+                        parts.Paint = paint;
+                        parts.Header.Visibility = section.ShowsHeader ? Visibility.Visible : Visibility.Collapsed;
+                        parts.Title.Text = section.Title;
+                        SetDetail(parts.Detail, week?.LineText, null);
+                        parts.Content.Child = distribution != null ? new DeepSeekDistributionView(distribution, showsTitle: !section.ShowsHeader)
+                            : week != null ? new DeepSeekWeekView(week, showsTitle: !section.ShowsHeader) : null;
+                        bool hasContent = parts.Content.Child != null;
+                        parts.Content.Margin = new Thickness(9, section.ShowsHeader && hasContent ? 8 : 0, 9, hasContent ? 4 : 0);
+                        panelMeasureDirty = true;
+                    }
                     // An empty chart takes no room unless it carries the panel's buttons.
-                    if (content == null && !section.ShowsHeader) break;
-                    parts.Header.Visibility = section.ShowsHeader ? Visibility.Visible : Visibility.Collapsed;
-                    parts.Title.Text = section.Title;
-                    SetDetail(parts.Detail, spend ? null : data?.Week?.LineText, null);
-                    parts.Content.Child = content;
-                    parts.Content.Margin = new Thickness(9, section.ShowsHeader && content != null ? 8 : 0, 9, content == null ? 0 : 4);
+                    if (parts.Content.Child == null && !section.ShowsHeader) break;
                     placed.Add((section, parts.Section, parts.Trailing, parts.Header));
                     break;
                 }
@@ -184,12 +191,11 @@ public partial class IslandWindow
         tasksShown = placed.Any(item => ReferenceEquals(item.Element, TasksSection));
         // Without any service the panel says so under its blocks and offers Settings, as on the Mac.
         bool noServices = snapshot.QuotaDashboard is { Providers.Count: 0 };
-        var none = NoServicesRow();
 
-        string signature = string.Join("|", placed.Select(item => item.Section.Key + ":" + item.Section.Joined + ":" + item.Element.GetHashCode())) + ":" + noServices;
+        string signature = string.Join("|", placed.Select(item => item.Section.Key + ":" + item.Section.Joined)) + ":" + noServices;
         if (signature != sectionSignature)
         {
-            sectionSignature = signature;
+            sectionSignature = signature; panelMeasureDirty = true;
             if (PanelActions.Parent is Panel owner) owner.Children.Remove(PanelActions);
             PanelContent.Children.Clear(); sectionHeaders.Clear();
             for (int index = 0; index < placed.Count; index++)
@@ -216,7 +222,7 @@ public partial class IslandWindow
             {
                 var hairline = new Border { Height = 1, Margin = new Thickness(9, 10, 9, 10) };
                 hairline.SetResourceReference(Border.BackgroundProperty, "Island.Overlay08");
-                PanelContent.Children.Add(hairline); PanelContent.Children.Add(none);
+                PanelContent.Children.Add(hairline); PanelContent.Children.Add(NoServicesRow());
             }
         }
         // The pager's divider only separates it from the buttons beside it.
@@ -224,6 +230,93 @@ public partial class IslandWindow
         ApplyHeaderActions();
         if (!MoreButton.ContextMenu.IsOpen) BuildMoreMenu();
     }
+
+    private void RefreshQuota(QuotaParts parts, PanelSection section, EngineSnapshot snapshot)
+    {
+        var dashboard = snapshot.QuotaDashboard is { SchemaVersion: 1 } data ? data : null;
+        var layout = expandedQuotaStyle == "classic" ? section.Classic : section.Split;
+        bool deepseek = section.Providers.Contains("deepseek");
+        var connection = deepseek ? snapshot.DeepseekConnection : null;
+        ProviderPaint Provider(string provider)
+        {
+            var reading = dashboard?.Providers.FirstOrDefault(value => value.Provider == provider);
+            return new(provider, reading is { History: not null } ? reading with { History = null } : reading,
+                panel?.Gauge(provider), snapshot.Sources.FirstOrDefault(source => source.Provider == provider && source.Transport == "app-server")?.Reason,
+                panelOptions.Periods(provider));
+        }
+        var paint = new QuotaPaint(section.Key, section.Title, section.Detail, layout, panelOptions.PaceTick, panelPaintRevision,
+            section.Providers.Select(Provider).ToArray(),
+            layout?.Kind == "legacyCodex" ? dashboard?.LegacyCodex : null, deepseek ? snapshot.Wallet : null, deepseek && panelBudgetDial,
+            layout?.Kind == "deepseekSolo", section.SpendBeside, deepseek && panelOptions.DeepseekPeak, deepseek && CanConnectDeepSeek(snapshot),
+            connection?.Context, connection?.Mode, connection?.Status);
+
+        if (parts.Paint is { } previous && SameQuota(previous, paint))
+        {
+            foreach (var dial in parts.Dials)
+                dial.UpdateReading(paint.Providers.FirstOrDefault(provider => provider.Provider == dial.Provider)?.Reading, paint.Wallet?.Angle);
+            return;
+        }
+        parts.Paint = paint;
+        parts.Title.Text = section.Title.Length > 0 ? section.Title : ui.Text("layout.group.quota_balance");
+        SetDetail(parts.Detail, section.Detail, section.Providers.Count == 1 ? section.Providers[0] : null);
+        FillQuota(parts.Slots, section, snapshot);
+        parts.Dials = DialsIn(parts.Slots).ToArray();
+        AutomationProperties.SetAutomationId(parts.Section, "island.section.quota." + string.Join("-", section.Providers));
+        panelMeasureDirty = true;
+    }
+
+    private static IEnumerable<QuotaDial> DialsIn(DependencyObject parent)
+    {
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is QuotaDial dial) yield return dial;
+            else foreach (var nested in DialsIn(child)) yield return nested;
+        }
+    }
+
+    private static bool SameQuota(QuotaPaint a, QuotaPaint b) =>
+        a == b with { Layout = a.Layout, Providers = a.Providers, Legacy = a.Legacy, Wallet = a.Wallet, BalanceStatus = a.BalanceStatus } &&
+        (a.Layout == b.Layout || a.Layout != null && b.Layout != null && a.Layout == b.Layout with { Slots = a.Layout.Slots } && a.Layout.Slots.SequenceEqual(b.Layout.Slots)) &&
+        a.Providers.Length == b.Providers.Length && a.Providers.Zip(b.Providers).All(pair => SameProvider(pair.First, pair.Second)) &&
+        (a.Legacy == b.Legacy || a.Legacy != null && b.Legacy != null && a.Legacy == b.Legacy with { Buckets = a.Legacy.Buckets } &&
+            a.Legacy.Buckets.Count == b.Legacy.Buckets.Count && a.Legacy.Buckets.Zip(b.Legacy.Buckets).All(pair =>
+                pair.First == pair.Second with { Windows = pair.First.Windows } && pair.First.Windows.SequenceEqual(pair.Second.Windows))) &&
+        SameWallet(a.Wallet, b.Wallet, b.Budget, b.Solo, b.SpendBeside) &&
+        (a.BalanceStatus == b.BalanceStatus || a.BalanceStatus != null && b.BalanceStatus != null &&
+            a.BalanceStatus == b.BalanceStatus with { Actions = a.BalanceStatus.Actions } && a.BalanceStatus.Actions.SequenceEqual(b.BalanceStatus.Actions));
+
+    private static bool SameProvider(ProviderPaint a, ProviderPaint b) => a == b with { Reading = a.Reading } &&
+        (a.Reading == b.Reading || a.Reading != null && b.Reading != null &&
+            SameReading(a.Reading.FiveHour, b.Reading.FiveHour) && SameReading(a.Reading.Weekly, b.Reading.Weekly) &&
+            (a.Reading.Status == b.Reading.Status || a.Reading.Status != null && b.Reading.Status != null &&
+                a.Reading.Status == b.Reading.Status with { Actions = a.Reading.Status.Actions } && a.Reading.Status.Actions.SequenceEqual(b.Reading.Status.Actions)));
+
+    // Only the dial uses the unrounded time and pace. Formatted labels, help and
+    // accessibility still take part in the comparison that decides a rebuild.
+    private static bool SameReading(DashboardReading a, DashboardReading b) => a == b ||
+        a == b with { RemainingTimePercent = a.RemainingTimePercent, PacePercent = a.PacePercent, CapturedAt = a.CapturedAt };
+
+    private static bool SameWallet(EngineWallet? a, EngineWallet? b, bool budget, bool solo, bool spend) =>
+        ReferenceEquals(a, b) || a != null && b != null && a.PeakNow == b.PeakNow &&
+        (budget && a.Solo?.Budgets.Count > 0 && b.Solo?.Budgets.Count > 0 ||
+            a.Balance == b.Balance && a.Whole == b.Whole && a.Cents == b.Cents && a.Dial == b.Dial &&
+            a.Hourly.SequenceEqual(b.Hourly) && a.Peak.SequenceEqual(b.Peak)) &&
+        (!budget || (a.Solo?.Budgets ?? []).SequenceEqual(b.Solo?.Budgets ?? [])) &&
+        (!solo || a.Dial?.PeakHelp == b.Dial?.PeakHelp && SameSolo(a.Solo, b.Solo, spend));
+
+    private static bool SameSolo(DeepSeekSoloPresentation? a, DeepSeekSoloPresentation? b, bool spend) =>
+        ReferenceEquals(a, b) || a != null && b != null &&
+        a.TodayLabel == b.TodayLabel && a.TodayText == b.TodayText && a.TodayHelp == b.TodayHelp && a.PeakUntil == b.PeakUntil &&
+        (a.Speed == b.Speed || a.Speed != null && b.Speed != null && a.Speed == b.Speed with { Fractions = a.Speed.Fractions } &&
+            a.Speed.Fractions.SequenceEqual(b.Speed.Fractions)) && (!spend || SameDistribution(a.Distribution, b.Distribution));
+
+    private static bool SameDistribution(DeepSeekDistribution? a, DeepSeekDistribution? b) => a == b || a != null && b != null &&
+        a == b with { Parts = a.Parts } && a.Parts.SequenceEqual(b.Parts);
+
+    private static bool SameChart(ChartPaint a, ChartPaint b) => a == b with { Distribution = a.Distribution, Week = a.Week } &&
+        SameDistribution(a.Distribution, b.Distribution) && (a.Week == b.Week || a.Week != null && b.Week != null &&
+            a.Week == b.Week with { Days = a.Week.Days } && a.Week.Days.SequenceEqual(b.Week.Days));
 
     /// Measuring the panel with an unchanged width reuses each section's cached
     /// size, so everything that render replaced is marked up to the panel first.
@@ -285,14 +378,24 @@ public partial class IslandWindow
     /// The header shows the chosen buttons; the rest wait in the More menu.
     private void ApplyHeaderActions()
     {
-        MarkReadButton.Visibility = panelOptions.InHeader("markRead") ? Visibility.Visible : Visibility.Collapsed;
-        PinButton.Visibility = panelOptions.InHeader("pin") ? Visibility.Visible : Visibility.Collapsed;
-        SettingsButton.Visibility = panelOptions.InHeader("settings") ? Visibility.Visible : Visibility.Collapsed;
+        void Show(Button button, string action)
+        {
+            var visibility = panelOptions.InHeader(action) ? Visibility.Visible : Visibility.Collapsed;
+            if (button.Visibility == visibility) return;
+            button.Visibility = visibility; panelMeasureDirty = true;
+        }
+        Show(MarkReadButton, "markRead"); Show(PinButton, "pin"); Show(SettingsButton, "settings");
     }
 
+    private (string Apps, bool Mark, bool CanMark, bool Pin, bool Pinned, bool Settings)? moreMenu;
     /// Unchecked header buttons first, then Refresh and Quit, which always live here.
     private void BuildMoreMenu()
     {
+        bool mark = !panelOptions.InHeader("markRead"), pin = !panelOptions.InHeader("pin");
+        var key = (showAppButtons ? "" : string.Join(",", availableApplications), mark, mark && MarkReadButton.IsEnabled,
+            pin, pin && pinned, !panelOptions.InHeader("settings"));
+        if (moreMenu == key) return;
+        moreMenu = key;
         var menu = MoreButton.ContextMenu;
         menu.Items.Clear();
         int hidden = 0;

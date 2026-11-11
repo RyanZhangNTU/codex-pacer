@@ -195,11 +195,20 @@ final class ExpandedPanelTests: XCTestCase {
         let classicWeek = QuotaDashboardPresentation.layout(providers: [.claude], snapshots: snapshots, style: .classic, now: now,
             periods: { _ in .weekly })
         XCTAssertEqual(classicWeek.slots.map(\.period), [.weekly])
+        XCTAssertEqual(classicWeek.showsDetails, true)
+        XCTAssertNotEqual(QuotaDashboardPresentation.layout(providers: [.claude], snapshots: snapshots, style: .classic,
+            now: now, details: false).showsDetails, true)
         XCTAssertEqual(QuotaDashboardPresentation.layout(providers: [.claude], snapshots: snapshots, style: .classic, now: now).slots.map(\.period),
             [.fiveHour, .weekly])
         let classicPair = QuotaDashboardPresentation.layout(providers: [.codex, .claude], snapshots: snapshots, style: .classic, now: now,
             periods: { $0 == .claude ? .fiveHour : .both })
         XCTAssertEqual(classicPair.slots.map(\.period), [.weekly, .fiveHour])
+        XCTAssertNotEqual(classicPair.showsDetails, true)
+        let weeklyOnly = QuotaDashboardPresentation.layout(providers: [.codex, .claude],
+            snapshots: [.codex: snapshot(.codex, fiveHour: false), .claude: snapshot(.claude)], style: .classic, now: now,
+            periods: { $0 == .codex ? .fiveHour : .both })
+        XCTAssertEqual(weeklyOnly.slots.map(\.period), [.weekly, .weekly],
+            "Classic uses the available weekly quota when the chosen five-hour reading does not exist")
     }
 
     // MARK: DeepSeek

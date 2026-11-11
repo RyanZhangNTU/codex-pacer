@@ -64,8 +64,12 @@ internal static class ClassicLayoutChecks
                         "Classic cells must follow the shared provider/period order for every enabled combination");
                     Check(Descendants(view).OfType<QuotaDial>().All(value => value.ActualWidth == 88 && value.ActualHeight == 88), "Every classic slot must keep its native size");
                     if (providers.SequenceEqual(new[] { "claude" }))
+                    {
                         Check(data.Classic.Slots.Select(slot => slot.Period).SequenceEqual(new[] { "5h", "7d" }) && Descendants(view).OfType<QuotaDial>().Count() == 2,
                             "A single dual-window service must show both original period rings");
+                        Check(Descendants(view).OfType<StackPanel>().Any(value => AutomationProperties.GetAutomationId(value) == "quota.details.classic"),
+                            "Classic shows side details alongside both original rings when the section has one service");
+                    }
                 }
             }
             settings.SelectPanelBlock("codex"); await Pump();

@@ -20,7 +20,7 @@ python scripts/windows/build-shell-resources.py --check
 - Groups outside `all` run only when named: `deepseek`, `displaySettings`, `persistence`, `position`, `progress`, `quotaIdle` and `ssh`. `position` moves the real pointer and restores it afterwards.
 - Screen tests use offline engines and synthetic data, never real accounts. Close other screen tests first; captures go to the ignored `output/windows` and are not committed.
 - `package-preview.ps1` writes the unsigned ZIP and its SHA-256 under `output/windows` and, unless `-BuildOnly`, checks the extracted app with a restricted environment, Unicode paths, a demo capture and single-instance activation. The portable ZIP is for development only; keep the whole folder (Engine, Maintenance, resources and runtimes) together.
-- Which CI jobs run on a pull request is described in [continuous integration](development.md#continuous-integration); packaging and publishing a release in [the release workflow](releasing.md). ARM64 is compiled and packaged in CI but never run.
+- [Continuous integration](development.md#continuous-integration) lists the jobs each pull request runs. Changes to installer inputs and release builds also launch an extracted ARM64 package and check an isolated installation on a Windows ARM64 runner. See [the release workflow](releasing.md) for packaging and publication.
 
 The Composition bridge (`windows/Native/CompositionBackdrop`) builds with the Visual C++ x64 tools and the Windows SDK's C++/WinRT headers, as C++20 on MSVC 19.30 or newer and as C++17 on VS 2019 (19.29 hits an internal compiler error in the SDK's C++20 projection). Warnings stay errors in both modes. Its DLL is published with the desktop app.
 
@@ -74,6 +74,7 @@ Opaque WPF windows (Settings, sign-in windows, dialogs and non-layered popups) u
 - Quota rotation uses a one-shot timer to the next switch deadline (four-second slots, 350 ms fade); a late wake jumps to the current phase.
 - Finite animations hold controllable clocks and stop them explicitly when they finish, are replaced or unload. Production code never forces garbage collection.
 - When an opaque fullscreen window fully covers the island, cosmetic motion pauses. Detection is driven by WinEvents with a 250 ms trailing throttle; nothing runs without events. Layered and `WS_EX_NOREDIRECTIONBITMAP` windows never count as covering, because their transparency cannot be proven.
+- The expanded panel holds the latest snapshot while folded or hidden. On reveal it applies that snapshot. A clock tick updates visible dials without rebuilding unchanged quota controls or charts.
 - The engine publishes a snapshot only when its encoded state changed, ignoring only the sequence number and capture times.
 
 Targets and measurement commands are in [idle CPU checks](windows-engine.md#idle-cpu-checks).

@@ -18,11 +18,27 @@ internal sealed class ClassicQuotaView : StackPanel
         PanelOptions? options = null, bool budgetDial = true)
     {
         options ??= PanelOptions.Default;
-        var row = new Grid(); Children.Add(row);
+        var row = new Grid();
+        var readings = layout.ShowsDetails == true && providers.Count == 1
+            ? layout.Slots.Select(slot => slot.Period == "5h" ? providers[0].FiveHour : providers[0].Weekly)
+                .Where(reading => reading.WindowID != null).ToArray() : [];
+        if (readings.Length > 0)
+        {
+            var columns = new Grid();
+            columns.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            columns.ColumnDefinitions.Add(new() { Width = new GridLength(16) });
+            columns.ColumnDefinitions.Add(new());
+            columns.Children.Add(row);
+            var details = SingleQuotaView.Details(readings[^1], readings.Length == 2 ? readings[0] : null, ui);
+            AutomationProperties.SetAutomationId(details, "quota.details.classic");
+            Grid.SetColumn(details, 2); columns.Children.Add(details); Children.Add(columns);
+        }
+        else Children.Add(row);
         foreach (var slot in layout.Slots)
         {
             if (row.Children.Count > 0) row.ColumnDefinitions.Add(new() { Width = new GridLength(16) });
-            int column = row.ColumnDefinitions.Count; row.ColumnDefinitions.Add(new());
+            int column = row.ColumnDefinitions.Count; row.ColumnDefinitions.Add(readings.Length > 0
+                ? new() { Width = new GridLength(88) } : new());
             FrameworkElement cell;
             if (slot.Provider == "deepseek") cell = new DeepSeekQuotaCell(wallet, ui, 88, connectDeepSeek, connectUnavailable, deepseekStatus, budgetDial: budgetDial);
             else

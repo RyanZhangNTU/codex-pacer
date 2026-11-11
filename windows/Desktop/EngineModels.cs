@@ -64,7 +64,7 @@ internal sealed record LegacyQuotaDashboard(bool Fresh, string FreshnessText, st
 internal sealed record LegacyQuotaBucket(string Id, string? Title, IReadOnlyList<LegacyQuotaWindow> Windows);
 internal sealed record LegacyQuotaWindow(string Id, string Label, double? RemainingPercent, double? RemainingTimePercent,
     double? PacePercent, string ValueText, string Countdown, string ResetDate, string PaceText, string AccessibilityLabel);
-internal sealed record DashboardLayout(string Kind, IReadOnlyList<DashboardSlot> Slots);
+internal sealed record DashboardLayout(string Kind, IReadOnlyList<DashboardSlot> Slots, bool? ShowsDetails = null);
 internal sealed record DashboardSlot(string Provider, string Period, bool IdentifiesProvider, string Id, string Title);
 internal sealed record DashboardProvider(string Provider, DashboardReading FiveHour, DashboardReading Weekly, QuotaConnectionStatus? Status = null, QuotaHistoryPresentation? History = null);
 internal sealed record QuotaHistoryPresentation(string Title, string? SourceText, string FreshnessText, bool NotUpdated, string? ErrorText, string? Placeholder,

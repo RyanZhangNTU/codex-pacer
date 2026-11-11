@@ -27,6 +27,8 @@ internal sealed partial class SettingsWindow
     private PanelEditorProjection? panelProjection;
     private string? panelSelected;
     private readonly Dictionary<string, LibraryTile> panelTiles = new();
+    private readonly Dictionary<string, (Button Button, Border Face)> panelOutline = new();
+    private string? panelOutlineKey, panelOutlineSelection;
     private readonly Dictionary<string, FrameworkElement> panelInspectorPanels = new();
     private readonly Dictionary<string, Dictionary<string, RadioButton>> panelSegments = new();
     private readonly Dictionary<string, CheckBox> panelSwitches = new(), panelChips = new();
@@ -41,6 +43,7 @@ internal sealed partial class SettingsWindow
     private void ClearExpandedPanel()
     {
         panelEditor = null; panelAutomatic = null; panelRestore = null; panelProjection = null;
+        panelOutline.Clear(); panelOutlineKey = panelOutlineSelection = null;
         panelTiles.Clear(); panelInspectorPanels.Clear(); panelSegments.Clear(); panelSwitches.Clear(); panelChips.Clear(); panelRetention = null;
         panelInspectorIcon = panelNotice = null; panelInspectorTitle = panelInspectorDetail = null;
         panelInspectorToggle = panelInfoButton = null; panelPreview = null;
@@ -386,8 +389,9 @@ internal sealed partial class SettingsWindow
     {
         if (panelEditor == null || activePane != "expandedPanel") return;
         var projection = ReadPanel();
-        if (projection == null) { panelEditor.IsEnabled = false; return; }
-        panelProjection = projection; panelEditor.IsEnabled = !busy && !session.RequiresRestart;
+        panelProjection = projection;
+        if (projection == null) return;
+        panelEditor.IsEnabled = !session.RequiresRestart;
         var preferences = session.Current; var options = projection.Options;
         var catalog = projection.Catalog.ToDictionary(value => value.Id);
         string selected = panelSelected is { } chosen && (chosen == ActionsBlock || catalog.ContainsKey(chosen)) ? chosen
@@ -474,8 +478,16 @@ internal sealed partial class SettingsWindow
     /// quotas side by side, and the buttons in the first header. Click selects; drag moves.
     private void DrawPanelEditor(PanelEditorProjection projection, string selected, DesktopPreferences preferences)
     {
-        var editor = panelEditor!; editor.Children.Clear();
         var options = projection.Options;
+        string key = string.Join("|", options.Key, preferences.ShowAppButtons, PacerPalette.Accent, PacerPalette.Light,
+            string.Join(";", projection.Sections.Select(section =>
+                $"{section.Kind}:{string.Join(",", section.Providers)}:{section.Actions}:{section.Joined}:{section.SpendBeside}")));
+        if (key == panelOutlineKey) { PaintPanelSelection(selected); return; }
+
+        var editor = panelEditor!;
+        string? focused = panelOutline.Values.FirstOrDefault(value => value.Button.IsKeyboardFocusWithin).Button?.Tag as string;
+        editor.Children.Clear(); panelOutline.Clear(); panelOutlineSelection = null;
+        panelOutlineKey = key;
         foreach (var (section, index) in projection.Sections.Select((value, index) => (value, index)))
         {
             if (index > 0)
@@ -490,7 +502,7 @@ internal sealed partial class SettingsWindow
                 top.ColumnDefinitions.Add(new ColumnDefinition()); top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 top.Children.Add(new TextBlock { Text = PanelSectionTitle(section), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Secondary,
                     VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
-                if (section.Actions) { var strip = PanelActionsStrip(selected == ActionsBlock, options, preferences.ShowAppButtons); Grid.SetColumn(strip, 1); top.Children.Add(strip); }
+                if (section.Actions) { var strip = PanelActionsStrip(options, preferences.ShowAppButtons); Grid.SetColumn(strip, 1); top.Children.Add(strip); }
                 editor.Children.Add(top);
             }
             var blocks = section.Kind == "quota" ? section.Providers.ToArray() : [section.Kind];
@@ -499,14 +511,42 @@ internal sealed partial class SettingsWindow
             {
                 if (column > 0) row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(6) });
                 row.ColumnDefinitions.Add(new ColumnDefinition());
-                var block = PanelBlockButton(blocks[column], selected, options, blocks.Length);
+                var block = PanelBlockButton(blocks[column], options, blocks.Length);
                 Grid.SetColumn(block, row.ColumnDefinitions.Count - 1); row.Children.Add(block);
             }
             editor.Children.Add(row);
+            // The dial and spend share a section in the island. Each keeps its own drag target here.
+            if (section.SpendBeside)
+            {
+                var spend = PanelBlockButton("deepseekSpend", options);
+                spend.Margin = new Thickness(0, 4, 0, 0);
+                editor.Children.Add(spend);
+            }
         }
+        PaintPanelSelection(selected);
+        if (focused != null && panelOutline.TryGetValue(focused, out var target)) target.Button.Focus();
     }
 
-    private Button PanelActionsStrip(bool selected, PanelOptions options, bool apps)
+    private static readonly Brush PanelSelectionInk = PacerPalette.Ink(10, 132, 255);
+    private static readonly Brush PanelSelectionFill = PacerPalette.Ink(10, 132, 255, 56);
+    private void PaintPanelSelection(string selected)
+    {
+        if (selected == panelOutlineSelection) return;
+        void Paint(string? id, bool active)
+        {
+            if (id == null || !panelOutline.TryGetValue(id, out var entry)) return;
+            bool actions = id == ActionsBlock;
+            entry.Face.BorderThickness = new Thickness(active ? actions ? 1.5 : 2 : actions ? 0 : 1);
+            entry.Face.BorderBrush = active ? PanelSelectionInk : actions ? null : PacerPalette.Overlay(15);
+            entry.Face.Background = active && actions ? PanelSelectionFill : PacerPalette.Overlay((byte)(active ? 26 : 15));
+            AutomationProperties.SetItemStatus(entry.Button, active ? ui.Text("main.panel.selected") : "");
+        }
+        Paint(panelOutlineSelection, false);
+        Paint(selected, true);
+        panelOutlineSelection = selected;
+    }
+
+    private Button PanelActionsStrip(PanelOptions options, bool apps)
     {
         var icons = new StackPanel { Orientation = Orientation.Horizontal };
         void Icon(string symbol) => icons.Children.Add(new IconGlyph { Symbol = symbol, Width = 11, Height = 11, Margin = new Thickness(icons.Children.Count == 0 ? 0 : 7, 0, 0, 0), Ink = PacerPalette.Secondary });
@@ -515,13 +555,11 @@ internal sealed partial class SettingsWindow
         if (options.InHeader("pin")) Icon("pin");
         if (options.InHeader("settings")) Icon("gearshape");
         Icon("ellipsis");
-        var accent = new SolidColorBrush(Color.FromRgb(10, 132, 255));
         var border = new Border { Child = icons, Height = 22, Padding = new Thickness(7, 0, 7, 0), CornerRadius = new CornerRadius(7),
-            BorderThickness = new Thickness(selected ? 1.5 : 0), BorderBrush = selected ? accent : null,
-            Background = selected ? new SolidColorBrush(Color.FromArgb(56, 10, 132, 255)) : PacerPalette.Overlay(15) };
-        var button = new Button { Content = border, Style = (Style)FindResource("SettingsRowButton"), Margin = new Thickness(0), VerticalAlignment = VerticalAlignment.Center, Template = PlainButtonTemplate() };
+            Background = PacerPalette.Overlay(15) };
+        var button = new Button { Content = border, Style = (Style)FindResource("SettingsRowButton"), Margin = new Thickness(0), VerticalAlignment = VerticalAlignment.Center, Template = PlainButtonTemplate(), Tag = ActionsBlock };
         Identify(button, "panel.editor.actions", ui.Text("panel.block.actions"));
-        AutomationProperties.SetItemStatus(button, selected ? ui.Text("main.panel.selected") : "");
+        panelOutline[ActionsBlock] = (button, border);
         button.Click += (_, _) => SelectPanelBlock(ActionsBlock);
         return button;
     }
@@ -561,9 +599,9 @@ internal sealed partial class SettingsWindow
     /// Up and Down (or Left and Right) move the focused block, as dragging does.
     /// <param name="row">How many quotas share the row: two show only the service's
     /// name, as on the Mac; three are too narrow for the grip, so the dot sits above the name.</param>
-    private Button PanelBlockButton(string id, string selected, PanelOptions options, int row = 1)
+    private Button PanelBlockButton(string id, PanelOptions options, int row = 1)
     {
-        bool isSelected = id == selected, paired = row > 1, narrow = row > 2;
+        bool paired = row > 1, narrow = row > 2;
         Brush tint = id switch { "codex" or "claude" or "deepseek" => PacerPalette.Provider(id), "deepseekSpend" or "deepseekWeek" => PacerPalette.DeepSeek, _ => PacerPalette.Secondary };
         var dot = new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = tint, VerticalAlignment = VerticalAlignment.Center };
         var name = new TextBlock { Text = paired ? BlockProviderName(id) : BlockLabel(id), FontSize = 12.5, FontWeight = FontWeights.SemiBold,
@@ -590,14 +628,13 @@ internal sealed partial class SettingsWindow
             Grid.SetColumn(names, 2); grid.Children.Add(names);
             content = grid;
         }
-        var accent = new SolidColorBrush(Color.FromRgb(10, 132, 255));
-        var surface = new Border { Child = content, CornerRadius = new CornerRadius(12), Background = PacerPalette.Overlay((byte)(isSelected ? 26 : 15)),
-            BorderThickness = new Thickness(isSelected ? 2 : 1), BorderBrush = isSelected ? accent : PacerPalette.Overlay(15),
+        var surface = new Border { Child = content, CornerRadius = new CornerRadius(12), Background = PacerPalette.Overlay(15),
+            BorderThickness = new Thickness(1), BorderBrush = PacerPalette.Overlay(15),
             MinHeight = id == "tasks" ? 58 : 46, Cursor = Cursors.SizeAll };
         // Its own template and no text template: the content is the block itself.
         var button = new Button { Style = (Style)FindResource("SettingsRowButton"), Content = surface, AllowDrop = true, Tag = id, Template = PlainButtonTemplate() };
         Identify(button, "panel.editor." + id, BlockLabel(id) + (summary.Length > 0 ? ", " + summary : ""));
-        AutomationProperties.SetItemStatus(button, isSelected ? ui.Text("main.panel.selected") : "");
+        panelOutline[id] = (button, surface);
         button.Click += (_, _) => { if (panelDragBlock == null) SelectPanelBlock(id); };
         button.KeyDown += async (_, e) =>
         {
@@ -606,18 +643,7 @@ internal sealed partial class SettingsWindow
             if (busy || panelProjection == null) return;
             SelectPanelBlock(id);
             await EditPanel(new("shift", id, Offset: e.Key is Key.Up or Key.Left ? -1 : 1));
-            // The outline was drawn again; the moved block keeps the keyboard.
-            if (activePane == "expandedPanel" && panelEditor != null) FindBlock(panelEditor)?.Focus();
         };
-        Button? FindBlock(Panel root)
-        {
-            foreach (var child in root.Children)
-            {
-                if (child is Button { Tag: string tag } found && tag == id) return found;
-                if (child is Panel inner && FindBlock(inner) is { } nested) return nested;
-            }
-            return null;
-        }
         button.PreviewMouseLeftButtonDown += (_, e) => { panelDragStart = e.GetPosition(this); panelDragBlock = null; };
         button.PreviewMouseMove += (_, e) =>
         {

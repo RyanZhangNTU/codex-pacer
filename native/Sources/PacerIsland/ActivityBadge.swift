@@ -253,6 +253,7 @@ final class TaskSegmentsView: NSView {
     private var scale: CGFloat = 1
     private var animates = true
     private var occlusionObserver: NSObjectProtocol?
+    private var motionVisible: Bool { animates && window.map(TaskStatusIconNSView.windowShows) == true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -287,7 +288,7 @@ final class TaskSegmentsView: NSView {
             lane.fill.strokeEnd = target
             lane.fill.opacity = segment.stale ? Self.staleOpacity : 1
             // A new estimate eases from the value on screen, as the badge's arc does.
-            if animates, abs(target - shown) > 0.0005 {
+            if motionVisible, abs(target - shown) > 0.0005 {
                 let sweep = CABasicAnimation(keyPath: "strokeEnd")
                 sweep.fromValue = shown; sweep.toValue = target; sweep.duration = 0.3 + 0.3 * abs(target - shown)
                 sweep.timingFunction = CAMediaTimingFunction(controlPoints: 0.33, 1, 0.68, 1)
@@ -334,7 +335,7 @@ final class TaskSegmentsView: NSView {
 
     /// The tasks without an estimate breathe on the shared long-step clock.
     private func refreshBreath() {
-        let live = animates && window.map { $0.occlusionState.contains(.visible) || !$0.isVisible } == true
+        let live = motionVisible
         let now = CACurrentMediaTime()
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -344,6 +345,7 @@ final class TaskSegmentsView: NSView {
                     lane.breath.add(TaskStatusIconNSView.stepBreath(on: lane.breath, now: now), forKey: "breath")
                 }
             } else { lane.breath.removeAnimation(forKey: "breath") }
+            if !live { lane.fill.removeAnimation(forKey: "sweep") }
         }
     }
     /// The lanes that breathe now, by index; read by tests.
@@ -437,6 +439,7 @@ final class ActivityOrbitView: NSView {
     private var flowFraction: Double?
     private var animates = true
     private var occlusionObserver: NSObjectProtocol?
+    private var motionVisible: Bool { animates && window.map(TaskStatusIconNSView.windowShows) == true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -486,7 +489,7 @@ final class ActivityOrbitView: NSView {
             let stops = ActivityOrbit.stops(for: segments, animates: animates)
             // A comet grows from or shrinks into its head; switching to or from
             // the static ring changes the stops entirely and snaps.
-            let eases = animates && self.animates && stops.count == comet.locations?.count
+            let eases = animates && motionVisible && stops.count == comet.locations?.count
             self.segments = segments; self.animates = animates
             apply(stops, easing: eases)
         }
@@ -502,7 +505,7 @@ final class ActivityOrbitView: NSView {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         let ink = (self.ink ?? segments.first { $0.weight > 0 }?.color ?? PacerPalette.tickInk).cgColor
-        let crossfade = animates && (previous == nil) != (progress == nil)
+        let crossfade = motionVisible && (previous == nil) != (progress == nil)
         ring.opacity = progress == nil ? 1 : 0
         estimate.isHidden = progress == nil && !crossfade
         if crossfade {
@@ -518,7 +521,7 @@ final class ActivityOrbitView: NSView {
         let shown = previous == nil ? 0 : Double((arc.presentation() ?? arc).strokeEnd)
         for shape in [arc, arcGlow] { shape.strokeEnd = target }
         step.strokeStart = target; step.strokeEnd = min(1, target + TaskStatusIconNSView.stepLengths[0])
-        guard animates, abs(target - shown) > 0.0005 else { return }
+        guard motionVisible, abs(target - shown) > 0.0005 else { return }
         let duration = 0.3 + 0.3 * abs(target - shown), timing = CAMediaTimingFunction(controlPoints: 0.33, 1, 0.68, 1)
         func ease(_ shape: CAShapeLayer, _ key: String, from: Double, to: Double) {
             let animation = CABasicAnimation(keyPath: key)
@@ -599,9 +602,20 @@ final class ActivityOrbitView: NSView {
     }
 
     private func refreshAnimation() {
-        // Occlusion pauses the orbit; a window whose state is not computed yet still starts it.
-        let live = animates && window.map { $0.occlusionState.contains(.visible) || !$0.isVisible } == true
+        let live = motionVisible
         refreshEstimateLoops(live: live)
+        if !live {
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            for key in ["colors", "locations"] { comet.removeAnimation(forKey: key) }
+            ring.removeAnimation(forKey: "fade")
+            estimate.removeAnimation(forKey: "fade")
+            estimate.isHidden = progress == nil
+            for shape in [arc, arcGlow, step] {
+                shape.removeAnimation(forKey: "sweep.strokeStart")
+                shape.removeAnimation(forKey: "sweep.strokeEnd")
+            }
+            CATransaction.commit()
+        }
         guard live, progress == nil, segments.contains(where: { $0.weight > 0 }) else {
             comet.removeAnimation(forKey: "orbit")
             return

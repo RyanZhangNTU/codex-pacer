@@ -38,6 +38,7 @@ internal static class ExpandedPanelChecks
             Check(island.LogicalTarget.Width == 404 && island.LogicalTarget.Height == 438 && ReferenceEquals(content.Children[0], island.FindName("TasksSection"))
                 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
                 "Without a saved layout the panel keeps the reference tasks-then-quota panel with its buttons in the task header");
+            CheckClockSnapshots(island, engine.LatestSnapshot!);
 
             await Until(() => Present<Button>(window, "panel.block.tasks"));
             Check(Equals(Find<Button>(window, "panel.block.codex.toggle").Tag, "added") && Equals(Find<Button>(window, "panel.block.deepseekWeek.toggle").Tag, "add")
@@ -51,11 +52,14 @@ internal static class ExpandedPanelChecks
 
             // Moving Codex above the tasks splits it from the other quotas and hands it the buttons.
             int before = configurations;
-            window.SelectPanelBlock("codex"); await Pump();
-            // The keyboard moves a block in the outline, as dragging does.
             var codex = Find<Button>(window, "panel.editor.codex");
-            codex.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(codex), Environment.TickCount,
-                System.Windows.Input.Key.Up) { RoutedEvent = System.Windows.Input.Keyboard.KeyDownEvent });
+            Invoke(codex); await Pump();
+            Check(ReferenceEquals(codex, Find<Button>(window, "panel.editor.codex")) && AutomationProperties.GetItemStatus(codex) == ui.Text("main.panel.selected"),
+                "Selecting an outline block keeps the same focusable button");
+            await engine.SendAsync("refresh", new { discover = false }); await Pump();
+            Check(ReferenceEquals(codex, Find<Button>(window, "panel.editor.codex")), "A refresh with the same outline keeps its focusable buttons");
+            // The keyboard moves a block in the outline, as dragging does.
+            MoveUp(codex);
             await Until(() => session.Current.ExpandedPanelLayout?.StartsWith("{\"blocks\":[\"codex\",\"tasks\"", StringComparison.Ordinal) == true);
             await Until(() => ReferenceEquals(content.Children[0], island.FindName("QuotaSection")));
             await island.WaitForPresentationAsync();
@@ -129,10 +133,64 @@ internal static class ExpandedPanelChecks
             await island.WaitForPresentationAsync();
             Check(island.LogicalTarget.Height == 438 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
                 "Restoring the layout and choices returns the reference panel");
-            Console.WriteLine("PASS expanded panel " + name + ": automatic layout, block moves, arrangement, rows, header buttons, removal and restore");
+
+            await session.ChangeAsync(p => p with
+            {
+                ExpandedPanelLayout = "{\"blocks\":[\"tasks\",\"deepseek\",\"deepseekSpend\"],\"version\":1}",
+                ExpandedPanelOptions = "{\"deepseekDial\":\"day\",\"version\":1}"
+            });
+            await Until(() => Present<Button>(window, "panel.editor.deepseekSpend") && engine.LatestSnapshot?.ExpandedPanel?.Sections.Any(section => section.SpendBeside) == true);
+            var spend = Find<Button>(window, "panel.editor.deepseekSpend");
+            Check(spend.AllowDrop && spend.IsEnabled, "Merged spend keeps its own enabled drag target in the outline");
+            MoveUp(spend);
+            await Until(() => session.Current.ExpandedPanelLayout?.Contains("\"deepseekSpend\",\"deepseek\"", StringComparison.Ordinal) == true);
+            Console.WriteLine("PASS expanded panel " + name + ": automatic layout, clock updates, focusable blocks, merged spend, rows, buttons and restore");
         }
         finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); await engine.DisposeAsync(); }
     }
+    private static void CheckClockSnapshots(IslandWindow island, EngineSnapshot snapshot)
+    {
+        QuotaDial Dial(string provider) => Descendants(island).OfType<QuotaDial>().Single(value => value.Provider == provider);
+        EngineSnapshot Tick(EngineSnapshot prior, double time, double? quota = null)
+        {
+            var dashboard = prior.QuotaDashboard!;
+            return prior with
+            {
+                CapturedAt = prior.CapturedAt + 5, Sequence = prior.Sequence + 1,
+                QuotaDashboard = dashboard with { Providers = dashboard.Providers.Select(provider => provider.Provider == "codex"
+                    ? provider with { Weekly = provider.Weekly with
+                    {
+                        RemainingTimePercent = time,
+                        RemainingPercent = quota ?? provider.Weekly.RemainingPercent,
+                        ValueText = quota?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? provider.Weekly.ValueText
+                    } }
+                    : provider with { }).ToArray() },
+                Wallet = prior.Wallet is { } wallet ? wallet with { Angle = wallet.Angle + 0.02 } : null
+            };
+        }
+
+        var codex = Dial("codex"); var claude = Dial("claude");
+        var tick = Tick(snapshot, 52);
+        island.ReceiveSnapshot(tick);
+        Check(ReferenceEquals(codex, Dial("codex")) && ReferenceEquals(claude, Dial("claude")) && codex.Selected?.RemainingTimePercent == 52,
+            "A running quota clock updates the dial without replacing unchanged controls");
+
+        double? oldQuota = codex.Selected?.RemainingPercent;
+        island.CollapseForAutomation(); island.ReceiveSnapshot(Tick(tick, 51, 61));
+        Check(ReferenceEquals(codex, Dial("codex")) && codex.Selected?.RemainingPercent == oldQuota,
+            "While collapsed the panel does no work on a newer reading");
+        island.Reveal();
+        Check(Dial("codex").Selected?.RemainingPercent == 61, "Reopening renders the latest reading immediately");
+
+        codex = Dial("codex"); island.Hide(); island.ReceiveSnapshot(Tick(tick, 50, 62));
+        Check(ReferenceEquals(codex, Dial("codex")) && codex.Selected?.RemainingPercent == 61,
+            "A hidden window leaves its expanded controls untouched");
+        island.Show();
+        Check(Dial("codex").Selected?.RemainingPercent == 62, "Showing an expanded window paints the latest reading");
+        island.ReceiveSnapshot(snapshot);
+    }
+    private static void MoveUp(Button block) => block.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
+        PresentationSource.FromVisual(block), Environment.TickCount, System.Windows.Input.Key.Up) { RoutedEvent = System.Windows.Input.Keyboard.KeyDownEvent });
     private static bool Present<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().Any(value => AutomationProperties.GetAutomationId(value) == id);
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement

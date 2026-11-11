@@ -6,6 +6,20 @@ import PacerTestSupport
 
 @MainActor
 final class IslandMoveTests: XCTestCase {
+    func testSelectingOneOfTwoDisplaysWithTheSameUUID() {
+        let first = DisplayIdentity.Display(number: 6, uuid: "shared")
+        let second = DisplayIdentity.Display(number: 9, uuid: "shared")
+        let displays = [first, second]
+        XCTAssertEqual(DisplayIdentity.select(number: 9, uuid: "shared", twinIndex: nil, among: displays), 1)
+        XCTAssertEqual(DisplayIdentity.select(number: 9, uuid: "shared", twinIndex: 1, among: [second, first]), 0)
+        XCTAssertEqual(DisplayIdentity.select(number: 9, uuid: "shared", twinIndex: 1,
+            among: [first, .init(number: 11, uuid: "shared")]), 1, "A new number still finds the saved display")
+        XCTAssertNil(DisplayIdentity.select(number: 9, uuid: "shared", twinIndex: 1, among: [first]),
+            "Unplugging the selected twin must leave its choice in place")
+        XCTAssertEqual(DisplayIdentity.select(number: 9, uuid: "shared", twinIndex: nil,
+            among: [.init(number: 9, uuid: "different"), first]), 1, "A reused number must match the saved UUID")
+    }
+
     private func fixture() throws -> (IslandModel, UserDefaults, String, URL) {
         let name = testDefaultsName("island-move-tests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))

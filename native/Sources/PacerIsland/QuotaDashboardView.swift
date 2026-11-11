@@ -62,7 +62,8 @@ struct QuotaDashboardView: View {
             case .legacyCodex:
                 if let snapshot = model.providerQuota(.codex) { LegacyCodexQuotaView(model: model, snapshot: snapshot) }
             case .deepseekSolo: DeepSeekSoloDashboard(model: model, spendBeside: spendBeside)
-            case .classicRings: ClassicQuotaDashboardView(model: model, providers: providers, slots: layout.slots)
+            case .classicRings:
+                ClassicQuotaDashboardView(model: model, providers: providers, slots: layout.slots, showsDetails: layout.showsDetails == true)
             case .splitSingle:
                 if let provider = layout.slots.first?.provider { single(provider) }
             case .splitRings: rings(layout.slots)
@@ -332,7 +333,7 @@ private struct QuotaRingValue: View {
 
 /// Pace, reset moment and forecast beside a single service's ring. With 5h the
 /// two groups face the upper and lower arcs; a weekly-only account gets rows.
-private struct QuotaDashboardDetailsView: View {
+struct QuotaDashboardDetailsView: View {
     let quota: QuotaDashboardQuota
     let fiveHourQuota: QuotaDashboardQuota?
     let now: Date

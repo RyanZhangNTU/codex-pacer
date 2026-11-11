@@ -29,66 +29,108 @@ enum DeepSeekWebSessionStore {
 /// One off-screen view, created for a read and released after it.
 @MainActor
 final class DeepSeekWebBalanceReader: NSObject, WKNavigationDelegate {
-    private var webView: WKWebView?
-    private var loaded: CheckedContinuation<Bool, Never>?
-    private var reply: CheckedContinuation<Any?, Error>?
-    private var replyLimit: Task<Void, Never>?
+    private struct Read {
+        let id: UUID
+        let view: WKWebView
+        let reply: @MainActor (Result<Any?, Error>) -> Void
+        let deadline: ContinuousClock.Instant
+        let timeout: Task<Void, Never>
+        var script: String?
+    }
+
+    private let timeout: Duration
+    private let dataStore: WKWebsiteDataStore?
+    private let loadPage: @MainActor (WKWebView) -> Void
+    private var pending: Read?
+
+    init(timeout: Duration = .seconds(ProviderQuotaRefreshPolicy.replyTimeout),
+         dataStore: WKWebsiteDataStore? = nil,
+         loadPage: @escaping @MainActor (WKWebView) -> Void = { view in
+             view.loadHTMLString("<!doctype html><title>Pacer</title>", baseURL: DeepSeekWebSessionStore.origin)
+         }) {
+        self.timeout = timeout
+        self.dataStore = dataStore
+        self.loadPage = loadPage
+    }
 
     func read(now: Date = Date()) async throws -> DeepSeekBalance {
-        let result = try await evaluate(DeepSeekWebSessionStore.summaryScript)
-        guard let reply = result as? [String: Any] else { throw DeepSeekBalanceError.invalidReply }
-        if reply["state"] as? String == "offline" { throw DeepSeekBalanceError.connectionFailed }
-        return try DeepSeekBalance.web(reply, at: now)
+        try await evaluate(DeepSeekWebSessionStore.summaryScript) { result in
+            guard let reply = result as? [String: Any] else { throw DeepSeekBalanceError.invalidReply }
+            if reply["state"] as? String == "offline" { throw DeepSeekBalanceError.connectionFailed }
+            return try DeepSeekBalance.web(reply, at: now)
+        }
     }
 
     /// The profile's token fingerprint wherever the visible page has navigated.
     func sessionFingerprint() async throws -> String? {
-        try await evaluate(DeepSeekWebSessionStore.sessionFingerprintScript) as? String
+        try await evaluate(DeepSeekWebSessionStore.sessionFingerprintScript) { $0 as? String }
     }
 
-    private func evaluate(_ script: String) async throws -> Any? {
-        defer { release() }
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = DeepSeekWebSessionStore.dataStore
-        let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 240), configuration: configuration)
-        view.navigationDelegate = self
-        webView = view
-        let ready = await withCheckedContinuation { continuation in
-            loaded = continuation
-            view.loadHTMLString("<!doctype html><title>Pacer</title>", baseURL: DeepSeekWebSessionStore.origin)
-        }
-        guard ready else { throw DeepSeekBalanceError.connectionFailed }
-        // The page's fetch has no limit of its own. A read that outlasts the shared
-        // reply limit is reported as slow, and release() discards its view.
-        return try await withCheckedThrowingContinuation { continuation in
-            reply = continuation
-            replyLimit = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(ProviderQuotaRefreshPolicy.replyTimeout * 1_000_000_000))
-                guard !Task.isCancelled else { return }
-                self?.finishReply(.failure(DeepSeekBalanceError.timedOut))
-            }
-            view.callAsyncJavaScript(script, in: nil, in: .defaultClient) { [weak self] result in
-                MainActor.assumeIsolated {
-                    self?.finishReply(result.map { Optional($0) }.mapError { _ -> Error in DeepSeekBalanceError.connectionFailed })
+    private func evaluate<Value: Sendable>(_ script: String, transform: @escaping @MainActor (Any?) throws -> Value) async throws -> Value {
+        guard pending == nil else { throw DeepSeekBalanceError.connectionFailed }
+        let id = UUID(), deadline = ContinuousClock.now + timeout
+        let result: Value = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                let configuration = WKWebViewConfiguration()
+                configuration.websiteDataStore = dataStore ?? DeepSeekWebSessionStore.dataStore
+                let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 240), configuration: configuration)
+                let timeout = Task { @MainActor [weak self] in
+                    do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+                    self?.finish(.failure(DeepSeekBalanceError.timedOut), id: id)
                 }
+                let reply: @MainActor (Result<Any?, Error>) -> Void = { result in
+                    continuation.resume(with: result.flatMap { value in Result { try transform(value) } })
+                }
+                pending = Read(id: id, view: view, reply: reply, deadline: deadline, timeout: timeout, script: script)
+                view.navigationDelegate = self
+                loadPage(view)
+            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in self?.finish(.failure(CancellationError()), id: id) }
+        }
+        try Task.checkCancellation()
+        return result
+    }
+
+    private func finish(_ result: Result<Any?, Error>, id: UUID) {
+        guard let read = pending, read.id == id else { return }
+        pending = nil
+        read.timeout.cancel()
+        read.view.navigationDelegate = nil
+        read.view.stopLoading()
+        read.reply(result)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let read = pending, read.view === webView, let script = read.script else { return }
+        if ContinuousClock.now >= read.deadline {
+            finish(.failure(DeepSeekBalanceError.timedOut), id: read.id)
+            return
+        }
+        pending?.script = nil
+        let id = read.id, deadline = read.deadline
+        webView.callAsyncJavaScript(script, in: nil, in: .defaultClient) { [weak self] result in
+            MainActor.assumeIsolated {
+                let reply: Result<Any?, Error> = ContinuousClock.now >= deadline
+                    ? .failure(DeepSeekBalanceError.timedOut)
+                    : result.map { Optional($0) }.mapError { _ -> Error in DeepSeekBalanceError.connectionFailed }
+                self?.finish(reply, id: id)
             }
         }
     }
 
-    private func finishReply(_ result: Result<Any?, Error>) {
-        replyLimit?.cancel(); replyLimit = nil
-        reply?.resume(with: result); reply = nil
+    private func fail(_ webView: WKWebView) {
+        guard let read = pending, read.view === webView else { return }
+        let error: DeepSeekBalanceError = ContinuousClock.now >= read.deadline ? .timedOut : .connectionFailed
+        finish(.failure(error), id: read.id)
     }
 
-    private func release() {
-        loaded?.resume(returning: false); loaded = nil
-        webView?.stopLoading(); webView?.navigationDelegate = nil; webView = nil
-    }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loaded?.resume(returning: true); loaded = nil }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { loaded?.resume(returning: false); loaded = nil }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { fail(webView) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        loaded?.resume(returning: false); loaded = nil
+        fail(webView)
     }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { fail(webView) }
 }
 
 /// The ordinary platform sign-in page in Pacer's profile. Phone, email,

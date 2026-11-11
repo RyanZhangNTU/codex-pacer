@@ -37,6 +37,11 @@ public enum QuotaDashboardPresentation {
     public struct Layout: Codable, Equatable, Sendable {
         public let kind: Kind
         public let slots: [Slot]
+        public let showsDetails: Bool?
+
+        init(kind: Kind, slots: [Slot], showsDetails: Bool? = nil) {
+            self.kind = kind; self.slots = slots; self.showsDetails = showsDetails
+        }
     }
     public static func bucket(provider: AgentProvider, snapshot: QuotaSnapshot?) -> QuotaBucket? {
         snapshot.flatMap { value in value.buckets.first { $0.id == provider.rawValue } ?? value.buckets.first }
@@ -105,8 +110,17 @@ public enum QuotaDashboardPresentation {
         let ordered = order(providers, preservingOrder: preservingOrder)
         if usesLegacyCodexDisplay(providers: ordered, snapshot: snapshots[.codex], style: style) { return Layout(kind: .legacyCodex, slots: []) }
         if ordered == [.deepseek] { return Layout(kind: .deepseekSolo, slots: []) }
-        let drawn = Self.slots(providers: ordered, style: style, preservingOrder: preservingOrder, periods: periods)
-        if style == .classic { return Layout(kind: .classicRings, slots: drawn) }
+        let drawn = Self.slots(providers: ordered, style: style, preservingOrder: preservingOrder) { provider in
+            let chosen = periods(provider)
+            if style == .classic && chosen == .fiveHour && isWeeklyOnly(provider: provider, snapshot: snapshots[provider]) { return .weekly }
+            return chosen
+        }
+        if style == .classic {
+            let shown = details && ordered.count == 1 && drawn.contains {
+                window(provider: $0.provider, snapshot: snapshots[$0.provider], period: $0.period) != nil
+            }
+            return Layout(kind: .classicRings, slots: drawn, showsDetails: shown ? true : nil)
+        }
         let single = details && ordered.count == 1 && ordered.first.map {
             Reading(provider: $0, period: .weekly, snapshot: snapshots[$0], now: now).availability != .unavailable
         } == true

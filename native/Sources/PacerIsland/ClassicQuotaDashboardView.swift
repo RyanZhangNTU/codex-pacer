@@ -16,14 +16,34 @@ struct ClassicQuotaDashboardView: View {
     let providers: [AgentProvider]
     /// The rings the block's services and windows give, in the panel's order.
     let slots: [ClassicQuotaDashboardSlot]
+    let showsDetails: Bool
 
     var body: some View { rings }
 
     private var rings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 16) {
-                ForEach(slots) { slot in
-                    if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 88) } else {
+            HStack(alignment: showsDetails ? .center : .top, spacing: 16) {
+                quotaRings
+                if showsDetails {
+                    let readings = slots.map { model.dashboardQuota(provider: $0.provider, period: $0.period) }.filter { $0.window != nil }
+                    if let main = readings.last {
+                        QuotaDashboardDetailsView(quota: main, fiveHourQuota: readings.count == 2 ? readings.first : nil, now: model.now)
+                    }
+                }
+            }
+            if providers.count == 1, let provider = providers.first {
+                QuotaProviderStatusView(model: model, provider: provider)
+                    .frame(maxWidth: .infinity)
+            }
+        }.padding(.bottom, 4)
+    }
+
+    private var quotaRings: some View {
+        HStack(alignment: .top, spacing: 16) {
+            ForEach(slots) { slot in
+                if slot.provider == .deepseek {
+                    DeepSeekDialCell(model: model, size: 88)
+                } else {
                     VStack(spacing: 6) {
                         ClassicQuotaDashboardRingView(quota: model.dashboardQuota(provider: slot.provider, period: slot.period),
                             title: slot.title, identifiesProvider: slot.identifiesProvider,
@@ -36,15 +56,10 @@ struct ClassicQuotaDashboardView: View {
                             }
                             QuotaProviderStatusView(model: model, provider: slot.provider)
                         }
-                    }.frame(maxWidth: .infinity, alignment: .top)
-                    }
+                    }.frame(maxWidth: showsDetails ? 88 : .infinity, alignment: .top)
                 }
             }
-            if providers.count == 1, let provider = providers.first {
-                QuotaProviderStatusView(model: model, provider: provider)
-                    .frame(maxWidth: .infinity)
-            }
-        }.padding(.bottom, 4)
+        }
     }
 
     private func providerHelp(_ provider: AgentProvider, period: QuotaDashboardPeriod) -> String {

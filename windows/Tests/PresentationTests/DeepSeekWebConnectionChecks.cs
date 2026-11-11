@@ -143,7 +143,8 @@ internal static class DeepSeekWebConnectionChecks
         {
             await engine.SendAsync("retryDeepSeekBalance", new { balanceContext = engine.LatestSnapshot!.DeepseekConnection!.Context });
             await Until(() => site.Deferred != null && engine.LatestSnapshot?.DeepseekConnection?.Refreshing == true);
-            await Until(() => engine.LatestSnapshot?.DeepseekConnection?.Refreshing == false);
+            // The engine uses its real 30-second deadline. Leave time for the result to cross the pipe and reach WPF.
+            await Until(() => engine.LatestSnapshot?.DeepseekConnection?.Refreshing == false, TimeSpan.FromSeconds(45));
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             Check(engine.LatestSnapshot?.DeepseekConnection is { Status: null } && engine.LatestSnapshot.Wallet?.Balance == 86.4 &&
                 !SelfAndDescendants(island).OfType<DeepSeekBalanceStatusView>().Any(view => view.IsVisible),
@@ -224,8 +225,8 @@ internal static class DeepSeekWebConnectionChecks
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Invoke(MenuItem item) => ((IInvokeProvider)new MenuItemAutomationPeer(item).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
-    private static async Task Until(Func<bool> condition)
-    { var start = Stopwatch.StartNew(); while (!condition() && start.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), "The web connection did not settle"); await Pump(); }
+    private static async Task Until(Func<bool> condition, TimeSpan? limit = null)
+    { var start = Stopwatch.StartNew(); while (!condition() && start.Elapsed < (limit ?? PresentationWait.Limit)) await Pump(); Check(condition(), "The web connection did not settle"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }
     private sealed class Faults(IDeepSeekWebSession session) : IDeepSeekWebSession
