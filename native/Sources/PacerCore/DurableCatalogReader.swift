@@ -14,11 +14,17 @@ package final class DurableCatalogReader {
         package let entries: [DurableActivityCatalog.Entry]
     }
 
+    /// A connection stays open until its account, executor or socket changes.
+    /// Renewing it starts a CLI for a token, so the hosts do so at most hourly.
+    package static let connectionLifetime: TimeInterval = 3600
+    /// How often a read pages to the limit on a long-lived connection.
+    package static let fullScanInterval: TimeInterval = 120
+
     private let socket: any DurableCatalogSocket
     private let scope: String
     private let environmentID: String
     private var nextID = 0
-    private var scannedEveryPage = false
+    private var lastFullScan: Date?
 
     package init(socket: any DurableCatalogSocket, scope: String, environmentID: String) {
         self.socket = socket; self.scope = scope; self.environmentID = environmentID
@@ -34,13 +40,14 @@ package final class DurableCatalogReader {
         try await socket.send(Data(#"{"method":"initialized","params":{}}"#.utf8))
     }
 
-    /// Rows arrive newest first. The first read on a connection pages up to
-    /// the limit, so an active thread with an old update is found at least
-    /// once per connection. Later reads stop after a page older than the
-    /// recent window once every retained thread has been seen.
+    /// Rows arrive newest first. The first read on a connection, and one every
+    /// `fullScanInterval` after it, pages up to the limit, so an active thread
+    /// with an old update is found within that interval. Other reads stop after
+    /// a page older than the recent window once every retained thread has been seen.
     package func read(retaining previous: DurableActivityCatalog?, now: () -> Date = { Date() }) async throws -> Result {
         let retained = previous?.scope == scope ? previous?.threadIDs ?? [] : []
-        let stopsEarly = scannedEveryPage
+        let started = now()
+        let stopsEarly = lastFullScan.map { started.timeIntervalSince($0) < Self.fullScanInterval } ?? false
         var entries: [DurableActivityCatalog.Entry] = [], cursor: String?, unseen = retained
         for _ in 0..<4 {
             var params: [String: Any] = [
@@ -59,7 +66,7 @@ package final class DurableCatalogReader {
                oldest < date.addingTimeInterval(-DurableActivityCatalog.recentWindow) { break }
             cursor = next
         }
-        scannedEveryPage = true
+        if !stopsEarly { lastFullScan = started }
         return Result(catalog: .init(scope: scope, threadIDs: entries.map(\.id)), entries: entries)
     }
 

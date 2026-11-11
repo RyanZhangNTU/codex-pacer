@@ -76,6 +76,18 @@ final class DurableDesktopTests: XCTestCase {
         let third = try await reader.read(retaining: nil, now: { now })
         XCTAssertEqual(third.catalog.threadIDs, [thread])
         XCTAssertEqual(socket.takeCursors(), ["first"])
+        // A long-lived connection pages to the end again once the interval
+        // passes, without a new connection, and then stops early again.
+        let interval = DurableCatalogReader.fullScanInterval
+        _ = try await reader.read(retaining: nil, now: { now.addingTimeInterval(interval - 1) })
+        XCTAssertEqual(socket.takeCursors(), ["first"])
+        let rescan = try await reader.read(retaining: nil, now: { now.addingTimeInterval(interval) })
+        XCTAssertEqual(rescan.catalog.threadIDs, [thread, other])
+        XCTAssertEqual(socket.takeCursors(), ["first", "second", "third"])
+        _ = try await reader.read(retaining: nil, now: { now.addingTimeInterval(interval + 1) })
+        XCTAssertEqual(socket.takeCursors(), ["first"])
+        XCTAssertGreaterThan(DurableCatalogReader.connectionLifetime, interval * 10,
+                             "Renewing starts a CLI for a token, so it is far rarer than the rescan")
     }
 
     func testClosedTaskWaitsForItsOwnerAndReportsTwoAcceptedPercentages() throws {
