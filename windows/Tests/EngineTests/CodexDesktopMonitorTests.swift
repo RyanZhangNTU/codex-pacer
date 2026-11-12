@@ -103,6 +103,34 @@ final class CodexDesktopMonitorTests: XCTestCase {
         XCTAssertEqual(snapshots.all().count, stopped)
     }
 
+    func testDotStaysOffUntilTheUserOptsIn() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dot-optin-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let date = Date(), factory = DesktopTestFactory(), snapshots = DesktopEngineSnapshots()
+        let runtime = EngineRuntime(demo: false, now: { date.addingTimeInterval(5) }, dismissalStore: nil,
+            desktopServices: factory.services(supportsDurable: true), output: { snapshots.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"],
+            "codexHome": EngineCodexSourceReport.path(root), "monitorRemoteControl": false]))
+        let host = DurableActivityCatalog.hostID
+        let first = try XCTUnwrap(factory.all().first)
+        try await first.send(frame("durableScope", ["scope": String(repeating: "a", count: 64)], host: host))
+        await first.send(try frame("runtimeBatch", ["events": [event("turn/started", at: date)]], host: host))
+        XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Dot is off by default: no Durable host, no rows")
+
+        _ = await runtime.receive(try command("configure", ["monitorDurable": true]))
+        let deadline = Date().addingTimeInterval(TestWait.limit)
+        while factory.all().count < 2 && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        let connection = try XCTUnwrap(factory.all().last, "Turning Dot on rebinds the Desktop source with the Durable host")
+        try await connection.send(frame("durableScope", ["scope": String(repeating: "a", count: 64)], host: host))
+        await connection.send(try frame("runtimeBatch", ["events": [event("turn/started", at: date)]], host: host))
+        XCTAssertEqual(snapshots.all().last?.presentation.rows.first?.sourceLabel, "Dot")
+
+        _ = await runtime.receive(try command("configure", ["monitorDurable": false]))
+        XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Turning Dot off hides its rows at once")
+        await runtime.stop()
+    }
+
     func testDotRowsShowProgressAndCompletionUntilTheAccountIsRevoked() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dot-engine-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -111,7 +139,7 @@ final class CodexDesktopMonitorTests: XCTestCase {
         let runtime = EngineRuntime(demo: false, now: { date.addingTimeInterval(5) }, dismissalStore: nil,
             desktopServices: factory.services(supportsDurable: true), output: { snapshots.append($0) })
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"],
-            "codexHome": EngineCodexSourceReport.path(root), "monitorRemoteControl": false, "codexProgressRing": true]))
+            "codexHome": EngineCodexSourceReport.path(root), "monitorRemoteControl": false, "monitorDurable": true, "codexProgressRing": true]))
         let connection = try XCTUnwrap(factory.all().first)
         let host = DurableActivityCatalog.hostID
         let progress = try frame("runtimeBatch", ["events": [event("turn/started", at: date),

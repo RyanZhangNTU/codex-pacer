@@ -23,6 +23,8 @@ public actor ClaudeActivityMonitor {
     /// Records arrived since ended requests last settled.
     private var localReleasePending = false
     private var pendingPublish: Task<Void, Never>?
+    private var urgency = ClaudeUrgency()
+    private var lastPublication: Publication?
     private var policy: ActivityRefreshPolicy = .collapsed
     private let sshExecutable: URL
     private let makeSSHArguments: @Sendable (RemoteActivityTarget) -> [String]?
@@ -59,7 +61,8 @@ public actor ClaudeActivityMonitor {
     }
     public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed,
                       retryingRemoteSources: Set<String> = [], update: @escaping Update) async {
-        callback = update; policy = refreshPolicy
+        // A (re)start always delivers: the host may have cleared its copy.
+        callback = update; policy = refreshPolicy; lastPublication = nil
         if self.home != home {
             stopLocal(); self.home = home; localReader.reset(); local = ClaudeActivityState()
             let generation = localGeneration
@@ -87,7 +90,7 @@ public actor ClaudeActivityMonitor {
         let before = Set(connections.keys).union(disconnected.keys)
         for (id, connection) in connections where wanted[id] != connection.target { stopRemote(id); disconnected.removeValue(forKey: id) }
         for id in Array(disconnected.keys) where wanted[id] == nil { disconnected.removeValue(forKey: id); retry.removeValue(forKey: id) }
-        for id in retrying where wanted[id] != nil && connections[id] == nil { retry.removeValue(forKey: id) }
+        for id in retrying where wanted[id] != nil && connections[id] == nil { retry.removeValue(forKey: id); failureCounts[id] = nil }
         let started = await connectWanted()
         // Periodic reconciliation is common; publish only an actual change.
         if started || before != Set(connections.keys).union(disconnected.keys) { await publish() }
@@ -98,10 +101,10 @@ public actor ClaudeActivityMonitor {
         guard home != nil else { return }
         if let id = remoteTargetID {
             guard let target = wanted[id] else { return }
-            if connections[id] == nil { retry.removeValue(forKey: id); connect(target) }
+            if connections[id] == nil { retry.removeValue(forKey: id); failureCounts[id] = nil; connect(target) }
         } else {
             await readLocal(discover: true)
-            for id in wanted.keys where connections[id] == nil { retry.removeValue(forKey: id) }
+            for id in wanted.keys where connections[id] == nil { retry.removeValue(forKey: id); failureCounts[id] = nil }
             await connectWanted()
         }
         await publish()
@@ -141,7 +144,7 @@ public actor ClaudeActivityMonitor {
     }
     public func shutdown(deadline: ShutdownDeadline = ShutdownDeadline()) async {
         let children = connections.values.map(\.process)
-        callback = nil; stopLocal(); home = nil
+        callback = nil; lastPublication = nil; stopLocal(); home = nil
         for id in Array(connections.keys) { stopRemote(id) }
         wanted.removeAll(); disconnected.removeAll(); retry.removeAll(); localReader.reset(); local = ClaudeActivityState()
         await deadline.finish(readers: [], children: children)
@@ -192,7 +195,10 @@ public actor ClaudeActivityMonitor {
                 await self?.continueRead()
             }
         }
-        if result.caughtUp { await schedulePublish(immediate: attaching || result.records.contains(where: Self.urgent)) }
+        if result.caughtUp {
+            let urgent = result.records.reduce(attaching) { urgency.isUrgent($1, source: "local") || $0 }
+            await schedulePublish(immediate: urgent)
+        }
     }
     private func fileChanged(discover: Bool, generation: UUID) async {
         guard localGeneration == generation else { return }
@@ -225,22 +231,33 @@ public actor ClaudeActivityMonitor {
             connections[target.id] = Connection(target: target, identity: identity, process: process,
                 state: disconnected.removeValue(forKey: target.id) ?? ClaudeActivityState(sourceID: target.id, sourceName: target.name), lastFrame: clock())
         } catch {
-            retry[target.id] = clock().addingTimeInterval(30)
+            retry[target.id] = clock().addingTimeInterval(backoff(target.id))
             disconnected[target.id] = ClaudeActivityState(sourceID: target.id, sourceName: target.name)
         }
+    }
+    /// An unreachable host is a normal state: 30 s, doubling to 15 minutes.
+    /// A frame from the helper or an explicit refresh resets it.
+    private var failureCounts: [String: Int] = [:]
+    private func backoff(_ id: String) -> TimeInterval {
+        let count = failureCounts[id, default: 0] + 1
+        failureCounts[id] = count
+        return min(900, 30 * pow(2, Double(min(count - 1, 10))))
     }
     private func receiveRemote(_ bytes: Data, id: String, identity: UUID) async {
         guard var connection = connections[id], connection.identity == identity else { return }
         connection.buffer.append(bytes)
         guard connection.buffer.count <= 2 * 1024 * 1024 else { closed(id, identity: identity); await publish(); return }
         var urgent = false, received = false, missingHome = false
+        let previousStatus = connection.state.status
         while let end = connection.buffer.firstIndex(of: 10) {
             let frame = Data(connection.buffer.prefix(upTo: end)); connection.buffer.removeSubrange(...end)
             guard let value = try? JSONSerialization.jsonObject(with: frame) as? [String: Any] else { continue }
-            connection.state.consume(frame, now: clock()); connection.lastFrame = clock(); received = true
-            urgent = urgent || Self.urgent(value)
+            connection.state.consume(frame, now: clock()); connection.lastFrame = clock(); received = true; failureCounts[id] = nil
             if value["kind"] as? String == "status" { missingHome = value["claudeHome"] as? Bool == false }
+            else { urgent = urgency.isUrgent(value, source: id) || urgent }
         }
+        // Heartbeats bypass batching only when the visible state changed.
+        if !connection.state.status.sameState(as: previousStatus) { urgent = true }
         connections[id] = connection
         if missingHome { park(id, identity: identity); await publish(); return }
         if received { await schedulePublish(immediate: urgent) }
@@ -260,7 +277,7 @@ public actor ClaudeActivityMonitor {
     }
     private func closed(_ id: String, identity: UUID) {
         guard var connection = connections[id], connection.identity == identity else { return }
-        connection.state.unavailable(); disconnected[id] = connection.state; retry[id] = clock().addingTimeInterval(30); stopRemote(id)
+        connection.state.unavailable(); disconnected[id] = connection.state; retry[id] = clock().addingTimeInterval(backoff(id)); stopRemote(id)
     }
     private func stopRemote(_ id: String) {
         guard let connection = connections.removeValue(forKey: id) else { return }
@@ -271,7 +288,23 @@ public actor ClaudeActivityMonitor {
         pendingPublish?.cancel(); pendingPublish = nil
         let attention = local.attention + connections.values.flatMap { $0.state.attention } + cloud.attention
         let performance = local.performanceUpdates + connections.values.flatMap { $0.state.performanceUpdates }
-        await callback?(activities(), statuses(), attention, performance)
+        let publication = Publication(activities: activities(), statuses: statuses(), attention: attention, performance: performance)
+        // Heartbeats, minute maintenance and reads of unrelated files in a
+        // watched folder repeat the last publication; the host already has it.
+        if let lastPublication, lastPublication.matches(publication) { return }
+        lastPublication = publication
+        await callback?(publication.activities, publication.statuses, attention, performance)
+    }
+    private struct Publication {
+        let activities: [SessionActivity]
+        let statuses: [String: RuntimeStreamStatus]
+        let attention: [PendingAttentionRequest]
+        let performance: [SessionPerformanceUpdate]
+        func matches(_ other: Publication) -> Bool {
+            activities == other.activities && attention == other.attention && performance == other.performance &&
+                statuses.count == other.statuses.count &&
+                statuses.allSatisfy { key, value in other.statuses[key].map(value.sameState(as:)) == true }
+        }
     }
     private func schedulePublish(immediate: Bool) async {
         if immediate { await publish(); return }
@@ -283,22 +316,40 @@ public actor ClaudeActivityMonitor {
             await self?.publish()
         }
     }
-    private static func urgent(_ bytes: Data) -> Bool {
-        guard let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return false }
-        return urgent(value)
-    }
-    private static func urgent(_ value: [String: Any]) -> Bool {
-        if value["kind"] as? String == "status" { return true }
-        if value["attaching"] as? Bool == true { return true }
-        let rows = value["records"] as? [[String: Any]] ?? [value]
-        return rows.contains { ["prompt", "responseDelta", "progress", "waiting", "toolStart", "toolEnd", "agentResult", "agentNotification", "approval", "input", "attentionCleared", "stop", "stopVerified", "failure", "interrupt", "subagentStart", "subagentStop", "unavailable"].contains($0["kind"] as? String ?? "") }
-    }
     private static func startsNewSession(_ bytes: Data, known: Set<String>) -> Bool {
         guard let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return false }
         let rows = value["records"] as? [[String: Any]] ?? [value]
         return rows.contains {
             $0["kind"] as? String == "prompt" && ($0["sessionId"] as? String).map { !known.contains($0) && UUID(uuidString: $0) != nil } == true
         }
+    }
+}
+
+/// Which Claude records bypass the publication batch: the first reply of a
+/// turn, turn and tool boundaries, self-reported progress and attention.
+/// Later streaming text joins the 1 s (expanded) or 5 s (collapsed) batch.
+struct ClaudeUrgency {
+    private static let boundaries: Set<String> = ["prompt", "progress", "waiting", "toolStart", "toolEnd", "agentResult",
+        "agentNotification", "approval", "input", "attentionCleared", "stop", "stopVerified", "failure", "interrupt",
+        "subagentStart", "subagentStop", "unavailable"]
+    private static let turnBoundaries: Set<String> = ["prompt", "stop", "stopVerified", "failure", "interrupt"]
+    private var replying: Set<String> = []
+
+    mutating func isUrgent(_ bytes: Data, source: String) -> Bool {
+        guard let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return false }
+        return isUrgent(value, source: source)
+    }
+    mutating func isUrgent(_ value: [String: Any], source: String) -> Bool {
+        var urgent = value["attaching"] as? Bool == true
+        for row in value["records"] as? [[String: Any]] ?? [value] {
+            let kind = row["kind"] as? String ?? ""
+            let session = source + "\u{0}" + (row["sessionId"] as? String ?? "")
+            if Self.turnBoundaries.contains(kind) { replying.remove(session) }
+            if Self.boundaries.contains(kind) { urgent = true }
+            else if kind == "responseDelta", replying.insert(session).inserted { urgent = true }
+        }
+        if replying.count > 1024 { replying.removeAll() }
+        return urgent
     }
 }
 

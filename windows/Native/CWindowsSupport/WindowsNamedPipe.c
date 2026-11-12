@@ -34,6 +34,21 @@ static int pacer_pipe_peer(HANDLE pipe, LPCWSTR root, LPCWSTR family, pacer_proc
 done:
     CloseHandle(process); return matched;
 }
+int pacer_pipe_exists(const uint16_t *name) {
+    if (name == NULL) return 0;
+    size_t length = 0;
+    while (length <= 100 && name[length] != 0) {
+        uint16_t c = name[length++];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_')) return 0;
+    }
+    if (length == 0 || length > 100) return 0;
+    WCHAR path[112] = L"\\\\.\\pipe\\";
+    memcpy(path + 9, name, (length + 1) * sizeof(WCHAR));
+    // Waiting never connects, so the server sees no client. A busy pipe exists.
+    if (WaitNamedPipeW(path, 1)) return 1;
+    DWORD error = GetLastError();
+    return error != ERROR_FILE_NOT_FOUND && error != ERROR_BAD_PATHNAME && error != ERROR_INVALID_NAME;
+}
 void *pacer_pipe_open(const uint16_t *name, const uint16_t *root, const uint16_t *family, uint32_t timeout_ms, int32_t *failure) {
     if (failure != NULL) *failure = 1;
     if (name == NULL || root == NULL || timeout_ms == 0 || timeout_ms > 5000) return NULL;
@@ -118,6 +133,7 @@ void pacer_pipe_close(void *value) {
     HeapFree(GetProcessHeap(), 0, pipe);
 }
 #else
+int pacer_pipe_exists(const uint16_t *name) { return 0; }
 int pacer_pipe_peer_identity(void *pipe, pacer_process_identity *identity) { return 0; }
 void *pacer_pipe_open(const uint16_t *name, const uint16_t *root, const uint16_t *family, uint32_t timeout_ms, int32_t *failure) { if (failure) *failure = 1; return NULL; }
 int64_t pacer_pipe_read(void *pipe, uint8_t *bytes, size_t capacity, uint32_t timeout_ms) { return -1; }

@@ -18,28 +18,50 @@ final class WindowsActivityLogWatcherTests: XCTestCase {
         let actual = await watcher.activeWatchCount()
         XCTAssertEqual(actual, count)
     }
-    func testRecursiveAppendAndReplacementWakeWithoutPolling() async throws {
+    /// Folder watches match the Mac's vnode watches: only the folder's own
+    /// entries wake discovery. Appends reach the reader through file watches,
+    /// so log writes deeper in `~/.claude` or `~/.codex` wake nothing.
+    func testFolderWatchSeesOwnEntriesAndFileWatchSeesAppendsWithoutPolling() async throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let nested = root.appendingPathComponent("project/session")
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
         let file = nested.appendingPathComponent("fixture.jsonl")
         try Data("first\n".utf8).write(to: file)
-        let delivery = expectation(description: "an append under a nested source wakes the reader")
-        let watcher = ActivityLogWatcher { discovery in XCTAssertFalse(discovery); delivery.fulfill() }
-        watcher.update([root], interval: 0.1)
-        try await ready(watcher, count: 1)
+
+        let quiet = expectation(description: "a write two folders down does not wake a folder watch")
+        quiet.isInverted = true
+        let folderOnly = ActivityLogWatcher { _ in quiet.fulfill() }
+        folderOnly.update([root], interval: 0.1)
+        try await ready(folderOnly, count: 1)
+        let early = try FileHandle(forWritingTo: file)
+        try early.seekToEnd(); try early.write(contentsOf: Data("unwatched\n".utf8)); try early.close()
+        try Data("other\n".utf8).write(to: nested.appendingPathComponent("unrelated.tmp"))
+        await fulfillment(of: [quiet], timeout: 1.5)
+        let created = expectation(description: "an entry created in the watched folder requests discovery")
+        let entries = ActivityLogWatcher { discovery in if discovery { created.fulfill() } }
+        folderOnly.stop(); try await ready(folderOnly, count: 0)
+        entries.update([root], interval: 0.1)
+        try await ready(entries, count: 1)
+        try Data("new\n".utf8).write(to: root.appendingPathComponent("new.jsonl"))
+        await fulfillment(of: [created], timeout: TestWait.limit)
+        entries.stop(); try await ready(entries, count: 0)
+
+        let delivery = expectation(description: "an append to a watched log wakes the reader")
+        let watcher = ActivityLogWatcher { discovery in if !discovery { delivery.fulfill() } }
+        watcher.update([root, file], interval: 0.1)
+        try await ready(watcher, count: 2)
         let handle = try FileHandle(forWritingTo: file)
         try handle.seekToEnd(); try handle.write(contentsOf: Data("appended\n".utf8)); try handle.close()
-        await fulfillment(of: [delivery], timeout: 3)
+        await fulfillment(of: [delivery], timeout: TestWait.limit)
         watcher.stop(); try await ready(watcher, count: 0)
 
-        let replacement = expectation(description: "atomic replacement also wakes the reader")
+        let replacement = expectation(description: "atomic replacement of a watched log requests discovery")
         let next = ActivityLogWatcher { discovery in if discovery { replacement.fulfill() } }
-        next.update([root], interval: 0.1)
-        try await ready(next, count: 1)
+        next.update([root, file], interval: 0.1)
+        try await ready(next, count: 2)
         try Data("replacement\n".utf8).write(to: file, options: .atomic)
-        await fulfillment(of: [replacement], timeout: 3)
+        await fulfillment(of: [replacement], timeout: TestWait.limit)
         next.stop(); try await ready(next, count: 0)
     }
     func testExpansionFlushesPendingChangesAndStopCancelsLaterDelivery() async throws {

@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "3aa5f55f56b22e04b5329daf25f5bf87d44a5f949ad1cfeead512ee83c9bcd51",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "75ce6ee85723302a6276f9411b94ceb4750f6dbda48df982f2fdc7c499b067de",
     "windows/EngineSupport/Resources/Localization/en.json": "6a0a4c7556788716d852ae2be97e169eeb1fe8a2480e1b41adba1f0b9e0eb76f"
   },
   "strings": {
@@ -1073,6 +1073,7 @@
     "settings.codex_home": "Codex Data Folder",
     "settings.compact_metric": "Show As",
     "settings.display_picker": "Display",
+    "settings.durable_help": "Shows Dot tasks assigned to this computer, even when their chats are closed. Pacer checks them through the Codex desktop app, which uses more power.",
     "settings.fifteen_minutes": "15 minutes",
     "settings.five_minutes": "5 minutes",
     "settings.four_hours": "4 hours",
@@ -1090,6 +1091,7 @@
     "settings.login_item_open": "Login Items\u2026",
     "settings.main_display": "Main Display",
     "settings.module_off": "Off",
+    "settings.monitor_durable": "Include Codex Dot Tasks",
     "settings.monitor_remote_control": "Include Codex Remote Control Tasks",
     "settings.monitor_ssh": "Monitor Tasks on SSH Hosts",
     "settings.notch": "Island",

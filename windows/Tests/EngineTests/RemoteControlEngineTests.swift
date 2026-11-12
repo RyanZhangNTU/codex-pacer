@@ -85,11 +85,15 @@ private final class RemoteFixture: @unchecked Sendable {
         try Data().write(to: root.appendingPathComponent("synthetic.exe"))
     }
     deinit { try? FileManager.default.removeItem(at: root) }
-    lazy var catalog = RemoteControlCatalog(fetch: { [self] _ in
+    // Weak captures: the catalog is stored on this fixture, and a strong cycle
+    // kept deinit from removing the temporary folder after every test.
+    lazy var catalog = RemoteControlCatalog(fetch: { [weak self] _ in
+        guard let self else { throw RemoteControlCatalog.CatalogError.status(410) }
         let bytes = try response()
         try await directoryGate?.wait()
         return bytes
-    }, files: WindowsFileSystem(), makeClient: { [self] home in
+    }, files: WindowsFileSystem(), makeClient: { [weak self] home in
+        guard let self else { return nil }
         lock.lock(); let account = account; lock.unlock()
         return CodexClient(executable: home.appendingPathComponent("synthetic.exe"), home: home, timeout: 1,
                            processes: Launcher(account: account), executables: Executables(), files: WindowsFileSystem())

@@ -50,6 +50,23 @@ final class EngineSnapshotEmissionTests: XCTestCase {
         XCTAssertTrue(try gate.accepts(notice)); XCTAssertTrue(try gate.accepts(notice), "Notification events are never suppressed by state comparison")
     }
 
+    func testClockDerivedNumbersPublishAtDisplayPrecision() throws {
+        var gate = EngineSnapshotEmission()
+        func wire(pace: Double, time: Double, angle: Double, average: Double, date: Double) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["notices": [],
+                "quota": [["windows": [["pacePercent": pace, "remainingTimePercent": time]]]],
+                "quotaDashboard": ["providers": [["weekly": ["period": "weekly", "availability": "available", "date": date,
+                                                             "pacePercent": pace, "remainingTimePercent": time]]]],
+                "wallet": ["angle": angle, "averageDaily": average]])
+        }
+        XCTAssertTrue(try gate.accepts(wire(pace: 80.01, time: 59.99, angle: 123.01, average: 4.001, date: 1)))
+        XCTAssertFalse(try gate.accepts(wire(pace: 80.03, time: 59.97, angle: 123.04, average: 4.004, date: 2)),
+            "A source callback that only advances the clock below display precision publishes nothing")
+        XCTAssertTrue(try gate.accepts(wire(pace: 80.12, time: 59.97, angle: 123.04, average: 4.004, date: 3)), "A visible pace step publishes")
+        XCTAssertTrue(try gate.accepts(wire(pace: 80.12, time: 59.97, angle: 123.04, average: 4.02, date: 4)), "A visible amount step publishes")
+        XCTAssertTrue(try gate.accepts(wire(pace: 80.12, time: 59.97, angle: 124.0, average: 4.02, date: 5)), "The wallet clock hand publishes as it moves")
+    }
+
     func testSuppressedPublicationsDoNotInvalidateTheDisplayedActionSequence() async throws {
         let capture = IdleFrameCapture()
         let runtime = EngineRuntime(demo: true, now: { Date(timeIntervalSince1970: 1_800_000_000) }, output: { capture.append($0) })
