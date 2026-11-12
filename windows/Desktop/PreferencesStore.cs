@@ -50,7 +50,7 @@ internal sealed class PreferencesStore
         catch (FileNotFoundException) { return null; }
         catch (DirectoryNotFoundException) { return null; }
     }
-    internal (DesktopPreferences Value, bool Unavailable) Load(bool migrateWSL = false)
+    internal (DesktopPreferences Value, bool Unavailable) Load(bool migrateOptIns = false, Func<string, bool>? durableEvidence = null)
     {
         lock (gate)
         {
@@ -68,9 +68,12 @@ internal sealed class PreferencesStore
                     try
                     {
                         var settings = Decode(basis);
-                        if (migrateWSL && !settings.WslOptInMigrated)
+                        if (migrateOptIns && (!settings.WslOptInMigrated || !settings.DurableOptInMigrated))
                         {
-                            settings = settings with { MonitorWSL = false, WslOptInMigrated = true };
+                            if (!settings.WslOptInMigrated) settings = settings with { MonitorWSL = false, WslOptInMigrated = true };
+                            // Profiles that already used Dot keep it; others start off.
+                            if (!settings.DurableOptInMigrated)
+                                settings = settings with { MonitorDurable = (durableEvidence ?? DurableUsageEvidence.HasReceipts)(settings.CodexHome), DurableOptInMigrated = true };
                             string temporary = file + ".tmp-" + Guid.NewGuid().ToString("N");
                             try { Commit(PreferencesCodec.Encode(settings, basis), temporary); }
                             catch (Exception error) when (Recoverable(error)) { }

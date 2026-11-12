@@ -182,7 +182,7 @@ public partial class App : Application
         if (!demo || demoPreferencesFile != null)
         {
             preferencesStore = new PreferencesStore(demoPreferencesFile);
-            (preferences, preferencesUnavailable) = preferencesStore.Load(migrateWSL: !demo);
+            (preferences, preferencesUnavailable) = preferencesStore.Load(migrateOptIns: !demo);
             if (positionIndex < 0) position = Array.IndexOf(positions, preferences.Position);
         }
         string language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en";

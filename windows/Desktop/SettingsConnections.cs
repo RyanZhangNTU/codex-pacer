@@ -12,7 +12,7 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? connectionsSSH, connectionsRemote, connectionsWSL;
+    private CheckBox? connectionsSSH, connectionsRemote, connectionsDurable, connectionsWSL;
     private StackPanel? connectionSources, connectionHosts, connectionControl, connectionWslHosts, connectionOthers, connectionRetryRow;
     private TextBlock? connectionTitle;
     private Button? connectionRetry, remoteDeviceRefresh, wslRefresh;
@@ -25,7 +25,7 @@ internal sealed partial class SettingsWindow
 
     private void ClearConnections()
     {
-        connectionsSSH = connectionsRemote = connectionsWSL = null;
+        connectionsSSH = connectionsRemote = connectionsDurable = connectionsWSL = null;
         connectionSources = connectionHosts = connectionControl = connectionWslHosts = null;
         connectionTitle = null;
         connectionRetry = null; connectionContent = null; connectionOthers = null; connectionRetryRow = null;
@@ -59,6 +59,11 @@ internal sealed partial class SettingsWindow
         connectionControl = new StackPanel(); var control = new StackPanel();
         control.Children.Add(remote); control.Children.Add(remoteDeviceRow); control.Children.Add(connectionControl);
         form.Children.Add(SectionTitle("Codex Remote Control")); form.Children.Add(Card(control));
+
+        var durable = Toggle("settings.monitor_durable", "settings.durable_help", "settings.connections.durable", out var durableSwitch);
+        connectionsDurable = durableSwitch; editors.Add(durableSwitch);
+        BindToggle(durableSwitch, (p, value) => p with { MonitorDurable = value });
+        form.Children.Add(SectionTitle("Codex Dot")); form.Children.Add(Card(durable));
 
         var wsl = Toggle("windows.connections.monitor_wsl", "windows.connections.wsl_help", "settings.connections.wsl", out var wslSwitch);
         connectionsWSL = wslSwitch; editors.Add(wslSwitch); BindToggle(wslSwitch, (p, value) => p with { MonitorWSL = value });
@@ -101,6 +106,7 @@ internal sealed partial class SettingsWindow
         try
         {
             connectionsRemote!.IsChecked = session.Current.MonitorRemoteControl; connectionsRemote.IsEnabled = available && codex;
+            connectionsDurable!.IsChecked = session.Current.MonitorDurable; connectionsDurable.IsEnabled = available && codex;
             connectionsSSH!.IsChecked = session.Current.MonitorSSH; connectionsSSH.IsEnabled = available && (codex || claude);
             connectionsWSL!.IsChecked = session.Current.MonitorWSL && snapshot?.WslAvailability != "unavailable";
             connectionsWSL.IsEnabled = available && (codex || claude) &&
