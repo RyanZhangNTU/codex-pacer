@@ -2479,25 +2479,26 @@ actor EngineRuntime {
         hostTracking.cancel()
         ownedWork.cancel(kinds: [.hostScan, .hostRetry])
     }
-    private func trackActivityHosts(provider only: AgentProvider? = nil, refreshRunning: Bool = true) {
-        for provider in AgentProvider.allCases where provider != .deepseek && (only == nil || provider == only) {
-            trackActivityHosts(for: provider, refreshRunning: refreshRunning)
-        }
+    private func trackActivityHosts() {
+        for provider in [AgentProvider.codex, .claude] { trackActivityHosts(for: provider) }
     }
-    private func trackActivityHosts(for provider: AgentProvider, refreshRunning: Bool) {
+    private func trackActivityHosts(for provider: AgentProvider) {
         let references = activityState.knownActivities(for: provider)
         let decision = hostTracking.prepare(provider: provider, references: references, activities: activities, inbox: inbox,
-            version: lifecycle.version(provider), now: now(), active: active, demo: demo, refreshRunning: refreshRunning)
+            version: lifecycle.version(provider), now: now(), active: active, demo: demo)
+        let retryKey = ApplicationWorkRegistry.Key(.hostRetry, provider: provider)
         switch decision {
         case .idle: break
+        case .cancelRetry: ownedWork.cancel(retryKey)
         case .retry(let retry):
-            let owner = ownedWork.begin(.init(.hostRetry, provider: provider), version: retry.version)
+            let owner = ownedWork.begin(retryKey, version: retry.version)
             let task = Task { [weak self] in
                 do { try await Task.sleep(nanoseconds: UInt64(max(0, retry.delay) * 1_000_000_000)) } catch { return }
                 await self?.finishHostRetry(retry, owner: owner)
             }
             ownedWork.attach(task, to: owner)
         case .scan(let scan):
+            ownedWork.cancel(retryKey)
             let owner = ownedWork.begin(.init(.hostScan, provider: provider), version: scan.version)
             let home = navigationHome(for: provider), services = activityHostServices, claude = claudeActivityMonitor
             let task = Task { [weak self] in
@@ -2517,7 +2518,7 @@ actor EngineRuntime {
     private func finishHostRetry(_ retry: HostApplicationTrackingState<ActivityHostApplication>.Retry, owner: ApplicationWorkRegistry.Ticket) {
         defer { ownedWork.finish(owner) }
         guard hostTracking.finishRetry(retry, version: lifecycle.version(retry.provider), active: active, cancelled: Task.isCancelled) else { return }
-        ownedWork.finish(owner); trackActivityHosts(for: retry.provider, refreshRunning: true)
+        ownedWork.finish(owner); trackActivityHosts(for: retry.provider)
     }
     private func finishHostScan(_ scan: HostApplicationTrackingState<ActivityHostApplication>.Scan, found: [String: ActivityHostApplication], owner: ApplicationWorkRegistry.Ticket) {
         defer { ownedWork.finish(owner) }
@@ -2525,7 +2526,7 @@ actor EngineRuntime {
         if result.owned { ownedWork.finish(owner) }
         guard result.accepted else { return }
         if result.changed { publish(notices: []) }
-        trackActivityHosts(for: scan.provider, refreshRunning: false)
+        trackActivityHosts(for: scan.provider)
     }
     private func navigationHome(for provider: AgentProvider) -> URL {
         switch provider { case .codex: codexHome; case .claude: claudeHome; case .deepseek: deepseekHome }

@@ -122,6 +122,7 @@ public actor LocalActivityReader {
                 }
                 if let latest = CodexRolloutMetadata.read(file, threadID: activity.threadID, head: header) {
                     activity.setCodexOrigin(latest.origin, at: latest.observedAt)
+                    if let launch = latest.observedAt { activity.noteHostLaunch(at: launch) }
                 }
                 metadata[file] = (identity, activity)
                 originSizes[file] = size

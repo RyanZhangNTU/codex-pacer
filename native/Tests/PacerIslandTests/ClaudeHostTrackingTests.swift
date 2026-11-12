@@ -38,9 +38,14 @@ final class ClaudeHostTrackingTests: XCTestCase {
             defer { removeTestDefaults(fixture.domain) }
             let model = fixture.model, scans = PendingScans()
             let session = "019a0000-0000-7000-8000-0000000000e1"
+            let other = "019a0000-0000-7000-8000-0000000000e2"
             model.hostApplicationResolver = { actual, sessions, _ in actual == provider ? await scans.resolve(sessions) : [:] }
-            if provider == .claude { model.receiveClaudeUpdate([activity(session)], statuses: [:], requests: []) }
-            else { model.receiveRemoteUpdate([activity(session, provider: .codex)], statuses: [:], unavailable: [], requests: [], names: []) }
+            func receive(_ ids: [String]) {
+                let rows = ids.map { activity($0, provider: provider) }
+                if provider == .claude { model.receiveClaudeUpdate(rows, statuses: [:], requests: []) }
+                else { model.receiveRemoteUpdate(rows, statuses: [:], unavailable: [], requests: [], names: []) }
+            }
+            receive([session])
             try await waitUntil { await scans.count() == 1 }
 
             await model.prepareForSleep()
@@ -61,11 +66,17 @@ final class ClaudeHostTrackingTests: XCTestCase {
             try await waitUntil { model.hostApplications[provider]?[session] == self.terminal }
 
             model.trackHostApplications(for: provider, now: Date().addingTimeInterval(3))
+            try await Task.sleep(nanoseconds: 20_000_000)
+            count = await scans.count()
+            XCTAssertEqual(count, 2, "A confirmed host should not be queried again")
+            receive([session, other])
+            model.trackHostApplications(for: provider, now: Date().addingTimeInterval(3))
             try await waitUntil { await scans.count() == 3 }
             await model.shutdown()
-            await scans.finish(3, with: [session: zotero])
+            await scans.finish(3, with: [other: zotero])
             try await Task.sleep(nanoseconds: 20_000_000)
-            XCTAssertEqual(model.hostApplications[provider]?[session], terminal, "A scan returning after shutdown cannot publish")
+            XCTAssertNil(model.hostApplications[provider]?[other], "A scan returning after shutdown cannot publish")
+            XCTAssertEqual(model.hostApplications[provider]?[session], terminal)
         }
     }
 
@@ -82,18 +93,16 @@ final class ClaudeHostTrackingTests: XCTestCase {
         }
         model.receiveClaudeUpdate([activity(running), activity(ended, completed: true), activity(vanishing)], statuses: [:], requests: [])
         try await waitUntil { model.hostApplications[.claude]?.count == 2 }
-        var requests = await scans.all()
+        let requests = await scans.all()
         XCTAssertEqual(requests, [[running, ended, vanishing]])
         XCTAssertEqual(model.taskSourceName(activity(running)), "Zotero")
         XCTAssertNil(model.taskSourceName(activity(ended)), "No live holder was seen for this ending")
 
-        // Within two seconds nothing is rescanned; later only running sessions
-        // are, so the latest live holder can replace a record.
         model.trackHostApplications(for: .claude, now: Date())
         model.trackHostApplications(for: .claude, now: Date().addingTimeInterval(3))
-        try await waitUntil { await scans.all().count == 2 }
-        requests = await scans.all()
-        XCTAssertEqual(requests.last, [running, vanishing])
+        try await Task.sleep(nanoseconds: 20_000_000)
+        let laterRequests = await scans.all()
+        XCTAssertEqual(laterRequests, requests)
 
         // The record outlives the process while its completion card is shown;
         // a session that leaves the list takes its record with it.

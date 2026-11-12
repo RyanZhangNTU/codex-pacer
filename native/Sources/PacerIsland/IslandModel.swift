@@ -1274,15 +1274,17 @@ final class IslandModel: ObservableObject {
     func recordHostApplications(_ found: [String: HostApplication], provider: AgentProvider) {
         if hostTracking.record(found, provider: provider) { publishHostApplications() }
     }
-    func trackHostApplications(for provider: AgentProvider, now: Date = Date(), refreshRunning: Bool = true) {
+    func trackHostApplications(for provider: AgentProvider, now: Date = Date()) {
         let decision = hostTracking.prepare(provider: provider, references: knownActivities(for: provider), activities: activities, inbox: completionInbox,
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id)), version: UInt64(sourceGeneration(for: provider)), now: now,
-            active: !stopped && !sleeping, demo: demo, refreshRunning: refreshRunning)
+            active: !stopped && !sleeping, demo: demo)
         publishHostApplications(layout: false)
+        let retryKey = ApplicationWorkRegistry.Key(.hostRetry, provider: provider)
         switch decision {
         case .idle: break
+        case .cancelRetry: ownedWork.cancel(retryKey)
         case .retry(let retry):
-            let owner = ownedWork.begin(.init(.hostRetry, provider: provider), version: retry.version)
+            let owner = ownedWork.begin(retryKey, version: retry.version)
             let task = Task { [weak self] in
                 defer { if let self { self.ownedWork.finish(owner) } }
                 do { try await Task.sleep(nanoseconds: UInt64(max(0, retry.delay) * 1_000_000_000)) } catch { return }
@@ -1292,6 +1294,7 @@ final class IslandModel: ObservableObject {
             }
             ownedWork.attach(task, to: owner)
         case .scan(let scan):
+            ownedWork.cancel(retryKey)
             let sourceHome = provider == .codex ? home : claudeHome, resolve = hostApplicationResolver
             let owner = ownedWork.begin(.init(.hostScan, provider: provider), version: scan.version)
             let task = Task { [weak self] in
@@ -1302,7 +1305,7 @@ final class IslandModel: ObservableObject {
                     active: !self.stopped && !self.sleeping, cancelled: Task.isCancelled)
                 if result.owned { self.ownedWork.finish(owner) }
                 guard result.accepted else { return }
-                self.publishHostApplications(); self.trackHostApplications(for: provider, refreshRunning: false)
+                self.publishHostApplications(); self.trackHostApplications(for: provider)
             }
             ownedWork.attach(task, to: owner)
         }

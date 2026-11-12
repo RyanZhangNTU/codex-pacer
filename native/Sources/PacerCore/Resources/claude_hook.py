@@ -232,6 +232,7 @@ def hook(home,value):
         if event=='SessionStart':
             if isinstance(value.get('model'),str):meta['model']=value['model'][:256]
             if isinstance(value.get('session_title'),str):meta['title']=value['session_title'][:240]
+            if not agent and value.get('source') in ('startup','resume'):meta['sessionLaunch']=True
         # Hooks inherit Claude Code's launch source; apps embedding it through
         # the Agent SDK use sdk-*. Only that yes/no is recorded.
         entry=os.environ.get('CLAUDE_CODE_ENTRYPOINT')

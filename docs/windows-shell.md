@@ -207,7 +207,7 @@ Run cold checks as the interactive user outside an agent's sandboxed process tre
 ## Embedded sessions and host applications
 
 - Codex and Claude each have a "sessions from other apps" switch (`showEmbeddedCodexSessions`, `showEmbeddedClaudeSessions`, on by default). Turning one off hides that provider's embedded families, completion cards and reminders; collection continues and hidden endings stay unread. Zotero translation sessions are always excluded.
-- Host tracking uses Core's policy (caching, two-second scan throttle, sleep cancellation, wake retry). A bounded native process snapshot gives parent links, and each candidate is checked by PID and creation time.
+- Host tracking uses Core's cache and bounded retries. A verified host is reused until a new launch is observed. Pending lookups pause during sleep. A bounded native process snapshot gives parent links, and each candidate is checked by PID and creation time.
 - Opening a card uses its verified live host. If the host has exited, the engine may restart the captured executable or packaged app after checking its file identity, size and modification time again. It passes no transcript arguments or prompt. Executable paths stay in the engine; WPF gets a one-use navigation context. Any failure leaves the ending unread.
 
 ### Claude Desktop data folder

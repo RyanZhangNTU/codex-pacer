@@ -335,7 +335,9 @@ final class WindowsActivityNavigationTests: XCTestCase {
         XCTAssertEqual(mapped.url, "claude://code/continue?session=" + local)
         XCTAssertThrowsError(try WindowsActivityNavigation.resolve(input(home: root.appendingPathComponent("other")), userHome: root, records: records, writers: { _, _ in [] }))
         let owner = WindowsProcessHost(identity: .init(pid: 123, started: 456), provider: nil)
-        let hosted = try WindowsActivityNavigation.resolve(input(), userHome: root, records: records,
+        var cached = input()
+        cached.cachedHost = .init(identity: .init(pid: 789, started: 321), provider: nil, name: "Previous editor", home: cached.home)
+        let hosted = try WindowsActivityNavigation.resolve(cached, userHome: root, records: records,
             writers: { _, _ in [owner.identity] }, host: { _ in owner })
         XCTAssertEqual(hosted.kind, "host"); XCTAssertEqual(hosted.pid, 123); XCTAssertNil(hosted.url)
     }
