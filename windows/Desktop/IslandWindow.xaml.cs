@@ -122,7 +122,6 @@ public partial class IslandWindow : Window
         InitializeMove();
         // Hover and connection errors can expand the HWND before the first
         // engine snapshot. Give every measured lane a real initial value.
-        compactRate.Visibility = compactStripRate.Visibility = Visibility.Collapsed;
         InitializeCompactBar();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
         // Closing under the pointer can still raise a leave that starts the timer.
@@ -175,8 +174,10 @@ public partial class IslandWindow : Window
         if (method.Length > 0 && method != "projectCompactBar") return;
         _ = Dispatcher.InvokeAsync(() =>
         {
-            if (presentationStopped) return;
-            UpdateCompactBar(); Relayout();
+            if (presentationStopped || !UpdateCompactBar(projectionOnly: true)) return;
+            // A new value can redraw inside the same footprint without measuring the panel again.
+            var size = MeasureCompactBar();
+            if (laidOutCompactSize != size) Relayout(compactSize: size);
         });
     }
     internal void SetStatus(string value)
@@ -449,11 +450,13 @@ public partial class IslandWindow : Window
         var measured = geometry.Measure(screen, work, 2, 0, 0, side, false, contentWidth, contentHeight, headerWidth, measuredStripHeight, CompactSizeIndex);
         return placement.Arrange(work, measured, measured.Target.Width, measured.Target.Height, contentHeight, open, anchor);
     }
-    private void Relayout(bool snap = false)
+    private void Relayout(bool snap = false, (double Header, double Strip)? compactSize = null)
     {
         if (move?.Active == true && !snap) return;
         // Never reuse a constrained lane's measured size as its natural width.
-        double measuredHeader = MeasureCompactBar().Header;
+        var size = compactSize ?? MeasureCompactBar();
+        laidOutCompactSize = size;
+        double measuredHeader = size.Header;
         dragHeaderWidth = measuredHeader;
         double rowsHeight = RowsHeight(rows.Count);
         // Every section header must fit, the one carrying the buttons above all.
@@ -649,7 +652,7 @@ public partial class IslandWindow : Window
         UpdateAppButtons();
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
         MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
-        UpdateCompactBar(); HeaderTrailing.InvalidateMeasure();
+        UpdateCompactBar();
         // New row choices redraw the page even when the rows are the same.
         bool choicesChanged = ApplyPanelChoices(snapshot);
         if (!rows.SequenceEqual(presentation.Rows) || choicesChanged)

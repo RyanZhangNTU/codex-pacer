@@ -32,7 +32,7 @@ public enum CompactBarPresentation {
     /// Remaining quota at or below this many percent is low, as in the expanded panel.
     public static let lowQuota = 15.0
     public static func rateIsVisible(context: CompactBarContext, attached: Bool, strip: Bool, showsStatus: Bool, language: AppLanguage) -> Bool {
-        context.running && context.rate != nil && (!showsStatus || strip || !attached || language != .english || !context.attention)
+        !showsStatus || strip || !attached || language != .english || !context.attention
     }
     public struct Options: Codable, Equatable, Sendable {
         public var singleTask: SingleTask
@@ -144,6 +144,7 @@ public enum CompactBarPresentation {
         }
     }
     public struct Group: Codable, Equatable, Sendable { public let id: String, label: String; public let components: [String] }
+    public struct Lanes: Codable, Equatable, Sendable { public let leading: [String], trailing: [String] }
     public struct Window: Codable, Equatable, Sendable {
         public let provider: AgentProvider
         public let label: String, selection: String
@@ -164,6 +165,8 @@ public enum CompactBarPresentation {
         public let metrics: CompactBarMetrics?
         /// The core shows the only task's reported percent instead of its stage.
         public let singleTaskPercent: Bool?
+        /// Strip order and visibility, using the same component values and their strip text.
+        public let stripLanes: Lanes?
 
         /// Invalid native input hides the bar's components until a valid projection arrives.
         public static let empty: Self = {
@@ -174,7 +177,7 @@ public enum CompactBarPresentation {
             return Self(version: 1, layoutJSON: layoutJSON, warnings: [],
                 editorLeading: [], editorTrailing: [], leading: [], trailing: [], components: [], groups: [], windows: [],
                 rings: [], ringChoices: ["none", "none"], gaugeClock: false, singleTaskCount: false,
-                componentOptions: CompactComponentOptions(), metrics: .standard, singleTaskPercent: false)
+                componentOptions: CompactComponentOptions(), metrics: .standard, singleTaskPercent: false, stripLanes: nil)
         }()
 
         public func component(_ component: CompactIslandLayout.Component) -> Component {
@@ -317,6 +320,9 @@ public enum CompactBarPresentation {
         let timeHelp = times.map { entry in L10n.text("provider.compact_time", entry.provider.displayName, entry.text, language: language) }.joined(separator: " · ")
         let clockSummary = L10n.text("deepseek.clock_accessibility", L10n.text(wallet?.peakNow == true ? "deepseek.now.peak" : "deepseek.now.offpeak", language: language),
             DeepSeekDialPresentation.amount(wallet?.todayTotal ?? 0), language: language)
+        let showsStatus = layout.components.contains(.status)
+        let stripRateVisible = context.map { rateIsVisible(context: $0, attached: request.attached, strip: true,
+            showsStatus: showsStatus, language: language) } ?? false
         let componentValues = CompactIslandLayout.Component.allCases.map { component -> Component in
             var text: String?, stripText: String?, unit: String?, stripUnit: String?
             var help = "", accessibility = "", visible = component.isAvailable(for: providers), values: [Entry] = []
@@ -331,15 +337,22 @@ public enum CompactBarPresentation {
                 let measured = max(1, context?.measuredTasks ?? 1)
                 let shown = context?.rate.map { average ? $0 / Double(measured) : $0 }
                 func format(_ rate: Double, compact: Bool) -> String {
-                    compact && rate >= 1_000_000 ? String(format: "%.1fM", rate / 1_000_000) : compact && rate >= 1000 ? String(format: "%.1fk", rate / 1000) : String(format: "%.0f", rate)
+                    if compact && rate >= 999_950 { return String(format: "%.1fM", rate / 1_000_000) }
+                    if compact && rate >= 999.5 { return String(format: "%.1fk", rate / 1000) }
+                    return String(format: "%03.0f", rate)
                 }
-                text = shown.map { format($0, compact: compact) } ?? "—"
-                stripText = shown.map { format($0, compact: true) } ?? "—"; unit = "t/s"; stripUnit = unit
+                text = shown.map { format($0, compact: compact) } ?? "000"
+                stripText = shown.map { format($0, compact: true) } ?? "000"; unit = "t/s"; stripUnit = unit
                 visible = context.map { rateIsVisible(context: $0, attached: request.attached, strip: request.strip,
-                    showsStatus: layout.components.contains(.status), language: language) } ?? false
-                help = average
-                    ? L10n.text("performance.average_help", shown ?? 0, measured, language: language)
-                    : L10n.text(context?.rateFresh == true ? "performance.total_help" : "performance.partial_total_help", context?.rate ?? 0, language: language)
+                    showsStatus: showsStatus, language: language) } ?? false
+                accessibility = (shown.map { String(format: "%.0f", $0) } ?? "0") + " t/s"
+                if let shown {
+                    help = average
+                        ? L10n.text("performance.average_help", shown, measured, language: language)
+                        : L10n.text(context?.rateFresh == true ? "performance.total_help" : "performance.partial_total_help", shown, language: language)
+                } else {
+                    help = L10n.text(context?.running == true ? "performance.awaiting_usage" : "activity.idle", language: language)
+                }
             case .firstOutput:
                 let median = choices.firstOutput == .median ? context?.firstOutputs.flatMap(CompactFirstOutputHistory.median) : nil
                 let seconds = median ?? context?.firstOutput
@@ -361,7 +374,7 @@ public enum CompactBarPresentation {
             case .quotaGauge: accessibility = clock ? clockSummary : gaugeHelp
             case .quotaLabel: accessibility = text ?? ""
             case .timeRemaining: accessibility = timeHelp
-            case .tps: accessibility = (text ?? "—") + " t/s"
+            case .tps: break
             case .priceClock: accessibility = clockSummary
             default: accessibility = help
             }
@@ -373,9 +386,14 @@ public enum CompactBarPresentation {
                 unit: unit, stripUnit: stripUnit, help: help, accessibility: accessibility, entries: values,
                 tone: tone, maxWidth: maxWidth)
         }
-        func runtime(_ lane: CompactIslandLayout.Lane) -> [String] {
-            layout[lane].filter { component in componentValues.first { $0.id == component.rawValue }.map { $0.visible && (!request.strip || $0.stripEligible) } == true }.map(\.rawValue)
+        func runtime(_ lane: CompactIslandLayout.Lane, strip: Bool) -> [String] {
+            layout[lane].filter { component in
+                guard let value = componentValues.first(where: { $0.id == component.rawValue }) else { return false }
+                if !strip { return value.visible }
+                return value.stripEligible && (component == .tps ? stripRateVisible : value.visible)
+            }.map(\.rawValue)
         }
+        let stripLanes = Lanes(leading: runtime(.leading, strip: true), trailing: runtime(.trailing, strip: true))
         let windows: [Window] = ordered.filter { $0 != .deepseek }.map { provider in
             let snapshot = source(provider)?.snapshot
             let own = snapshot.flatMap { $0.buckets.first { $0.id == provider.rawValue } ?? $0.buckets.first }
@@ -385,11 +403,12 @@ public enum CompactBarPresentation {
         }
         return .init(version: 1, layoutJSON: canonical, warnings: CompactIslandLayout.Warning.allCases.filter(layout.warnings.contains).map(\.rawValue),
             editorLeading: layout.visibleComponents(in: .leading, providers: providers).map(\.rawValue), editorTrailing: layout.visibleComponents(in: .trailing, providers: providers).map(\.rawValue),
-            leading: runtime(.leading), trailing: runtime(.trailing), components: componentValues,
+            leading: request.strip ? stripLanes.leading : runtime(.leading, strip: false),
+            trailing: request.strip ? stripLanes.trailing : runtime(.trailing, strip: false), components: componentValues,
             groups: CompactIslandLayout.Group.allCases.map { .init(id: $0.rawValue, label: L10n.text("layout.group." + $0.rawValue, language: language), components: $0.components.map(\.rawValue)) },
             windows: windows, rings: rings, ringChoices: ringChoices.map(\.rawValue), gaugeClock: clock, singleTaskCount: request.options.singleTask == .count,
             componentOptions: choices, metrics: metrics,
-            singleTaskPercent: request.options.singleTask == .percent)
+            singleTaskPercent: request.options.singleTask == .percent, stripLanes: stripLanes)
     }
     public static func quotaValue(provider: AgentProvider, snapshot: QuotaSnapshot?, failed: Bool,
                                   metric: Metric, selection: String?, now: Date) -> Double? {

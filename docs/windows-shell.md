@@ -46,6 +46,7 @@ The Composition bridge (`windows/Native/CompositionBackdrop`) builds with the Vi
 - Rendering reads a bounded cache and returns at once; identical requests share one pending operation; there is no polling loop. A missing projection shows a placeholder, and a failed settings edit saves nothing.
 - An engine exit fails pending requests. If the engine stops after running at least 10 minutes, Pacer restarts itself, unless an update is in progress. An engine that stops sooner keeps the stopped status, so a startup failure cannot loop.
 - Collapsed-bar and quota-chart drawing come from `projectCompactBar` and `layoutQuotaChart` (Core's `CompactBarPresentation` and `QuotaCycleChartPresentation`). `PacerWindowsBridge` supplies only geometry, finite motion and native activation.
+- One collapsed-bar reply supplies the component values and lane order for both the horizontal bar and the side strip. When the reply leaves the bar the same size, WPF updates the values without measuring the panel again.
 - The expanded panel's layout and choices reach the engine in `configure` (`expandedPanel`: layout, options and whether DeepSeek's former content was Detailed). Each snapshot carries `expandedPanel`: the resolved sections with each quota section's drawing in both styles, every ring's window and the choices after fallback, so a style change needs no new snapshot. The Expanded Panel page edits blocks through `projectExpandedPanel` (Core's `ExpandedPanelPresentation`) and saves the layout it returns.
 - `SlowEngineChecks` covers silent, slow and exiting engines.
 

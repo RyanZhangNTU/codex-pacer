@@ -38,7 +38,7 @@ Codex quota needs nothing extra.
 | Part | What it tells you |
 | --- | --- |
 | **Task badge** | How many tasks are running. Its ring shows which services are working, or their average progress. Amber means a task needs your reply or approval; a check means one just finished. |
-| **Speed** | The combined output speed of your running tasks, in tokens per second. |
+| **Speed** | The combined output speed of your running tasks, in tokens per second. Shows `000` when no rate is available. |
 | **Quota** | Quota left for Codex and Claude, or your DeepSeek balance or budget. |
 | **Warnings** | Appear only when something needs attention, such as low quota or a disconnected SSH host. |
 

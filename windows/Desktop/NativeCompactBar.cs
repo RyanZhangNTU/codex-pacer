@@ -17,6 +17,7 @@ internal sealed record CompactComponent(string Id, string Label, string ShortLab
     string? Tone = null, double? MaxWidth = null);
 internal sealed record CompactGroup(string Id, string Label, string[] Components);
 internal sealed record CompactWindow(string Provider, string Label, string Selection, bool WeeklyOnly);
+internal sealed record CompactLanes(string[] Leading, string[] Trailing);
 // Points for one bar size, from Core's CompactBarMetrics.
 internal sealed record CompactMetrics(double Scale, double Height, double StripWidth, double Inset, double Gap, double LaneGap,
     double Divider, double Value, double Unit, double Status, double Badge, double Gauge, double Warning, double StripValue,
@@ -28,7 +29,7 @@ internal sealed record CompactProjection(int Version, string LayoutJSON, string[
     string[] EditorLeading, string[] EditorTrailing, string[] Leading, string[] Trailing,
     CompactComponent[] Components, CompactGroup[] Groups, CompactWindow[] Windows, CompactRing[] Rings,
     string[] RingChoices, bool GaugeClock, bool SingleTaskCount,
-    CompactChoices? ComponentOptions = null, CompactMetrics? Metrics = null, bool? SingleTaskPercent = null)
+    CompactChoices? ComponentOptions = null, CompactMetrics? Metrics = null, bool? SingleTaskPercent = null, CompactLanes? StripLanes = null)
 {
     internal CompactChoices Choices => ComponentOptions ?? CompactChoices.Default;
     internal CompactMetrics Sizes => Metrics ?? CompactMetrics.Standard;
@@ -46,7 +47,10 @@ internal sealed class NativeCompactBar
     internal NativeCompactBar(string directory) { }
     private static CompactProjection Empty { get; } = new(1, "", [], [], [], [], [], [], [], [], [], [], false, false);
     private static bool Valid(CompactProjection value) => value is { Version: 1, Components: not null, Leading: not null, Trailing: not null }
-        && value.Components.Length <= 64 && value.Leading.Length <= value.Components.Length && value.Trailing.Length <= value.Components.Length;
+        && value.Components.Length <= 64 && ValidLanes(value.Leading, value.Trailing, value.Components.Length)
+        && (value.StripLanes == null || ValidLanes(value.StripLanes.Leading, value.StripLanes.Trailing, value.Components.Length));
+    private static bool ValidLanes(string[]? leading, string[]? trailing, int count)
+        => leading != null && trailing != null && leading.Length <= count && trailing.Length <= count;
     private static object Input(DesktopPreferences preferences, string language, string[] providers, JsonElement? context,
         bool attached, bool strip, CompactEdit? action) => new
     {

@@ -115,13 +115,30 @@ final class CompactBarPresentationTests: XCTestCase {
         XCTAssertFalse(value.leading.contains("tps")); XCTAssertEqual(try component("firstOutput", in: value).text, "1.25")
         XCTAssertEqual(try component("firstOutput", in: value).unit, "s")
         XCTAssertTrue(try component("firstOutput", in: value).accessibility.contains("1.25 s"))
+        let strip = try XCTUnwrap(value.stripLanes)
+        XCTAssertEqual(strip.leading, ["activity", "tps", "firstOutput"])
         request.strip = true; request.attached = false
         value = try XCTUnwrap(CompactBarPresentation.project(request))
-        XCTAssertTrue(value.leading.contains("tps")); XCTAssertFalse(value.leading.contains("status"))
+        XCTAssertEqual(value.leading, strip.leading); XCTAssertEqual(value.trailing, strip.trailing)
         XCTAssertEqual(try component("firstOutput", in: value).stripText, "1.2")
         request.strip = false; request.attached = true; request.language = "zh-Hans"
         value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertTrue(value.leading.contains("tps")); XCTAssertNotEqual(try component("status", in: value).text, "Approval needed")
+    }
+    func testRateFormattingKeepsCompactValuesShortAtRoundingBoundaries() throws {
+        let request = CompactBarPresentation.Request(language: "en", providers: [.codex], context: context())
+        let encoded = try JSONEncoder().encode(request)
+        for (rate, horizontal, strip, spoken) in [(nil, "000", "000", "0"), (7.0, "007", "007", "7"),
+            (999.4, "999", "999", "999"), (999.5, "1000", "1.0k", "1000"), (999_999.0, "999999", "1.0M", "999999")] {
+            var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            var values = try XCTUnwrap(wire["context"] as? [String: Any])
+            values["rate"] = rate; wire["context"] = values
+            let input = try JSONDecoder().decode(CompactBarPresentation.Request.self, from: JSONSerialization.data(withJSONObject: wire))
+            let output = try XCTUnwrap(CompactBarPresentation.project(input))
+            let tps = try component("tps", in: output)
+            XCTAssertTrue(output.leading.contains("tps")); XCTAssertTrue(output.stripLanes?.leading.contains("tps") == true)
+            XCTAssertEqual(tps.text, horizontal); XCTAssertEqual(tps.stripText, strip); XCTAssertEqual(tps.accessibility, spoken + " t/s")
+        }
     }
     func testContextOmitsAccountCreditsAndTaskIdentityWithoutMutatingTheSource() throws {
         var snapshot = try XCTUnwrap(DemoScenario.quota(at: now).last)

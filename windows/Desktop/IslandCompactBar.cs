@@ -22,10 +22,11 @@ public partial class IslandWindow
     private readonly StackPanel compactTime = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
     private readonly StackPanel compactStripTime = new() { HorizontalAlignment = HorizontalAlignment.Center };
     private readonly TextBlock compactStripQuotaUnit = CompactInk.Text(9, FontWeights.Medium, CompactInk.Unit);
-    private CompactProjection? compactData;
+    private (EngineSnapshot? Snapshot, CompactProjection Row, CompactProjection? LegacyStrip, string? Placeholder)? compactDisplay;
     private CompactMetrics compactSizes = CompactMetrics.Standard;
     private bool quotaLinked, stripQuotaLinked;
     private double measuredStripHeight = 135;
+    private (double Header, double Strip)? laidOutCompactSize;
     /// The bar size's index in Core's `CompactBarSize.allCases`, for the native layout.
     private int CompactSizeIndex => Math.Max(0, Array.IndexOf(DesktopPreferences.BarSizes, compactPreferences.CompactBarSize));
 
@@ -67,19 +68,32 @@ public partial class IslandWindow
         }
         UpdateCompactBar();
     }
-    private void UpdateCompactBar()
+    private bool UpdateCompactBar(bool projectionOnly = false)
     {
-        if (compactRow.Count == 0) return;
+        if (compactRow.Count == 0) return false;
         var providers = NativeCompactBar.Providers(compactPreferences, latest);
-        bool attached = displayMode == 1;
-        var horizontal = NativeCompactBar.Shared.Read(compactPreferences, ui.Language, providers, latest?.CompactContext, attached: attached);
-        bool horizontalPending = NativeCompactBar.Shared.LastPending;
-        var vertical = NativeCompactBar.Shared.Read(compactPreferences, ui.Language, providers, latest?.CompactContext, strip: true);
         // Source values change with every rate update. Until their projection
         // arrives, keep the bar as displayed: clearing it removed the badge,
         // restarting its rotation and retargeting the collapse motion.
-        if ((horizontalPending || NativeCompactBar.Shared.LastPending) && compactData is { Components.Length: > 0 }) return;
-        compactData = horizontal;
+        var horizontal = NativeCompactBar.Shared.Read(compactPreferences, ui.Language, providers, latest?.CompactContext, attached: displayMode == 1);
+        bool pending = NativeCompactBar.Shared.LastPending;
+        // Once an older engine is known, start both queries together. Starting the strip after
+        // the row finishes can evict the row's reply when the projection cache is full.
+        CompactProjection? legacyStrip = null;
+        if (horizontal.StripLanes == null && (horizontal.Components.Length > 0 || compactDisplay?.LegacyStrip != null))
+        {
+            legacyStrip = NativeCompactBar.Shared.Read(compactPreferences, ui.Language, providers, latest?.CompactContext, strip: true);
+            pending |= NativeCompactBar.Shared.LastPending;
+        }
+        if (pending && compactDisplay is { Row.Components.Length: > 0 }) return false;
+        var vertical = legacyStrip ?? horizontal;
+        string[] stripLeading = horizontal.StripLanes?.Leading ?? legacyStrip?.Leading ?? [];
+        string[] stripTrailing = horizontal.StripLanes?.Trailing ?? legacyStrip?.Trailing ?? [];
+        string? placeholderText = horizontal.Components.Length > 0 ? null
+            : ShellProjection.HasFailure("projectCompactBar") ? ui.Text("windows.connection.refresh_failed") : "…";
+        if (projectionOnly && compactDisplay is { } shown && ReferenceEquals(shown.Row, horizontal)
+            && ReferenceEquals(shown.LegacyStrip, legacyStrip) && ReferenceEquals(shown.Snapshot, latest) && shown.Placeholder == placeholderText) return false;
+        compactDisplay = (latest, horizontal, legacyStrip, placeholderText);
         var sizes = compactSizes = horizontal.Sizes;
         var choices = horizontal.Choices;
         Badge.SetSize(sizes.Badge); StripBadge.SetSize(sizes.Badge);
@@ -91,7 +105,8 @@ public partial class IslandWindow
         }
         UpdateValues(horizontal, false); UpdateValues(vertical, true);
         QuotaGlyph.Update(horizontal, latest?.Wallet); StripQuotaGlyph.Update(vertical, latest?.Wallet, strip: true);
-        quotaLinked = Linked(horizontal); stripQuotaLinked = Linked(vertical);
+        quotaLinked = Linked(horizontal, horizontal.Leading, horizontal.Trailing);
+        stripQuotaLinked = Linked(vertical, stripLeading, stripTrailing);
         QuotaGlyph.Highlighted = quotaLinked ? QuotaLabel.CurrentProvider : null; StripQuotaGlyph.Highlighted = stripQuotaLinked ? StripQuota.CurrentProvider : null;
         foreach (var clock in new[] { compactClock, compactStripClock }) { clock.Width = clock.Height = sizes.Gauge; clock.Update(latest?.Wallet); }
         WarningGlyphs.Update(latest?.CompactWarnings, choices.WarningStyle, choices.WarningLimit, sizes.Warning, DecorationsAnimate);
@@ -101,19 +116,21 @@ public partial class IslandWindow
         StripLeading.Margin = new Thickness(0, sizes.StripInset, 0, 0); StripTrailing.Margin = new Thickness(0, 0, 0, sizes.StripInset);
         Fill(HeaderLeading, horizontal.Leading, compactRow, false, sizes.Gap);
         Fill(HeaderTrailing, horizontal.Trailing, compactRow, false, sizes.Gap);
-        Fill(StripLeading, vertical.Leading, compactColumn, true, sizes.StripGap); Fill(StripTrailing, vertical.Trailing, compactColumn, true, sizes.StripGap);
-        if (horizontal.Components.Length == 0)
+        Fill(StripLeading, stripLeading, compactColumn, true, sizes.StripGap); Fill(StripTrailing, stripTrailing, compactColumn, true, sizes.StripGap);
+        if (placeholderText != null)
         {
             var placeholder = new Button { Name = "enginePlaceholder", IsHitTestVisible = false, IsEnabled = false, Focusable = false, IsTabStop = false,
-                Content = new TextBlock { Text = !ShellProjection.HasFailure("projectCompactBar") ? "…" : ui.Text("windows.connection.refresh_failed"),
+                Content = new TextBlock { Text = placeholderText,
                     Foreground = PacerPalette.Secondary, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 220 },
                 Style = (Style)FindResource("CompactComponentButton") };
             HeaderLeading.Children.Add(placeholder);
         }
         // The ring the alternating value is not naming dims, unless the rings' card turned that off.
-        static bool Linked(CompactProjection data) => data.Choices.RingDim && data.Choices.QuotaMultiple == "alternate" && data.Rings.Length > 1
-            && data.Rings.All(ring => ring.Window == null) && data.Leading.Concat(data.Trailing).Contains("quota")
-            && data.Leading.Concat(data.Trailing).Contains("quotaGauge");
+        return true;
+
+        static bool Linked(CompactProjection data, string[] leading, string[] trailing) => data.Choices.RingDim
+            && data.Choices.QuotaMultiple == "alternate" && data.Rings.Length > 1 && data.Rings.All(ring => ring.Window == null)
+            && (leading.Contains("quota") || trailing.Contains("quota")) && (leading.Contains("quotaGauge") || trailing.Contains("quotaGauge"));
         void UpdateValues(CompactProjection data, bool column)
         {
             var slots = column ? compactColumn : compactRow;
@@ -130,7 +147,6 @@ public partial class IslandWindow
             // A rate without a fresh measurement stays, in the secondary colour.
             rateView.Update(column ? rate.StripText : rate.Text, column ? rate.StripUnit : rate.Unit,
                 latest?.RateIsFresh == true ? PacerPalette.Primary : PacerPalette.Secondary, metrics);
-            rateView.Visibility = rate.Shown && rate.Visible ? Visibility.Visible : Visibility.Collapsed;
             var first = Item("firstOutput");
             (column ? compactStripFirst : compactFirst).Update(column ? first.StripText : first.Text, column ? first.StripUnit : first.Unit,
                 PacerPalette.Primary, metrics);
