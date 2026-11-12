@@ -382,7 +382,7 @@ final class IslandModel: ObservableObject {
         guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL,
               let ticket = codexProgressQueue.request(.init(home: home, executable: defaults.string(forKey: "codexExecutable") ?? "",
                                                             enabled: showsCodexProgressRing && isModuleEnabled(.codex)), force: force) else { return }
-        let target = ticket.target
+        let target = ticket.target, durable = monitorsDurable
         // Apply flag changes in order, off the main actor and independently
         // of any earlier setup that is still waiting for Codex.
         let gate = codexProgressGate, previousHome = ticket.previous?.home
@@ -398,10 +398,10 @@ final class IslandModel: ObservableObject {
                 let generation = await flagTask.value
                 await ticket.waitForPrevious()
                 if let previous = ticket.previous, previous.home != target.home {
-                    _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false)
+                    _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false, durable: false)
                 }
                 return await Self.configureCodexReporter(home: target.home, executable: target.executable, reporter: reporter, enabled: target.enabled,
-                                                         gate: gate, request: generation)
+                                                         durable: durable, gate: gate, request: generation)
             }.value
             guard let self, !stopped, codexProgressQueue.finish(ticket) else { return }
             codexProgressFlagTask = nil
@@ -410,7 +410,7 @@ final class IslandModel: ObservableObject {
         codexProgressQueue.track(task)
     }
 
-    private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool,
+    private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool, durable: Bool,
                                                            gate: CodexProgressSwitchGate? = nil, request: Int = 0) async -> CodexProgressSetupStatus? {
         let command: CodexProgressCommand? = enabled ? .native(executable: reporter, home: home) : nil
         let status = await CodexProgressSetup.apply(home: home, reporter: command, storage: MacClaudeHookStorage(),
@@ -424,7 +424,8 @@ final class IslandModel: ObservableObject {
         if !enabled || status == .ready {
             // The Dot plugin is best effort: a failed install leaves local
             // sessions reporting and is retried by the next setup.
-            _ = await MacDurableProgressSetup.apply(home: home, reporter: enabled ? reporter : nil,
+            // With Dot off the plugin is removed, as when the ring is off.
+            _ = await MacDurableProgressSetup.apply(home: home, reporter: enabled && durable ? reporter : nil,
                                                     customExecutable: executable)
         }
         return status
@@ -440,6 +441,8 @@ final class IslandModel: ObservableObject {
     var showsClaudeProgressRing: Bool { Self.progressRingEnabled(Self.claudeProgressRingKey, in: defaults) }
     /// The setting the last settings pass applied, so a switch reaches SSH hosts once.
     private var appliedClaudeProgressRing = false
+    /// The Dot switch the Codex progress setup last applied.
+    private var appliedDurable = false
     /// The Claude home where this app turned the ring's switch on.
     private var claudeProgressSwitchHome: URL?
     /// Only an app that manages the hooks writes the switch; a demo never
@@ -1101,6 +1104,14 @@ final class IslandModel: ObservableObject {
     var rateIsFresh: Bool { overview.rateIsFresh }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     var monitorsRemoteControl: Bool { defaults.bool(forKey: "monitorRemoteControl") }
+    /// Dot tasks are opt-in; see `migrateDurableSwitch`.
+    nonisolated static let monitorsDurableKey = "monitorDurable"
+    var monitorsDurable: Bool { defaults.bool(forKey: Self.monitorsDurableKey) }
+    /// An upgraded profile decides once: Dot stays on where its tasks already reported progress.
+    static func migrateDurableSwitch(in defaults: UserDefaults, home: URL, files: any PlatformFileSystem = MacFileSystem()) {
+        guard defaults.object(forKey: monitorsDurableKey) == nil else { return }
+        defaults.set(DurableUsageEvidence.hasReceipts(home: home, files: files), forKey: monitorsDurableKey)
+    }
     static let showsClaudeCloudProjectsKey = "showClaudeCloudProjects"
     var showsClaudeCloudProjects: Bool {
         defaults.object(forKey: Self.showsClaudeCloudProjectsKey) == nil || defaults.bool(forKey: Self.showsClaudeCloudProjectsKey)
@@ -1150,6 +1161,8 @@ final class IslandModel: ObservableObject {
         if let saved = defaults.string(forKey: "selectedQuotaProvider").flatMap(AgentProvider.init(rawValue:)), enabledProviders.contains(saved) {
             selectedProvider = saved
         } else { selectedProvider = enabledProviders.first ?? .codex }
+        if !demo { Self.migrateDurableSwitch(in: defaults, home: home) }
+        appliedDurable = defaults.bool(forKey: Self.monitorsDurableKey)
         lifecycle = ApplicationLifecycleCoordinator(demo: demo, configuration: .init(enabled: Set(enabledProviders),
             sources: [.codex: currentCodexSourceSignature, .claude: currentClaudeSourceSignature, .deepseek: currentDeepSeekSourceSignature],
             hasDemoSnapshot: demo && demoArguments != nil))
@@ -1729,7 +1742,8 @@ final class IslandModel: ObservableObject {
         launchOwnedWork(.init(.remote, provider: .codex)) { [weak self] workTicket in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.ownedWork.finish(workTicket) } }
-            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl, refreshPolicy: self.activityRefreshPolicy) { [weak self] snapshot in
+            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl,
+                includeDurable: self.monitorsDurable, refreshPolicy: self.activityRefreshPolicy) { [weak self] snapshot in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
@@ -1783,12 +1797,7 @@ final class IslandModel: ObservableObject {
     }
     /// Helper CPU, loop and notification counters change on every heartbeat and are never shown.
     static func sameVisibleStreamState(_ lhs: [String: RuntimeStreamStatus], _ rhs: [String: RuntimeStreamStatus]) -> Bool {
-        func visible(_ value: RuntimeStreamStatus) -> RuntimeStreamStatus {
-            var value = value
-            value.helperCpuSeconds = 0; value.helperLoopIterations = 0; value.notifications = 0; value.fallbackScans = 0
-            return value
-        }
-        return lhs.count == rhs.count && lhs.allSatisfy { key, value in rhs[key].map(visible) == visible(value) }
+        lhs.count == rhs.count && lhs.allSatisfy { key, value in rhs[key].map(value.sameState(as:)) == true }
     }
     func applyActivityUpdate(_ update: ActivityApplicationUpdate) {
         if activities != update.activities { activities = update.activities }
@@ -1815,7 +1824,7 @@ final class IslandModel: ObservableObject {
     }
 
     private var currentCodexSourceSignature: String {
-        home.path + "|" + (defaults.string(forKey: "codexExecutable") ?? "") + "|" + String(monitorsRemoteControl)
+        home.path + "|" + (defaults.string(forKey: "codexExecutable") ?? "") + "|" + String(monitorsRemoteControl) + "|" + String(monitorsDurable)
     }
     private var currentClaudeSourceSignature: String {
         claudeHome.path + "|" + String(monitorsSSH) + (monitorsSSH
@@ -1853,6 +1862,10 @@ final class IslandModel: ObservableObject {
         }
         // A restarted Claude source applies the ring's switch as part of its setup.
         if !plan.changedProviders.contains(.claude) || !isModuleEnabled(.claude) { syncClaudeProgressSwitch() }
+        if appliedDurable != monitorsDurable {
+            appliedDurable = monitorsDurable
+            syncCodexProgressSwitch(force: true)
+        }
         if appliedClaudeProgressRing != showsClaudeProgressRing {
             appliedClaudeProgressRing = showsClaudeProgressRing
             scheduleClaudeRemoteSetup()

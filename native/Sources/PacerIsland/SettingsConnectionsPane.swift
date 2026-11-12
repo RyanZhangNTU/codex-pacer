@@ -8,6 +8,7 @@ struct SettingsConnectionsPane: View {
     @ObservedObject var model: IslandModel
     @Binding var monitorSSH: Bool
     @Binding var monitorRemoteControl: Bool
+    @Binding var monitorDurable: Bool
     let codexEnabled: Bool
     let claudeEnabled: Bool
 
@@ -97,6 +98,10 @@ struct SettingsConnectionsPane: View {
                 }
             }
             ForEach(sources.filter { $0.key.hasPrefix(ConnectionSource.controlPrefix) }) { source in sourceRow(source) }
+        }
+        MainCard(title: "Codex Dot") {
+            CardToggle(title: L10n.text("settings.monitor_durable"), info: L10n.text("settings.durable_help"), isOn: $monitorDurable)
+                .disabled(!codexEnabled)
         }
         let others = sources.filter { !$0.key.hasPrefix(ConnectionSource.sshPrefix) && !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
         if !others.isEmpty {
