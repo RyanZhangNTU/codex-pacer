@@ -75,6 +75,8 @@ public sealed class ActivityBadge : Grid
     private double? estimateFlowTo;
     /// Ink on a solid ending, as in the task rows.
     private static readonly Brush EndingMarkInk = PacerPalette.Ink(0, 0, 0, 189);
+    private static readonly Brush Sheen = Frozen(new LinearGradientBrush(new GradientStopCollection { new(Color.FromArgb(66, 255, 255, 255), 0), new(Color.FromArgb(0, 255, 255, 255), 0.5) }, 90));
+    private static Brush Frozen(Brush brush) { brush.Freeze(); return brush; }
     internal bool ShowsEstimate => estimate.Visibility == Visibility.Visible && previous?.ProgressFraction != null;
     internal double EstimateFraction => estimateArc.Fraction;
     /// Whether everything ended and the core is a solid disc; read by the presentation checks.
@@ -84,6 +86,36 @@ public sealed class ActivityBadge : Grid
     internal (bool Composed, bool FallbackClock, long Uploads, IntPtr Window) RotationScheduling => (orbit != null && rotating, spin != null, orbit?.Uploads ?? 0, orbit?.WindowHandle ?? IntPtr.Zero);
     internal void InjectOrbitDeviceLoss() => orbit?.InjectDeviceLoss();
     internal bool HasEndingMarker => ending.Visibility == Visibility.Visible;
+    /// The endless loops' rate: full while the panel is open, a recognisable but
+    /// cheaper rate while only the collapsed bar shows them.
+    internal const int OpenFrameRate = 30, CollapsedFrameRate = 12;
+    private const double SpinPeriod = 1.8;
+    private int frameRate = OpenFrameRate;
+    private EngineHeader? lastValue;
+    private BadgeOptions? lastOptions;
+    private object? coreKey;
+    private double clipWidth = double.NaN;
+    internal int FrameRate
+    {
+        get => frameRate;
+        set
+        {
+            if (frameRate == value) return;
+            frameRate = value;
+            // Each running loop restarts on the shared clock, so its phase carries over.
+            if (estimateFlowLoop != null && estimateFlowTo is double flow) { estimateFlowLoop.Dispose(); estimateFlowLoop = FlowLoop(flow); }
+            if (estimateStepLoop != null) { estimateStepLoop.Dispose(); estimateStepLoop = BreathLoop(estimateStep); }
+            if (segmentBreathLoop != null) { segmentBreathLoop.Dispose(); segmentBreathLoop = BreathLoop(segmentBreath); }
+            if (spin != null) { spin.Dispose(); spin = SpinLoop(); }
+        }
+    }
+    /// The desired rate of the running loops; read by the presentation checks.
+    internal int LoopFrameRate => frameRate;
+    /// Applies the island's motion policy to the header shown last, without a new snapshot.
+    internal void SetAnimations(bool value)
+    {
+        if (lastValue != null && canAnimate != value) Update(lastValue, value, lastOptions);
+    }
     public ActivityBadge()
     {
         Width = Height = 20; IsHitTestVisible = false;
@@ -119,6 +151,7 @@ public sealed class ActivityBadge : Grid
     internal void Update(EngineHeader value, bool? animations = null, BadgeOptions? options = null)
     {
         var choice = options ?? BadgeOptions.Default;
+        lastValue = value; lastOptions = options;
         canAnimate = animations ?? SystemParameters.ClientAreaAnimation;
         bool reduce = !canAnimate;
         // Several running tasks can show their estimates instead of the services:
@@ -152,28 +185,36 @@ public sealed class ActivityBadge : Grid
         Brush ink = value.Attention != null ? PacerPalette.Ink(66, 38, 5) : value.EndingIsCore ? EndingMarkInk : PacerPalette.Primary;
         bool solid = value.Attention != null || value.EndingIsCore;
         core.Height = core.MinWidth = solid ? 17 : 15; core.CornerRadius = new CornerRadius(solid ? 8.5 : 7.5);
-        if (percent != null)
-            core.Child = new TextBlock { Text = percent, FontSize = 8, FontWeight = FontWeights.Bold, Foreground = ink,
-                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        else if (value.CoreSymbol is string symbol)
-            core.Child = new IconGlyph { Symbol = symbol.EndsWith(".circle", StringComparison.Ordinal) ? symbol[..^7] : symbol, Ink = ink, Width = 11, Height = 11,
-                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        else if (value.ActiveCount > 0)
-            core.Child = new TextBlock { Text = value.ActiveCountText ?? "—", FontSize = 10, FontWeight = FontWeights.Bold,
-                Foreground = ink, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        else core.Child = new Ellipse { Fill = PacerPalette.Tertiary, Width = 5, Height = 5, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        if (value.EndingIsCore && value.Attention == null)
+        // The core is rebuilt only when what it draws changes; a new rate or
+        // estimate leaves its text, mark and disc as they are.
+        string? symbol = percent == null ? value.CoreSymbol : null;
+        string? count = percent == null && symbol == null && value.ActiveCount > 0 ? value.ActiveCountText ?? "—" : null;
+        Color? endingTint = value.EndingIsCore && value.Attention == null ? ((SolidColorBrush)EndingInk(value)).Color : null;
+        var key = (percent, symbol, count, (ink as SolidColorBrush)?.Color, endingTint, several, value.Attention != null, PacerPalette.Light);
+        if (!Equals(coreKey, key))
         {
-            var tint = ((SolidColorBrush)EndingInk(value)).Color;
-            core.Background = new LinearGradientBrush(Color.FromRgb((byte)(tint.R + (255 - tint.R) * 0.28), (byte)(tint.G + (255 - tint.G) * 0.28), (byte)(tint.B + (255 - tint.B) * 0.28)), tint, 90);
-            // Lit from the top, as a row's disc.
-            var sheen = new Border { CornerRadius = new CornerRadius(7.5), IsHitTestVisible = false,
-                Background = new LinearGradientBrush(new GradientStopCollection { new(Color.FromArgb(66, 255, 255, 255), 0), new(Color.FromArgb(0, 255, 255, 255), 0.5) }, 90) };
-            var mark = core.Child; core.Child = null;
-            var face = new Grid(); face.Children.Add(sheen); if (mark != null) face.Children.Add(mark); core.Child = face;
+            coreKey = key;
+            if (percent != null)
+                core.Child = new TextBlock { Text = percent, FontSize = 8, FontWeight = FontWeights.Bold, Foreground = ink,
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            else if (symbol != null)
+                core.Child = new IconGlyph { Symbol = symbol.EndsWith(".circle", StringComparison.Ordinal) ? symbol[..^7] : symbol, Ink = ink, Width = 11, Height = 11,
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            else if (count != null)
+                core.Child = new TextBlock { Text = count, FontSize = 10, FontWeight = FontWeights.Bold,
+                    Foreground = ink, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            else core.Child = new Ellipse { Fill = PacerPalette.Tertiary, Width = 5, Height = 5, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            if (endingTint is Color tint)
+            {
+                core.Background = new LinearGradientBrush(Color.FromRgb((byte)(tint.R + (255 - tint.R) * 0.28), (byte)(tint.G + (255 - tint.G) * 0.28), (byte)(tint.B + (255 - tint.B) * 0.28)), tint, 90);
+                // Lit from the top, as a row's disc.
+                var sheen = new Border { CornerRadius = new CornerRadius(7.5), IsHitTestVisible = false, Background = Sheen };
+                var mark = core.Child; core.Child = null;
+                var face = new Grid(); face.Children.Add(sheen); if (mark != null) face.Children.Add(mark); core.Child = face;
+            }
+            // Several tasks: the count sits on a faint disc so it reads steadily over the ring.
+            else core.Background = value.Attention != null ? PacerPalette.Attention : several && core.Child is TextBlock ? SoftCore : Brushes.Transparent;
         }
-        // Several tasks: the count sits on a faint disc so it reads steadily over the ring.
-        else core.Background = value.Attention != null ? PacerPalette.Attention : several && core.Child is TextBlock ? SoftCore : Brushes.Transparent;
         core.BorderBrush = Brushes.Transparent; core.BorderThickness = new Thickness(0);
         halo.Stroke = PacerPalette.Attention;
         halo.Visibility = value.Attention != null ? Visibility.Visible : Visibility.Collapsed;
@@ -225,39 +266,46 @@ public sealed class ActivityBadge : Grid
             estimateSweep = new AnimationLease(sweep, clock => estimateArc.ApplyAnimationClock(EstimatePaint.FractionProperty, clock), () => estimateSweep = null);
         }
         estimateFlow.Fraction = estimateStep.Fraction = target; estimateFlow.Limit = target;
-        double now = TaskProgressRing.Now;
         bool live = animate && IsVisible;
         double? flow = live && !longStep && !stale && target is > 0.04 and < 0.9995 ? target : null;
         if (flow != estimateFlowTo)
         {
             estimateFlowLoop?.Dispose(); estimateFlowLoop = null; estimateFlow.BeginAnimation(EstimatePaint.FrontProperty, null);
             estimateFlowTo = flow; estimateFlow.Flowing = flow != null;
-            if (flow is double fraction)
-            {
-                double reach = fraction + EstimatePaint.FlowLengths[0];
-                var run = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.FlowPeriod), RepeatBehavior = RepeatBehavior.Forever,
-                    BeginTime = TimeSpan.FromSeconds(-(now % EstimatePaint.FlowPeriod)) };
-                run.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-                run.KeyFrames.Add(new LinearDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowTravel))));
-                run.KeyFrames.Add(new DiscreteDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowPeriod))));
-                Timeline.SetDesiredFrameRate(run, 30);
-                estimateFlowLoop = new AnimationLease(run, clock => estimateFlow.ApplyAnimationClock(EstimatePaint.FrontProperty, clock));
-            }
+            if (flow is double fraction) estimateFlowLoop = FlowLoop(fraction);
         }
         bool step = longStep && target < 0.9995;
         if (live && step != (estimateStepLoop != null) || !live && estimateStepLoop != null)
         {
             estimateStepLoop?.Dispose(); estimateStepLoop = null; estimateStep.BeginAnimation(OpacityProperty, null);
-            if (live && step)
-            {
-                estimateStepLoop = new AnimationLease(StepBreath(now), clock => estimateStep.ApplyAnimationClock(OpacityProperty, clock));
-            }
+            if (live && step) estimateStepLoop = BreathLoop(estimateStep);
         }
         if (estimateStepLoop == null) estimateStep.Opacity = step ? 0.55 : 0;
     }
+    /// One run of light from the arc's start out through its head, then a rest, on the shared clock.
+    private AnimationLease FlowLoop(double fraction)
+    {
+        double reach = fraction + EstimatePaint.FlowLengths[0];
+        var run = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.FlowPeriod), RepeatBehavior = RepeatBehavior.Forever,
+            BeginTime = TimeSpan.FromSeconds(-(TaskProgressRing.Now % EstimatePaint.FlowPeriod)) };
+        run.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        run.KeyFrames.Add(new LinearDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowTravel))));
+        run.KeyFrames.Add(new DiscreteDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowPeriod))));
+        Timeline.SetDesiredFrameRate(run, frameRate);
+        return new AnimationLease(run, clock => estimateFlow.ApplyAnimationClock(EstimatePaint.FrontProperty, clock));
+    }
+    private AnimationLease BreathLoop(UIElement target) => new(StepBreath(TaskProgressRing.Now, frameRate), clock => target.ApplyAnimationClock(OpacityProperty, clock));
+    /// The fallback rotation without the compositor, on the shared clock.
+    private AnimationLease SpinLoop()
+    {
+        var animation = new DoubleAnimation(0, 360, TimeSpan.FromSeconds(SpinPeriod)) { RepeatBehavior = RepeatBehavior.Forever,
+            BeginTime = TimeSpan.FromSeconds(-(TaskProgressRing.Now % SpinPeriod)) };
+        Timeline.SetDesiredFrameRate(animation, frameRate);
+        return new(animation, clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
+    }
     /// The long step's breath, 0.2 to 0.85 and back over its period, in phase
     /// with every other breath on the shared clock.
-    private static DoubleAnimationUsingKeyFrames StepBreath(double now)
+    private static DoubleAnimationUsingKeyFrames StepBreath(double now, int frameRate)
     {
         var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
         var breath = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.StepPeriod), RepeatBehavior = RepeatBehavior.Forever,
@@ -265,7 +313,7 @@ public sealed class ActivityBadge : Grid
         breath.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.Zero)));
         breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.85, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod / 2)), ease));
         breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod)), ease));
-        Timeline.SetDesiredFrameRate(breath, 30);
+        Timeline.SetDesiredFrameRate(breath, frameRate);
         return breath;
     }
     /// Segments of tasks without an estimate breathe together while the badge
@@ -275,7 +323,7 @@ public sealed class ActivityBadge : Grid
         bool live = segmentBreathWanted && IsVisible;
         if (live == (segmentBreathLoop != null)) return;
         segmentBreathLoop?.Dispose(); segmentBreathLoop = null; segmentBreath.BeginAnimation(OpacityProperty, null); segmentBreath.Opacity = 0;
-        if (live) segmentBreathLoop = new AnimationLease(StepBreath(TaskProgressRing.Now), clock => segmentBreath.ApplyAnimationClock(OpacityProperty, clock));
+        if (live) segmentBreathLoop = BreathLoop(segmentBreath);
     }
     private void StopEstimate()
     {
@@ -292,6 +340,8 @@ public sealed class ActivityBadge : Grid
     private void UpdateClip()
     {
         double width = Width;
+        if (width == clipWidth) return;
+        clipWidth = width;
         var shape = new GeometryGroup { FillRule = FillRule.EvenOdd };
         shape.Children.Add(new RectangleGeometry(new Rect(0, 0, width, 20), 10, 10));
         shape.Children.Add(new RectangleGeometry(new Rect(1.5, 1.5, width - 3, 17), 8.5, 8.5));
@@ -311,9 +361,7 @@ public sealed class ActivityBadge : Grid
         rotating = true;
         paint.Opacity = orbit == null ? 1 : 0;
         if (orbit != null) return;
-        var animation = new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1.8)) { RepeatBehavior = RepeatBehavior.Forever };
-        Timeline.SetDesiredFrameRate(animation, 30);
-        spin = new(animation, clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
+        spin = SpinLoop();
     }
     private void StopRotation() { spin?.Dispose(); spin = null; orbit?.Set(false); paint.Opacity = 1; rotating = false; }
     private void OrbitUnavailable()
@@ -418,7 +466,7 @@ internal sealed class SegmentPaint : FrameworkElement
             drawing.DrawGeometry(null, Pen(color), EstimatePaint.Arc(center, radius, start, start + span * Math.Clamp(fraction, 0, 1)));
             drawing.Pop();
         }
-        static Pen Pen(Color color) => new(new SolidColorBrush(color), stroke) { StartLineCap = PenLineCap.Flat, EndLineCap = PenLineCap.Flat };
+        static Pen Pen(Color color) => DrawingCache.Pen(color, stroke);
     }
 }
 
@@ -434,6 +482,8 @@ internal sealed class OrbitPaint : FrameworkElement
     private (Color Codex, Color Claude, Color DeepSeek) shades;
     private AnimationLease? transition;
     internal event Action? Changed;
+    /// While a change of services eases between its stops.
+    internal bool Transitioning => (double)GetValue(ProgressProperty) < 1;
     internal OrbitPaint() { SizeChanged += (_, _) => Changed?.Invoke(); Unloaded += (_, _) => { transition?.Dispose(); transition = null; }; }
     internal void Update(IReadOnlyDictionary<string, int> values, bool animate)
     {

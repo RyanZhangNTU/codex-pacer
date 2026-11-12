@@ -43,18 +43,24 @@ internal sealed class ComposedBadgeOrbit : IDisposable
         hide = Export<HandleAction>("pacer_orbit_hide"); destroy = Export<HandleAction>("pacer_surface_destroy"); testLoss = Export<HandleAction>("pacer_surface_test_loss");
         Check(Export<Create>("pacer_orbit_create")(hwnd, RemovedMessage, out handle));
         WindowHandle = Export<GetWindow>("pacer_surface_window")(handle);
-        source.AddHook(Message); badge.LayoutUpdated += Layout; paint.Changed += PaintChanged; owner.LocationChanged += Layout;
+        // LayoutUpdated is raised for every layout pass on the thread, so it is
+        // followed only while the orbit shows; moves and fades have their own events.
+        source.AddHook(Message); paint.Changed += PaintChanged; owner.LocationChanged += Layout;
         badge.RenderTransform.Changed += Layout;
         for (DependencyObject? node = badge; node != null; node = VisualTreeHelper.GetParent(node))
             if (node is UIElement) { ancestors.Add(node); OpacityDescriptor.AddValueChanged(node, Layout); }
     }
     internal void Set(bool value)
     {
+        if (value != enabled) { if (value) badge.LayoutUpdated += Layout; else badge.LayoutUpdated -= Layout; }
         enabled = value;
         if (!value) { hide(handle); last = null; return; }
         Sync();
     }
-    private void PaintChanged() { dirty = true; Sync(); }
+    // A change of services eases its colours for a third of a second; the
+    // compositor keeps turning the previous texture meanwhile and receives
+    // only the final one, instead of a readback and upload for every frame.
+    private void PaintChanged() { dirty = true; if (!paint.Transitioning) Sync(); }
     private void Layout(object? sender, EventArgs args) => Sync();
     private void Sync()
     {
@@ -68,7 +74,7 @@ internal sealed class ComposedBadgeOrbit : IDisposable
             var frame = new Frame((int)Math.Round(start.X), (int)Math.Round(start.Y), Math.Max(1, (int)Math.Round(end.X - start.X)),
                 Math.Max(1, (int)Math.Round(end.Y - start.Y)), scale, opacity, badge.HasEndingMarker);
             double dpi = VisualTreeHelper.GetDpi(badge).DpiScaleX;
-            if (dirty || textureScale != dpi)
+            if (dirty && (!paint.Transitioning || Uploads == 0) || textureScale != dpi)
             {
                 var bitmap = paint.Bitmap(dpi); int stride = bitmap.PixelWidth * 4;
                 byte[] pixels = new byte[stride * bitmap.PixelHeight]; bitmap.CopyPixels(pixels, stride, 0);
@@ -92,7 +98,7 @@ internal sealed class ComposedBadgeOrbit : IDisposable
     public void Dispose()
     {
         if (handle == IntPtr.Zero) return;
-        badge.LayoutUpdated -= Layout; paint.Changed -= PaintChanged; owner.LocationChanged -= Layout; badge.RenderTransform.Changed -= Layout;
+        badge.LayoutUpdated -= Layout; enabled = false; paint.Changed -= PaintChanged; owner.LocationChanged -= Layout; badge.RenderTransform.Changed -= Layout;
         foreach (var node in ancestors) OpacityDescriptor.RemoveValueChanged(node, Layout); ancestors.Clear();
         if (!source.IsDisposed) source.RemoveHook(Message);
         var value = handle; handle = IntPtr.Zero; destroy(value);

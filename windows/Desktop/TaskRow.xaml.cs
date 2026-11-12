@@ -24,8 +24,10 @@ public partial class TaskRow : Button
     internal const double TwoLineHeight = 54, OneLineHeight = 38;
     internal static double RowHeight(PanelOptions? options) => options?.OneLine == true ? OneLineHeight : TwoLineHeight;
     /// <param name="options">The panel's row style and fields; none draws every field on two lines.</param>
-    internal TaskRow(EngineTaskRow value, PanelOptions? options = null)
+    /// <param name="settled">The first sight draws the icon's final state, as a row built while hidden does.</param>
+    internal TaskRow(EngineTaskRow value, PanelOptions? options = null, bool settled = false)
     {
+        this.settled = settled;
         InitializeComponent();
         FontFamily = PacerFonts.Interface;
         var state = new TaskRowState(value, options);
@@ -40,13 +42,32 @@ public partial class TaskRow : Button
         Unloaded += (_, _) => { hovered = false; hoverRevision++; hover?.Dispose(); hover = null; HoverProgress = 0; };
         Loaded += (_, _) => { ApplyAppearance(); if (!progressShown) { progressShown = true; ShowProgress(); } };
     }
-    private bool progressShown;
+    private bool progressShown, settled;
     /// The ring and the state share one 28-pt icon, as on the Mac.
     private void ShowProgress()
     {
         var state = (TaskRowState)DataContext;
-        var color = state.StatusInk is SolidColorBrush solid ? solid.Color : PacerPalette.Neutral;
-        Icon.Show(state.Value, color, animations && IsVisible);
+        bool animate = animations && IsVisible;
+        Icon.Show(state.Value, IconColor(state), animate && !settled);
+        // A settled first sight still runs the face's own loops.
+        if (settled && animate) Icon.SetMotion(true);
+        settled = false;
+    }
+    private static Color IconColor(TaskRowState state) => state.StatusInk is SolidColorBrush solid ? solid.Color : PacerPalette.Neutral;
+    /// Takes the same task's new values in place. Text and colours rebind; the
+    /// icon is shown again only when its state or colour changed, so a new rate
+    /// or turn time leaves its motion alone.
+    internal void Update(EngineTaskRow value, PanelOptions? options)
+    {
+        var previous = (TaskRowState)DataContext;
+        if (previous.Value == value && previous.OneLine == (options?.OneLine == true)) return;
+        var state = new TaskRowState(value, options);
+        DataContext = state;
+        var before = previous.Value;
+        if (progressShown && (before.Symbol != value.Symbol || before.Dimmed != value.Dimmed || before.ProgressState != value.ProgressState
+            || before.ProgressMode != value.ProgressMode || before.ProgressFraction != value.ProgressFraction || before.ProgressStale != value.ProgressStale
+            || IconColor(previous) != IconColor(state)))
+            ShowProgress();
     }
     /// The row's status icon; read by the presentation checks.
     internal TaskStatusIcon StatusIcon => Icon;

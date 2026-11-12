@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
@@ -85,7 +86,8 @@ public partial class IslandWindow : Window
         Func<EngineNavigationPlan, EngineTaskRow, Task<bool>>? openConversation = null,
         Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null,
         Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null,
-        Func<IDisplayTopologySource>? displayTopologyFactory = null, ISystemAppearanceSource? appearanceSource = null)
+        Func<IDisplayTopologySource>? displayTopologyFactory = null, ISystemAppearanceSource? appearanceSource = null,
+        DisplayPresence? presence = null)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
@@ -102,6 +104,7 @@ public partial class IslandWindow : Window
         if (animationOverride != null && !demo) throw new ArgumentException("Synthetic motion overrides require demo mode.");
         this.animationOverride = animationOverride;
         InitializeAppearance(appearanceSource);
+        InitializePresence(presence);
         string directory = Path.Combine(AppContext.BaseDirectory, "Engine");
         geometry = new NativeLayout(directory);
         displays = displayTopologyFactory?.Invoke() ?? new WindowsDisplayTopology(action => Dispatcher.BeginInvoke(action, DispatcherPriority.ContextIdle));
@@ -122,14 +125,14 @@ public partial class IslandWindow : Window
         InitializeMove();
         // Hover and connection errors can expand the HWND before the first
         // engine snapshot. Give every measured lane a real initial value.
-        InitializeCompactBar();
+        InitializeCompactBar(); PaceBadges();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
         // Closing under the pointer can still raise a leave that starts the timer.
         collapse.Tick += (_, _) => { collapse.Stop(); if (!presentationStopped && !pinned) SetExpanded(false); };
         // The open menu holds the pointer, so leaving the island meanwhile raised no leave event.
         MoreButton.ContextMenu.Closed += (_, _) => Dispatcher.BeginInvoke(() =>
         { if (!presentationStopped && move == null && IsVisible && !pinned && expanded && !IsMouseOver) collapse.Start(); }, DispatcherPriority.Input);
-        engine.Snapshot += value => Dispatcher.InvokeAsync(() => Render(value));
+        engine.Snapshot += QueueSnapshot;
         engine.Status += value => Dispatcher.InvokeAsync(() => SetStatus(ui.Text(value == "engineStopped" ? "windows.connection.closed" : "windows.connection.refresh_failed")));
         ShellProjection.Changed += OnShellProjectionChanged;
         Loaded += (_, _) => OnShellProjectionChanged("");
@@ -309,14 +312,14 @@ public partial class IslandWindow : Window
         position = Array.IndexOf(new[] { "center", "topLeft", "bottomLeft", "topRight", "bottomRight" }, preferences.Position);
         displayMode = Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode);
         showAppButtons = preferences.ShowAppButtons;
-        if ((accentChanged || toneChanged) && latest != null) { RenderPanel(latest); BuildPage(false, 0); }
+        if (accentChanged || toneChanged) InvalidatePanel(rebuildRows: true);
         if (toneChanged) RepaintTone();
         // The style draws from both of Core's layouts, so it needs no new snapshot.
         if (expandedQuotaStyle != preferences.ExpandedQuotaStyle || deepseekPanelStyle != preferences.DeepSeekPanelStyle)
         {
             expandedQuotaStyle = preferences.ExpandedQuotaStyle;
             deepseekPanelStyle = preferences.DeepSeekPanelStyle;
-            if (latest != null) RenderPanel(latest);
+            InvalidatePanel(rebuildRows: false);
         }
         UpdateAppButtons(); UpdateCompactBar();
         if (!MoreButton.ContextMenu.IsOpen) BuildMoreMenu();
@@ -428,6 +431,10 @@ public partial class IslandWindow : Window
         if (value == expanded) return;
         if (!value) Keyboard.ClearFocus();
         expanded = value;
+        // A collapsed island skipped the panel's snapshots; it is built once, before it is measured.
+        // Rows kept from a hidden panel resume their loops once they show.
+        if (value) { RefreshDirtyPanel(); RefreshRowMotion(); }
+        PaceBadges();
         UIElementAutomationPeer.FromElement(this)?.RaisePropertyChangedEvent(ExpandCollapsePatternIdentifiers.ExpandCollapseStateProperty,
             value ? ExpandCollapseState.Collapsed : ExpandCollapseState.Expanded,
             value ? ExpandCollapseState.Expanded : ExpandCollapseState.Collapsed);
@@ -459,30 +466,39 @@ public partial class IslandWindow : Window
         double measuredHeader = size.Header;
         dragHeaderWidth = measuredHeader;
         double rowsHeight = RowsHeight(rows.Count);
-        // Every section header must fit, the one carrying the buttons above all.
-        double headerWidth = 0;
-        foreach (var header in sectionHeaders.Count > 0 ? sectionHeaders : [TaskToolbar])
-        { header.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); headerWidth = Math.Max(headerWidth, header.DesiredSize.Width); }
-        double contentWidth = Math.Max((tasksShown ? measuredRowsWidth : 0) + 12, headerWidth + 12);
-        var widthProbe = MeasureLayout(contentWidth, 0, measuredHeader, expanded);
-        double availableContentWidth = Math.Max(1, widthProbe.CanvasWidth - 12 - (widthProbe.Position != 0 ? widthProbe.StripWidth : 0));
-        double contentHeight;
-        // Before the first snapshot the panel reserves the original quota row.
-        if (latest == null)
-        {
-            contentHeight = 4 + 24 + 4 + rowsHeight + 21 + 24 + 8 + 133 + 4 + 14;
-            if (StatusLabel.Visibility == Visibility.Visible) { StatusLabel.Measure(new Size(availableContentWidth, double.PositiveInfinity)); contentHeight += StatusLabel.DesiredSize.Height; }
-        }
+        double contentWidth, contentHeight;
+        // A collapsed island keeps the panel's last measured size: its
+        // snapshots wait for the next opening, which measures it again.
+        if (!expanded && latest != null && panelSize is { } kept)
+            (contentWidth, contentHeight) = kept;
         else
         {
-            InvalidatePanelMeasure();
-            PanelContent.Measure(new Size(availableContentWidth, double.PositiveInfinity));
-            contentHeight = PanelContent.DesiredSize.Height;
+            // Every section header must fit, the one carrying the buttons above all.
+            double headerWidth = 0;
+            foreach (var header in sectionHeaders.Count > 0 ? sectionHeaders : [TaskToolbar])
+            { header.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); headerWidth = Math.Max(headerWidth, header.DesiredSize.Width); }
+            contentWidth = Math.Max((tasksShown ? measuredRowsWidth : 0) + 12, headerWidth + 12);
+            var widthProbe = MeasureLayout(contentWidth, 0, measuredHeader, expanded);
+            double availableContentWidth = Math.Max(1, widthProbe.CanvasWidth - 12 - (widthProbe.Position != 0 ? widthProbe.StripWidth : 0));
+            // Before the first snapshot the panel reserves the original quota row.
+            if (latest == null)
+            {
+                contentHeight = 4 + 24 + 4 + rowsHeight + 21 + 24 + 8 + 133 + 4 + 14;
+                if (StatusLabel.Visibility == Visibility.Visible) { StatusLabel.Measure(new Size(availableContentWidth, double.PositiveInfinity)); contentHeight += StatusLabel.DesiredSize.Height; }
+            }
+            else
+            {
+                InvalidatePanelMeasure();
+                PanelContent.Measure(new Size(availableContentWidth, double.PositiveInfinity));
+                contentHeight = PanelContent.DesiredSize.Height;
+                PanelMeasures++;
+            }
+            // IslandModel.updateMeasuredContentHeight also rounds upward. A
+            // fractional text line must not create a scrollbar and narrow the
+            // already measured content when geometry snaps the panel to points.
+            contentHeight = Math.Ceiling(contentHeight);
+            if (latest != null) panelSize = (contentWidth, contentHeight);
         }
-        // IslandModel.updateMeasuredContentHeight also rounds upward. A
-        // fractional text line must not create a scrollbar and narrow the
-        // already measured content when geometry snaps the panel to points.
-        contentHeight = Math.Ceiling(contentHeight);
         int previousAnchor = layout.MotionAnchor;
         layout = MeasureLayout(contentWidth, contentHeight, measuredHeader, expanded, snap ? null : expansionAnchor);
         // If the panel had to move to fit, hold that edge until it closes.
@@ -507,12 +523,19 @@ public partial class IslandWindow : Window
         motionRevision++;
         Expanded.Visibility = Visibility.Visible;
         transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, blackHeader, layout.MotionAnchor);
+        if (!AnimationsEnabled)
+        {
+            // Nothing is displayed between here and the settled frame, so the
+            // surface goes straight to its settled outline without growing first.
+            StopRendering(); var settled = motion.SettledAt(transitionStarted);
+            FitSurface(settled); ApplyMotion(settled);
+            return;
+        }
         PrepareSurface();
         // Allocation can wait on the system compositor. Start the displayed
         // transition after that work, retaining the same last displayed sample.
         transitionStarted = Clock(); motion.RetargetTo(destination, expanded, transitionStarted, blackHeader, layout.MotionAnchor);
-        if (!AnimationsEnabled) { StopRendering(); ApplyMotion(motion.SettledAt(transitionStarted)); }
-        else StartRendering();
+        StartRendering();
     }
     private void PrepareSurface()
     {
@@ -523,6 +546,25 @@ public partial class IslandWindow : Window
         NativeWindowBounds.Apply(this, surfaceBounds);
         PlaceShell(lastFrame.Window.Width > 0 ? lastFrame.Window : layout.Target);
     }
+    /// A finished transition keeps only its settled outline. The canvas grown
+    /// for the spring is transparent, but a layered window still pushes all of
+    /// it on every later frame of the bar's own motion. The next transition
+    /// grows it again before it starts.
+    private void FitSurface(MotionFrame frame)
+    {
+        var settled = destination;
+        if (frame.Window.Width > 0 && frame.Window.Height > 0)
+        {
+            var union = Rect.Union(new Rect(settled.X, settled.Y, settled.Width, settled.Height),
+                new Rect(frame.Window.X, frame.Window.Y, frame.Window.Width, frame.Window.Height));
+            settled = new(union.X, union.Y, union.Width, union.Height);
+        }
+        if (settled == surfaceBounds) return;
+        surfaceBounds = settled;
+        NativeWindowBounds.Apply(this, surfaceBounds);
+    }
+    /// The settled window surface, in logical points; read by the presentation checks.
+    internal MotionBounds SurfaceBounds => surfaceBounds;
     private void PlaceShell(MotionBounds frame)
     {
         Shell.Width = frame.Width; Shell.Height = frame.Height;
@@ -567,7 +609,15 @@ public partial class IslandWindow : Window
             int revision = motionRevision;
             if (lastRenderedAt >= transitionStarted && lastRenderedAt > 0) worstFrameIntervalMilliseconds = Math.Max(worstFrameIntervalMilliseconds, (callbackStarted - lastRenderedAt) * 1000);
             renderedFrames++; lastRenderedAt = Clock();
-            MotionFrame frame = AnimationsEnabled ? motion.At(Clock()) : motion.SettledAt(Math.Max(Clock(), transitionStarted)); ApplyMotion(frame);
+            MotionFrame frame = AnimationsEnabled ? motion.At(Clock()) : motion.SettledAt(Math.Max(Clock(), transitionStarted));
+            if (frame.Finished && revision == motionRevision)
+            {
+                // Shrink before the last frame is applied, so the shell and its
+                // decoration are placed in the final surface once.
+                FitSurface(frame);
+                if (revision != motionRevision) return;
+            }
+            ApplyMotion(frame);
             if (frame.Finished && revision == motionRevision) StopRendering();
         }
         finally
@@ -627,11 +677,11 @@ public partial class IslandWindow : Window
     internal void StopPresentation()
     {
         if (presentationStopped) return;
-        ShellProjection.Changed -= OnShellProjectionChanged;
+        ShellProjection.Changed -= OnShellProjectionChanged; engine.Snapshot -= QueueSnapshot;
         presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         if (decoration != null) { decoration.Close(); decoration = null; }
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
-        DisposeAppearance();
+        DisposeAppearance(); DisposePresence();
         displays.Changed -= DisplayTopologyChanged; displays.Dispose();
     }
     private async Task Send(string method, object? parameters = null)
@@ -640,12 +690,36 @@ public partial class IslandWindow : Window
         catch (Exception ex) when (ex is IOException or OperationCanceledException or InvalidOperationException) { }
     }
     internal void ReceiveSnapshot(EngineSnapshot snapshot) => Render(snapshot);
+    private EngineSnapshot? queuedSnapshot;
+    /// Snapshots rendered, the expanded panel's builds and measures; read by the presentation checks.
+    internal int SnapshotRenders { get; private set; }
+    internal int PanelBuilds { get; private set; }
+    internal int PanelMeasures { get; private set; }
+    internal bool PanelDirty => panelDirty;
+    internal ulong RenderedSequence => latest?.Sequence ?? 0;
+    /// A burst of snapshots renders once, with the newest. The engine still
+    /// hands every snapshot to its other subscribers, so notices are unaffected.
+    private void QueueSnapshot(EngineSnapshot value)
+    {
+        if (Interlocked.Exchange(ref queuedSnapshot, value) == null) Dispatcher.InvokeAsync(RenderQueuedSnapshot);
+    }
+    private void RenderQueuedSnapshot()
+    {
+        if (Interlocked.Exchange(ref queuedSnapshot, null) is { } value) Render(value);
+    }
+    /// Whether the panel follows each snapshot: while it is open or still
+    /// fading, and until it has been measured once.
+    private bool PanelLive => expanded || lastFrame.Content > 0 || panelSize == null;
+    private bool panelDirty;
+    private (double Width, double Height)? panelSize;
 
     private void Render(EngineSnapshot snapshot)
     {
         if (presentationStopped) return;
+        SnapshotRenders++;
         bool linksChanged = !(latest?.ActivityLinks ?? []).SequenceEqual(snapshot.ActivityLinks ?? []);
         bool openingChanged = !(latest?.OpeningActivityIDs ?? []).SequenceEqual(snapshot.OpeningActivityIDs ?? []);
+        bool first = latest == null;
         latest = snapshot;
         openingActivityContexts.IntersectWith((snapshot.ActivityLinks ?? []).Select(link => link.Context));
         ApplyNavigationFailure(snapshot.NavigationError);
@@ -655,15 +729,71 @@ public partial class IslandWindow : Window
         UpdateCompactBar();
         // New row choices redraw the page even when the rows are the same.
         bool choicesChanged = ApplyPanelChoices(snapshot);
-        if (!rows.SequenceEqual(presentation.Rows) || choicesChanged)
-        {
-            rows = presentation.Rows; page = Math.Clamp(page, 0, PageCount - 1); BuildPage(false, 0);
-        }
-        else if (linksChanged || openingChanged) foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
+        bool rowsChanged = !rows.SequenceEqual(presentation.Rows);
+        if (rowsChanged || choicesChanged) { rows = presentation.Rows; page = Math.Clamp(page, 0, PageCount - 1); }
+        string countShown = TasksCount.Text, pageShown = PageNumber.Text; var pagerShown = PageControls.Visibility;
         TasksCount.Text = presentation.TaskCountText ?? "—";
         UpdatePager();
-        RenderPanel(snapshot);
-        Relayout();
+        // A new count or page label can widen the task header.
+        bool panelChanged = first || countShown != TasksCount.Text || pageShown != PageNumber.Text || pagerShown != PageControls.Visibility;
+        if (!PanelLive)
+        {
+            // Nothing of the hidden panel is built or measured; opening builds it once.
+            panelDirty = true;
+        }
+        else
+        {
+            if (panelDirty) { panelDirty = false; BuildPage(false, 0); panelChanged = true; }
+            else if (choicesChanged) { BuildPage(false, 0); panelChanged = true; }
+            else if (rowsChanged) { if (!UpdatePageInPlace()) BuildPage(false, 0); panelChanged = true; }
+            else if (linksChanged || openingChanged) foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
+            panelChanged |= RenderPanel(snapshot);
+        }
+        // Only a new size relays the island; values redraw within their footprint.
+        var size = MeasureCompactBar();
+        if (panelChanged || laidOutCompactSize != size) Relayout(compactSize: size);
+    }
+    /// Builds a panel that skipped snapshots while collapsed, from the latest one.
+    private void RefreshDirtyPanel()
+    {
+        if (!panelDirty || latest?.Presentation is not EnginePresentation presentation) return;
+        panelDirty = false;
+        ApplyPanelChoices(latest);
+        rows = presentation.Rows; page = Math.Clamp(page, 0, PageCount - 1);
+        // Rows that changed meanwhile draw their final state, as rows built while hidden did.
+        BuildPage(false, 0, settled: true); UpdatePager();
+        RenderPanel(latest);
+    }
+    /// Rebuilds the panel now when it shows, or at its next opening.
+    private void InvalidatePanel(bool rebuildRows)
+    {
+        if (latest == null) return;
+        if (!PanelLive) { panelDirty = true; return; }
+        if (rebuildRows) BuildPage(false, 0);
+        RenderPanel(latest);
+    }
+    /// The page shows the same tasks in the same order: each row takes its new
+    /// values in place, keeping its control and motion. Otherwise it is rebuilt.
+    private bool UpdatePageInPlace()
+    {
+        if (currentPage is not { } shown || shown.Children.Count != 1 || shown.Children[0] is not StackPanel content) return false;
+        var values = rows.Skip(page * PageSize).Take(PageSize).ToArray();
+        var controls = content.Children.OfType<TaskRow>().ToArray();
+        if (values.Length == 0 || controls.Length != content.Children.Count || controls.Length != values.Length) return false;
+        for (int index = 0; index < values.Length; index++)
+        {
+            var current = ((TaskRowState)controls[index].DataContext).Value;
+            if (current.Id != values[index].Id || current.Provider != values[index].Provider) return false;
+        }
+        AutomationProperties.SetName(shown, ui.Text(rows.Count > PageSize ? "activity.page_region" : "activity.task_list"));
+        TaskPages.Height = RowsHeight(rows.Count);
+        measuredRowsWidth = 0;
+        for (int index = 0; index < values.Length; index++)
+        {
+            controls[index].Update(values[index], panelOptions); BindTaskAction(controls[index]);
+            measuredRowsWidth = Math.Max(measuredRowsWidth, controls[index].IdealWidth());
+        }
+        return true;
     }
     private FrameworkElement? DeepSeekStatus(EngineSnapshot snapshot)
     {
@@ -713,8 +843,9 @@ public partial class IslandWindow : Window
         if (target == page) return;
         page = target; BuildPage(DecorationsAnimate, Math.Sign(delta)); UpdatePager(); Relayout();
     }
-    private void BuildPage(bool animate, int direction)
+    private void BuildPage(bool animate, int direction, bool settled = false)
     {
+        PanelBuilds++;
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         RevealHost? outgoing = currentPage;
         var content = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
@@ -726,7 +857,7 @@ public partial class IslandWindow : Window
         int index = 0;
         foreach (var value in rows.Skip(page * PageSize).Take(PageSize))
         {
-            var row = new TaskRow(value, panelOptions) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };
+            var row = new TaskRow(value, panelOptions, settled) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };
             BindTaskAction(row);
             content.Children.Add(row); measuredRowsWidth = Math.Max(measuredRowsWidth, row.IdealWidth());
         }
