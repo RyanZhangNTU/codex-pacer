@@ -17,19 +17,21 @@ public enum ClaudeLiveSessionRegistry {
     public static func holder(for sessionID: String, claudeHome: URL, currentProcess: Int32,
                               files: any PlatformFileSystem, processStart: (Int32) -> Date?) -> Int32? {
         guard sessionID.count == 36, let session = UUID(uuidString: sessionID) else { return nil }
-        return holders(claudeHome: claudeHome, currentProcess: currentProcess,
+        return holders(sessions: [session.uuidString.lowercased()], claudeHome: claudeHome, currentProcess: currentProcess,
                        files: files, processStart: processStart)[session.uuidString.lowercased()]
     }
 
-    /// Every verified live holder, keyed by lowercase session UUID; the first
-    /// record by file name wins. Mirrors the CLI's holder rule: a record needs a
-    /// kind, and a parked interactive record does not hold its session.
+    /// Verified live holders, optionally restricted to the requested session UUIDs.
+    /// A resumed session can have two live records while the old process exits.
+    /// Prefer the newest verified process, breaking ties by file name.
+    /// A record needs a kind, and a parked interactive record does not hold its session.
     /// `procStart` must match the live process, so a stale record whose PID was
     /// reused is never trusted.
-    public static func holders(claudeHome: URL, currentProcess: Int32,
+    public static func holders(sessions: Set<String>? = nil, claudeHome: URL, currentProcess: Int32,
                                files: any PlatformFileSystem, processStart: (Int32) -> Date?) -> [String: Int32] {
-        guard claudeHome.isFileURL else { return [:] }
-        var result: [String: Int32] = [:]
+        guard claudeHome.isFileURL, sessions?.isEmpty != true else { return [:] }
+        let requested = sessions.map { Set($0.map { $0.lowercased() }) }
+        var result: [String: (pid: Int32, started: Date)] = [:]
         let directory = claudeHome.appendingPathComponent("sessions", isDirectory: true)
         let candidates = ((try? files.entries(in: directory)) ?? [])
             .filter { $0.pathExtension == "json" && $0.deletingPathExtension().lastPathComponent.range(
@@ -41,13 +43,14 @@ public enum ClaudeLiveSessionRegistry {
                   let record = try? JSONDecoder().decode(Record.self, from: data),
                   String(record.pid) == file.deletingPathExtension().lastPathComponent, record.pid != currentProcess,
                   record.sessionId.count == 36, let session = UUID(uuidString: record.sessionId)?.uuidString.lowercased(),
-                  result[session] == nil, record.kind?.isEmpty == false,
+                  requested?.contains(session) != false, record.kind?.isEmpty == false,
                   !(record.kind == "interactive" && record.parkedJobId != nil),
                   let recorded = record.procStart.flatMap(startDate(lstart:)),
                   let started = processStart(record.pid), abs(started.timeIntervalSince(recorded)) <= 1 else { continue }
-            result[session] = record.pid
+            if let previous = result[session], previous.started >= started { continue }
+            result[session] = (record.pid, started)
         }
-        return result
+        return result.mapValues { $0.pid }
     }
 
     /// The CLI records `ps -o lstart=` with `LC_ALL=C TZ=UTC`, e.g.

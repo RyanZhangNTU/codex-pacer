@@ -127,6 +127,36 @@ final class CodexSessionOriginTests: XCTestCase {
         XCTAssertTrue(follows.contains { $0["hostId"] as? String == remote && $0["following"] as? Bool == true })
     }
 
+    func testNativeDesktopCarriesVerifiedLaunchDatesAcrossRefollows() throws {
+        let file = try directory().appendingPathComponent("rollout-" + session + ".jsonl")
+        var launch: Date?
+        var desktop = try NativeDesktopSession(hosts: ["local"]) { _ in }
+        desktop.localOrigin = { _ in
+            .init(origin: .init(embedded: true, ignored: false), url: file, observedAt: launch, parentThreadID: nil)
+        }
+        try desktop.receive(JSONSerialization.data(withJSONObject: ["type": "response", "method": "initialize", "resultType": "success",
+            "result": ["clientId": "019a0000-0000-7000-8000-0000000000b1"]]))
+        try desktop.discover([.init(host: "local", thread: session)])
+
+        var runtime = RuntimeEventState(sourceID: nil, sourceName: nil)
+        runtime.consume(["kind": "status", "connected": true])
+        func publishMetadata() throws {
+            try desktop.publishEvents()
+            for data in desktop.takeFrames() {
+                runtime.consume(try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any]))
+            }
+        }
+        try publishMetadata()
+        runtime.consume(["kind": "runtime", "event": ["method": "turn/started", "threadId": session, "turnId": "synthetic", "at": 201.0]])
+        XCTAssertNil(try XCTUnwrap(runtime.activities.first).hostLaunchAt)
+
+        for seconds in [200.0, 202.0] {
+            launch = Date(timeIntervalSince1970: seconds)
+            try desktop.service(at: XCTUnwrap(desktop.nextServiceDate))
+            try publishMetadata()
+            XCTAssertEqual(try XCTUnwrap(runtime.activities.first).hostLaunchAt, launch)
+        }
+    }
 
     func testMetadataHeadAndTailKeepTheLatestLaunchAcrossChunkBoundaries() throws {
         let root = try directory(), file = root.appendingPathComponent("sessions/rollout-" + session + ".jsonl")

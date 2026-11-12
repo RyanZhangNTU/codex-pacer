@@ -965,7 +965,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         if method == "metadata" {
             if let origin = CodexSessionOrigin.sanitized(event) { setCodexOrigin(origin, at: date) }
-            if sourceHostID == nil, let path = event["localRolloutPath"] as? String { setCodexRollout(URL(fileURLWithPath: path)) }
+            if provider == .codex, sourceHostID == nil, let path = event["localRolloutPath"] as? String {
+                setCodexRollout(URL(fileURLWithPath: path))
+                if event["sessionLaunch"] as? Bool == true { noteHostLaunch(at: date) }
+            }
             updateParent(Self.parentID(in: event, provider: provider))
             if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 updateTitle(name)
