@@ -43,6 +43,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var launchedByEmbeddingApp = false
     public private(set) var codexOrigin: CodexSessionOrigin?
     private var codexOriginAt: Date?
+    private(set) var hostLaunchAt: Date?
     public private(set) var rolloutURL: URL?
     public var isIgnoredCodexSession: Bool { codexOrigin?.ignored == true }
     /// Set on tasks that run in a Claude cloud Project.
@@ -298,6 +299,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if navigationDirectory == nil { navigationDirectory = other.navigationDirectory }
         if desktopSessionID == nil { desktopSessionID = other.desktopSessionID }
         if rolloutURL == nil { rolloutURL = other.rolloutURL }
+        if let launch = other.hostLaunchAt { noteHostLaunch(at: launch) }
         if claudeCloud == nil { claudeCloud = other.claudeCloud }
         // Model metadata belongs to a turn. An older card or another source's
         // previous turn must not supply a model for the current one.
@@ -438,6 +440,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     /// The latest launch wins: a session resumed in a terminal shows again.
     public mutating func setClaudeLaunch(embedded: Bool) {
         if provider == .claude { launchedByEmbeddingApp = embedded }
+    }
+    mutating func noteHostLaunch(at date: Date) {
+        guard sourceHostID == nil, date > (hostLaunchAt ?? .distantPast) else { return }
+        hostLaunchAt = date
     }
     public mutating func setCodexOrigin(_ origin: CodexSessionOrigin, at: Date? = nil) {
         guard provider == .codex, codexOriginAt == nil || at == nil || at! >= codexOriginAt! else { return }
@@ -613,6 +619,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         guard provider == .codex, let payload = value["payload"] as? [String: Any] else { return }
         defer { rememberRate() }
         if value["type"] as? String == "session_meta" {
+            let stamp = (value["timestamp"] as? String).flatMap(Self.parseDate)
             if let raw = payload["id"] as? String, let uuid = UUID(uuidString: raw) {
                 let identity = uuid.uuidString.lowercased()
                 if let threadID, identity != threadID {
@@ -623,10 +630,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 }
                 threadID = identity
                 ignoringInheritedHistory = false
+                if let stamp { noteHostLaunch(at: stamp) }
             }
             if let title = payload["title"] as? String { updateTitle(title) }
             if let origin = CodexSessionOrigin.sanitized(payload) {
-                setCodexOrigin(origin, at: (value["timestamp"] as? String).flatMap(Self.parseDate))
+                setCodexOrigin(origin, at: stamp)
             }
             updateParent(Self.parentID(in: payload))
             let source = payload["source"] as? [String: Any]
@@ -957,7 +965,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         if method == "metadata" {
             if let origin = CodexSessionOrigin.sanitized(event) { setCodexOrigin(origin, at: date) }
-            if sourceHostID == nil, let path = event["localRolloutPath"] as? String { setCodexRollout(URL(fileURLWithPath: path)) }
+            if provider == .codex, sourceHostID == nil, let path = event["localRolloutPath"] as? String {
+                setCodexRollout(URL(fileURLWithPath: path))
+                if event["sessionLaunch"] as? Bool == true { noteHostLaunch(at: date) }
+            }
             updateParent(Self.parentID(in: event, provider: provider))
             if let name = event["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 updateTitle(name)

@@ -8,9 +8,9 @@ extension ClaudeLiveSessionRegistry {
         holder(for: sessionID, claudeHome: claudeHome, currentProcess: currentProcess,
             files: MacFileSystem(), processStart: processStart)
     }
-    public static func holders(claudeHome: URL, currentProcess: pid_t = getpid(),
+    public static func holders(sessions: Set<String>? = nil, claudeHome: URL, currentProcess: pid_t = getpid(),
                                processStart: (pid_t) -> Date? = processStartDate) -> [String: pid_t] {
-        holders(claudeHome: claudeHome, currentProcess: currentProcess, files: MacFileSystem(), processStart: processStart)
+        holders(sessions: sessions, claudeHome: claudeHome, currentProcess: currentProcess, files: MacFileSystem(), processStart: processStart)
     }
     public static func processStartDate(_ pid: pid_t) -> Date? { ProcessOwnership.processStartDate(pid) }
 }

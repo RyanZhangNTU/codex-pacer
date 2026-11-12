@@ -8,7 +8,10 @@ extension ProcessOwnership {
         findOwner(of: pid, currentProcess: currentProcess, isApplication: isApplication, parent: parent)
     }
     public static func processStartDate(_ pid: pid_t) -> Date? {
-        information(pid).map { Date(timeIntervalSince1970: TimeInterval($0.kp_proc.p_starttime.tv_sec)) }
+        information(pid).map {
+            let start = $0.kp_proc.p_starttime
+            return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+        }
     }
 
     public static func parentProcess(_ pid: pid_t) -> pid_t? {

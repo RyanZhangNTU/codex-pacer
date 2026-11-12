@@ -448,6 +448,8 @@ struct ClaudeActivityState: Sendable {
             value.applyRuntime(event)
             if sourceID == nil, let path = record["localDirectory"] as? String { value.setClaudeNavigation(directory: URL(fileURLWithPath: path), desktopSessionID: nil) }
             if let embedded = record["embedded"] as? Bool { value.setClaudeLaunch(embedded: embedded) }
+            if origin == "hook", record["sessionLaunch"] as? Bool == true,
+               record["parentId"] == nil, value.parentThreadID == nil { value.noteHostLaunch(at: date) }
             sessions[key] = value; return
         }
         if kind == "agentResult" {

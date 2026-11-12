@@ -67,7 +67,8 @@ public struct NativeDesktopSession {
                 return
             }
             try queue(["method": "metadata", "threadId": key.thread, "at": (metadata.observedAt ?? Date()).timeIntervalSince1970,
-                "embedded": metadata.origin.embedded, "ignoredSession": false, "localRolloutPath": metadata.url.path], host: key.host)
+                "embedded": metadata.origin.embedded, "ignoredSession": false, "localRolloutPath": metadata.url.path,
+                "sessionLaunch": metadata.observedAt != nil], host: key.host)
         }
         try send(["type": "broadcast", "method": "thread-stream-following-changed", "sourceClientId": client,
             "version": 1, "params": ["conversationId": key.thread, "hostId": key.host, "following": value]])
