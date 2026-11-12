@@ -231,9 +231,18 @@ actor EngineRuntime {
     private var wslAvailability: WindowsWSLAvailability?
     private var wslWatch: (any ActivityFileWatch)?
     private var wslWatchID = UUID()
+    private var wslEpoch: UInt64 = 0
     private var wslFallback: Task<Void, Never>?
-    private var wslRefreshInstalled = false
-    private var wslRescanPending = false
+    private struct WSLDiscoveryRequest {
+        var checkInstalled = false
+        var forceProfiles = false
+        var manual = false
+        func merging(_ other: Self) -> Self {
+            .init(checkInstalled: checkInstalled || other.checkInstalled,
+                  forceProfiles: forceProfiles || other.forceProfiles, manual: manual || other.manual)
+        }
+    }
+    private var pendingWSLDiscovery: WSLDiscoveryRequest?
     private var wslRecoverAfter = Date.distantPast
     private var wslReconnects: [AgentProvider: Set<String>] = [:]
     private var boundWSLCodex: [RemoteActivityTarget] = [], boundWSLClaude: [RemoteActivityTarget] = []
@@ -826,7 +835,7 @@ actor EngineRuntime {
             Task { await monitor.refreshRemoteControlCatalog() }
         case "refreshWSL":
             guard active, initialized, wslServices != nil else { failure(id: command.id, code: "unavailable"); return true }
-            scheduleWSLDiscovery(checkInstalled: true, manual: true)
+            scheduleWSLDiscovery(.init(checkInstalled: true, forceProfiles: true, manual: true))
         case "refreshTaskSources":
             guard active else { failure(id: command.id, code: "unavailable"); return true }
             scheduleConnectionRetry()
@@ -1001,7 +1010,7 @@ actor EngineRuntime {
                 if availability == .unavailable { requestedWSL = false }
             }
         }
-        let wslProvidersChanged = selectedProviders.map { $0.intersection([.codex, .claude]) != enabled.intersection([.codex, .claude]) } ?? false
+        let wslProvidersChanged = selectedProviders.map { $0.intersection(WindowsWSLProfile.providers) != enabled.intersection(WindowsWSLProfile.providers) } ?? false
         projectionReady = false
         activityDisplayTask = nil; activityDisplayDeadline = nil
         if let codex { codexHome = codex }
@@ -1030,7 +1039,10 @@ actor EngineRuntime {
         }
         if let hidden = parameters.hideProjects { hideProjects = hidden }
         if let shown = parameters.showEmbeddedCodexSessions { showEmbeddedCodexSessions = shown }
-        if let value = parameters.monitorRemoteControl { monitorRemoteControl = value }
+        if let value = parameters.monitorRemoteControl, value != monitorRemoteControl {
+            monitorRemoteControl = value
+            if !value { discardPendingControlEndings() }
+        }
         if let value = requestedWSL, value != monitorWSL {
             monitorWSL = value; wslNeedsReconcile = true
             stopWSLMonitoring()
@@ -1342,6 +1354,10 @@ actor EngineRuntime {
             let next = moduleSettings.enabledProviders(detection: detected)
             if next != enabled {
                 for provider in enabled.subtracting(next) { inbox.remove(provider: provider) }
+                if next.intersection(WindowsWSLProfile.providers) != enabled.intersection(WindowsWSLProfile.providers) {
+                    stopWSLMonitoring()
+                    wslNeedsReconcile = true
+                }
                 enabled = next; projectionReady = false
                 let plan = lifecycle.settings(lifecycleConfiguration)
                 for provider in plan.changedProviders { resetSourceState(provider) }
@@ -1430,6 +1446,7 @@ actor EngineRuntime {
         switch provider {
         case .codex:
             desktopBinding = UUID(); remoteControlHostIDs = []; remoteControlScope = nil; durableAccountScope = nil
+            inbox.remoteControlRevalidating = false
             bindCodexCompletionSources()
             desktopState = nil; pendingDesktopEndings = [:]
             codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
@@ -1588,6 +1605,12 @@ actor EngineRuntime {
             remoteControlHostIDs: monitorRemoteControl ? remoteControlHostIDs : [], remoteControlAccountScope: remoteControlScope,
             durableAccountScope: durableAccountScope)
     }
+    private func discardPendingControlEndings(except hosts: Set<String> = []) {
+        pendingDesktopEndings = pendingDesktopEndings.filter { _, activity in
+            guard let host = activity.sourceHostID, host.hasPrefix(ConnectionSource.controlPrefix) else { return true }
+            return hosts.contains(host)
+        }
+    }
     private func wslCompletionHomes(_ provider: AgentProvider) -> [String: String] {
         guard monitorWSL, let state = wslServices?.registry.snapshot() else { return [:] }
         return Dictionary(state.profiles.compactMap { profile in
@@ -1608,12 +1631,12 @@ actor EngineRuntime {
         return Array(ssh.prefix(8)) + Array(wsl.prefix(8))
     }
     private var monitorsWSLTasks: Bool {
-        !demo && active && monitorWSL && !enabled.isDisjoint(with: [.codex, .claude])
+        !demo && active && monitorWSL && !enabled.isDisjoint(with: WindowsWSLProfile.providers)
     }
     private func startWSLMonitoring(checkInstalled: Bool = false) {
         wslNeedsReconcile = false
         watchWSLRegistrations()
-        scheduleWSLDiscovery(checkInstalled: checkInstalled)
+        scheduleWSLDiscovery(.init(checkInstalled: checkInstalled))
     }
     private func watchWSLRegistrations() {
         guard monitorsWSLTasks, wslWatch == nil, let services = wslServices else { return }
@@ -1626,26 +1649,32 @@ actor EngineRuntime {
         }
     }
     private func stopWSLMonitoring() {
+        wslEpoch &+= 1
         ownedWork.cancel(.init(.discovery, identifier: "wsl"))
         wslFallback?.cancel(); wslFallback = nil
         wslWatchID = UUID(); wslWatch?.stop(); wslWatch = nil
-        wslRefreshInstalled = false; wslRescanPending = false; wslRecoverAfter = .distantPast
+        pendingWSLDiscovery = nil; wslRecoverAfter = .distantPast
         wslReconnects.removeAll()
         boundWSLCodex = []; boundWSLClaude = []
         wslServices?.registry.suspend()
+        clearWSLChecking()
+    }
+    private func clearWSLChecking() {
+        if wslAvailability == .checking {
+            wslAvailability = wslServices?.registry.installations.map { $0.isEmpty ? .unavailable : .available }
+        }
     }
     private func wslRegistrationsChanged(id: UUID, armed: Bool) {
         guard wslWatchID == id, monitorsWSLTasks else { return }
         if !armed { wslWatch?.stop(); wslWatch = nil }
-        scheduleWSLDiscovery(checkInstalled: true)
+        scheduleWSLDiscovery(.init(checkInstalled: true, forceProfiles: true))
     }
     private func wslHelperDisconnected(provider: AgentProvider, source: String) {
         guard monitorsWSLTasks else { return }
         wslReconnects[provider, default: []].insert(source)
         if now() >= wslRecoverAfter {
             wslRecoverAfter = now().addingTimeInterval(10)
-            if ownedWork.task(.init(.discovery, identifier: "wsl")) == nil { scheduleWSLDiscovery() }
-            else { wslRescanPending = true }
+            scheduleWSLDiscovery()
         } else {
             armWSLFallback()
         }
@@ -1653,51 +1682,53 @@ actor EngineRuntime {
     private func armWSLFallback() {
         guard monitorsWSLTasks, wslFallback == nil, let registry = wslServices?.registry else { return }
         let snapshot = registry.snapshot()
-        let attached = Set(snapshot.profiles.filter { profile in
-            snapshot.active.contains(profile.id) && enabled.contains { profile.target($0) != nil }
-        }.map { $0.distro.lowercased() })
-        if let installed = registry.installations, installed.prefix(8).allSatisfy({ attached.contains($0.lowercased()) }),
+        let attached = Set(snapshot.profiles.filter { snapshot.covers($0, providers: enabled) }.map { $0.distro.lowercased() })
+        if wslWatch != nil, let installed = registry.installations, installed.prefix(8).allSatisfy({ attached.contains($0.lowercased()) }),
            wslAvailability == .available { return }
-        let id = wslWatchID
+        let epoch = wslEpoch
         wslFallback = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
-            await self?.runWSLFallback(id: id)
+            await self?.runWSLFallback(epoch: epoch)
         }
     }
-    private func runWSLFallback(id: UUID) {
-        guard !Task.isCancelled, id == wslWatchID else { return }
+    private func runWSLFallback(epoch: UInt64) {
+        guard !Task.isCancelled, epoch == wslEpoch else { return }
         wslFallback = nil
-        scheduleWSLDiscovery(checkInstalled: wslAvailability == .failed)
+        scheduleWSLDiscovery(.init(checkInstalled: wslWatch == nil || wslAvailability == .failed))
     }
-    private func scheduleWSLDiscovery(checkInstalled: Bool = false, manual: Bool = false) {
+    private func scheduleWSLDiscovery(_ request: WSLDiscoveryRequest = .init()) {
         let key = ApplicationWorkRegistry.Key(.discovery, identifier: "wsl")
-        guard !demo, active, let services = wslServices, monitorsWSLTasks || manual else { return }
+        guard !demo, active, let services = wslServices, monitorsWSLTasks || request.manual else { return }
         if ownedWork.task(key) != nil {
-            wslRefreshInstalled = wslRefreshInstalled || checkInstalled
+            pendingWSLDiscovery = pendingWSLDiscovery?.merging(request) ?? request
             return
         }
         wslFallback?.cancel(); wslFallback = nil
         let monitoring = monitorsWSLTasks, providers = enabled, date = now()
-        if checkInstalled || services.registry.installations == nil { wslAvailability = .checking }
-        let owner = ownedWork.begin(key, version: generation)
+        if request.checkInstalled || services.registry.installations == nil { wslAvailability = .checking }
+        let owner = ownedWork.begin(key, version: wslEpoch)
         let task = Task { [weak self] in
-            let availability = await services.discover(checkInstalled: checkInstalled, monitoring: monitoring,
-                forceProfiles: manual || checkInstalled, providers: providers, at: date)
+            let availability = await services.discover(checkInstalled: request.checkInstalled, monitoring: monitoring,
+                forceProfiles: request.forceProfiles, providers: providers, at: date)
             await self?.receiveWSLDiscovery(owner, availability: availability)
         }
         ownedWork.attach(task, to: owner)
-        if checkInstalled && projectionReady { projectCollected(at: date) }
+        if request.checkInstalled && projectionReady { projectCollected(at: date) }
     }
     private func receiveWSLDiscovery(_ owner: ApplicationWorkRegistry.Ticket, availability: WindowsWSLAvailability?) async {
-        guard active, generation == owner.version, ownedWork.owns(owner) else { return }
-        ownedWork.finish(owner)
+        guard ownedWork.owns(owner) else { return }
+        defer { ownedWork.finish(owner) }
+        guard active, wslEpoch == owner.version else { return }
         let previousCodex = boundWSLCodex, previousClaude = boundWSLClaude
         if let availability { wslAvailability = availability }
+        else { clearWSLChecking() }
         if availability == .available { watchWSLRegistrations() }
         if availability == .unavailable && monitorWSL {
+            ownedWork.finish(owner)
             monitorWSL = false
             stopWSLMonitoring()
         }
+        let epoch = wslEpoch
         for (id, state) in wslQuota {
             guard let profile = state.profile, let provider = AgentProvider(rawValue: String(id.prefix { $0 != ":" })) else { continue }
             if wslServices?.registry.profile(id: profile.id, provider: provider) != profile {
@@ -1708,20 +1739,26 @@ actor EngineRuntime {
         let claude = monitoredRemoteTargets(.claude).filter { $0.id.hasPrefix(ConnectionSource.wslPrefix) }
         let retryCodex = availability == .available ? (wslReconnects[.codex] ?? []).intersection(codex.map(\.id)) : []
         let retryClaude = availability == .available ? (wslReconnects[.claude] ?? []).intersection(claude.map(\.id)) : []
-        if availability == .available { wslReconnects.removeAll() }
+        if availability == .available, !wslReconnects.isEmpty, let registry = wslServices?.registry {
+            let retained = Set(registry.snapshot().profiles.map(\.id))
+            wslReconnects[.codex] = wslReconnects[.codex]?.intersection(retained).subtracting(retryCodex)
+            wslReconnects[.claude] = wslReconnects[.claude]?.intersection(retained).subtracting(retryClaude)
+        }
         if previousCodex != codex || previousClaude != claude || !retryCodex.isEmpty || !retryClaude.isEmpty {
             boundWSLCodex = codex; boundWSLClaude = claude
             bindCodexCompletionSources(); bindWSLCompletionSources(.claude)
             await desktopMonitor?.retryInactiveHelpers(sources: retryCodex)
+            guard active, epoch == wslEpoch else { return }
             await bindActivityMonitor(.claude, retryingWSL: retryClaude)
+            guard active, epoch == wslEpoch else { return }
             await bindDesktopMonitor(force: true)
         }
-        guard active else { return }
+        guard active, epoch == wslEpoch else { return }
+        ownedWork.finish(owner)
         if projectionReady { projectCollected(at: now()) }
-        if wslRefreshInstalled || wslRescanPending {
-            let checkInstalled = wslRefreshInstalled
-            wslRefreshInstalled = false; wslRescanPending = false
-            scheduleWSLDiscovery(checkInstalled: checkInstalled)
+        if let pending = pendingWSLDiscovery {
+            pendingWSLDiscovery = nil
+            scheduleWSLDiscovery(pending)
         } else { armWSLFallback() }
     }
     private func readWSLQuota(_ profile: WindowsWSLProfile, provider: AgentProvider) {
@@ -1800,11 +1837,14 @@ actor EngineRuntime {
             pendingDesktopEndings = pendingDesktopEndings.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID }
             activityState.clearFirstOutput()
         }
+        inbox.remoteControlRevalidating = monitorRemoteControl && state.bindings.isRevalidating
         if monitorRemoteControl {
             let bindings = state.bindings
             if remoteControlScope != bindings.accountScope {
-                pendingDesktopEndings = pendingDesktopEndings.filter { $0.value.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) != true }
+                discardPendingControlEndings()
                 activityState.clearFirstOutput()
+            } else if bindings.authoritative {
+                discardPendingControlEndings(except: bindings.hostIDs)
             }
             remoteControlScope = bindings.accountScope
             remoteControlHostIDs = bindings.authoritative ? bindings.hostIDs : remoteControlHostIDs.union(bindings.hostIDs)
@@ -1830,7 +1870,9 @@ actor EngineRuntime {
         guard let source else { return true }
         if source == DurableActivityCatalog.hostID { return provider == .codex && durableAccountScope != nil }
         if source.hasPrefix(ConnectionSource.wslPrefix) { return monitorWSL && wslServices?.registry.profile(id: source, provider: provider) != nil }
-        if source.hasPrefix(ConnectionSource.controlPrefix) { return provider == .codex && monitorRemoteControl && remoteControlHostIDs.contains(source) }
+        if source.hasPrefix(ConnectionSource.controlPrefix) {
+            return provider == .codex && monitorRemoteControl && inbox.isSourceVisible(source) && remoteControlHostIDs.contains(source)
+        }
         if source == ClaudeCloudProjectState.sourceID { return provider == .claude && showClaudeCloudProjects }
         return monitorSSH && (provider == .claude ? claudeRemoteTargets : codexRemoteTargets).contains { $0.id == source }
     }
@@ -1943,13 +1985,13 @@ actor EngineRuntime {
             for profile in catalog?.profiles ?? [] {
                 var status = streams[provider]?[profile.id] ?? RuntimeStreamStatus()
                 status.sourceName = "WSL · " + profile.distro; status.remoteHostOnline = catalog?.active.contains(profile.id) == true
-                if status.remoteHostOnline == false { status.connected = false }
+                if catalog?.permits(profile, for: provider) != true { status.connected = false }
                 if profile.target(provider) == nil { status.sourceAvailable = false; status.connected = false }
                 streams[provider, default: [:]][profile.id] = status
             }
         }
         return EngineConnectionProjection.make(enabled: enabled, statuses: streams, targets: monitorSSH ? claudeRemoteTargets : [],
-            setups: claudeRemoteSetups, profiles: catalog?.profiles ?? [], activeWSL: catalog?.active ?? [], canRetrySetup: !demo && claudeRemoteServices != nil)
+            setups: claudeRemoteSetups, wsl: catalog, canRetrySetup: !demo && claudeRemoteServices != nil)
     }
     private func receiveClaudeRemoteSetups(_ rows: [EngineClaudeRemoteSetup], version: UInt64) {
         guard active, lifecycle.version(.claude) == version, rows != claudeRemoteSetups else { return }
@@ -2076,7 +2118,7 @@ actor EngineRuntime {
                     var reading = statuses[provider]?[profile.id] ?? RuntimeStreamStatus()
                     reading.sourceName = "WSL · " + profile.distro
                     reading.remoteHostOnline = catalog.active.contains(profile.id)
-                    if reading.remoteHostOnline == false { reading.connected = false }
+                    if !catalog.permits(profile, for: provider) { reading.connected = false }
                     if profile.target(provider) == nil { reading.sourceAvailable = false; reading.connected = false }
                     statuses[provider, default: [:]][profile.id] = reading
                 }

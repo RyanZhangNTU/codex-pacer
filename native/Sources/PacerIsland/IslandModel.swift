@@ -646,7 +646,7 @@ final class IslandModel: ObservableObject {
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id)))
     }
     func canOpen(_ activity: SessionActivity) -> Bool {
-        guard !activity.isIgnoredCodexSession else { return false }
+        guard !activity.isIgnoredCodexSession, completionInbox.isSourceVisible(activity.sourceHostID) else { return false }
         // Harness has no conversation link; its app opens on the session list.
         if activity.provider == .deepseek { return demo || DeepSeekApplicationResolver.cachedApplication() != nil }
         if activity.provider == .codex, activity.sourceHostID == nil, activity.launchedByEmbeddingApp {
@@ -1219,7 +1219,7 @@ final class IslandModel: ObservableObject {
         return activity.claudeCloud == nil ? nil : claudeCloudNavigationScope
     }
     private func acceptsNavigation(_ activity: SessionActivity) -> Bool {
-        !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo)
+        !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo) && completionInbox.isSourceVisible(activity.sourceHostID)
     }
     func open(_ activity: SessionActivity) {
         guard canOpen(activity), let target = conversationTarget(for: activity), let open = onOpenActivity,
@@ -1709,6 +1709,7 @@ final class IslandModel: ObservableObject {
             bindCompletionSources(.codex)
         }
         if let bindings = remoteControlBindings {
+            completionInbox.remoteControlRevalidating = bindings.isRevalidating
             let previous = remoteControlHostIDs ?? Set(RemoteControlActivityTarget.configured(home: home).map(\.id))
             let hosts = bindings.authoritative ? bindings.hostIDs : previous.union(bindings.hostIDs)
             if remoteControlHostIDs != hosts || remoteControlAccountScope != bindings.accountScope {
@@ -1811,6 +1812,7 @@ final class IslandModel: ObservableObject {
         codexQuota = nil; codexHistory = QuotaCycleHistory(); codexHistoryWarning = nil; codexErrorMessage = nil
         quotaCLI = nil; attention = AttentionPolicy()
         completionInbox.remove(provider: .codex)
+        completionInbox.remoteControlRevalidating = false
         remoteControlHostIDs = nil
         remoteControlAccountScope = nil
         remoteControlDirectory = nil

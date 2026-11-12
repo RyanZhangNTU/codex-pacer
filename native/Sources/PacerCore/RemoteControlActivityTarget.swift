@@ -8,14 +8,16 @@ public struct RemoteControlDirectoryStatus: Codable, Equatable, Sendable {
 
 /// Saved routes add sources only before the account has a Remote Control
 /// enrollment. After that, only its verified directory adds devices, as on
-/// Windows; a pending or failed read keeps the previous bindings. A verified
-/// directory, a signed-out account or disabling monitoring confirms removal.
+/// Windows. During revalidation the inbox keeps its previous bindings hidden.
+/// A verified directory, a signed-out account or disabling monitoring confirms removal.
 public struct RemoteControlSourceBindings: Equatable, Sendable {
     public let hostIDs: Set<String>
     public let authoritative: Bool
     public let accountScope: String?
-    public init(hostIDs: Set<String>, authoritative: Bool, accountScope: String? = nil) {
+    public let isRevalidating: Bool
+    public init(hostIDs: Set<String>, authoritative: Bool, accountScope: String? = nil, isRevalidating: Bool = false) {
         self.hostIDs = hostIDs; self.authoritative = authoritative; self.accountScope = accountScope
+        self.isRevalidating = isRevalidating
     }
 }
 

@@ -77,6 +77,7 @@ public actor RealtimeActivityMonitor {
     private var controlTimer: Task<Void, Never>?
     private var controlFailures = 0
     private var nextControlEventRefresh = Date.distantPast
+    private var controlEventPending = false
     private var controlRouteHints: [String: NativeDesktopSession.Key] = [:]
     private var recentControlHints: [String: Date] = [:]
     private var controlDirectory = RemoteControlDirectoryStatus()
@@ -196,7 +197,6 @@ public actor RealtimeActivityMonitor {
     }
 
     private func readControlDirectory(_ context: ControlContext, id: UUID) async {
-        await publish()
         guard controlWork?.id == id else { return }
         let binding = await controlCatalog.localBinding(home: context.home)
         guard controlWork?.id == id else { return }
@@ -207,9 +207,15 @@ public actor RealtimeActivityMonitor {
             controlDirectory.refreshedAt = nil
             controlFailures = 0
             controlRouteHints.removeAll(); recentControlHints.removeAll()
+            await reconcileControlDirectory(home: context.home, catalog: nil)
+        } else {
+            await publish()
         }
+        guard controlWork?.id == id else { return }
+        let hintsAtRequest = Set(controlRouteHints.keys)
+        controlEventPending = false
         let outcome = await controlCatalog.refresh(home: context.home)
-        guard controlWork?.id == id, let config = configuration else { return }
+        guard controlWork?.id == id else { return }
         let cached = await controlCatalog.cachedTargets(home: context.home)
         guard controlWork?.id == id else { return }
         controlDirectory.refreshing = false
@@ -218,24 +224,34 @@ public actor RealtimeActivityMonitor {
         if cached == nil { controlDirectory.refreshedAt = nil }
         if outcome == .superseded { controlAttempted = false }
         if outcome != .retry { controlFailures = 0 }
-        startGeneration += 1
-        await reconcile(home: config.home, includeSSH: config.includeSSH, includeRemoteControl: config.includeRemoteControl,
-                        useSSHFallback: config.useSSHFallback, refreshPolicy: refreshPolicy, catalog: cached)
+        await reconcileControlDirectory(home: context.home, catalog: cached)
         guard controlWork?.id == id else { return }
-        if outcome == .success, let desktop {
-            let hints = controlRouteHints.values.filter { desktop.hosts[$0.host] != nil }
-            controlRouteHints.removeAll()
-            if !hints.isEmpty { await desktop.collector.discoverRemote(hints) }
+        if outcome == .success {
+            let hints = controlRouteHints.values.filter { desktop?.hosts[$0.host] != nil }
+            // A device announced during this read may only appear in the next reply.
+            controlRouteHints = controlRouteHints.filter { host, _ in !hintsAtRequest.contains(host) && desktop?.hosts[host] == nil }
+            if !hints.isEmpty { await desktop?.collector.discoverRemote(hints) }
         } else if outcome != .retry {
             controlRouteHints.removeAll()
         }
         guard controlWork?.id == id else { return }
+        let followUp = controlEventPending
+        controlEventPending = false
         controlWork = nil
         if outcome == .retry {
             let delay = Self.controlBackoff[controlFailures]
             controlFailures = min(controlFailures + 1, Self.controlBackoff.count - 1)
             scheduleControlRefresh(after: delay)
+        } else if outcome == .success && followUp {
+            scheduleControlEventRefresh()
         }
+    }
+
+    private func reconcileControlDirectory(home: URL, catalog: [RemoteControlActivityTarget]?) async {
+        guard let config = configuration, config.home == home, config.includeRemoteControl else { return }
+        startGeneration += 1
+        await reconcile(home: home, includeSSH: config.includeSSH, includeRemoteControl: true,
+                        useSSHFallback: config.useSSHFallback, refreshPolicy: refreshPolicy, catalog: catalog)
     }
 
     private func scheduleControlRefresh(after seconds: TimeInterval) {
@@ -248,7 +264,8 @@ public actor RealtimeActivityMonitor {
     }
 
     private func scheduleControlEventRefresh(at now: Date = Date()) {
-        guard controlWork == nil, controlTimer == nil else { return }
+        if controlWork != nil { controlEventPending = true; return }
+        guard controlTimer == nil else { return }
         let delay = max(0, nextControlEventRefresh.timeIntervalSince(now))
         nextControlEventRefresh = now.addingTimeInterval(delay + 30)
         scheduleControlRefresh(after: delay)
@@ -257,7 +274,7 @@ public actor RealtimeActivityMonitor {
     private func resetControlRefresh() {
         controlWork?.task.cancel(); controlWork = nil
         controlTimer?.cancel(); controlTimer = nil
-        controlFailures = 0; nextControlEventRefresh = .distantPast
+        controlFailures = 0; nextControlEventRefresh = .distantPast; controlEventPending = false
         controlRouteHints.removeAll(); recentControlHints.removeAll()
         controlDirectory.refreshing = false
     }
@@ -267,7 +284,9 @@ public actor RealtimeActivityMonitor {
         let local = Source(id: "local", name: nil, alias: nil, home: home.path,
             desktopIPC: !services.controlAvailable(home), refreshPolicy: refreshPolicy)
         let authorization = includeRemoteControl ? controlAuthorization(home: home) : nil
-        let scope = includeRemoteControl ? authorization?.scope : controlAccountScope
+        let revoked = authorization?.revoked == true
+        let revalidating = includeRemoteControl && authorization?.verified == false && !revoked
+        let scope = !includeRemoteControl || revalidating ? controlAccountScope : (revoked ? nil : authorization?.scope)
         let revision = authorization?.revision ?? 0
         let authorizationChanged = revision != controlAuthorizationRevision || scope != controlAccountScope
         if includeRemoteControl, controlAccountScope != nil, scope != controlAccountScope {
@@ -296,13 +315,11 @@ public actor RealtimeActivityMonitor {
         if includeSSH && useSSHFallback {
             sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, target: $0, refreshPolicy: refreshPolicy) }
         }
-        let controls: [RemoteControlActivityTarget]
-        if !includeRemoteControl || authorization?.verified == false { controls = [] }
-        else { controls = catalog ?? RemoteControlActivityTarget.configured(home: home) }
-        remoteControlBindings = .init(hostIDs: Set(controls.map(\.id)), authoritative: !includeRemoteControl || catalog != nil || authorization?.revoked == true || scope != nil,
-                                      accountScope: scope)
-        let controlTargets = includeRemoteControl && authorization?.verified != false
-            ? catalog.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }) } : nil
+        let verifiedCatalog = includeRemoteControl && !revoked && !revalidating ? catalog : nil
+        let controls = verifiedCatalog ?? (includeRemoteControl && authorization == nil ? RemoteControlActivityTarget.configured(home: home) : [])
+        remoteControlBindings = .init(hostIDs: Set(controls.map(\.id)), authoritative: !includeRemoteControl || verifiedCatalog != nil || revoked,
+                                      accountScope: scope, isRevalidating: revalidating)
+        let controlTargets = verifiedCatalog.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }) }
         knownControls = controlTargets
         var names = Dictionary(targets.map { ($0.id, $0.name) } + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
         if services.supportsDurable { names[DurableActivityCatalog.hostID] = "" }

@@ -25,8 +25,11 @@ final class EngineConnectionProjectionTests: XCTestCase {
         let setups = [ssh.id, profile.id].map { EngineClaudeRemoteSetup(sourceID: $0, context: context, configured: false, inFlight: false,
             canRetry: true, message: "Synthetic setup failure", retryAt: 1800) }
         let streams: [AgentProvider: [String: RuntimeStreamStatus]] = [.codex: ["local": status(0), ssh.id: status(2), profile.id: status(3)], .claude: ["local": status(0), ssh.id: status(5), profile.id: status(7)]]
+        let registry = WindowsWSLRegistry()
+        registry.accept([profile], installed: [profile.distro.lowercased()], ticket: registry.begin())
+        let wsl = registry.snapshot()
         let page = EngineConnectionProjection.make(enabled: [.codex, .claude], statuses: streams, targets: targets, setups: setups,
-            profiles: [profile], activeWSL: [profile.id], canRetrySetup: true)
+            wsl: wsl, canRetrySetup: true)
         XCTAssertEqual(page.state, "retrying"); XCTAssertEqual(page.sourceCount, 6); XCTAssertEqual(page.sessionCount, 5)
         XCTAssertEqual(page.hosts.count, 2); XCTAssertEqual(page.sources.count, 2)
         for host in page.hosts {
@@ -37,13 +40,13 @@ final class EngineConnectionProjectionTests: XCTestCase {
             XCTAssertEqual(host.modules[0].readsQuota, host.kind == "WSL")
         }
         let codexOnly = EngineConnectionProjection.make(enabled: [.codex], statuses: streams, targets: targets, setups: setups,
-            profiles: [profile], activeWSL: [], canRetrySetup: true)
+            canRetrySetup: true)
         XCTAssertTrue(codexOnly.hosts.allSatisfy { $0.modules.count == 1 && $0.modules[0].provider == "codex" && !$0.modules[0].readsQuota })
         XCTAssertEqual(codexOnly.sessionCount, 5)
         var disconnected = streams
         disconnected[.claude] = ["local": status(0), ssh.id: RuntimeStreamStatus(), profile.id: RuntimeStreamStatus()]
         let brokenTransport = EngineConnectionProjection.make(enabled: [.codex, .claude], statuses: disconnected, targets: targets, setups: setups,
-            profiles: [profile], activeWSL: [profile.id], canRetrySetup: true)
+            wsl: wsl, canRetrySetup: true)
         XCTAssertTrue(brokenTransport.hosts.allSatisfy { $0.modules.last?.state == "retrying" && $0.modules.last?.retrySetup == false },
             "Both transports report the broken collector before a cached hook-setup failure")
     }
@@ -82,12 +85,14 @@ final class EngineConnectionProjectionTests: XCTestCase {
         let profile = profile, id = profile.id
         let installing = EngineClaudeRemoteSetup(sourceID: id, context: UUID().uuidString, configured: false, inFlight: true, canRetry: false, message: nil, retryAt: nil)
         var streams: [AgentProvider: [String: RuntimeStreamStatus]] = [.claude: ["local": status(0), id: status(4)]]
-        let page = EngineConnectionProjection.make(enabled: [.claude], statuses: streams, targets: [], setups: [installing], profiles: [profile], activeWSL: [id], canRetrySetup: true)
+        let registry = WindowsWSLRegistry()
+        registry.accept([profile], installed: [profile.distro.lowercased()], ticket: registry.begin())
+        let page = EngineConnectionProjection.make(enabled: [.claude], statuses: streams, targets: [], setups: [installing], wsl: registry.snapshot(), canRetrySetup: true)
         XCTAssertEqual(page.state, "connecting"); XCTAssertEqual(page.sessionCount, 0)
         XCTAssertEqual(page.hosts.first?.modules.first?.state, "configuring"); XCTAssertFalse(page.hosts.first?.modules.first?.retrySetup == true)
         var absent = RuntimeStreamStatus(); absent.sourceAvailable = false; absent.remoteHostOnline = true
         streams[.claude]?[id] = absent
-        let paused = EngineConnectionProjection.make(enabled: [.claude], statuses: streams, targets: [], setups: [installing], profiles: [], activeWSL: [], canRetrySetup: true)
+        let paused = EngineConnectionProjection.make(enabled: [.claude], statuses: streams, targets: [], setups: [installing], canRetrySetup: true)
         XCTAssertEqual(paused.state, "paused"); XCTAssertEqual(paused.sessionCount, 0)
         XCTAssertFalse(paused.hosts.first?.modules.first?.readsQuota == true)
     }

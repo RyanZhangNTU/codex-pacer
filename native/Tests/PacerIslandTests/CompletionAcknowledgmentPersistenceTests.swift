@@ -194,6 +194,22 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         await rebuilt.shutdown()
     }
 
+    func testRevalidatingRemoteControlHidesUnreadEndingUntilTheSameAccountReturns() async throws {
+        let fixture = try controlCatalogFixture(), model = fixture.model, host = try XCTUnwrap(fixture.host)
+        let ending = familyActivity(.codex, 963, host: host, at: Date().addingTimeInterval(-2))
+        let verified = RemoteControlSourceBindings(hostIDs: [host], authoritative: true, accountScope: "fixture")
+        model.receiveRemoteUpdate([ending], statuses: [:], unavailable: [], requests: [], names: [], remoteControlBindings: verified)
+        XCTAssertTrue(model.isUnreadCompletion(ending))
+        model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [],
+            remoteControlBindings: .init(hostIDs: [], authoritative: false, accountScope: "fixture", isRevalidating: true))
+        XCTAssertFalse(model.activities.contains { $0.id == ending.id })
+        XCTAssertFalse(model.canOpen(ending))
+        model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [], remoteControlBindings: verified)
+        XCTAssertTrue(model.activities.contains { $0.id == ending.id })
+        XCTAssertTrue(model.isUnreadCompletion(ending))
+        await model.shutdown()
+    }
+
     func testOnlyActualConversationOpenPersistsAcrossModelReconstructionForBothProvidersAndHosts() async throws {
         for provider in AgentProvider.allCases {
             for sourceHostID in [nil, "remote-ssh-discovered:synthetic-ack", "remote-control:synthetic-ack"] as [String?]

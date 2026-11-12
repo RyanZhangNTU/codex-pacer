@@ -361,4 +361,127 @@ final class WindowsWSLTests: XCTestCase {
         let after = await probe.commands
         XCTAssertTrue(after.allSatisfy { $0.first == "--list" }, "A stopped distribution is not launched")
     }
+
+    func testWSLRefreshCompletesAcrossUnrelatedSourceChange() async throws {
+        actor List {
+            var calls = 0
+            var released = false
+            func read() async -> Data? {
+                calls += 1
+                while !released {
+                    do { try await Task.sleep(nanoseconds: 5_000_000) }
+                    catch { return nil }
+                }
+                return Data("Fixture Linux\n".utf8)
+            }
+            func release() { released = true }
+        }
+        let list = List(), registry = WindowsWSLRegistry(), frames = WSLFrames()
+        let services = WindowsWSLServices(registry: registry, capture: { _, _, _, _ in await list.read() },
+            watchRegistrations: { _ in nil })
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, wslServices: services, output: { frames.append($0) })
+        addTeardownBlock { await list.release(); await runtime.stop() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-wsl-refresh-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
+        }
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"],
+            "codexHome": EngineCodexSourceReport.path(root)]))
+        _ = await runtime.receive(try command("refreshWSL"))
+        let began = try await TestWait.until { await list.calls == 1 }
+        XCTAssertTrue(began)
+        XCTAssertEqual(frames.latest()?.wslAvailability, .checking)
+        _ = await runtime.receive(try command("configure", ["deepseekHome": EngineCodexSourceReport.path(root)]))
+        _ = await runtime.receive(try command("refreshWSL"))
+        await list.release()
+        let settled = try await TestWait.until {
+            let calls = await list.calls
+            return calls == 2 && frames.latest()?.wslAvailability == .available
+        }
+        XCTAssertTrue(settled, "The queued manual refresh should finish and leave Settings out of Checking")
+        XCTAssertEqual(registry.installations, ["Fixture Linux"])
+    }
+
+    func testWSLFallbackFindsASecondProviderInARunningDistro() async throws {
+        let full = profile(), registry = WindowsWSLRegistry()
+        var codexOnly = full
+        codexOnly.claudeIdentity = nil
+        let before = try JSONEncoder().encode(codexOnly), after = try JSONEncoder().encode(full)
+        actor Probe {
+            var rootsReady = false
+            func completeRoots() { rootsReady = true }
+            func read(_ args: [String], before: Data, after: Data) -> Data {
+                args.first == "--list" ? Data("Fixture Linux\n".utf8) : (rootsReady ? after : before)
+            }
+        }
+        let probe = Probe()
+        let services = WindowsWSLServices(registry: registry, capture: { _, args, _, _ in await probe.read(args, before: before, after: after) })
+        let start = Date()
+        await services.discover(at: start)
+        XCTAssertNotNil(registry.targets(.codex).first)
+        XCTAssertTrue(registry.targets(.claude).isEmpty)
+        let initial = try XCTUnwrap(registry.snapshot().profiles.first)
+        XCTAssertTrue(registry.snapshot().covers(initial, providers: [.codex, .deepseek]))
+        XCTAssertFalse(registry.snapshot().covers(initial, providers: [.codex, .claude]))
+        await probe.completeRoots()
+        await services.discover(checkInstalled: false, forceProfiles: false, at: start.addingTimeInterval(60))
+        XCTAssertTrue(registry.targets(.claude).isEmpty, "The probe still observes the five minute budget")
+        await services.discover(checkInstalled: false, forceProfiles: false, at: start.addingTimeInterval(360))
+        XCTAssertEqual(registry.targets(.codex).first, full.target(.codex))
+        XCTAssertEqual(registry.targets(.claude).first, full.target(.claude))
+        XCTAssertTrue(registry.snapshot().covers(full, providers: [.codex, .claude]))
+    }
+
+    func testWSLHelperDisconnectKeepsSiblingEventsUntilDistroStops() async throws {
+        actor Frames {
+            var accepted = 0
+            func receive(_ bytes: Data) { accepted += 1 }
+        }
+        actor Probe {
+            var running = true, verified = false
+            func capture(_ args: [String], profile: Data) -> Data? {
+                if args == ["--list", "--quiet"] { return Data("Fixture Linux\n".utf8) }
+                if args.first == "--list" { return running ? Data("Fixture Linux\n".utf8) : Data() }
+                return verified ? profile : nil
+            }
+            func verify() { verified = true }
+            func stop() { running = false }
+        }
+        let profile = profile(), registry = WindowsWSLRegistry(), launches = WSLLaunches(), frames = Frames()
+        activate(registry, profile)
+        let probe = Probe(), data = try JSONEncoder().encode(profile), start = Date()
+        let services = WindowsWSLServices(registry: registry, capture: { _, args, _, _ in await probe.capture(args, profile: data) },
+            start: { launches.launch($0, input: $1, output: $2, ended: $3) })
+        let launcher = services.launcher(disconnected: { _, _ in })
+        for provider in [AgentProvider.codex, .claude] {
+            let route = try XCTUnwrap(registry.arguments(try XCTUnwrap(profile.target(provider))))
+            _ = try launcher.launch(.init(executable: WindowsExecutables.ssh, arguments: route + ["fixture"], environment: [:]),
+                output: { await frames.receive($0) }, ended: {})
+        }
+        let codex = try XCTUnwrap(launches.all().first?.2), claude = try XCTUnwrap(launches.all().last?.2)
+        try await claude.send(["kind": "status", "connected": true])
+        let before = await frames.accepted
+        XCTAssertEqual(before, 1)
+        await codex.disconnect()
+        XCTAssertTrue(claude.isRunning)
+        XCTAssertNil(registry.profile(id: profile.id, provider: .codex))
+        XCTAssertNotNil(registry.profile(id: profile.id, provider: .claude))
+        await services.discover(checkInstalled: false, forceProfiles: false, at: start)
+        XCTAssertNil(registry.profile(id: profile.id, provider: .codex), "A failed probe cannot reauthorize the disconnected route")
+        try await claude.send(["kind": "runtimeBatch", "events": [["method": "turn/completed"]]])
+        let after = await frames.accepted
+        XCTAssertEqual(after, 2, "The still-running helper must deliver its completion during rediscovery")
+        await probe.verify()
+        await services.discover(checkInstalled: false, forceProfiles: false, at: start.addingTimeInterval(300))
+        XCTAssertNotNil(registry.profile(id: profile.id, provider: .codex))
+        await probe.stop()
+        await services.discover(checkInstalled: false, forceProfiles: false, at: start.addingTimeInterval(301))
+        XCTAssertNil(registry.profile(id: profile.id, provider: .claude))
+        try await claude.send(["kind": "status", "connected": true])
+        let afterStop = await frames.accepted
+        XCTAssertEqual(afterStop, after, "A confirmed distribution stop revokes every route")
+        claude.close()
+    }
 }

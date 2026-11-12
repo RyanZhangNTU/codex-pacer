@@ -145,7 +145,7 @@ Preferences live in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`; keep the fi
 | DeepSeek | `deepseekPanelStyle`, `deepseekMode`, `deepseekBalanceSource`, `deepseekDailyBudget`, `deepseekWeeklyBudget`, `deepseekRingPeriod`, `deepseekSpeedSource`, `deepseekShowsTurnCost`, `deepseekLowBalanceLine`, `deepseekSpikeLimit` | `detailed`, `balance`, `automatic`, no amounts, `day`, `local`, turn cost on |
 | Task progress rings | `codexProgressRing`, `claudeProgressRing`, `deepseekProgressRing` | on |
 | Privacy and visible tasks | `hideProjects`, `showAppButtons`, `showEmbeddedCodexSessions`, `showEmbeddedClaudeSessions`, `showClaudeCloudProjects` | off, then on |
-| Remote sources | `monitorSSH`, `monitorRemoteControl`, `monitorWSL` (Windows only) | on |
+| Remote sources | `monitorSSH`, `monitorRemoteControl`, `monitorWSL` (Windows only) | on, off, off |
 | Retention and page | `completedRetentionMinutes`, `settingsPane` | `30`, `overview` |
 | Source overrides | `codexExecutable`, `codexHome`, `claudeHome`, `deepseekHome`, `claudeWebOrganizationID` | empty |
 | Modules | `providerModule.codex`, `providerModule.claude`, `providerModule.deepseek` | `automatic` |
@@ -220,7 +220,7 @@ A Claude task without a live host opens through Desktop's `claude://code/continu
 
 ## Codex Remote Control
 
-- `monitorRemoteControl` defaults to on, as on the Mac. The paired-device directory is read through the shared catalog and the stream arrives over the authenticated Desktop pipe. A saved routing hint alone grants nothing.
+- `monitorRemoteControl` defaults to off, as on the Mac. Pacer reads the paired-device directory through the shared catalog and receives task updates over the authenticated Desktop pipe. It verifies a saved route before following it.
 - Bearer credentials stay inside the read-only catalog request ([WinHTTP limits](windows-engine.md#http-through-winhttp)). Catalog work is separate from initialization, so a slow directory cannot block the local task source or the 650 ms cleanup budget.
 - Only the currently verified account and exact device ID can open a Remote Control thread. Account or enrollment changes revoke old pipe proofs and navigation; a token refresh for the same account keeps its scope. A hashed account scope keeps acknowledgements of two accounts apart.
 
