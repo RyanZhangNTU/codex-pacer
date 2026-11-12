@@ -72,6 +72,14 @@ final class RemoteControlTests: XCTestCase {
         let frames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as? [String: String] }
         XCTAssertEqual(frames, [["kind": "remoteControlRoute", "hostId": host, "threadId": thread]])
         XCTAssertFalse(session.hosts.contains(host))
+        for seconds in [1.0, 30, 59] {
+            try send(&session, method: "thread-stream-state-changed", version: 11,
+                     params: ["hostId": host, "conversationId": thread], at: seconds)
+        }
+        XCTAssertTrue(session.takeFrames().isEmpty, "A streaming device announces its route once a minute, not per patch")
+        try send(&session, method: "thread-stream-state-changed", version: 11,
+                 params: ["hostId": host, "conversationId": thread], at: 61)
+        XCTAssertEqual(session.takeFrames().count, 1)
     }
 
     func testDiscoveryUnionsSavedRoutesWithoutReadingEnrollmentOrProjectContent() throws {

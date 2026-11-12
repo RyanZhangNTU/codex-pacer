@@ -17,6 +17,9 @@ public struct NativeDesktopSession {
     /// Saved routes alone are idle. Losing an observed runtime remains a
     /// failure until a usable stream returns, even after snapshot retries end.
     private var invalidatedRemoteHosts: Set<String> = []
+    /// An untracked device streams a patch per update; announce it once a minute.
+    private var announcedRoutes: [String: Date] = [:]
+    private static let routeAnnouncementInterval: TimeInterval = 60
     private var dormant: [Key: UInt64] = [:]
     private var retirementSequence: UInt64 = 0
     private struct SnapshotWait { var retry: Int; var next: Date }
@@ -268,13 +271,17 @@ public struct NativeDesktopSession {
         if ready { try drain() }
     }
     mutating func observeRemoteRoute(host: String, thread: String, method: String?, version: Int?,
-                                     sender: String?, following: Bool?) throws {
+                                     sender: String?, following: Bool?, at now: Date = Date()) throws {
         guard ready, host.hasPrefix(ConnectionSource.controlPrefix),
               RemoteControlCatalogIdentity.validIdentifier(String(host.dropFirst(ConnectionSource.controlPrefix.count))),
               let thread = Self.valid(thread), Self.valid(sender) != nil else { return }
         let announcesRoute = method == "thread-stream-following-status-requested" ||
             (method == "thread-stream-following-changed" && following == true)
-        guard (announcesRoute && version == 1) || (method == "thread-stream-state-changed" && version == 11) else { return }
+        guard (announcesRoute && version == 1) || (method == "thread-stream-state-changed" && version == 11),
+              (announcedRoutes[host] ?? .distantPast) <= now else { return }
+        announcedRoutes = announcedRoutes.filter { $0.value > now }
+        guard announcedRoutes.count < 64 else { return }
+        announcedRoutes[host] = now.addingTimeInterval(Self.routeAnnouncementInterval)
         try frame(["kind": "remoteControlRoute", "hostId": host, "threadId": thread])
     }
     mutating func receive(_ bytes: Data, at now: Date = Date(), projectedItems: Bool = false) throws {
@@ -321,7 +328,7 @@ public struct NativeDesktopSession {
         guard let host = p["hostId"]?.string(), let thread = Self.valid(p["conversationId"]?.string()) else { return }
         guard hosts.contains(host) else {
             try observeRemoteRoute(host: host, thread: thread, method: method, version: fields["version"]?.integer(),
-                                   sender: fields["sourceClientId"]?.string(), following: p["following"]?.boolean())
+                                   sender: fields["sourceClientId"]?.string(), following: p["following"]?.boolean(), at: now)
             return
         }
         let key = Key(host: host, thread: thread)

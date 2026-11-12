@@ -6,8 +6,10 @@ public struct RemoteControlDirectoryStatus: Codable, Equatable, Sendable {
     public var failed = false
 }
 
-/// Saved routes can add sources while the catalog is unavailable, but only a
-/// verified catalog (or disabling monitoring) can confirm device removal.
+/// Saved routes add sources only before the account has a Remote Control
+/// enrollment. After that, only its verified directory adds devices, as on
+/// Windows; a pending or failed read keeps the previous bindings. A verified
+/// directory, a signed-out account or disabling monitoring confirms removal.
 public struct RemoteControlSourceBindings: Equatable, Sendable {
     public let hostIDs: Set<String>
     public let authoritative: Bool

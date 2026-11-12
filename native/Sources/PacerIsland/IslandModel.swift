@@ -736,6 +736,7 @@ final class IslandModel: ObservableObject {
     private var remoteTask: Task<Void, Never>? { ownedWork.task(.init(.remote, provider: .codex)) }
     private var remoteControlHostIDs: Set<String>?
     private var remoteControlAccountScope: String?
+    private var appliedCodexSSH: Bool?
     private var durableAccountScope: String?
     private var lastRemoteDiscovery = Date.distantPast
     private let historyStore: QuotaHistoryStore
@@ -1787,6 +1788,13 @@ final class IslandModel: ObservableObject {
             hasDemoSnapshot: demo && demoArguments != nil), explicitlyDisablesClaude: modules.claudeMode == .disabled)
         for provider in plan.changedProviders { navigation.cancel(provider: provider) }
         performLifecycle(plan)
+        // SSH is outside the Codex source signature so the Remote Control
+        // directory survives the switch; hand it to the running monitor now.
+        if appliedCodexSSH != monitorsSSH {
+            let changed = appliedCodexSSH != nil
+            appliedCodexSSH = monitorsSSH
+            if changed && !plan.changedProviders.contains(.codex) { refreshRemote() }
+        }
         // A restarted Claude source applies the ring's switch as part of its setup.
         if !plan.changedProviders.contains(.claude) || !isModuleEnabled(.claude) { syncClaudeProgressSwitch() }
         if appliedClaudeProgressRing != showsClaudeProgressRing {

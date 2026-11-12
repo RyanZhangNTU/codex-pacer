@@ -74,7 +74,7 @@ Helper commands run through swift-subprocess 1.0.2; launching a task's host appl
 
 WSL monitoring starts disabled. The desktop applies the one-time opt-in migration before it initializes the engine. The Remote page can check the installed distributions even when monitoring is off. The engine validates that at least one is installed before it accepts an enable request.
 
-While monitoring, a current-user registry notification refreshes the installation list. Only running distributions can start Pacer helpers. A helper disconnect invalidates its route before a new running-state check. When any of the eligible distributions still needs a connection, a 60-second fallback lists running distributions once and reuses the installation list. Fully attached sources rely on their streams and registration notifications. Discovery changes WSL bindings independently of the Remote Control directory.
+While monitoring, a current-user registry notification refreshes the installation list. Only running distributions can start Pacer helpers. A helper disconnect invalidates its route before a new running-state check. While any of the first eight installed distributions is not attached, including one that is stopped or has no `/usr/bin/python3`, a 60-second fallback lists running distributions once and reuses the installation list. A distribution is probed again at most every five minutes unless it restarts or a helper disconnects. Only when every one of them is attached do sources rely on their streams and registration notifications alone. Discovery changes WSL bindings independently of the Remote Control directory.
 
 ## Writers of a session file
 
