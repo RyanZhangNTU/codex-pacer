@@ -48,25 +48,39 @@ public struct RemoteActivityTarget: Equatable, Sendable {
     public static func claudeCodexTargets(home: URL) -> [RemoteActivityTarget] {
         configured(home: home).map { .init(id: $0.id, name: $0.name, alias: $0.alias, home: "~/.claude") }
     }
-    private static let configurations = FileSignatureCache<[RemoteActivityTarget]?>()
     /// Codex's global state can exceed a megabyte; reparse it only when it changes.
-    static func readConfiguration(home: URL) -> [RemoteActivityTarget]? {
-        let file = home.appendingPathComponent(".codex-global-state.json")
-        return configurations.value(for: file) { parseConfiguration(file) }
-    }
-    private static func parseConfiguration(_ file: URL) -> [RemoteActivityTarget]? {
-        guard let data = try? Data(contentsOf: file), data.count < 8 * 1024 * 1024,
-              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let connections = value["codex-managed-remote-connections"] as? [[String: Any]] else { return nil }
-        let flags = value["remote-connection-auto-connect-by-host-id"] as? [String: Bool] ?? [:]
-        let routes = value["app-server-migrated-pinned-thread-ids-by-host"] as? [String: Any] ?? [:]
-        return connections.compactMap { c in
-            guard c["source"] as? String == "discovered", let id = c["hostId"] as? String,
+    static func readConfiguration(home: URL) -> [RemoteActivityTarget]? { CodexGlobalStateSummary.read(home: home).sshTargets }
+
+    static let globalStateFields: Set<String> = ["codex-managed-remote-connections", "remote-connection-auto-connect-by-host-id",
+                                                 "app-server-migrated-pinned-thread-ids-by-host"]
+    /// Any malformed connection row invalidates the list; malformed flags or routes read as absent.
+    static func configuration(_ fields: [String: JSONFieldView]) -> [RemoteActivityTarget]? {
+        guard let connections = fields["codex-managed-remote-connections"], connections.isArray,
+              let rows = try? connections.elements(), rows.allSatisfy(\.isObject) else { return nil }
+        var flags: [String: Bool] = [:], routes: [String] = []
+        do {
+            if let value = fields["remote-connection-auto-connect-by-host-id"], value.isObject {
+                try value.forEachField(maximumCount: 4096) { id, flag in
+                    guard let flag = flag.boolean() else { throw JSONFieldView.Failure.malformed }
+                    flags[id] = flag
+                }
+            }
+        } catch { flags = [:] }
+        do {
+            if let value = fields["app-server-migrated-pinned-thread-ids-by-host"], value.isObject {
+                try value.forEachField(maximumCount: 4096) { route, _ in routes.append(route) }
+            }
+        } catch { routes = [] }
+        var targets: [RemoteActivityTarget] = []
+        for row in rows where targets.count < 8 {
+            guard let c = try? row.fields(["source", "hostId", "alias", "displayName"]),
+                  c["source"]?.string() == "discovered", let id = c["hostId"]?.string(limit: 4096),
                   id.hasPrefix("remote-ssh-discovered:"), flags[id] == true,
-                  let alias = c["alias"] as? String,
-                  alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$"#, options: .regularExpression) != nil else { return nil }
-            let path = routes.keys.first { $0.hasPrefix(id + ":/") }.map { String($0.dropFirst(id.count + 1)) } ?? "~/.codex"
-            return RemoteActivityTarget(id: id, name: c["displayName"] as? String ?? alias, alias: alias, home: path)
-        }.prefix(8).map { $0 }
+                  let alias = c["alias"]?.string(),
+                  alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$"#, options: .regularExpression) != nil else { continue }
+            let path = routes.first { $0.hasPrefix(id + ":/") }.map { String($0.dropFirst(id.count + 1)) } ?? "~/.codex"
+            targets.append(RemoteActivityTarget(id: id, name: c["displayName"]?.string(limit: 4096) ?? alias, alias: alias, home: path))
+        }
+        return targets
     }
 }
