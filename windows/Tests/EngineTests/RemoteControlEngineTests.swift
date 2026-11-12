@@ -303,6 +303,25 @@ final class WindowsRemoteControlGateTests: XCTestCase {
 #endif
 
 extension RemoteControlEngineTests {
+    func testFirstDirectoryReadReplaysVerifiedRouteWithoutAnotherRequest() async throws {
+        let gate = RemoteDirectoryGate(holding: [1]), fixture = try RemoteFixture(directoryGate: gate)
+        fixture.setDirectory(added: true)
+        let monitor = fixture.services.makeMonitor()
+        addTeardownBlock { await gate.releaseAll(); await monitor.shutdown() }
+        let start = Task { await monitor.startAsync(home: fixture.root, includeSSH: false) { _ in } }
+        try await until { await gate.calls == 1 }
+        let channel = try XCTUnwrap(fixture.read().channels.last)
+        let unknown = "remote-control:new"
+        try await channel.send(["kind": "remoteControlRoute", "hostId": unknown, "threadId": thread])
+        let before = await channel.remoteRoutes
+        XCTAssertTrue(before.isEmpty, "An unverified route must not be followed.")
+        await gate.release(1)
+        await start.value
+        let after = await channel.remoteRoutes
+        XCTAssertEqual(after, [.init(host: unknown, thread: thread)])
+        XCTAssertEqual(fixture.fetchCount(), 1)
+    }
+
     func testDirectoryEventsDuringAnOlderReadShareOneFollowUp() async throws {
         let gate = RemoteDirectoryGate(holding: [2]), fixture = try RemoteFixture(directoryGate: gate)
         let monitor = fixture.services.makeMonitor()

@@ -157,6 +157,19 @@ final class RemoteControlAuthorizationTests: XCTestCase {
         XCTAssertEqual(files.readCount(), count, "Check the size before allocating metadata")
         await catalog.shutdown()
     }
+    private actor NoDesktop: DesktopActivityChannel {
+        func start() {}
+        func setHosts(_ hosts: Set<String>) {}
+        func discover(_ threads: [String]) {}
+        func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) {}
+        func stop() {}
+    }
+    private struct NoHelpers: HelperProcessLauncher {
+        func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) async -> Void,
+                    ended: @escaping @Sendable () async -> Void) throws -> any ChildProcessConnection {
+            throw CodexClientError.disconnected
+        }
+    }
     func testDirectoryBacksOffUntilVerifiedThenReusesTheDirectoryOnWakeAndRebind() async throws {
         actor Network {
             var attempts = 0, permits = 0
@@ -172,19 +185,6 @@ final class RemoteControlAuthorizationTests: XCTestCase {
                 while permits < attempt { try await Task.sleep(nanoseconds: 5_000_000) }
             }
             func allow() { permits += 1 }
-        }
-        actor NoDesktop: DesktopActivityChannel {
-            func start() {}
-            func setHosts(_ hosts: Set<String>) {}
-            func discover(_ threads: [String]) {}
-            func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) {}
-            func stop() {}
-        }
-        struct NoHelpers: HelperProcessLauncher {
-            func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) async -> Void,
-                        ended: @escaping @Sendable () async -> Void) throws -> any ChildProcessConnection {
-                throw CodexClientError.disconnected
-            }
         }
         let files = Files(), home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let network = Network(), catalog = try fixture(files, home) { _ in try await network.reply() }
@@ -214,6 +214,33 @@ final class RemoteControlAuthorizationTests: XCTestCase {
         XCTAssertEqual(attempts, 6, "A successful response describing an offline device ends retries")
         XCTAssertEqual(files.readCount(), reads, "Rebinds and wake reuse an unchanged enrollment file")
     }
+    func testWakeRetriesFailedRefreshOfAVerifiedDirectory() async throws {
+        actor Network {
+            var requests = 0
+            func reply() throws -> Data {
+                requests += 1
+                if requests == 2 { throw RemoteControlCatalog.CatalogError.status(503) }
+                return Data(#"{"items":[{"env_id":"work","online":true}]}"#.utf8)
+            }
+        }
+        let files = Files(), home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let network = Network(), catalog = try fixture(files, home) { _ in try await network.reply() }
+        let monitor = RealtimeActivityMonitor(controlCatalog: catalog, services: .init(
+            desktopAvailable: { _ in false }, controlAvailable: { _ in false }, makeDesktop: { _, _, _, _, _, _ in NoDesktop() },
+            processes: NoHelpers(), python: home, ssh: home), controlWait: { _ in try await Task.sleep(nanoseconds: 60_000_000_000) })
+        addTeardownBlock { await monitor.shutdown() }
+        await monitor.startAsync(home: home, includeSSH: false) { _ in }
+        await monitor.refreshRemoteControlCatalog()
+        let beforeSleep = await network.requests
+        XCTAssertEqual(beforeSleep, 2)
+        XCTAssertTrue(catalog.authorization.snapshot(home: home).verified, "A temporary failure keeps the last verified directory.")
+        await monitor.shutdown(retainingRemoteControlCatalog: true)
+        await monitor.startAsync(home: home, includeSSH: false) { _ in }
+        let afterWake = await network.requests
+        XCTAssertEqual(afterWake, 3, "Wake retries the failed refresh without waiting for another device event.")
+        XCTAssertTrue(catalog.authorization.snapshot(home: home).verified)
+    }
+
     func testAccountNamespaceInvalidatesOldNavigationAndNeverSharesAcknowledgments() throws {
         let files = Files(), home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = CompletionDismissalStore(fileURL: home.appendingPathComponent("dismissals"), files: files)

@@ -325,6 +325,62 @@ final class WindowsWSLTests: XCTestCase {
         try await child.send(["kind": "runtimeBatch", "events": [["method": "turn/started", "threadId": thread, "turnId": "late"]]])
         XCTAssertEqual(frames.count(), count)
     }
+    func testUnregisteringAStoppedDistributionClearsItsUnreadEnding() async throws {
+        actor Lists {
+            var stage = 0
+            func advance() { stage += 1 }
+            func read(_ args: [String], bytes: Data) -> Data {
+                if args == ["--list", "--quiet"] {
+                    return Data((stage < 2 ? "Fixture Linux\nAnother distro\n" : "Another distro\n").utf8)
+                }
+                if args == ["--list", "--running", "--quiet"] {
+                    return stage == 0 ? Data("Fixture Linux\n".utf8) : Data()
+                }
+                return bytes
+            }
+        }
+        let profile = profile(), registry = WindowsWSLRegistry(), launches = WSLLaunches(), frames = WSLFrames()
+        let lists = Lists(), bytes = try JSONEncoder().encode(profile)
+        let services = WindowsWSLServices(registry: registry, capture: { _, args, _, _ in await lists.read(args, bytes: bytes) },
+            start: { launches.launch($0, input: $1, output: $2, ended: $3) }, watchRegistrations: { _ in nil })
+        let desktop = CodexDesktopServices { _, _, _, _ in WSLNoDesktop() }
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, desktopServices: desktop, wslServices: services,
+            output: { frames.append($0) })
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-wsl-unregister-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { await runtime.stop(); try? FileManager.default.removeItem(at: root) }
+        func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
+        }
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "monitorWSL": true,
+            "monitorSSH": false, "codexHome": EngineCodexSourceReport.path(root)]))
+        let launched = try await TestWait.until { !launches.all().isEmpty }
+        XCTAssertTrue(launched)
+        let child = try XCTUnwrap(launches.all().last?.2), thread = "019a0000-0000-7000-8000-000000000001"
+        try await child.send(["kind": "status", "connected": true, "sourceAvailable": true])
+        for method in ["turn/started", "turn/completed"] {
+            try await child.send(["kind": "runtimeBatch", "events": [["method": method, "threadId": thread,
+                "turnId": "one", "status": "completed", "at": Date().timeIntervalSince1970]]])
+        }
+        XCTAssertTrue(frames.latest()?.tasks.contains { $0.sourceID == profile.id && $0.unread } == true)
+        await lists.advance()
+        _ = await runtime.receive(try command("refreshWSL"))
+        let offline = try await TestWait.until {
+            frames.latest()?.sources.contains { $0.sourceName == "WSL · Fixture Linux" && $0.state == "offline" } == true
+        }
+        XCTAssertTrue(offline)
+        XCTAssertTrue(frames.latest()?.tasks.contains { $0.sourceID == profile.id && $0.unread } == true,
+            "Stopping an installed distribution keeps its unread completion.")
+        await lists.advance()
+        _ = await runtime.receive(try command("refreshWSL"))
+        let removed = try await TestWait.until {
+            frames.latest()?.wslAvailability == .available &&
+                frames.latest()?.sources.contains { $0.sourceName == "WSL · Fixture Linux" } == false
+        }
+        XCTAssertTrue(removed)
+        XCTAssertFalse(frames.latest()?.tasks.contains { $0.sourceID == profile.id } == true)
+    }
+
     func testWSLIsOptInAndAnEmptyInstallationBlocksEnablement() async throws {
         actor Probe {
             var commands: [[String]] = []

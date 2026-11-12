@@ -246,6 +246,7 @@ actor EngineRuntime {
     private var wslRecoverAfter = Date.distantPast
     private var wslReconnects: [AgentProvider: Set<String>] = [:]
     private var boundWSLCodex: [RemoteActivityTarget] = [], boundWSLClaude: [RemoteActivityTarget] = []
+    private var boundWSLCompletionProfiles: [WindowsWSLProfile] = []
     private struct SourceQuotaState {
         var windows: [EngineQuota.Window]?
         var refreshing = false
@@ -1079,6 +1080,7 @@ actor EngineRuntime {
         applyClaudeProgressSwitch()
         scheduleCodexProgressSetup()
         scheduleDeepSeekProgressSetup()
+        boundWSLCompletionProfiles = wslCompletionProfiles
         bindCodexCompletionSources()
         bindWSLCompletionSources(.claude)
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
@@ -1611,9 +1613,11 @@ actor EngineRuntime {
             return hosts.contains(host)
         }
     }
+    private var wslCompletionProfiles: [WindowsWSLProfile] {
+        monitorWSL ? wslServices?.registry.snapshot().profiles ?? [] : []
+    }
     private func wslCompletionHomes(_ provider: AgentProvider) -> [String: String] {
-        guard monitorWSL, let state = wslServices?.registry.snapshot() else { return [:] }
-        return Dictionary(state.profiles.compactMap { profile in
+        Dictionary(wslCompletionProfiles.compactMap { profile in
             profile.target(provider).map { ($0.id, $0.home + "|" + (profile.rootIdentity(provider) ?? "")) }
         }, uniquingKeysWith: { _, latest in latest })
     }
@@ -1744,9 +1748,14 @@ actor EngineRuntime {
             wslReconnects[.codex] = wslReconnects[.codex]?.intersection(retained).subtracting(retryCodex)
             wslReconnects[.claude] = wslReconnects[.claude]?.intersection(retained).subtracting(retryClaude)
         }
+        // A stopped distribution still owns completions until it is unregistered.
+        let completionProfiles = wslCompletionProfiles
+        if boundWSLCompletionProfiles != completionProfiles {
+            boundWSLCompletionProfiles = completionProfiles
+            bindCodexCompletionSources(); bindWSLCompletionSources(.claude)
+        }
         if previousCodex != codex || previousClaude != claude || !retryCodex.isEmpty || !retryClaude.isEmpty {
             boundWSLCodex = codex; boundWSLClaude = claude
-            bindCodexCompletionSources(); bindWSLCompletionSources(.claude)
             await desktopMonitor?.retryInactiveHelpers(sources: retryCodex)
             guard active, epoch == wslEpoch else { return }
             await bindActivityMonitor(.claude, retryingWSL: retryClaude)

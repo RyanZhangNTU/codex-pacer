@@ -227,15 +227,16 @@ public actor RealtimeActivityMonitor {
         await reconcileControlDirectory(home: context.home, catalog: cached)
         guard controlWork?.id == id else { return }
         if outcome == .success {
-            let hints = controlRouteHints.values.filter { desktop?.hosts[$0.host] != nil }
-            // A device announced during this read may only appear in the next reply.
-            controlRouteHints = controlRouteHints.filter { host, _ in !hintsAtRequest.contains(host) && desktop?.hosts[host] == nil }
+            let verifiedHosts = controlAuthorization(home: context.home)?.hostIDs ?? []
+            let hints = controlRouteHints.values.filter { verifiedHosts.contains($0.host) && desktop?.hosts[$0.host] != nil }
+            // Only an unresolved route announced during the read needs another reply.
+            controlRouteHints = controlRouteHints.filter { host, _ in !hintsAtRequest.contains(host) && !verifiedHosts.contains(host) }
             if !hints.isEmpty { await desktop?.collector.discoverRemote(hints) }
         } else if outcome != .retry {
             controlRouteHints.removeAll()
         }
         guard controlWork?.id == id else { return }
-        let followUp = controlEventPending
+        let followUp = controlEventPending || !controlRouteHints.isEmpty
         controlEventPending = false
         controlWork = nil
         if outcome == .retry {
@@ -285,8 +286,9 @@ public actor RealtimeActivityMonitor {
             desktopIPC: !services.controlAvailable(home), refreshPolicy: refreshPolicy)
         let authorization = includeRemoteControl ? controlAuthorization(home: home) : nil
         let revoked = authorization?.revoked == true
-        let revalidating = includeRemoteControl && authorization?.verified == false && !revoked
-        let scope = !includeRemoteControl || revalidating ? controlAccountScope : (revoked ? nil : authorization?.scope)
+        let needsVerification = includeRemoteControl && authorization?.verified == false && !revoked
+        let revalidating = needsVerification && controlAccountScope != nil
+        let scope = !includeRemoteControl || needsVerification ? controlAccountScope : (revoked ? nil : authorization?.scope)
         let revision = authorization?.revision ?? 0
         let authorizationChanged = revision != controlAuthorizationRevision || scope != controlAccountScope
         if includeRemoteControl, controlAccountScope != nil, scope != controlAccountScope {
@@ -315,7 +317,7 @@ public actor RealtimeActivityMonitor {
         if includeSSH && useSSHFallback {
             sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, target: $0, refreshPolicy: refreshPolicy) }
         }
-        let verifiedCatalog = includeRemoteControl && !revoked && !revalidating ? catalog : nil
+        let verifiedCatalog = includeRemoteControl && !revoked && !needsVerification ? catalog : nil
         let controls = verifiedCatalog ?? (includeRemoteControl && authorization == nil ? RemoteControlActivityTarget.configured(home: home) : [])
         remoteControlBindings = .init(hostIDs: Set(controls.map(\.id)), authoritative: !includeRemoteControl || verifiedCatalog != nil || revoked,
                                       accountScope: scope, isRevalidating: revalidating)
@@ -415,7 +417,7 @@ public actor RealtimeActivityMonitor {
         startGeneration += 1; configuration = nil; retryTask?.cancel(); retryTask = nil
         resetControlRefresh()
         if retainingRemoteControlCatalog {
-            controlAttempted = controlDirectory.refreshedAt != nil
+            controlAttempted = controlDirectory.refreshedAt != nil && !controlDirectory.failed
         } else {
             controlContext = nil; controlHasIdentity = false; controlAttempted = false; controlDirectory = .init()
         }
@@ -476,7 +478,8 @@ public actor RealtimeActivityMonitor {
             guard let config = configuration, config.includeRemoteControl else { return }
             let authorization = controlAuthorization(home: config.home)
             if frame["kind"] as? String == "remoteControlRoute" {
-                guard let authorization, authorization.verified, !authorization.hostIDs.contains(host),
+                guard let authorization, !authorization.revoked, controlContext?.home == config.home, controlContext?.key != nil,
+                      !authorization.hostIDs.contains(host) || (controlWork != nil && current.hosts[host] == nil),
                       host != controlContext?.localHost, let thread = frame["threadId"] as? String else { return }
                 recordControlHint(host: host, thread: thread)
                 return
@@ -565,7 +568,7 @@ public actor RealtimeActivityMonitor {
         guard recentControlHints.count < 64 else { return }
         recentControlHints[host] = now.addingTimeInterval(300)
         controlRouteHints[host] = .init(host: host, thread: thread)
-        scheduleControlEventRefresh(at: now)
+        if controlWork == nil { scheduleControlEventRefresh(at: now) }
     }
     private func desktopClosed(id: UUID) async {
         guard let current = desktop, current.id == id else { return }
