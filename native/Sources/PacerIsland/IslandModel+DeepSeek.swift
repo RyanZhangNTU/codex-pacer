@@ -241,7 +241,7 @@ extension IslandModel {
         let endedTurns = Set(values.filter { [.completed, .interrupted].contains($0.phase) }.compactMap(\.turnID))
             .subtracting(deepseekReceivedActivities.filter { [.completed, .interrupted].contains($0.phase) }.compactMap(\.turnID))
         now = Date(); deepseekReceivedActivities = values; deepseekReceivedRequests = requests
-        if deepseekStreamStatuses != statuses { deepseekStreamStatuses = statuses }
+        if !Self.sameVisibleStreamState(deepseekStreamStatuses, statuses) { deepseekStreamStatuses = statuses }
         if deepseekUsage != usage { deepseekUsage = usage }
         let balanceSourceChanged = synchronizeDeepSeekBalanceSource()
         completionInbox.updatePerformance(performance)
@@ -261,7 +261,7 @@ extension IslandModel {
         let key = mode == .apiKey ? deepseekBalanceReads.apiKey() : nil
         let inputError = DeepSeekBalanceCoordinator.credentialError(mode: mode, key: key, webAvailable: true)
         guard mode != nil, inputError == nil else { deepseekBalanceError = inputError; return }
-        let active = active ?? (expanded || running.contains { $0.provider == .deepseek })
+        let active = active ?? (visiblyExpanded || running.contains { $0.provider == .deepseek })
         let requested = !scheduled && !turnEnded
         guard DeepSeekBalanceCoordinator.isDue(lastAttempt: deepseekBalanceState?.lastAttempt,
             failures: deepseekFailureCount, active: active, force: force, requested: requested, turnEnded: turnEnded, now: Date()) else { return }

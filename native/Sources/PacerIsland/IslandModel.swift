@@ -473,7 +473,9 @@ final class IslandModel: ObservableObject {
     }
     @Published var expanded = false
     @Published var pinned = false
-    @Published var now = Date()
+    /// The reference time for each pass. Setting it alone does not redraw: changed
+    /// values publish themselves; the clock and expiry wake-ups call `redrawClock()`.
+    var now = Date()
     @Published var settingsRevision = 0
     @Published var isAttached = false
     /// Attached to a real hardware notch, where the collapsed bar is pure black.
@@ -985,7 +987,40 @@ final class IslandModel: ObservableObject {
     }
     var displayMode: IslandDisplayMode { .load() }
     var islandPosition: IslandPosition { .load(from: defaults) }
-    var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
+    var activityRefreshPolicy: ActivityRefreshPolicy { visiblyExpanded ? .expanded : .collapsed }
+    /// Why an open panel cannot be seen. It then refreshes at the collapsed cadence.
+    enum VisibilityBlocker: Hashable { case displaySleep, screenLock, inactiveSession, occluded }
+    private(set) var visibilityBlockers: Set<VisibilityBlocker> = []
+    /// Expanded and actually on screen: only then do clocks, quotas and activity use the fast cadence.
+    var visiblyExpanded: Bool { expanded && visibilityBlockers.isEmpty }
+    func setVisibilityBlocked(_ blocker: VisibilityBlocker, _ blocked: Bool) {
+        let wasLive = visiblyExpanded
+        if blocked { visibilityBlockers.insert(blocker) } else { visibilityBlockers.remove(blocker) }
+        guard visiblyExpanded != wasLive else { return }
+        applyRefreshCadence()
+        guard visiblyExpanded else { return }
+        // Back in view: catch up once, as opening the panel does.
+        redrawClock()
+        if !demo, !sleeping, !stopped { refreshActivity(metricsOnly: true) }
+        if Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshQuota() }
+    }
+    private func applyRefreshCadence() {
+        if !demo, !sleeping, !stopped {
+            logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: visiblyExpanded)
+            let generation = sourceGeneration
+            launchOwnedWork(.init(.presentation, identifier: "activity-policy")) { [weak self] ticket in
+                guard let self, generation == self.sourceGeneration, self.lifecycle.owns(ticket) else { return }
+                await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
+                guard self.lifecycle.owns(ticket) else { return }
+                await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
+                guard self.lifecycle.owns(ticket) else { return }
+                await self.claudeCloudCoordinator?.setExpanded(self.visiblyExpanded)
+                guard self.lifecycle.owns(ticket) else { return }
+                await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
+            }
+        }
+        if clock != nil { scheduleClock() }
+    }
     var appearance: IslandAppearance { .stored(in: defaults) }
     var expandedQuotaStyle: ExpandedQuotaStyle { .load(from: defaults) }
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
@@ -1144,6 +1179,21 @@ final class IslandModel: ObservableObject {
                 self?.resumeAfterSleep()
             }
         })
+        // A pinned panel behind a dark display, the lock screen or another user's session is not seen.
+        for (name, blocker, blocked) in [(NSWorkspace.screensDidSleepNotification, VisibilityBlocker.displaySleep, true),
+                                         (NSWorkspace.screensDidWakeNotification, .displaySleep, false),
+                                         (NSWorkspace.sessionDidResignActiveNotification, .inactiveSession, true),
+                                         (NSWorkspace.sessionDidBecomeActiveNotification, .inactiveSession, false)] {
+            observations.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.setVisibilityBlocked(blocker, blocked) }
+            })
+        }
+        let distributed = DistributedNotificationCenter.default()
+        for (name, blocked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
+            observations.append(distributed.addObserver(forName: .init(name), object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.setVisibilityBlocked(.screenLock, blocked) }
+            })
+        }
     }
     func prepareForSleep() async {
         let plan = lifecycle.prepareForSleep()
@@ -1167,29 +1217,17 @@ final class IslandModel: ObservableObject {
     func resumeAfterSleep() {
         let plan = lifecycle.resume()
         guard !plan.actions.isEmpty else { return }
-        now = Date(); performLifecycle(plan)
+        redrawClock(); performLifecycle(plan)
     }
+    /// Elapsed times, countdowns and rate expiry change with time alone.
+    func redrawClock(_ date: Date = Date()) { now = date; objectWillChange.send() }
     func setExpanded(_ value: Bool) {
         guard !value || !interactionSuspended else { return }
         closeWork?.cancel()
         guard expanded != value else { return }
         expanded = value
-        if !demo, !sleeping, !stopped {
-            logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: value)
-            let generation = sourceGeneration
-            launchOwnedWork(.init(.presentation, identifier: "activity-policy")) { [weak self] ticket in
-                guard let self, generation == self.sourceGeneration, self.lifecycle.owns(ticket) else { return }
-                await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.claudeCloudCoordinator?.setExpanded(self.expanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
-            }
-            if value { refreshActivity(metricsOnly: true) }
-        }
-        if clock != nil { scheduleClock() }
+        applyRefreshCadence()
+        if value, !demo, !sleeping, !stopped { refreshActivity(metricsOnly: true) }
         onLayoutChange?()
         if value && Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshQuota() }
         if value { refreshDesktopApplications(force: false) }
@@ -1212,7 +1250,8 @@ final class IslandModel: ObservableObject {
         interactionSuspended = suspended
         if suspended { close() }
     }
-    func close() { pinned = false; setExpanded(false) }
+    /// A published write redraws every view even when the value is unchanged.
+    func close() { if pinned { pinned = false }; setExpanded(false) }
     private func navigationScope(for activity: SessionActivity) -> String? {
         if activity.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) == true { return remoteControlAccountScope }
         return activity.claudeCloud == nil ? nil : claudeCloudNavigationScope
@@ -1329,7 +1368,7 @@ final class IslandModel: ObservableObject {
     }
     private func refreshCodexQuota(force: Bool = true) {
         guard isModuleEnabled(.codex), refreshTask == nil, !sleeping, !stopped, !demo else { return }
-        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: codexQuotaState?.lastAttempt, expanded: expanded,
+        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: codexQuotaState?.lastAttempt, expanded: visiblyExpanded,
             failures: codexQuotaState?.failureCount ?? 0, now: Date(), force: force) else { return }
         let generation = sourceGeneration, sourceHome = home, custom = defaults.string(forKey: "codexExecutable") ?? ""
         let owner = codexQuotaOwnerID, receipt = UUID()
@@ -1355,7 +1394,7 @@ final class IslandModel: ObservableObject {
             guard generation == self.sourceGeneration, !Task.isCancelled else { return }
             await coordinator.configure(home: sourceHome, customPath: custom, enabled: true, context: UInt64(generation))
             guard generation == self.sourceGeneration, !Task.isCancelled else { return }
-            await coordinator.refreshIfDue(expanded: self.expanded, force: force)
+            await coordinator.refreshIfDue(expanded: self.visiblyExpanded, force: force)
             if self.codexQuotaReceiptID == receipt { self.codexQuotaStarting = false }
             self.receiveCodexQuota(await coordinator.currentState(), owner: owner)
             await coordinator.waitForRefresh()
@@ -1437,7 +1476,7 @@ final class IslandModel: ObservableObject {
     }
     private func refreshClaudeQuota(force: Bool = true) {
         guard isModuleEnabled(.claude), claudeQuotaTask == nil, claudeQuotaRestartTask == nil, !sleeping, !stopped, !demo else { return }
-        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: claudeQuotaState?.lastAttempt, expanded: expanded,
+        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: claudeQuotaState?.lastAttempt, expanded: visiblyExpanded,
             failures: claudeQuotaState?.failureCount ?? 0, now: Date(), force: force) else { return }
         let generation = claudeGeneration, sourceHome = claudeHome
         let organization = defaults.string(forKey: "claudeWebOrganizationID") ?? ""
@@ -1474,7 +1513,7 @@ final class IslandModel: ObservableObject {
             guard self.isCurrentClaudeQuotaRead(generation) else { return }
             await coordinator.configure(home: sourceHome, organization: organization, enabled: true, context: UInt64(generation))
             guard self.isCurrentClaudeQuotaRead(generation) else { return }
-            _ = await coordinator.refreshIfDue(expanded: self.expanded, force: force)
+            _ = await coordinator.refreshIfDue(expanded: self.visiblyExpanded, force: force)
             if self.claudeQuotaReceiptID == receipt { self.claudeQuotaStarting = false }
             self.receiveClaudeQuota(await coordinator.currentState(), owner: owner)
             await coordinator.waitForRefresh()
@@ -1534,7 +1573,7 @@ final class IslandModel: ObservableObject {
     /// meanwhile. Stopping the source forgets it.
     private func syncClaudeCloudMonitor() {
         guard isModuleEnabled(.claude), showsClaudeCloudProjects, !sleeping, !stopped, !demo else { stopClaudeCloudMonitor(); return }
-        let generation = claudeGeneration, expanded = expanded
+        let generation = claudeGeneration, expanded = visiblyExpanded
         if claudeCloudCoordinator == nil {
             guard let factory = makeClaudeCloudMonitor else { return }
             let clients = MacClaudeCloudClients(prepared: factory(), factory: factory)
@@ -1699,7 +1738,7 @@ final class IslandModel: ObservableObject {
                 }
             }
             // A hover/collapse can occur while start is awaiting the monitor.
-            await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+            await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
         }
     }
 
@@ -1730,12 +1769,21 @@ final class IslandModel: ObservableObject {
         }
         completionInbox.updateNames(names.filter { !ignored.contains($0.id) })
         completionInbox.updatePerformance(performance.filter { !ignored.contains($0.id) })
-        if streamStatuses != statuses { streamStatuses = statuses }
+        if !Self.sameVisibleStreamState(streamStatuses, statuses) { streamStatuses = statuses }
         if unavailableSSH != unavailable { unavailableSSH = unavailable }
         codexReceivedRequests = requests
         refilterEmbeddedSessions()
         if oldLocal != newLocal { refreshActivity() }
         else if agentStatesChanged { refreshActivity(metricsOnly: true) }
+    }
+    /// Helper CPU, loop and notification counters change on every heartbeat and are never shown.
+    static func sameVisibleStreamState(_ lhs: [String: RuntimeStreamStatus], _ rhs: [String: RuntimeStreamStatus]) -> Bool {
+        func visible(_ value: RuntimeStreamStatus) -> RuntimeStreamStatus {
+            var value = value
+            value.helperCpuSeconds = 0; value.helperLoopIterations = 0; value.notifications = 0; value.fallbackScans = 0
+            return value
+        }
+        return lhs.count == rhs.count && lhs.allSatisfy { key, value in rhs[key].map(visible) == visible(value) }
     }
     func applyActivityUpdate(_ update: ActivityApplicationUpdate) {
         if activities != update.activities { activities = update.activities }
@@ -1905,7 +1953,7 @@ final class IslandModel: ObservableObject {
         guard plan.actions.contains(.stopSources) else { return }
         desktopApplicationScan?.cancel()
         clock?.invalidate(); closeWork?.cancel()
-        observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0); DistributedNotificationCenter.default().removeObserver($0) }
         performLifecycle(plan)
         navigation.cancel(); clearNavigationError()
         invalidateWork(invalidateSource: false)
@@ -1943,7 +1991,7 @@ final class IslandModel: ObservableObject {
     }
     private func scheduleClock() {
         clock?.invalidate()
-        let interval: TimeInterval = !expanded ? 30 : 2
+        let interval: TimeInterval = !visiblyExpanded ? 30 : 2
         clock = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -1958,7 +2006,7 @@ final class IslandModel: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.sleeping, !self.stopped else { return }
             self.rateExpiryWork = nil; self.rateExpiryAt = nil
-            self.now = Date()
+            self.redrawClock()
             self.pruneCompletions()
             self.scheduleRateExpiry()
             self.onStatusChange?()
@@ -1968,8 +2016,8 @@ final class IslandModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow) + 0.01, execute: work)
     }
     private func tick() {
-        now = Date()
-        performLifecycle(lifecycle.tick(.init(now: now, expanded: expanded, codexConnected: streamStatuses["local"]?.connected == true,
+        redrawClock()
+        performLifecycle(lifecycle.tick(.init(now: now, expanded: visiblyExpanded, codexConnected: streamStatuses["local"]?.connected == true,
             lastCodexDiscovery: lastDiscovery, lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
             deepseekRunning: running.contains { $0.provider == .deepseek })))
         if !sleeping, !stopped, !demo { onStatusChange?() }
@@ -2027,7 +2075,7 @@ final class IslandModel: ObservableObject {
     }
     /// Each provider gets its own sample, whichever one Settings showed last.
     private func makeDemo() {
-        now = demoClock()
+        redrawClock(demoClock())
         for snapshot in DemoScenario.quota(.codex, at: now) { codexHistory.record(snapshot); codexQuota = snapshot }
         for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
         makeDeepSeekDemo()
@@ -2041,7 +2089,7 @@ final class IslandModel: ObservableObject {
     }
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }
-        now = demoClock()
+        redrawClock(demoClock())
         let demoArguments = demoArguments ?? []
         var observed = demoArguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
         if demoArguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }
