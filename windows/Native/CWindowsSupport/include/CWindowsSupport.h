@@ -20,6 +20,10 @@ typedef void (*pacer_change_callback)(void *context, int valid);
 void *pacer_watch_directory(const uint16_t *path, int is_directory, void *context,
                            pacer_change_callback callback, void (*closed)(void *));
 void pacer_close_directory_watch(void *watch);
+// 1 registered, 0 empty, -1 unknown. A notification only invalidates the list.
+int pacer_wsl_registration_presence(void);
+void *pacer_watch_wsl_registrations(void *context, pacer_change_callback callback, void (*closed)(void *));
+void pacer_close_wsl_registration_watch(void *watch);
 void *pacer_telemetry_listen(uint16_t port, int backlog, uint16_t *bound_port, void *context,
                             void (*accepted)(void *, void *), void (*closed)(void *));
 void pacer_telemetry_stop(void *listener);

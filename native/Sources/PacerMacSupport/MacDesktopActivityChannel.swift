@@ -65,6 +65,7 @@ final class MacDesktopActivityChannel: DesktopActivityChannel, @unchecked Sendab
     }
     func setHosts(_ hosts: Set<String>) { collector.setHosts(hosts) }
     func discover(_ threads: [String]) { /* Mac routing and owner broadcasts supply discovery. */ }
+    func discoverRemote(_ routes: [NativeDesktopSession.Key]) { collector.discoverRemote(routes) }
     func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) { collector.setBatchInterval(seconds, flushPending: flushPending) }
     func stop() { slot.stop(); continuation.finish(); delivery.cancel() }
 }

@@ -88,7 +88,7 @@ internal static class PreferencesCodec
             };
         }
         if (!value.IsValid) throw new JsonException();
-        return value;
+        return value with { WslOptInMigrated = root["wslOptInMigrated"] is JsonValue marker && marker.TryGetValue<bool>(out bool migrated) && migrated };
     }
     // Damaged component choices read as the defaults without touching other settings.
     private static string? ReadComponentOptions(JsonNode? node)

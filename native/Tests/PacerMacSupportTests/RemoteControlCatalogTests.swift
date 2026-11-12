@@ -73,16 +73,17 @@ final class RemoteControlCatalogTests: XCTestCase {
         let catalog = RemoteControlCatalog(fetch: { _ in try await fetches.response() }, makeClient: { home in
             CodexClient(executable: URL(fileURLWithPath: "/usr/bin/python3"), home: home, arguments: ["-u", "-c", script])
         })
-        let now = Date()
-        let first = await catalog.targets(home: home, now: now)
+        _ = await catalog.refresh(home: home)
+        let first = await catalog.cachedTargets(home: home)
         XCTAssertEqual(first?.first?.name, "Workstation")
-        await catalog.invalidate()
-        let retained = await catalog.targets(home: home, now: now.addingTimeInterval(1))
+        _ = await catalog.refresh(home: home)
+        let retained = await catalog.cachedTargets(home: home)
         XCTAssertEqual(retained?.first?.name, "Workstation", "Refresh expires the catalog without losing verified names on a temporary network failure")
         let attempts = await fetches.count
         XCTAssertEqual(attempts, 2)
         try Data("different-synthetic-profile".utf8).write(to: profile)
-        let replaced = await catalog.targets(home: home, now: now.addingTimeInterval(2))
+        _ = await catalog.refresh(home: home)
+        let replaced = await catalog.cachedTargets(home: home)
         XCTAssertNil(replaced, "A replaced authentication profile cannot reuse the former account's catalog")
         await catalog.shutdown()
     }
@@ -94,14 +95,15 @@ final class RemoteControlCatalogTests: XCTestCase {
                 ["env_id": "env_\($0)", "name": "Device \($0)", "online": true] as [String: Any]
             }, "cursor": NSNull()])
         }, makeClient: try clientFactory())
-        let first = await catalog.targets(home: home)
+        _ = await catalog.refresh(home: home)
+        let first = await catalog.cachedTargets(home: home)
         XCTAssertEqual(first?.count, 8)
         XCTAssertFalse(first?.contains { $0.id == "remote-control:env_8" } ?? true)
         let file = home.appendingPathComponent(".codex-global-state.json")
         var state = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
         state["selected-remote-host-id"] = "remote-control:env_8"
         try JSONSerialization.data(withJSONObject: state).write(to: file)
-        let selected = await catalog.targets(home: home)
+        let selected = await catalog.cachedTargets(home: home)
         XCTAssertEqual(selected?.first?.id, "remote-control:env_8")
         await catalog.shutdown()
     }
@@ -112,7 +114,8 @@ final class RemoteControlCatalogTests: XCTestCase {
             try Data("replacement-profile".utf8).write(to: home.appendingPathComponent("auth.json"))
             return try JSONSerialization.data(withJSONObject: ["items": [["env_id": "old", "name": "Old account device"]], "cursor": NSNull()])
         }, makeClient: try clientFactory())
-        let result = await catalog.targets(home: home)
+        _ = await catalog.refresh(home: home)
+        let result = await catalog.cachedTargets(home: home)
         XCTAssertNil(result, "No caller should receive a catalog fetched before an in-flight account replacement")
         await catalog.shutdown()
     }

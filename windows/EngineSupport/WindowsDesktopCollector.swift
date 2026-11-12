@@ -118,15 +118,20 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
             // Global handshakes are allowed. Every thread-bearing broadcast is
             // bound before it can discover, follow or mutate a projection.
             let root = try JSONFieldView.document(bytes, projectedItems: true)
-            let fields = try root.fields(["type", "method", "params", "sourceClientId"])
+            let fields = try root.fields(["type", "method", "params", "sourceClientId", "version"])
             if fields["type"]?.string() == "broadcast", let params = fields["params"], params.isObject {
-                let route = try params.fields(["hostId", "conversationId"])
+                let route = try params.fields(["hostId", "conversationId", "following"])
                 if let thread = route["conversationId"]?.string() {
                     guard let host = route["hostId"]?.string() else { return }
                     if host == DurableActivityCatalog.hostID {
                         guard durableThreads.contains(thread.lowercased()) else { try await deliver(); return }
                     } else if host != "local" {
-                        guard remoteGate?.permit(host) == true else { return }
+                        guard remoteGate?.permit(host) == true else {
+                            try session?.observeRemoteRoute(host: host, thread: thread, method: fields["method"]?.string(),
+                                version: fields["version"]?.integer(), sender: fields["sourceClientId"]?.string(), following: route["following"]?.boolean())
+                            try await deliver()
+                            return
+                        }
                     } else {
                         let owner = fields["method"]?.string() == "thread-stream-state-changed" ? fields["sourceClientId"]?.string() : nil
                         guard gate.permit(thread, owner: owner) else {
@@ -139,6 +144,13 @@ actor WindowsDesktopCollector: DesktopActivityChannel {
             }
             try session?.receive(bytes)
             guard !gate.revoked else { throw WindowsDesktopSourceGate.Failure.revoked }
+            try await deliver(); schedule()
+        } catch { await finish(flush: false) }
+    }
+    func discoverRemote(_ routes: [NativeDesktopSession.Key]) async {
+        guard !finished, let remoteGate else { return }
+        do {
+            try session?.discover(routes.filter { remoteGate.permit($0.host) })
             try await deliver(); schedule()
         } catch { await finish(flush: false) }
     }

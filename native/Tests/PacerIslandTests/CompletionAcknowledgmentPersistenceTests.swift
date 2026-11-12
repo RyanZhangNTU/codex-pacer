@@ -114,6 +114,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
         defaults.set(false, forKey: "monitorSSH")
+        defaults.set(true, forKey: "monitorRemoteControl")
         defaults.set(0, forKey: "completedRetentionMinutes")
         ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
         var configuration: [String: Any] = ["electron-remote-control-client-enrollments": [
@@ -193,6 +194,22 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         await rebuilt.shutdown()
     }
 
+    func testRevalidatingRemoteControlHidesUnreadEndingUntilTheSameAccountReturns() async throws {
+        let fixture = try controlCatalogFixture(), model = fixture.model, host = try XCTUnwrap(fixture.host)
+        let ending = familyActivity(.codex, 963, host: host, at: Date().addingTimeInterval(-2))
+        let verified = RemoteControlSourceBindings(hostIDs: [host], authoritative: true, accountScope: "fixture")
+        model.receiveRemoteUpdate([ending], statuses: [:], unavailable: [], requests: [], names: [], remoteControlBindings: verified)
+        XCTAssertTrue(model.isUnreadCompletion(ending))
+        model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [],
+            remoteControlBindings: .init(hostIDs: [], authoritative: false, accountScope: "fixture", isRevalidating: true))
+        XCTAssertFalse(model.activities.contains { $0.id == ending.id })
+        XCTAssertFalse(model.canOpen(ending))
+        model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [], remoteControlBindings: verified)
+        XCTAssertTrue(model.activities.contains { $0.id == ending.id })
+        XCTAssertTrue(model.isUnreadCompletion(ending))
+        await model.shutdown()
+    }
+
     func testOnlyActualConversationOpenPersistsAcrossModelReconstructionForBothProvidersAndHosts() async throws {
         for provider in AgentProvider.allCases {
             for sourceHostID in [nil, "remote-ssh-discovered:synthetic-ack", "remote-control:synthetic-ack"] as [String?]
@@ -206,6 +223,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     defaults.set(directory.path, forKey: "codexHome")
                     defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
                     defaults.set("synthetic-ack", forKey: "claudeSSHHosts")
+                    defaults.set(true, forKey: "monitorRemoteControl")
                     defaults.set(0, forKey: "completedRetentionMinutes")
                     ProviderModules(codexMode: .enabled, claudeMode: .enabled, deepseekMode: .enabled).save(to: defaults)
                     let host = "remote-ssh-discovered:synthetic-ack"
@@ -470,6 +488,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             defaults.set(directory.path, forKey: "codexHome")
             defaults.set(directory.appendingPathComponent("claude-profile").path, forKey: "claudeHome")
             defaults.set(false, forKey: "monitorSSH")
+            defaults.set(true, forKey: "monitorRemoteControl")
             defaults.set(0, forKey: "completedRetentionMinutes")
             ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
             func configuration(_ home: URL, enabled: Bool = true) throws {
@@ -482,7 +501,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                 installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
                 completionDismissalStore: CompletionDismissalStore(fileURL: file))
-            XCTAssertTrue(model.monitorsRemoteControl, "The injected defaults retain the enabled-by-default setting")
+            XCTAssertTrue(model.monitorsRemoteControl, "The injected defaults opt in to Remote Control")
             let at = Date().addingTimeInterval(-2), host = "remote-control:scope-fixture"
             let codex = familyActivity(.codex, 950, host: host, at: at), claude = familyActivity(.claude, 951, at: at)
             publishFamily([codex, claude], to: model)

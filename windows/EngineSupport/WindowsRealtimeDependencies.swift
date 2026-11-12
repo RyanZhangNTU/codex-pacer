@@ -42,7 +42,8 @@ struct CodexDesktopServices: Sendable {
         #endif
     }
     func makeMonitor(retryInterval: TimeInterval = 30, ssh: WindowsSSHServices? = nil, wsl: WindowsWSLServices? = nil,
-                     targets: (@Sendable (URL) async -> [RemoteActivityTarget])? = nil) -> RealtimeActivityMonitor {
+                     targets: (@Sendable (URL) async -> [RemoteActivityTarget])? = nil,
+                     wslDisconnected: WindowsWSLServices.Disconnect? = nil) -> RealtimeActivityMonitor {
         let catalog = catalog ?? RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse },
             files: WindowsFileSystem(), makeClient: { _ in nil })
         let authorization: (@Sendable (URL) -> RemoteControlAuthorizationSnapshot)?
@@ -58,7 +59,7 @@ struct CodexDesktopServices: Sendable {
             makeDesktop: { home, hosts, local, interval, frame, closed in
                 if let routed { return routed(home, hosts, local, interval, frame, closed) }
                 return makeConnection(home, interval, frame, closed)
-            }, processes: wsl?.launcher(base: base) ?? base, python: WindowsExecutables.python, ssh: ssh?.ssh ?? WindowsExecutables.ssh,
+            }, processes: wsl?.launcher(base: base, disconnected: wslDisconnected) ?? base, python: WindowsExecutables.python, ssh: ssh?.ssh ?? WindowsExecutables.ssh,
             sshTargets: targets, sshArguments: arguments,
             remoteControlAuthorization: authorization, supportsDurable: supportsDurable),
             retryInterval: retryInterval)
@@ -82,5 +83,6 @@ struct CodexDesktopState: Sendable {
     var durableAccountScope: String?
     /// Failed sources without a stream status, such as an exited SSH helper.
     var unavailable: [String] = []
+    var remoteControlDirectory: RemoteControlDirectoryStatus?
     var remoteStatuses: [String: RuntimeStreamStatus] { statuses.filter { $0.key != "local" } }
 }

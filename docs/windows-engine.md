@@ -70,6 +70,14 @@ Helper commands run through swift-subprocess 1.0.2; launching a task's host appl
 - Do not pass `.none` input or `.discarded` output on Windows. swift-subprocess then opens `NUL` through the C runtime on every run and never releases the descriptor; the 30-second WSL discovery once exhausted the runtime's 8,192 descriptors in about 15 hours and stopped the engine. `WindowsSubprocessTests` checks that captures keep no descriptors.
 - Long-running helpers (Codex app-server, SSH and WSL helpers) stream `.sequence` output through `WindowsCodexProcess`.
 
+### WSL discovery
+
+WSL monitoring starts disabled. The desktop applies the one-time opt-in migration before it initializes the engine. The Remote page can check the installed distributions even when monitoring is off. The engine validates that at least one is installed before it accepts an enable request.
+
+While monitoring is on, Pacer watches the current user's WSL registrations and refreshes the installation list when they change. It starts helpers only in running distributions. If a helper disconnects, Pacer rechecks its route before reconnecting it. Other helpers in that distribution can keep reporting unless their own route changes or the distribution stops. Unread completions stay when a distribution stops and are removed when it is unregistered.
+
+Pacer checks the running list once a minute if it cannot watch the registry or if any of the first eight installed distributions still lacks a route for an enabled provider. That includes stopped distributions, missing Python, and providers whose configuration directories do not exist yet. The fallback reuses the installation list while the watch is working and probes each incomplete profile at most every five minutes. Registration changes, a restart, a disconnect or a manual refresh can trigger an earlier probe. Once all enabled routes are verified and the watch is working, streams and registration notifications take over. WSL discovery does not refresh the Remote Control directory.
+
 ## Writers of a session file
 
 Host tracking, opening a task and the Codex Desktop source binding ask which processes hold a session file open for writing. `WindowsFileOwners.c` asks Restart Manager for candidates, captures each one's handle table with `PssCaptureSnapshot`, and compares the file identity of every handle with write access.

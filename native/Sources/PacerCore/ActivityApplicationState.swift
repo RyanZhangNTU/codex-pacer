@@ -56,7 +56,7 @@ public struct ActivityApplicationState: Sendable {
         switch provider { case .codex: incoming = localActivities + remoteActivities + Array(pendingCodexEndings.values); case .claude: incoming = claudeActivities; case .deepseek: incoming = deepseekActivities }
         var values = Dictionary(inbox.activities.filter { $0.provider == provider }.map { ($0.canonicalized().id, $0.canonicalized()) }, uniquingKeysWith: { _, latest in latest })
         let samples = includesDemoMetadata ? demoActivities.filter { $0.provider == provider } : []
-        for item in samples + incoming {
+        for item in samples + incoming where inbox.isSourceVisible(item.sourceHostID) {
             var value = item.canonicalized()
             if let old = values[value.id] { value.mergeDisplayMetadata(from: old) }
             values[value.id] = value
@@ -169,7 +169,8 @@ public struct ActivityApplicationState: Sendable {
         let ignored = ignoredCodexActivityIDs
         inbox.remove(activityIDs: ignored)
         let previous = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-        let streamed = pendingCodexEndings.isEmpty ? remoteActivities : ActivitySourceMerger.merge(logged: Array(pendingCodexEndings.values), streamed: remoteActivities)
+        let readyEndings = pendingCodexEndings.values.filter { inbox.isSourceVisible($0.sourceHostID) }
+        let streamed = readyEndings.isEmpty ? remoteActivities : ActivitySourceMerger.merge(logged: readyEndings, streamed: remoteActivities)
         let merged = (ActivitySourceMerger.merge(logged: localActivities, streamed: streamed) + claudeActivities + deepseekActivities)
             .filter { !ignored.contains($0.id) && !$0.codexGoalExpired(at: now) }.map { value in
                 var value = value
@@ -177,7 +178,7 @@ public struct ActivityApplicationState: Sendable {
                 return value
             }
         let observed = inbox.observe(ActivityTaskGroup.make(merged).flatMap(\.members), at: now, retention: retention)
-        pendingCodexEndings = [:]
+        pendingCodexEndings = pendingCodexEndings.filter { !inbox.isSourceVisible($0.value.sourceHostID) }
         for ending in inbox.activities where ending.claudeCloud?.readInClaude == true { inbox.dismiss(ending) }
         let hidden = hiddenActivityIDs(visibility), shown = observed.filter { !hidden.contains($0.id) }
         observeFirstOutputs(shown, at: now)

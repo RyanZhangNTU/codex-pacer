@@ -182,7 +182,7 @@ public partial class App : Application
         if (!demo || demoPreferencesFile != null)
         {
             preferencesStore = new PreferencesStore(demoPreferencesFile);
-            (preferences, preferencesUnavailable) = preferencesStore.Load();
+            (preferences, preferencesUnavailable) = preferencesStore.Load(migrateWSL: !demo);
             if (positionIndex < 0) position = Array.IndexOf(positions, preferences.Position);
         }
         string language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en";
@@ -239,6 +239,18 @@ public partial class App : Application
             await engineReady.Task.WaitAsync(TimeSpan.FromSeconds(15));
             return await PreferencesAcknowledgement.ValidateAsync(engine, value);
         });
+        if (!demo)
+        {
+            bool handledMissingWSL = false;
+            engine.Snapshot += snapshot => _ = Dispatcher.InvokeAsync(async () =>
+            {
+                if (snapshot.WslAvailability != "unavailable") { handledMissingWSL = false; return; }
+                if (quitting || handledMissingWSL || !settingsSession.Current.MonitorWSL) return;
+                handledMissingWSL = true;
+                await settingsSession.ChangeAsync(value => engine.LatestSnapshot?.WslAvailability == "unavailable"
+                    ? value with { MonitorWSL = false } : value);
+            });
+        }
         island.SaveIslandPlacement = edit => settingsSession.ChangeAsync(edit);
         notificationActions = new NotificationActions(engineReady.Task, () => quitting || settingsSession.Current.SystemNotifications != true, island.Reveal,
             () => engine.SendAsync("snoozeDeepSeekSpike"), OpenNotificationLink, notificationLifetime.Token, () => applications.Open("deepseek"),

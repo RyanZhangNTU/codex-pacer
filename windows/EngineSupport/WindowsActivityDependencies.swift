@@ -2,9 +2,10 @@ import Foundation
 import PacerCore
 
 extension ClaudeActivityMonitor {
-    init(clock: @escaping @Sendable () -> Date = { Date() }, ssh: WindowsSSHServices? = nil, wsl: WindowsWSLServices? = nil) {
+    init(clock: @escaping @Sendable () -> Date = { Date() }, ssh: WindowsSSHServices? = nil, wsl: WindowsWSLServices? = nil,
+         wslDisconnected: WindowsWSLServices.Disconnect? = nil) {
         let base = ssh?.processes ?? WindowsSSHProcessLauncher(ssh: WindowsExecutables.ssh)
-        self.init(sshExecutable: ssh?.ssh ?? WindowsExecutables.ssh, processes: wsl?.launcher(base: base) ?? base,
+        self.init(sshExecutable: ssh?.ssh ?? WindowsExecutables.ssh, processes: wsl?.launcher(base: base, disconnected: wslDisconnected) ?? base,
             fileEvents: WindowsActivityLogWatcher(), telemetryTransport: WindowsTelemetryTransport(),
             remoteMirrorSessionIDs: { home in
                 ClaudeDesktopRecords.remoteMirrorSessionIDs(claudeHome: home,

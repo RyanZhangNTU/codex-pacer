@@ -27,6 +27,10 @@ public struct DesktopCollectionSession {
         if flushPending, session.hasEvents { try session.publishEvents(); lastFlush = now }
     }
     public mutating func discover(_ keys: [NativeDesktopSession.Key]) throws { try session.discover(keys) }
+    package mutating func observeRemoteRoute(host: String, thread: String, method: String?, version: Int?,
+                                             sender: String?, following: Bool?) throws {
+        try session.observeRemoteRoute(host: host, thread: thread, method: method, version: version, sender: sender, following: following)
+    }
     public mutating func setDurableCatalog(_ catalog: DurableActivityCatalog?, at now: Date = Date()) throws {
         try session.setDurableCatalog(catalog, at: now)
     }

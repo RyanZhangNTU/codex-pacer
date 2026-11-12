@@ -57,7 +57,8 @@ public actor ClaudeActivityMonitor {
         self.maximumRemoteTargets = min(16, max(1, maximumRemoteTargets))
         localReader = ClaudeActivityReader(files: files, clock: clock)
     }
-    public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed, update: @escaping Update) async {
+    public func start(home: URL, remoteTargets: [RemoteActivityTarget] = [], refreshPolicy: ActivityRefreshPolicy = .collapsed,
+                      retryingRemoteSources: Set<String> = [], update: @escaping Update) async {
         callback = update; policy = refreshPolicy
         if self.home != home {
             stopLocal(); self.home = home; localReader.reset(); local = ClaudeActivityState()
@@ -75,17 +76,18 @@ public actor ClaudeActivityMonitor {
                 }
             }
         }
-        await updateRemoteTargets(remoteTargets)
+        await updateRemoteTargets(remoteTargets, retrying: retryingRemoteSources)
         updateRefreshPolicy(refreshPolicy); await publish()
     }
     /// Reconcile discovery/settings without replacing healthy local/SSH state.
-    public func updateRemoteTargets(_ remoteTargets: [RemoteActivityTarget]) async {
+    public func updateRemoteTargets(_ remoteTargets: [RemoteActivityTarget], retrying: Set<String> = []) async {
         wanted = Dictionary(remoteTargets.prefix(maximumRemoteTargets).filter { target in
             makeSSHArguments(target) != nil
         }.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         let before = Set(connections.keys).union(disconnected.keys)
         for (id, connection) in connections where wanted[id] != connection.target { stopRemote(id); disconnected.removeValue(forKey: id) }
         for id in Array(disconnected.keys) where wanted[id] == nil { disconnected.removeValue(forKey: id); retry.removeValue(forKey: id) }
+        for id in retrying where wanted[id] != nil && connections[id] == nil { retry.removeValue(forKey: id) }
         let started = await connectWanted()
         // Periodic reconciliation is common; publish only an actual change.
         if started || before != Set(connections.keys).union(disconnected.keys) { await publish() }

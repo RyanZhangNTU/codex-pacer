@@ -353,6 +353,11 @@
 "settings.monitor_ssh" = "Monitor Tasks on SSH Hosts";
 "settings.monitor_remote_control" = "Include Codex Remote Control Tasks";
 "settings.remote_control_help" = "Uses the connected Codex desktop app. Keep Codex open and connected to the remote host.";
+"settings.remote_control_devices" = "Paired Devices";
+"settings.remote_control_refresh" = "Refresh Devices";
+"settings.remote_control_refreshing" = "Refreshing devices…";
+"settings.remote_control_refresh_failed" = "Couldn't refresh devices.";
+"settings.remote_control_last_refresh" = "Last refreshed";
 "settings.notch" = "Island";
 "settings.notification_denied" = "System notifications aren’t allowed. Allow them in System Settings > Notifications.";
 "settings.one_hour" = "1 hour";

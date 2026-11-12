@@ -102,9 +102,11 @@ Dot 分派到这台电脑的 Durable 任务会标注 `Dot`，聊天关闭时也�
 
 **DeepSeek Harness。** Pacer 会跟随本机 Harness 会话的进度、速度和花费。
 
-**SSH 主机和 WSL。** Pacer 会跟随你在 Codex 和 Claude 里已经在用的 SSH 主机，以及 Windows 上的 WSL。主机需要能免密码连接，并装有 Python 3。主机断开时，在“远程”页点“重试”。
+**SSH 主机。** Pacer 会跟随你在 Codex 和 Claude 里已经在用的 SSH 主机。主机需要能免密码连接，并装有 Python 3。主机断开时，在“远程”页点“重试”。
 
-**Codex Remote Control。** 请保持 Codex 应用开启并连接到远程主机。
+**Windows 上的 WSL。** 需要时在“设置 → 远程”开启 WSL 监测。至少要安装一个发行版。开启后会增加能耗。安装发行版后，或需要查看哪些发行版正在运行时，点“立即刷新”。
+
+**Codex Remote Control。** 在“设置 → 远程”开启监测，并保持 Codex 应用开启且连接到远程主机。点“刷新设备列表”可以更新已配对设备。
 
 ## 主窗口
 

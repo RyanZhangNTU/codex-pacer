@@ -31,6 +31,24 @@ internal static class SettingsServiceChecks
         Check(!apps.Open("claude") && !apps.Open("unknown;command"), "Missing and unknown providers cannot launch anything");
         Check(apps.Open("codex") && opened.SequenceEqual(["OpenAI.Codex_2p2nqsd0c76g0!App"]), "Activation must use the verified package identity");
         Check(!new WindowsDesktopApplications(_ => true, _ => false).Open("claude"), "Activation failures must remain failures");
+
+        string root = Path.Combine(Path.GetTempPath(), "pacer-wsl-migration-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string profile = Path.Combine(root, "preferences.json");
+        try
+        {
+            var defaults = new PreferencesStore(profile).Load(migrateWSL: true).Value;
+            Check(!defaults.MonitorWSL && !defaults.MonitorRemoteControl, "New profiles opt in to both kinds of remote monitoring");
+            File.WriteAllText(profile, """{"schemaVersion":1,"monitorWSL":true,"monitorRemoteControl":true,"hideProjects":true,"otherPreference":true}""");
+            var store = new PreferencesStore(profile);
+            var migrated = store.Load(migrateWSL: true).Value;
+            Check(!migrated.MonitorWSL && migrated.WslOptInMigrated && migrated.MonitorRemoteControl && migrated.HideProjects,
+                "The upgrade closes WSL and preserves the user's other choices");
+            Check(File.ReadAllText(profile).Contains("otherPreference", StringComparison.Ordinal), "Unknown settings survive the migration");
+            Check(store.Save(migrated with { MonitorWSL = true }), "The user can opt back in");
+            Check(new PreferencesStore(profile).Load(migrateWSL: true).Value.MonitorWSL, "Relaunch preserves the new opt-in");
+        }
+        finally { File.Delete(profile); Directory.Delete(root); }
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

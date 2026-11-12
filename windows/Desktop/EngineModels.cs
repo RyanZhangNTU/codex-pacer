@@ -15,7 +15,9 @@ internal sealed record EngineSnapshot(
     ClaudeCloudConnection? ClaudeCloudConnection = null, IReadOnlyList<EngineActivityLink>? ActivityLinks = null,
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
     IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
-    string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null);
+    string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
+    string? WslAvailability = null, RemoteControlDirectory? RemoteControlDirectory = null);
+internal sealed record RemoteControlDirectory(bool Refreshing, double? RefreshedAt, bool Failed);
 internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
     bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
 internal sealed record ConnectionSourceRow(string Id, string Key, string Provider, string Name, string Kind, ConnectionModule Module);
