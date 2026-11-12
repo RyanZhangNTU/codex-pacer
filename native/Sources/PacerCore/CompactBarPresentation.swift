@@ -32,7 +32,7 @@ public enum CompactBarPresentation {
     /// Remaining quota at or below this many percent is low, as in the expanded panel.
     public static let lowQuota = 15.0
     public static func rateIsVisible(context: CompactBarContext, attached: Bool, strip: Bool, showsStatus: Bool, language: AppLanguage) -> Bool {
-        context.running && context.rate != nil && (!showsStatus || strip || !attached || language != .english || !context.attention)
+        !showsStatus || strip || !attached || language != .english || !context.attention
     }
     public struct Options: Codable, Equatable, Sendable {
         public var singleTask: SingleTask
@@ -331,15 +331,21 @@ public enum CompactBarPresentation {
                 let measured = max(1, context?.measuredTasks ?? 1)
                 let shown = context?.rate.map { average ? $0 / Double(measured) : $0 }
                 func format(_ rate: Double, compact: Bool) -> String {
-                    compact && rate >= 1_000_000 ? String(format: "%.1fM", rate / 1_000_000) : compact && rate >= 1000 ? String(format: "%.1fk", rate / 1000) : String(format: "%.0f", rate)
+                    if compact && rate >= 1_000_000 { return String(format: "%.1fM", rate / 1_000_000) }
+                    if compact && rate >= 1000 { return String(format: "%.1fk", rate / 1000) }
+                    return String(format: "%03.0f", rate)
                 }
-                text = shown.map { format($0, compact: compact) } ?? "—"
-                stripText = shown.map { format($0, compact: true) } ?? "—"; unit = "t/s"; stripUnit = unit
+                text = shown.map { format($0, compact: compact) } ?? "000"
+                stripText = shown.map { format($0, compact: true) } ?? "000"; unit = "t/s"; stripUnit = unit
                 visible = context.map { rateIsVisible(context: $0, attached: request.attached, strip: request.strip,
                     showsStatus: layout.components.contains(.status), language: language) } ?? false
-                help = average
-                    ? L10n.text("performance.average_help", shown ?? 0, measured, language: language)
-                    : L10n.text(context?.rateFresh == true ? "performance.total_help" : "performance.partial_total_help", context?.rate ?? 0, language: language)
+                if let shown {
+                    help = average
+                        ? L10n.text("performance.average_help", shown, measured, language: language)
+                        : L10n.text(context?.rateFresh == true ? "performance.total_help" : "performance.partial_total_help", shown, language: language)
+                } else {
+                    help = L10n.text(context?.running == true ? "performance.awaiting_usage" : "activity.idle", language: language)
+                }
             case .firstOutput:
                 let median = choices.firstOutput == .median ? context?.firstOutputs.flatMap(CompactFirstOutputHistory.median) : nil
                 let seconds = median ?? context?.firstOutput
@@ -361,7 +367,9 @@ public enum CompactBarPresentation {
             case .quotaGauge: accessibility = clock ? clockSummary : gaugeHelp
             case .quotaLabel: accessibility = text ?? ""
             case .timeRemaining: accessibility = timeHelp
-            case .tps: accessibility = (text ?? "—") + " t/s"
+            case .tps:
+                let number = text?.drop(while: { $0 == "0" }) ?? ""
+                accessibility = (number.isEmpty ? "0" : String(number)) + " t/s"
             case .priceClock: accessibility = clockSummary
             default: accessibility = help
             }

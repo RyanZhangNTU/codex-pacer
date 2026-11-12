@@ -106,6 +106,17 @@ final class CompactPresentationCacheTests: XCTestCase {
         XCTAssertTrue(completed.hasPendingAttention)
         XCTAssertEqual(completed.activity.ending, .completed(.codex))
         XCTAssertNotEqual(completed.output.component(.tps).stripText, strip.output.component(.tps).stripText)
+
+        model.activities = []
+        let idleStrip = model.compactBarSnapshot(showsStatus: false)
+        XCTAssertEqual(idleStrip.output.leading, ["activity", "tps"])
+        XCTAssertEqual(idleStrip.output.component(.tps).stripText, "000")
+        XCTAssertFalse(idleStrip.context.rateFresh)
+        model.sideDock = nil
+        let idleBar = model.compactBarSnapshot()
+        XCTAssertEqual(idleBar.output.leading, ["activity", "status", "tps"])
+        XCTAssertEqual(idleBar.output.component(.tps).text, "000")
+        XCTAssertEqual(idleBar.output.component(.tps).accessibility, "0 t/s")
         await model.shutdown()
     }
 

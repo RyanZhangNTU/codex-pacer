@@ -513,8 +513,8 @@
   ],
   "live": [
     {"stage": 0,"status": "activity.thinking","rate": "102"},
-    {"stage": 1,"status": "activity.tool_compact","rate": "83"},
+    {"stage": 1,"status": "activity.tool_compact","rate": "083"},
     {"stage": 2,"status": "activity.responding_compact","rate": "102"},
-    {"stage": 3,"status": "activity.tool_compact","rate": "42"}
+    {"stage": 3,"status": "activity.tool_compact","rate": "042"}
   ]
 }

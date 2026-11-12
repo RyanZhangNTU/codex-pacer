@@ -235,7 +235,7 @@ struct CompactIslandComponent: View {
             CompactStatusText(text: item.text ?? "", tone: item.tone,
                 maxWidth: item.maxWidth ?? (108 * scale).rounded(), size: metrics.status)
         case .tps:
-            CompactValueText(number: item.text ?? "—", unit: item.unit, metrics: metrics,
+            CompactValueText(number: item.text ?? "000", unit: item.unit, metrics: metrics,
                 color: snapshot.context.rateFresh ? PacerPalette.primary : PacerPalette.secondary)
                 .accessibilityElement(children: .ignore).accessibilityLabel(item.accessibility)
         case .firstOutput:
@@ -322,8 +322,9 @@ struct CompactIslandComponent: View {
     @ViewBuilder private var stripContent: some View {
         switch component {
         case .tps:
-            CompactStripValue(number: item.stripText ?? "—", unit: item.stripUnit, metrics: metrics, width: snapshot.stripWidth,
+            CompactStripValue(number: item.stripText ?? "000", unit: item.stripUnit, metrics: metrics, width: snapshot.stripWidth,
                 color: snapshot.context.rateFresh ? PacerPalette.primary : PacerPalette.secondary)
+                .accessibilityElement(children: .ignore).accessibilityLabel(item.accessibility)
         case .firstOutput:
             CompactStripValue(number: item.stripText ?? "—", unit: item.stripUnit, metrics: metrics, width: snapshot.stripWidth,
                 color: PacerPalette.primary, glyph: .stopwatch)
