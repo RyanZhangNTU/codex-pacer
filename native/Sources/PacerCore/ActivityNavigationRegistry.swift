@@ -26,6 +26,8 @@ public struct ActivityNavigationRegistry: Sendable {
         public let capture: ActivityNavigationOperation
     }
     public private(set) var entries: [String: Entry] = [:]
+    /// Ending digests from the previous update; unchanged endings are not rehashed on every publish.
+    private var endingDigests: [[String]: String] = [:]
     public var links: [ActivityNavigationLink] { entries.values.map(\.link).sorted { $0.activityID < $1.activityID } }
 
     private var currentActivities: [SessionActivity] = []
@@ -35,7 +37,15 @@ public struct ActivityNavigationRegistry: Sendable {
                          cloudContext: String?, remoteSourceIDs: Set<String> = [], canOpen: (SessionActivity) -> Bool) {
         currentActivities = activities
         let pending = Set(requests.map { $0.activity.id })
-        var next: [String: Entry] = [:]
+        var next: [String: Entry] = [:], digests: [[String]: String] = [:]
+        func endingDigest(_ value: SessionActivity) -> String? {
+            guard [.completed, .interrupted].contains(value.phase) else { return nil }
+            let fields = [value.phase.rawValue, value.turnFailed ? "failed" : "ok", value.phaseChangedAt.map { String($0.timeIntervalSince1970) } ?? "",
+                          value.claudeCloud?.completionMark.map { String($0.timeIntervalSince1970) } ?? ""]
+            let digest = digests[fields] ?? endingDigests[fields] ?? CompletionDismissalStore.digest(fields)
+            digests[fields] = digest
+            return digest
+        }
         for group in ActivityTaskGroup.make(activities).prefix(1024) {
             let primary = group.primary
             guard !primary.isInternalReview, !primary.isIgnoredCodexSession,
@@ -43,10 +53,7 @@ public struct ActivityNavigationRegistry: Sendable {
                   canOpen(target) else { continue }
             let members = group.members.sorted { $0.id < $1.id }.map {
                 Member(id: $0.id, thread: $0.threadID, parent: $0.parentThreadID, turn: $0.turnID,
-                       started: $0.turnStartedAt, phase: $0.phase,
-                       ending: [.completed, .interrupted].contains($0.phase) ? CompletionDismissalStore.digest([
-                           $0.phase.rawValue, $0.turnFailed ? "failed" : "ok", $0.phaseChangedAt.map { String($0.timeIntervalSince1970) } ?? "",
-                           $0.claudeCloud?.completionMark.map { String($0.timeIntervalSince1970) } ?? ""]) : nil,
+                       started: $0.turnStartedAt, phase: $0.phase, ending: endingDigest($0),
                        source: inbox.sourceToken(for: $0))
             }
             let ids = Set(group.members.map { $0.canonicalized().id })
@@ -62,7 +69,7 @@ public struct ActivityNavigationRegistry: Sendable {
             let capture = same ? previous!.capture : ActivityNavigationOperation(activity: primary, target: target, version: 0, activities: activities, inbox: inbox, scope: scope)
             next[primary.id] = .init(link: link, target: target, members: members, endings: endings, cloudContext: scope, activity: primary, capture: capture)
         }
-        entries = next
+        entries = next; endingDigests = digests
     }
     public func entry(context: String) -> Entry? { entries.values.first { $0.link.context == context } }
     public mutating func invalidate() { entries.removeAll() }

@@ -32,7 +32,15 @@ public struct CompletionDismissalStore: Sendable {
             let bytes = Data(field.utf8)
             data.append(Data("\(bytes.count):".utf8)); data.append(bytes)
         }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return hex(SHA256.hash(data: data))
+    }
+    private static let hexDigits = Array("0123456789abcdef".utf8)
+    /// Lowercase hex without a formatter call per byte; endings are hashed on every pass.
+    package static func hex<Bytes: Sequence>(_ bytes: Bytes) -> String where Bytes.Element == UInt8 {
+        var text: [UInt8] = []
+        text.reserveCapacity(64)
+        for byte in bytes { text.append(hexDigits[Int(byte >> 4)]); text.append(hexDigits[Int(byte & 0x0f)]) }
+        return String(decoding: text, as: UTF8.self)
     }
 
     func loadDigests() -> [String] { load().digests }
