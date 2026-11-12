@@ -1,7 +1,7 @@
 import Foundation
 
 public struct NativeDesktopSession {
-    public struct Key: Hashable {
+    public struct Key: Hashable, Sendable {
         public let host: String
         public let thread: String
         public init(host: String, thread: String) { self.host = host; self.thread = thread }
@@ -267,6 +267,16 @@ public struct NativeDesktopSession {
         }
         if ready { try drain() }
     }
+    mutating func observeRemoteRoute(host: String, thread: String, method: String?, version: Int?,
+                                     sender: String?, following: Bool?) throws {
+        guard ready, host.hasPrefix(ConnectionSource.controlPrefix),
+              RemoteControlCatalogIdentity.validIdentifier(String(host.dropFirst(ConnectionSource.controlPrefix.count))),
+              let thread = Self.valid(thread), Self.valid(sender) != nil else { return }
+        let announcesRoute = method == "thread-stream-following-status-requested" ||
+            (method == "thread-stream-following-changed" && following == true)
+        guard (announcesRoute && version == 1) || (method == "thread-stream-state-changed" && version == 11) else { return }
+        try frame(["kind": "remoteControlRoute", "hostId": host, "threadId": thread])
+    }
     mutating func receive(_ bytes: Data, at now: Date = Date(), projectedItems: Bool = false) throws {
         let root = try JSONFieldView.document(bytes, projectedItems: projectedItems)
         guard root.isObject else { throw JSONFieldView.Failure.malformed }
@@ -308,7 +318,12 @@ public struct NativeDesktopSession {
         }
         guard kind == "broadcast", let params = fields["params"], params.isObject else { return }
         let p = try params.fields(["conversationId", "hostId", "following", "change"])
-        guard let host = p["hostId"]?.string(), hosts.contains(host), let thread = Self.valid(p["conversationId"]?.string()) else { return }
+        guard let host = p["hostId"]?.string(), let thread = Self.valid(p["conversationId"]?.string()) else { return }
+        guard hosts.contains(host) else {
+            try observeRemoteRoute(host: host, thread: thread, method: method, version: fields["version"]?.integer(),
+                                   sender: fields["sourceClientId"]?.string(), following: p["following"]?.boolean())
+            return
+        }
         let key = Key(host: host, thread: thread)
         guard allows(key) else { return }
         // Existing owners may publish targeted patches before asking a newly
@@ -433,7 +448,10 @@ public struct NativeDesktopSession {
             let hasHistory = host == DurableActivityCatalog.hostID && !durableHistory.isEmpty
             let connected = ready && (host == "local" || hasHistory || current.values.contains { $0.runtimeAvailable })
             let waitingForSession = ready && host.hasPrefix("remote-control:") && !connected && !invalidatedRemoteHosts.contains(host)
+            let remoteRuntimeLost = ready && !connected && invalidatedRemoteHosts.contains(host) &&
+                !awaitingSnapshot.keys.contains { $0.host == host }
             try frame(["kind": "status", "hostId": host, "connected": connected, "waitingForSession": waitingForSession,
+                "remoteRuntimeLost": remoteRuntimeLost,
                 "attached": current.filter { $0.value.isActive }.count,
                 "notifications": notifications, "fallbackScans": 0, "watchingLogs": false,
                 "helperLoopIterations": loopIterations])

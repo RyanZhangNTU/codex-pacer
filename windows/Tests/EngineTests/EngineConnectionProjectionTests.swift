@@ -96,7 +96,7 @@ final class EngineConnectionProjectionTests: XCTestCase {
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
         }
-        _ = await runtime.receive(try command("initialize"))
+        _ = await runtime.receive(try command("initialize", ["monitorRemoteControl": true, "monitorWSL": true]))
         let before = try XCTUnwrap(frames.read())
         XCTAssertEqual(before.connections?.sources.count, 4); XCTAssertEqual(before.connections?.hosts.count, 1)
         XCTAssertTrue(before.connections?.sources.contains { $0.key == ClaudeCloudProjectState.sourceID } == true)

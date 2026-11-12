@@ -489,7 +489,9 @@ final class NativeDesktopSocketTests: XCTestCase {
         await gate.release(); await startup.value
         let statuses = await monitor.statuses()
         XCTAssertEqual(statuses["remote-control:added"]?.sourceName, "Added device")
-        XCTAssertEqual(observed.controlBindings, .init(hostIDs: ["remote-control:added"], authoritative: true), "The directory's source bindings reach the same ordered publication as its metadata")
+        XCTAssertEqual(observed.controlBindings.hostIDs, ["remote-control:added"])
+        XCTAssertTrue(observed.controlBindings.authoritative, "The directory's source bindings reach the same ordered publication as its metadata")
+        XCTAssertNotNil(observed.controlBindings.accountScope)
         try commands.fileHandleForWriting.write(contentsOf: Data("complete\n".utf8))
         await fulfillment(of: [completed], timeout: TestWait.limit)
         await monitor.shutdown()

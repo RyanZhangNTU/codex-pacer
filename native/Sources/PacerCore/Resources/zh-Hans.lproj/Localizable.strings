@@ -353,6 +353,11 @@
 "settings.monitor_ssh" = "监测 SSH 主机上的任务";
 "settings.monitor_remote_control" = "统计 Codex Remote Control 任务";
 "settings.remote_control_help" = "通过已连接的 Codex 桌面端获取数据。请保持 Codex 开启并连接远程主机。";
+"settings.remote_control_devices" = "已配对设备";
+"settings.remote_control_refresh" = "刷新设备列表";
+"settings.remote_control_refreshing" = "正在刷新设备列表…";
+"settings.remote_control_refresh_failed" = "无法刷新设备列表。";
+"settings.remote_control_last_refresh" = "上次刷新";
 "settings.notch" = "灵动岛";
 "settings.notification_denied" = "系统通知未获授权，可在“系统设置 > 通知”中允许。";
 "settings.one_hour" = "1 小时";

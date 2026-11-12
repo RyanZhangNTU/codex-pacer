@@ -2,8 +2,8 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "af9f7d02a4ecfd4932e53774f00a6dc4ca7536f8c670d4274f4c36e2b177eae7",
-    "windows/EngineSupport/Resources/Localization/en.json": "65c35113fedb2aecec350a0b346b9f6b5919f266b8a1cbc5ca48a5c8cb8aaf5b"
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "3aa5f55f56b22e04b5329daf25f5bf87d44a5f949ad1cfeead512ee83c9bcd51",
+    "windows/EngineSupport/Resources/Localization/en.json": "6a0a4c7556788716d852ae2be97e169eeb1fe8a2480e1b41adba1f0b9e0eb76f"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -1110,7 +1110,12 @@
     "settings.quota_history": "%@ quota history",
     "settings.remaining_quota": "Quota Left",
     "settings.reminders": "Reminders",
+    "settings.remote_control_devices": "Paired Devices",
     "settings.remote_control_help": "Uses the connected Codex desktop app. Keep Codex open and connected to the remote host.",
+    "settings.remote_control_last_refresh": "Last refreshed",
+    "settings.remote_control_refresh": "Refresh Devices",
+    "settings.remote_control_refresh_failed": "Couldn't refresh devices.",
+    "settings.remote_control_refreshing": "Refreshing devices\u2026",
     "settings.rescan": "Rescan",
     "settings.system_notifications": "System Notifications",
     "settings.system_notifications_detail": "When a task needs your reply or approval, ends, or quota falls below 15% or a balance runs low",
@@ -1310,7 +1315,13 @@
     "windows.connection.refresh_failed": "Couldn't complete the action. Refresh and try again.",
     "windows.connections.monitor_wsl": "Monitor Tasks in WSL",
     "windows.connections.read_quota": "Read Quota",
+    "windows.connections.wsl_checking": "Checking for WSL distributions\u2026",
+    "windows.connections.wsl_distributions": "WSL Distributions",
+    "windows.connections.wsl_energy": "Monitoring increases power use. Turn it on only when you need it.",
+    "windows.connections.wsl_failed": "Couldn't check for WSL distributions.",
     "windows.connections.wsl_help": "Read Codex and Claude sessions in running distributions as their default Linux user.",
+    "windows.connections.wsl_refresh": "Refresh Now",
+    "windows.connections.wsl_unavailable": "No WSL distributions are installed.",
     "windows.deepseek.budget_help": "Filled in from the last 7 days' daily average plus 20%. Edit or clear either amount. Budgets only send reminders and never block requests. Account spend includes this PC's estimate and charges from elsewhere. The week starts Monday at 00:00.",
     "windows.deepseek.demo_key_help": "Demo keys stay in memory and are cleared when this demo closes.",
     "windows.deepseek.demo_web_help": "Web sign-in is unavailable in the offline demo.",

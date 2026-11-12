@@ -2,8 +2,8 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "f7898e1488832ecdec59d66efce2c3a33e5340a65876cfbd288a6b093f269593",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "9bb46bc483d0dea3b8b78e9ab15e9af0c20e82a5f4ea9d1f6c05acbe7e6629cf"
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "ecea19c0e0e9050b6778189b7350daa0bfcf5693d171dca425bfeec18a789e74",
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "143c60a53b13f1123645b34f3954a610860a3f8e9e96435ce1e6d050ce0c4a1a"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -1110,7 +1110,12 @@
     "settings.quota_history": "%@ \u989d\u5ea6\u5386\u53f2",
     "settings.remaining_quota": "\u5269\u4f59\u989d\u5ea6",
     "settings.reminders": "\u63d0\u9192",
+    "settings.remote_control_devices": "\u5df2\u914d\u5bf9\u8bbe\u5907",
     "settings.remote_control_help": "\u901a\u8fc7\u5df2\u8fde\u63a5\u7684 Codex \u684c\u9762\u7aef\u83b7\u53d6\u6570\u636e\u3002\u8bf7\u4fdd\u6301 Codex \u5f00\u542f\u5e76\u8fde\u63a5\u8fdc\u7a0b\u4e3b\u673a\u3002",
+    "settings.remote_control_last_refresh": "\u4e0a\u6b21\u5237\u65b0",
+    "settings.remote_control_refresh": "\u5237\u65b0\u8bbe\u5907\u5217\u8868",
+    "settings.remote_control_refresh_failed": "\u65e0\u6cd5\u5237\u65b0\u8bbe\u5907\u5217\u8868\u3002",
+    "settings.remote_control_refreshing": "\u6b63\u5728\u5237\u65b0\u8bbe\u5907\u5217\u8868\u2026",
     "settings.rescan": "\u91cd\u65b0\u68c0\u6d4b",
     "settings.system_notifications": "\u7cfb\u7edf\u901a\u77e5",
     "settings.system_notifications_detail": "\u9700\u8981\u4f60\u56de\u590d\u6216\u5ba1\u6279\u3001\u4efb\u52a1\u7ed3\u675f\u3001\u989d\u5ea6\u4f4e\u4e8e 15% \u6216\u4f59\u989d\u504f\u4f4e\u65f6\u901a\u77e5",
@@ -1310,7 +1315,13 @@
     "windows.connection.refresh_failed": "\u64cd\u4f5c\u672a\u5b8c\u6210\uff0c\u8bf7\u5237\u65b0\u540e\u91cd\u8bd5\u3002",
     "windows.connections.monitor_wsl": "\u76d1\u6d4b WSL \u4e2d\u7684\u4efb\u52a1",
     "windows.connections.read_quota": "\u8bfb\u53d6\u989d\u5ea6",
+    "windows.connections.wsl_checking": "\u6b63\u5728\u68c0\u67e5 WSL \u53d1\u884c\u7248\u2026",
+    "windows.connections.wsl_distributions": "WSL \u53d1\u884c\u7248",
+    "windows.connections.wsl_energy": "\u5f00\u542f\u540e\u4f1a\u589e\u52a0\u80fd\u8017\uff0c\u8bf7\u4ec5\u5728\u9700\u8981\u65f6\u5f00\u542f\u3002",
+    "windows.connections.wsl_failed": "\u65e0\u6cd5\u68c0\u6d4b WSL \u53d1\u884c\u7248\u3002",
     "windows.connections.wsl_help": "\u4ee5\u9ed8\u8ba4 Linux \u7528\u6237\u8bfb\u53d6\u6b63\u5728\u8fd0\u884c\u7684\u53d1\u884c\u7248\u4e2d\u7684 Codex \u548c Claude \u4f1a\u8bdd\u3002",
+    "windows.connections.wsl_refresh": "\u7acb\u5373\u5237\u65b0",
+    "windows.connections.wsl_unavailable": "\u6ca1\u6709\u5df2\u5b89\u88c5\u7684 WSL \u53d1\u884c\u7248\u3002",
     "windows.deepseek.budget_help": "\u6309\u6700\u8fd1 7 \u5929\u7684\u65e5\u5747\u652f\u51fa\u52a0 20% \u586b\u5165\uff1b\u53ef\u4fee\u6539\u6216\u6e05\u7a7a\u4efb\u4e00\u91d1\u989d\u3002\u9884\u7b97\u53ea\u7528\u4e8e\u63d0\u9192\uff0c\u4e0d\u4f1a\u62e6\u622a\u8bf7\u6c42\u3002\u652f\u51fa\u4ee5\u8d26\u6237\u6263\u8d39\u4e3a\u51c6\uff0c\u5305\u62ec\u6b64\u7535\u8111\u4f30\u7b97\u548c\u5176\u4ed6\u6765\u6e90\u6263\u8d39\uff1b\u6bcf\u5468\u4ece\u5468\u4e00 00:00 \u5f00\u59cb\u3002",
     "windows.deepseek.demo_key_help": "\u6f14\u793a\u5bc6\u94a5\u4ec5\u4fdd\u5b58\u5728\u5185\u5b58\u4e2d\uff0c\u5173\u95ed\u6f14\u793a\u540e\u6e05\u9664\u3002",
     "windows.deepseek.demo_web_help": "\u79bb\u7ebf\u6f14\u793a\u4e2d\u65e0\u6cd5\u7f51\u9875\u767b\u5f55\u3002",

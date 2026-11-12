@@ -102,9 +102,11 @@ Spend made elsewhere on your account, such as web searches or another device, is
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
 
-**SSH hosts and WSL.** Pacer follows the SSH hosts you already use in Codex and Claude, and WSL on Windows. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.
+**SSH hosts.** Pacer follows the hosts you already use in Codex and Claude. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.
 
-**Codex Remote Control.** Keep the Codex app open and connected to the remote host.
+**WSL on Windows.** Turn on WSL monitoring in **Settings → Remote** when you need it. At least one distribution must be installed. Monitoring increases power use. Use **Refresh Now** after installing a distribution or to check which ones are running.
+
+**Codex Remote Control.** Turn on monitoring in **Settings → Remote** and keep Codex open and connected to the remote host. Use **Refresh Devices** to update the list of paired devices.
 
 ## The main window
 

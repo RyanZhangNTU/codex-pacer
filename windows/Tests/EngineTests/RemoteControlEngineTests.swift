@@ -6,11 +6,13 @@ import XCTest
 private actor RemoteChannel: DesktopActivityChannel {
     let frame: @Sendable (Data) async -> Void, closed: @Sendable () async -> Void
     var hosts: Set<String>, stopped = false
+    var remoteRoutes: [NativeDesktopSession.Key] = []
     init(hosts: Set<String>, frame: @escaping @Sendable (Data) async -> Void, closed: @escaping @Sendable () async -> Void) {
         self.hosts = hosts; self.frame = frame; self.closed = closed
     }
     func start() {}
     func discover(_ threads: [String]) {}
+    func discoverRemote(_ routes: [NativeDesktopSession.Key]) { remoteRoutes += routes }
     func setHosts(_ hosts: Set<String>) { self.hosts = hosts }
     func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) {}
     func stop() { stopped = true }
@@ -22,6 +24,7 @@ private final class RemoteFixture: @unchecked Sendable {
     let lock = NSLock()
     var channels: [RemoteChannel] = [], snapshots: [EngineSnapshot] = [], messages: [[String: Any]] = []
     var account = "first", fail = false
+    private var directoryRequests = 0, addedDevice = false, workOnline = true
     private struct Executables: ExecutablePlatform {
         func normalize(_ input: String, userHome: URL) -> String { input }
         func isAbsolutePath(_ path: String) -> Bool { true }
@@ -76,11 +79,20 @@ private final class RemoteFixture: @unchecked Sendable {
                            processes: Launcher(account: account), executables: Executables(), files: WindowsFileSystem())
     })
     private func response() throws -> Data {
-        lock.lock(); let fail = fail; lock.unlock()
+        lock.lock()
+        directoryRequests += 1
+        let fail = fail, addedDevice = addedDevice, workOnline = workOnline
+        lock.unlock()
         if fail { throw RemoteControlCatalog.CatalogError.status(401) }
-        return try JSONSerialization.data(withJSONObject: ["items": [["env_id": "work", "display_name": "Workstation", "online": true],
-                                                                  ["env_id": "offline", "name": "Notebook", "online": false]]])
+        var rows: [[String: Any]] = [["env_id": "work", "display_name": "Workstation", "online": workOnline],
+                                    ["env_id": "offline", "name": "Notebook", "online": false]]
+        if addedDevice { rows.append(["env_id": "new", "name": "New device", "online": true]) }
+        return try JSONSerialization.data(withJSONObject: ["items": rows])
     }
+    func setDirectory(added: Bool = false, online: Bool = true) {
+        lock.lock(); addedDevice = added; workOnline = online; lock.unlock()
+    }
+    func fetchCount() -> Int { lock.lock(); defer { lock.unlock() }; return directoryRequests }
     var services: CodexDesktopServices {
         .init(makeConnection: { [self] _, _, frame, closed in make(["local"], frame, closed) }, catalog: catalog,
               routed: { [self] _, hosts, _, _, frame, closed in make(hosts, frame, closed) })
@@ -120,14 +132,59 @@ final class RemoteControlEngineTests: XCTestCase {
         ["kind": "runtimeBatch", "hostId": host ?? self.host, "events": [["method": method, "threadId": thread,
             "turnId": turn, "status": status, "at": at.timeIntervalSince1970]]]
     }
+    func testUnknownDeviceRequiresDirectoryConfirmationAndRetainsOnlyTheRoute() async throws {
+        let fixture = try RemoteFixture(), monitor = fixture.services.makeMonitor()
+        addTeardownBlock { await monitor.shutdown() }
+        await monitor.startAsync(home: fixture.root, includeSSH: false) { _ in }
+        let channel = try XCTUnwrap(fixture.read().channels.last), unknown = "remote-control:new"
+        try await channel.send(events("turn/started", host: unknown))
+        let rejected = await monitor.activities()
+        XCTAssertTrue(rejected.isEmpty)
+        XCTAssertEqual(fixture.fetchCount(), 1)
+        fixture.setDirectory(added: true)
+        let hint = ["kind": "remoteControlRoute", "hostId": unknown, "threadId": thread]
+        try await channel.send(hint); try await channel.send(hint)
+        try await until { await channel.remoteRoutes.count == 1 }
+        let discovered = await channel.remoteRoutes
+        XCTAssertEqual(discovered, [.init(host: unknown, thread: thread)])
+        XCTAssertEqual(fixture.fetchCount(), 2)
+        try await channel.send(events("turn/started", host: unknown))
+        let accepted = await monitor.activities()
+        XCTAssertEqual(accepted.first?.sourceHostID, unknown)
+    }
+    func testRuntimeLossRefreshesPresenceOnceAndOfflineHostCanResumeFromEvents() async throws {
+        let fixture = try RemoteFixture(), monitor = fixture.services.makeMonitor()
+        addTeardownBlock { await monitor.shutdown() }
+        await monitor.startAsync(home: fixture.root, includeSSH: false) { _ in }
+        let channel = try XCTUnwrap(fixture.read().channels.last)
+        try await channel.send(events("turn/started"))
+        fixture.setDirectory(online: false)
+        let lost: [String: Any] = ["kind": "status", "hostId": host, "connected": false,
+                                  "waitingForSession": false, "remoteRuntimeLost": true]
+        try await channel.send(lost); try await channel.send(lost)
+        try await until { await monitor.statuses()[self.host]?.remoteHostOnline == false }
+        XCTAssertEqual(fixture.fetchCount(), 2)
+        try await channel.send(lost)
+        try await channel.send(events("turn/started", turn: "after-reconnect"))
+        let restored = await monitor.activities()
+        XCTAssertTrue(restored.contains { $0.sourceHostID == host && $0.phase == .running })
+        XCTAssertEqual(fixture.fetchCount(), 2, "A live frame reconnects an already verified device without a directory request")
+    }
     func testCatalogStatesExactNavigationAndUnreadSurviveEofButNotAccountReplacement() async throws {
         let fixture = try RemoteFixture()
+        let wsl = WindowsWSLServices(capture: { _, _, _, _ in Data() }, watchRegistrations: { _ in nil })
         let runtime = EngineRuntime(demo: false, dismissalStore: nil, desktopServices: fixture.services,
+            wslServices: wsl,
             navigationServices: .init { input in
                 try WindowsActivityNavigation.resolve(input)
             }, output: { fixture.append($0) })
-        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(fixture.root)]))
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "monitorRemoteControl": true,
+            "codexHome": EngineCodexSourceReport.path(fixture.root)]))
         try await until { fixture.read().snapshot?.sources.contains { $0.sourceName == "Workstation" } == true }
+        _ = await runtime.receive(try command("refreshWSL"))
+        try await until { fixture.read().snapshot?.wslAvailability == .unavailable }
+        _ = await runtime.receive(try command("refreshTaskSources"))
+        XCTAssertEqual(fixture.fetchCount(), 1, "WSL discovery and task-source retry use the current directory")
         let channel = try XCTUnwrap(fixture.read().channels.last)
         try await channel.send(["kind": "status", "hostId": host, "connected": false, "waitingForSession": true])
         XCTAssertEqual(fixture.read().snapshot?.sources.first { $0.transport == "remote-control" && $0.sourceName == "Workstation" }?.state, "idle")
@@ -187,7 +244,7 @@ final class RemoteControlEngineTests: XCTestCase {
         await monitor.startAsync(home: fixture.root, includeSSH: false, includeRemoteControl: true, useSSHFallback: false) { _ in }
         let first = try XCTUnwrap(fixture.read().channels.last)
         await first.disconnect()
-        await monitor.invalidateRemoteControlCatalog(retryTransport: true)
+        await monitor.retryInactiveHelpers()
         await monitor.startAsync(home: fixture.root, includeSSH: false, includeRemoteControl: true, useSSHFallback: false) { _ in }
         XCTAssertEqual(fixture.read().channels.count, 2)
         await monitor.startAsync(home: fixture.root, includeSSH: false, includeRemoteControl: false, useSSHFallback: false) { _ in }

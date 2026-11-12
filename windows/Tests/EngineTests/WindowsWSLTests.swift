@@ -117,6 +117,9 @@ final class WindowsWSLTests: XCTestCase {
         XCTAssertEqual(args.count, 3)
         XCTAssertTrue(args.filter { $0.first == "--distribution" }.allSatisfy { $0[1] == "Fixture Linux" })
         XCTAssertEqual(registry.targets(.codex).first?.id, first.id)
+        await services.discover(checkInstalled: false, forceProfiles: false)
+        let followUp = await calls.args
+        XCTAssertEqual(Array(followUp.dropFirst(args.count)), [["--list", "--running", "--quiet"]])
         let old = registry.begin(), next = registry.begin()
         registry.suspend(ticket: old)
         XCTAssertTrue(registry.accept([profile(distro: "New")], installed: ["new"], ticket: next))
@@ -182,7 +185,7 @@ final class WindowsWSLTests: XCTestCase {
         XCTAssertEqual(launches.all().count, 1, "Retrying sources does not resubscribe a healthy helper")
         await child.disconnect()
         XCTAssertTrue(inbox.unreadActivities.contains { $0.sourceHostID == profile.id })
-        await monitor.invalidateRemoteControlCatalog(retryTransport: true)
+        await monitor.refreshRemoteControlCatalog()
         await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await updates.receive($0) }
         // Failed helper backoff is source-owned; explicit refresh must not
         // replace healthy helpers or acknowledge their retained completions.
@@ -266,7 +269,7 @@ final class WindowsWSLTests: XCTestCase {
             if args.first == "--list" { return Data((profile.distro + "\n").utf8) }
             if args.contains(where: { $0.contains("print('verified')") }) { return Data("verified\n".utf8) }
             return data
-        }, start: { launches.launch($0, input: $1, output: $2, ended: $3) })
+        }, start: { launches.launch($0, input: $1, output: $2, ended: $3) }, watchRegistrations: { _ in nil })
         let desktop = CodexDesktopServices { _, _, _, _ in WSLNoDesktop() }
         let runtime = EngineRuntime(demo: false, dismissalStore: nil, desktopServices: desktop, wslServices: services, output: { frames.append($0) })
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-wsl-engine-" + UUID().uuidString)
@@ -275,12 +278,13 @@ final class WindowsWSLTests: XCTestCase {
         func command(_ method: String, _ params: [String: Any] = [:], id: String = UUID().uuidString) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": id, "method": method, "params": params])
         }
-        func until(_ condition: () -> Bool) async throws {
+        func until(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
             let end = Date().addingTimeInterval(TestWait.limit)
             while !condition(), Date() < end { try await Task.sleep(nanoseconds: 5_000_000) }
-            XCTAssertTrue(condition())
+            XCTAssertTrue(condition(), file: file, line: line)
         }
-        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(root)]))
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "monitorWSL": true,
+            "codexHome": EngineCodexSourceReport.path(root)]))
         try await until { !launches.all().isEmpty }
         let child = try XCTUnwrap(launches.all().last?.2), thread = "019a0000-0000-7000-8000-000000000001"
         try await child.send(["kind": "status", "connected": true, "sourceAvailable": true])
@@ -308,6 +312,10 @@ final class WindowsWSLTests: XCTestCase {
         let prior = launches.all().count
         _ = await runtime.receive(try command("configure", ["monitorWSL": true]))
         try await until { launches.all().count > prior }
+        let beforeReconnect = launches.all().count
+        let disconnected = try XCTUnwrap(launches.all().last?.2)
+        await disconnected.disconnect()
+        try await until { launches.all().count > beforeReconnect }
         let waking = try XCTUnwrap(launches.all().last?.2)
         await runtime.prepareForSleep(); XCTAssertTrue(registry.snapshot().active.isEmpty)
         XCTAssertFalse(waking.isRunning, "Sleep releases an active Linux helper, not only an already disabled source")
@@ -316,5 +324,41 @@ final class WindowsWSLTests: XCTestCase {
         let count = frames.count()
         try await child.send(["kind": "runtimeBatch", "events": [["method": "turn/started", "threadId": thread, "turnId": "late"]]])
         XCTAssertEqual(frames.count(), count)
+    }
+    func testWSLIsOptInAndAnEmptyInstallationBlocksEnablement() async throws {
+        actor Probe {
+            var commands: [[String]] = []
+            var installed = false
+            func capture(_ args: [String]) -> Data {
+                commands.append(args)
+                return installed && args == ["--list", "--quiet"] ? Data("Fixture Linux\n".utf8) : Data()
+            }
+            func install() { installed = true }
+        }
+        let probe = Probe(), frames = WSLFrames()
+        let services = WindowsWSLServices(capture: { _, args, _, _ in await probe.capture(args) }, watchRegistrations: { _ in nil })
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, wslServices: services, output: { frames.append($0) })
+        addTeardownBlock { await runtime.stop() }
+        func command(_ method: String, _ params: [String: Any] = [:], id: String = UUID().uuidString) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": id, "method": method, "params": params])
+        }
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"]]))
+        await runtime.maintenanceRefresh()
+        let before = await probe.commands
+        XCTAssertTrue(before.isEmpty, "Starting with default preferences does not enumerate WSL")
+        _ = await runtime.receive(try command("refreshWSL"))
+        let unavailable = try await TestWait.until { frames.latest()?.wslAvailability == .unavailable }
+        XCTAssertTrue(unavailable)
+        let inspection = await probe.commands
+        XCTAssertEqual(inspection, [["--list", "--quiet"]])
+        _ = await runtime.receive(try command("configure", ["monitorWSL": true], id: "wsl-enable"))
+        XCTAssertEqual(frames.result("wsl-enable")?["code"] as? String, "invalidConfiguration")
+        await probe.install()
+        _ = await runtime.receive(try command("configure", ["monitorWSL": true], id: "wsl-enable"))
+        XCTAssertEqual(frames.result("wsl-enable")?["ok"] as? Bool, true)
+        let checked = try await TestWait.until { await probe.commands.contains(["--list", "--running", "--quiet"]) }
+        XCTAssertTrue(checked)
+        let after = await probe.commands
+        XCTAssertTrue(after.allSatisfy { $0.first == "--list" }, "A stopped distribution is not launched")
     }
 }

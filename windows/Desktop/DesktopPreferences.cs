@@ -79,8 +79,9 @@ internal sealed record DesktopPreferences
     public bool HideProjects { get; init; }
     public bool ShowAppButtons { get; init; } = true;
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
-    public bool MonitorRemoteControl { get; init; } = true;
-    public bool MonitorWSL { get; init; } = true;
+    public bool MonitorRemoteControl { get; init; }
+    public bool MonitorWSL { get; init; }
+    public bool WslOptInMigrated { get; init; } = true;
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; } = true;

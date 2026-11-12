@@ -70,6 +70,12 @@ Helper commands run through swift-subprocess 1.0.2; launching a task's host appl
 - Do not pass `.none` input or `.discarded` output on Windows. swift-subprocess then opens `NUL` through the C runtime on every run and never releases the descriptor; the 30-second WSL discovery once exhausted the runtime's 8,192 descriptors in about 15 hours and stopped the engine. `WindowsSubprocessTests` checks that captures keep no descriptors.
 - Long-running helpers (Codex app-server, SSH and WSL helpers) stream `.sequence` output through `WindowsCodexProcess`.
 
+### WSL discovery
+
+WSL monitoring starts disabled. The desktop applies the one-time opt-in migration before it initializes the engine. The Remote page can check the installed distributions even when monitoring is off. The engine validates that at least one is installed before it accepts an enable request.
+
+While monitoring, a current-user registry notification refreshes the installation list. Only running distributions can start Pacer helpers. A helper disconnect invalidates its route before a new running-state check. When any of the eligible distributions still needs a connection, a 60-second fallback lists running distributions once and reuses the installation list. Fully attached sources rely on their streams and registration notifications. Discovery changes WSL bindings independently of the Remote Control directory.
+
 ## Writers of a session file
 
 Host tracking, opening a task and the Codex Desktop source binding ask which processes hold a session file open for writing. `WindowsFileOwners.c` asks Restart Manager for candidates, captures each one's handle table with `PssCaptureSnapshot`, and compares the file identity of every handle with write access.

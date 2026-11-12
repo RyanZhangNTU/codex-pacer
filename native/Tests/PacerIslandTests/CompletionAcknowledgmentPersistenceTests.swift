@@ -114,6 +114,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         defaults.set(directory.path, forKey: "codexHome")
         defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
         defaults.set(false, forKey: "monitorSSH")
+        defaults.set(true, forKey: "monitorRemoteControl")
         defaults.set(0, forKey: "completedRetentionMinutes")
         ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
         var configuration: [String: Any] = ["electron-remote-control-client-enrollments": [
@@ -206,6 +207,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     defaults.set(directory.path, forKey: "codexHome")
                     defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
                     defaults.set("synthetic-ack", forKey: "claudeSSHHosts")
+                    defaults.set(true, forKey: "monitorRemoteControl")
                     defaults.set(0, forKey: "completedRetentionMinutes")
                     ProviderModules(codexMode: .enabled, claudeMode: .enabled, deepseekMode: .enabled).save(to: defaults)
                     let host = "remote-ssh-discovered:synthetic-ack"
@@ -470,6 +472,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             defaults.set(directory.path, forKey: "codexHome")
             defaults.set(directory.appendingPathComponent("claude-profile").path, forKey: "claudeHome")
             defaults.set(false, forKey: "monitorSSH")
+            defaults.set(true, forKey: "monitorRemoteControl")
             defaults.set(0, forKey: "completedRetentionMinutes")
             ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
             func configuration(_ home: URL, enabled: Bool = true) throws {
@@ -482,7 +485,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
             let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                 installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
                 completionDismissalStore: CompletionDismissalStore(fileURL: file))
-            XCTAssertTrue(model.monitorsRemoteControl, "The injected defaults retain the enabled-by-default setting")
+            XCTAssertTrue(model.monitorsRemoteControl, "The injected defaults opt in to Remote Control")
             let at = Date().addingTimeInterval(-2), host = "remote-control:scope-fixture"
             let codex = familyActivity(.codex, 950, host: host, at: at), claude = familyActivity(.claude, 951, at: at)
             publishFamily([codex, claude], to: model)

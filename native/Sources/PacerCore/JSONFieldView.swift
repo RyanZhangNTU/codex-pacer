@@ -193,7 +193,7 @@ package struct JSONFieldView {
               let value = Double(text), value.isFinite else { return nil }
         return value
     }
-    func boolean() -> Bool? {
+    package func boolean() -> Bool? {
         if range.count == 4 && data[range.lowerBound] == 116 { return true }
         if range.count == 5 && data[range.lowerBound] == 102 { return false }
         return nil

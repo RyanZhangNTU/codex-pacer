@@ -288,6 +288,8 @@ struct EngineSnapshot: Codable, Equatable {
     let navigationError: EngineNavigationFailure?
     let openingActivityIDs: [String]?
     var expandedPanel: EngineExpandedPanel? = nil
+    var wslAvailability: WindowsWSLAvailability?
+    var remoteControlDirectory: RemoteControlDirectoryStatus?
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,
