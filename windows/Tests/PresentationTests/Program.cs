@@ -93,6 +93,7 @@ internal static class Program
                 if (All("idle") || Has("quotaIdle")) await Attempt(nameof(IdleSchedulingChecks), () => IdleSchedulingChecks.Run());
                 if (All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run());
                 if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (!All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
+                if (All("collapsed")) await Attempt("Compact TPS geometry", () => CollapsedLayoutChecks.CheckRateGeometry(projections));
                 // Native mouse and keyboard input on an owned synthetic island; the cursor is restored afterwards.
                 // Hosted CI desktops do not deliver synthesized input, so this stays an explicit local group.
                 if (Has("position"))

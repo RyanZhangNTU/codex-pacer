@@ -121,14 +121,16 @@ final class CompactComponentOptionsTests: XCTestCase {
         var value = try project(options, context: input, layout: layout)
         let urgent = try component("status", in: value)
         XCTAssertEqual(urgent.tone, "attention"); XCTAssertEqual(urgent.maxWidth, 108)
-        XCTAssertEqual(try component("tps", in: value).text, String(format: "%.0f", rate))
+        XCTAssertEqual(try component("tps", in: value).text, String(format: "%03.0f", rate))
         XCTAssertEqual(try component("firstOutput", in: value).text, "1.25")
         options.statusShow = .stage; options.statusWidth = .long; options.rateMeasure = .average; options.firstOutput = .median
         value = try project(options, context: input, layout: layout, size: "small")
         let stage = try component("status", in: value)
         XCTAssertNil(stage.tone); XCTAssertNotEqual(stage.text, urgent.text); XCTAssertEqual(stage.maxWidth, (160 * 32.0 / 36).rounded())
         let average = try component("tps", in: value)
-        XCTAssertEqual(average.text, String(format: "%.0f", rate / Double(measured))); XCTAssertEqual(average.accessibility, (average.text ?? "") + " t/s")
+        let perTask = rate / Double(measured)
+        XCTAssertEqual(average.text, String(format: "%03.0f", perTask))
+        XCTAssertEqual(average.accessibility, String(format: "%.0f t/s", perTask))
         XCTAssertEqual(try component("firstOutput", in: value).text, "2.00")
         options = .init(); options.statusShow = .count
         let counted = try component("status", in: project(options, context: input, layout: layout))
