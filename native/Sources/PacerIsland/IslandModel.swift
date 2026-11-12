@@ -1059,7 +1059,6 @@ final class IslandModel: ObservableObject {
     }
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
-    var rateHelp: String { L10n.text(rateIsFresh ? "performance.total_help" : "performance.partial_total_help", rate ?? 0) }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     var monitorsRemoteControl: Bool { defaults.bool(forKey: "monitorRemoteControl") }
     static let showsClaudeCloudProjectsKey = "showClaudeCloudProjects"

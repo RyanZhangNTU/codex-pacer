@@ -46,17 +46,18 @@ struct CompactRowLayout: Layout {
 
 struct CompactIslandHeader: View {
     @ObservedObject var model: IslandModel
-    let layout: CompactIslandLayout
     let baseHeight: CGFloat
     let notchWidth: CGFloat
 
     var body: some View {
-        let metrics = model.barMetrics
-        rowView(metrics)
+        let snapshot = model.compactBarSnapshot()
+        let metrics = snapshot.metrics
+        let row = rowView(snapshot)
+        row
             .padding(.horizontal, metrics.inset)
             .frame(height: baseHeight)
             .background {
-                rowView(metrics).fixedSize().background(GeometryReader { geometry in
+                row.fixedSize().background(GeometryReader { geometry in
                     Color.clear.preference(key: CompactHeaderIdealWidth.self, value: geometry.size.width + 2 * metrics.inset)
                 }).environment(\.islandLayoutProbe, true).hidden().allowsHitTesting(false).accessibilityHidden(true)
             }
@@ -73,23 +74,22 @@ struct CompactIslandHeader: View {
         .accessibilityLabel(L10n.text("layout.collapsed"))
     }
 
-    private func visible(_ components: [CompactIslandLayout.Component]) -> [CompactIslandLayout.Component] {
-        components.filter { CompactIslandComponent.isVisible($0, model: model, showsStatus: layout.components.contains(.status)) }
-    }
-    private func rowView(_ metrics: CompactBarMetrics) -> some View {
-        let leading = visible(layout.leading), trailing = visible(layout.trailing)
+    private func rowView(_ snapshot: CompactBarSnapshot) -> some View {
+        let metrics = snapshot.metrics
+        let leading = snapshot.output.leading.compactMap(CompactIslandLayout.Component.init(rawValue:))
+        let trailing = snapshot.output.trailing.compactMap(CompactIslandLayout.Component.init(rawValue:))
         let divided = notchWidth == 0 && !leading.isEmpty && !trailing.isEmpty
         return CompactRowLayout(notchWidth: notchWidth, laneGap: metrics.laneGap) {
-            lane(leading, alignment: .leading, gap: metrics.gap)
+            lane(leading, alignment: .leading, snapshot: snapshot)
             Rectangle().fill(divided ? PacerPalette.overlay(41 / 255) : .clear)
                 .frame(width: divided ? 1 : 0, height: divided ? metrics.divider : 0).accessibilityHidden(true)
-            lane(trailing, alignment: .trailing, gap: metrics.gap)
+            lane(trailing, alignment: .trailing, snapshot: snapshot)
         }
     }
-    private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment, gap: CGFloat) -> some View {
-        HStack(spacing: gap) {
+    private func lane(_ components: [CompactIslandLayout.Component], alignment: Alignment, snapshot: CompactBarSnapshot) -> some View {
+        HStack(spacing: snapshot.metrics.gap) {
             ForEach(components) { component in
-                CompactIslandComponent(model: model, component: component)
+                CompactIslandComponent(model: model, component: component, snapshot: snapshot)
             }
         }.fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: alignment).clipped()
@@ -103,15 +103,15 @@ struct CompactIslandHeader: View {
 /// them apart with the window and closing brings them back together.
 struct CompactIslandStrip: View {
     @ObservedObject var model: IslandModel
-    let layout: CompactIslandLayout
 
     var body: some View {
-        let metrics = model.barMetrics
-        column(metrics)
-            .frame(width: model.stripWidth)
+        let snapshot = model.compactBarSnapshot(showsStatus: false)
+        let column = column(snapshot)
+        column
+            .frame(width: snapshot.stripWidth)
             .frame(maxHeight: .infinity)
             .background {
-                column(metrics).fixedSize().background(GeometryReader { geometry in
+                column.fixedSize().background(GeometryReader { geometry in
                     Color.clear.preference(key: CompactStripIdealHeight.self, value: geometry.size.height)
                 }).environment(\.islandLayoutProbe, true).hidden().allowsHitTesting(false).accessibilityHidden(true)
             }
@@ -128,54 +128,62 @@ struct CompactIslandStrip: View {
             .accessibilityLabel(L10n.text("layout.collapsed"))
     }
 
-    private func column(_ metrics: CompactBarMetrics) -> some View {
-        let leading = visible(layout.leading), trailing = visible(layout.trailing)
+    private func column(_ snapshot: CompactBarSnapshot) -> some View {
+        let metrics = snapshot.metrics
+        let leading = snapshot.output.leading.compactMap(CompactIslandLayout.Component.init(rawValue:))
+        let trailing = snapshot.output.trailing.compactMap(CompactIslandLayout.Component.init(rawValue:))
         let divided = !leading.isEmpty && !trailing.isEmpty
         return VStack(spacing: 0) {
-            lane(leading, gap: metrics.stripGap)
+            lane(leading, snapshot: snapshot)
             Spacer(minLength: divided ? metrics.laneGap / 2 : 0)
             if divided {
                 Rectangle().fill(PacerPalette.overlay(41 / 255)).frame(width: metrics.divider, height: 1)
                     .padding(.bottom, metrics.laneGap / 2).accessibilityHidden(true)
             }
-            lane(trailing, gap: metrics.stripGap)
+            lane(trailing, snapshot: snapshot)
         }
         .padding(.vertical, metrics.stripInset)
     }
 
-    private func visible(_ components: [CompactIslandLayout.Component]) -> [CompactIslandLayout.Component] {
-        components.filter { $0.showsInStrip && CompactIslandComponent.isVisible($0, model: model, showsStatus: false) }
-    }
-
-    private func lane(_ components: [CompactIslandLayout.Component], gap: CGFloat) -> some View {
-        VStack(spacing: gap) {
+    private func lane(_ components: [CompactIslandLayout.Component], snapshot: CompactBarSnapshot) -> some View {
+        VStack(spacing: snapshot.metrics.stripGap) {
             ForEach(components) { component in
-                CompactIslandComponent(model: model, component: component, vertical: true)
+                CompactIslandComponent(model: model, component: component, snapshot: snapshot, vertical: true)
             }
         }
     }
 }
 
 struct CompactIslandComponent: View {
-    @ObservedObject var model: IslandModel
+    let model: IslandModel
     let component: CompactIslandLayout.Component
+    let snapshot: CompactBarSnapshot
     /// Stacked for the docked strip: values sit above their units, multiple
     /// providers one above another.
-    var vertical = false
+    let vertical: Bool
     @Environment(\.islandLayoutProbe) private var layoutProbe
-    private var providers: [AgentProvider] { model.enabledProviders }
-    private var output: CompactBarPresentation.Output { model.compactPresentation(showsStatus: !vertical) }
-    private var item: CompactBarPresentation.Component { output.component(component) }
-    private var metrics: CompactBarMetrics { output.metrics ?? model.barMetrics }
-    private var choices: CompactComponentOptions { output.componentOptions ?? CompactComponentOptions() }
+    private let item: CompactBarPresentation.Component
+    private var output: CompactBarPresentation.Output { snapshot.output }
+    private var metrics: CompactBarMetrics { snapshot.metrics }
+    private var choices: CompactComponentOptions { snapshot.choices }
+
+    init(model: IslandModel, component: CompactIslandLayout.Component, snapshot: CompactBarSnapshot, vertical: Bool = false) {
+        self.model = model
+        self.component = component
+        self.snapshot = snapshot
+        self.vertical = vertical
+        item = snapshot.output.component(component)
+    }
+
     private var scale: CGFloat { CGFloat(metrics.scale) }
 
-    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true) -> Bool {
+    static func isVisible(_ component: CompactIslandLayout.Component, model: IslandModel, showsStatus: Bool = true,
+                          snapshot: CompactBarSnapshot? = nil) -> Bool {
         if component == .tps {
-            return CompactBarPresentation.rateIsVisible(context: model.compactTaskContext, attached: model.isAttached,
+            return CompactBarPresentation.rateIsVisible(context: snapshot?.context ?? model.compactTaskContext, attached: model.isAttached,
                 strip: model.sideDock != nil, showsStatus: showsStatus, language: L10n.language)
         }
-        return model.compactComponent(component, showsStatus: showsStatus).visible
+        return (snapshot?.output.component(component) ?? model.compactComponent(component, showsStatus: showsStatus)).visible
     }
     /// Alternation skips providers without a value, so an unavailable service
     /// never spends half the time as a dash; with none known, the first shows one.
@@ -220,36 +228,36 @@ struct CompactIslandComponent: View {
     @ViewBuilder private var content: some View {
         switch component {
         case .activity:
-            ActivityBadge(activity: model.headerActivity(), options: badgeOptions, size: metrics.badge)
+            ActivityBadge(activity: snapshot.activity, options: badgeOptions, size: metrics.badge)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(activitySummary)
+                .accessibilityLabel(item.accessibility)
         case .status:
-            CompactStatusText(text: item.text ?? model.headerDisplayStatus, tone: item.tone,
+            CompactStatusText(text: item.text ?? "", tone: item.tone,
                 maxWidth: item.maxWidth ?? (108 * scale).rounded(), size: metrics.status)
         case .tps:
-            CompactValueText(number: item.text ?? model.headerRateText ?? "—", unit: item.unit, metrics: metrics,
-                color: model.rateIsFresh ? PacerPalette.primary : PacerPalette.secondary)
-                .accessibilityElement(children: .ignore).accessibilityLabel((item.text ?? "—") + " t/s")
+            CompactValueText(number: item.text ?? "—", unit: item.unit, metrics: metrics,
+                color: snapshot.context.rateFresh ? PacerPalette.primary : PacerPalette.secondary)
+                .accessibilityElement(children: .ignore).accessibilityLabel(item.accessibility)
         case .firstOutput:
             CompactValueText(number: item.text ?? "—", unit: item.unit, metrics: metrics, color: PacerPalette.primary, glyph: .stopwatch)
                 .accessibilityElement(children: .ignore).accessibilityLabel(item.accessibility)
         case .warnings:
-            CompactWarningMarks(items: model.compactWarningItems, style: choices.warningStyle, limit: choices.warningLimit, height: metrics.warning)
-                .accessibilityElement(children: .ignore).accessibilityLabel(warningSummary)
+            CompactWarningMarks(items: snapshot.context.warnings, style: choices.warningStyle, limit: choices.warningLimit, height: metrics.warning)
+                .accessibilityElement(children: .ignore).accessibilityLabel(item.accessibility)
         case .quota:
             quotaValues
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(item.accessibility.isEmpty ? quotaSummary : item.accessibility)
+                .accessibilityLabel(item.accessibility)
         case .quotaGauge:
             if output.gaugeClock { priceClock } else {
                 rings
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(item.accessibility.isEmpty ? gaugeSummary : item.accessibility)
+                    .accessibilityLabel(item.accessibility)
             }
         case .priceClock:
             priceClock
         case .quotaLabel:
-            Text(item.text ?? model.compactMetricLabel)
+            Text(item.text ?? "")
                 .font(.system(size: metrics.unit, weight: .medium)).foregroundStyle(PacerPalette.tertiary)
         case .timeRemaining:
             HStack(spacing: 5 * scale) {
@@ -301,23 +309,23 @@ struct CompactIslandComponent: View {
                 exhausted: ring.exhausted == true, window: ring.window, provider: ring.provider)
         }, layout: choices.ringLayout, vertical: vertical, size: metrics.gauge, link: ringLink)
     }
-    private var priceClock: some View {
-        let wallet = model.deepseekWallet
-        return PriceClockGlyph(hourly: wallet.hourly, peaks: wallet.peakToday.map { wallet.angle(of: $0.start)...wallet.angle(of: $0.end) },
-            now: wallet.angle(of: model.now), dimmed: model.deepseekWalletDimmed, side: metrics.gauge, compact: true, peakNow: wallet.peakNow)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(L10n.text("deepseek.clock_accessibility", L10n.text(wallet.peakNow ? "deepseek.now.peak" : "deepseek.now.offpeak"),
-                DeepSeekDayDial.amount(wallet.todayTotal)))
+    @ViewBuilder private var priceClock: some View {
+        if let clock = snapshot.clock {
+            PriceClockGlyph(hourly: clock.hourly, peaks: clock.peaks, now: clock.angle, dimmed: clock.dimmed,
+                side: metrics.gauge, compact: true, peakNow: clock.peakNow)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(item.accessibility)
+        }
     }
     /// The strip's stacked forms: each number sits above its unit, sized for
     /// the strip; a value wider than the strip shrinks to fit.
     @ViewBuilder private var stripContent: some View {
         switch component {
         case .tps:
-            CompactStripValue(number: item.stripText ?? "—", unit: item.stripUnit, metrics: metrics, width: model.stripWidth,
-                color: model.rateIsFresh ? PacerPalette.primary : PacerPalette.secondary)
+            CompactStripValue(number: item.stripText ?? "—", unit: item.stripUnit, metrics: metrics, width: snapshot.stripWidth,
+                color: snapshot.context.rateFresh ? PacerPalette.primary : PacerPalette.secondary)
         case .firstOutput:
-            CompactStripValue(number: item.stripText ?? "—", unit: item.stripUnit, metrics: metrics, width: model.stripWidth,
+            CompactStripValue(number: item.stripText ?? "—", unit: item.stripUnit, metrics: metrics, width: snapshot.stripWidth,
                 color: PacerPalette.primary, glyph: .stopwatch)
                 .accessibilityElement(children: .ignore).accessibilityLabel(item.accessibility)
         case .quota:
@@ -330,14 +338,14 @@ struct CompactIslandComponent: View {
                 } else if entries.count > 1 {
                     AlternatingQuotaText(entries: entries.map { .init(text: $0.stripText, color: NSColor(valueColor($0)), splitsUnit: false) },
                         animates: !layoutProbe, font: .monospacedDigitSystemFont(ofSize: metrics.stripValue, weight: .semibold),
-                        centered: true, maxWidth: max(16, model.stripWidth - 6))
+                        centered: true, maxWidth: max(16, snapshot.stripWidth - 6))
                 } else if let entry = entries.first {
                     stripNumber(entry.stripText, color: valueColor(entry))
                 }
                 if let unit = item.stripUnit { stripUnit(unit) }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(item.accessibility.isEmpty ? quotaSummary : item.accessibility)
+            .accessibilityLabel(item.accessibility)
         case .timeRemaining:
             VStack(spacing: 1) {
                 CompactGlyph(kind: .hourglass, scale: scale).padding(.bottom, scale)
@@ -349,49 +357,25 @@ struct CompactIslandComponent: View {
                 if let unit = item.stripUnit { stripUnit(unit) }
             }
         case .warnings:
-            CompactWarningMarks(items: model.compactWarningItems, style: choices.warningStyle, limit: choices.warningLimit,
+            CompactWarningMarks(items: snapshot.context.warnings, style: choices.warningStyle, limit: choices.warningLimit,
                 height: metrics.warning, vertical: true)
-                .accessibilityElement(children: .ignore).accessibilityLabel(warningSummary)
+                .accessibilityElement(children: .ignore).accessibilityLabel(item.accessibility)
         default:
             content
         }
     }
     private func stripNumber(_ text: String, color: Color, size: Double? = nil) -> some View {
         Text(text).font(.system(size: size ?? metrics.stripValue, weight: .semibold)).monospacedDigit().foregroundStyle(color)
-            .lineLimit(1).minimumScaleFactor(0.6).frame(maxWidth: max(16, model.stripWidth - 6))
+            .lineLimit(1).minimumScaleFactor(0.6).frame(maxWidth: max(16, snapshot.stripWidth - 6))
     }
     private func stripUnit(_ text: String) -> some View {
         Text(text).font(.system(size: metrics.stripUnit, weight: .medium)).foregroundStyle(PacerPalette.unit)
     }
-    private var warningSummary: String { CompactWarningPresentation.summary(model.compactWarningItems) }
-    private var quotaSummary: String {
-        providers.map { L10n.text("provider.compact_quota", $0.displayName, model.compactQuotaText($0)) }.joined(separator: ", ")
-    }
-    private var gaugeSummary: String {
-        model.compactRingProviders.map { provider in
-            if provider == .deepseek {
-                let budget = model.deepseekWallet.ringBudget(prefer: model.deepseekRingPeriod)
-                return L10n.text("provider.compact_quota", provider.displayName, budget.map { DeepSeekWallet.compactRemaining($0.remaining) } ?? "—")
-            }
-            let remaining = model.providerSelectedWindow(provider)?.remainingPercent
-            return L10n.text("provider.compact_quota", provider.displayName, remaining.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—")
-        }.joined(separator: " · ")
-    }
-    /// The count and the most urgent state, without repeating a count-only status.
-    private var activitySummary: String {
-        let count = model.running.count + model.waiting.count
-        let tasks = count == 0 ? nil : L10n.text(count == 1 ? "activity.task_count_compact_singular" : "activity.task_count_compact",
-            count > 99 ? "99+" : String(count))
-        return [tasks, model.headerStatus].compactMap { $0 }.reduce(into: [String]()) { parts, part in
-            if !parts.contains(part) { parts.append(part) }
-        }.joined(separator: " · ")
-    }
     private var help: String {
         switch component {
         case .activity, .status:
-            return L10n.text(model.pendingInputRequests.isEmpty && model.pendingCompletions.isEmpty ? "activity.header_pin" : "activity.header_open",
-                component == .activity ? activitySummary : model.headerStatus)
-        case .tps: return item.help.isEmpty ? model.rateHelp : item.help
+            return L10n.text(snapshot.hasPendingAttention ? "activity.header_open" : "activity.header_pin",
+                component == .activity ? item.help : snapshot.context.headerStatusText(language: L10n.language))
         case .priceClock: return ""
         case .quotaGauge: return output.gaugeClock ? "" : item.help
         default: return item.help

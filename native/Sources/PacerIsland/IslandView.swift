@@ -30,7 +30,7 @@ struct IslandView: View {
     private var centered: some View {
         let edge: Alignment = model.opensUp ? .bottom : .top, away: CGFloat = model.opensUp ? -1 : 1
         return VStack(spacing: 0) {
-            CompactIslandHeader(model: model, layout: model.compactLayout,
+            CompactIslandHeader(model: model,
                 baseHeight: model.baseHeaderHeight, notchWidth: model.notchWidth)
                 .modifier(IslandMoveGesture(model: model))
         }
@@ -59,7 +59,7 @@ struct IslandView: View {
         case (true, .right): .bottomTrailing
         }
         let strip = model.stripWidth, inward: CGFloat = side == .left ? 1 : -1
-        return CompactIslandStrip(model: model, layout: model.compactLayout)
+        return CompactIslandStrip(model: model)
             .modifier(IslandMoveGesture(model: model))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: corner)
             .overlay(alignment: corner) {

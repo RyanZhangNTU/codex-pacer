@@ -75,6 +75,40 @@ final class CompactPresentationCacheTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testSnapshotRefreshesTaskStateAndRateInBothBarModes() async throws {
+        let (defaults, suite) = try defaults()
+        defer { removeTestDefaults(suite) }
+        CompactIslandLayout(leading: [.activity, .status, .tps], trailing: [.quotaLabel, .quota]).save(to: defaults)
+        ProviderModules(codexMode: .enabled, claudeMode: .disabled, deepseekMode: .disabled).save(to: defaults)
+        let tomorrow = Date().addingTimeInterval(86_400)
+        let now = try XCTUnwrap(Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: tomorrow))
+        let model = IslandModel(demo: true, demoClock: { now }, demoArguments: ["--demo-collapsed"], defaults: defaults)
+        let thinking = model.compactBarSnapshot()
+        XCTAssertEqual(thinking.output.leading, ["activity", "status", "tps"])
+        XCTAssertEqual(thinking.output.component(.status).text, L10n.text("activity.thinking"))
+        XCTAssertTrue(thinking.context.rateFresh)
+        XCTAssertNotNil(thinking.context.rate)
+
+        model.setDemoStage(.tool)
+        let tool = model.compactBarSnapshot()
+        XCTAssertEqual(tool.output.component(.status).text, L10n.text("activity.tool_compact"))
+        XCTAssertNotEqual(tool.output.component(.tps).text, thinking.output.component(.tps).text)
+        XCTAssertEqual(thinking.output.component(.status).text, L10n.text("activity.thinking"))
+
+        model.sideDock = .topLeft
+        let strip = model.compactBarSnapshot(showsStatus: false)
+        XCTAssertEqual(strip.output.leading, ["activity", "tps"])
+        XCTAssertEqual(strip.output.trailing, ["quota"])
+        XCTAssertEqual(strip.output.component(.tps).stripText, tool.output.component(.tps).stripText)
+
+        model.setDemoStage(.completed)
+        let completed = model.compactBarSnapshot(showsStatus: false)
+        XCTAssertTrue(completed.hasPendingAttention)
+        XCTAssertEqual(completed.activity.ending, .completed(.codex))
+        XCTAssertNotEqual(completed.output.component(.tps).stripText, strip.output.component(.tps).stripText)
+        await model.shutdown()
+    }
+
     func testMalformedSavedOptionsKeepTheirOriginalDefaultsWithoutRewritingPreferences() async throws {
         let (defaults, suite) = try defaults()
         defer { removeTestDefaults(suite) }

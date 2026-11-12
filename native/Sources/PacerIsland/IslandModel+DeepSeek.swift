@@ -135,8 +135,6 @@ extension IslandModel {
             budgets: deepseekBudgets, spikeLimit: amount(Self.deepseekSpikeLimitKey),
             speedSource: deepseekSpeedSource)
     }
-    /// The wallet cannot be read: the collapsed bar dims rather than recolors.
-    var deepseekWalletDimmed: Bool { [.stale, .disconnected].contains(deepseekWallet.state) }
     /// The one collapsed alert, from the reminders that are on.
     var deepseekAlert: DeepSeekAlert? {
         guard isModuleEnabled(.deepseek) else { return nil }
