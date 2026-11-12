@@ -54,6 +54,8 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     }
     private func currentHosts() -> Set<String> { lock.lock(); defer { lock.unlock() }; return hosts }
     var peerProcessID: pid_t? { lock.lock(); defer { lock.unlock() }; return peer }
+    /// The panel is open and in view (one-second batches, not the collapsed five).
+    var batchesAtExpandedCadence: Bool { lock.lock(); defer { lock.unlock() }; return batchInterval < 5 }
     func setDurableCatalog(_ value: DurableActivityCatalog?) {
         lock.lock(); defer { lock.unlock() }
         guard !cancelled, value != nil || durableCatalog != nil else { return }
