@@ -119,6 +119,11 @@ final class IslandModel: ObservableObject {
     var deepseekBalanceReads = DeepSeekBalanceReadDependencies()
     var deepseekBalanceCoordinator: DeepSeekBalanceCoordinator?
     var deepseekBalanceCoordinatorID = UUID()
+    /// The newest balance history not yet written; readings arrive up to once a minute.
+    var pendingDeepSeekHistory: DeepSeekBalanceHistory?
+    var deepseekHistorySaveWork: DispatchWorkItem?
+    /// One wallet per distinct input; a render reads it from many views.
+    var deepseekWalletMemo: (inputs: DeepSeekWalletInputs, wallet: DeepSeekWallet)?
     var deepseekBalanceState: DeepSeekBalanceState?
     var deepseekCredentialInput: MacDeepSeekCredentialInput?
     var deepseekBalanceStarting = false
@@ -1949,6 +1954,7 @@ final class IslandModel: ObservableObject {
         // applied its pending changes.
         if codexProgressQueue.target?.enabled == true, !showsCodexProgressRing { syncCodexProgressSwitch() }
         if deepseekProgressQueue.target?.enabled == true, !showsDeepSeekProgressRing { syncDeepSeekProgressSwitch() }
+        flushDeepSeekHistory()
         let plan = lifecycle.shutdown()
         guard plan.actions.contains(.stopSources) else { return }
         desktopApplicationScan?.cancel()

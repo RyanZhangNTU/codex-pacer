@@ -137,13 +137,12 @@ extension IslandModel {
             budgetDial: deepseekShowsBudgetDial)
     }
 
+    /// The History pane draws the cycle chart itself; it reads only the text here. Labeling
+    /// every chart point on each redraw only decided whether the placeholder shows, which
+    /// the pane shows only without a cycle.
     func quotaHistoryPresentation(_ provider: AgentProvider) -> QuotaHistoryPresentation {
-        let snapshot = providerQuota(provider)
-        let chart = providerCurrentCycle(provider).map {
-            QuotaCycleChartPresentation(data: QuotaChartData(cycle: $0, resetCredits: snapshot?.resetCredits, now: now))
-        }
-        return .init(provider: provider, snapshot: snapshot, weekly: dashboardQuota(provider: provider, period: .weekly),
-            chart: chart, error: providerQuotaError(provider), warning: providerHistoryWarning(provider),
+        .init(provider: provider, snapshot: providerQuota(provider), weekly: dashboardQuota(provider: provider, period: .weekly),
+            chart: nil, error: providerQuotaError(provider), warning: providerHistoryWarning(provider),
             refreshing: providerRefreshing(provider), accountContext: "", now: now)
     }
 }
