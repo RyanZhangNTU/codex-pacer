@@ -126,6 +126,45 @@ final class SourceDiscoveryTests: XCTestCase {
         try JSONSerialization.data(withJSONObject:state).write(to:home.appendingPathComponent(".codex-global-state.json"))
         XCTAssertEqual(RemoteActivityTarget.configured(home:home).map(\.alias), ["one"])
     }
+    func testSSHDiscoveryFollowsTheCurrentDesktopAccount() throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let file = home.appendingPathComponent(".codex-global-state.json")
+        let first = String(repeating: "a", count: 64), second = String(repeating: "b", count: 64)
+        let one = "remote-ssh-discovered:one", two = "remote-ssh-discovered:two"
+        let flags = "remote-connection-auto-connect-by-host-id"
+        let routes = "app-server-migrated-pinned-thread-ids-by-host"
+        let owner = "electron-renderer-content-owner"
+        var state: [String: Any] = [
+            "codex-managed-remote-connections": [
+                ["hostId": one, "source": "discovered", "alias": "one"],
+                ["hostId": two, "source": "discovered", "alias": "two"]],
+            flags: [one: true, two: true],
+            routes: [two + ":/legacy/codex": [] as [String]],
+            "electron-account-remote-preference:\(flags):\(first)": [one: true, two: false],
+            "electron-account-remote-preference:\(flags):\(second)": [one: false, two: true],
+            "electron-owner-value:\(routes):\(first)": [
+                one + ":/srv/first/codex": [] as [String], two + ":/srv/first/other": [] as [String]]
+        ]
+        func write(ownerValue: String) throws {
+            state[owner] = ownerValue
+            try JSONSerialization.data(withJSONObject: state).write(to: file, options: .atomic)
+        }
+        try write(ownerValue: first)
+        var targets = RemoteActivityTarget.configured(home: home)
+        XCTAssertEqual(targets.map(\.alias), ["one"])
+        XCTAssertEqual(targets.map(\.home), ["/srv/first/codex"])
+
+        try write(ownerValue: second)
+        targets = RemoteActivityTarget.configured(home: home)
+        XCTAssertEqual(targets.map(\.alias), ["two"])
+        XCTAssertEqual(targets.map(\.home), ["~/.codex"])
+
+        try write(ownerValue: String(repeating: "c", count: 64))
+        XCTAssertTrue(RemoteActivityTarget.configured(home: home).isEmpty)
+
+        try write(ownerValue: "signed-out")
+        XCTAssertTrue(RemoteActivityTarget.configured(home: home).isEmpty)
+    }
     func testSshAndRemoteControlDiscoveryShareOneScanAndFollowEachRewrite() throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
         let file = home.appendingPathComponent(".codex-global-state.json")
