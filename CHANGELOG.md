@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.4.2
+
+- Use much less power in the background. With the same real tasks and the panel collapsed, Pacer used about 60% less CPU than 4.4.1 on Windows and MACPERCENT less on Mac. Pacer no longer redraws or sends updates that change nothing on screen. It checks unreachable SSH hosts and failed connections less often, backing off to every 15 minutes, and stops rescanning apps it has already identified. On Windows, collapsed animations run at lower frame rates and stop while the screen is locked or off. On Mac, the Dot task check pauses while the screen is dark.
+- Codex Dot tasks have their own switch, **Include Codex Dot Tasks**, on the Remote page. It is off by default because checking Dot tasks uses more power. After this upgrade it stays on if Dot tasks already reported progress on this computer.
+- Codex Remote Control monitoring, and WSL monitoring on Windows, are off unless you turn them on in **Settings → Remote**. Windows turns WSL monitoring off once after this upgrade. WSL now follows distributions as they start and stop instead of scanning every 30 seconds, and **Refresh Now** checks them on demand.
+- A slow quota reply no longer shows an error. Codex, Claude and DeepSeek wait up to 30 seconds and keep the last reading, which is dimmed only after 10 minutes.
+- The collapsed bar keeps its width while the TPS readout changes between 0 and 999.
+
 ## 4.4.1
 
 - Fix high disk reads and energy use on Macs where Codex can run Dot tasks. Every two minutes, Pacer 4.4.0 checked the signature of all of Codex, reading about 1.6 GB each time. It now checks only the Codex command-line tool it starts. On Mac and Windows, Pacer also keeps one connection for Dot tasks instead of reconnecting, and starting Codex's command-line tool, every two minutes. Dot tasks still appear as quickly as before.
