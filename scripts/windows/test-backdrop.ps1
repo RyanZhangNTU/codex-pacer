@@ -1,6 +1,6 @@
 param(
     [ValidateSet('Debug','Release')][string]$Configuration = 'Debug',
-    [ValidateSet('overlay','cpu','interactive','input','motion')][string]$Mode = 'overlay',
+    [ValidateSet('overlay','cpu','interactive','input','motion','settle')][string]$Mode = 'overlay',
     [string]$Output
 )
 . (Join-Path $PSScriptRoot 'environment.ps1')

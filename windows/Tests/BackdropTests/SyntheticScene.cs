@@ -89,7 +89,7 @@ internal sealed class ProtectedScene : IAsyncDisposable
     {
         IntPtr Orbit(string name) => typeof(ActivityBadge).GetProperty("RotationScheduling", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
             ?.GetValue((ActivityBadge)island.FindName(name)) is ValueTuple<bool, bool, long, IntPtr> value ? value.Item4 : IntPtr.Zero;
-        return [new WindowInteropHelper(island).Handle, island.BackdropWindowHandle, Orbit("Badge"), Orbit("StripBadge")];
+        return [new WindowInteropHelper(island).Handle, island.BackdropWindowHandle, island.DecorationWindowHandle, Orbit("Badge"), Orbit("StripBadge")];
     }
     internal void Capture(string path, params IntPtr[] allowed)
     {
@@ -104,19 +104,25 @@ internal sealed class ProtectedScene : IAsyncDisposable
     }
     private void Guard(ScreenNative.Bounds capture, IntPtr[] allowed)
     {
-        bool sceneSeen = false, foreign = false;
+        bool sceneSeen = false, foreign = false; string intruder = "";
         ScreenNative.EnumWindows((hwnd, _) =>
         {
             if (hwnd == Handle) { sceneSeen = true; return false; }
             if (!ScreenNative.IsWindowVisible(hwnd) || allowed.Contains(hwnd)) return true;
             if (ScreenNative.DwmGetWindowAttribute(hwnd, 14, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
             var rectangle = ScreenNative.Read(hwnd);
-            if (rectangle.Width > 0 && rectangle.Height > 0 && rectangle.Intersects(capture)) { foreign = true; return false; }
+            if (rectangle.Width > 0 && rectangle.Height > 0 && rectangle.Intersects(capture))
+            {
+                // Only whose window it is: own process or another, never its title.
+                ScreenNative.GetWindowThreadProcessId(hwnd, out uint pid);
+                intruder = pid == Environment.ProcessId ? " An own window intersects it." : " Another process's window intersects it.";
+                foreign = true; return false;
+            }
             return true;
         }, IntPtr.Zero);
         ScreenNative.GetWindowThreadProcessId(Handle, out uint owner);
         if (!sceneSeen || foreign || owner != process.Id || process.HasExited || !ScreenNative.IsWindowVisible(Handle))
-            throw new InvalidOperationException("Screenshot rejected: the synthetic scene does not fully protect its capture rectangle.");
+            throw new InvalidOperationException("Screenshot rejected: the synthetic scene does not fully protect its capture rectangle." + intruder);
     }
     public async ValueTask DisposeAsync()
     {

@@ -546,10 +546,13 @@ public partial class IslandWindow : Window
         NativeWindowBounds.Apply(this, surfaceBounds);
         PlaceShell(lastFrame.Window.Width > 0 ? lastFrame.Window : layout.Target);
     }
-    /// A finished transition keeps only its settled outline. The canvas grown
-    /// for the spring is transparent, but a layered window still pushes all of
-    /// it on every later frame of the bar's own motion. The next transition
-    /// grows it again before it starts.
+    /// A finished transition trims the canvas grown for the spring. It is
+    /// transparent, but a layered window still pushes all of it on every later
+    /// frame of the bar's own motion. Only the right and bottom edges move: a
+    /// new origin would show each layered window's previous bitmap at the new
+    /// place until WPF draws again, so the shell, its glass and its shoulders
+    /// or shadow would jump apart for a frame or two. A kept origin shows the
+    /// same pixels, and the next transition grows the far edges back in place.
     private void FitSurface(MotionFrame frame)
     {
         var settled = destination;
@@ -559,9 +562,17 @@ public partial class IslandWindow : Window
                 new Rect(frame.Window.X, frame.Window.Y, frame.Window.Width, frame.Window.Height));
             settled = new(union.X, union.Y, union.Width, union.Height);
         }
-        if (settled == surfaceBounds) return;
-        surfaceBounds = settled;
+        var fitted = FittedSurface(surfaceBounds, settled);
+        if (fitted == surfaceBounds) return;
+        surfaceBounds = fitted;
         NativeWindowBounds.Apply(this, surfaceBounds);
+    }
+    /// The settled outline with the current origin, unless the outline starts
+    /// above or left of it (only a transition without motion does that).
+    internal static MotionBounds FittedSurface(MotionBounds current, MotionBounds settled)
+    {
+        double x = Math.Min(current.X, settled.X), y = Math.Min(current.Y, settled.Y);
+        return new(x, y, settled.X + settled.Width - x, settled.Y + settled.Height - y);
     }
     /// The settled window surface, in logical points; read by the presentation checks.
     internal MotionBounds SurfaceBounds => surfaceBounds;

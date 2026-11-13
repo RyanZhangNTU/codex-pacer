@@ -21,6 +21,7 @@ internal static class ShellWorkChecks
     {
         void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
         static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+        CheckFittedSurface();
         await using var engine = new EngineClient();
         using var presence = new DisplayPresence(observe: false);
         var window = new IslandWindow(engine, true, false, animationOverride: motion,
@@ -36,23 +37,34 @@ internal static class ShellWorkChecks
                 "The island must render the first reference snapshot");
             await window.WaitForPresentationAsync();
 
-            // A settled island keeps only its own outline: the spring's canvas
-            // is grown for a transition and given back when it settles.
+            // A settled island gives back the spring's canvas at the right and
+            // bottom edges and keeps its origin: a moved layered window shows
+            // its previous bitmap at the new place, and the shell, glass and
+            // shoulders jump apart for a frame.
+            NativeRect Native() => GetWindowRect(new WindowInteropHelper(window).Handle, out var native) ? native : default;
             bool Fits()
             {
                 double scale = VisualTreeHelper.GetDpi(window).DpiScaleX;
-                if (!GetWindowRect(new WindowInteropHelper(window).Handle, out var native)) return false;
-                return Math.Abs(window.SurfaceBounds.Width - window.LogicalTarget.Width) < 1 && Math.Abs(window.SurfaceBounds.Height - window.LogicalTarget.Height) < 1
-                    && Math.Abs((native.Right - native.Left) / scale - window.LogicalTarget.Width) < 2 && Math.Abs((native.Bottom - native.Top) / scale - window.LogicalTarget.Height) < 2;
+                var native = Native(); var surface = window.SurfaceBounds; var target = window.LogicalTarget;
+                return surface.X <= target.X + 0.5 && surface.Y <= target.Y + 0.5
+                    && Math.Abs(surface.X + surface.Width - target.X - target.Width) < 1 && Math.Abs(surface.Y + surface.Height - target.Y - target.Height) < 1
+                    && Math.Abs((native.Right - native.Left) / scale - surface.Width) < 2 && Math.Abs((native.Bottom - native.Top) / scale - surface.Height) < 2;
             }
             window.Reveal(); await window.WaitForPresentationAsync(); await Pump();
             Check(window.IsExpandedForAutomation && window.LogicalTarget.Height > 100 && Fits(),
-                $"An open island must settle on the panel's outline ({scenario}): surface={window.SurfaceBounds}, target={window.LogicalTarget}, actual={window.ActualWidth}x{window.ActualHeight}");
+                $"An open island must settle on the panel's far edges ({scenario}): surface={window.SurfaceBounds}, target={window.LogicalTarget}, actual={window.ActualWidth}x{window.ActualHeight}");
             var badge = (ActivityBadge)window.FindName("Badge");
             Check(badge.LoopFrameRate == ActivityBadge.OpenFrameRate, "The badge's loops run at full rate while the panel is open");
+            var opened = Native();
             window.CollapseForAutomation(); await window.WaitForPresentationAsync(); await Pump();
-            Check(!window.IsExpandedForAutomation && window.LogicalTarget.Height < 100 && Fits(),
-                $"A collapsed island must give back the panel-sized surface ({scenario}): surface={window.SurfaceBounds}, target={window.LogicalTarget}, actual={window.ActualWidth}x{window.ActualHeight}");
+            var closed = Native();
+            Check(!window.IsExpandedForAutomation && window.LogicalTarget.Height < 100 && window.SurfaceBounds.Height < 100 && Fits()
+                && closed.Left == opened.Left && closed.Top == opened.Top,
+                $"A collapsed island must give back the panel's height without moving its origin ({scenario}): surface={window.SurfaceBounds}, target={window.LogicalTarget}, origin {opened.Left},{opened.Top} -> {closed.Left},{closed.Top}");
+            window.Reveal(); await window.WaitForPresentationAsync(); await Pump();
+            Check(Native() is var reopened && reopened.Left == opened.Left && reopened.Top == opened.Top && Fits(),
+                $"Reopening must grow the far edges in place ({scenario}): surface={window.SurfaceBounds}, target={window.LogicalTarget}");
+            window.CollapseForAutomation(); await window.WaitForPresentationAsync(); await Pump();
             Check(badge.LoopFrameRate == ActivityBadge.CollapsedFrameRate, "The badge's loops slow down while only the bar shows");
 
             // A collapsed island builds and measures nothing of its panel; the
@@ -151,6 +163,20 @@ internal static class ShellWorkChecks
         finally { window.StopPresentation(); window.AllowClose = true; window.Close(); }
     }
     [StructLayout(LayoutKind.Sequential)] private struct NativeRect { internal int Left, Top, Right, Bottom; }
+    /// The rule behind the settled surface, apart from any window.
+    internal static void CheckFittedSurface()
+    {
+        void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
+        var canvas = new MotionBounds(1078, 0, 404, 460);
+        Check(IslandWindow.FittedSurface(canvas, new(1195, 0, 170, 36)) == new MotionBounds(1078, 0, 287, 36),
+            "Closing keeps the canvas origin and trims the right and bottom edges");
+        Check(IslandWindow.FittedSurface(canvas, new(1078, 0, 404, 438)) == new MotionBounds(1078, 0, 404, 438),
+            "Opening trims only the spring's extra bottom");
+        Check(IslandWindow.FittedSurface(new(1195, 0, 170, 36), new(1078, 0, 404, 438)) == new MotionBounds(1078, 0, 404, 438),
+            "An outline left of the surface moves the origin to include it");
+        Check(IslandWindow.FittedSurface(new(1078, 400, 404, 460), new(1195, 824, 170, 36)) == new MotionBounds(1078, 400, 287, 460),
+            "A panel that opened upward keeps its top and gives back only the right edge");
+    }
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr window, out NativeRect rectangle);
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {

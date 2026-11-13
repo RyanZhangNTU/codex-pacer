@@ -76,7 +76,7 @@ Opaque WPF windows (Settings, sign-in windows, dialogs and non-layered popups) u
 - Finite animations hold controllable clocks and stop them explicitly when they finish, are replaced or unload. Production code never forces garbage collection.
 - When an opaque fullscreen window fully covers the island, cosmetic motion pauses. Detection is driven by WinEvents with a 250 ms trailing throttle; nothing runs without events. Layered and `WS_EX_NOREDIRECTIONBITMAP` windows never count as covering, because their transparency cannot be proven.
 - The engine publishes a snapshot only when its encoded state changed at display precision, ignoring the sequence number, capture times and sub-display changes of clock-derived numbers.
-- Each frame of the layered island costs a few milliseconds, so repeating motion is rationed: estimate and breath loops run at 30 fps expanded and 12 fps collapsed, task-row icon and progress-ring loops at 12 to 20 fps, and the quota swap fades at 15 fps. When a transition settles, the window shrinks to the settled size instead of keeping the expanded panel's area.
+- Each frame of the layered island costs a few milliseconds, so repeating motion is rationed: estimate and breath loops run at 30 fps expanded and 12 fps collapsed, task-row icon and progress-ring loops at 12 to 20 fps, and the quota swap fades at 15 fps. When a transition settles, the window gives back the spring's canvas at its right and bottom edges and keeps its origin; the next transition grows those edges in place. A moved layered window shows its previous bitmap at the new place until WPF draws again, so a new origin made the shell, its glass and its shoulders or shadow jump apart for a frame or two.
 - A locked session, a disconnected remote session or a display that is off (`DisplayPresence`) stops every decoration, like fullscreen cover.
 - While collapsed, a snapshot only marks the hidden panel dirty; it is rebuilt once when it opens. While open, rows with the same tasks update in place and quota, DeepSeek and menu sections rebuild only when their inputs change. A burst of snapshots renders once with the newest, while every snapshot still reaches notification subscribers.
 
@@ -95,8 +95,10 @@ Targets and measurement commands are in [idle CPU checks](windows-engine.md#idle
 Checks, after building the desktop and in a screen slot of their own (pixel checks need Pillow and NumPy):
 
 ```powershell
-./scripts/windows/test-backdrop.ps1 -Mode overlay   # also input, cpu, motion, interactive
+./scripts/windows/test-backdrop.ps1 -Mode overlay   # also input, cpu, motion, settle, interactive
 ```
+
+`settle` opens and closes the island 24 times in Black and Liquid Glass, attached and floating, samples the screen about every 9 ms and fails when the outline moves more than 2 pixels after the last frame. It keeps only outlines; `PACER_SETTLE_FRAMES=1` also saves the synthetic frames around a failure.
 
 Each run needs a fresh output folder (default `output/windows/backdrop/<id>/`) and refuses to start while another Pacer screen test runs. An unavailable native backdrop fails the run instead of passing Black as glass. `interactive` keeps the window for up to 180 seconds; create a `finish` file in its output folder to end it early. Not automated: real changes of system settings, several monitors or mixed DPI, Narrator, recovery after sleep, lock, Remote Desktop or a GPU switch, and other GPUs.
 
