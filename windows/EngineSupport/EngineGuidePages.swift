@@ -68,7 +68,7 @@ enum EngineGuidePages {
             nextSeen: nextSeen, recordLaunch: !input.demo && (welcome || (!input.settings && !note)), recordClose: !input.demo,
             versionTitle: L10n.text("whats_new.version", input.current, language: language),
             steps: (1...2).map { L10n.text("welcome.step_of", $0, 2, language: language) },
-            moduleOff: Dictionary(uniqueKeysWithValues: AgentProvider.allCases.map { ($0.rawValue, L10n.text("welcome.module.off", $0.displayName, language: language)) }),
+            moduleOff: Dictionary(uniqueKeysWithValues: HarnessRegistry.legacyIDs.map { ($0.rawValue, L10n.text("welcome.module.off", $0.displayName, language: language)) }),
             releases: (pending.isEmpty && note ? Array(history.prefix(1)) : pending).map(release),
             history: history.map(release),
             links: ["repository": repository, "star": ProjectSupport.star.absoluteString,

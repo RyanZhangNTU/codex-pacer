@@ -211,7 +211,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
     }
 
     func testOnlyActualConversationOpenPersistsAcrossModelReconstructionForBothProvidersAndHosts() async throws {
-        for provider in AgentProvider.allCases {
+        for provider in HarnessRegistry.legacyIDs {
             for sourceHostID in [nil, "remote-ssh-discovered:synthetic-ack", "remote-control:synthetic-ack"] as [String?]
                 where (provider == .codex || sourceHostID?.hasPrefix("remote-control:") != true) && (provider != .deepseek || sourceHostID == nil) {
                 for outcome in [ActivityOpenOutcome.openedConversation, .dispatchedTerminal, .failed("Synthetic failure")] {

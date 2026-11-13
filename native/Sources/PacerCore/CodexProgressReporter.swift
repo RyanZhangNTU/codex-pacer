@@ -1,13 +1,14 @@
 import Foundation
 
-/// The stdio server runs in a separate Pacer process owned by Codex. A private
-/// Durable registration can also deliver the accepted receipt on this Mac.
-public struct CodexProgressReporter {
+/// The stdio server acknowledges estimates from a harness. An optional Codex
+/// Durable registration also delivers the accepted receipt to a mailbox.
+public struct TaskProgressReporter {
     public static let argument = "--codex-progress-mcp"
     package static let durableArgument = "--durable"
+    package static let localHarnessArgument = "--task-progress-mcp"
     private static let limit = 1024 * 1024
     private static let instructions = "Report your best estimate of how much of the user's current request is done. Call this tool with your first useful tool batch, after meaningful progress, and before a long wait. Use an integer from 0 to 100 and revise it downward when needed. Skip reports for short replies that need no tools."
-    private let flag: URL
+    private let flag: URL?
     private let capturesDurableReceipts: Bool
     private var pending = Data()
     private var durableReceipts: [DurableProgressReceipt] = []
@@ -16,6 +17,33 @@ public struct CodexProgressReporter {
     package init(home: URL, capturesDurableReceipts: Bool) {
         flag = CodexProgressSetup.flag(home)
         self.capturesDurableReceipts = capturesDurableReceipts
+    }
+
+    private init(localHarnessFlag: URL?) {
+        flag = localHarnessFlag
+        capturesDurableReceipts = false
+    }
+
+    @discardableResult package static func serveLocalHarnessIfRequested(
+        arguments: [String], read: () throws -> Data?
+    ) -> Bool {
+        guard arguments.count >= 2, arguments[1] == localHarnessArgument else { return false }
+        let flag: URL?
+        switch arguments.count {
+        case 2: flag = nil
+        case 4 where arguments[2] == LocalHarnessProgressSetup.managedArgument && LocalHarnessProgressSetup.validPath(arguments[3]):
+            flag = URL(fileURLWithPath: arguments[3])
+        default: return true
+        }
+        var reporter = Self(localHarnessFlag: flag)
+        do {
+            while let bytes = try read(), !bytes.isEmpty {
+                for reply in try reporter.receive(bytes) {
+                    try FileHandle.standardOutput.write(contentsOf: reply)
+                }
+            }
+        } catch { }
+        return true
     }
 
     package mutating func takeDurableReceipts() -> [DurableProgressReceipt] {
@@ -40,6 +68,7 @@ public struct CodexProgressReporter {
     }
 
     private var enabled: Bool {
+        guard let flag else { return true }
         guard let facts = try? FileManager.default.attributesOfItem(atPath: flag.path),
               facts[.type] as? FileAttributeType == .typeRegular,
               (facts[.size] as? NSNumber)?.intValue == CodexProgressSetup.on.count,
@@ -85,6 +114,8 @@ public struct CodexProgressReporter {
         return reply
     }
 }
+
+public typealias CodexProgressReporter = TaskProgressReporter
 
 public enum CodexProgressSetupStatus: String, Codable, Sendable {
     case settingUp, ready, missingCLI, conflict, failed

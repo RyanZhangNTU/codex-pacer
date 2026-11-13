@@ -111,10 +111,8 @@ internal sealed partial class SettingsWindow
     private Grid ProviderHeader(string provider, out TextBlock detection, out CheckBox module, out Button automatic)
     {
         var header = new Grid(); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Color color = ProviderTint(provider);
-        Color lighter = Color.FromRgb((byte)Math.Min(255, color.R + 10), (byte)Math.Min(255, color.G + 10), (byte)Math.Min(255, color.B + 10));
-        var tile = new Border { Width = 40, Height = 40, CornerRadius = new CornerRadius(10.4), Background = new LinearGradientBrush(lighter, color, 90), Margin = new Thickness(0, 0, 14, 0),
-            Child = new IconGlyph { Symbol = PaneSymbol(provider), Width = 26, Height = 26, Ink = new SolidColorBrush(Color.FromArgb(184, 0, 0, 0)) }, VerticalAlignment = VerticalAlignment.Center };
+        var tile = ProviderIcon.Tile(provider, 40, PaneSymbol(provider));
+        tile.Margin = new Thickness(0, 0, 14, 0);
         header.Children.Add(tile);
         var names = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var title = Label(PaneTitle(provider), 22, FontWeights.Bold); AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1); names.Children.Add(title);

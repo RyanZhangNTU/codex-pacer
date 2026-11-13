@@ -32,8 +32,8 @@ final class WidthMeasurementTests: XCTestCase {
                 model.desktopApplicationResolver = { _ in URL(fileURLWithPath: "/Synthetic.app") }
             }
             model.refreshDesktopApplications()
-            try await TestWait.until { model.appButtonProviders == AgentProvider.allCases }
-            XCTAssertEqual(model.appButtonProviders, AgentProvider.allCases)
+            try await TestWait.until { model.appButtonProviders == HarnessRegistry.legacyIDs }
+            XCTAssertEqual(model.appButtonProviders, HarnessRegistry.legacyIDs)
             XCTAssertEqual(model.visibleActivities.count, 4)
             for language in AppLanguage.allCases {
                 let capture = WidthCapture()

@@ -182,6 +182,11 @@ public struct ActivityTaskRowPresentation: Sendable {
     public let ratePlaceholder: String?
     public let cost: String?
     public let peakCost: Bool
+    public var costAccessibility: String? {
+        guard let cost else { return nil }
+        if case .estimatedYuan? = activity.turnCharge { return L10n.text("deepseek.turn_cost_accessibility", cost) }
+        return cost
+    }
     public let progressRing: TaskProgressRing?
     public var rateText: String? { rate.map { String(format: "%.1f", $0.value) } }
     public var subagentText: String { String(subagents) }
@@ -207,20 +212,45 @@ public struct ActivityTaskRowPresentation: Sendable {
         dimmed = Self.isDimmed(phase: phase, unread: unread, attention: attention != nil, failed: activity.turnFailed)
         subagents = (group?.runningSubagentCount ?? 0) + (phase == .running ? activity.claudeCloud?.additionalWorkers ?? 0 : 0)
         rate = group?.displayedRate(at: now) ?? activity.displayedOutputEstimate(at: now)
-        model = activity.modelName.map { Self.shortened(ModelDisplay.name($0), limit: 22) } ?? activity.provider.displayName
+        model = activity.modelName.map { Self.shortened(ModelDisplay.name($0, provider: activity.provider), limit: 22) } ?? activity.provider.displayName
         effort = activity.modelName == nil ? nil : activity.reasoningEffort.flatMap { ModelDisplay.effortLabel($0) }
         turnTime = Self.turnTimeText(activity, phase: phase, now: now)
         source = Self.sourceName(activity, options: options)
         sourceLabel = source.map { Self.middleTruncated($0, limit: 16) }
         sourceKind = activity.claudeCloud != nil ? "cloud" : activity.sourceHostID != nil ? "server" : source == nil ? nil : "application"
-        ratePlaceholder = activity.claudeCloud == nil ? L10n.text("performance.awaiting_usage") : nil
-        cost = activity.provider == .deepseek && options.showsDeepSeekTurnCost ? activity.turnCost.map(DeepSeekWallet.turnAmount) : nil
-        peakCost = (activity.turnPeakCost ?? 0) >= 0.005
+        ratePlaceholder = activity.claudeCloud == nil && HarnessRegistry.descriptor(for: activity.provider)?.hasRateDisplay == true
+            ? L10n.text("performance.awaiting_usage") : nil
+        switch activity.turnCharge {
+        case .estimatedYuan(let total, let peak) where options.showsDeepSeekTurnCost:
+            cost = DeepSeekWallet.turnAmount(total)
+            peakCost = peak >= 0.005
+        case .credits(let amount):
+            cost = Self.creditAmount(amount)
+            peakCost = false
+        default:
+            cost = nil
+            peakCost = false
+        }
         progressRing = TaskProgressRing.make(activity, phase: phase, enabled: options.progressRingProviders.contains(activity.provider), at: now,
             hasAttention: attention != nil, waitingForDependents: group?.isRunning == true && [.completed, .interrupted].contains(activity.phase))
     }
     public static func title(_ activity: SessionActivity, hideProjects: Bool) -> String {
-        hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project
+        activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project)
+    }
+    private static func creditAmount(_ value: Double) -> String {
+        if value > 0 && value < 0.01 { return "<0.01 " + L10n.text("harness.credit_unit") }
+        let hundredths = Int((value * 100).rounded())
+        let whole = hundredths / 100
+        let fraction = hundredths % 100
+        let amount: String
+        switch fraction {
+        case 0: amount = String(whole)
+        case 1...9: amount = "\(whole).0\(fraction)"
+        case 10, 20, 30, 40, 50, 60, 70, 80, 90: amount = "\(whole).\(fraction / 10)"
+        default: amount = "\(whole).\(fraction)"
+        }
+        let unit = hundredths == 100 ? "harness.credit_unit_single" : "harness.credit_unit"
+        return amount + " " + L10n.text(unit)
     }
     public static func sourceName(_ activity: SessionActivity, options: TaskPresentationOptions) -> String? {
         if let cloud = activity.claudeCloud { return options.hideProjects ? L10n.text("connections.kind.claude_cloud") : cloud.projectName }

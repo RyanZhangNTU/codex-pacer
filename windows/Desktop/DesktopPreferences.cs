@@ -90,6 +90,9 @@ internal sealed record DesktopPreferences
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; } = true;
     public bool CodexProgressRing { get; init; } = true;
+    public string[] EnabledHarnessProgress { get; init; } = [];
+    public string WorkBuddyAccountSite { get; init; } = "automatic";
+    internal bool UsesWorkBuddyChina(bool chinese) => WorkBuddyAccountSite == "china" || WorkBuddyAccountSite == "automatic" && chinese;
     public bool MonitorSSH { get; init; } = true;
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
@@ -122,6 +125,7 @@ internal sealed record DesktopPreferences
         && ValidRing(QuotaRingOuter) && ValidRing(QuotaRingInner)
         && DeepSeekPanelStyle is "simple" or "detailed" && DeepSeekMode is "balance" or "budget"
         && DeepSeekBalanceSource is "automatic" or "web" or "apiKey"
+        && WorkBuddyAccountSite is "automatic" or "china" or "international"
         && DeepSeekRingPeriod is "day" or "week" && DeepSeekSpeedSource is "local" or "account"
         && ValidAmount(DeepSeekDailyBudget) && ValidAmount(DeepSeekWeeklyBudget)
         && ValidAmount(DeepSeekLowBalanceLine) && ValidAmount(DeepSeekSpikeLimit)
@@ -132,8 +136,19 @@ internal sealed record DesktopPreferences
         && RetentionMinutes is >= 0 and <= 10080
         && ValidPath(CodexExecutable) && ValidPath(CodexHome) && ValidPath(ClaudeHome) && ValidPath(DeepseekHome)
         && (ClaudeOrganization == "" || ClaudeOrganization is { Length: 36 } && Guid.TryParseExact(ClaudeOrganization, "D", out _))
-        && ProviderModes is { Count: 3 }
-        && ProviderModes.All(pair => pair.Key is "codex" or "claude" or "deepseek" && pair.Value is "automatic" or "enabled" or "disabled");
+        && ProviderModes is { Count: >= 3 and <= 128 }
+        && LegacyProviders.All(ProviderModes.ContainsKey)
+        && ProviderModes.All(pair => ValidProviderId(pair.Key) && ValidProviderMode(pair.Value))
+        && EnabledHarnessProgress is { Length: <= 128 } && EnabledHarnessProgress.All(id => id != null && ValidProviderId(id) && !IsLegacyProvider(id));
+
+    internal static IReadOnlyList<string> LegacyProviders { get; } = ["codex", "claude", "deepseek"];
+    internal static bool IsLegacyProvider(string id) => LegacyProviders.Contains(id);
+    internal const string HarnessPanePrefix = "harness.";
+    internal static bool IsStoredHarnessPane(string? value) => value?.StartsWith(HarnessPanePrefix, StringComparison.Ordinal) == true
+        && ValidProviderId(value[HarnessPanePrefix.Length..]);
+    internal static bool ValidProviderId(string id) => id.Length is > 0 and <= 48 && id[0] is >= 'a' and <= 'z'
+        && id.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+    internal static bool ValidProviderMode(string? value) => value is "automatic" or "enabled" or "disabled";
 
     private static bool ValidPath(string? value) => value != null && Encoding.UTF8.GetByteCount(value) <= 32768
         && !value.Any(char.IsControl) && (value.Length == 0 || Path.IsPathFullyQualified(value));
@@ -158,6 +173,7 @@ internal sealed record DesktopPreferences
             claudeProgressRing = ClaudeProgressRing,
             codexProgressRing = CodexProgressRing,
             deepseekProgressRing = DeepSeekProgressRing,
+            enabledHarnessProgress = EnabledHarnessProgress,
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },

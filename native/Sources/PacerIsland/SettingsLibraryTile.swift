@@ -1,4 +1,5 @@
 import AppKit
+import PacerCore
 import SwiftUI
 
 /// The light and dark colors a page library draws its tiles in.
@@ -39,6 +40,7 @@ struct LibraryTile: View {
     let selected: Bool
     /// The icon's color while placed; the label's ink otherwise.
     var tint: Color? = nil
+    var provider: AgentProvider? = nil
     /// The service is off or unavailable: still selectable, drawn faint.
     var faint = false
     /// The last block a panel keeps: its button cannot remove it.
@@ -58,9 +60,14 @@ struct LibraryTile: View {
         HStack(spacing: 0) {
             Button(action: select) {
                 HStack(spacing: 7) {
-                    Image(systemName: symbol).font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(placed ? tint ?? LibraryPalette.placedInk : LibraryPalette.freeIcon)
-                        .frame(width: 16)
+                    Group {
+                        if let provider {
+                            ProviderAppIcon(provider: provider, size: 14)
+                        } else {
+                            Image(systemName: symbol).font(.system(size: 12, weight: .regular))
+                                .foregroundStyle(placed ? tint ?? LibraryPalette.placedInk : LibraryPalette.freeIcon)
+                        }
+                    }.frame(width: 16)
                     Text(label).font(.system(size: 12.5)).lineLimit(1).minimumScaleFactor(0.85)
                         .foregroundStyle(placed ? LibraryPalette.placedInk : LibraryPalette.freeInk)
                     Spacer(minLength: 4)

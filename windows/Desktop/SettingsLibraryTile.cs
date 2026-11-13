@@ -10,19 +10,22 @@ namespace CodexPacer.Windows;
 /// A component in a page's library, as on the Mac: clicking the tile only
 /// selects it, and the round button at its end adds or removes it without
 /// changing the selection. Keyboards and screen readers reach two buttons.
-internal sealed record LibraryTile(Grid Root, Button Body, Button? Toggle, IconGlyph Icon, TextBlock Name, string Label);
+internal sealed record LibraryTile(Grid Root, Button Body, Button? Toggle, FrameworkElement Icon, TextBlock Name, string Label);
 
 internal sealed partial class SettingsWindow
 {
     /// <param name="id">The tile's automation id; its round button adds ".toggle".</param>
     /// <param name="fixedNote">Shown instead of the round button for a component that is always there.</param>
-    private LibraryTile BuildLibraryTile(string id, string label, string symbol, string help, Action select, Func<Task>? toggle, string? fixedNote = null)
+    private LibraryTile BuildLibraryTile(string id, string label, string symbol, string help, Action select, Func<Task>? toggle, string? fixedNote = null,
+        string? provider = null)
     {
         var root = new Grid();
         var body = new Button { Style = (Style)FindResource("SettingsLibraryTile") };
         var row = new Grid();
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var icon = new IconGlyph { Symbol = symbol, Width = 12, Height = 12, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+        var icon = provider == null ? new IconGlyph { Symbol = symbol, Width = 12, Height = 12 } : ProviderIcon.Create(provider, 14, symbol);
+        icon.Margin = new Thickness(0, 0, 8, 0);
+        icon.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(icon);
         var name = Label(label, 12.5); name.TextTrimming = TextTrimming.CharacterEllipsis; Grid.SetColumn(name, 1); row.Children.Add(name);
         if (fixedNote != null)
@@ -58,7 +61,8 @@ internal sealed partial class SettingsWindow
         tile.Body.SetResourceReference(BorderBrushProperty, added ? "SettingsCardBorder" : "SettingsTileStroke");
         tile.Body.Tag = selected ? "selected" : null;
         tile.Name.SetResourceReference(TextBlock.ForegroundProperty, added ? "SettingsPrimary" : "SettingsSecondary");
-        tile.Icon.SetResourceReference(IconGlyph.InkProperty, !added ? "SettingsSecondary" : tint ?? "SettingsPrimary");
+        if (tile.Icon is IconGlyph glyph)
+            glyph.SetResourceReference(IconGlyph.InkProperty, !added ? "SettingsSecondary" : tint ?? "SettingsPrimary");
         // A service that is off keeps its tile, faded, so its settings stay reachable.
         tile.Root.Opacity = available ? 1 : 0.55;
         AutomationProperties.SetItemStatus(tile.Body, selected ? ui.Text("main.panel.selected") : "");

@@ -284,6 +284,7 @@ struct DeepSeekDialCell: View {
                 else { DeepSeekDayDial(model: model, wallet: wallet, size: size) }
                 HStack(spacing: 5) {
                     if showsName {
+                        ProviderAppIcon(provider: .deepseek, size: 13)
                         Text(AgentProvider.deepseek.displayName).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.primary)
                     }
                     if budget {

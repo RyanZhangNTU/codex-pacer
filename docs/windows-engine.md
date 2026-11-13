@@ -24,6 +24,7 @@ python scripts/windows/test_contract.py
 The engine speaks bounded newline-delimited JSON on stdin and stdout. Requests carry `protocolVersion: 1`, an `id` and a `method`. `initialize` supplies the enabled providers and source roots; `shutdown` closes owned work. New fields must be optional so existing DTOs stay compatible.
 
 - Never save live protocol bodies: they carry task display metadata. Diagnostics and acceptance records exclude credentials, account identity and private task content.
+- The optional `hello.harnessModules` lists extra module IDs supported by the engine. A host that understands them sets `supportsHarnessModules` on `initialize`. Without that exchange, both sides keep the original three modules on protocol 1.
 - While configuration suspends task projection, the engine holds at most four DeepSeek browser requests. Cancellation, a new binding, sleep and shutdown clear them.
 
 ## Shared Core and platform boundaries
@@ -36,6 +37,14 @@ The engine speaks bounded newline-delimited JSON on stdin and stdout. Requests c
 - Both platforms run the full `PacerCoreTests` target. Mac-only IO tests live in `PacerMacSupportTests`. Synthetic Python programs take their arguments from temporary files so the Windows command-line limit cannot drop coverage.
 
 The platform contract (`windows/platform-contract.json`, checked by `check-contract.py` in CI) scans every Core source and rejects host imports and platform or business conditionals. Only `FoundationNetworking` and `CoreGraphics` may appear in a conditional import, and only as the import. It also checks package identity, dependency pins, native resources and target wiring, and pins the digests of the Mac shipping files and release scripts (`protectedFiles`), so changing one of those needs a contract update in the same change. Windows CI also compiles a forbidden Windows-type reference with the real Core compiler command and expects it to fail.
+
+## WorkBuddy
+
+WorkBuddy AI starts off. Enable it in **Settings → WorkBuddy**. Pacer opens `workbuddy.db` read-only when the WAL and SHM are present. The data directory is `%USERPROFILE%\.workbuddy-ai` by default. Set `WORKBUDDY_CONFIG_DIR` to an absolute path in Pacer’s environment to use a different directory. The account snapshot limits reads to the signed-in user. The query checks the 512 most recently inserted session rows and follows observed sessions by primary key. Pacer can miss an older session resumed outside those rows.
+
+WorkBuddy AI 5.9.4 wrote both a reply and a manual stop as `completed`. Pacer checks the same turn in the local transcript to distinguish completion, cancellation and a pending question. It keeps task metadata, not the text of prompts, replies or answers. A completed or interrupted turn can remain in the inbox; a baseline read does not send an alert. The default profile can open an exact conversation through the signed WorkBuddy app.
+
+WorkBuddy settings and Overview can show context and credits for the latest session. Account credits come from the WorkBuddy site after the user signs in through Pacer’s own WebView2 profile. The host reads the account independently of the local task monitor. Turn on the task progress ring in WorkBuddy settings to install the local MCP tool and its reporting rule. A percentage appears after WorkBuddy calls the tool and records a successful reply for that turn.
 
 ## Log paths longer than MAX_PATH
 

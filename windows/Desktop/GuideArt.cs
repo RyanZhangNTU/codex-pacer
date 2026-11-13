@@ -13,8 +13,15 @@ namespace CodexPacer.Windows;
 internal static class GuideArt
 {
     internal static readonly Color CodexTile = Color.FromRgb(125, 214, 196), ClaudeTile = Color.FromRgb(242, 156, 107), DeepSeekTile = Color.FromRgb(123, 147, 255);
-    internal static Color ProviderTile(string provider) => provider == "claude" ? ClaudeTile : provider == "deepseek" ? DeepSeekTile : CodexTile;
-    internal static string ProviderSymbol(string provider) => provider == "claude" ? "asterisk" : provider == "deepseek" ? "water.waves" : "chevron.left.forwardslash.chevron.right";
+    internal static readonly Color LocalHarnessTile = Color.FromRgb(195, 171, 241);
+    internal static Color ProviderTile(string provider) => provider switch
+    {
+        "codex" => CodexTile, "claude" => ClaudeTile, "deepseek" => DeepSeekTile, _ => LocalHarnessTile
+    };
+    internal static string ProviderSymbol(string provider) => provider switch
+    {
+        "codex" => "chevron.left.forwardslash.chevron.right", "claude" => "asterisk", "deepseek" => "water.waves", _ => "circle.circle"
+    };
 
     /// Release highlights name Mac symbols; the nearest drawn glyph stands in.
     internal static string Symbol(string symbol) => IconGlyph.Has(symbol) ? symbol : symbol switch

@@ -64,7 +64,10 @@ struct QuotaDashboardView: View {
             case .deepseekSolo: DeepSeekSoloDashboard(model: model, spendBeside: spendBeside)
             case .classicRings: ClassicQuotaDashboardView(model: model, providers: providers, slots: layout.slots)
             case .splitSingle:
-                if let provider = layout.slots.first?.provider { single(provider) }
+                if let slot = layout.slots.first {
+                    if slot.period == nil { accountCredits(slot, size: 104, details: true) }
+                    else { single(slot.provider) }
+                }
             case .splitRings: rings(layout.slots)
             }
         }
@@ -96,17 +99,22 @@ struct QuotaDashboardView: View {
     }
 
     private func rings(_ slots: [QuotaDashboardPresentation.Slot]) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            ForEach(slots) { slot in
-                if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 104) } else {
-                    let (main, fiveHour) = gauge(slot.provider)
-                    VStack(spacing: 6) {
-                        QuotaDashboardRingView(quota: main, fiveHourQuota: fiveHour, providerHelp: providerHelp(slot.provider), now: model.now)
-                        QuotaProviderStatusView(model: model, provider: slot.provider)
-                    }.frame(maxWidth: .infinity, alignment: .top)
-                }
+        QuotaDialRow(slots: slots) { slot in
+            if slot.period == nil { accountCredits(slot, size: 104) }
+            else if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 104) } else {
+                let (main, fiveHour) = gauge(slot.provider)
+                VStack(spacing: 6) {
+                    QuotaDashboardRingView(quota: main, fiveHourQuota: fiveHour, providerHelp: providerHelp(slot.provider), now: model.now)
+                    QuotaProviderStatusView(model: model, provider: slot.provider)
+                }.frame(maxWidth: .infinity, alignment: .top)
             }
         }.padding(.bottom, 4)
+    }
+
+    private func accountCredits(_ slot: QuotaDashboardPresentation.Slot, size: CGFloat, details: Bool = false) -> some View {
+        HarnessAccountCard(connection: model.workBuddyAccount, style: .split, size: size, showsDetails: details, showsName: !details,
+            openSettings: { model.openSettings(for: slot.provider) })
+            .padding(.horizontal, details ? IslandMetrics.rowInset : 0)
     }
 
     private func providerHelp(_ provider: AgentProvider) -> String {
@@ -115,6 +123,25 @@ struct QuotaDashboardView: View {
             details.append(L10n.text("claude.quota.source_service_help"))
         }
         return details.compactMap { $0 }.joined(separator: "\n")
+    }
+}
+
+struct QuotaDialRow<Cell: View>: View {
+    let slots: [QuotaDashboardPresentation.Slot]
+    @ViewBuilder let cell: (QuotaDashboardPresentation.Slot) -> Cell
+
+    var body: some View {
+        if let columns = QuotaDashboardPresentation.Layout.columns(for: slots.count) {
+            Grid(alignment: .top, horizontalSpacing: 16, verticalSpacing: 12) {
+                ForEach(Array(stride(from: 0, to: slots.count, by: columns)), id: \.self) { start in
+                    GridRow(alignment: .top) {
+                        ForEach(slots[start..<min(start + columns, slots.count)], content: cell)
+                    }
+                }
+            }
+        } else {
+            HStack(alignment: .top, spacing: 16) { ForEach(slots, content: cell) }
+        }
     }
 }
 
@@ -159,6 +186,7 @@ struct QuotaRingGeometry {
     let startDegrees: Double
     let sweepDegrees: Double
     static let gauge = Self(startDegrees: 125, sweepDegrees: 290)
+    static let classic = Self(startDegrees: -90, sweepDegrees: 360)
     static let fiveHour = Self(startDegrees: 204, sweepDegrees: 132)
     static let weekly = Self(startDegrees: 348, sweepDegrees: 204)
 
@@ -224,10 +252,10 @@ struct QuotaDashboardRingView: View {
                         QuotaRingValue(reading: weekly, size: 22, showsPeriod: true)
                     }.frame(maxWidth: 76)
                 } else if quota.availability == .unavailable {
-                    Circle().stroke(PacerPalette.track, lineWidth: 1.5)
-                    Image(systemName: quota.provider.glyph).font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(PacerPalette.tertiary)
-                        .accessibilityLabel(weekly.accessibilityLabel)
+                    ZStack {
+                        Circle().stroke(PacerPalette.track, lineWidth: 1.5)
+                        ProviderAppIcon(provider: quota.provider, size: 24)
+                    }.accessibilityElement(children: .ignore).accessibilityLabel(weekly.accessibilityLabel)
                 } else {
                     QuotaRingGauge(reading: weekly, geometry: .gauge)
                     QuotaRingValue(reading: weekly, size: 24, showsPeriod: false).frame(maxWidth: 76).offset(y: -4)
@@ -242,6 +270,7 @@ struct QuotaDashboardRingView: View {
             .frame(width: Self.diameter, height: Self.diameter)
             if showsCaption {
                 HStack(spacing: 5) {
+                    ProviderAppIcon(provider: quota.provider, size: 13)
                     Text(quota.provider.displayName).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.primary)
                     if !showsSplitRing, let verdict = weekly.verdict { QuotaVerdictChip(verdict: verdict) }
                     if weekly.stale || (showsSplitRing && fiveHourQuota?.availability == .stale) {
@@ -269,22 +298,33 @@ private struct QuotaRingArc: Shape {
     }
 }
 
-private struct QuotaRingGauge: View {
-    let reading: QuotaRingReading
+struct QuotaRingGauge: View {
+    let fraction: Double?
+    let timeFraction: Double?
+    let tint: Color
+    let stale: Bool
     let geometry: QuotaRingGeometry
     @Environment(\.quotaPaceTick) private var paceTick
     private static let stroke: CGFloat = 6
+
+    init(fraction: Double?, timeFraction: Double? = nil, tint: Color, stale: Bool = false, geometry: QuotaRingGeometry) {
+        self.fraction = fraction; self.timeFraction = timeFraction; self.tint = tint; self.stale = stale; self.geometry = geometry
+    }
+
+    init(reading: QuotaRingReading, geometry: QuotaRingGeometry) {
+        self.init(fraction: reading.fraction, timeFraction: reading.timeFraction, tint: reading.tint, stale: reading.stale, geometry: geometry)
+    }
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 QuotaRingArc(geometry: geometry).stroke(PacerPalette.track,
-                    style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round, dash: reading.fraction == nil ? [2, 5] : []))
-                if let fraction = reading.fraction, fraction > 0 {
+                    style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round, dash: fraction == nil ? [2, 5] : []))
+                if let fraction, fraction > 0 {
                     QuotaRingArc(geometry: geometry).trim(from: 0, to: CGFloat(fraction))
-                        .stroke(reading.tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
+                        .stroke(tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
                 }
-                if paceTick, let time = reading.timeFraction {
+                if paceTick, let time = timeFraction {
                     Capsule().fill(PacerPalette.tick)
                         .overlay(Capsule().stroke(PacerPalette.tickEdge, lineWidth: 0.5))
                         .frame(width: 2.5, height: Self.stroke + 6)
@@ -293,7 +333,7 @@ private struct QuotaRingGauge: View {
                 }
             }.frame(width: proxy.size.width, height: proxy.size.height)
         }
-        .opacity(reading.stale ? 0.55 : 1)
+        .opacity(stale ? 0.55 : 1)
         .accessibilityHidden(true)
     }
 }

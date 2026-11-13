@@ -51,7 +51,7 @@ struct TaskPagerView: View {
                         let activity = row.activity
                         TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
                             enabled: model.canOpen(activity), accent: model.taskAccent,
-                            costDetail: model.deepseekCostDetail(activity), options: model.panelOptions) {
+                            costHelp: model.deepseekCostHelp(activity), options: model.panelOptions) {
                                 model.open(activity)
                             }
                             .frame(height: rowHeight)

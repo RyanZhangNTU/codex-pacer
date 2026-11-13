@@ -224,11 +224,14 @@ struct ProgressRingToggle: View {
     var status: String? = nil
     var canRetry = false
     var retry: () -> Void = {}
+    var secondaryTitle: String? = nil
+    var secondaryAction: () -> Void = {}
 
     var body: some View {
         CardRow(title: L10n.text("main.claude.ring"), detail: status, info: info) {
             HStack(spacing: 8) {
                 if canRetry { Button(L10n.text("connections.retry"), action: retry).buttonStyle(.main) }
+                if let secondaryTitle { Button(secondaryTitle, action: secondaryAction).buttonStyle(.main) }
                 Toggle(L10n.text("main.claude.ring"), isOn: $isOn).labelsHidden().toggleStyle(.switch)
             }
         }

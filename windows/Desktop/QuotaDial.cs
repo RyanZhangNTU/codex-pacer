@@ -40,13 +40,18 @@ internal sealed class QuotaDial : FrameworkElement
     private readonly double? dialSize;
     private readonly PanelGauge? gauge;
     private readonly bool paceTick;
+    private readonly HarnessAccountReading? account;
+    private readonly UiText? accountText;
+    private readonly bool accountStale;
     /// <param name="gauge">Core's choice of window for the panel's chosen periods; without it 5 hours splits the ring when reported.</param>
     /// <param name="paceTick">The white tick where an even pace would be.</param>
     internal QuotaDial(string provider, EngineQuota? quota, EngineWallet? wallet, bool classic = false,
-        DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null, PanelGauge? gauge = null, bool paceTick = true)
+        DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null, PanelGauge? gauge = null, bool paceTick = true,
+        HarnessAccountReading? account = null, UiText? accountText = null, bool accountStale = false)
     {
         this.provider = provider; this.wallet = wallet; this.classic = classic; this.dashboard = dashboard;
         this.classicPeriod = classicPeriod; this.dialSize = dialSize; this.gauge = gauge; this.paceTick = paceTick;
+        this.account = account; this.accountText = accountText; this.accountStale = accountStale;
         _ = quota; // Raw transport data cannot replace a shared display projection.
     }
     private readonly Typeface regular = new(PacerFonts.Interface, FontStyles.Normal, FontWeights.Medium, FontStretches.Normal);
@@ -64,7 +69,8 @@ internal sealed class QuotaDial : FrameworkElement
     internal QuotaWindow? GaugeWindow => ShortGauge ? Short : Weekly;
     private DashboardReading? ClassicReading => classicPeriod == "5h" ? dashboard?.FiveHour : dashboard?.Weekly;
     internal QuotaWindow? Selected => classic ? classicPeriod == "5h" ? Short : Weekly : GaugeWindow;
-    internal string AccessibleName => provider == "deepseek" ? wallet?.Dial?.AccessibilityLabel ?? provider
+    internal string AccessibleName => accountText != null ? account == null ? "WorkBuddy" : HarnessAccountCard.AvailableText(accountText, account.Remaining)
+        : provider == "deepseek" ? wallet?.Dial?.AccessibilityLabel ?? provider
         : classic && ClassicReading != null ? ClassicReading.ClassicAccessibilityLabel
         : dashboard != null ? string.Join("\n", Split ? new[] { dashboard.FiveHour.AccessibilityLabel, dashboard.Weekly.AccessibilityLabel } : new[] { GaugeReading!.AccessibilityLabel })
         : provider;
@@ -83,13 +89,12 @@ internal sealed class QuotaDial : FrameworkElement
     protected override void OnRender(DrawingContext drawing)
     {
         base.OnRender(drawing);
+        if (accountText != null) { DrawAccount(drawing, accountText); return; }
         if (provider == "deepseek") { DrawWallet(drawing); return; }
         if (dashboard == null || (classic ? ClassicReading?.Availability == "unavailable" : GaugeReading?.Availability == "unavailable" && !Split))
         {
-            drawing.DrawEllipse(null, new Pen(PacerPalette.Hairline, 1.5), new Point(Side / 2, Side / 2), Side / 2, Side / 2);
-            drawing.PushTransform(new TranslateTransform(Side / 2 - 10, Side / 2 - 10));
-            IconGlyph.Draw(drawing, provider == "claude" ? "asterisk" : "chevron.left.forwardslash.chevron.right", PacerPalette.Tertiary, 20, 20);
-            drawing.Pop(); return;
+            DrawDisconnected(drawing);
+            return;
         }
         if (classic)
         {
@@ -141,18 +146,49 @@ internal sealed class QuotaDial : FrameworkElement
     }
     private void Gauge(DrawingContext drawing, QuotaWindow? window, double start, double sweep, bool shortPeriod)
     {
+        DrawGauge(drawing, window?.RemainingPercent is double percent ? percent / 100 : null, start, sweep,
+            shortPeriod && window?.Pressing == true ? PacerPalette.Attention : PacerPalette.Provider(provider));
         double radius = Side / 2;
-        var centre = new Point(radius, radius);
-        RingDrawing.Arc(drawing, centre, radius, start, sweep, PacerPalette.Hairline, 6, dashed: window?.RemainingPercent == null);
-        if (window?.RemainingPercent is double percent && percent > 0)
-            RingDrawing.Arc(drawing, centre, radius, start, sweep * Math.Clamp(percent / 100, 0, 1),
-                shortPeriod && window.Pressing ? PacerPalette.Attention : PacerPalette.Provider(provider), 6);
         if (paceTick && window?.RemainingTimePercent is double time)
         {
             drawing.PushTransform(new RotateTransform(start + sweep * Math.Clamp(time / 100, 0, 1) + 90, radius, radius));
             drawing.DrawRoundedRectangle(Brushes.White, new Pen(PacerPalette.Ink(0, 0, 0, 115), 0.5), new Rect(radius - 1.25, -6, 2.5, 12), 1.25, 1.25);
             drawing.Pop();
         }
+    }
+    private void DrawGauge(DrawingContext drawing, double? fraction, double start, double sweep, Brush tint)
+    {
+        double radius = Side / 2;
+        var centre = new Point(radius, radius);
+        RingDrawing.Arc(drawing, centre, radius, start, sweep, PacerPalette.Hairline, 6, dashed: fraction == null);
+        if (fraction > 0) RingDrawing.Arc(drawing, centre, radius, start, sweep * Math.Min(fraction.Value, 1), tint, 6);
+    }
+
+    private void DrawDisconnected(DrawingContext drawing)
+    {
+        double centre = Side / 2;
+        drawing.DrawEllipse(null, DrawingCache.Pen(PacerPalette.Hairline, 1.5), new Point(centre, centre), centre, centre);
+        if (ProviderIcon.Source(provider) is { } icon)
+            drawing.DrawImage(icon, new Rect(centre - 12, centre - 12, 24, 24));
+    }
+
+    private void DrawAccount(DrawingContext drawing, UiText ui)
+    {
+        if (account == null) { DrawDisconnected(drawing); return; }
+        drawing.PushOpacity(accountStale ? 0.55 : 1);
+        if (account.Fraction is double fraction)
+            DrawGauge(drawing, fraction, classic ? -90 : 125, classic ? 360 : 290, PacerPalette.Provider(provider));
+        else
+            drawing.DrawEllipse(null, DrawingCache.Pen(PacerPalette.Hairline, 1.5), new Point(Side / 2, Side / 2), Side / 2, Side / 2);
+        var value = Text(HarnessAccountCard.Amount(ui, account.Remaining), Side * 0.22, PacerPalette.Primary, true);
+        double top = Side / 2 - 15, width = Side * 0.72;
+        double scale = Math.Min(1, width / Math.Max(1, value.WidthIncludingTrailingWhitespace));
+        drawing.PushTransform(new TranslateTransform((Side - value.WidthIncludingTrailingWhitespace * scale) / 2, top));
+        drawing.PushTransform(new ScaleTransform(scale, scale));
+        drawing.DrawText(value, new Point()); drawing.Pop(); drawing.Pop();
+        WalletSubtitle(drawing, Text(ui.Text("harness.account.available_label"), 10, PacerPalette.Secondary),
+            top + Math.Max(21, value.Height * scale) + 3, width);
+        drawing.Pop();
     }
     private void Value(DrawingContext drawing, QuotaWindow? window, double size, double baseline, string? period, double percentSize = 9)
     {
@@ -259,6 +295,7 @@ internal sealed class QuotaCell : StackPanel
         var dial = new QuotaDial(provider, quota, wallet, dashboard: dashboard, gauge: gauge, paceTick: paceTick) { Width = 104, Height = 104, HorizontalAlignment = HorizontalAlignment.Center };
         Children.Add(dial);
         var caption = new StackPanel { Orientation = Orientation.Horizontal, Height = 15, Margin = new Thickness(0, 8, 0, 6), HorizontalAlignment = HorizontalAlignment.Center };
+        caption.Children.Add(ProviderIcon.Caption(provider));
         caption.Children.Add(new TextBlock { Text = provider switch { "codex" => "Codex", "claude" => "Claude", _ => "DeepSeek" },
             FontSize = 11, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         var shown = dial.GaugeWindow;

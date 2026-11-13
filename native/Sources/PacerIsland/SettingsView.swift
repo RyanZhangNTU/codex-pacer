@@ -77,6 +77,8 @@ struct SettingsView: View {
         return result
     }()
     @State private var pane = SettingsPane.load()
+    @State private var enabledHarnessProgress = Set(UserDefaults.standard.stringArray(forKey: IslandModel.enabledHarnessProgressKey) ?? [])
+    private var localProviders: [AgentProvider] { model.localHarnessDescriptors.map(\.id) }
     /// A row a link elsewhere asked for, scrolled into view when its pane opens.
     @State private var scrollTarget: String?
     private static let gaugeAnchor = SettingsCollapsedBarPane.inspectorAnchor
@@ -91,7 +93,7 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            MainWindowSidebar(selection: $pane, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
+            MainWindowSidebar(selection: $pane, localProviders: localProviders, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
                 needsAttention: needsAttention, updateVersion: updater.flow.available?.version)
                 .background(SidebarMaterial())
             Rectangle().fill(Color.black.opacity(0.25)).frame(width: 1)
@@ -104,6 +106,8 @@ struct SettingsView: View {
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
             launchAtLogin.refresh()
+            if let provider = pane.provider, !HarnessRegistry.legacyIDs.contains(provider), !localProviders.contains(provider) { pane = .overview }
+            refreshProgressConnection()
         }
         .task(id: "\(cliScanRevision):\(executable)") {
             cliReport = nil
@@ -114,7 +118,11 @@ struct SettingsView: View {
             guard !Task.isCancelled else { return }
             cliReport = report
         }
-        .onChange(of: pane) { _, value in UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey) }
+        .onChange(of: pane) { _, value in
+            UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey)
+            refreshProgressConnection()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshProgressConnection() }
         // Settings apply as they change, like System Settings; there is no Save.
         .onChange(of: liveSettings) { _, _ in scheduleApply() }
         .onChange(of: theme) { _, value in value.apply() }
@@ -136,6 +144,12 @@ struct SettingsView: View {
         .onDisappear {
             if let focusedText { commit(focusedText) }
             if applyTask != nil { applyNow() }
+        }
+    }
+
+    private func refreshProgressConnection() {
+        if let provider = pane.provider, !HarnessRegistry.legacyIDs.contains(provider) {
+            model.syncLocalHarnessProgress(force: provider, inspectOnly: true)
         }
     }
 
@@ -186,7 +200,7 @@ struct SettingsView: View {
 
     private func providerHeader(_ provider: AgentProvider) -> some View {
         HStack(spacing: 14) {
-            SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72), size: 40)
+            ProviderAppIcon(provider: provider, size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 Text(provider.displayName).font(.system(size: 22, weight: .bold)).accessibilityAddTraits(.isHeader)
                 HStack(spacing: 6) {
@@ -288,7 +302,8 @@ struct SettingsView: View {
                 quotaStyle: $quotaStyle, retention: $completedRetention, showsAppButtons: $showsAppButtons,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) },
                 deepseekDetailed: DeepSeekPanelStyle.load() == .detailed,
-                openGeneral: { pane = .general }, openDeepSeek: { pane = .deepseek })
+                openGeneral: { pane = .general }, openDeepSeek: { pane = .deepseek },
+                openWorkBuddy: { pane = SettingsPane(provider: .workbuddy) })
         case .notifications:
             SettingsNotificationsPane(model: model, notificationPreference: notificationPreference, layout: $compactLayout,
                 lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
@@ -306,6 +321,8 @@ struct SettingsView: View {
             SettingsSupportPane()
         case .overview, .history:
             EmptyView()
+        default:
+            if let provider = pane.provider { providerPane(provider) }
         }
     }
 
@@ -314,6 +331,14 @@ struct SettingsView: View {
     @ViewBuilder private func providerPane(_ provider: AgentProvider) -> some View {
         if !moduleEnabled(provider) {
             MainCard { CardRow(title: L10n.text("main.module_off_hint")) }
+        } else if let descriptor = model.localHarnessDescriptors.first(where: { $0.id == provider }) {
+            SettingsHarnessSections(model: model, descriptor: descriptor,
+                showsProgress: Binding(get: { enabledHarnessProgress.contains(provider.rawValue) }, set: { visible in
+                    if visible { enabledHarnessProgress.insert(provider.rawValue) }
+                    else { enabledHarnessProgress.remove(provider.rawValue) }
+                    UserDefaults.standard.set(enabledHarnessProgress.sorted(), forKey: IslandModel.enabledHarnessProgressKey)
+                    model.refreshProgressPresentation()
+                }))
         } else if provider == .deepseek {
             SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
                 // Like Codex, the switch applies at once, so turning it off and quitting still removes the entry.

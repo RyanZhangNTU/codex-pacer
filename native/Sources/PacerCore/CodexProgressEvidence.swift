@@ -35,6 +35,13 @@ enum CodexProgressEvidence {
         return value
     }
 
+    static func percentInToolArguments(_ view: JSONFieldView?) -> Int? {
+        if view?.isObject == true { return percent(view) }
+        guard let raw = view?.string(limit: 128),
+              let json = try? JSONFieldView.document(Data(raw.utf8), maximumBytes: 128) else { return nil }
+        return percent(json)
+    }
+
     static func isAcknowledgment(_ output: Any?) -> Bool {
         if let text = output as? String { return text == acknowledgment }
         guard let items = output as? [[String: Any]], (1...2).contains(items.count), let item = items.last else { return false }
@@ -63,6 +70,14 @@ enum CodexProgressEvidence {
               let items = try? fields["content"]?.elements(maximumCount: 1), items.count == 1,
               let item = try? items[0].fields(["type", "text"]) else { return false }
         return item["type"]?.string(limit: 16) == "text" && item["text"]?.string(limit: 32) == acknowledgment
+    }
+
+    static func textReceiptAccepted(_ view: JSONFieldView?) -> Bool {
+        if view?.matchesStringLiteral(acknowledgment) == true { return true }
+        guard let item = try? view?.fields(["type", "text", "isError", "is_error"]),
+              item["type"]?.matchesStringLiteral("text") == true,
+              item["isError"]?.boolean() != true, item["is_error"]?.boolean() != true else { return false }
+        return item["text"]?.matchesStringLiteral(acknowledgment) == true
     }
 
     /// Match modern turn IDs and older bounded IDs without guessing ownership.

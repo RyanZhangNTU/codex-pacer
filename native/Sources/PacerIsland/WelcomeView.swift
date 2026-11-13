@@ -223,7 +223,7 @@ struct WelcomeView: View {
         let status = moduleStatus(provider, enabled: enabled)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72), size: 40)
+                ProviderAppIcon(provider: provider, size: 40)
                     .saturation(enabled ? 1 : 0).opacity(enabled ? 1 : 0.5)
                 Spacer()
                 Toggle(provider.displayName, isOn: Binding(get: { enabled }, set: { setModule(provider, enabled: $0) }))

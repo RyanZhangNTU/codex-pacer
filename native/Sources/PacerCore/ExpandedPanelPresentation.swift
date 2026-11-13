@@ -39,7 +39,7 @@ public enum ExpandedPanelPresentation {
             switch block {
             case .tasks:
                 result.append(Section(kind: .tasks))
-            case .codex, .claude, .deepseek:
+            case .codex, .claude, .deepseek, .workbuddy:
                 var group = [block.provider ?? .codex]
                 if options.quotaArrange == .pair {
                     while index < visible.count, visible[index].isQuota, let provider = visible[index].provider {
@@ -78,8 +78,11 @@ public enum ExpandedPanelPresentation {
         case .deepseekWeek: return Header(title: L10n.text("deepseek.week_title"), detail: nil, provider: nil)
         case .quota:
             let single = section.providers.count == 1 ? section.providers.first : nil
+            let hasBalance = section.providers.contains { provider in
+                provider == .deepseek || HarnessRegistry.descriptor(for: provider)?.reportsAccountCredits == true
+            }
             let key = single == .deepseek ? (budgetDial ? "layout.group.budget" : "layout.group.balance")
-                : section.providers.contains(.deepseek) ? "layout.group.quota_balance" : "layout.group.quota"
+                : hasBalance ? "layout.group.quota_balance" : "layout.group.quota"
             return Header(title: L10n.text(key), detail: single?.displayName, provider: single)
         }
     }
@@ -175,7 +178,7 @@ public enum ExpandedPanelPresentation {
 
     /// Labels follow the request's language, as the collapsed bar's projection does.
     public static func project(_ request: Request) -> Output? {
-        guard let language = AppLanguage(rawValue: request.language), request.providers.count <= 3,
+        guard let language = AppLanguage(rawValue: request.language), request.providers.count <= HarnessRegistry.descriptors.count,
               Set(request.providers).count == request.providers.count,
               request.layout.map({ $0.utf8.count <= ExpandedPanelLayout.byteLimit }) ?? true,
               request.options.map({ $0.utf8.count <= ExpandedPanelOptions.byteLimit }) ?? true else { return nil }

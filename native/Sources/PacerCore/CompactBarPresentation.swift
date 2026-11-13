@@ -18,6 +18,7 @@ public enum CompactBarPresentation {
             case .codex: self = .codex
             case .claude: self = .claude
             case .deepseek: self = .deepseek
+            default: self = .none
             }
         }
         public var provider: AgentProvider? {
@@ -187,7 +188,7 @@ public enum CompactBarPresentation {
 
     public static func project(_ request: Request, layout suppliedLayout: CompactIslandLayout? = nil,
                                components suppliedComponents: CompactComponentOptions? = nil) -> Output? {
-        guard let language = AppLanguage(rawValue: request.language), request.providers.count <= 3,
+        guard let language = AppLanguage(rawValue: request.language), request.providers.count <= HarnessRegistry.descriptors.count,
               Set(request.providers).count == request.providers.count, request.options.valid,
               request.warnings.map({ $0.count <= 6 && $0.allSatisfy { CompactIslandLayout.Warning(rawValue: $0) != nil } }) ?? true,
               request.layout.map({ $0.utf8.count <= 8192 }) ?? true,
@@ -195,7 +196,8 @@ public enum CompactBarPresentation {
               request.size.map({ $0.utf8.count <= 64 }) ?? true else { return nil }
         let choices = suppliedComponents ?? CompactComponentOptions.decode(request.componentOptions)
         let metrics = (request.size.flatMap(CompactBarSize.init(rawValue:)) ?? .standard).metrics
-        let providers = Set(request.providers), ordered = AgentProvider.allCases.filter(providers.contains)
+        let ordered = HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay && request.providers.contains($0.id) }.map(\.id)
+        let providers = Set(ordered)
         var layout = suppliedLayout ?? (request.layout.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode(CompactIslandLayout.self, from: $0) }?.normalized ?? .standard)
         if let warnings = request.warnings { layout.warnings = Set(warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))) }
         if let action = request.action {

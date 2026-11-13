@@ -21,26 +21,30 @@ struct ClassicQuotaDashboardView: View {
 
     private var rings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 16) {
-                ForEach(slots) { slot in
-                    if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 88) } else {
+            QuotaDialRow(slots: slots) { slot in
+                if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 88) }
+                else if let period = slot.period {
                     VStack(spacing: 6) {
-                        ClassicQuotaDashboardRingView(quota: model.dashboardQuota(provider: slot.provider, period: slot.period),
+                        ClassicQuotaDashboardRingView(quota: model.dashboardQuota(provider: slot.provider, period: period),
                             title: slot.title, identifiesProvider: slot.identifiesProvider,
-                            providerHelp: providerHelp(slot.provider, period: slot.period), now: model.now)
+                            providerHelp: providerHelp(slot.provider, period: period), now: model.now)
                         if slot.identifiesProvider {
                             // A service limited to one window names no other.
                             if model.panelOptions.periods(for: slot.provider) == .both {
                                 ClassicQuotaOtherPeriodView(quota: model.dashboardQuota(provider: slot.provider,
-                                    period: slot.period == .fiveHour ? .weekly : .fiveHour), now: model.now)
+                                    period: period == .fiveHour ? .weekly : .fiveHour), now: model.now)
                             }
                             QuotaProviderStatusView(model: model, provider: slot.provider)
                         }
                     }.frame(maxWidth: .infinity, alignment: .top)
-                    }
+                } else {
+                    let details = slots.count == 1 && model.panelOptions.quotaDetails
+                    HarnessAccountCard(connection: model.workBuddyAccount, style: .classic, size: 88, showsDetails: details, showsName: !details,
+                        openSettings: { model.openSettings(for: slot.provider) })
+                        .padding(.horizontal, details ? IslandMetrics.rowInset : 0)
                 }
             }
-            if providers.count == 1, let provider = providers.first {
+            if providers.count == 1, let provider = providers.first, slots.first?.period != nil {
                 QuotaProviderStatusView(model: model, provider: provider)
                     .frame(maxWidth: .infinity)
             }
@@ -85,8 +89,7 @@ struct ClassicQuotaDashboardRingView: View {
                 } else if quota.availability == .unavailable {
                     // Not connected: a quiet outline and the provider's mark, not an empty gauge.
                     Circle().stroke(PacerPalette.track, lineWidth: 1.5)
-                    Image(systemName: quota.provider.glyph).font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(PacerPalette.tertiary)
+                    ProviderAppIcon(provider: quota.provider, size: 24)
                 } else {
                     ring(percent: quota.remainingQuotaPercent, lineWidth: Self.stroke, color: quota.provider.tint)
                     if showsPaceTick, let time = quota.remainingTimePercent.flatMap({ $0.isFinite ? min(100, max(0, $0)) : nil }) {
@@ -113,7 +116,7 @@ struct ClassicQuotaDashboardRingView: View {
             .frame(width: Self.diameter, height: Self.diameter)
             .opacity(stale ? 0.55 : 1)
             HStack(spacing: 5) {
-                if identifiesProvider { Circle().fill(quota.provider.tint).frame(width: 6, height: 6) }
+                if identifiesProvider { ProviderAppIcon(provider: quota.provider, size: 13) }
                 Text(title).font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(identifiesProvider ? PacerPalette.primary : PacerPalette.secondary)
                 if identifiesProvider {

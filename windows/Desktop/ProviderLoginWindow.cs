@@ -58,7 +58,8 @@ internal class ProviderLoginWindow : Window
         SetResourceReference(BackgroundProperty, "SettingsBackground");
         address.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         message.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-        address.Text = provider.Origin.IdnHost; message.Text = ui.Text("windows." + provider.ID + ".login.instructions"); proceed.Content = ui.Text("claude.login.continue");
+        address.Text = provider.Origin.IdnHost; message.Text = ui.Text("windows." + provider.ID + ".login.instructions");
+        proceed.Content = ui.Text(provider.WatchSignIn ? "claude.login.continue" : "login.done");
         AutomationProperties.SetAutomationId(address, provider.ID + ".login.host"); AutomationProperties.SetAutomationId(message, provider.ID + ".login.instructions");
         AutomationProperties.SetAutomationId(proceed, provider.ID + ".login.continue"); AutomationProperties.SetName(proceed, (string)proceed.Content);
         refresh.Content = ui.Text("common.refresh"); later.Content = ui.Text("login.later");
@@ -83,7 +84,7 @@ internal class ProviderLoginWindow : Window
             // Leave WPF's Closing stack before a completed probe or Abort calls Close again.
             await Dispatcher.Yield(DispatcherPriority.Background);
             if (closed) return;
-            if (!baselineKnown) { Abort(); return; }
+            if (!baselineKnown || !provider.WatchSignIn) { Abort(); return; }
             await (CheckCompletion = FinishAsync(requiringSession: false));
         };
         PreviewKeyDown += async (_, e) => { if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control) { e.Handled = true; await (CheckCompletion = ContinueAsync()); } };
@@ -106,7 +107,7 @@ internal class ProviderLoginWindow : Window
             await page.Initialize(runtime, cancellation); fixture?.Invoke(page.Core); Configure(page, this);
             RefreshBrowserTheme();
             await page.Navigate(new Uri(provider.Origin, provider.LoginPath), cancellation);
-            observer.Start(); await ObserveAsync();
+            if (provider.WatchSignIn) { observer.Start(); await ObserveAsync(); }
         }
         catch (Exception error) when (Recoverable(error)) { if (!closed) message.Text = ui.Text("claude.login.load_failed"); }
     }
@@ -121,7 +122,7 @@ internal class ProviderLoginWindow : Window
     }
     private async Task ObserveAsync()
     {
-        if (closed || checking || finishing || !page.IsUsable || !provider.IsOrigin(page.Core.Source)) return;
+        if (!provider.WatchSignIn || closed || checking || finishing || !page.IsUsable || !provider.IsOrigin(page.Core.Source)) return;
         checking = true;
         SessionChecks++;
         try
@@ -162,7 +163,12 @@ internal class ProviderLoginWindow : Window
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation); deadline.CancelAfter(ProviderWebSession.StartupTimeout + ProviderWebSession.ReadTimeout);
             string? current = await readProfileFingerprint(deadline.Token);
-            if (closed || current == null && requiringSession) return;
+            if (closed) return;
+            if (current == null && requiringSession)
+            {
+                if (!provider.WatchSignIn) message.Text = ui.Text("harness.account.sign_in_again");
+                return;
+            }
             NewSession = current != null && current != baseline;
             completion.TrySetResult(current != null); allowClose = true; Close();
         }

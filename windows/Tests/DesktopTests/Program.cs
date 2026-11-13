@@ -40,6 +40,27 @@ internal static class Program
         { await GuideControlChecks.Run(); Console.WriteLine("PASS combined embedded-session flags, schema 2 reopen and save rollback"); return 0; }
         if (args is ["--conversation-only"])
         { await ConversationApplicationChecks.Run(); Console.WriteLine("PASS conversation routing and prepared-host activation boundaries"); return 0; }
+        if (args is ["--open-workbuddy-test-chat", var workBuddyEngine])
+        {
+            // Opt-in: use a local synthetic chat and the real desktop route.
+            await using var client = new EngineClient();
+            await client.StartAsync(Path.GetFullPath(workBuddyEngine), false, "en", configuration: new
+            {
+                providerModes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled",
+                    ["deepseek"] = "disabled", ["workbuddy"] = "enabled" },
+                monitorSSH = false, monitorWSL = false, monitorRemoteControl = false, monitorDurable = false, retentionMinutes = 1440
+            }, readOnlyDiagnostics: true);
+            var snapshot = client.LatestSnapshot;
+            var rows = snapshot?.Tasks.Where(task => task.Provider == "workbuddy").ToArray() ?? [];
+            if (rows.Length != 1 || snapshot?.ActivityLinks?.SingleOrDefault(link => link.ActivityID == rows[0].Id) is not { } target)
+                throw new InvalidOperationException("Expected exactly one visible local WorkBuddy test chat.");
+            var plan = await client.QueryAsync<EngineNavigationPlan>("prepareActivityOpen", new { context = target.Context });
+            var apps = new WindowsConversationApplication(_ => false);
+            if (!await apps.OpenAsync(plan)) throw new InvalidOperationException("The verified WorkBuddy application did not start.");
+            await client.SendAsync("completeActivityOpen", new { context = target.Context });
+            Console.WriteLine("PASS WorkBuddy prepared navigation and verified installed handler");
+            return 0;
+        }
         if (args is ["--platform-only"])
         { WindowsPlatformChecks.Run(); Console.WriteLine("PASS Windows 10 minimum, notification capability failures and glass fallback"); return 0; }
         if (args is ["--pages-only", var pagesEngine])

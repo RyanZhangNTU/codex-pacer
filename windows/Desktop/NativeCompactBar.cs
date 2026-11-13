@@ -1,7 +1,5 @@
 using System;
-using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -38,8 +36,8 @@ internal sealed record CompactProjection(int Version, string LayoutJSON, string[
 internal sealed class NativeCompactBar
 {
     private static readonly Lazy<NativeCompactBar> SharedValue = new(() => new(""));
-    private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private readonly System.Collections.Generic.Dictionary<string, CompactProjection> previous = new();
+    private CompactProjection? lastCached;
     /// The last read returned Empty only because its projection has not arrived yet.
     internal bool LastPending { get; private set; }
     private EngineClient? previousClient;
@@ -64,20 +62,45 @@ internal sealed class NativeCompactBar
         bool attached = false, bool strip = false, CompactEdit? action = null)
     {
         object input = Input(preferences, language, providers, context, attached, strip, action);
-        var state = ShellProjection.Read<CompactProjection>("projectCompactBar", input, Valid);
+        var state = ShellProjection.Read<CompactProjection>("projectCompactBar", input, out var encoded, Valid);
         // Only a clock tick may reuse the previous display while a query is pending.
         // Provider, source values, options and language remain part of the key.
-        var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(input, Json))!;
-        if (node["compact"]?["context"] is System.Text.Json.Nodes.JsonObject clock) clock.Remove("now");
-        string key = node.ToJsonString();
-        if (!ReferenceEquals(previousClient, ShellProjection.Client)) { previous.Clear(); previousClient = ShellProjection.Client; }
+        if (!ReferenceEquals(previousClient, ShellProjection.Client)) { previous.Clear(); lastCached = null; previousClient = ShellProjection.Client; }
         LastPending = false;
         if (state.Value is { } value)
         {
-            if (previous.Count >= 32) previous.Clear(); previous[key] = value; return value;
+            if (!ReferenceEquals(lastCached, value))
+            {
+                if (previous.Count >= 32) previous.Clear();
+                previous[ProjectionWithoutClock(encoded)] = value; lastCached = value;
+            }
+            return value;
         }
-        if (state.Pending && previous.TryGetValue(key, out var known)) return known;
+        if (state.Pending && previous.Count > 0 && previous.TryGetValue(ProjectionWithoutClock(encoded), out var known)) return known;
         LastPending = state.Pending; return Empty;
+    }
+
+    private static string ProjectionWithoutClock(JsonElement input)
+    {
+        if (!input.GetProperty("compact").TryGetProperty("context", out var context) || context.ValueKind != JsonValueKind.Object ||
+            !context.TryGetProperty("now", out _)) return input.GetRawText();
+        // The context is an already serialized object. Skip the reference
+        // clock without building a second graph or reserializing the request.
+        using var bytes = new System.IO.MemoryStream();
+        using (var writer = new Utf8JsonWriter(bytes))
+        {
+            writer.WriteStartObject();
+            foreach (var property in input.GetProperty("compact").EnumerateObject())
+            {
+                if (!property.NameEquals("context")) { property.WriteTo(writer); continue; }
+                writer.WriteStartObject("context");
+                foreach (var item in context.EnumerateObject())
+                    if (!item.NameEquals("now")) item.WriteTo(writer);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(bytes.GetBuffer(), 0, checked((int)bytes.Length));
     }
     internal Task<CompactProjection> ReadAsync(DesktopPreferences preferences, string language, string[] providers,
         JsonElement? context = null, bool attached = false, bool strip = false, CompactEdit? action = null)
@@ -90,7 +113,7 @@ internal sealed class NativeCompactBar
     internal static string[] Providers(DesktopPreferences preferences, EngineSnapshot? snapshot)
     {
         var model = snapshot ?? ShellProjection.Client?.LatestSnapshot;
-        if (model?.Modules is { } modules) return modules.Where(value => value.Enabled).Select(value => value.Provider).ToArray();
+        if (model?.Modules is { } modules) return modules.Where(value => value.Enabled && DesktopPreferences.IsLegacyProvider(value.Provider)).Select(value => value.Provider).ToArray();
         return model?.QuotaDashboard?.Providers.Select(value => value.Provider).ToArray()
             ?? model?.Sources.Select(value => value.Provider).Distinct().ToArray() ?? [];
     }

@@ -52,7 +52,7 @@ struct SettingsHelpPane: View {
     @ViewBuilder private var collapsedRows: some View {
         // Under one accent the services are its shades, as the tiles draw them.
         row("help.services", detail: PacerAccent.current == .multicolor ? nil : "help.services.shades") {
-            ForEach(AgentProvider.allCases, id: \.self) { ProviderTile(provider: $0) }
+            ForEach(HarnessRegistry.legacyIDs, id: \.self) { ProviderTile(provider: $0) }
         }
         row("help.tasks") {
             ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [.codex: 1]))
@@ -85,8 +85,9 @@ struct SettingsHelpPane: View {
         row("help.hover", symbol: "cursorarrow.rays")
         row("help.open", symbol: "arrow.up.forward.app")
         row("help.app_buttons") {
-            ForEach(AgentProvider.allCases, id: \.self) { provider in
-                Image(systemName: provider.glyph).font(.system(size: 12, weight: .semibold)).foregroundStyle(provider.tint)
+            ForEach(HarnessRegistry.legacyIDs, id: \.self) { provider in
+                ProviderAppIcon(provider: provider, size: 14, outline: true)
+                    .foregroundStyle(PacerPalette.secondary)
             }
         }
         row("help.read", symbol: "checkmark.rectangle.stack")
@@ -179,7 +180,7 @@ struct SettingsHelpPane: View {
 private enum HelpTopic: Hashable {
     case collapsed, expanded, module(AgentProvider)
 
-    static var all: [HelpTopic] { [.collapsed, .expanded] + AgentProvider.allCases.map(HelpTopic.module) }
+    static var all: [HelpTopic] { [.collapsed, .expanded] + HarnessRegistry.legacyIDs.map(HelpTopic.module) }
     var isModule: Bool { if case .module = self { true } else { false } }
     var title: String {
         switch self {
@@ -202,8 +203,7 @@ private struct TopicChips: View {
                 Button { selection = topic } label: {
                     HStack(spacing: 5) {
                         if case .module(let provider) = topic {
-                            Image(systemName: provider.glyph).font(.system(size: 9.5, weight: .semibold))
-                                .foregroundStyle(selected ? Color.white : provider.tint)
+                            ProviderAppIcon(provider: provider, size: 13)
                         }
                         Text(topic.title).font(.system(size: 12, weight: selected ? .semibold : .regular))
                     }
@@ -302,10 +302,7 @@ private struct ProviderTile: View {
     let provider: AgentProvider
 
     var body: some View {
-        Image(systemName: provider.glyph).font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(Color.black.opacity(0.72))
-            .frame(width: 18, height: 18)
-            .background(provider.tint, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        ProviderAppIcon(provider: provider, size: 18)
     }
 }
 

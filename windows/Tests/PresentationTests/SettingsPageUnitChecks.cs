@@ -28,6 +28,11 @@ internal static class SettingsPageUnitChecks
             Check(SettingsPagePolicy.OpenPricing(language, target => { opened.Add(target); return true; }) && opened[^1] == uri, "The production pricing action uses the localized target");
         }
         Check(!SettingsPagePolicy.OpenPricing("en", _ => throw new InvalidOperationException()), "A failed browser launch is reported");
+        const string workBuddyUsage = "https://www.workbuddy.ai/docs/workbuddy/usage";
+        Check(SettingsPagePolicy.HarnessUsageGuide("workbuddy", workBuddyUsage)?.AbsoluteUri == workBuddyUsage
+            && SettingsPagePolicy.HarnessUsageGuide("codex", workBuddyUsage) == null
+            && SettingsPagePolicy.HarnessUsageGuide("workbuddy", workBuddyUsage + "?extra=1") == null,
+            "WorkBuddy opens the official usage instructions for its own module");
 
         var catalog = Catalog("https://github.com/RyanZhangNTU/codex-pacer");
         var backend = new ShareBackend(); int created = 0;

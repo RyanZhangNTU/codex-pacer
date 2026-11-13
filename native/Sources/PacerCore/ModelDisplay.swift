@@ -19,13 +19,13 @@ public enum ModelDisplay {
         return value
     }
 
-    /// `claude-opus-5-5` → Opus 5.5, `gpt-6.1-sol` → GPT-6.1 Sol. Unknown
-    /// identifiers stay as reported, without a bracketed variant such as `[1m]`.
-    public static func name(_ raw: String) -> String {
+    /// Shorten model identifiers without losing the brand when the task comes
+    /// from a different provider. Drop bracketed variants such as `[1m]`.
+    public static func name(_ raw: String, provider: AgentProvider? = nil) -> String {
         let id = raw.replacingOccurrences(of: #"\[[^\]]*\]\z"#, with: "", options: .regularExpression)
         let lower = id.lowercased()
         let parts = lower.split(separator: "-").map(String.init)
-        if parts.first == "claude", parts.count >= 3 {
+        if parts.first == "claude", parts.count >= 3, provider == nil || provider == .claude {
             var words = Array(parts.dropFirst())
             if let last = words.last, last.count == 8, last.allSatisfy(\.isNumber) { words.removeLast() }
             let numbers = words.filter { $0.allSatisfy(\.isNumber) }
@@ -37,7 +37,7 @@ public enum ModelDisplay {
             let suffix = parts.dropFirst(2).map { ["mini", "nano"].contains($0) || $0.contains(where: \.isNumber) ? $0 : $0.capitalized }
             return (["GPT-" + parts[1]] + suffix).joined(separator: " ")
         }
-        if parts.first == "deepseek", parts.count >= 2 {
+        if parts.first == "deepseek", parts.count >= 2, provider == nil || provider == .deepseek {
             // `deepseek-v4-pro` → V4 Pro, `deepseek-flash` → Flash.
             return parts.dropFirst().map { $0.first == "v" && $0.dropFirst().allSatisfy(\.isNumber) ? $0.uppercased() : $0.capitalized }
                 .joined(separator: " ")
@@ -49,7 +49,7 @@ public enum ModelDisplay {
     public static func effortLabel(_ raw: String, language: AppLanguage? = nil) -> String? {
         // DeepSeek Harness writes `off` for a model asked not to reason.
         guard raw != "none", raw != "off" else { return nil }
-        let known = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"]
+        let known = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent", "enabled", "disabled"]
         return known.contains(raw) ? L10n.text("model.effort." + raw, language: language) : raw
     }
 }

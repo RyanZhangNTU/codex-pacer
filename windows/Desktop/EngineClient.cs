@@ -45,6 +45,7 @@ internal sealed class EngineClient : IAsyncDisposable
     private volatile bool acceptsWebHostMessages;
     private volatile bool acceptsClaudeHostMessages;
     private EngineSnapshot? latestSnapshot;
+    private readonly HashSet<string> harnessModules = new(StringComparer.Ordinal);
     internal EngineSnapshot? LatestSnapshot => Volatile.Read(ref latestSnapshot);
     internal bool IsInitialized => initialized;
     internal int? ProcessId => process?.Id;
@@ -150,9 +151,23 @@ internal sealed class EngineClient : IAsyncDisposable
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, cancellation);
         deadline.CancelAfter(timeout ?? commandTimeout);
         string id = Interlocked.Increment(ref request).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if ((method is "initialize" or "configure") && parameters != null)
+        {
+            var config = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.SerializeToUtf8Bytes(parameters)) as System.Text.Json.Nodes.JsonObject;
+            if (config?["providerModes"] is System.Text.Json.Nodes.JsonObject modes)
+            {
+                foreach (string provider in new List<string>(System.Linq.Enumerable.Select(modes, pair => pair.Key)))
+                    if (!DesktopPreferences.IsLegacyProvider(provider) && !harnessModules.Contains(provider)) modes.Remove(provider);
+            }
+            if (config?["enabledHarnessProgress"] is System.Text.Json.Nodes.JsonArray progress)
+                for (int index = progress.Count - 1; index >= 0; index--)
+                    if (progress[index] is System.Text.Json.Nodes.JsonValue value && value.TryGetValue<string>(out var provider) && !harnessModules.Contains(provider))
+                        progress.RemoveAt(index);
+            parameters = config ?? parameters;
+        }
         byte[] frame = JsonSerializer.SerializeToUtf8Bytes(new
         {
-            protocolVersion = Version, id, method, @params = parameters
+            protocolVersion = Version, id, method, @params = parameters, supportsHarnessModules = true
         });
         if (frame.Length > 64 * 1024) throw new EngineCommandException("commandLimit");
         var response = new TaskCompletionSource<JsonElement?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -264,6 +279,9 @@ internal sealed class EngineClient : IAsyncDisposable
                 break;
             case "hello":
                 if (root.GetProperty("engine").GetString() != "PacerEngine") throw new InvalidDataException("Unexpected engine.");
+                if (!ready.Task.IsCompleted && root.TryGetProperty("harnessModules", out var modules) && modules.ValueKind == JsonValueKind.Array)
+                    foreach (var module in modules.EnumerateArray())
+                        if (module.ValueKind == JsonValueKind.String && module.GetString() is { } name && DesktopPreferences.ValidProviderId(name)) harnessModules.Add(name);
                 ready.TrySetResult();
                 break;
             case "snapshot":

@@ -165,7 +165,7 @@ final class ExpandedPanelDisplayTests: XCTestCase {
     }
 
     func testExpandedPanelPageSitsAfterTheCollapsedBar() {
-        XCTAssertEqual(SettingsPane.groups[2], [.appearance, .collapsedBar, .expandedPanel, .notifications, .general])
+        XCTAssertEqual(SettingsPane.groups(localProviders: [])[2], [.appearance, .collapsedBar, .expandedPanel, .notifications, .general])
         XCTAssertEqual(SettingsPane(stored: "expandedPanel"), .expandedPanel)
         XCTAssertFalse(SettingsPane.expandedPanel.searchTerms.isEmpty)
     }

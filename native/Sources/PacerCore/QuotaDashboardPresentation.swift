@@ -24,19 +24,27 @@ public enum QuotaDashboardPresentation {
     public enum Kind: String, Codable, Sendable { case splitRings, splitSingle, classicRings, legacyCodex, deepseekSolo }
     public struct Slot: Codable, Equatable, Identifiable, Sendable {
         public let provider: AgentProvider
-        public let period: Period
+        public let period: Period?
         public let identifiesProvider: Bool
         public let id: String
         public let title: String
-        public init(provider: AgentProvider, period: Period, identifiesProvider: Bool) {
+        public init(provider: AgentProvider, period: Period?, identifiesProvider: Bool) {
             self.provider = provider; self.period = period; self.identifiesProvider = identifiesProvider
-            id = provider.rawValue + ":" + period.rawValue
-            title = identifiesProvider ? provider.displayName : period.rawValue
+            id = provider.rawValue + ":" + (period?.rawValue ?? "credits")
+            title = identifiesProvider || period == nil ? provider.displayName : period?.rawValue ?? provider.displayName
         }
     }
     public struct Layout: Codable, Equatable, Sendable {
         public let kind: Kind
         public let slots: [Slot]
+        // Four or more dials use two columns so the rings fit the standard panel.
+        public let columns: Int?
+        init(kind: Kind, slots: [Slot]) {
+            self.kind = kind
+            self.slots = slots
+            columns = Self.columns(for: slots.count)
+        }
+        public static func columns(for count: Int) -> Int? { count > 3 ? 2 : nil }
     }
     public static func bucket(provider: AgentProvider, snapshot: QuotaSnapshot?) -> QuotaBucket? {
         snapshot.flatMap { value in value.buckets.first { $0.id == provider.rawValue } ?? value.buckets.first }
@@ -73,21 +81,24 @@ public enum QuotaDashboardPresentation {
                              periods: (AgentProvider) -> ExpandedPanelOptions.Periods = { _ in .both }) -> [Slot] {
         let ordered = order(providers, preservingOrder: preservingOrder)
         if style == .classic, let provider = ordered.first, ordered.count == 1 {
+            if HarnessRegistry.descriptor(for: provider)?.reportsAccountCredits == true {
+                return [Slot(provider: provider, period: nil, identifiesProvider: true)]
+            }
             let chosen = periods(provider)
             return Period.allCases.filter { chosen == .both || (chosen == .weekly) == ($0 == .weekly) }
                 .map { Slot(provider: provider, period: $0, identifiesProvider: false) }
         }
         return ordered.map {
-            Slot(provider: $0, period: style == .classic && periods($0) == .fiveHour ? .fiveHour : .weekly, identifiesProvider: style == .classic)
+            let credits = HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true
+            return Slot(provider: $0, period: credits ? nil : style == .classic && periods($0) == .fiveHour ? .fiveHour : .weekly,
+                identifiesProvider: credits || style == .classic)
         }
     }
     private static func order(_ providers: [AgentProvider], preservingOrder: Bool) -> [AgentProvider] {
-        guard preservingOrder else {
-            let enabled = Set(providers)
-            return AgentProvider.allCases.filter { enabled.contains($0) }
-        }
+        let eligible = Set(HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay || $0.reportsAccountCredits }.map(\.id))
+        guard preservingOrder else { return AgentProvider.allCases.filter { eligible.contains($0) && providers.contains($0) } }
         var seen: Set<AgentProvider> = []
-        return providers.filter { seen.insert($0).inserted }
+        return providers.filter { eligible.contains($0) && seen.insert($0).inserted }
     }
     public static func usesLegacyCodexDisplay(providers: [AgentProvider], snapshot: QuotaSnapshot?, style: Style) -> Bool {
         guard Set(providers) == [.codex], let primary = snapshot?.buckets.first(where: { $0.id == "codex" }),
@@ -108,7 +119,8 @@ public enum QuotaDashboardPresentation {
         let drawn = Self.slots(providers: ordered, style: style, preservingOrder: preservingOrder, periods: periods)
         if style == .classic { return Layout(kind: .classicRings, slots: drawn) }
         let single = details && ordered.count == 1 && ordered.first.map {
-            Reading(provider: $0, period: .weekly, snapshot: snapshots[$0], now: now).availability != .unavailable
+            HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true ||
+                Reading(provider: $0, period: .weekly, snapshot: snapshots[$0], now: now).availability != .unavailable
         } == true
         return Layout(kind: single ? .splitSingle : .splitRings, slots: drawn)
     }

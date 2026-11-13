@@ -216,8 +216,8 @@ extension IslandModel {
     func displayedTurnCost(_ activity: SessionActivity) -> Double? {
         activity.provider == .deepseek && showsDeepSeekTurnCost ? activity.turnCost : nil
     }
-    /// The peak mark and tooltip beside a DeepSeek row's estimate.
-    func deepseekCostDetail(_ activity: SessionActivity) -> (peak: Bool, help: String)? {
+    /// The explanation beside a DeepSeek row's estimate.
+    func deepseekCostHelp(_ activity: SessionActivity) -> String? {
         guard displayedTurnCost(activity) != nil else { return nil }
         var lines = [L10n.text("deepseek.turn_cost_row_help")]
         if let task = deepseekTaskSpend(activity) {
@@ -229,7 +229,7 @@ extension IslandModel {
             if task.subagents > 0 { parts.append(L10n.text("deepseek.task_subagents", task.subagents)) }
             if !parts.isEmpty { lines.append(parts.joined(separator: " · ")) }
         }
-        return ((activity.turnPeakCost ?? 0) >= 0.005, lines.joined(separator: "\n"))
+        return lines.joined(separator: "\n")
     }
     /// "Updated 2 min ago" for a connected wallet.
     var deepseekBalanceFreshness: String {
@@ -266,7 +266,8 @@ extension IslandModel {
                                performance: [SessionPerformanceUpdate] = [], usage: DeepSeekLocalUsage = DeepSeekLocalUsage()) {
         let endedTurns = Set(values.filter { [.completed, .interrupted].contains($0.phase) }.compactMap(\.turnID))
             .subtracting(deepseekReceivedActivities.filter { [.completed, .interrupted].contains($0.phase) }.compactMap(\.turnID))
-        now = Date(); deepseekReceivedActivities = values; deepseekReceivedRequests = requests
+        now = Date()
+        activityState.replaceHarness(.deepseek, with: .init(activities: values, requests: requests))
         if !Self.sameVisibleStreamState(deepseekStreamStatuses, statuses) { deepseekStreamStatuses = statuses }
         if deepseekUsage != usage { deepseekUsage = usage }
         let balanceSourceChanged = synchronizeDeepSeekBalanceSource()
@@ -421,8 +422,7 @@ extension IslandModel {
         defaults.removeObject(forKey: DeepSeekBalanceHistory.defaultsKey)
     }
 
-    func resetDeepSeekSource(versionInvalidated: Bool = false) {
-        if !versionInvalidated { lifecycle.invalidateSources([.deepseek]) }
+    func resetDeepSeekSource() {
         deepseekActivityTask?.cancel(); cancelOwnedWork(.init(.activity, provider: .deepseek))
         clearDeepSeekBalance(); deepseekBalanceBinding = nil
         deepseekActivityAttention = AttentionPolicy(); deepseekBalanceAttention = DeepSeekBalanceAttention()
@@ -435,10 +435,10 @@ extension IslandModel {
         let generation = deepseekGeneration
         launchOwnedWork(.init(.reset, provider: .deepseek)) { [weak self] _ in
             guard let self, generation == self.deepseekGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
-            let monitor = self.deepseekMonitor
-            await ApplicationLifecycleCoordinator.cleanup([.deepseekActivity: { await monitor.shutdown() }])
+            let deadline = ShutdownDeadline()
+            if let stop = self.stopActivity(.deepseek, deadline: deadline) { await deadline.perform([stop]) }
             guard generation == self.deepseekGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
-            self.startDeepSeekActivity(); self.refreshDeepSeekBalance()
+            self.startActivity(.deepseek); self.refreshDeepSeekBalance()
         }
     }
 

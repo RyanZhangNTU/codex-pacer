@@ -130,10 +130,11 @@
     <Border x:Name="Surface" CornerRadius="4" Background="Transparent" Padding="{TemplateBinding Padding}">
      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
       <Path x:Name="Check" Stroke="{TemplateBinding Foreground}" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,6 L5,9 L11,2" Width="13" Height="12" Visibility="Hidden"/>
+      <ContentPresenter x:Name="MenuIcon" ContentSource="Icon" HorizontalAlignment="Left" VerticalAlignment="Center"/>
       <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
      </Grid>
     </Border><ControlTemplate.Triggers>
-     <Trigger Property="IsChecked" Value="True"><Setter TargetName="Check" Property="Visibility" Value="Visible"/></Trigger>
+     <Trigger Property="IsChecked" Value="True"><Setter TargetName="Check" Property="Visibility" Value="Visible"/><Setter TargetName="MenuIcon" Property="Visibility" Value="Collapsed"/></Trigger>
      <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Surface" Property="Background" Value="{Binding Background, RelativeSource={RelativeSource TemplatedParent}}"/></Trigger>
      <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
     </ControlTemplate.Triggers>

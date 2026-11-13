@@ -8,13 +8,13 @@ public struct ApplicationLifecycleCoordinator: Sendable {
         public let enabled: Set<AgentProvider>
         public let sources: [AgentProvider: String]
         public let hasDemoSnapshot: Bool
-        public init(enabled: Set<AgentProvider> = Set(AgentProvider.allCases), sources: [AgentProvider: String] = [:], hasDemoSnapshot: Bool = false) {
+        public init(enabled: Set<AgentProvider> = Set(HarnessRegistry.legacyIDs), sources: [AgentProvider: String] = [:], hasDemoSnapshot: Bool = false) {
             self.enabled = enabled; self.sources = sources; self.hasDemoSnapshot = hasDemoSnapshot
         }
     }
     public enum Action: Equatable, Sendable {
         case quota(AgentProvider, force: Bool, active: Bool = false)
-        case codexActivity, remoteActivity, activity(AgentProvider), claudeTargets
+        case activity(AgentProvider), discoverActivityRoutes(AgentProvider)
         case applications, clock, displayExpiry, pruneActivities, pruneHistory
         case resetSource(AgentProvider), updateActivityPolicy, cloud, balanceBinding, refilter
         case removeClaudeHooks, retryHostTracking, stopWatches, cancelHostTracking, cancelRemoteSetup
@@ -42,7 +42,7 @@ public struct ApplicationLifecycleCoordinator: Sendable {
     }
     public enum Resource: CaseIterable, Hashable, Sendable {
         case codexProgressFlag, codexQuota, claudeQuota, cloud, claudeActivity, deepseekActivity, remoteSetup, realtime
-        case balance, web, claudeWeb, watches, reader
+        case balance, web, claudeWeb, watches, reader, harnesses
     }
     public typealias Cleanup = @Sendable () async -> Void
     public private(set) var phase = Phase.cold
@@ -83,7 +83,8 @@ public struct ApplicationLifecycleCoordinator: Sendable {
     }
     public mutating func settings(_ next: Configuration, explicitlyDisablesClaude: Bool = false, forceReset: Set<AgentProvider> = []) -> Plan {
         let old = configuration
-        let changed = Set(AgentProvider.allCases.filter {
+        let configured = old.enabled.union(next.enabled).union(old.sources.keys).union(next.sources.keys)
+        let changed = Set(configured.filter {
             old.enabled.contains($0) != next.enabled.contains($0) || old.sources[$0] != next.sources[$0]
         }).union(forceReset)
         configuration = next
@@ -91,10 +92,11 @@ public struct ApplicationLifecycleCoordinator: Sendable {
         invalidateSources(changed)
         var actions: [Action] = [.pruneActivities]
         if !demo, old.enabled.contains(.claude), !next.enabled.contains(.claude), explicitlyDisablesClaude { actions.append(.removeClaudeHooks) }
-        actions += changed.contains(.codex) ? [.resetSource(.codex)] : [.updateActivityPolicy, .remoteActivity]
+        actions += changed.contains(.codex) ? [.resetSource(.codex)] : [.updateActivityPolicy, .discoverActivityRoutes(.codex)]
         actions += changed.contains(.claude) ? [.resetSource(.claude)] : [.activity(.claude)]
         actions.append(.cloud)
         actions += changed.contains(.deepseek) ? [.resetSource(.deepseek)] : [.activity(.deepseek)]
+        actions += Self.activityOrder(changed.subtracting(HarnessRegistry.legacyIDs)).map(Action.resetSource)
         actions += [.balanceBinding, .refilter, .applications]
         return Plan(actions, changed: changed)
     }
@@ -102,15 +104,17 @@ public struct ApplicationLifecycleCoordinator: Sendable {
         var actions: [Action] = [.pruneActivities, .pruneHistory]
         guard acceptsObservedWork, !demo else { return Plan(actions) }
         actions += [AgentProvider.codex, .claude].filter { configuration.enabled.contains($0) }.map { .quota($0, force: false) }
-        if configuration.enabled.contains(.codex), input.now.timeIntervalSince(input.lastCodexDiscovery) >= (input.codexConnected ? 120 : 60) { actions.append(.codexActivity) }
-        if configuration.enabled.contains(.codex), input.now.timeIntervalSince(input.lastRemoteDiscovery) >= 30 { actions.append(.remoteActivity) }
-        if configuration.enabled.contains(.claude), input.now.timeIntervalSince(input.lastClaudeDiscovery) >= 30 { actions.append(.claudeTargets) }
+        if configuration.enabled.contains(.codex), input.now.timeIntervalSince(input.lastCodexDiscovery) >= (input.codexConnected ? 120 : 60) {
+            actions.append(.activity(.codex))
+        }
+        if configuration.enabled.contains(.codex), input.now.timeIntervalSince(input.lastRemoteDiscovery) >= 30 { actions.append(.discoverActivityRoutes(.codex)) }
+        if configuration.enabled.contains(.claude), input.now.timeIntervalSince(input.lastClaudeDiscovery) >= 30 { actions.append(.discoverActivityRoutes(.claude)) }
         if configuration.enabled.contains(.deepseek) { actions.append(.quota(.deepseek, force: false, active: input.expanded || input.deepseekRunning)) }
         return Plan(actions)
     }
     public mutating func prepareForSleep() -> Plan {
         guard !isStopped, !isSleeping else { return Plan([]) }
-        phase = .sleeping; invalidateSources(Set(AgentProvider.allCases)); work.cancel()
+        phase = .sleeping; invalidateSources(configuration.enabled.union(configuration.sources.keys)); work.cancel()
         return Plan([.stopWatches, .cancelHostTracking, .cancelRemoteSetup, .suspendSources])
     }
     public mutating func resume() -> Plan {
@@ -121,15 +125,22 @@ public struct ApplicationLifecycleCoordinator: Sendable {
     }
     public mutating func shutdown() -> Plan {
         guard !isStopped else { return Plan([]) }
-        phase = .stopped; invalidateSources(Set(AgentProvider.allCases)); work.cancel()
+        phase = .stopped; invalidateSources(configuration.enabled.union(configuration.sources.keys)); work.cancel()
         return Plan([.stopWatches, .cancelHostTracking, .cancelRemoteSetup, .stopSources])
     }
-    private func quotaActions(force: Bool) -> [Action] { AgentProvider.allCases.filter { configuration.enabled.contains($0) }.map { .quota($0, force: force) } }
-    private func activityActions() -> [Action] {
-        (configuration.enabled.contains(.codex) ? [.codexActivity, .remoteActivity] : []) +
-            [AgentProvider.claude, .deepseek].filter { configuration.enabled.contains($0) }.map { .activity($0) }
+    private func quotaActions(force: Bool) -> [Action] {
+        HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay && configuration.enabled.contains($0.id) }.map { .quota($0.id, force: force) }
     }
-    @discardableResult public static func cleanup(_ operations: [Resource: Cleanup], deadline: ShutdownDeadline = ShutdownDeadline()) async -> Bool {
-        await deadline.perform(Resource.allCases.compactMap { operations[$0] })
+    private func activityActions() -> [Action] {
+        (configuration.enabled.contains(.codex) ? [.activity(.codex), .discoverActivityRoutes(.codex)] : []) +
+            Self.activityOrder(configuration.enabled.subtracting([.codex])).map(Action.activity)
+    }
+    private static func activityOrder(_ providers: Set<AgentProvider>) -> [AgentProvider] {
+        let legacy = HarnessRegistry.legacyIDs
+        return legacy.filter(providers.contains) + providers.subtracting(legacy).sorted { $0.rawValue < $1.rawValue }
+    }
+    @discardableResult public static func cleanup(_ operations: [Resource: Cleanup], activity: [Cleanup] = [],
+                                                   deadline: ShutdownDeadline = ShutdownDeadline()) async -> Bool {
+        await deadline.perform(Resource.allCases.compactMap { operations[$0] } + activity)
     }
 }

@@ -21,9 +21,10 @@ struct EngineQuotaDashboard: Codable, Equatable {
          refreshing: Set<AgentProvider> = [], sourceText: [AgentProvider: String] = [:], errorText: [AgentProvider: String] = [:],
          history: [AgentProvider: QuotaHistoryPresentation] = [:], at now: Date) {
         schemaVersion = 1
-        let ordered = AgentProvider.allCases.filter { enabled.contains($0) }
-        split = QuotaDashboardPresentation.layout(providers: ordered, snapshots: snapshots, style: .split, now: now)
-        classic = QuotaDashboardPresentation.layout(providers: ordered, snapshots: snapshots, style: .classic, now: now)
+        let ordered = HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay && enabled.contains($0.id) }.map(\.id)
+        let displayed = HarnessRegistry.descriptors.filter { ($0.hasQuotaDisplay || $0.reportsAccountCredits) && enabled.contains($0.id) }.map(\.id)
+        split = QuotaDashboardPresentation.layout(providers: displayed, snapshots: snapshots, style: .split, now: now)
+        classic = QuotaDashboardPresentation.layout(providers: displayed, snapshots: snapshots, style: .classic, now: now)
         // The panel can give Codex a section of its own, so its bars are ready
         // whenever Codex alone would draw them.
         if enabled.contains(.codex), let snapshot = snapshots[.codex],

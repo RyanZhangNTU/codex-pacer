@@ -29,25 +29,39 @@ public final class ActivityLogWatcher: @unchecked Sendable {
     private var revision: UInt64 = 0
     private var interval: TimeInterval
     private let maximumDirectoryWatches: Int
+    private let fileExtensions: Set<String>?
     private let changed: @Sendable (Bool) -> Void
 
     public init(files: any PlatformFileSystem, events: any ActivityFileEvents,
-                interval: TimeInterval = 5, maximumDirectoryWatches: Int = 4,
+                interval: TimeInterval = 5, maximumDirectoryWatches: Int = 4, fileExtensions: Set<String>? = ["jsonl", "zstd"],
                 changed: @escaping @Sendable (Bool) -> Void) {
         self.files = files; self.events = events
         self.interval = min(5, max(0.1, interval))
         self.maximumDirectoryWatches = min(99, max(1, maximumDirectoryWatches)); self.changed = changed
+        self.fileExtensions = fileExtensions
     }
     public func update(_ urls: [URL], interval: TimeInterval, flushPending: Bool = false) {
         queue.async { [self] in
             let previous = self.interval
             self.interval = min(5, max(0.1, interval))
-            let directories = Set(urls.filter { files.metadata($0)?.isDirectory == true }.prefix(maximumDirectoryWatches))
-            let desired = Set(urls.filter { ["jsonl", "zstd"].contains($0.pathExtension) }.prefix(32)).union(directories)
+            var directoryURLs: [URL] = [], regularFiles: [URL] = []
+            for url in urls {
+                let wantsDirectory = directoryURLs.count < maximumDirectoryWatches
+                let wantsFile = regularFiles.count < 32
+                if !wantsDirectory && !wantsFile { break }
+                let metadata = wantsDirectory || (wantsFile && fileExtensions == nil) ? files.metadata(url) : nil
+                if wantsDirectory, metadata?.isDirectory == true { directoryURLs.append(url) }
+                if wantsFile, fileExtensions?.contains(url.pathExtension) ?? (metadata?.isRegularFile == true) {
+                    regularFiles.append(url)
+                }
+            }
+            let directories = Set(directoryURLs)
+            let desired = Set(regularFiles).union(directories)
             for url in Array(sources.keys) where !desired.contains(url) { sources.removeValue(forKey: url)?.source.stop() }
             pendingEvents = pendingEvents.filter { desired.contains($0.key) }
             if pendingEvents.isEmpty { cancelPending() }
-            for url in desired where sources[url] == nil {
+            // Preserve the caller's order when a shared watcher budget is full.
+            for url in urls where desired.contains(url) && sources[url] == nil {
                 let identity = UUID()
                 guard let source = events.watch(url, isDirectory: directories.contains(url), changed: { [weak self] event in
                     self?.queue.async { [weak self] in self?.receive(event, url: url, identity: identity) }

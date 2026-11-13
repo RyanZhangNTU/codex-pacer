@@ -70,7 +70,7 @@ final class QuotaDashboardScenarioTableTests: XCTestCase {
             let inputs = Array(row.providers.reversed()) + row.providers
             let classic = P.slots(providers: inputs, style: .classic)
             XCTAssertEqual(classic.map(\.provider), row.classicProviders)
-            XCTAssertEqual(classic.map { $0.period.rawValue }, row.classicPeriods)
+            XCTAssertEqual(classic.map { $0.period?.rawValue }, row.classicPeriods.map(Optional.some))
             XCTAssertEqual(classic.map(\.identifiesProvider), Array(repeating: row.identifies, count: row.classicProviders.count))
             XCTAssertEqual(classic.map(\.title), row.identifies ? row.classicProviders.map(\.displayName) : row.classicPeriods)
             XCTAssertEqual(P.slots(providers: inputs, style: .split).map(\.provider), row.split)

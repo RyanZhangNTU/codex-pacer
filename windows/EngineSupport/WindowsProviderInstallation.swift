@@ -54,7 +54,16 @@ enum WindowsProviderInstallation {
             isDirectory: &isDirectory) && isDirectory.boolValue
         let desktop = WindowsDeepSeekApplication.find(applicationURLs: applicationURLs?[.deepseek], userHome: userHome, environment: environment) != nil
         let deepseek = desktop || app(applicationURLs?[.deepseek] ?? [], paths: ["app/dsh.exe", "dsh.exe"]) || cli("dsh") || hasSessions
-        return .init(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek)
+        let additional = HarnessRegistry.localHarnesses.filter { definition in
+            guard definition.platforms.contains(.windows) else { return false }
+            if let supplied = applicationURLs?[definition.descriptor.id] { return supplied.contains(where: executable) }
+            // Explicit application lists make installation probes deterministic in tests.
+            guard applicationURLs == nil else { return false }
+            let roots = ["ProgramFiles", "LOCALAPPDATA"].compactMap { WindowsEnvironment.value($0, in: environment) }
+                .filter(WindowsCodexExecutableDiscovery.absolute)
+            return app(roots.map { URL(fileURLWithPath: $0) }, paths: definition.windowsExecutables)
+        }.map(\.descriptor.id)
+        return .init(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek, additional: Set(additional))
     }
 }
 

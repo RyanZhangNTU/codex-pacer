@@ -61,7 +61,7 @@ struct EngineExpandedPanel: Codable, Equatable {
                 spendBeside: section.spendBeside, showsHeader: section.showsHeader, title: header.title, detail: header.detail,
                 split: layout(.split), classic: layout(.classic))
         }
-        gauges = AgentProvider.allCases.filter { enabled.contains($0) && $0 != .deepseek }.map {
+        gauges = HarnessRegistry.legacyIDs.filter { enabled.contains($0) && $0 != .deepseek }.map {
             ExpandedPanelPresentation.gauge(provider: $0, snapshot: snapshots[$0], periods: options.periods(for: $0))
         }
     }
