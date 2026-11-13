@@ -51,15 +51,30 @@ public struct RemoteActivityTarget: Equatable, Sendable {
     /// Codex's global state can exceed a megabyte; reparse it only when it changes.
     static func readConfiguration(home: URL) -> [RemoteActivityTarget]? { CodexGlobalStateSummary.read(home: home).sshTargets }
 
-    static let globalStateFields: Set<String> = ["codex-managed-remote-connections", "remote-connection-auto-connect-by-host-id",
-                                                 "app-server-migrated-pinned-thread-ids-by-host"]
+    private static let rendererOwnerField = "electron-renderer-content-owner"
+    private static let autoConnectField = "remote-connection-auto-connect-by-host-id"
+    private static let homeRoutesField = "app-server-migrated-pinned-thread-ids-by-host"
+    private static let scopedAutoConnectPrefix = "electron-account-remote-preference:\(autoConnectField):"
+    private static let scopedHomeRoutesPrefix = "electron-owner-value:\(homeRoutesField):"
+    static let globalStateFields: Set<String> = ["codex-managed-remote-connections", rendererOwnerField, autoConnectField, homeRoutesField]
+    static let scopedFieldPrefixes = [scopedAutoConnectPrefix, scopedHomeRoutesPrefix]
     /// Any malformed connection row invalidates the list; malformed flags or routes read as absent.
     static func configuration(_ fields: [String: JSONFieldView]) -> [RemoteActivityTarget]? {
         guard let connections = fields["codex-managed-remote-connections"], connections.isArray,
               let rows = try? connections.elements(), rows.allSatisfy(\.isObject) else { return nil }
+        let flagValues: JSONFieldView?, routeValues: JSONFieldView?
+        if let owner = fields[rendererOwnerField] {
+            // Scoped Desktop state must never inherit a previous account's settings.
+            guard let scope = owner.string(limit: 65), scope.range(of: #"^[0-9a-f]{64}\z"#, options: .regularExpression) != nil else { return [] }
+            flagValues = fields[scopedAutoConnectPrefix + scope]
+            routeValues = fields[scopedHomeRoutesPrefix + scope]
+        } else {
+            flagValues = fields[autoConnectField]
+            routeValues = fields[homeRoutesField]
+        }
         var flags: [String: Bool] = [:], routes: [String] = []
         do {
-            if let value = fields["remote-connection-auto-connect-by-host-id"], value.isObject {
+            if let value = flagValues, value.isObject {
                 try value.forEachField(maximumCount: 4096) { id, flag in
                     guard let flag = flag.boolean() else { throw JSONFieldView.Failure.malformed }
                     flags[id] = flag
@@ -67,7 +82,7 @@ public struct RemoteActivityTarget: Equatable, Sendable {
             }
         } catch { flags = [:] }
         do {
-            if let value = fields["app-server-migrated-pinned-thread-ids-by-host"], value.isObject {
+            if let value = routeValues, value.isObject {
                 try value.forEachField(maximumCount: 4096) { route, _ in routes.append(route) }
             }
         } catch { routes = [] }
