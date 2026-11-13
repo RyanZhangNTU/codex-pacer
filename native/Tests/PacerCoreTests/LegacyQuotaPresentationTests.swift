@@ -28,7 +28,7 @@ final class LegacyQuotaPresentationTests: XCTestCase {
     func testFailedAgedAndExpiredLegacyReadingsKeepValuesAndRemoveLiveReferences() {
         let fresh = snapshot()
         for reading in [QuotaDashboardPresentation.Legacy(snapshot: fresh, failed: true, now: now),
-            .init(snapshot: snapshot(age: 301), now: now), .init(snapshot: snapshot(expired: true), now: now)] {
+            .init(snapshot: snapshot(age: 601), now: now), .init(snapshot: snapshot(expired: true), now: now)] {
             XCTAssertFalse(reading.fresh)
             XCTAssertEqual(reading.buckets[0].windows[0].remainingPercent, 80)
             XCTAssertTrue(reading.buckets.flatMap(\.windows).allSatisfy { $0.pacePercent == nil && $0.remainingTimePercent == nil })

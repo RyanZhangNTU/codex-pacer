@@ -12,20 +12,25 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? connectionsSSH, connectionsRemote, connectionsWSL;
+    private CheckBox? connectionsSSH, connectionsRemote, connectionsDurable, connectionsWSL;
     private StackPanel? connectionSources, connectionHosts, connectionControl, connectionWslHosts, connectionOthers, connectionRetryRow;
     private TextBlock? connectionTitle;
-    private Button? connectionRetry;
+    private Button? connectionRetry, remoteDeviceRefresh, wslRefresh;
+    private FrameworkElement? remoteDeviceRow;
+    private TextBlock? remoteDeviceDetail, wslDetail;
+    private bool wslInspectionRequested;
     private string? connectionContent;
     private bool connectionBusy;
     private readonly List<Button> connectionActions = [];
 
     private void ClearConnections()
     {
-        connectionsSSH = connectionsRemote = connectionsWSL = null;
+        connectionsSSH = connectionsRemote = connectionsDurable = connectionsWSL = null;
         connectionSources = connectionHosts = connectionControl = connectionWslHosts = null;
         connectionTitle = null;
         connectionRetry = null; connectionContent = null; connectionOthers = null; connectionRetryRow = null;
+        remoteDeviceRefresh = wslRefresh = null; remoteDeviceRow = null;
+        remoteDeviceDetail = wslDetail = null; wslInspectionRequested = false;
         connectionActions.Clear();
     }
     /// As on the Mac: the overall state is the page's subtitle, then SSH hosts,
@@ -48,12 +53,29 @@ internal sealed partial class SettingsWindow
         var remote = Toggle("settings.monitor_remote_control", "settings.remote_control_help", "settings.connections.remote_control", out var remoteSwitch);
         connectionsRemote = remoteSwitch; editors.Add(remoteSwitch);
         BindToggle(remoteSwitch, (p, value) => p with { MonitorRemoteControl = value });
-        connectionControl = new StackPanel(); var control = new StackPanel(); control.Children.Add(remote); control.Children.Add(connectionControl);
+        remoteDeviceRefresh = ConnectionRefreshButton("settings.remote_control_refresh", "settings.connections.refresh_remote_control", "refreshRemoteControl");
+        remoteDeviceDetail = Label("", 11.5); remoteDeviceDetail.TextWrapping = TextWrapping.Wrap;
+        remoteDeviceRow = InfoRow(ui.Text("settings.remote_control_devices"), remoteDeviceRefresh, detail: remoteDeviceDetail);
+        connectionControl = new StackPanel(); var control = new StackPanel();
+        control.Children.Add(remote); control.Children.Add(remoteDeviceRow); control.Children.Add(connectionControl);
         form.Children.Add(SectionTitle("Codex Remote Control")); form.Children.Add(Card(control));
+
+        var durable = Toggle("settings.monitor_durable", "settings.durable_help", "settings.connections.durable", out var durableSwitch);
+        connectionsDurable = durableSwitch; editors.Add(durableSwitch);
+        BindToggle(durableSwitch, (p, value) => p with { MonitorDurable = value });
+        form.Children.Add(SectionTitle("Codex Dot")); form.Children.Add(Card(durable));
 
         var wsl = Toggle("windows.connections.monitor_wsl", "windows.connections.wsl_help", "settings.connections.wsl", out var wslSwitch);
         connectionsWSL = wslSwitch; editors.Add(wslSwitch); BindToggle(wslSwitch, (p, value) => p with { MonitorWSL = value });
-        connectionWslHosts = new StackPanel(); var wslCard = new StackPanel(); wslCard.Children.Add(wsl); wslCard.Children.Add(connectionWslHosts);
+        var energy = Label(ui.Text("windows.connections.wsl_energy"), 11.5);
+        energy.Margin = new Thickness(14, 0, 14, 4); energy.TextWrapping = TextWrapping.Wrap;
+        energy.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        wslRefresh = ConnectionRefreshButton("windows.connections.wsl_refresh", "settings.connections.refresh_wsl", "refreshWSL");
+        wslDetail = Label("", 11.5); wslDetail.TextWrapping = TextWrapping.Wrap;
+        connectionWslHosts = new StackPanel(); var wslCard = new StackPanel();
+        wslCard.Children.Add(wsl); wslCard.Children.Add(energy);
+        wslCard.Children.Add(InfoRow(ui.Text("windows.connections.wsl_distributions"), wslRefresh, detail: wslDetail));
+        wslCard.Children.Add(connectionWslHosts);
         form.Children.Add(SectionTitle("WSL")); form.Children.Add(Card(wslCard));
 
         connectionSources = new StackPanel();
@@ -64,6 +86,14 @@ internal sealed partial class SettingsWindow
         var others = new StackPanel(); others.Children.Add(connectionSources); others.Children.Add(connectionRetryRow);
         connectionOthers = new StackPanel(); connectionOthers.Children.Add(SectionTitle(ui.Text("connections.section.tasks"))); connectionOthers.Children.Add(Card(others));
         form.Children.Add(connectionOthers);
+    }
+    private Button ConnectionRefreshButton(string key, string id, string method)
+    {
+        string label = ui.Text(key);
+        var button = new Button { Content = label, VerticalAlignment = VerticalAlignment.Center };
+        Identify(button, id, label); editors.Add(button);
+        button.Click += async (_, _) => await RunConnectionAction(async () => { if (engine != null) await engine.SendAsync(method); });
+        return button;
     }
     private void RefreshConnections()
     {
@@ -76,10 +106,33 @@ internal sealed partial class SettingsWindow
         try
         {
             connectionsRemote!.IsChecked = session.Current.MonitorRemoteControl; connectionsRemote.IsEnabled = available && codex;
+            connectionsDurable!.IsChecked = session.Current.MonitorDurable; connectionsDurable.IsEnabled = available && codex;
             connectionsSSH!.IsChecked = session.Current.MonitorSSH; connectionsSSH.IsEnabled = available && (codex || claude);
-            connectionsWSL!.IsChecked = session.Current.MonitorWSL; connectionsWSL.IsEnabled = available && (codex || claude);
+            connectionsWSL!.IsChecked = session.Current.MonitorWSL && snapshot?.WslAvailability != "unavailable";
+            connectionsWSL.IsEnabled = available && (codex || claude) &&
+                (connectionsWSL.IsChecked == true || snapshot?.WslAvailability == "available");
         }
         finally { synchronizing = previous; }
+        var directory = snapshot?.RemoteControlDirectory;
+        remoteDeviceRow!.Visibility = session.Current.MonitorRemoteControl ? Visibility.Visible : Visibility.Collapsed;
+        remoteDeviceRefresh!.IsEnabled = available && codex && session.Current.MonitorRemoteControl && directory?.Refreshing != true;
+        string last = directory?.RefreshedAt is double seconds && seconds is >= 0 and < 253402300799
+            ? ui.Text("settings.remote_control_last_refresh") + " · " + DateTimeOffset.FromUnixTimeSeconds((long)seconds).ToLocalTime().ToString("g") : "";
+        remoteDeviceDetail!.Text = directory?.Refreshing == true ? ui.Text("settings.remote_control_refreshing")
+            : directory?.Failed == true ? (ui.Text("settings.remote_control_refresh_failed") + " " + last).TrimEnd() : last;
+        wslRefresh!.IsEnabled = available && snapshot != null && !snapshot.Demo && snapshot.WslAvailability != "checking";
+        wslDetail!.Text = snapshot?.WslAvailability switch
+        {
+            "checking" => ui.Text("windows.connections.wsl_checking"),
+            "unavailable" => ui.Text("windows.connections.wsl_unavailable"),
+            "failed" => ui.Text("windows.connections.wsl_failed"),
+            _ => ""
+        };
+        if (!wslInspectionRequested && available && snapshot != null && !snapshot.Demo && !session.Current.MonitorWSL)
+        {
+            wslInspectionRequested = true;
+            _ = Dispatcher.InvokeAsync(() => RunConnectionAction(async () => { if (engine != null) await engine.SendAsync("refreshWSL"); }));
+        }
         string summary = providerConnectionClosed ? ui.Text("windows.connection.closed") : page?.Title ?? ui.Text("connections.summary.checking");
         if (!providerConnectionClosed && page?.Detail is { Length: > 0 } detail) summary += " · " + detail;
         connectionTitle.Text = summary; AutomationProperties.SetName(connectionTitle, summary);

@@ -60,6 +60,27 @@ final class RemoteControlTests: XCTestCase {
         localRuntime.consume(["kind": "status", "connected": false, "waitingForSession": true])
         XCTAssertTrue(localRuntime.status.hasConnectionFailure, "Only Remote Control can wait for a session")
     }
+    func testUnlistedDeviceCanOnlyAnnounceAValidatedRoute() throws {
+        var session = try NativeDesktopSession(hosts: ["local"]) { _ in }
+        try initialize(&session)
+        _ = session.takeFrames()
+        try send(&session, method: "thread-stream-state-changed", version: 10,
+                 params: ["hostId": host, "conversationId": thread])
+        XCTAssertTrue(session.takeFrames().isEmpty)
+        try send(&session, method: "thread-stream-following-status-requested", version: 1,
+                 params: ["hostId": host, "conversationId": thread])
+        let frames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as? [String: String] }
+        XCTAssertEqual(frames, [["kind": "remoteControlRoute", "hostId": host, "threadId": thread]])
+        XCTAssertFalse(session.hosts.contains(host))
+        for seconds in [1.0, 30, 59] {
+            try send(&session, method: "thread-stream-state-changed", version: 11,
+                     params: ["hostId": host, "conversationId": thread], at: seconds)
+        }
+        XCTAssertTrue(session.takeFrames().isEmpty, "A streaming device announces its route once a minute, not per patch")
+        try send(&session, method: "thread-stream-state-changed", version: 11,
+                 params: ["hostId": host, "conversationId": thread], at: 61)
+        XCTAssertEqual(session.takeFrames().count, 1)
+    }
 
     func testDiscoveryUnionsSavedRoutesWithoutReadingEnrollmentOrProjectContent() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

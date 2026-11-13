@@ -64,7 +64,9 @@ enum WindowsDurableCatalog {
                 guard binding.isCurrent(home: home) else { throw CodexClientError.accountMismatch }
                 if !updates.isEmpty { await publishHistory(result.catalog.scope, binding, updates) }
                 retryDelay = 5
-                delay = max(1, 15 - Date().timeIntervalSince(now))
+                // 15 s while a Dot task runs or ended in the last three
+                // minutes; otherwise a new task is found within 90 s.
+                delay = max(1, (result.catalog.threadIDs.isEmpty ? 90 : 15) - Date().timeIntervalSince(now))
             } catch {
                 connection?.reader.close()
                 connection = nil

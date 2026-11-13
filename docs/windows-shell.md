@@ -46,6 +46,7 @@ The Composition bridge (`windows/Native/CompositionBackdrop`) builds with the Vi
 - Rendering reads a bounded cache and returns at once; identical requests share one pending operation; there is no polling loop. A missing projection shows a placeholder, and a failed settings edit saves nothing.
 - An engine exit fails pending requests. If the engine stops after running at least 10 minutes, Pacer restarts itself, unless an update is in progress. An engine that stops sooner keeps the stopped status, so a startup failure cannot loop.
 - Collapsed-bar and quota-chart drawing come from `projectCompactBar` and `layoutQuotaChart` (Core's `CompactBarPresentation` and `QuotaCycleChartPresentation`). `PacerWindowsBridge` supplies only geometry, finite motion and native activation.
+- One collapsed-bar reply supplies the component values and lane order for both the horizontal bar and the side strip. When the reply leaves the bar the same size, WPF updates the values without measuring the panel again.
 - The expanded panel's layout and choices reach the engine in `configure` (`expandedPanel`: layout, options and whether DeepSeek's former content was Detailed). Each snapshot carries `expandedPanel`: the resolved sections with each quota section's drawing in both styles, every ring's window and the choices after fallback, so a style change needs no new snapshot. The Expanded Panel page edits blocks through `projectExpandedPanel` (Core's `ExpandedPanelPresentation`) and saves the layout it returns.
 - `SlowEngineChecks` covers silent, slow and exiting engines.
 
@@ -74,7 +75,10 @@ Opaque WPF windows (Settings, sign-in windows, dialogs and non-layered popups) u
 - Quota rotation uses a one-shot timer to the next switch deadline (four-second slots, 350 ms fade); a late wake jumps to the current phase.
 - Finite animations hold controllable clocks and stop them explicitly when they finish, are replaced or unload. Production code never forces garbage collection.
 - When an opaque fullscreen window fully covers the island, cosmetic motion pauses. Detection is driven by WinEvents with a 250 ms trailing throttle; nothing runs without events. Layered and `WS_EX_NOREDIRECTIONBITMAP` windows never count as covering, because their transparency cannot be proven.
-- The engine publishes a snapshot only when its encoded state changed, ignoring only the sequence number and capture times.
+- The engine publishes a snapshot only when its encoded state changed at display precision, ignoring the sequence number, capture times and sub-display changes of clock-derived numbers.
+- Each frame of the layered island costs a few milliseconds, so repeating motion is rationed: estimate and breath loops run at 30 fps expanded and 12 fps collapsed, task-row icon and progress-ring loops at 12 to 20 fps, and the quota swap fades at 15 fps. When a transition settles, the window gives back the spring's canvas at its right and bottom edges and keeps its origin; the next transition grows those edges in place. A moved layered window shows its previous bitmap at the new place until WPF draws again, so a new origin made the shell, its glass and its shoulders or shadow jump apart for a frame or two.
+- A locked session, a disconnected remote session or a display that is off (`DisplayPresence`) stops every decoration, like fullscreen cover.
+- While collapsed, a snapshot only marks the hidden panel dirty; it is rebuilt once when it opens. While open, rows with the same tasks update in place and quota, DeepSeek and menu sections rebuild only when their inputs change. A burst of snapshots renders once with the newest, while every snapshot still reaches notification subscribers.
 
 Targets and measurement commands are in [idle CPU checks](windows-engine.md#idle-cpu-checks).
 
@@ -91,8 +95,12 @@ Targets and measurement commands are in [idle CPU checks](windows-engine.md#idle
 Checks, after building the desktop and in a screen slot of their own (pixel checks need Pillow and NumPy):
 
 ```powershell
-./scripts/windows/test-backdrop.ps1 -Mode overlay   # also input, cpu, motion, interactive
+./scripts/windows/test-backdrop.ps1 -Mode overlay   # also input, cpu, motion, settle, interactive
 ```
+
+`overlay` compares each capture with the scene alone. Outside the shell's outline, only the outer bounds of the shoulders and floating shadow that the decoration window reports may differ.
+
+`settle` opens and closes the island 24 times in Black and Liquid Glass, attached and floating, samples the screen about every 9 ms and fails when the outline moves more than 2 pixels after the last frame. It keeps only outlines; `PACER_SETTLE_FRAMES=1` also saves the synthetic frames around a failure.
 
 Each run needs a fresh output folder (default `output/windows/backdrop/<id>/`) and refuses to start while another Pacer screen test runs. An unavailable native backdrop fails the run instead of passing Black as glass. `interactive` keeps the window for up to 180 seconds; create a `finish` file in its output folder to end it early. Not automated: real changes of system settings, several monitors or mixed DPI, Narrator, recovery after sleep, lock, Remote Desktop or a GPU switch, and other GPUs.
 
@@ -145,7 +153,7 @@ Preferences live in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`; keep the fi
 | DeepSeek | `deepseekPanelStyle`, `deepseekMode`, `deepseekBalanceSource`, `deepseekDailyBudget`, `deepseekWeeklyBudget`, `deepseekRingPeriod`, `deepseekSpeedSource`, `deepseekShowsTurnCost`, `deepseekLowBalanceLine`, `deepseekSpikeLimit` | `detailed`, `balance`, `automatic`, no amounts, `day`, `local`, turn cost on |
 | Task progress rings | `codexProgressRing`, `claudeProgressRing`, `deepseekProgressRing` | on |
 | Privacy and visible tasks | `hideProjects`, `showAppButtons`, `showEmbeddedCodexSessions`, `showEmbeddedClaudeSessions`, `showClaudeCloudProjects` | off, then on |
-| Remote sources | `monitorSSH`, `monitorRemoteControl`, `monitorWSL` (Windows only) | on |
+| Remote sources | `monitorSSH`, `monitorRemoteControl`, `monitorDurable`, `monitorWSL` (Windows only) | on, off, off (see Dot), off |
 | Retention and page | `completedRetentionMinutes`, `settingsPane` | `30`, `overview` |
 | Source overrides | `codexExecutable`, `codexHome`, `claudeHome`, `deepseekHome`, `claudeWebOrganizationID` | empty |
 | Modules | `providerModule.codex`, `providerModule.claude`, `providerModule.deepseek` | `automatic` |
@@ -207,7 +215,7 @@ Run cold checks as the interactive user outside an agent's sandboxed process tre
 ## Embedded sessions and host applications
 
 - Codex and Claude each have a "sessions from other apps" switch (`showEmbeddedCodexSessions`, `showEmbeddedClaudeSessions`, on by default). Turning one off hides that provider's embedded families, completion cards and reminders; collection continues and hidden endings stay unread. Zotero translation sessions are always excluded.
-- Host tracking uses Core's policy (caching, two-second scan throttle, sleep cancellation, wake retry). A bounded native process snapshot gives parent links, and each candidate is checked by PID and creation time.
+- Host tracking uses Core's cache and bounded retries. A verified host is reused until a new launch is observed. Pending lookups pause during sleep. A bounded native process snapshot gives parent links, and each candidate is checked by PID and creation time.
 - Opening a card uses its verified live host. If the host has exited, the engine may restart the captured executable or packaged app after checking its file identity, size and modification time again. It passes no transcript arguments or prompt. Executable paths stay in the engine; WPF gets a one-use navigation context. Any failure leaves the ending unread.
 
 ### Claude Desktop data folder
@@ -220,7 +228,7 @@ A Claude task without a live host opens through Desktop's `claude://code/continu
 
 ## Codex Remote Control
 
-- `monitorRemoteControl` defaults to on, as on the Mac. The paired-device directory is read through the shared catalog and the stream arrives over the authenticated Desktop pipe. A saved routing hint alone grants nothing.
+- `monitorRemoteControl` defaults to off, as on the Mac. Pacer reads the paired-device directory through the shared catalog and receives task updates over the authenticated Desktop pipe. It verifies a saved route before following it.
 - Bearer credentials stay inside the read-only catalog request ([WinHTTP limits](windows-engine.md#http-through-winhttp)). Catalog work is separate from initialization, so a slow directory cannot block the local task source or the 650 ms cleanup budget.
 - Only the currently verified account and exact device ID can open a Remote Control thread. Account or enrollment changes revoke old pipe proofs and navigation; a token refresh for the same account keeps its scope. A hashed account scope keeps acknowledgements of two accounts apart.
 
@@ -228,7 +236,7 @@ Checks use synthetic catalogs, RPC replies and a private named-pipe fixture; the
 
 ## Dot Durable Codex
 
-The Microsoft Store version of Codex Desktop supplies the named pipe. With the default Codex profile, Pacer checks the pipe's package and looks for one matching executor under that Desktop process. A managed copy of the CLI can identify the executor, but Pacer launches the CLI from the verified package.
+`monitorDurable` is off for new profiles. The first launch after an upgrade sets it once from local Dot receipts (`durableOptInMigrated` records the decision), and the Remote page's Codex Dot card changes it. The Microsoft Store version of Codex Desktop supplies the named pipe. With the default Codex profile, Pacer checks the pipe's package and looks for one matching executor under that Desktop process. A managed copy of the CLI can identify the executor, but Pacer launches the CLI from the verified package.
 
 The catalog and turn history use WinHTTP over TLS. Pacer checks the executor and the profile's authentication file before publishing either. The Codex **Progress Ring** switch installs or removes Pacer's local plugin. Turning it off revokes connected reporters immediately. Desktop picks up plugin changes on its next executor registration, which a Codex restart triggers. When the reporter script changes, Pacer uses a new runtime path so Store Codex can load it even if its private cache still holds an older copy.
 

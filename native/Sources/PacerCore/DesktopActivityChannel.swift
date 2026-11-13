@@ -5,8 +5,12 @@ public protocol DesktopActivityChannel: Sendable {
     func start() async throws
     func setHosts(_ hosts: Set<String>) async
     func discover(_ threads: [String]) async
+    func discoverRemote(_ routes: [NativeDesktopSession.Key]) async
     func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) async
     func stop() async
+}
+public extension DesktopActivityChannel {
+    func discoverRemote(_ routes: [NativeDesktopSession.Key]) async {}
 }
 
 public struct RealtimeActivityServices: Sendable {

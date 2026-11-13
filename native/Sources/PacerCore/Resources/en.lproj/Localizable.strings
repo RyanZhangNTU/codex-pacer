@@ -353,6 +353,13 @@
 "settings.monitor_ssh" = "Monitor Tasks on SSH Hosts";
 "settings.monitor_remote_control" = "Include Codex Remote Control Tasks";
 "settings.remote_control_help" = "Uses the connected Codex desktop app. Keep Codex open and connected to the remote host.";
+"settings.monitor_durable" = "Include Codex Dot Tasks";
+"settings.durable_help" = "Shows Dot tasks assigned to this computer, even when their chats are closed. Pacer checks them through the Codex desktop app, which uses more power.";
+"settings.remote_control_devices" = "Paired Devices";
+"settings.remote_control_refresh" = "Refresh Devices";
+"settings.remote_control_refreshing" = "Refreshing devices…";
+"settings.remote_control_refresh_failed" = "Couldn't refresh devices.";
+"settings.remote_control_last_refresh" = "Last refreshed";
 "settings.notch" = "Island";
 "settings.notification_denied" = "System notifications aren’t allowed. Allow them in System Settings > Notifications.";
 "settings.one_hour" = "1 hour";
@@ -758,6 +765,7 @@
 "deepseek.balance.currency" = "The balance is not in yuan, so Pacer cannot show it.";
 "deepseek.balance.invalid_reply" = "The DeepSeek platform returned an unexpected reply.";
 "deepseek.balance.connection_failed" = "Could not reach DeepSeek. Pacer will try again.";
+"deepseek.balance.timed_out" = "DeepSeek took too long to reply. Pacer will try again.";
 "deepseek.balance.unavailable" = "The balance is not available right now.";
 "deepseek.notice.low" = "Balance low";
 "deepseek.notice.low_detail" = "%@ left on the DeepSeek platform.";

@@ -43,8 +43,10 @@ final class QuotaDashboardPresentationTests: XCTestCase {
         XCTAssertEqual(available.remainingPercent, 80); XCTAssertEqual(available.remainingTimePercent, 50)
         XCTAssertEqual(available.pacePercent, 160); XCTAssertEqual(available.verdict, .spare)
         XCTAssertEqual(available.paceText, "160%")
+        let late = P.Reading(provider: .codex, period: .fiveHour, snapshot: snapshot([("codex", [window("five", minutes: 300)])], age: 599), now: now)
+        XCTAssertEqual(late.availability, .available, "Missed polls inside ten minutes leave the reading unchanged")
         for sample in [snapshot([("codex", [window("expired", minutes: 300, reset: now)])]),
-                       snapshot([("codex", [window("five", minutes: 300)])], age: 301)] {
+                       snapshot([("codex", [window("five", minutes: 300)])], age: 601)] {
             let stale = P.Reading(provider: .codex, period: .fiveHour, snapshot: sample, now: now)
             XCTAssertEqual(stale.availability, .stale); XCTAssertEqual(stale.remainingPercent, 80)
             XCTAssertNil(stale.pacePercent); XCTAssertNil(stale.verdict); XCTAssertNil(stale.projectionText); XCTAssertFalse(stale.pressing)

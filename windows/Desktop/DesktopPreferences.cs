@@ -79,8 +79,13 @@ internal sealed record DesktopPreferences
     public bool HideProjects { get; init; }
     public bool ShowAppButtons { get; init; } = true;
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
-    public bool MonitorRemoteControl { get; init; } = true;
-    public bool MonitorWSL { get; init; } = true;
+    public bool MonitorRemoteControl { get; init; }
+    // Dot (Durable) tasks are opt-in. An upgraded profile decides once from
+    // local Dot progress receipts; a new profile starts off.
+    public bool MonitorDurable { get; init; }
+    public bool DurableOptInMigrated { get; init; } = true;
+    public bool MonitorWSL { get; init; }
+    public bool WslOptInMigrated { get; init; } = true;
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; } = true;
@@ -146,6 +151,7 @@ internal sealed record DesktopPreferences
             providerModes = ProviderModes, hideProjects = HideProjects, retentionMinutes = RetentionMinutes,
             showEmbeddedCodexSessions = ShowEmbeddedCodexSessions,
             monitorRemoteControl = MonitorRemoteControl,
+            monitorDurable = MonitorDurable,
             monitorWSL = MonitorWSL,
             showEmbeddedClaudeSessions = ShowEmbeddedClaudeSessions,
             showClaudeCloudProjects = ShowClaudeCloudProjects,

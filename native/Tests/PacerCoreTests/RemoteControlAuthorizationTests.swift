@@ -92,7 +92,8 @@ final class RemoteControlAuthorizationTests: XCTestCase {
     func testVerifiedGrantIsFileBoundAndTokenRefreshKeepsTheAccountScope() async throws {
         let files = Files(), home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let data = try devices(), catalog = try fixture(files, home) { _ in data }
-        let targets = await catalog.targets(home: home)
+        _ = await catalog.refresh(home: home)
+        let targets = await catalog.cachedTargets(home: home)
         XCTAssertEqual(targets?.map(\.name), ["Work", "Notebook"])
         let first = catalog.authorization.snapshot(home: home)
         XCTAssertTrue(first.verified); XCTAssertEqual(first.hostIDs, ["remote-control:work", "remote-control:offline"])
@@ -104,7 +105,7 @@ final class RemoteControlAuthorizationTests: XCTestCase {
         XCTAssertTrue(catalog.authorization.snapshot(home: home).verified, "Selection changes do not change the account")
         _ = files.replace(home.appendingPathComponent("auth.json"), with: Data("refreshed-token".utf8))
         XCTAssertFalse(catalog.authorization.snapshot(home: home).verified, "Changed auth suspends IO immediately")
-        _ = await catalog.targets(home: home)
+        _ = await catalog.refresh(home: home)
         XCTAssertEqual(catalog.authorization.snapshot(home: home).scope, first.scope)
         XCTAssertTrue(catalog.authorization.snapshot(home: home).verified)
         XCTAssertFalse(catalog.authorization.snapshot(home: home.appendingPathComponent("other")).verified)
@@ -122,18 +123,23 @@ final class RemoteControlAuthorizationTests: XCTestCase {
         }
         let files = Files(), home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let replies = Replies(), data = try devices(), catalog = try fixture(files, home) { _ in try await replies.read(data) }
-        _ = await catalog.targets(home: home)
+        _ = await catalog.refresh(home: home)
         let first = catalog.authorization.snapshot(home: home)
-        await replies.set(429); await catalog.invalidate()
-        let cached = await catalog.targets(home: home)
+        await replies.set(429)
+        let transient = await catalog.refresh(home: home)
+        XCTAssertEqual(transient, .retry)
+        let cached = await catalog.cachedTargets(home: home)
         XCTAssertEqual(cached?.count, 2); XCTAssertTrue(catalog.authorization.snapshot(home: home).verified)
         XCTAssertEqual(catalog.authorization.snapshot(home: home).scope, first.scope)
-        await replies.set(401); await catalog.invalidate()
-        let rejected = await catalog.targets(home: home)
+        await replies.set(401)
+        let unauthorized = await catalog.refresh(home: home)
+        XCTAssertEqual(unauthorized, .unavailable)
+        let rejected = await catalog.cachedTargets(home: home)
         XCTAssertNil(rejected); XCTAssertTrue(catalog.authorization.snapshot(home: home).revoked)
         XCTAssertFalse(catalog.authorization.snapshot(home: home).verified); XCTAssertNil(catalog.authorization.snapshot(home: home).scope)
-        await replies.set(200); await catalog.invalidate()
-        let retried = await catalog.targets(home: home)
+        await replies.set(200)
+        _ = await catalog.refresh(home: home)
+        let retried = await catalog.cachedTargets(home: home)
         XCTAssertEqual(retried?.count, 2); XCTAssertTrue(catalog.authorization.snapshot(home: home).verified)
         await catalog.shutdown()
     }
@@ -142,7 +148,8 @@ final class RemoteControlAuthorizationTests: XCTestCase {
         let data = try devices(), catalog = try fixture(files, home) { _ in
             _ = files.replace(home.appendingPathComponent("auth.json"), with: Data("different-profile".utf8)); return data
         }
-        let targets = await catalog.targets(home: home)
+        _ = await catalog.refresh(home: home)
+        let targets = await catalog.cachedTargets(home: home)
         XCTAssertNil(targets); XCTAssertFalse(catalog.authorization.snapshot(home: home).verified)
         _ = files.replace(home.appendingPathComponent(".codex-global-state.json"), with: Data(repeating: 32, count: 8 * 1024 * 1024 + 1))
         let count = files.readCount()
@@ -150,6 +157,90 @@ final class RemoteControlAuthorizationTests: XCTestCase {
         XCTAssertEqual(files.readCount(), count, "Check the size before allocating metadata")
         await catalog.shutdown()
     }
+    private actor NoDesktop: DesktopActivityChannel {
+        func start() {}
+        func setHosts(_ hosts: Set<String>) {}
+        func discover(_ threads: [String]) {}
+        func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) {}
+        func stop() {}
+    }
+    private struct NoHelpers: HelperProcessLauncher {
+        func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) async -> Void,
+                    ended: @escaping @Sendable () async -> Void) throws -> any ChildProcessConnection {
+            throw CodexClientError.disconnected
+        }
+    }
+    func testDirectoryBacksOffUntilVerifiedThenReusesTheDirectoryOnWakeAndRebind() async throws {
+        actor Network {
+            var attempts = 0, permits = 0
+            var delays: [TimeInterval] = []
+            func reply() throws -> Data {
+                attempts += 1
+                if attempts <= 5 { throw RemoteControlCatalog.CatalogError.status(503) }
+                return Data(#"{"items":[{"env_id":"work","online":false}]}"#.utf8)
+            }
+            func wait(_ delay: TimeInterval) async throws {
+                delays.append(delay)
+                let attempt = delays.count
+                while permits < attempt { try await Task.sleep(nanoseconds: 5_000_000) }
+            }
+            func allow() { permits += 1 }
+        }
+        let files = Files(), home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let network = Network(), catalog = try fixture(files, home) { _ in try await network.reply() }
+        let monitor = RealtimeActivityMonitor(controlCatalog: catalog, services: .init(
+            desktopAvailable: { _ in false }, controlAvailable: { _ in false }, makeDesktop: { _, _, _, _, _, _ in NoDesktop() },
+            processes: NoHelpers(), python: home, ssh: home), controlWait: { try await network.wait($0) })
+        addTeardownBlock { await monitor.shutdown() }
+        await monitor.startAsync(home: home, includeSSH: false) { _ in }
+        for (index, expected) in [30.0, 60, 120, 300, 300].enumerated() {
+            let deadline = Date().addingTimeInterval(5)
+            while await network.delays.count <= index, Date() < deadline { try await Task.sleep(nanoseconds: 5_000_000) }
+            let delays = await network.delays
+            XCTAssertEqual(delays.last, expected)
+            XCTAssertFalse(catalog.authorization.snapshot(home: home).verified)
+            await network.allow()
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while await monitor.statuses()["remote-control:work"]?.remoteHostOnline != false, Date() < deadline {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertTrue(catalog.authorization.snapshot(home: home).verified)
+        let reads = files.readCount()
+        for _ in 0..<3 { await monitor.startAsync(home: home, includeSSH: false) { _ in } }
+        await monitor.shutdown(retainingRemoteControlCatalog: true)
+        await monitor.startAsync(home: home, includeSSH: false) { _ in }
+        let attempts = await network.attempts
+        XCTAssertEqual(attempts, 6, "A successful response describing an offline device ends retries")
+        XCTAssertEqual(files.readCount(), reads, "Rebinds and wake reuse an unchanged enrollment file")
+    }
+    func testWakeRetriesFailedRefreshOfAVerifiedDirectory() async throws {
+        actor Network {
+            var requests = 0
+            func reply() throws -> Data {
+                requests += 1
+                if requests == 2 { throw RemoteControlCatalog.CatalogError.status(503) }
+                return Data(#"{"items":[{"env_id":"work","online":true}]}"#.utf8)
+            }
+        }
+        let files = Files(), home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let network = Network(), catalog = try fixture(files, home) { _ in try await network.reply() }
+        let monitor = RealtimeActivityMonitor(controlCatalog: catalog, services: .init(
+            desktopAvailable: { _ in false }, controlAvailable: { _ in false }, makeDesktop: { _, _, _, _, _, _ in NoDesktop() },
+            processes: NoHelpers(), python: home, ssh: home), controlWait: { _ in try await Task.sleep(nanoseconds: 60_000_000_000) })
+        addTeardownBlock { await monitor.shutdown() }
+        await monitor.startAsync(home: home, includeSSH: false) { _ in }
+        await monitor.refreshRemoteControlCatalog()
+        let beforeSleep = await network.requests
+        XCTAssertEqual(beforeSleep, 2)
+        XCTAssertTrue(catalog.authorization.snapshot(home: home).verified, "A temporary failure keeps the last verified directory.")
+        await monitor.shutdown(retainingRemoteControlCatalog: true)
+        await monitor.startAsync(home: home, includeSSH: false) { _ in }
+        let afterWake = await network.requests
+        XCTAssertEqual(afterWake, 3, "Wake retries the failed refresh without waiting for another device event.")
+        XCTAssertTrue(catalog.authorization.snapshot(home: home).verified)
+    }
+
     func testAccountNamespaceInvalidatesOldNavigationAndNeverSharesAcknowledgments() throws {
         let files = Files(), home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = CompletionDismissalStore(fileURL: home.appendingPathComponent("dismissals"), files: files)

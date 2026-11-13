@@ -130,6 +130,9 @@ package struct DurableHistoryPoll {
 
     package init() {}
 
+    /// A turn seen in flight is still being followed.
+    package var followsActiveTurn: Bool { polls.values.contains { $0.activeTurn != nil } }
+
     package mutating func reset(startingNow: Bool) {
         polls.removeAll()
         if startingNow { since = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)) }

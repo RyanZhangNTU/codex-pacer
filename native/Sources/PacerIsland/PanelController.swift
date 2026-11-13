@@ -68,9 +68,18 @@ final class PanelController: NSObject {
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.layout(animated: false) }
         })
+        // A pinned panel covered by full-screen windows or on a dark display is not being read.
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.model.setVisibilityBlocked(.occluded, self.panel.isVisible && !self.panel.occlusionState.contains(.visible))
+            }
+        })
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
             Task { @MainActor in
-                guard let self, !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+                // Clicks elsewhere while collapsed have nothing to close.
+                guard let self, self.move != nil || self.model.expanded || self.model.pinned,
+                      !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
                 self.cancelMove()
                 self.model.close()
             }

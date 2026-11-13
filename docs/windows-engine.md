@@ -39,7 +39,7 @@ The platform contract (`windows/platform-contract.json`, checked by `check-contr
 
 ## Log paths longer than MAX_PATH
 
-`PacerEngine.exe` embeds an `asInvoker`, `longPathAware` manifest, as does the desktop. File ports and directory watches convert absolute drive and UNC paths to extended Win32 paths only at the IO boundary; canonical URLs, source identities and saved paths keep their normal form.
+`PacerEngine.exe` embeds an `asInvoker`, `longPathAware` manifest, as does the desktop. File ports and directory watches convert absolute drive and UNC paths to extended Win32 paths only at the IO boundary; canonical URLs, source identities and saved paths keep their normal form. A folder watch reports only entries created, removed or renamed in that folder, like the Mac's vnode watches; appends to a log are seen by that file's own watch, so activity elsewhere under `~/.claude` or `~/.codex` wakes nothing.
 
 `WindowsFileSystemTests` and the desktop's `LongPathChecks` cover paths beyond 260 characters. Known limitation: the whole app has only been run with `LongPathsEnabled=1`.
 
@@ -50,7 +50,7 @@ On Windows, FoundationNetworking's URLSession keeps one worker thread busy for a
 | Client | Used for | Limits |
 | --- | --- | --- |
 | `WindowsClaudeCloudStream` | `GET` on `https://claude.ai` message-stream paths only | 4 MiB line limit, eight-line buffer, 60 s idle, 24 h total |
-| `WindowsHTTPClient` | Claude web usage, Claude cloud polling, Remote Control catalogs, Claude OAuth usage | Claude web: 12 s request, 15 s total, 32 MiB body. Remote Control and OAuth: 8 s and 10 s, 512 KiB and 2 MiB |
+| `WindowsHTTPClient` | Claude web usage, Claude cloud polling, Remote Control catalogs, Claude OAuth usage | Claude web usage: 30 s request, 33 s total, 32 MiB body; cloud polling: 12 s and 15 s. Remote Control: 8 s and 10 s, 512 KiB. Claude OAuth usage: 30 s and 33 s, 2 MiB |
 
 Rules both clients keep:
 
@@ -70,9 +70,17 @@ Helper commands run through swift-subprocess 1.0.2; launching a task's host appl
 - Do not pass `.none` input or `.discarded` output on Windows. swift-subprocess then opens `NUL` through the C runtime on every run and never releases the descriptor; the 30-second WSL discovery once exhausted the runtime's 8,192 descriptors in about 15 hours and stopped the engine. `WindowsSubprocessTests` checks that captures keep no descriptors.
 - Long-running helpers (Codex app-server, SSH and WSL helpers) stream `.sequence` output through `WindowsCodexProcess`.
 
+### WSL discovery
+
+WSL monitoring starts disabled. The desktop applies the one-time opt-in migration before it initializes the engine. The Remote page can check the installed distributions even when monitoring is off. The engine validates that at least one is installed before it accepts an enable request.
+
+While monitoring is on, Pacer watches the current user's WSL registrations and refreshes the installation list when they change. It starts helpers only in running distributions. If a helper disconnects, Pacer rechecks its route before reconnecting it. Other helpers in that distribution can keep reporting unless their own route changes or the distribution stops. Unread completions stay when a distribution stops and are removed when it is unregistered.
+
+Pacer checks the running list once a minute if it cannot watch the registry or if any of the first eight installed distributions still lacks a route for an enabled provider. That includes stopped distributions, missing Python, and providers whose configuration directories do not exist yet. The fallback reuses the installation list while the watch is working and probes each incomplete profile at most every five minutes. Registration changes, a restart, a disconnect or a manual refresh can trigger an earlier probe. Once all enabled routes are verified and the watch is working, streams and registration notifications take over. WSL discovery does not refresh the Remote Control directory.
+
 ## Writers of a session file
 
-Host tracking, opening a task and the Codex Desktop source binding ask which processes hold a session file open for writing. `WindowsFileOwners.c` asks Restart Manager for candidates, captures each one's handle table with `PssCaptureSnapshot`, and compares the file identity of every handle with write access.
+Host tracking, opening a task and the Codex Desktop source binding ask which processes hold a session file open for writing. The Desktop source binding rechecks a granted thread's proof at most once a second and retries a denied thread after 2, 2, 2, then 300 seconds, or at once when a follow names its owner. `WindowsFileOwners.c` asks Restart Manager for candidates, captures each one's handle table with `PssCaptureSnapshot`, and compares the file identity of every handle with write access.
 
 Always request `PSS_CAPTURE_HANDLE_NAME_INFORMATION` with the basic information. Windows 10 (through at least build 19045.7725) clears the capture's name buffer only when names are requested and otherwise leaves stale stack pointers there, which can crash the engine in `ntdll.dll`. Windows 11 and CI clear it either way, so they cannot show the fault. The fix has not been run on a Windows 10 machine. `WindowsProcessOwnershipTests` checks that the capture reports names.
 
@@ -167,5 +175,7 @@ python scripts/windows/check-engine-idle.py --engine <engine-path> --seconds 300
 The script cannot sign in to Claude on the web, so the WinHTTP paths are covered only by the loopback tests above. A signed-in engine that falls back to URLSession holds about one full core while idle.
 
 Shell, in a screen slot of its own: build `windows/Tests/BackdropTests/Pacer.BackdropTests.csproj` in Release, then run `python scripts/windows/check-shell-idle.py --probe <probe> --output <new folder> --seconds 300 --appearance classic|liquidGlass --snapshot <synthetic snapshot>`, optionally with `--states collapsed expanded hidden covered`. CPU is read only at the start and end. Process CPU excludes DWM and GPU work.
+
+The engine compares snapshots at display precision: clock-derived percents and the wallet hand at 0.1, amounts at 0.01, and a reading's reference time not at all, so a source callback that changes nothing visible sends no frame. Codex Desktop is looked for by checking that its `codex-ipc` pipe exists (without connecting) before any package query or connection; a closed Desktop costs one lookup per discovery tick. Provider installation is detected at most every ten minutes, and at once when settings change.
 
 `QuotaScheduleChecks`, `IdleSchedulingChecks`, `OcclusionPolicyChecks`, `OcclusionSchedulingChecks` and `EngineSnapshotEmissionTests` guard the idle rules in CI. The shell's rules are in [Windows shell development](windows-shell.md#idle-rendering).

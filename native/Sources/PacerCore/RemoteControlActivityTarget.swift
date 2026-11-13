@@ -1,13 +1,23 @@
 import Foundation
 
-/// Saved routes can add sources while the catalog is unavailable, but only a
-/// verified catalog (or disabling monitoring) can confirm device removal.
+public struct RemoteControlDirectoryStatus: Codable, Equatable, Sendable {
+    public var refreshing = false
+    public var refreshedAt: TimeInterval?
+    public var failed = false
+}
+
+/// Saved routes add sources only before the account has a Remote Control
+/// enrollment. After that, only its verified directory adds devices, as on
+/// Windows. During revalidation the inbox keeps its previous bindings hidden.
+/// A verified directory, a signed-out account or disabling monitoring confirms removal.
 public struct RemoteControlSourceBindings: Equatable, Sendable {
     public let hostIDs: Set<String>
     public let authoritative: Bool
     public let accountScope: String?
-    public init(hostIDs: Set<String>, authoritative: Bool, accountScope: String? = nil) {
+    public let isRevalidating: Bool
+    public init(hostIDs: Set<String>, authoritative: Bool, accountScope: String? = nil, isRevalidating: Bool = false) {
         self.hostIDs = hostIDs; self.authoritative = authoritative; self.accountScope = accountScope
+        self.isRevalidating = isRevalidating
     }
 }
 
@@ -22,11 +32,11 @@ public struct RemoteControlActivityTarget: Equatable, Sendable {
     }
 
     public static func configured(home: URL) -> [RemoteControlActivityTarget] {
-        let file = home.appendingPathComponent(".codex-global-state.json")
-        guard let data = try? Data(contentsOf: file), data.count < 8 * 1024 * 1024,
-              let value = try? JSONFieldView.document(data),
-              let fields = try? value.fields(["thread-project-membership-host-ids", "remote-projects", "added-remote-control-env-ids",
-                                             "app-server-migrated-pinned-thread-ids-by-host", "selected-remote-host-id"]) else { return [] }
+        CodexGlobalStateSummary.read(home: home).remoteControlTargets
+    }
+    static let globalStateFields: Set<String> = ["thread-project-membership-host-ids", "remote-projects", "added-remote-control-env-ids",
+                                                 "app-server-migrated-pinned-thread-ids-by-host", "selected-remote-host-id"]
+    static func configured(_ fields: [String: JSONFieldView]) -> [RemoteControlActivityTarget] {
         var ids: Set<String> = []
         func add(_ host: String?) {
             let prefix = "remote-control:"

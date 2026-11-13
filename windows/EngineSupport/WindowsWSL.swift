@@ -1,7 +1,13 @@
 import Foundation
 import PacerCore
+import CWindowsSupport
+
+enum WindowsWSLAvailability: String, Codable, Sendable {
+    case checking, available, unavailable, failed
+}
 
 struct WindowsWSLProfile: Codable, Equatable, Sendable {
+    static let providers: Set<AgentProvider> = [.codex, .claude]
     var distro: String = ""
     let user: String, uid: UInt32, home: String, identity: String
     let codexHome: String, claudeHome: String
@@ -48,30 +54,103 @@ struct WindowsWSLProfile: Codable, Equatable, Sendable {
 }
 
 final class WindowsWSLRegistry: @unchecked Sendable {
+    fileprivate struct Route: Hashable, Sendable {
+        let source: String
+        let provider: AgentProvider
+    }
+    struct Snapshot: Sendable {
+        let profiles: [WindowsWSLProfile]
+        let active: Set<String>
+        fileprivate let awaitingProbe: Set<Route>
+
+        func permits(_ profile: WindowsWSLProfile, for provider: AgentProvider) -> Bool {
+            active.contains(profile.id) && profile.target(provider) != nil &&
+                !awaitingProbe.contains(.init(source: profile.id, provider: provider))
+        }
+        func covers(_ profile: WindowsWSLProfile, providers: Set<AgentProvider>) -> Bool {
+            active.contains(profile.id) && providers.intersection(WindowsWSLProfile.providers).allSatisfy { permits(profile, for: $0) }
+        }
+    }
     private let lock = NSLock()
     private var revision: UInt64 = 0
     private var profiles: [WindowsWSLProfile] = []
     private var active: Set<String> = []
+    private var installed: [String]?
+    private var probeAfter: [String: Date] = [:]
+    private var helpers: [Route: UUID] = [:]
+    private var awaitingProbe: Set<Route> = []
+    var installations: [String]? { lock.lock(); defer { lock.unlock() }; return installed }
     func begin() -> UInt64 { lock.lock(); defer { lock.unlock() }; revision &+= 1; return revision }
-    @discardableResult func accept(_ values: [WindowsWSLProfile], installed: Set<String>, ticket: UInt64) -> Bool {
+    @discardableResult func accept(_ verified: [WindowsWSLProfile], retaining cached: [WindowsWSLProfile] = [],
+                                  installed: Set<String>, ticket: UInt64) -> Bool {
         lock.lock(); defer { lock.unlock() }; guard revision == ticket else { return false }
         profiles.removeAll { !installed.contains($0.distro.lowercased()) }
-        for value in values where value.valid {
+        let verified = verified.filter(\.valid)
+        for value in verified {
             profiles.removeAll { $0.distro.caseInsensitiveCompare(value.distro) == .orderedSame }
             profiles.append(value)
         }
-        active = Set(values.filter(\.valid).map(\.id)); return true
+        let refreshed = Set(verified.map(\.id))
+        active = refreshed.union(cached.map(\.id))
+        awaitingProbe = awaitingProbe.filter { active.contains($0.source) && !refreshed.contains($0.source) }
+        helpers = helpers.filter { active.contains($0.key.source) }
+        return true
     }
     func suspend(ticket: UInt64? = nil) {
         lock.lock(); defer { lock.unlock() }
-        guard ticket == nil || ticket == revision else { return }; revision &+= 1; active = []
+        guard ticket == nil || ticket == revision else { return }
+        revision &+= 1; active = []; helpers.removeAll(); awaitingProbe.removeAll(); probeAfter.removeAll()
     }
-    func snapshot() -> (profiles: [WindowsWSLProfile], active: Set<String>) {
-        lock.lock(); defer { lock.unlock() }; return (profiles, active)
+    @discardableResult func rememberInstalled(_ values: [String], ticket: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }; guard revision == ticket else { return false }
+        installed = values
+        let wanted = Set(values.map { $0.lowercased() })
+        profiles.removeAll { !wanted.contains($0.distro.lowercased()) }
+        active.formIntersection(profiles.map(\.id))
+        return true
     }
-    func profile(id: String, provider: AgentProvider, activeOnly: Bool = true) -> WindowsWSLProfile? {
+    func dueForProbe(_ distro: String, at now: Date, force: Bool, ticket: UInt64) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return profiles.first { $0.id == id && (!activeOnly || active.contains(id)) && $0.target(provider) != nil }
+        let name = distro.lowercased()
+        guard revision == ticket, force || (probeAfter[name] ?? .distantPast) <= now else { return false }
+        probeAfter[name] = now.addingTimeInterval(300)
+        return true
+    }
+    func noteRunning(_ values: Set<String>, ticket: UInt64) {
+        lock.lock(); defer { lock.unlock() }; guard revision == ticket else { return }
+        probeAfter = probeAfter.filter { values.contains($0.key) }
+        active.formIntersection(profiles.filter { values.contains($0.distro.lowercased()) }.map(\.id))
+    }
+    func beginHelper(_ profile: WindowsWSLProfile, provider: AgentProvider) -> UUID? {
+        lock.lock(); defer { lock.unlock() }
+        let route = Route(source: profile.id, provider: provider)
+        guard active.contains(profile.id), !awaitingProbe.contains(route), matches(profile, provider: provider) else { return nil }
+        let id = UUID()
+        helpers[route] = id
+        return id
+    }
+    func endHelper(_ profile: WindowsWSLProfile, provider: AgentProvider, id: UUID) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let route = Route(source: profile.id, provider: provider)
+        guard helpers[route] == id else { return false }
+        helpers[route] = nil
+        guard active.contains(profile.id), matches(profile, provider: provider), awaitingProbe.insert(route).inserted else { return false }
+        revision &+= 1
+        probeAfter[profile.distro.lowercased()] = nil
+        return true
+    }
+    private func matches(_ profile: WindowsWSLProfile, provider: AgentProvider) -> Bool {
+        guard let target = profile.target(provider) else { return false }
+        return profiles.contains { $0.id == profile.id && $0.target(provider) == target }
+    }
+    func snapshot() -> Snapshot {
+        lock.lock(); defer { lock.unlock() }
+        return Snapshot(profiles: profiles, active: active, awaitingProbe: awaitingProbe)
+    }
+    func profile(id: String, provider: AgentProvider) -> WindowsWSLProfile? {
+        lock.lock(); defer { lock.unlock() }
+        guard active.contains(id), !awaitingProbe.contains(.init(source: id, provider: provider)) else { return nil }
+        return profiles.first { $0.id == id && $0.target(provider) != nil }
     }
     func arguments(_ target: RemoteActivityTarget) -> [String]? {
         for provider in [AgentProvider.codex, .claude] {
@@ -83,7 +162,7 @@ final class WindowsWSLRegistry: @unchecked Sendable {
     }
     func targets(_ provider: AgentProvider) -> [RemoteActivityTarget] {
         let current = snapshot()
-        return current.profiles.filter { current.active.contains($0.id) }.compactMap { $0.target(provider) }.prefix(8).map { $0 }
+        return Array(current.profiles.filter { current.permits($0, for: provider) }.compactMap { $0.target(provider) }.prefix(8))
     }
 }
 
@@ -91,17 +170,23 @@ struct WindowsWSLServices: Sendable {
     typealias Capture = @Sendable (URL, [String], TimeInterval, Int) async -> Data?
     typealias Start = @Sendable (ChildProcessRequest, Data, @escaping @Sendable (Data) async -> Void,
                                 @escaping @Sendable () async -> Void) throws -> any ChildProcessConnection
+    typealias Disconnect = @Sendable (AgentProvider, String) async -> Void
     let executable: URL
     let registry: WindowsWSLRegistry
     let capture: Capture
     let start: Start
+    let registrationPresence: @Sendable () -> Int32
+    let watchRegistrations: @Sendable (@escaping @Sendable (Bool) -> Void) -> (any ActivityFileWatch)?
     init(executable: URL? = nil, registry: WindowsWSLRegistry = WindowsWSLRegistry(),
          capture: @escaping Capture = { await WindowsSubprocess.capture(executable: $0, arguments: $1, timeout: $2, limit: $3,
              environment: WindowsWSLInvocation.environment(ProcessInfo.processInfo.environment)) },
-         start: @escaping Start = { try WindowsHelperProcess($0, initialInput: $1, privateErrors: true, output: $2, ended: $3) }) {
+         start: @escaping Start = { try WindowsHelperProcess($0, initialInput: $1, privateErrors: true, output: $2, ended: $3) },
+         registrationPresence: @escaping @Sendable () -> Int32 = { pacer_wsl_registration_presence() },
+         watchRegistrations: @escaping @Sendable (@escaping @Sendable (Bool) -> Void) -> (any ActivityFileWatch)? = { WindowsWSLRegistrationWatch.start($0) }) {
         let system = ProcessInfo.processInfo.environment["SystemRoot"] ?? "C:/Windows"
         self.executable = executable ?? URL(fileURLWithPath: system).appendingPathComponent("System32/wsl.exe")
         self.registry = registry; self.capture = capture; self.start = start
+        self.registrationPresence = registrationPresence; self.watchRegistrations = watchRegistrations
     }
     static func script(_ name: String) -> String? {
         guard let url = Bundle.module.resourceURL?.appendingPathComponent("WSL/" + name + ".py"),
@@ -119,28 +204,57 @@ struct WindowsWSLServices: Sendable {
         guard values.count <= 32, values.allSatisfy(WindowsWSLProfile.validDistro), Set(values.map { $0.lowercased() }).count == values.count else { return nil }
         return values
     }
-    func discover() async {
-        guard !Task.isCancelled else { return }
+    func installedDistributions() async -> [String]? {
+        if let data = await capture(executable, ["--list", "--quiet"], 4, 65536), let values = Self.distributions(data) { return values }
+        return registrationPresence() == 0 ? [] : nil
+    }
+    @discardableResult func discover(checkInstalled: Bool = true, monitoring: Bool = true, forceProfiles: Bool = true,
+                                     providers: Set<AgentProvider> = WindowsWSLProfile.providers, at now: Date = Date()) async -> WindowsWSLAvailability? {
+        guard !Task.isCancelled else { return nil }
         let ticket = registry.begin()
-        async let installedData = capture(executable, ["--list", "--quiet"], 4, 65536)
-        async let runningData = capture(executable, ["--list", "--running", "--quiet"], 4, 65536)
-        guard let installedBytes = await installedData, let installed = Self.distributions(installedBytes),
-              let runningBytes = await runningData, let running = Self.distributions(runningBytes), let script = Self.script("discover") else {
-            if !Task.isCancelled { registry.suspend(ticket: ticket) }; return
+        var installed = registry.installations
+        if checkInstalled || installed == nil { installed = await installedDistributions() }
+        guard !Task.isCancelled else { return nil }
+        guard let initial = installed else { return .failed }
+        guard registry.rememberInstalled(initial, ticket: ticket) else { return nil }
+        if initial.isEmpty { return .unavailable }
+        guard monitoring else { return .available }
+        guard let runningBytes = await capture(executable, ["--list", "--running", "--quiet"], 4, 65536),
+              let running = Self.distributions(runningBytes), let script = Self.script("discover") else { return .failed }
+        guard !Task.isCancelled else { return nil }
+        let runningNames = Set(running.map { $0.lowercased() })
+        var names = Set(initial.map { $0.lowercased() })
+        if !checkInstalled && !runningNames.isSubset(of: names), let current = await installedDistributions() {
+            guard !Task.isCancelled, registry.rememberInstalled(current, ticket: ticket) else { return nil }
+            installed = current
+            names = Set(current.map { $0.lowercased() })
         }
-        var values: [WindowsWSLProfile] = []
-        for distro in installed.filter({ name in running.contains { $0.caseInsensitiveCompare(name) == .orderedSame } }).prefix(8) {
-            guard !Task.isCancelled else { return }
+        if names.isEmpty { return .unavailable }
+        registry.noteRunning(runningNames, ticket: ticket)
+        let previous = registry.snapshot()
+        var verified: [WindowsWSLProfile] = [], cached: [WindowsWSLProfile] = []
+        for distro in (installed ?? []).filter({ runningNames.contains($0.lowercased()) }).prefix(8) {
+            guard !Task.isCancelled else { return nil }
+            let existing = previous.profiles.first { $0.distro.caseInsensitiveCompare(distro) == .orderedSame && previous.active.contains($0.id) }
+            let complete = existing.map { previous.covers($0, providers: providers) } == true
+            if (!forceProfiles && complete) || !registry.dueForProbe(distro, at: now, force: forceProfiles, ticket: ticket) {
+                if let existing { cached.append(existing) }
+                continue
+            }
             let args = ["--distribution", distro, "--exec", "/usr/bin/python3", "-I", "-c", script]
             if let data = await capture(executable, args, 5, 16384), var profile = try? JSONDecoder().decode(WindowsWSLProfile.self, from: data) {
-                profile.distro = distro; if profile.valid { values.append(profile) }
+                profile.distro = distro
+                if profile.valid { verified.append(profile); continue }
             }
+            // A failed probe leaves the disconnected route blocked. A sibling can keep streaming.
+            if let existing { cached.append(existing) }
         }
-        guard !Task.isCancelled else { return }
-        registry.accept(values, installed: Set(installed.map { $0.lowercased() }), ticket: ticket)
+        guard !Task.isCancelled else { return nil }
+        return registry.accept(verified, retaining: cached, installed: names, ticket: ticket) ? .available : nil
     }
-    func launcher(base: any HelperProcessLauncher = WindowsHelperProcessLauncher()) -> any HelperProcessLauncher {
-        WindowsWSLHelperLauncher(services: self, base: base)
+    func launcher(base: any HelperProcessLauncher = WindowsHelperProcessLauncher(),
+                  disconnected: Disconnect? = nil) -> any HelperProcessLauncher {
+        WindowsWSLHelperLauncher(services: self, base: base, disconnected: disconnected)
     }
     func setupArguments(_ target: RemoteActivityTarget, requireHome: Bool = true, progressRing: Bool = false, automatic: Bool = false) throws -> [String] {
         guard let profile = registry.profile(id: target.id, provider: .claude), profile.target(.claude) == target,
@@ -152,6 +266,7 @@ struct WindowsWSLServices: Sendable {
 private struct WindowsWSLHelperLauncher: HelperProcessLauncher {
     let services: WindowsWSLServices
     let base: any HelperProcessLauncher
+    let disconnected: WindowsWSLServices.Disconnect?
     func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) async -> Void,
                 ended: @escaping @Sendable () async -> Void) throws -> any ChildProcessConnection {
         guard request.arguments.first == "--pacer-wsl" else { return try base.launch(request, output: output, ended: ended) }
@@ -159,10 +274,23 @@ private struct WindowsWSLHelperLauncher: HelperProcessLauncher {
               let profile = services.registry.profile(id: request.arguments[2], provider: provider),
               let invocation = WindowsWSLInvocation(profile: profile, provider: provider, command: request.arguments[3]) else { throw CodexClientError.invalidResponse }
         let wrapped = ChildProcessRequest(executable: services.executable, arguments: invocation.arguments, environment: WindowsWSLInvocation.environment(request.environment))
-        return try services.start(wrapped, invocation.input, { bytes in
-            guard services.registry.profile(id: profile.id, provider: provider)?.target(provider) == profile.target(provider) else { return }
-            await output(bytes)
-        }, ended)
+        let id = disconnected.flatMap { _ in services.registry.beginHelper(profile, provider: provider) }
+        guard disconnected == nil || id != nil else { throw CodexClientError.disconnected }
+        do {
+            return try services.start(wrapped, invocation.input, { bytes in
+                guard services.registry.profile(id: profile.id, provider: provider)?.target(provider) == profile.target(provider) else { return }
+                await output(bytes)
+            }, {
+                let invalidated = id.map { services.registry.endHelper(profile, provider: provider, id: $0) } ?? false
+                await ended()
+                if invalidated { await disconnected?(provider, profile.id) }
+            })
+        } catch {
+            if let disconnected, let id, services.registry.endHelper(profile, provider: provider, id: id) {
+                Task { await disconnected(provider, profile.id) }
+            }
+            throw error
+        }
     }
 }
 

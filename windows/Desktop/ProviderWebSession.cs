@@ -40,6 +40,11 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         if (!KeepBrowserAlive || disposed || page is not { IsUsable: true }) return;
         var previous = browserKeeper; browserKeeper = page; page = null; previous?.Dispose();
     }
+    /// Created by the first sign-in window or read; absent, there is nothing to read.
+    public bool HasProfile
+    {
+        get { try { return Directory.Exists(directory); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; } }
+    }
     public bool Available
     {
         get
@@ -119,13 +124,15 @@ internal abstract class ProviderWebSession : IAsyncDisposable
             page?.Dispose(); if (ReferenceEquals(activeRead, warm)) activeRead = null; operation.Release();
         }
     }
-    protected async Task<T> ReadAsync<T>(Func<ProviderBrowserPage, CancellationToken, Task<T>> inspect, CancellationToken cancellation)
+    protected async Task<T> ReadAsync<T>(Func<ProviderBrowserPage, CancellationToken, Task<T>> inspect,
+        CancellationToken cancellation, TimeSpan? readTimeout = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         int current = revision;
+        TimeSpan timeout = readTimeout ?? ReadTimeout;
         using var read = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
         using var queue = CancellationTokenSource.CreateLinkedTokenSource(read.Token);
-        queue.CancelAfter(ReadTimeout);
+        queue.CancelAfter(timeout);
         await operation.WaitAsync(queue.Token);
         ProviderBrowserPage? page = null;
         bool completed = false;
@@ -136,7 +143,7 @@ internal abstract class ProviderWebSession : IAsyncDisposable
             if (ReuseReader && browserKeeper is { IsUsable: true }) { page = browserKeeper; browserKeeper = null; }
             else page = await CreateReader(read.Token);
             using var inspection = CancellationTokenSource.CreateLinkedTokenSource(read.Token);
-            inspection.CancelAfter(ReadTimeout);
+            inspection.CancelAfter(timeout);
             fixture?.Invoke(page.Core);
             var reply = await inspect(page, inspection.Token);
             inspection.Token.ThrowIfCancellationRequested();

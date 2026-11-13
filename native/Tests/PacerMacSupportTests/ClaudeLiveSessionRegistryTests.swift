@@ -58,6 +58,28 @@ final class ClaudeLiveSessionRegistryTests: XCTestCase {
                        currentProcess: 7, processStart: live), [:])
     }
 
+    func testRequestedSessionChoosesNewerLiveHolderDuringResume() throws {
+        let home = try directory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let started = try XCTUnwrap(ClaudeLiveSessionRegistry.startDate(lstart: lstart))
+        let other = "e0c2a517-74bc-43ec-a806-e9187a72fcc8"
+        for (pid, id) in [(4242, session), (4343, other), (4444, session), (4545, session)] {
+            try write(["pid": pid, "sessionId": id, "kind": "sdk", "procStart": lstart], home: home, name: String(pid))
+        }
+        var checked: [pid_t] = []
+        let holders = ClaudeLiveSessionRegistry.holders(sessions: [session.uppercased()], claudeHome: home,
+            currentProcess: 7, processStart: { pid in
+                checked.append(pid)
+                switch pid {
+                case 4444: return started.addingTimeInterval(0.75)
+                case 4545: return started.addingTimeInterval(2)
+                default: return started
+                }
+            })
+        XCTAssertEqual(checked, [4242, 4444, 4545])
+        XCTAssertEqual(holders, [session: 4444])
+    }
+
     func testRegistryFileShapeIsCheckedBeforeDecoding() throws {
         let home = try directory()
         defer { try? FileManager.default.removeItem(at: home) }

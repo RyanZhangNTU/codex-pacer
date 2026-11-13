@@ -170,7 +170,9 @@ final class DesktopFrameDecoderTests: XCTestCase {
         let frame = try decode(Data(foreign.utf8))
         try session.receive(frame.data, projectedItems: true)
         XCTAssertEqual(session.retainedItemCount, 1, "Another host's limit cannot invalidate the active stream")
-        XCTAssertTrue(session.takeFrames().isEmpty)
+        let foreignFrames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as? [String: String] }
+        XCTAssertEqual(foreignFrames, [["kind": "remoteControlRoute", "hostId": "remote-control:other", "threadId": thread]],
+                       "Another host only announces its route")
         try session.receive(decode(matching).data, projectedItems: true)
         let frames = try session.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
         XCTAssertTrue(frames.contains { $0["kind"] as? String == "streamInvalidated" }, "A matching thread's limit still requires resync")

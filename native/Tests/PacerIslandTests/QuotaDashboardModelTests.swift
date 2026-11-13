@@ -100,7 +100,7 @@ final class QuotaDashboardModelTests: XCTestCase {
             }
             publish(nil, for: provider, to: model)
             XCTAssertEqual(model.dashboardQuota(provider: provider, period: .fiveHour).availability, .unavailable)
-            publish(snapshot([bucket(provider.rawValue, [weekly])], at: now.addingTimeInterval(-301)), for: provider, to: model)
+            publish(snapshot([bucket(provider.rawValue, [weekly])], at: now.addingTimeInterval(-601)), for: provider, to: model)
             XCTAssertEqual(model.dashboardQuota(provider: provider, period: .fiveHour).availability, .stale)
             publish(snapshot([bucket(provider.rawValue, [weekly])]), for: provider, to: model)
             model.errorMessage = "Synthetic service failure"
@@ -184,7 +184,7 @@ final class QuotaDashboardModelTests: XCTestCase {
         let codex = QuotaSnapshot(buckets: [QuotaBucket(id: "codex", name: nil, plan: nil,
             windows: [window("codex/week", minutes: 10080), window("codex/eight", minutes: 480)], credits: credit),
             bucket("codex/review", [window("codex/review/week", minutes: 10080, used: 50)])],
-            capturedAt: now.addingTimeInterval(-400), accountScope: "synthetic-codex", resetCredits: reset)
+            capturedAt: now.addingTimeInterval(-700), accountScope: "synthetic-codex", resetCredits: reset)
         let claude = QuotaSnapshot(buckets: [bucket("claude", [window("claude/week", minutes: 10080, used: 40)])],
             capturedAt: now, accountScope: "synthetic-claude", resetCredits: nil)
         for (provider, value, warning) in [(AgentProvider.codex, codex, "Synthetic Codex warning"), (.claude, claude, "Synthetic Claude warning")] {

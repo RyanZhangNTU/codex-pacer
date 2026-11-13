@@ -1,6 +1,34 @@
 import Foundation
 import PacerCore
 
+struct CompactBarSnapshot {
+    struct PriceClock {
+        let hourly: [Double]
+        let peaks: [ClosedRange<Double>]
+        let angle: Double
+        let dimmed: Bool
+        let peakNow: Bool
+
+        init(wallet: DeepSeekWallet, now: Date) {
+            hourly = wallet.hourly
+            peaks = wallet.peakToday.map { wallet.angle(of: $0.start)...wallet.angle(of: $0.end) }
+            angle = wallet.angle(of: now)
+            dimmed = [.stale, .disconnected].contains(wallet.state)
+            peakNow = wallet.peakNow
+        }
+    }
+
+    let output: CompactBarPresentation.Output
+    let context: CompactBarContext
+    let activity: HeaderActivity
+    let hasPendingAttention: Bool
+    let clock: PriceClock?
+    let stripWidth: CGFloat
+
+    var metrics: CompactBarMetrics { output.metrics ?? .standard }
+    var choices: CompactComponentOptions { output.componentOptions ?? CompactComponentOptions() }
+}
+
 extension IslandModel {
     var compactTaskContext: CompactBarContext {
         CompactBarContext(activities: activities, requests: pendingInputRequests, completions: pendingCompletions,
@@ -8,7 +36,13 @@ extension IslandModel {
     }
     var compactWarningItems: [CompactWarningPresentation.Item] { warningItems() }
     func warningItems(warnings supplied: Set<CompactIslandLayout.Warning>? = nil) -> [CompactWarningPresentation.Item] {
-        let enabled = Set(enabledProviders), warnings = supplied ?? compactLayout.warnings
+        warningItems(warnings: supplied ?? compactLayout.warnings, wallet: compactWallet)
+    }
+
+    private var compactWallet: DeepSeekWallet? { enabledProviders.contains(.deepseek) ? deepseekWallet : nil }
+
+    private func warningItems(warnings: Set<CompactIslandLayout.Warning>, wallet: DeepSeekWallet?) -> [CompactWarningPresentation.Item] {
+        let enabled = Set(enabledProviders)
         let snapshots = Dictionary(uniqueKeysWithValues: enabledProviders.compactMap { provider in
             providerQuota(provider).map { (provider, $0) }
         })
@@ -17,20 +51,24 @@ extension IslandModel {
             (provider, QuotaWindowSelection(saved: defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"),
                 snapshot: providerQuota(provider)))
         })
-        let wallet = enabled.contains(.deepseek) ? DeepSeekAlertPresentation(wallet: deepseekWallet,
-            lowBalance: warnings.contains(.lowBalance), spike: warnings.contains(.spendSpike), budget: warnings.contains(.budget)) : nil
+        let alert = wallet.flatMap { DeepSeekAlertPresentation(wallet: $0,
+            lowBalance: warnings.contains(.lowBalance), spike: warnings.contains(.spendSpike), budget: warnings.contains(.budget)) }
         return CompactWarningPresentation.items(enabled: enabled, warnings: warnings, snapshots: snapshots,
-            failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, wallet: wallet, now: now)
+            failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, wallet: alert, now: now)
     }
 
-    var compactContext: CompactBarContext {
-        CompactBarContext(activities: activities, requests: pendingInputRequests, completions: pendingCompletions,
+    private func compactInputs() -> (context: CompactBarContext, tasks: ActivityTaskPresentation, wallet: DeepSeekWallet?) {
+        let tasks = taskPresentation
+        let wallet = compactWallet
+        let context = CompactBarContext(activities: activities, requests: pendingInputRequests, completions: tasks.pendingCompletions,
             sources: enabledProviders.filter { $0 != .deepseek }.map {
                 .init(provider: $0, snapshot: providerQuota($0), failed: providerQuotaError($0) != nil)
-            }, wallet: enabledProviders.contains(.deepseek) ? .init(deepseekWallet, preferred: deepseekRingPeriod) : nil,
-            firstOutput: latestFirstOutputLatency, warnings: compactWarningItems,
-            groups: taskGroups, overview: overview, firstOutputs: activityState.firstOutputHistory.values, now: now)
+            }, wallet: wallet.map { .init($0, preferred: deepseekRingPeriod) },
+            firstOutput: latestFirstOutputLatency, warnings: warningItems(warnings: compactLayout.warnings, wallet: wallet),
+            groups: tasks.groups, overview: tasks.overview, firstOutputs: activityState.firstOutputHistory.values, now: now)
+        return (context, tasks, wallet)
     }
+
     /// Every component's choices, edited in the Collapsed Bar page.
     var compactComponentOptions: CompactComponentOptions { .load(from: defaults) }
     /// The bar size the island draws at: the saved one, or standard while
@@ -40,10 +78,26 @@ extension IslandModel {
     }
     var barMetrics: CompactBarMetrics { compactBarSize.metrics }
 
+    /// The visible bar and its ideal-size copy draw from the same inputs.
+    func compactBarSnapshot(showsStatus: Bool = true) -> CompactBarSnapshot {
+        let (context, tasks, wallet) = compactInputs()
+        let singleTask = ActivityBadgeSingleTask(defaults: defaults)
+        let output = compactPresentation(showsStatus: showsStatus, context: context, singleTask: singleTask)
+        return CompactBarSnapshot(output: output, context: context,
+            activity: tasks.header(singleTask: singleTask, symbol: StatusSymbols.symbol),
+            hasPendingAttention: !pendingInputRequests.isEmpty || !tasks.pendingCompletions.isEmpty,
+            clock: wallet.map { .init(wallet: $0, now: context.now) }, stripWidth: stripWidth)
+    }
+
     func compactPresentation(showsStatus: Bool = true) -> CompactBarPresentation.Output {
+        compactPresentation(showsStatus: showsStatus, context: compactInputs().context, singleTask: ActivityBadgeSingleTask(defaults: defaults))
+    }
+
+    private func compactPresentation(showsStatus: Bool, context: CompactBarContext,
+                                     singleTask: ActivityBadgeSingleTask) -> CompactBarPresentation.Output {
         var layout = compactLayout
         if !showsStatus { layout.hide(.status) }
-        let options = CompactBarPresentation.Options(singleTask: ActivityBadgeSingleTask(defaults: defaults),
+        let options = CompactBarPresentation.Options(singleTask: singleTask,
             metric: defaults.string(forKey: "compactMetric").flatMap(CompactBarPresentation.Metric.init(rawValue:)) ?? .remaining,
             codexWindow: QuotaWindowSelection(saved: defaults.string(forKey: "quotaWindowID"), snapshot: providerQuota(.codex)).rawValue,
             claudeWindow: QuotaWindowSelection(saved: defaults.string(forKey: "claudeQuotaWindowID"), snapshot: providerQuota(.claude)).rawValue,
@@ -54,7 +108,7 @@ extension IslandModel {
             })
         let choices = compactComponentOptions
         let request = CompactBarPresentation.Request(providers: enabledProviders, options: options,
-            context: compactContext, attached: isAttached, strip: sideDock != nil, componentOptions: choices.json,
+            context: context, attached: isAttached, strip: sideDock != nil, componentOptions: choices.json,
             size: compactBarSize.rawValue)
         if let cached = compactPresentationCache[showsStatus], cached.layout == layout, cached.request == request { return cached.output }
         guard let output = CompactBarPresentation.project(request, layout: layout, components: choices) else {
@@ -83,13 +137,12 @@ extension IslandModel {
             budgetDial: deepseekShowsBudgetDial)
     }
 
+    /// The History pane draws the cycle chart itself; it reads only the text here. Labeling
+    /// every chart point on each redraw only decided whether the placeholder shows, which
+    /// the pane shows only without a cycle.
     func quotaHistoryPresentation(_ provider: AgentProvider) -> QuotaHistoryPresentation {
-        let snapshot = providerQuota(provider)
-        let chart = providerCurrentCycle(provider).map {
-            QuotaCycleChartPresentation(data: QuotaChartData(cycle: $0, resetCredits: snapshot?.resetCredits, now: now))
-        }
-        return .init(provider: provider, snapshot: snapshot, weekly: dashboardQuota(provider: provider, period: .weekly),
-            chart: chart, error: providerQuotaError(provider), warning: providerHistoryWarning(provider),
+        .init(provider: provider, snapshot: providerQuota(provider), weekly: dashboardQuota(provider: provider, period: .weekly),
+            chart: nil, error: providerQuotaError(provider), warning: providerHistoryWarning(provider),
             refreshing: providerRefreshing(provider), accountContext: "", now: now)
     }
 }

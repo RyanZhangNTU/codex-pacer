@@ -1,8 +1,53 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
 
 namespace CodexPacer.Windows;
+
+/// Frozen pens and brushes shared by the drawn rings. A running light draws
+/// every frame, and each frame used to allocate its own pens.
+internal static class DrawingCache
+{
+    [ThreadStatic] private static Dictionary<(Color, double, PenLineCap), Pen>? colorPens;
+    [ThreadStatic] private static Dictionary<(Brush, double, PenLineCap, bool), Pen>? brushPens;
+    [ThreadStatic] private static Dictionary<Color, Brush>? brushes;
+    private const int Capacity = 1024;
+    internal static Brush Solid(Color color)
+    {
+        var cache = brushes ??= new();
+        if (cache.TryGetValue(color, out var brush)) return brush;
+        if (cache.Count >= Capacity) cache.Clear();
+        brush = new SolidColorBrush(color); brush.Freeze();
+        return cache[color] = brush;
+    }
+    internal static Pen Pen(Color color, double width, PenLineCap cap = PenLineCap.Flat)
+    {
+        var cache = colorPens ??= new();
+        var key = (color, width, cap);
+        if (cache.TryGetValue(key, out var pen)) return pen;
+        if (cache.Count >= Capacity) cache.Clear();
+        pen = new Pen(Solid(color), width) { StartLineCap = cap, EndLineCap = cap }; pen.Freeze();
+        return cache[key] = pen;
+    }
+    /// A pen over a frozen brush is shared; a brush that can still change gets its own.
+    internal static Pen Pen(Brush brush, double width, PenLineCap cap = PenLineCap.Flat, bool dashed = false)
+    {
+        Pen Make()
+        {
+            var made = new Pen(brush, width) { StartLineCap = cap, EndLineCap = cap };
+            if (dashed) made.DashStyle = new DashStyle(new[] { 2 / width, 5 / width }, 0);
+            return made;
+        }
+        if (!brush.IsFrozen) return Make();
+        var cache = brushPens ??= new();
+        var key = (brush, width, cap, dashed);
+        if (cache.TryGetValue(key, out var pen)) return pen;
+        if (cache.Count >= Capacity) cache.Clear();
+        pen = Make(); pen.Freeze();
+        return cache[key] = pen;
+    }
+}
 
 /// One layer of a reported estimate, as the Mac draws it on the task icon and
 /// the collapsed badge: the arc from the top with its soft glow, the band of
@@ -61,7 +106,7 @@ internal sealed class EstimatePaint : FrameworkElement
             case Layer.Flow:
                 if (!flowing) return;
                 double limit = Math.Min(f, Limit), front = Front;
-                foreach (var (length, alpha) in new[] { (FlowLengths[0], 0.3), (FlowLengths[1], 0.45) })
+                foreach (var (length, alpha) in FlowBands)
                 {
                     double start = Math.Clamp(front - length, 0, limit), end = Math.Clamp(front, 0, limit);
                     if (end - start > 0.0005) drawing.DrawGeometry(null, Pen(WithAlpha(Colors.White, alpha), stroke, PenLineCap.Flat), Arc(center, radius, start, end));
@@ -75,7 +120,8 @@ internal sealed class EstimatePaint : FrameworkElement
                 break;
         }
     }
-    private static Pen Pen(Color color, double width, PenLineCap cap) => new(new SolidColorBrush(color), width) { StartLineCap = cap, EndLineCap = cap };
+    private static readonly (double Length, double Alpha)[] FlowBands = [(FlowLengths[0], 0.3), (FlowLengths[1], 0.45)];
+    private static Pen Pen(Color color, double width, PenLineCap cap) => DrawingCache.Pen(color, width, cap);
     internal static Color WithAlpha(Color color, double share) => Color.FromArgb((byte)Math.Round(color.A * share), color.R, color.G, color.B);
     /// An arc clockwise from `from` to `to`, as shares of the circle measured from the top.
     internal static Geometry Arc(Point center, double radius, double from, double to)
@@ -112,8 +158,8 @@ internal sealed class CometPaint : FrameworkElement
     protected override void OnRender(DrawingContext drawing)
     {
         var center = new Point(ActualWidth / 2, ActualHeight / 2);
-        if (still) { drawing.DrawEllipse(null, new Pen(new SolidColorBrush(EstimatePaint.WithAlpha(ink, 0.5)), stroke), center, radius, radius); return; }
-        drawing.DrawEllipse(null, new Pen(TrackInk, stroke), center, radius, radius);
+        if (still) { drawing.DrawEllipse(null, DrawingCache.Pen(EstimatePaint.WithAlpha(ink, 0.5), stroke), center, radius, radius); return; }
+        drawing.DrawEllipse(null, DrawingCache.Pen(TrackInk, stroke), center, radius, radius);
         double tail = Math.Clamp(Tail, 0.005, 1);
         int count = Math.Max(4, (int)Math.Ceiling(tail * 72));
         for (int pass = 0; pass < 2; pass++)
@@ -125,11 +171,10 @@ internal sealed class CometPaint : FrameworkElement
                 double near = -tail * index / count, far = -tail * (index + 1) / count - 0.002;
                 double alpha = strength * (1 - index / (double)count);
                 if (alpha <= 0.004) continue;
-                drawing.DrawGeometry(null, new Pen(new SolidColorBrush(EstimatePaint.WithAlpha(ink, alpha)), width) { StartLineCap = PenLineCap.Flat, EndLineCap = PenLineCap.Flat },
-                    EstimatePaint.Arc(center, radius, far, near));
+                drawing.DrawGeometry(null, DrawingCache.Pen(EstimatePaint.WithAlpha(ink, alpha), width), EstimatePaint.Arc(center, radius, far, near));
             }
         }
         // The head leads with a small dot.
-        drawing.DrawEllipse(new SolidColorBrush(ink), null, new Point(center.X, center.Y - radius), stroke / 2 + 0.2, stroke / 2 + 0.2);
+        drawing.DrawEllipse(DrawingCache.Solid(ink), null, new Point(center.X, center.Y - radius), stroke / 2 + 0.2, stroke / 2 + 0.2);
     }
 }

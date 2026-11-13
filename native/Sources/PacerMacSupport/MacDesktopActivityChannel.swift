@@ -19,7 +19,8 @@ private final class MacDesktopChannelSlot: @unchecked Sendable {
         catalog = Task.detached(priority: .utility) {
             await MacDurableCatalog.observe(home: home, peer: peer, publish: publish,
                 ipcObservations: { [weak collector] in collector?.durableIPCObservations ?? [:] },
-                publishHistory: { [weak collector] scope, turns in collector?.setDurableHistory(scope: scope, turns: turns) })
+                publishHistory: { [weak collector] scope, turns in collector?.setDurableHistory(scope: scope, turns: turns) },
+                panelInView: { [weak collector] in collector?.batchesAtExpandedCadence ?? false })
         }
     }
     func stop() {
@@ -65,6 +66,7 @@ final class MacDesktopActivityChannel: DesktopActivityChannel, @unchecked Sendab
     }
     func setHosts(_ hosts: Set<String>) { collector.setHosts(hosts) }
     func discover(_ threads: [String]) { /* Mac routing and owner broadcasts supply discovery. */ }
+    func discoverRemote(_ routes: [NativeDesktopSession.Key]) { collector.discoverRemote(routes) }
     func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) { collector.setBatchInterval(seconds, flushPending: flushPending) }
     func stop() { slot.stop(); continuation.finish(); delivery.cancel() }
 }

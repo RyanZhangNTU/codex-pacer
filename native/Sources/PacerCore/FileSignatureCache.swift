@@ -14,15 +14,17 @@ final class FileSignatureCache<Value>: @unchecked Sendable {
                          (attributes?[.systemFileNumber] as? NSNumber)?.doubleValue ?? -1]
         return value(for: file, signature: .attributes(signature), compute: compute)
     }
-    func value(for file: URL, metadata: PlatformFileMetadata?, compute: () -> Value) -> Value {
-        value(for: file, signature: .metadata(metadata), compute: compute)
+    func value(for file: URL, metadata: PlatformFileMetadata?, compute: () throws -> Value) rethrows -> Value {
+        try value(for: file, signature: .metadata(metadata), compute: compute)
     }
-    private func value(for file: URL, signature: Signature, compute: () -> Value) -> Value {
-        lock.lock()
-        if let entry = entries[file.path], entry.signature == signature { lock.unlock(); return entry.value }
-        lock.unlock()
-        let value = compute()
-        lock.lock(); if entries.count >= 16 { entries.removeAll() }; entries[file.path] = (signature, value); lock.unlock()
+    /// Computes under the lock: concurrent pollers of one changed file wait for a
+    /// single read instead of each parsing it. No compute re-enters its own cache.
+    private func value(for file: URL, signature: Signature, compute: () throws -> Value) rethrows -> Value {
+        lock.lock(); defer { lock.unlock() }
+        if let entry = entries[file.path], entry.signature == signature { return entry.value }
+        let value = try compute()
+        if entries.count >= 16 { entries.removeAll() }
+        entries[file.path] = (signature, value)
         return value
     }
 }

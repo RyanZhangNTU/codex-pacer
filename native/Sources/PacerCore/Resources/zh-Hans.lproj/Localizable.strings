@@ -353,6 +353,13 @@
 "settings.monitor_ssh" = "监测 SSH 主机上的任务";
 "settings.monitor_remote_control" = "统计 Codex Remote Control 任务";
 "settings.remote_control_help" = "通过已连接的 Codex 桌面端获取数据。请保持 Codex 开启并连接远程主机。";
+"settings.monitor_durable" = "统计 Codex Dot 任务";
+"settings.durable_help" = "显示分配给这台电脑的 Dot 任务，即使对话已关闭。Pacer 通过 Codex 桌面端检查这些任务，会增加耗电。";
+"settings.remote_control_devices" = "已配对设备";
+"settings.remote_control_refresh" = "刷新设备列表";
+"settings.remote_control_refreshing" = "正在刷新设备列表…";
+"settings.remote_control_refresh_failed" = "无法刷新设备列表。";
+"settings.remote_control_last_refresh" = "上次刷新";
 "settings.notch" = "灵动岛";
 "settings.notification_denied" = "系统通知未获授权，可在“系统设置 > 通知”中允许。";
 "settings.one_hour" = "1 小时";
@@ -758,6 +765,7 @@
 "deepseek.balance.currency" = "余额不是人民币，Pacer 无法显示。";
 "deepseek.balance.invalid_reply" = "DeepSeek 开放平台返回了无法识别的结果。";
 "deepseek.balance.connection_failed" = "无法连接 DeepSeek，Pacer 会稍后重试。";
+"deepseek.balance.timed_out" = "DeepSeek 回复太慢，Pacer 会稍后重试。";
 "deepseek.balance.unavailable" = "暂时无法读取余额。";
 "deepseek.notice.low" = "余额偏低";
 "deepseek.notice.low_detail" = "DeepSeek 开放平台余额还剩 %@。";

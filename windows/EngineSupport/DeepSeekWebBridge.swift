@@ -64,7 +64,7 @@ actor DeepSeekWebBridge {
     private let timeout: UInt64
     private let now: @Sendable () -> Date
     private let output: @Sendable (DeepSeekWebHostMessage) async -> Void
-    init(timeout: UInt64 = 20_000_000_000, now: @escaping @Sendable () -> Date,
+    init(timeout: UInt64 = UInt64(ProviderQuotaRefreshPolicy.replyTimeout * 1_000_000_000), now: @escaping @Sendable () -> Date,
          output: @escaping @Sendable (DeepSeekWebHostMessage) async -> Void) {
         self.timeout = timeout; self.now = now; self.output = output
     }
@@ -84,7 +84,7 @@ actor DeepSeekWebBridge {
                 guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
                 let timer = Task { [weak self, timeout] in
                     do { try await Task.sleep(nanoseconds: timeout) } catch { return }
-                    await self?.cancel(id, failure: DeepSeekBalanceError.connectionFailed)
+                    await self?.cancel(id, failure: DeepSeekBalanceError.timedOut)
                 }
                 pending[id] = .init(context: context, at: now(), continuation: continuation, timer: timer)
                 Task { await send(id) }

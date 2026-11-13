@@ -83,6 +83,7 @@ public partial class IslandWindow
     private IslandDecorationWindow? decoration;
     internal IntPtr DecorationWindowHandle => decoration == null ? IntPtr.Zero : new System.Windows.Interop.WindowInteropHelper(decoration).Handle;
     internal (string Shoulders, bool Shadow) Decoration => decoration?.IsVisible == true ? (decoration.ShoulderSide, decoration.ShowsShadow) : ("", false);
+    internal (Rect Shoulders, Rect Shadow) DecorationRegions => decoration?.Regions ?? (Rect.Empty, Rect.Empty);
     /// Shoulders where an attached island meets the screen edge, and a shadow
     /// under a floating one, drawn in a window that never takes a click.
     private void UpdateDecoration(MotionFrame frame)

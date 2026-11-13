@@ -31,14 +31,14 @@ struct ActivityHostServices: Sendable {
     static let live = Self { input in
         #if os(Windows)
         let worker = Task.detached(priority: .utility) { () -> [String: ActivityHostApplication] in
-            guard let snapshot = WindowsProcessOwnership.snapshot(), !Task.isCancelled else { return [:] }
+            let files = input.files.filter { input.sessions.contains($0.key) }
+            guard !files.isEmpty, !Task.isCancelled, let snapshot = WindowsProcessOwnership.snapshot() else { return [:] }
             let roots: [AgentProvider: [URL]] = [.claude: WindowsPackageLocations.find(family: "Claude_pzs8sxrjxfjjc"),
                                                .codex: WindowsPackageLocations.find(family: "OpenAI.Codex_2p2nqsd0c76g0")]
             var result: [String: ActivityHostApplication] = [:]
-            for session in input.sessions {
+            for (session, file) in files {
                 guard !Task.isCancelled else { break }
-                guard let file = input.files[session],
-                      let owner = try? WindowsActivityNavigation.currentHost(file: file, home: input.home, host: {
+                guard let owner = try? WindowsActivityNavigation.currentHost(file: file, home: input.home, host: {
                           WindowsProcessHost.nearest(to: $0, lookup: snapshot.inspect, packageRoots: roots)
                       }),
                       let row = snapshot.inspect(owner.identity.pid, owner.identity.started),

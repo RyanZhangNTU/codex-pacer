@@ -43,6 +43,9 @@ public struct CompletionInbox: Sendable {
     private var persistedDigestSet: Set<String>
     private var persistedCloudEndings: [CompletionDismissalStore.CloudEnding]
     private var sourceNamespaces: [AgentProvider: [String: String]] = [:]
+    /// Retained endings are observed again on every pass; hash each identity once.
+    private var digestCache: [[String]: String] = [:]
+    package var remoteControlRevalidating = false
     public init(dismissalStore: CompletionDismissalStore? = nil) {
         self.dismissalStore = dismissalStore
         let saved = dismissalStore?.load()
@@ -82,7 +85,18 @@ public struct CompletionInbox: Sendable {
         sourceNamespaces[provider] = namespaces
     }
 
-    private func persistentDigest(_ activity: SessionActivity) -> String? {
+    private mutating func cachedDigest(_ fields: [String]) -> String {
+        if let value = digestCache[fields] { return value }
+        if digestCache.count >= 2048 { digestCache.removeAll(keepingCapacity: true) }
+        let value = CompletionDismissalStore.digest(fields)
+        digestCache[fields] = value
+        return value
+    }
+
+    private mutating func persistentDigest(_ activity: SessionActivity) -> String? {
+        persistentDigestFields(activity).map { cachedDigest($0) }
+    }
+    private func persistentDigestFields(_ activity: SessionActivity) -> [String]? {
         guard dismissalStore != nil,
               let namespace = sourceNamespaces[activity.provider]?[activity.sourceHostID ?? "local"] else { return nil }
         var fields = ["completion-v1", activity.provider.rawValue, namespace, activity.sourceHostID ?? "local",
@@ -107,7 +121,7 @@ public struct CompletionInbox: Sendable {
             guard let started = milliseconds(activity.turnStartedAt), let ended = milliseconds(activity.phaseChangedAt) else { return nil }
             fields += ["legacy", started, ended]
         }
-        return CompletionDismissalStore.digest(fields)
+        return fields
     }
 
     private mutating func persistDismissal(_ activity: SessionActivity) {
@@ -134,13 +148,13 @@ public struct CompletionInbox: Sendable {
         dismissalStore.saveDigests(persistedDigests, cloudEndings: persistedCloudEndings)
     }
 
-    private func cloudSourceDigest(_ activity: SessionActivity) -> String? {
+    private mutating func cloudSourceDigest(_ activity: SessionActivity) -> String? {
         guard activity.claudeCloud?.role == .thread,
               let namespace = sourceNamespaces[activity.provider]?[activity.sourceHostID ?? "local"] else { return nil }
-        return CompletionDismissalStore.digest(["cloud-ending-v1", namespace, activity.canonicalized().id])
+        return cachedDigest(["cloud-ending-v1", namespace, activity.canonicalized().id])
     }
 
-    private func isAcknowledgedCloudSettlement(_ activity: SessionActivity) -> Bool {
+    private mutating func isAcknowledgedCloudSettlement(_ activity: SessionActivity) -> Bool {
         guard activity.claudeCloud?.status == .resolved, let mark = activity.claudeCloud?.completionMark,
               let source = cloudSourceDigest(activity), let old = persistedCloudEndings.first(where: { $0.source == source }) else { return false }
         let elapsed = mark.timeIntervalSince(old.mark)
@@ -190,18 +204,23 @@ public struct CompletionInbox: Sendable {
         }
     }
 
-    public var activities: [SessionActivity] { entries.values.map(\.activity) }
+    package func isSourceVisible(_ host: String?) -> Bool {
+        !remoteControlRevalidating || host?.hasPrefix(ConnectionSource.controlPrefix) != true
+    }
+    public var activities: [SessionActivity] {
+        entries.values.compactMap { isSourceVisible($0.activity.sourceHostID) ? $0.activity : nil }
+    }
     public var unreadActivities: [SessionActivity] {
-        entries.values.filter(\.unread).map(\.activity).sorted {
+        entries.values.filter { $0.unread && isSourceVisible($0.activity.sourceHostID) }.map(\.activity).sorted {
             let left = $0.phaseChangedAt ?? .distantPast, right = $1.phaseChangedAt ?? .distantPast
             return left == right ? $0.id < $1.id : left > right
         }
     }
     public func isUnread(_ activity: SessionActivity) -> Bool {
-        entries[activity.id].map { $0.unread && Identity($0.activity) == Identity(activity) } ?? false
+        isSourceVisible(activity.sourceHostID) && entries[activity.id].map { $0.unread && Identity($0.activity) == Identity(activity) } == true
     }
     public func acknowledgment(for activity: SessionActivity) -> AcknowledgmentToken? {
-        guard let entry = entries[activity.id], Identity(entry.activity) == Identity(activity) else { return nil }
+        guard isSourceVisible(activity.sourceHostID), let entry = entries[activity.id], Identity(entry.activity) == Identity(activity) else { return nil }
         return AcknowledgmentToken(activityID: activity.id, identity: Identity(entry.activity),
             namespace: sourceNamespaces[activity.provider]?[activity.sourceHostID ?? "local"])
     }
@@ -210,7 +229,7 @@ public struct CompletionInbox: Sendable {
             namespace: sourceNamespaces[activity.provider]?[activity.sourceHostID ?? "local"])
     }
     public func isCurrentSource(_ token: SourceToken) -> Bool {
-        sourceNamespaces[token.provider]?[token.sourceHostID ?? "local"] == token.namespace
+        isSourceVisible(token.sourceHostID) && sourceNamespaces[token.provider]?[token.sourceHostID ?? "local"] == token.namespace
     }
     @discardableResult
     public mutating func dismiss(_ activity: SessionActivity) -> Bool {
@@ -245,6 +264,7 @@ public struct CompletionInbox: Sendable {
         // A released stream may be followed by an older log baseline. Only a
         // newer state/new live turn can supersede a retained or dismissed ending.
         let current = Dictionary(activities.map(retainingCloudEnding).filter { activity in
+            guard isSourceVisible(activity.sourceHostID) else { return false }
             let ended = entries[activity.id].map { Identity($0.activity) } ?? dismissed[activity.id]
             guard let ended, let endedAt = ended.changedAt else { return true }
             if activity.hasLiveEvidence, activity.liveTurnStarted, activity.turnID != ended.turnID { return true }

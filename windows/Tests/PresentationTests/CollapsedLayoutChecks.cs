@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
@@ -17,6 +19,66 @@ using CodexPacer.Windows;
 
 internal static class CollapsedLayoutChecks
 {
+    internal static async Task CheckRateGeometry(EngineClient projections)
+    {
+        await Until(() => projections.LatestSnapshot?.CompactContext != null);
+        var snapshot = projections.LatestSnapshot!;
+        var values = JsonNode.Parse(snapshot.CompactContext!.Value.GetRawText())!.AsObject();
+        values["attention"] = false;
+        await using var commands = new EngineClient();
+        var island = new IslandWindow(commands, true, false, animationOverride: true,
+            screenGeometry: () => (new(0, 0, 1440, 900), new(0, 0, 1440, 860))) { IsHitTestVisible = false, ShowActivated = false };
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", CompactBarSize = "large",
+            CompactLayout = """{"version":9,"leading":["activity","status","tps","firstOutput"],"trailing":["quotaGauge","quota","timeRemaining"]}""" };
+        int frames = 0;
+        island.FrameApplied += _ => frames++;
+        try
+        {
+            island.Show();
+            foreach (var (display, position, strip) in new[] { ("floating", "center", false), ("notch", "center", false), ("floating", "topLeft", true) })
+            {
+                island.ApplyPreferences(preferences with { DisplayMode = display, Position = position, PositionChosen = true });
+                await ShowRate(null, "000", "0");
+                var initial = island.LogicalTarget;
+                frames = 0;
+                foreach (var (rate, text) in new[] { (7, "007"), (83, "083"), (102, "102"), (999, "999") })
+                {
+                    await ShowRate(rate, text, rate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    Check(island.LogicalTarget == initial, $"{display}/{position}: the three digits must keep the same bounds");
+                }
+                await ShowRate(null, "000", "0");
+                Check(island.LogicalTarget == initial && frames == 0, $"{display}/{position}: idle and three-digit updates must not animate the window size");
+                if (display == "floating" && !strip)
+                {
+                    await ShowRate(1200, "1200", "1200");
+                    var wider = island.LogicalTarget;
+                    Check(wider.Width > initial.Width && Math.Abs(wider.X + wider.Width / 2 - initial.X - initial.Width / 2) <= 1,
+                        "A four-digit floating rate widens the bar about the same center");
+                    await ShowRate(83, "083", "83");
+                    Check(island.LogicalTarget == initial, "The floating bar returns to the original bounds");
+                }
+                else await ShowRate(999.5, "1.0k", "1000");
+
+                async Task ShowRate(double? rate, string text, string spoken)
+                {
+                    if (rate is double number) values["rate"] = number;
+                    else values.Remove("rate");
+                    values["rateFresh"] = rate.HasValue;
+                    island.ReceiveSnapshot(snapshot with { CompactContext = JsonSerializer.SerializeToElement(values), RateIsFresh = rate.HasValue });
+                    string id = strip ? "compact.strip.tps" : "compact.row.tps";
+                    Button? button = null;
+                    await Until(() => (button = SelfAndDescendants(island).OfType<Button>()
+                        .FirstOrDefault(value => value.IsVisible && AutomationProperties.GetAutomationId(value) == id))?.Content is CompactValueView view
+                        && view.Text == text);
+                    await island.WaitForPresentationAsync();
+                    Check(AutomationProperties.GetName(button!) == spoken + " t/s", "UI Automation reports the rate without padding or abbreviation");
+                }
+            }
+            Console.WriteLine("PASS floating, attached and docked TPS geometry and accessibility");
+        }
+        finally { island.AllowClose = true; island.Close(); }
+    }
+
     internal static async Task Run(string language, bool dark, bool animations, string output)
     {
         var engine = new EngineClient();

@@ -16,9 +16,9 @@ public struct MacHostApplication: Equatable, Sendable {
 
     public static func resolve(sessions: Set<String>, provider: AgentProvider, home: URL) -> [String: MacHostApplication] {
         guard !sessions.isEmpty else { return [:] }
-        let holders = provider == .claude ? ClaudeLiveSessionRegistry.holders(claudeHome: home)
+        let holders = provider == .claude ? ClaudeLiveSessionRegistry.holders(sessions: sessions, claudeHome: home)
             : CodexRolloutOwners.holders(sessions: sessions, home: home)
-        return holders.filter { sessions.contains($0.key) }.compactMapValues(application(above:))
+        return holders.compactMapValues(application(above:))
     }
     public static func resolve(sessions: Set<String>, claudeHome: URL) -> [String: MacHostApplication] {
         resolve(sessions: sessions, provider: .claude, home: claudeHome)

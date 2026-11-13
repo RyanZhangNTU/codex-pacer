@@ -15,6 +15,7 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     private var hosts: Set<String>
     private var hostsChanged = false
     private var removedHosts: Set<String> = []
+    private var remoteRoutes: [NativeDesktopSession.Key] = []
     private var durableCatalog: DurableActivityCatalog?
     private var durableChanged = false
     private var durableHistory: (scope: String, turns: [DurableTurnHistory])?
@@ -32,6 +33,15 @@ public final class NativeDesktopCollector: @unchecked Sendable {
             _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
         }
     }
+    func discoverRemote(_ routes: [NativeDesktopSession.Key]) {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { return }
+        remoteRoutes = Array((remoteRoutes + routes).suffix(64))
+        if eventQueue >= 0 {
+            var trigger = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
+            _ = Darwin.kevent64(eventQueue, &trigger, 1, nil, 0, 0, nil)
+        }
+    }
     public func setHosts(_ value: Set<String>) {
         lock.lock(); defer { lock.unlock() }
         guard hosts != value else { return }
@@ -44,6 +54,8 @@ public final class NativeDesktopCollector: @unchecked Sendable {
     }
     private func currentHosts() -> Set<String> { lock.lock(); defer { lock.unlock() }; return hosts }
     var peerProcessID: pid_t? { lock.lock(); defer { lock.unlock() }; return peer }
+    /// The panel is open and in view (one-second batches, not the collapsed five).
+    var batchesAtExpandedCadence: Bool { lock.lock(); defer { lock.unlock() }; return batchInterval < 5 }
     func setDurableCatalog(_ value: DurableActivityCatalog?) {
         lock.lock(); defer { lock.unlock() }
         guard !cancelled, value != nil || durableCatalog != nil else { return }
@@ -69,12 +81,13 @@ public final class NativeDesktopCollector: @unchecked Sendable {
         if !durableChanged, durableCatalog != nil { ipcObservations = values }
     }
     private func batchUpdate() -> (interval: TimeInterval, flush: Bool, hosts: Set<String>?, resetHosts: Set<String>,
-                                   durable: DurableActivityCatalog??, history: (scope: String, turns: [DurableTurnHistory])?) {
+                                    durable: DurableActivityCatalog??, history: (scope: String, turns: [DurableTurnHistory])?,
+                                    remoteRoutes: [NativeDesktopSession.Key]) {
         lock.lock(); defer { lock.unlock() }
         let update: DurableActivityCatalog?? = durableChanged ? .some(durableCatalog) : nil
-        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts, update, durableHistory)
+        let result = (batchInterval, flushRequested, hostsChanged ? hosts : nil, removedHosts, update, durableHistory, remoteRoutes)
         flushRequested = false; hostsChanged = false; removedHosts.removeAll(); durableChanged = false
-        durableHistory = nil
+        durableHistory = nil; remoteRoutes.removeAll()
         return result
     }
     private let onFrame: @Sendable (Data) -> Void
@@ -222,10 +235,10 @@ public final class NativeDesktopCollector: @unchecked Sendable {
                     if let catalog = batch.durable { try session.setDurableCatalog(catalog, at: now) }
                     if let history = batch.history { try session.observeDurableHistory(history.turns, scope: history.scope, at: now) }
                     try session.setBatchInterval(batch.interval, at: now)
-                    var discovered: [NativeDesktopSession.Key] = []
+                    var discovered = batch.remoteRoutes
                     if routingDirty && now >= nextRoutingRead {
                         if reopenRouting { try reopenRoutingWatch(); reopenRouting = false }
-                        discovered = routing.changed(home: home, hosts: session.hosts)
+                        discovered += routing.changed(home: home, hosts: session.hosts)
                         routingDirty = false; nextRoutingRead = now.addingTimeInterval(0.25)
                     }
                     try session.service(at: now, discovering: discovered, flushPending: batch.flush)

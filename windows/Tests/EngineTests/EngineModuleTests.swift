@@ -3,6 +3,13 @@ import Foundation
 import XCTest
 @testable import PacerCore
 
+private final class ModuleClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = Date()
+    var now: Date { lock.lock(); defer { lock.unlock() }; return value }
+    func advance(_ seconds: TimeInterval) { lock.lock(); value.addTimeInterval(seconds); lock.unlock() }
+}
+
 private actor ModuleDetector {
     var value: ProviderInstallationDetection
     private(set) var reads = 0
@@ -57,11 +64,19 @@ final class EngineModuleTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-module-refresh-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let detector = ModuleDetector(.init(codexInstalled: true, claudeInstalled: false)), capture = ModuleSnapshots()
-        let runtime = EngineRuntime(demo: false, dismissalStore: nil, installationDetection: { await detector.read() }, output: { capture.append($0) })
+        let clock = ModuleClock()
+        let runtime = EngineRuntime(demo: false, now: { clock.now }, dismissalStore: nil, installationDetection: { await detector.read() },
+                                    output: { capture.append($0) })
         _ = await runtime.receive(try command("initialize", homes(root)))
         XCTAssertEqual(Set(capture.snapshot()?.sources.map(\.provider) ?? []), ["codex"])
         let sequence = capture.snapshot()?.sequence
         await detector.replace(.init(codexInstalled: false, claudeInstalled: true, deepseekInstalled: true))
+        clock.advance(599)
+        await runtime.maintenanceRefresh()
+        let early = await detector.reads
+        XCTAssertEqual(early, 1, "The minute maintenance tick probes installed apps at most every ten minutes")
+        XCTAssertEqual(Set(capture.snapshot()?.sources.map(\.provider) ?? []), ["codex"])
+        clock.advance(2)
         await runtime.maintenanceRefresh()
         XCTAssertEqual(Set(capture.snapshot()?.sources.map(\.provider) ?? []), ["claude", "deepseek"])
         XCTAssertNotEqual(capture.snapshot()?.sequence, sequence)

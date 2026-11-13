@@ -56,8 +56,28 @@ extension IslandModel {
     var currentDeepSeekBalanceBinding: DeepSeekBalanceBinding {
         DeepSeekBalanceBinding(source: .load(from: defaults), mode: deepseekBalanceMode)
     }
+    /// Writes coalesce for up to 30 minutes; sleep, quit and a source change write at once.
+    func saveDeepSeekHistory(_ history: DeepSeekBalanceHistory) {
+        guard !history.samples.isEmpty else {
+            dropPendingDeepSeekHistory(); defaults.removeObject(forKey: DeepSeekBalanceHistory.defaultsKey); return
+        }
+        pendingDeepSeekHistory = history
+        guard deepseekHistorySaveWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in self?.flushDeepSeekHistory() }
+        deepseekHistorySaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1800, execute: work)
+    }
+    func flushDeepSeekHistory() {
+        let pending = pendingDeepSeekHistory
+        dropPendingDeepSeekHistory()
+        pending?.save(to: defaults)
+    }
+    private func dropPendingDeepSeekHistory() {
+        deepseekHistorySaveWork?.cancel(); deepseekHistorySaveWork = nil; pendingDeepSeekHistory = nil
+    }
     /// Cancellation alone cannot stop a WebKit read from returning late.
     @discardableResult func cancelDeepSeekBalanceRead(stop: Bool = true) -> DeepSeekBalanceCoordinator? {
+        flushDeepSeekHistory()
         let previous = deepseekBalanceCoordinator; previous?.invalidateSource()
         deepseekBalanceCoordinator = nil; deepseekBalanceCoordinatorID = UUID(); deepseekCredentialInput = nil
         deepseekBalanceRequestID = nil
@@ -129,14 +149,18 @@ extension IslandModel {
         defaults.string(forKey: Self.deepseekSpeedSourceKey).flatMap(DeepSeekSpeedSource.init(rawValue:)) ?? .local
     }
     var deepseekWallet: DeepSeekWallet {
-        DeepSeekWallet(balance: deepseekBalance, connected: deepseekBalanceError == nil || deepseekBalance != nil,
+        let inputs = DeepSeekWalletInputs(balance: deepseekBalance, connected: deepseekBalanceError == nil || deepseekBalance != nil,
             ledger: deepseekUsage.ledger, now: now, lowLine: Self.deepseekLowLine(in: defaults),
             history: demo || deepseekBalanceBinding?.historySource == deepseekHistory.source ? deepseekHistory : DeepSeekBalanceHistory(),
             budgets: deepseekBudgets, spikeLimit: amount(Self.deepseekSpikeLimitKey),
-            speedSource: deepseekSpeedSource)
+            speedSource: deepseekSpeedSource, timeZone: TimeZone.current)
+        if let memo = deepseekWalletMemo, memo.inputs == inputs { return memo.wallet }
+        let wallet = DeepSeekWallet(balance: inputs.balance, connected: inputs.connected, ledger: inputs.ledger, now: inputs.now,
+            lowLine: inputs.lowLine, history: inputs.history, budgets: inputs.budgets, spikeLimit: inputs.spikeLimit,
+            speedSource: inputs.speedSource)
+        deepseekWalletMemo = (inputs, wallet)
+        return wallet
     }
-    /// The wallet cannot be read: the collapsed bar dims rather than recolors.
-    var deepseekWalletDimmed: Bool { [.stale, .disconnected].contains(deepseekWallet.state) }
     /// The one collapsed alert, from the reminders that are on.
     var deepseekAlert: DeepSeekAlert? {
         guard isModuleEnabled(.deepseek) else { return nil }
@@ -243,7 +267,7 @@ extension IslandModel {
         let endedTurns = Set(values.filter { [.completed, .interrupted].contains($0.phase) }.compactMap(\.turnID))
             .subtracting(deepseekReceivedActivities.filter { [.completed, .interrupted].contains($0.phase) }.compactMap(\.turnID))
         now = Date(); deepseekReceivedActivities = values; deepseekReceivedRequests = requests
-        if deepseekStreamStatuses != statuses { deepseekStreamStatuses = statuses }
+        if !Self.sameVisibleStreamState(deepseekStreamStatuses, statuses) { deepseekStreamStatuses = statuses }
         if deepseekUsage != usage { deepseekUsage = usage }
         let balanceSourceChanged = synchronizeDeepSeekBalanceSource()
         completionInbox.updatePerformance(performance)
@@ -263,7 +287,7 @@ extension IslandModel {
         let key = mode == .apiKey ? deepseekBalanceReads.apiKey() : nil
         let inputError = DeepSeekBalanceCoordinator.credentialError(mode: mode, key: key, webAvailable: true)
         guard mode != nil, inputError == nil else { deepseekBalanceError = inputError; return }
-        let active = active ?? (expanded || running.contains { $0.provider == .deepseek })
+        let active = active ?? (visiblyExpanded || running.contains { $0.provider == .deepseek })
         let requested = !scheduled && !turnEnded
         guard DeepSeekBalanceCoordinator.isDue(lastAttempt: deepseekBalanceState?.lastAttempt,
             failures: deepseekFailureCount, active: active, force: force, requested: requested, turnEnded: turnEnded, now: Date()) else { return }
@@ -306,8 +330,7 @@ extension IslandModel {
                 fingerprint: { fingerprints.fingerprint(source: $0, identity: $1) }, readWeb: { @MainActor _ in try await reads.web() },
                 loadHistory: { initialHistory }, saveHistory: { @MainActor [weak self] history, _ in
                     guard let self, self.deepseekBalanceCoordinatorID == owner, self.deepseekGeneration == generation, !self.stopped else { return }
-                    if history.samples.isEmpty { self.defaults.removeObject(forKey: DeepSeekBalanceHistory.defaultsKey) }
-                    else { history.save(to: self.defaults) }
+                    self.saveDeepSeekHistory(history)
                 })
             deepseekBalanceCoordinator = DeepSeekBalanceCoordinator(services: services, seed: deepseekBalanceState) { [weak self] state in
                 await self?.receiveDeepSeekBalance(state, owner: owner)
@@ -393,6 +416,7 @@ extension IslandModel {
 
     /// Another sign-in or key may be another account, so earlier readings no longer compare.
     private func forgetDeepSeekHistory() {
+        dropPendingDeepSeekHistory()
         deepseekHistory = DeepSeekBalanceHistory()
         defaults.removeObject(forKey: DeepSeekBalanceHistory.defaultsKey)
     }
@@ -430,4 +454,18 @@ extension IslandModel {
         deepseekHistory.record(total: 86.4 + local + 2.1, at: start, source: "web")
         deepseekHistory.record(total: 86.4, at: now, source: "web")
     }
+}
+
+/// Everything a DeepSeek wallet is computed from, so repeated reads in one render share it.
+struct DeepSeekWalletInputs: Equatable {
+    let balance: DeepSeekBalance?
+    let connected: Bool
+    let ledger: DeepSeekSpendLedger
+    let now: Date
+    let lowLine: Double?
+    let history: DeepSeekBalanceHistory
+    let budgets: DeepSeekBudgets
+    let spikeLimit: Double?
+    let speedSource: DeepSeekSpeedSource
+    let timeZone: TimeZone
 }

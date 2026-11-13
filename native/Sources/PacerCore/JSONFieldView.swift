@@ -59,7 +59,7 @@ package struct JSONFieldView {
                 let valueStart = cursor.position
                 try cursor.skipValue(depth: 0)
                 if keyRange.count <= 1538,
-                   let key = try? JSONDecoder().decode(String.self, from: data.subdata(in: keyRange)),
+                   let key = Self.decodeString(data, keyRange),
                    key.count <= 256, allowed?.contains(key) ?? true {
                     fields[key] = Self(data: data, range: valueStart..<cursor.position, projectedItems: projectedItems)
                     count += 1
@@ -108,7 +108,7 @@ package struct JSONFieldView {
                 cursor.whitespace(); let start = cursor.position
                 try cursor.skipString(); let keyRange = start..<cursor.position
                 guard keyRange.count <= 1538,
-                      let key = try? JSONDecoder().decode(String.self, from: data.subdata(in: keyRange)),
+                      let key = Self.decodeString(data, keyRange),
                       key.count <= 256 else { throw Failure.limit }
                 cursor.whitespace(); try cursor.require(58); cursor.whitespace()
                 let valueStart = cursor.position; try cursor.skipValue(depth: 0)
@@ -135,8 +135,16 @@ package struct JSONFieldView {
     }
     package func string(limit: Int = 256) -> String? {
         guard data[range.lowerBound] == 34, range.count <= limit * 6 + 2,
-              let value = try? JSONDecoder().decode(String.self, from: data.subdata(in: range)) else { return nil }
+              let value = Self.decodeString(data, range) else { return nil }
         return String(value.prefix(limit))
+    }
+    /// Every view's range was validated as UTF-8 JSON, so a literal without an
+    /// escape is its own text; only escaped literals need a decoder.
+    private static func decodeString(_ data: Data, _ range: Range<Int>) -> String? {
+        guard range.count >= 2 else { return nil }
+        let text = data[(range.lowerBound + 1)..<(range.upperBound - 1)]
+        if !text.contains(92) { return String(decoding: text, as: UTF8.self) }
+        return try? JSONDecoder().decode(String.self, from: data.subdata(in: range))
     }
     package func integer() -> Int? {
         guard range.count <= 24, let text = String(data: data.subdata(in: range), encoding: .utf8),
@@ -193,7 +201,7 @@ package struct JSONFieldView {
               let value = Double(text), value.isFinite else { return nil }
         return value
     }
-    func boolean() -> Bool? {
+    package func boolean() -> Bool? {
         if range.count == 4 && data[range.lowerBound] == 116 { return true }
         if range.count == 5 && data[range.lowerBound] == 102 { return false }
         return nil
@@ -205,7 +213,12 @@ package struct JSONFieldView {
         var position: Int
         let end: Int
         mutating func whitespace() {
-            while position < end && [9, 10, 13, 32].contains(bytes[position]) { position += 1 }
+            while position < end {
+                switch bytes[position] {
+                case 9, 10, 13, 32: position += 1
+                default: return
+                }
+            }
         }
         mutating func consume(_ byte: UInt8) -> Bool {
             guard position < end && bytes[position] == byte else { return false }

@@ -8,11 +8,23 @@ struct SettingsConnectionsPane: View {
     @ObservedObject var model: IslandModel
     @Binding var monitorSSH: Bool
     @Binding var monitorRemoteControl: Bool
+    @Binding var monitorDurable: Bool
     let codexEnabled: Bool
     let claudeEnabled: Bool
 
     private var sources: [ConnectionSource] { Self.sources(model) }
     private var hosts: [SSHHost] { Self.hosts(model) }
+    private var deviceListDetail: String? {
+        guard let directory = model.remoteControlDirectory else { return nil }
+        if directory.refreshing { return L10n.text("settings.remote_control_refreshing") }
+        let last = directory.refreshedAt.map {
+            L10n.text("settings.remote_control_last_refresh") + " · " + Date(timeIntervalSince1970: $0).formatted(date: .abbreviated, time: .shortened)
+        }
+        if directory.failed {
+            return [L10n.text("settings.remote_control_refresh_failed"), last].compactMap { $0 }.joined(separator: " ")
+        }
+        return last
+    }
 
     /// Retrying sources and hosts with a problem, for the sidebar dot and Overview.
     static func problemCount(_ model: IslandModel) -> Int {
@@ -78,7 +90,18 @@ struct SettingsConnectionsPane: View {
             CardToggle(title: L10n.text("settings.monitor_remote_control"), info: L10n.text("settings.remote_control_help"),
                        isOn: $monitorRemoteControl)
                 .disabled(!codexEnabled)
+            if monitorRemoteControl {
+                CardRow(title: L10n.text("settings.remote_control_devices"), detail: deviceListDetail) {
+                    Button(L10n.text("settings.remote_control_refresh")) { model.refreshRemoteControlDevices() }
+                        .buttonStyle(.main)
+                        .disabled(!codexEnabled || model.remoteControlDirectory?.refreshing == true)
+                }
+            }
             ForEach(sources.filter { $0.key.hasPrefix(ConnectionSource.controlPrefix) }) { source in sourceRow(source) }
+        }
+        MainCard(title: "Codex Dot") {
+            CardToggle(title: L10n.text("settings.monitor_durable"), info: L10n.text("settings.durable_help"), isOn: $monitorDurable)
+                .disabled(!codexEnabled)
         }
         let others = sources.filter { !$0.key.hasPrefix(ConnectionSource.sshPrefix) && !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
         if !others.isEmpty {

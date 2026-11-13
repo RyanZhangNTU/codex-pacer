@@ -25,6 +25,7 @@
     <Compile Include="../../Desktop/PanelChoices.cs" Link="PanelChoices.cs"/>
     <Compile Include="../../Desktop/IslandScreenMemory.cs" Link="IslandScreenMemory.cs"/>
     <Compile Include="../../Desktop/PreferencesStore.cs" Link="PreferencesStore.cs"/>
+    <Compile Include="../../Desktop/DurableUsageEvidence.cs" Link="DurableUsageEvidence.cs"/>
     <Compile Include="../../Desktop/FileQuarantine.cs" Link="FileQuarantine.cs"/>
     <Compile Include="../../Desktop/PreferencesAcknowledgement.cs" Link="PreferencesAcknowledgement.cs"/>
 

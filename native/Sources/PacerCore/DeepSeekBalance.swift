@@ -80,7 +80,7 @@ public struct DeepSeekBalance: Equatable, Sendable {
 }
 
 public enum DeepSeekBalanceError: Error, LocalizedError, Equatable {
-    case signedOut, missingKey, invalidKey, challenge, unsupportedCurrency, invalidReply, connectionFailed, unavailable
+    case signedOut, missingKey, invalidKey, challenge, unsupportedCurrency, invalidReply, connectionFailed, timedOut, unavailable
     public var errorDescription: String? {
         switch self {
         case .signedOut: L10n.text("deepseek.balance.signed_out")
@@ -90,6 +90,7 @@ public enum DeepSeekBalanceError: Error, LocalizedError, Equatable {
         case .unsupportedCurrency: L10n.text("deepseek.balance.currency")
         case .invalidReply: L10n.text("deepseek.balance.invalid_reply")
         case .connectionFailed: L10n.text("deepseek.balance.connection_failed")
+        case .timedOut: L10n.text("deepseek.balance.timed_out")
         case .unavailable: L10n.text("deepseek.balance.unavailable")
         }
     }
@@ -121,11 +122,12 @@ public struct DeepSeekAPIKeyStore: Sendable {
 public enum DeepSeekAPIBalanceClient {
     static let endpoint = URL(string: "https://api.deepseek.com/user/balance")!
     public static func read(key: String, session: URLSession = .shared, now: @Sendable () -> Date = { Date() }) async throws -> DeepSeekBalance {
-        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: ProviderQuotaRefreshPolicy.replyTimeout)
         request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let data: Data, response: URLResponse
-        do { (data, response) = try await session.data(for: request) } catch { throw DeepSeekBalanceError.connectionFailed }
+        do { (data, response) = try await session.data(for: request) }
+        catch { throw (error as? URLError)?.code == .timedOut ? DeepSeekBalanceError.timedOut : DeepSeekBalanceError.connectionFailed }
         switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
         case 200: return try DeepSeekBalance.api(data, at: now())
         case 401, 403: throw DeepSeekBalanceError.invalidKey

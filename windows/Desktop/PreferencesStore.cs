@@ -50,7 +50,7 @@ internal sealed class PreferencesStore
         catch (FileNotFoundException) { return null; }
         catch (DirectoryNotFoundException) { return null; }
     }
-    internal (DesktopPreferences Value, bool Unavailable) Load()
+    internal (DesktopPreferences Value, bool Unavailable) Load(bool migrateOptIns = false, Func<string, bool>? durableEvidence = null)
     {
         lock (gate)
         {
@@ -65,7 +65,22 @@ internal sealed class PreferencesStore
                     basis = Read(); loaded = true; HasFutureVersion = Future(basis);
                     if (basis == null) return (new(), false);
                     if (HasFutureVersion) return Unavailable();
-                    try { return (Decode(basis), false); }
+                    try
+                    {
+                        var settings = Decode(basis);
+                        if (migrateOptIns && (!settings.WslOptInMigrated || !settings.DurableOptInMigrated))
+                        {
+                            if (!settings.WslOptInMigrated) settings = settings with { MonitorWSL = false, WslOptInMigrated = true };
+                            // Profiles that already used Dot keep it; others start off.
+                            if (!settings.DurableOptInMigrated)
+                                settings = settings with { MonitorDurable = (durableEvidence ?? DurableUsageEvidence.HasReceipts)(settings.CodexHome), DurableOptInMigrated = true };
+                            string temporary = file + ".tmp-" + Guid.NewGuid().ToString("N");
+                            try { Commit(PreferencesCodec.Encode(settings, basis), temporary); }
+                            catch (Exception error) when (Recoverable(error)) { }
+                            finally { DeleteTemporary(temporary); }
+                        }
+                        return (settings, false);
+                    }
                     catch (Exception error) when (Recoverable(error) && recoverDamagedFiles)
                     {
                         recoveryFileName = FileQuarantine.Move(file); basis = null;
@@ -114,21 +129,29 @@ internal sealed class PreferencesStore
                     else if (damaged) return false;
                 }
                 byte[] bytes = PreferencesCodec.Encode(settings, current ?? []);
-                Directory.CreateDirectory(Path.GetDirectoryName(file)!); CheckPath();
-                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                { stream.Write(bytes); stream.Flush(flushToDisk: true); }
-                CheckPath();
-                File.Move(temporary, file, overwrite: true);
-                basis = bytes; loaded = true; return true;
+                Commit(bytes, temporary); return true;
             }
             catch (Exception error) when (Recoverable(error)) { return false; }
             finally
             {
                 if (acquired) mutex!.ReleaseMutex();
                 mutex?.Dispose();
-                try { File.Delete(temporary); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+                DeleteTemporary(temporary);
             }
         }
+    }
+    private void Commit(byte[] bytes, string temporary)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!); CheckPath();
+        using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        { stream.Write(bytes); stream.Flush(flushToDisk: true); }
+        CheckPath();
+        File.Move(temporary, file, overwrite: true);
+        basis = bytes; loaded = true;
+    }
+    private static void DeleteTemporary(string path)
+    {
+        try { File.Delete(path); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
     private static DesktopPreferences Decode(byte[] bytes) => bytes.Length <= MaximumBytes ? PreferencesCodec.Decode(bytes) : throw new JsonException();
     private static bool Future(byte[]? bytes)

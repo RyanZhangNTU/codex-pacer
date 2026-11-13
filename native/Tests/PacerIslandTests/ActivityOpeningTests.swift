@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 import PacerCore
 @testable import PacerIsland
@@ -28,7 +29,32 @@ final class ActivityOpeningTests: XCTestCase {
         XCTAssertEqual(model.activityRefreshPolicy.interval, 5)
         model.setInteractionSuspended(false); model.setExpanded(true)
         XCTAssertEqual(model.activityRefreshPolicy.interval, 1)
+        // An open panel nobody can see refreshes like a collapsed one until every blocker clears.
+        model.setVisibilityBlocked(.displaySleep, true); model.setVisibilityBlocked(.occluded, true)
+        XCTAssertFalse(model.visiblyExpanded)
+        XCTAssertEqual(model.activityRefreshPolicy.interval, 5)
+        model.setVisibilityBlocked(.displaySleep, false)
+        XCTAssertEqual(model.activityRefreshPolicy.interval, 5)
+        model.setVisibilityBlocked(.occluded, false)
+        XCTAssertEqual(model.activityRefreshPolicy.interval, 1)
         XCTAssertEqual(model.activities, before)
+    }
+    func testUnchangedCloseAndDiagnosticCountersDoNotRedrawTheModel() throws {
+        let (model, _, _) = try completion()
+        model.close()
+        var redraws = 0
+        let watch = model.objectWillChange.sink { redraws += 1 }
+        defer { watch.cancel() }
+        model.close()
+        XCTAssertEqual(redraws, 0)
+        var status = RuntimeStreamStatus(); status.connected = true
+        var busier = status; busier.helperCpuSeconds = 4; busier.helperLoopIterations = 90; busier.notifications = 3; busier.fallbackScans = 1
+        XCTAssertTrue(IslandModel.sameVisibleStreamState(["local": status], ["local": busier]))
+        busier.connected = false
+        XCTAssertFalse(IslandModel.sameVisibleStreamState(["local": status], ["local": busier]))
+        XCTAssertFalse(IslandModel.sameVisibleStreamState(["local": status], [:]))
+        model.redrawClock()
+        XCTAssertEqual(redraws, 1)
     }
 
     func testSubagentRowsAndTotalsRemainWhenAnotherTaskStartsOrToolsRun() throws {

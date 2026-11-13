@@ -45,7 +45,9 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
         if (disposed || unsupported) return;
         if (!bridgeEnabled) { started = true; return; }
         bool available = session.Available;
-        if (available && availability != true)
+        // A profile that never signed in to Claude on the web has no cookies to
+        // read: it starts no private browser until a sign-in creates the profile.
+        if (available && availability != true && session.HasProfile)
         {
             try { await session.PrepareAsync(lifetime.Token); }
             catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
@@ -78,6 +80,7 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
         }
         if (cancelled.Remove(request.RequestID) || reads.ContainsKey(request.RequestID)) return;
         if (!Available || reads.Count >= 4 || !CurrentCookieScope(request.Context)) { _ = Reply(request, "offline", null); return; }
+        if (!session.HasProfile) { _ = Reply(request, "signedOut", null); return; }
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); reads[request.RequestID] = cancellation;
         _ = Read(request, cancellation);
     }

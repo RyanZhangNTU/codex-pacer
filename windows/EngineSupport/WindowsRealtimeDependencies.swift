@@ -14,6 +14,10 @@ struct CodexDesktopServices: Sendable {
     let routed: RoutedConnection?
     let setExecutable: @Sendable (String) -> Void
     let supportsDurable: Bool
+    /// Production checks that Codex Desktop's pipe exists before connecting,
+    /// so a closed Desktop costs one pipe lookup per discovery tick instead of
+    /// a package query, a failed connection and a publication every 30 s.
+    var desktopAvailable: @Sendable (URL) -> Bool = { _ in true }
     init(makeConnection: @escaping Connection, supportsDurable: Bool = false) {
         self.makeConnection = makeConnection; catalog = nil; routed = nil; setExecutable = { _ in }
         self.supportsDurable = supportsDurable
@@ -31,18 +35,21 @@ struct CodexDesktopServices: Sendable {
             guard let executable = CodexClient.findExecutable(customPath: path.get()) else { return nil }
             return CodexClient(executable: executable, home: home, timeout: 8)
         })
-        return .init(makeConnection: { home, interval, frame, closed in
+        var services = Self(makeConnection: { home, interval, frame, closed in
             WindowsDesktopCollector(home: home, interval: interval, onFrame: frame, onClosed: closed)
         }, catalog: catalog, routed: { home, hosts, local, interval, frame, closed in
             WindowsDesktopCollector(home: home, interval: interval, hosts: hosts, localRuntime: local,
                 authorization: { catalog.authorization.snapshot(home: home) }, onFrame: frame, onClosed: closed)
         }, setExecutable: { path.set($0) }, supportsDurable: true)
+        services.desktopAvailable = { _ in WindowsDesktopTransport.desktopEndpointExists() }
+        return services
         #else
         return nil
         #endif
     }
     func makeMonitor(retryInterval: TimeInterval = 30, ssh: WindowsSSHServices? = nil, wsl: WindowsWSLServices? = nil,
-                     targets: (@Sendable (URL) async -> [RemoteActivityTarget])? = nil) -> RealtimeActivityMonitor {
+                     targets: (@Sendable (URL) async -> [RemoteActivityTarget])? = nil,
+                     wslDisconnected: WindowsWSLServices.Disconnect? = nil) -> RealtimeActivityMonitor {
         let catalog = catalog ?? RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse },
             files: WindowsFileSystem(), makeClient: { _ in nil })
         let authorization: (@Sendable (URL) -> RemoteControlAuthorizationSnapshot)?
@@ -54,11 +61,11 @@ struct CodexDesktopServices: Sendable {
         }
         let base = ssh?.processes ?? WindowsSSHProcessLauncher(ssh: WindowsExecutables.ssh)
         return RealtimeActivityMonitor(controlCatalog: catalog, services: .init(
-            desktopAvailable: { _ in true }, controlAvailable: { _ in false },
+            desktopAvailable: desktopAvailable, controlAvailable: { _ in false },
             makeDesktop: { home, hosts, local, interval, frame, closed in
                 if let routed { return routed(home, hosts, local, interval, frame, closed) }
                 return makeConnection(home, interval, frame, closed)
-            }, processes: wsl?.launcher(base: base) ?? base, python: WindowsExecutables.python, ssh: ssh?.ssh ?? WindowsExecutables.ssh,
+            }, processes: wsl?.launcher(base: base, disconnected: wslDisconnected) ?? base, python: WindowsExecutables.python, ssh: ssh?.ssh ?? WindowsExecutables.ssh,
             sshTargets: targets, sshArguments: arguments,
             remoteControlAuthorization: authorization, supportsDurable: supportsDurable),
             retryInterval: retryInterval)
@@ -82,5 +89,6 @@ struct CodexDesktopState: Sendable {
     var durableAccountScope: String?
     /// Failed sources without a stream status, such as an exited SSH helper.
     var unavailable: [String] = []
+    var remoteControlDirectory: RemoteControlDirectoryStatus?
     var remoteStatuses: [String: RuntimeStreamStatus] { statuses.filter { $0.key != "local" } }
 }

@@ -14,6 +14,8 @@ internal interface IClaudeWebSession : IAsyncDisposable
     Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation);
     Task<bool> SignInAsync();
     Task ClearAsync(CancellationToken cancellation);
+    /// The private browser profile exists, so a sign-in may have stored cookies.
+    bool HasProfile => true;
 }
 
 internal sealed class ClaudeWebSession : ProviderWebSession, IClaudeWebSession

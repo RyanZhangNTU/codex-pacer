@@ -38,7 +38,7 @@ Codex quota needs nothing extra.
 | Part | What it tells you |
 | --- | --- |
 | **Task badge** | How many tasks are running. Its ring shows which services are working, or their average progress. Amber means a task needs your reply or approval; a check means one just finished. |
-| **Speed** | The combined output speed of your running tasks, in tokens per second. |
+| **Speed** | The combined output speed of your running tasks, in tokens per second. Shows `000` when no rate is available. |
 | **Quota** | Quota left for Codex and Claude, or your DeepSeek balance or budget. |
 | **Warnings** | Appear only when something needs attention, such as low quota or a disconnected SSH host. |
 
@@ -82,7 +82,7 @@ Codex, Claude Code and DeepSeek Harness each report how much of your request is 
 
 Estimates are the agent's own guess, so a ring can move back. Rings are on by default; turn them off for each service with **Progress Ring** on its page in the main window. Start a new session after turning a ring on.
 
-Pacer labels Dot Durable tasks assigned to this computer with `Dot`, even when their chats are closed. On Windows this works with the Microsoft Store version of Codex Desktop and its default profile. The Codex **Progress Ring** switch sets up percentage reporting. Restart Codex Desktop after turning the ring on so Dot tasks pick it up. Turning the ring off stops new reports right away. Pacer still shows whether the task is running or has finished.
+Turn on **Include Codex Dot Tasks** on the Remote page to see Dot Durable tasks. It is off by default because checking them uses more power; after an upgrade it stays on if Dot tasks already reported progress on this computer. Pacer labels Dot tasks assigned to this computer with `Dot`, even when their chats are closed. On Windows this works with the Microsoft Store version of Codex Desktop and its default profile. The Codex **Progress Ring** switch sets up percentage reporting. Restart Codex Desktop after turning the ring on so Dot tasks pick it up. Turning the ring off stops new reports right away. Pacer still shows whether the task is running or has finished.
 
 ## Quota and balance
 
@@ -102,9 +102,11 @@ Spend made elsewhere on your account, such as web searches or another device, is
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
 
-**SSH hosts and WSL.** Pacer follows the SSH hosts you already use in Codex and Claude, and WSL on Windows. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.
+**SSH hosts.** Pacer follows the hosts you already use in Codex and Claude. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.
 
-**Codex Remote Control.** Keep the Codex app open and connected to the remote host.
+**WSL on Windows.** Turn on WSL monitoring in **Settings → Remote** when you need it. At least one distribution must be installed. Monitoring increases power use. Use **Refresh Now** after installing a distribution or to check which ones are running.
+
+**Codex Remote Control.** Turn on monitoring in **Settings → Remote** and keep Codex open and connected to the remote host. Use **Refresh Devices** to update the list of paired devices.
 
 ## The main window
 

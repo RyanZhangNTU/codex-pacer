@@ -363,6 +363,11 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         XCTAssertEqual(try run(prompt), "", "A session without the plugin is never asked to call it")
         let start: [String: Any] = ["hook_event_name": "SessionStart", "session_id": "synthetic-ring-session", "source": "startup"]
         XCTAssertEqual(try run(start), "")
+        let spool = pacer.appendingPathComponent("events.jsonl")
+        let launchRecords = try Data(contentsOf: spool).split(separator: 10).compactMap {
+            try JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]
+        }
+        XCTAssertEqual(launchRecords.filter { $0["sessionLaunch"] as? Bool == true }.count, 1)
         XCTAssertEqual(try run(prompt), "", "A session that started before the plugin was enabled still lacks it")
         try JSONSerialization.data(withJSONObject: ["enabledPlugins": ["pacer@pacer": true]]).write(to: home.appendingPathComponent("settings.json"))
         // Claude Desktop adds a newly enabled plugin to running sessions; other clients wait for a new session.

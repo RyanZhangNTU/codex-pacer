@@ -18,6 +18,22 @@ final class ClaudeActivityTests: XCTestCase {
         let record: [String: Any] = ["kind": kind, "origin": "hook", "sessionId": session, "promptId": turn, "at": now.timeIntervalSince1970 + offset]
         state.consume(ClaudeActivityRecord.encode(record.merging(extra) { _, newer in newer })!, now: now.addingTimeInterval(100), attaching: attaching)
     }
+    func testHostLaunchEvidenceComesFromLocalLaunchHooksAndSurvivesOrdinaryUpdates() {
+        var local = ClaudeActivityState()
+        consume("metadata", state: &local, offset: 1, extra: ["sessionLaunch": true, "origin": "transcript"])
+        XCTAssertNil(local.activities.first?.hostLaunchAt)
+        consume("metadata", state: &local, offset: 2, extra: ["sessionLaunch": true])
+        consume("prompt", state: &local, offset: 3)
+        consume("metadata", state: &local, offset: 4)
+        consume("metadata", state: &local, offset: 1, extra: ["sessionLaunch": true], attaching: true)
+        XCTAssertEqual(local.activities.first?.hostLaunchAt, now.addingTimeInterval(2))
+        consume("metadata", state: &local, offset: 5, extra: ["sessionLaunch": true])
+        XCTAssertEqual(local.activities.first?.hostLaunchAt, now.addingTimeInterval(5))
+
+        var remote = ClaudeActivityState(sourceID: "remote-ssh-discovered:fixture")
+        consume("metadata", state: &remote, offset: 6, extra: ["sessionLaunch": true])
+        XCTAssertNil(remote.activities.first?.hostLaunchAt)
+    }
     private func nextStepBox(_ endTurn: Any?, promptID: String? = nil) -> [Data] {
         var raw: [String: Any] = ["type": "user", "sessionId": session, "uuid": "result-box", "timestamp": "2027-01-15T08:00:03Z",
             "entrypoint": "claude-desktop", "toolUseResult": [["type": "text", "text": "PRIVATE box"]],

@@ -35,6 +35,10 @@ public sealed class TaskProgressRing : Grid
     internal static readonly Stopwatch Clock = Stopwatch.StartNew();
     private static readonly Dictionary<string, Memory> Memories = new();
     internal static double Now => Clock.Elapsed.TotalSeconds;
+    /// Rates for the endless loops in the panel. WPF otherwise ticks them at the
+    /// display's rate, and every tick repaints the whole layered island: pulses
+    /// and breaths read the same at a low rate, a turning comet needs a little more.
+    internal const int PulseFrameRate = 12, TravelFrameRate = 20;
     /// The comet's turn: a working request, and a long step.
     internal const double WorkingPeriod = 2.0, LongStepPeriod = 3.2;
     /// The comet's tail as a share of the circle; a new request's grows from a point.
@@ -365,8 +369,9 @@ public sealed class TaskProgressRing : Grid
             if (period is double seconds)
             {
                 if (memory != null && memory.SpinPeriod != seconds) { memory.SpinOrigin = angle; memory.SpinEpoch = now; memory.SpinPeriod = seconds; }
-                spinLease = new AnimationLease(new DoubleAnimation(angle, angle + 360, TimeSpan.FromSeconds(seconds)) { RepeatBehavior = RepeatBehavior.Forever },
-                    clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
+                var turn = new DoubleAnimation(angle, angle + 360, TimeSpan.FromSeconds(seconds)) { RepeatBehavior = RepeatBehavior.Forever };
+                Timeline.SetDesiredFrameRate(turn, TravelFrameRate);
+                spinLease = new AnimationLease(turn, clock => rotation.ApplyAnimationClock(RotateTransform.AngleProperty, clock));
             }
         }
         pending.Still = pendingShown && !spin;
@@ -384,6 +389,7 @@ public sealed class TaskProgressRing : Grid
                 run.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
                 run.KeyFrames.Add(new LinearDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowTravel))));
                 run.KeyFrames.Add(new DiscreteDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowPeriod))));
+                Timeline.SetDesiredFrameRate(run, TravelFrameRate);
                 flowLease = new AnimationLease(run, clock => flow.ApplyAnimationClock(EstimatePaint.FrontProperty, clock));
             }
         }
@@ -402,6 +408,7 @@ public sealed class TaskProgressRing : Grid
                 breath.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.Zero)));
                 breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.85, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod / 2)), ease));
                 breath.KeyFrames.Add(new EasingDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.StepPeriod)), ease));
+                Timeline.SetDesiredFrameRate(breath, PulseFrameRate);
                 stepLease = new AnimationLease(breath, clock => step.ApplyAnimationClock(OpacityProperty, clock));
             }
         }
@@ -414,9 +421,11 @@ public sealed class TaskProgressRing : Grid
             if (breath2 is UIElement element)
             {
                 double high = element == pending ? PendingOpacity : 1;
-                breathLease = new AnimationLease(new DoubleAnimation(high, high * BreathLow, TimeSpan.FromSeconds(BreathPeriod / 2))
+                var pulse = new DoubleAnimation(high, high * BreathLow, TimeSpan.FromSeconds(BreathPeriod / 2))
                     { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-                      BeginTime = TimeSpan.FromSeconds(-(now % BreathPeriod)) }, clock => element.ApplyAnimationClock(OpacityProperty, clock));
+                      BeginTime = TimeSpan.FromSeconds(-(now % BreathPeriod)) };
+                Timeline.SetDesiredFrameRate(pulse, PulseFrameRate);
+                breathLease = new AnimationLease(pulse, clock => element.ApplyAnimationClock(OpacityProperty, clock));
                 breathingTarget = element;
             }
         }

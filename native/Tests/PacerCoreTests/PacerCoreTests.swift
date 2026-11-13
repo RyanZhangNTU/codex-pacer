@@ -41,7 +41,8 @@ final class QuotaTests: XCTestCase {
     }
     func testOldSnapshotBecomesStaleWithoutInventingAReset() throws {
         let snapshot = try QuotaSnapshot.decode(Data("{\"rateLimits\":{\"primary\":{\"usedPercent\":90}}}".utf8), capturedAt: Date(timeIntervalSince1970: 100))
-        XCTAssertTrue(snapshot.isStale(at: Date(timeIntervalSince1970: 401)))
+        XCTAssertFalse(snapshot.isStale(at: Date(timeIntervalSince1970: 700)), "Ten minutes old is still current")
+        XCTAssertTrue(snapshot.isStale(at: Date(timeIntervalSince1970: 701)))
         XCTAssertEqual(snapshot.windows.first?.remainingPercent, 10)
     }
     private func decode(_ text: String) throws -> QuotaSnapshot { try QuotaSnapshot.decode(Data(text.utf8)) }

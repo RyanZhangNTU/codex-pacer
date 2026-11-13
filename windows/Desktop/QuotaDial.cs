@@ -26,9 +26,7 @@ internal static class RingDrawing
                 geometry.ArcTo(At(start + sweep * part / pieces), new Size(radius, radius), 0, false, SweepDirection.Clockwise, true, false);
         }
         path.Freeze();
-        var pen = new Pen(ink, thickness) { StartLineCap = round ? PenLineCap.Round : PenLineCap.Flat, EndLineCap = round ? PenLineCap.Round : PenLineCap.Flat };
-        if (dashed) pen.DashStyle = new DashStyle(new[] { 2 / thickness, 5 / thickness }, 0);
-        drawing.DrawGeometry(null, pen, path);
+        drawing.DrawGeometry(null, DrawingCache.Pen(ink, thickness, round ? PenLineCap.Round : PenLineCap.Flat, dashed), path);
     }
 }
 
@@ -304,12 +302,18 @@ public sealed class CompactQuotaGlyph : FrameworkElement
     private bool Side => rings.Length == 2 && !Split && layout == "sideBySide";
     internal void Update(CompactProjection value, EngineWallet? wallet, bool strip = false)
     {
-        rings = value.Rings.ToArray(); clock = value.GaugeClock ? wallet : null;
+        var nextClock = value.GaugeClock ? wallet : null;
+        // Equal rings in the same tone draw nothing new.
+        if (rings.SequenceEqual(value.Rings) && DeepSeekPriceClock.SameDrawing(clock, nextClock) && layout == value.Choices.RingLayout
+            && vertical == strip && size == value.Sizes.Gauge && tone == (PacerPalette.Accent, PacerPalette.Light)) return;
+        tone = (PacerPalette.Accent, PacerPalette.Light);
+        rings = value.Rings.ToArray(); clock = nextClock;
         layout = value.Choices.RingLayout; vertical = strip; size = value.Sizes.Gauge;
         double unit = size / 20;
         Width = Side && !vertical ? 36 * unit : size; Height = Side && vertical ? 36 * unit : size;
         InvalidateVisual();
     }
+    private (string, bool)? tone;
     /// While the quota value takes turns, the other service's ring steps back.
     internal string? Highlighted { get => focus; set { if (focus == value) return; focus = value; InvalidateVisual(); } }
     protected override void OnRender(DrawingContext drawing)
@@ -324,10 +328,17 @@ public sealed class CompactQuotaGlyph : FrameworkElement
         drawing.Pop();
     }
     private double Emphasis(CompactRing ring) => (ring.Dimmed ? 0.5 : 1) * (focus != null && focus != ring.Provider && rings.Length > 1 && !Split ? 0.42 : 1);
+    [ThreadStatic] private static System.Collections.Generic.Dictionary<(Brush, double), Brush>? tracks;
     private static Brush Track(CompactRing ring)
+        => ring.Exhausted == true ? Faded(PacerPalette.Danger, 0.4) : Faded(PacerPalette.Provider(ring.Provider), 0.26);
+    /// One frozen copy per palette brush and strength, so each ring keeps its pen.
+    private static Brush Faded(Brush source, double opacity)
     {
-        if (ring.Exhausted == true) { var red = PacerPalette.Danger.Clone(); red.Opacity = 0.4; red.Freeze(); return red; }
-        var track = PacerPalette.Provider(ring.Provider).Clone(); track.Opacity = 0.26; track.Freeze(); return track;
+        var cache = tracks ??= new();
+        if (cache.TryGetValue((source, opacity), out var brush)) return brush;
+        if (cache.Count >= 64) cache.Clear();
+        brush = source.Clone(); brush.Opacity = opacity; brush.Freeze();
+        return cache[(source, opacity)] = brush;
     }
     private static Brush Fill(CompactRing ring) => ring.Low == true ? PacerPalette.Attention : PacerPalette.Provider(ring.Provider);
     private void Gauge(DrawingContext drawing, CompactRing ring, Point centre, double radius, double stroke)
@@ -365,8 +376,16 @@ public sealed class CompactQuotaGlyph : FrameworkElement
 internal sealed class DeepSeekPriceClock : FrameworkElement
 {
     private EngineWallet? wallet;
+    private (string, bool)? tone;
     internal bool Compact { get; init; }
-    internal void Update(EngineWallet? value) { wallet = value; InvalidateVisual(); }
+    internal void Update(EngineWallet? value)
+    {
+        if (SameDrawing(wallet, value) && tone == (PacerPalette.Accent, PacerPalette.Light)) return;
+        tone = (PacerPalette.Accent, PacerPalette.Light); wallet = value; InvalidateVisual();
+    }
+    /// Whether two wallets draw the same clock: the hand, today's hours, the peaks and the state.
+    internal static bool SameDrawing(EngineWallet? a, EngineWallet? b) => ReferenceEquals(a, b) || a != null && b != null
+        && a.State == b.State && a.Angle == b.Angle && a.PeakNow == b.PeakNow && a.Hourly.SequenceEqual(b.Hourly) && a.Peak.SequenceEqual(b.Peak);
     protected override void OnRender(DrawingContext drawing)
     {
         if (wallet == null) return;

@@ -31,6 +31,8 @@ enum DeepSeekWebSessionStore {
 final class DeepSeekWebBalanceReader: NSObject, WKNavigationDelegate {
     private var webView: WKWebView?
     private var loaded: CheckedContinuation<Bool, Never>?
+    private var reply: CheckedContinuation<Any?, Error>?
+    private var replyLimit: Task<Void, Never>?
 
     func read(now: Date = Date()) async throws -> DeepSeekBalance {
         let result = try await evaluate(DeepSeekWebSessionStore.summaryScript)
@@ -56,8 +58,26 @@ final class DeepSeekWebBalanceReader: NSObject, WKNavigationDelegate {
             view.loadHTMLString("<!doctype html><title>Pacer</title>", baseURL: DeepSeekWebSessionStore.origin)
         }
         guard ready else { throw DeepSeekBalanceError.connectionFailed }
-        do { return try await view.callAsyncJavaScript(script, contentWorld: .defaultClient) }
-        catch { throw DeepSeekBalanceError.connectionFailed }
+        // The page's fetch has no limit of its own. A read that outlasts the shared
+        // reply limit is reported as slow, and release() discards its view.
+        return try await withCheckedThrowingContinuation { continuation in
+            reply = continuation
+            replyLimit = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(ProviderQuotaRefreshPolicy.replyTimeout * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                self?.finishReply(.failure(DeepSeekBalanceError.timedOut))
+            }
+            view.callAsyncJavaScript(script, in: nil, in: .defaultClient) { [weak self] result in
+                MainActor.assumeIsolated {
+                    self?.finishReply(result.map { Optional($0) }.mapError { _ -> Error in DeepSeekBalanceError.connectionFailed })
+                }
+            }
+        }
+    }
+
+    private func finishReply(_ result: Result<Any?, Error>) {
+        replyLimit?.cancel(); replyLimit = nil
+        reply?.resume(with: result); reply = nil
     }
 
     private func release() {
