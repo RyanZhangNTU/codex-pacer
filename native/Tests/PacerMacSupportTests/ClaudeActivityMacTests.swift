@@ -26,7 +26,9 @@ final class ClaudeActivityMacTests: XCTestCase {
         warmup.arguments = ["-c", "__name__='pacer_fixture'\n" + ClaudeActivityProbe.script]
         warmup.standardInput = FileHandle.nullDevice; warmup.standardOutput = FileHandle.nullDevice; warmup.standardError = FileHandle.nullDevice
         try warmup.run()
-        let warmupDeadline = Date().addingTimeInterval(10)
+        // A cold hosted runner can take over ten seconds to start Python the
+        // first time; only the helper's own deadlines below are under test.
+        let warmupDeadline = Date().addingTimeInterval(TestWait.limit)
         while warmup.isRunning && Date() < warmupDeadline { Thread.sleep(forTimeInterval: 0.01) }
         if warmup.isRunning { warmup.terminate(); warmup.waitUntilExit(); XCTFail("The runner could not prepare Python for the helper fixture"); return }
         warmup.waitUntilExit(); XCTAssertEqual(warmup.terminationStatus, 0)
