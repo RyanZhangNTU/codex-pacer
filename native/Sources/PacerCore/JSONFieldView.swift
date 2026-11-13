@@ -46,7 +46,8 @@ package struct JSONFieldView {
         return false
     }
 
-    package func fields(_ allowed: Set<String>? = nil, maximumCount: Int = 512) throws -> [String: Self] {
+    package func fields(_ allowed: Set<String>? = nil, maximumCount: Int = 512,
+                        allowedPrefixes: [String] = []) throws -> [String: Self] {
         try data.withUnsafeBytes { raw in
             var cursor = Cursor(bytes: raw.bindMemory(to: UInt8.self), position: range.lowerBound, end: range.upperBound)
             try cursor.require(123); cursor.whitespace()
@@ -60,7 +61,7 @@ package struct JSONFieldView {
                 try cursor.skipValue(depth: 0)
                 if keyRange.count <= 1538,
                    let key = Self.decodeString(data, keyRange),
-                   key.count <= 256, allowed?.contains(key) ?? true {
+                   key.count <= 256, allowed?.contains(key) != false || allowedPrefixes.contains(where: { key.hasPrefix($0) }) {
                     fields[key] = Self(data: data, range: valueStart..<cursor.position, projectedItems: projectedItems)
                     count += 1
                     guard count <= maximumCount else { throw Failure.limit }

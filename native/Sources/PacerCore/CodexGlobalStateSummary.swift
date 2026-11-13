@@ -16,7 +16,8 @@ enum CodexGlobalStateSummary {
     private static func parse(_ file: URL) -> Value {
         guard let data = try? Data(contentsOf: file), data.count < 8 * 1024 * 1024,
               let fields = try? JSONFieldView.document(data).fields(
-                RemoteActivityTarget.globalStateFields.union(RemoteControlActivityTarget.globalStateFields)) else {
+                RemoteActivityTarget.globalStateFields.union(RemoteControlActivityTarget.globalStateFields),
+                allowedPrefixes: RemoteActivityTarget.scopedFieldPrefixes) else {
             return Value(sshTargets: nil, remoteControlTargets: [])
         }
         return Value(sshTargets: RemoteActivityTarget.configuration(fields),
