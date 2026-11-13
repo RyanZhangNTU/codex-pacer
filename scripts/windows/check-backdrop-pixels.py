@@ -24,12 +24,18 @@ def check(root: Path) -> list[dict]:
         scale = 4
         mask = Image.new("L", (image.shape[1] * scale, image.shape[0] * scale))
         points = [((x + capture["x"]) * scale, (y + capture["y"]) * scale) for x, y in polygon]
-        ImageDraw.Draw(mask).polygon(points, fill=255)
+        draw = ImageDraw.Draw(mask)
+        draw.polygon(points, fill=255)
+        # The decoration window draws shoulders and a floating shadow outside the
+        # shell by design; only their recorded outer bounds are excused.
+        for left, top, right, bottom in capture.get("decoration", []):
+            draw.rectangle([left * scale, top * scale, right * scale, bottom * scale], fill=255)
         mask = mask.filter(ImageFilter.MaxFilter(2 * scale + 1)).resize((image.shape[1], image.shape[0]), Image.Resampling.BOX)
         outside = np.asarray(mask) == 0
         difference = np.abs(image - reference).max(axis=2)
         results.append({"name": name, "outsidePixels": int(outside.sum()), "outsideChangedPixels": int(np.count_nonzero(difference[outside])),
-                        "outsideMaxDifference": int(difference[outside].max()), "excludedAntialiasPixels": 1})
+                        "outsideMaxDifference": int(difference[outside].max()), "excludedAntialiasPixels": 1,
+                        "decorationRegions": len(capture.get("decoration", []))})
     (root / "outside-pixels.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     return results
 

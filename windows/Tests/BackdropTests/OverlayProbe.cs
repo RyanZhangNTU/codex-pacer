@@ -43,7 +43,16 @@ internal static class OverlayProbe
             Check(visible.X >= bounds.Left && visible.Y >= bounds.Top && visible.Right <= bounds.Right && visible.Bottom <= bounds.Bottom,
                 $"Synthetic scene covers {name} (surface={visible}, scene={bounds.Left},{bounds.Top},{bounds.Right},{bounds.Bottom})");
             scene.Capture(Path.Combine(output, name + ".png"), ProtectedScene.Surfaces(island));
-            captures.Add(new { name, x = frame.X - bounds.Left, y = frame.Y - bounds.Top, frame.Width, frame.Height, frame.Scale, frame.Polygon,
+            // The decoration window's shoulders and shadow lie outside the shell by
+            // design; record their outer bounds in capture pixels so only they are excused.
+            var device = PresentationSource.FromVisual(island)!.CompositionTarget!.TransformToDevice;
+            var (shoulders, cast) = island.DecorationRegions;
+            var decoration = new[] { shoulders, cast }.Where(region => !region.IsEmpty).Select(region =>
+            {
+                Point from = device.Transform(region.TopLeft), to = device.Transform(region.BottomRight);
+                return new[] { from.X - bounds.Left, from.Y - bounds.Top, to.X - bounds.Left, to.Y - bounds.Top };
+            }).ToArray();
+            captures.Add(new { name, x = frame.X - bounds.Left, y = frame.Y - bounds.Top, frame.Width, frame.Height, frame.Scale, frame.Polygon, decoration,
                 preferred = island.SurfaceDecision.Preferred, reason = island.SurfaceDecision.Reason.ToString(), glass = island.GlassVisible, nonactive = !island.IsActive });
         }
         try
