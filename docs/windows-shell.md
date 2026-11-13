@@ -98,6 +98,8 @@ Checks, after building the desktop and in a screen slot of their own (pixel chec
 ./scripts/windows/test-backdrop.ps1 -Mode overlay   # also input, cpu, motion, settle, interactive
 ```
 
+`overlay` compares each capture with the scene alone. Outside the shell's outline, only the outer bounds of the shoulders and floating shadow that the decoration window reports may differ.
+
 `settle` opens and closes the island 24 times in Black and Liquid Glass, attached and floating, samples the screen about every 9 ms and fails when the outline moves more than 2 pixels after the last frame. It keeps only outlines; `PACER_SETTLE_FRAMES=1` also saves the synthetic frames around a failure.
 
 Each run needs a fresh output folder (default `output/windows/backdrop/<id>/`) and refuses to start while another Pacer screen test runs. An unavailable native backdrop fails the run instead of passing Black as glass. `interactive` keeps the window for up to 180 seconds; create a `finish` file in its output folder to end it early. Not automated: real changes of system settings, several monitors or mixed DPI, Narrator, recovery after sleep, lock, Remote Desktop or a GPU switch, and other GPUs.

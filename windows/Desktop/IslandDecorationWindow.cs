@@ -62,6 +62,18 @@ internal sealed class IslandDecorationWindow : Window
         if (castShadow) shadow.Set(local, Math.Min(corners.TopLeft, Math.Min(local.Width, local.Height) / 2), bounds.Width, bounds.Height);
     }
     internal void Conceal() { if (IsVisible) Hide(); placed = null; drawn = null; }
+    /// The outer bounds of what this window draws, in screen points: the
+    /// shoulders and the shadow, each empty when not drawn. Read by the overlay probe.
+    internal (Rect Shoulders, Rect Shadow) Regions
+    {
+        get
+        {
+            if (!IsVisible || placed is not { } at || drawn is not { } frame) return (Rect.Empty, Rect.Empty);
+            Rect Screen(Rect local) => local.IsEmpty ? local : new(local.X + at.X, local.Y + at.Y, local.Width, local.Height);
+            var fills = shoulders.Visibility == Visibility.Visible && shoulders.Data != null ? shoulders.Data.Bounds : Rect.Empty;
+            return (Screen(fills), Screen(ShowsShadow ? ShadowPaint.Extent(frame.Shell) : Rect.Empty));
+        }
+    }
     /// Two fillets at the island's ends against `side`, each a quarter circle
     /// of `radius` that flares the island into the screen edge, with a sliver
     /// reaching into the island so no seam shows between them.
@@ -112,6 +124,8 @@ internal sealed class IslandDecorationWindow : Window
         private Rect shell;
         private double radius;
         internal ShadowPaint() { IsHitTestVisible = false; }
+        /// The outermost ring, which contains every smaller one.
+        internal static Rect Extent(Rect shell) => new(shell.X - Blur, shell.Y - Blur + Fall, shell.Width + 2 * Blur, shell.Height + 2 * Blur);
         internal void Set(Rect value, double corner, double width, double height)
         {
             if (shell == value && radius == corner && Width == width && Height == height) return;
