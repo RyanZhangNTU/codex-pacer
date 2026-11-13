@@ -53,6 +53,7 @@ extension AgentProvider {
         case .codex: Color(red: 14 / 255, green: 140 / 255, blue: 120 / 255)
         case .claude: Color(red: 196 / 255, green: 88 / 255, blue: 31 / 255)
         case .deepseek: Color(red: 62 / 255, green: 91 / 255, blue: 219 / 255)
+        default: Color(red: 105 / 255, green: 66 / 255, blue: 162 / 255)
         }
     }
     /// The service's own color, which its icon keeps whatever the accent.
@@ -61,18 +62,13 @@ extension AgentProvider {
         case .codex: Color(red: 0.49, green: 0.84, blue: 0.77)
         case .claude: Color(red: 0.95, green: 0.61, blue: 0.42)
         case .deepseek: color
+        default: Color(red: 195 / 255, green: 171 / 255, blue: 241 / 255)
         }
     }
     /// DeepSeek's blue (#7B93FF) reads at the same weight as the other two on black.
     var color: Color { Color(red: 0x7B / 255, green: 0x93 / 255, blue: 0xFF / 255) }
     /// Generic glyph for settings navigation and app buttons; never a vendor logo.
-    var glyph: String {
-        switch self {
-        case .codex: "chevron.left.forwardslash.chevron.right"
-        case .claude: "asterisk"
-        case .deepseek: "water.waves"
-        }
-    }
+    var glyph: String { taskSymbol }
 }
 
 /// The Appearance page's accent color. Multicolor keeps each service's own
@@ -114,7 +110,7 @@ enum PacerAccent: String, CaseIterable, Identifiable {
     /// light color such as yellow keeps at least 3.5:1 against the light face.
     func tint(for provider: AgentProvider, light: Bool = false) -> Color? {
         guard let base = light ? lightComponents(for: provider) : components.map({ base in
-            let lift = switch provider { case .codex: 0.0; case .claude: 0.42; case .deepseek: 0.66 }
+            let lift = switch provider { case .claude: 0.42; case .deepseek: 0.66; default: 0.0 }
             func lifted(_ value: Double) -> Double { value + (1 - value) * lift }
             return (lifted(base.red), lifted(base.green), lifted(base.blue))
         }) else { return nil }
@@ -123,7 +119,7 @@ enum PacerAccent: String, CaseIterable, Identifiable {
     /// Relative luminance of each service's shade on light glass: Codex 0.07,
     /// Claude 0.12 and DeepSeek 0.20, about 7.4, 5.2 and 3.6:1 against #ECECF0.
     static func lightLuminance(for provider: AgentProvider) -> Double {
-        switch provider { case .codex: 0.07; case .claude: 0.12; case .deepseek: 0.2 }
+        switch provider { case .claude: 0.12; case .deepseek: 0.2; default: 0.07 }
     }
     /// The color's linear light scaled evenly to the service's luminance, which
     /// keeps its hue and saturation.
@@ -280,17 +276,21 @@ struct IslandIconButton: View {
     let title: String
     var help: String?
     var active = false
-    /// A provider color stays on at rest; plain controls brighten on hover.
-    var tint: Color?
+    var provider: AgentProvider?
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(tint ?? (active || hovered ? PacerPalette.primary : PacerPalette.secondary))
+            Group {
+                if let provider {
+                    ProviderAppIcon(provider: provider, size: 17, outline: true)
+                } else {
+                    Image(systemName: symbol).font(.system(size: 12, weight: .medium))
+                }
+            }
+                .foregroundStyle(active || hovered ? PacerPalette.primary : PacerPalette.secondary)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(active || (hovered && enabled) ? PacerPalette.hover : .clear))
                 .contentShape(Circle())

@@ -394,7 +394,7 @@ internal sealed class GuideContent : StackPanel
         var layout = new Grid { Margin = new Thickness(12) };
         foreach (var height in new[] { GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto }) layout.RowDefinitions.Add(new RowDefinition { Height = height });
         var top = new Grid();
-        var tile = GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), 34, darkGlyph: true); tile.HorizontalAlignment = HorizontalAlignment.Left; top.Children.Add(tile);
+        var tile = ProviderIcon.Tile(provider, 34); tile.HorizontalAlignment = HorizontalAlignment.Left; top.Children.Add(tile);
         var toggle = Switch(name, "welcome.module." + provider, () => session.Current.ProviderModes[provider] switch
         { "enabled" => true, "disabled" => false, _ => snapshot()?.Modules?.FirstOrDefault(value => value.Provider == provider)?.Enabled == true },
             value => Preference(p => p with { ProviderModes = new(p.ProviderModes) { [provider] = value ? "enabled" : "disabled" } }));
@@ -614,12 +614,7 @@ internal sealed class GuideContent : StackPanel
             string name = id switch { "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek", _ => ui.Text("help.section." + id) };
             var chip = new RadioButton { Style = (Style)FindResource("SettingsTopicChip"), GroupName = "help.topics", Margin = new Thickness(0, 0, 6, 6) };
             var label = new StackPanel { Orientation = Orientation.Horizontal };
-            if (module)
-            {
-                var glyph = new IconGlyph { Symbol = GuideArt.ProviderSymbol(id), Width = 11, Height = 11, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center, Ink = PacerPalette.Provider(id) };
-                chip.Checked += (_, _) => glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSelectionText"); chip.Unchecked += (_, _) => glyph.Ink = PacerPalette.Provider(id);
-                label.Children.Add(glyph);
-            }
+            if (module) label.Children.Add(ProviderIcon.Caption(id));
             var text = new TextBlock { Text = name, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
             text.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Control.Foreground)) { Source = chip }); label.Children.Add(text);
             chip.Content = label; Identify(chip, module ? "help.module." + id : "help.topic." + id, name);
@@ -638,7 +633,7 @@ internal sealed class GuideContent : StackPanel
         {
             // Under one accent the services are its shades, as the tiles draw them.
             bool shades = PacerPalette.Accent != "multicolor";
-            var services = HelpRow("help.services", providers.Select(provider => (UIElement)GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), 18, true)).ToArray());
+            var services = HelpRow("help.services", providers.Select(provider => (UIElement)ProviderIcon.Tile(provider, 18)).ToArray());
             if (shades && services.Children.OfType<StackPanel>().FirstOrDefault(child => Grid.GetColumn(child) == 1)?.Children[1] is TextBlock detail) detail.Text = ui.Text("help.services.shades");
             target.Children.Add(Group(HelpInset, services,
                 HelpRow("help.tasks", Tasks(1, "codex"), Tasks(2, "codex", "claude"), Tasks(3, providers)),
@@ -652,7 +647,7 @@ internal sealed class GuideContent : StackPanel
         else if (id == "expanded")
             target.Children.Add(Group(HelpInset,
                 HelpRow("help.hover", Mark("cursorarrow.rays")), HelpRow("help.open", Mark("arrow.up.forward.app")),
-                HelpRow("help.app_buttons", providers.Select(provider => (UIElement)Mark(GuideArt.ProviderSymbol(provider), PacerPalette.Provider(provider), 12)).ToArray()),
+                HelpRow("help.app_buttons", providers.Select(provider => (UIElement)ProviderIcon.CreateLaunch(provider, 14)).ToArray()),
                 HelpRow("help.read", Mark("checkmark.rectangle.stack")), HelpRow("help.pace", PaceSample())));
         else
         {
@@ -713,7 +708,7 @@ internal sealed class GuideContent : StackPanel
     {
         switch (key)
         {
-            case "balance": return [GuideArt.Tile(GuideArt.ProviderSymbol("deepseek"), GuideArt.ProviderTile("deepseek"), 18, true), Figure("¥86", PacerPalette.DeepSeek)];
+            case "balance": return [ProviderIcon.Tile("deepseek", 18), Figure("¥86", PacerPalette.DeepSeek)];
             case "mode": return [Mark("clock", PacerPalette.DeepSeek), Mark("chart.pie", PacerPalette.DeepSeek)];
             case "cost": return [Figure("≈¥0.42", PacerPalette.DeepSeek, 11)];
             case "peak": return [Figure("×2", PacerPalette.Attention)];

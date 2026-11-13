@@ -67,6 +67,7 @@ final class CompactBarScenarioTableTests: XCTestCase {
                                 switch entry.provider {
                                 case .deepseek: expectedText = wallet
                                 case .codex, .claude: expectedText = try XCTUnwrap(metric.quota[entry.provider.rawValue])
+                                default: XCTFail("Unexpected quota provider \(entry.provider)"); continue
                                 }
                                 XCTAssertEqual(entry.text, expectedText, label)
                                 let strip = entry.provider == .deepseek || row.providers.contains("deepseek")

@@ -6,6 +6,7 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 // helper forever. Hosts also impose their own shorter async request deadlines.
 let codexCleanup = ["--check-uninstall-codex-progress", "--uninstall-codex-progress"].contains(arguments.first ?? "")
 let deepseekCleanup = ["--check-uninstall-deepseek-progress", "--uninstall-deepseek-progress"].contains(arguments.first ?? "")
+let harnessCleanup = ["--check-uninstall-local-harness-progress", "--uninstall-local-harness-progress"].contains(arguments.first ?? "")
 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + (codexCleanup ? 20 : 9)) { exit(124) }
 var result: Int32 = 2
 do {
@@ -24,6 +25,10 @@ do {
     } else if deepseekCleanup, (2...4).contains(arguments.count) {
         try WindowsDeepSeekProgressCleanup.unregister(homes: arguments.dropFirst().map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL },
             checkOnly: arguments[0] == "--check-uninstall-deepseek-progress")
+        result = 0
+    } else if harnessCleanup, arguments.count == 4 {
+        try WindowsLocalHarnessProgressCleanup.unregister(executable: arguments[1], runtimeRoot: arguments[2], fixtureRoot: arguments[3],
+            checkOnly: arguments[0] == "--check-uninstall-local-harness-progress")
         result = 0
     } else if arguments.count == 2, ["--uninstall", "--check-uninstall"].contains(arguments[0]) {
         try WindowsClaudeHookCleanup.uninstall(home: URL(fileURLWithPath: arguments[1], isDirectory: true),
@@ -53,7 +58,8 @@ do {
     }
 } catch {
     // No paths, provider settings, account data or record contents in diagnostics.
-    let provider = deepseekCleanup ? "DeepSeek Harness" : codexCleanup || arguments.first == "--prepare-codex-progress" ? "Codex" : "Claude"
+    let provider = harnessCleanup ? "local Harness" : deepseekCleanup ? "DeepSeek Harness"
+        : codexCleanup || arguments.first == "--prepare-codex-progress" ? "Codex" : "Claude"
     FileHandle.standardError.write(Data("Pacer could not safely update \(provider) configuration or its owned runtime.\n".utf8))
     result = 1
 }

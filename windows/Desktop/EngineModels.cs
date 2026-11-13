@@ -57,7 +57,11 @@ internal sealed record EngineSource(string Id, string Provider, bool Available, 
     string? SourceName = null, string? State = null, string? StateLabel = null, int? Sessions = null,
     IReadOnlyList<QuotaWindow>? QuotaWindows = null, bool QuotaRefreshing = false, string? QuotaError = null);
 internal sealed record ConnectionFailure(string Kind, string? Method, int? Code);
-internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled);
+internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled,
+    string? DisplayName = null, string? Symbol = null, string? Status = null, HarnessUsage? Usage = null,
+    string? UsageGuideUrl = null, bool? ProgressConnector = null, bool? HasTaskProgress = null, bool? ReportsSessionUsage = null,
+    string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null);
+internal sealed record HarnessUsage(int? ContextUsed, int? ContextCapacity, double? SessionCredits, double MeasuredAt);
 internal sealed record CodexSourceCandidate(string Path, string Source, string Label);
 internal sealed record CodexSourceReport(string Executable, string? SelectedExecutable, string? ExecutableIssue,
     IReadOnlyList<CodexSourceCandidate> Candidates, string Home, string EffectiveHome, string? HomeIssue, string HistoryTitle);
@@ -66,8 +70,8 @@ internal sealed record LegacyQuotaDashboard(bool Fresh, string FreshnessText, st
 internal sealed record LegacyQuotaBucket(string Id, string? Title, IReadOnlyList<LegacyQuotaWindow> Windows);
 internal sealed record LegacyQuotaWindow(string Id, string Label, double? RemainingPercent, double? RemainingTimePercent,
     double? PacePercent, string ValueText, string Countdown, string ResetDate, string PaceText, string AccessibilityLabel);
-internal sealed record DashboardLayout(string Kind, IReadOnlyList<DashboardSlot> Slots);
-internal sealed record DashboardSlot(string Provider, string Period, bool IdentifiesProvider, string Id, string Title);
+internal sealed record DashboardLayout(string Kind, IReadOnlyList<DashboardSlot> Slots, int? Columns = null);
+internal sealed record DashboardSlot(string Provider, string? Period, bool IdentifiesProvider, string Id, string Title);
 internal sealed record DashboardProvider(string Provider, DashboardReading FiveHour, DashboardReading Weekly, QuotaConnectionStatus? Status = null, QuotaHistoryPresentation? History = null);
 internal sealed record QuotaHistoryPresentation(string Title, string? SourceText, string FreshnessText, bool NotUpdated, string? ErrorText, string? Placeholder,
     QuotaChartPresentation? Chart, IReadOnlyList<LegacyQuotaBucket> Buckets, QuotaAccountPresentation? Account, string? Warning, string RefreshTitle, bool Refreshing);

@@ -47,19 +47,23 @@ internal static class PacerPalette
     private static readonly Brush LightSurface = Ink(236, 236, 240);
     internal static Brush Provider(string? provider) => provider switch
     {
+        null or "codex" => Codex,
         "claude" => Claude,
         "deepseek" => DeepSeek,
-        _ => Codex
+        "workbuddy" => LocalHarness,
+        _ => Primary
     };
     internal static readonly Brush BrandCodex = Ink(125, 214, 196);
     internal static readonly Brush BrandClaude = Ink(242, 156, 107);
     internal static readonly Brush BrandDeepSeek = Ink(123, 147, 255);
+    private static readonly Brush BrandLocalHarness = Ink(195, 171, 241), LightLocalHarness = Ink(105, 66, 162);
     // A shade darker on light glass, so each service keeps its contrast.
     private static readonly Brush LightCodex = Ink(14, 140, 120), LightClaude = Ink(196, 88, 31), LightDeepSeek = Ink(62, 91, 219);
     // The services' colors follow the accent choice; Multicolor keeps the brands.
     internal static Brush Codex { get; private set; } = BrandCodex;
     internal static Brush Claude { get; private set; } = BrandClaude;
     internal static Brush DeepSeek { get; private set; } = BrandDeepSeek;
+    private static Brush LocalHarness { get; set; } = BrandLocalHarness;
     internal static string Accent { get; private set; } = "multicolor";
     /// Returns whether the services' colors changed, so drawn views can repaint.
     internal static bool ApplyAccent(string? accent)
@@ -94,6 +98,7 @@ internal static class PacerPalette
     {
         Brush Pick(string provider, Brush brand, Brush light) => AccentPalette.ProviderShade(Accent, provider, Light) is { } color ? Ink(color.R, color.G, color.B) : Light ? light : brand;
         Codex = Pick("codex", BrandCodex, LightCodex); Claude = Pick("claude", BrandClaude, LightClaude); DeepSeek = Pick("deepseek", BrandDeepSeek, LightDeepSeek);
+        LocalHarness = Pick("workbuddy", BrandLocalHarness, LightLocalHarness);
     }
     internal static SolidColorBrush Ink(byte red, byte green, byte blue, byte alpha = 255)
     {

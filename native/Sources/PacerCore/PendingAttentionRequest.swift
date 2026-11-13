@@ -40,4 +40,9 @@ public struct PendingAttentionRequest: Equatable, Sendable, Identifiable {
         if let claudeCloud { value.setClaudeCloud(claudeCloud) }
         return value
     }
+
+    func suppressingNotice() -> Self {
+        .init(id: id, threadID: threadID, sourceHostID: sourceHostID, sourceName: sourceName, kind: kind,
+              detectedAt: detectedAt, provider: provider, questionKey: questionKey, claudeCloud: claudeCloud, suppressesNotice: true)
+    }
 }

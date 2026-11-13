@@ -21,6 +21,9 @@ internal static class SettingsPagePolicy
         => Open(new("ms-settings:easeofaccess-visualeffects"), launch);
     internal static bool OpenPricing(string language, Func<Uri, bool>? launch = null)
         => Open(PricingDocumentation(language), launch);
+    internal static Uri? HarnessUsageGuide(string provider, string? value)
+        => provider == "workbuddy" && value == "https://www.workbuddy.ai/docs/workbuddy/usage" ? new(value) : null;
+    internal static bool OpenHarnessUsage(Uri guide, Func<Uri, bool>? launch = null) => Open(guide, launch);
     private static bool Open(Uri uri, Func<Uri, bool>? launch)
     {
         try

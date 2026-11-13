@@ -168,8 +168,7 @@ def respond(message, flag, durable=False):
     return reply
 
 
-def serve(home, durable=False):
-    flag = Path(home) / "pacer" / "codex-progress" / "native" / "enabled"
+def serve(flag, durable=False):
     while True:
         line = sys.stdin.buffer.readline(LIMIT + 1)
         if not line or len(line) > LIMIT:
@@ -182,5 +181,10 @@ def serve(home, durable=False):
             print(json.dumps(reply, separators=(",", ":")), flush=True)
 
 
-if __name__ == "__main__" and (len(sys.argv) == 2 or sys.argv[2:] == ["--durable"]):
-    serve(sys.argv[1], len(sys.argv) == 3)
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--pacer-progress-flag":
+        flag = Path(sys.argv[2])
+        if flag.is_absolute():
+            serve(flag)
+    elif len(sys.argv) == 2 or (len(sys.argv) == 3 and sys.argv[2] == "--durable"):
+        serve(Path(sys.argv[1]) / "pacer" / "codex-progress" / "native" / "enabled", len(sys.argv) == 3)

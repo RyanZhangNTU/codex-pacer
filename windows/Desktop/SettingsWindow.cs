@@ -42,6 +42,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly Action<string>? guideCopyLink;
     private readonly Func<Uri, bool>? systemSettingsLauncher;
     private readonly Grid client = new() { Width = DefaultWidth, Height = DefaultHeight };
+    private readonly HarnessAccountConnection? harnessAccount;
     private readonly StackPanel form = new() { Margin = new Thickness(32, 10, 32, 32), MaxWidth = ColumnWidth };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
     private readonly Button recoveryRestart = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(10, 0, 10, 10) };
@@ -70,12 +71,14 @@ internal sealed partial class SettingsWindow : Window
     internal FrameworkElement ClientContent => client;
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
-        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null, Func<Uri, bool>? guideLinkLauncher = null, Action<string>? guideCopyLink = null, ISystemAppearanceSource? appearanceSource = null, Func<Uri, bool>? systemSettingsLauncher = null, WindowsUpdateService? updater = null)
+        DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null, Func<Uri, bool>? guideLinkLauncher = null, Action<string>? guideCopyLink = null, ISystemAppearanceSource? appearanceSource = null, Func<Uri, bool>? systemSettingsLauncher = null, WindowsUpdateService? updater = null,
+        HarnessAccountConnection? harnessAccount = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
         this.ui = ui; this.session = session; this.startup = startup; this.demo = demo; this.darkOverride = darkOverride;
         this.engine = engine;
+        this.harnessAccount = harnessAccount;
         this.updater = updater;
         this.webConnection = webConnection;
         this.claudeConnection = claudeConnection;
@@ -131,7 +134,12 @@ internal sealed partial class SettingsWindow : Window
         ShellProjection.Changed += OnShellProjectionChanged;
         Loaded += (_, _) => OnShellProjectionChanged("");
         Closed += (_, _) => ShellProjection.Changed -= OnShellProjectionChanged;
-        Activated += async (_, _) => { RefreshSystemState(); if (notifications != null) await notifications.RefreshAsync(); };
+        Activated += async (_, _) =>
+        {
+            RefreshSystemState();
+            await RefreshHarnessProgressConnectionAsync();
+            if (notifications != null) await notifications.RefreshAsync();
+        };
         Deactivated += (_, _) => RefreshTheme();
         appearance.Changed += OnAppearanceChanged;
         session.Changed += OnPreferencesChanged;
@@ -140,6 +148,7 @@ internal sealed partial class SettingsWindow : Window
         if (updater != null) updater.Changed += OnUpdateStatus;
         appearanceDisplays.Changed += OnAppearanceDisplaysChanged;
         if (engine != null) { engine.Snapshot += OnProviderSnapshot; engine.Status += OnProviderStatus; }
+        if (harnessAccount != null) harnessAccount.Changed += RefreshAccountCards;
         Closing += (_, e) => { if (busy && !AllowClose) e.Cancel = true; };
         Closed += (_, _) =>
         {
@@ -151,6 +160,7 @@ internal sealed partial class SettingsWindow : Window
             appearanceDisplays.Changed -= OnAppearanceDisplaysChanged;
             if (ownsAppearanceDisplays) appearanceDisplays.Dispose();
             if (engine != null) { engine.Snapshot -= OnProviderSnapshot; engine.Status -= OnProviderStatus; }
+            if (harnessAccount != null) harnessAccount.Changed -= RefreshAccountCards;
         };
         // PreviewKeyDown yields to ComboBox's Escape handling while its menu is open.
         KeyDown += (_, e) =>
@@ -382,8 +392,14 @@ internal sealed partial class SettingsWindow : Window
     }
     private string ResolvePane(string value)
     {
+        if (DesktopPreferences.IsStoredHarnessPane(value))
+        {
+            string provider = value[DesktopPreferences.HarnessPanePrefix.Length..];
+            return HarnessPane(provider) ? provider : engine == null ? "general" : "overview";
+        }
         value = CanonicalPane(value);
-        return value is "general" or "appearance" or "collapsed" or "expandedPanel" or "about" or "support" || EnginePane(value) && engine != null ? value : "general";
+        return value is "general" or "appearance" or "collapsed" or "expandedPanel" or "about" or "support"
+            || (EnginePane(value) || HarnessPane(value)) && engine != null ? value : "general";
     }
     /// Opens a page; What's New and Help open as tabs of Help & Updates.
     internal async System.Threading.Tasks.Task NavigateAsync(string pane)
@@ -397,11 +413,13 @@ internal sealed partial class SettingsWindow : Window
         else
         {
             bool wasReadOnly = ReadOnlyGuidePane(activePane); if (wasReadOnly || switchesTab) RebuildPane(pane);
-            if (await Change(p => p with { LastSettingsPane = pane }) != PreferencesApplyResult.Applied && wasReadOnly) RebuildPane(session.Current.LastSettingsPane);
+            string stored = HarnessPane(pane) ? DesktopPreferences.HarnessPanePrefix + pane : pane;
+            if (await Change(p => p with { LastSettingsPane = stored }) != PreferencesApplyResult.Applied && wasReadOnly) RebuildPane(session.Current.LastSettingsPane);
         }
     }
     private void RebuildPane(string value)
     {
+        bool wasSynchronizing = synchronizing;
         synchronizing = true;
         try
         {
@@ -419,6 +437,7 @@ internal sealed partial class SettingsWindow : Window
             ClearClaude();
             ClearProviderHome();
             ClearDeepSeek();
+            ClearHarnessPage();
             ClearReminders();
             ClearCollapsed();
             ClearExpandedPanel();
@@ -440,12 +459,19 @@ internal sealed partial class SettingsWindow : Window
                 case "collapsed": BuildCollapsed(); break;
                 case "expandedPanel": BuildExpandedPanel(); break;
                 case "remote": BuildConnections(); break;
-                default: BuildGeneral(); break;
+                default:
+                    if (HarnessPane(activePane))
+                    {
+                        BuildHarnessPage(activePane);
+                        _ = RefreshHarnessProgressConnectionAsync();
+                    }
+                    else BuildGeneral();
+                    break;
             }
             foreach (var item in navigation) item.Value.IsChecked = item.Key == activePane;
             paneScroller.ScrollToTop(); SetEditors(!busy && !session.RequiresRestart);
         }
-        finally { synchronizing = false; }
+        finally { synchronizing = wasSynchronizing; }
     }
     private void RefreshValues()
     {
@@ -491,7 +517,7 @@ internal sealed partial class SettingsWindow : Window
             RefreshCollapsed();
             RefreshExpandedPanel();
             RefreshConnections();
-            RefreshSidebar();
+            RefreshProviderPages();
             RefreshOverview();
             RefreshHistory();
             recoveryRestart.Visibility = session.RequiresRestart && activePane != "general" ? Visibility.Visible : Visibility.Collapsed;

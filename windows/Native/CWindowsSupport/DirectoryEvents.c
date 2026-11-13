@@ -19,7 +19,8 @@ typedef struct {
     void *context;
     pacer_change_callback callback;
     void (*closed)(void *);
-    unsigned char buffer[64 * 1024];
+    DWORD buffer_size;
+    DWORD buffer[];
 } PacerDirectoryWatch;
 
 static void CALLBACK pacer_directory_release(PTP_CALLBACK_INSTANCE, void *, PTP_WORK);
@@ -33,7 +34,7 @@ static int pacer_directory_read(PacerDirectoryWatch *watch) {
     // logs further down the tree, belong to the file watches Core keeps.
     DWORD flags = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME;
     if (watch->filename != NULL) flags |= FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
-    if (!ReadDirectoryChangesW(watch->directory, watch->buffer, sizeof(watch->buffer),
+    if (!ReadDirectoryChangesW(watch->directory, watch->buffer, watch->buffer_size,
                                FALSE, flags, NULL, &watch->overlapped, NULL)) return 0;
     SetThreadpoolWait(watch->wait, watch->event, NULL);
     return 1;
@@ -96,10 +97,14 @@ void *pacer_watch_directory(const uint16_t *path, int is_directory, void *contex
                                 NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
     free(directory);
     if (handle == INVALID_HANDLE_VALUE) { free(filename); return NULL; }
-    PacerDirectoryWatch *watch = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*watch));
+    // File watches coalesce into a reread of one path, including on overflow.
+    // Directory watches need space for bursts of distinct names.
+    DWORD buffer_size = filename == NULL ? 64 * 1024 : 8 * 1024;
+    PacerDirectoryWatch *watch = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*watch) + buffer_size);
     if (watch == NULL) { CloseHandle(handle); free(filename); return NULL; }
     InitializeSRWLock(&watch->lock);
     watch->directory = handle; watch->filename = filename; watch->context = context;
+    watch->buffer_size = buffer_size;
     watch->callback = callback; watch->closed = closed;
     watch->event = CreateEventW(NULL, TRUE, FALSE, NULL);
     watch->cleanup = CreateThreadpoolWork(pacer_directory_release, watch, NULL);

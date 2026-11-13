@@ -61,7 +61,7 @@ extension IslandModel {
         let tasks = taskPresentation
         let wallet = compactWallet
         let context = CompactBarContext(activities: activities, requests: pendingInputRequests, completions: tasks.pendingCompletions,
-            sources: enabledProviders.filter { $0 != .deepseek }.map {
+            sources: quotaProviders.filter { $0 != .deepseek }.map {
                 .init(provider: $0, snapshot: providerQuota($0), failed: providerQuotaError($0) != nil)
             }, wallet: wallet.map { .init($0, preferred: deepseekRingPeriod) },
             firstOutput: latestFirstOutputLatency, warnings: warningItems(warnings: compactLayout.warnings, wallet: wallet),

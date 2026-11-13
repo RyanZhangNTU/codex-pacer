@@ -157,7 +157,9 @@ internal abstract class ProviderWebSession : IAsyncDisposable
             page?.Dispose(); if (ReferenceEquals(activeRead, read)) activeRead = null; operation.Release();
         }
     }
-    public async Task<bool> SignInAsync()
+    public Task<bool> SignInAsync() => SignInAsync(CancellationToken.None);
+
+    public async Task<bool> SignInAsync(CancellationToken cancellation)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (clearing) return false;
@@ -167,7 +169,9 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         login = window;
         try
         {
-            string? baseline = await ReadFingerprintAsync(lifetime.Token);
+            using var registration = cancellation.Register(() => window.Dispatcher.BeginInvoke(new Action(window.Abort)));
+            cancellation.ThrowIfCancellationRequested();
+            string? baseline = provider.WatchSignIn ? await ReadFingerprintAsync(lifetime.Token) : null;
             if (!window.Completion.IsCompleted) { window.Show(); await window.StartAsync(baseline, ReadFingerprintAsync); }
             bool result = await window.Completion; SignInWasNew = result && window.NewSession; return result;
         }

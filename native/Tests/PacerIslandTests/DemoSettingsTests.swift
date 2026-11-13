@@ -22,7 +22,7 @@ final class DemoSettingsTests: XCTestCase {
     func testSettingsPreserveDemoTasksStageRatesAndRequests() async throws {
         let defaults = try defaults(), clock = now
         let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: arguments, defaults: defaults)
-        XCTAssertEqual(Set(model.enabledProviders), Set(AgentProvider.allCases), "Demo automatic choices use synthetic installations")
+        XCTAssertEqual(Set(model.enabledProviders), Set(HarnessRegistry.legacyIDs), "Demo automatic choices use synthetic installations")
         for stage in DemoTaskStage.allCases {
             model.setDemoStage(stage)
             let before = model.activities.sorted { $0.id < $1.id }
@@ -62,10 +62,10 @@ final class DemoSettingsTests: XCTestCase {
         for mask in 0..<8 {
             let defaults = try defaults()
             var modules = ProviderModules()
-            let enabled = Set(AgentProvider.allCases.enumerated().compactMap { index, provider in
+            let enabled = Set(HarnessRegistry.legacyIDs.enumerated().compactMap { index, provider in
                 mask & (1 << index) == 0 ? nil : provider
             })
-            for provider in AgentProvider.allCases { modules.setMode(enabled.contains(provider) ? .enabled : .disabled, for: provider) }
+            for provider in HarnessRegistry.legacyIDs { modules.setMode(enabled.contains(provider) ? .enabled : .disabled, for: provider) }
             modules.save(to: defaults)
             let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: arguments, defaults: defaults)
             for stage in DemoTaskStage.allCases {
@@ -87,7 +87,7 @@ final class DemoSettingsTests: XCTestCase {
             model.setDemoStage(stage)
             let before = model.activities.sorted { $0.id < $1.id }, requests = model.pendingInputRequests
             let unread = Set(model.pendingCompletions.map(\.id))
-            for provider in AgentProvider.allCases {
+            for provider in HarnessRegistry.legacyIDs {
                 var modules = ProviderModules()
                 modules.setMode(.disabled, for: provider); modules.save(to: defaults)
                 model.applySettings(sourceChanged: false)

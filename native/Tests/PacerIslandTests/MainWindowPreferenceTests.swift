@@ -9,7 +9,7 @@ final class MainWindowPreferenceTests: XCTestCase {
         return (UserDefaults(suiteName: name)!, name)
     }
 
-    func testStoredPagesFromTheSettingsWindowOpenWhereTheirContentMoved() {
+    func testStoredPagesFromTheSettingsWindowOpenWhereTheirContentMoved() throws {
         let (defaults, name) = defaults()
         defer { removeTestDefaults(name) }
         XCTAssertEqual(SettingsPane.load(from: defaults), .overview, "A first open lands on Overview")
@@ -19,14 +19,17 @@ final class MainWindowPreferenceTests: XCTestCase {
             defaults.set(stored, forKey: SettingsPane.defaultsKey)
             XCTAssertEqual(SettingsPane.load(from: defaults), pane, stored)
         }
-        for pane in SettingsPane.allCases {
+        let workBuddy = try XCTUnwrap(AgentProvider(rawValue: "workbuddy"))
+        let localProviders = [workBuddy]
+        let pages = SettingsPane.pages(localProviders: localProviders)
+        for pane in pages {
             defaults.set(pane.rawValue, forKey: SettingsPane.defaultsKey)
             XCTAssertEqual(SettingsPane.load(from: defaults), pane, "Current pages reopen as saved")
         }
         defaults.set("removed", forKey: SettingsPane.defaultsKey)
         XCTAssertEqual(SettingsPane.load(from: defaults), .overview)
-        XCTAssertEqual(Set(SettingsPane.groups.joined()).union([.about, .support]), Set(SettingsPane.allCases),
-            "Every page is reachable from the sidebar's groups or footer")
+        XCTAssertEqual(SettingsPane.groups(localProviders: localProviders)[1], [.codex, .claude, .deepseek, SettingsPane(provider: workBuddy), .remote])
+        XCTAssertFalse(SettingsPane.pages(localProviders: []).contains(SettingsPane(provider: workBuddy)))
     }
 
     func testAboutKeepsTheHelpTabForAnOldHelpPage() {

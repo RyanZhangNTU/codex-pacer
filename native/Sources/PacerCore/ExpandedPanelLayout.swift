@@ -6,7 +6,7 @@ import Foundation
 /// first edit saves the blocks as they then appeared.
 public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
     public enum Block: String, CaseIterable, Codable, Sendable, Identifiable {
-        case tasks, codex, claude, deepseek, deepseekSpend, deepseekWeek
+        case tasks, codex, claude, deepseek, deepseekSpend, deepseekWeek, workbuddy
         public var id: String { rawValue }
         public var label: String { L10n.text("panel.block." + rawValue) }
         public var detail: String { L10n.text("panel.block_detail." + rawValue) }
@@ -19,10 +19,15 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
             case .codex: .codex
             case .claude: .claude
             case .deepseek, .deepseekSpend, .deepseekWeek: .deepseek
+            case .workbuddy: .workbuddy
             }
         }
         /// Adjacent quota blocks share one row when the panel pairs them.
-        public var isQuota: Bool { self == .codex || self == .claude || self == .deepseek }
+        public var isQuota: Bool {
+            provider.flatMap(HarnessRegistry.descriptor(for:)).map { descriptor in
+                (descriptor.hasQuotaDisplay || descriptor.reportsAccountCredits) && self != .deepseekSpend && self != .deepseekWeek
+            } ?? false
+        }
         public var group: Group { self == .tasks ? .tasks : isQuota ? .quota : .deepseek }
         public var symbol: String {
             switch self {
@@ -32,6 +37,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
             case .deepseek: "water.waves"
             case .deepseekSpend: "chart.pie"
             case .deepseekWeek: "chart.xyaxis.line"
+            case .workbuddy: "briefcase"
             }
         }
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool { provider.map(providers.contains) ?? true }
@@ -61,7 +67,9 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
     /// and week when DeepSeek is the only service and its content was Detailed.
     public static func automatic(providers: Set<AgentProvider>, deepseekDetailed: Bool) -> Self {
         var blocks: [Block] = [.tasks, .codex, .claude, .deepseek]
-        if deepseekDetailed, providers == [.deepseek] { blocks += [.deepseekSpend, .deepseekWeek] }
+        let quotaProviders = providers.filter { HarnessRegistry.descriptor(for: $0)?.hasQuotaDisplay == true }
+        if providers.contains(.workbuddy) { blocks.append(.workbuddy) }
+        if deepseekDetailed, quotaProviders == [.deepseek] { blocks += [.deepseekSpend, .deepseekWeek] }
         return Self(blocks: blocks)
     }
 

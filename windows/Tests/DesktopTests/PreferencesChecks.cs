@@ -96,6 +96,9 @@ internal static class PreferencesChecks
             foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
                 Check(store.Save(original with { LastSettingsPane = pane }) && store.Load().Value.LastSettingsPane == pane, "The settings page survives a save: " + pane);
             Check(store.Save(original with { LastSettingsPane = "future-page" }) && store.Load().Value.LastSettingsPane == "overview", "An unknown page opens Overview, as on the Mac");
+            Check(store.Save(original with { LastSettingsPane = "harness.workbuddy", EnabledHarnessProgress = ["workbuddy"] })
+                && store.Load().Value is { LastSettingsPane: "harness.workbuddy", EnabledHarnessProgress: ["workbuddy"] },
+                "Local Harness page and progress settings survive a restart");
             Check(store.Save(original with { AppTheme = "dark", AccentColor = "graphite" }) && store.Load().Value is { AppTheme: "dark", AccentColor: "graphite" }
                 && File.ReadAllText(file).Contains("\"appTheme\": \"dark\"") && File.ReadAllText(file).Contains("\"accentColor\": \"graphite\""),
                 "Theme and accent save under the Mac's keys");
@@ -135,6 +138,17 @@ internal static class PreferencesChecks
             var unknownSurface = store.Load();
             Check(!unknownSurface.Unavailable && unknownSurface.Value.IslandAppearance == "liquidGlass" && unknownSurface.Value.Position == "topRight"
                 && File.ReadAllText(file) == futureAppearance, "A future appearance falls back without losing other choices or rewriting the file");
+            File.WriteAllText(file, """{"schemaVersion":2,"providerModule.workbuddy":"enabled","providerModule.future-harness":"disabled","providerModule.bad?key":"enabled","providerModule.future-mode":"foreign"}""");
+            var modules = store.Load().Value;
+            Check(modules.ProviderModes.Count == 5 && modules.ProviderModes["workbuddy"] == "enabled" && modules.ProviderModes["future-harness"] == "disabled",
+                "Loading preserves valid module choices, including ones the engine does not support yet");
+            Check(store.Save(modules with { HideProjects = true }) && store.Load().Value.ProviderModes.OrderBy(pair => pair.Key).SequenceEqual(modules.ProviderModes.OrderBy(pair => pair.Key)),
+                "Saving an unrelated setting keeps registered and future module choices");
+            var hundred = new Dictionary<string, string>(modules.ProviderModes, StringComparer.Ordinal);
+            for (int i = 0; i < 100; i++) hundred["fixture-" + i] = i % 2 == 0 ? "enabled" : "disabled";
+            Check(store.Save(modules with { ProviderModes = hundred }) &&
+                store.Load().Value.ProviderModes.OrderBy(pair => pair.Key).SequenceEqual(hundred.OrderBy(pair => pair.Key)),
+                "A profile with a hundred more modules preserves every choice after relaunch");
             foreach (string damaged in new[]
             {
                 "not JSON", "null", "{}", "{\"schemaVersion\":3}", "{\"schemaVersion\":\"one\"}",

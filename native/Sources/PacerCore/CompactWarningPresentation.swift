@@ -47,7 +47,7 @@ public enum CompactWarningPresentation {
                              snapshots: [AgentProvider: QuotaSnapshot], failed: Set<AgentProvider> = [],
                              selections: [AgentProvider: QuotaWindowSelection] = [:], sshIssue: Bool = false,
                              wallet: DeepSeekAlertPresentation? = nil, now: Date) -> [Item] {
-        let ordered = AgentProvider.allCases.filter { enabled.contains($0) && $0 != .deepseek }
+        let ordered = HarnessRegistry.legacyIDs.filter { enabled.contains($0) && $0 != .deepseek }
         func windows(_ provider: AgentProvider) -> [QuotaWindow] {
             guard let snapshot = snapshots[provider] else { return [] }
             return (snapshot.buckets.first { $0.id == provider.rawValue } ?? snapshot.buckets.first)?.windows ?? []

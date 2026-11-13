@@ -31,6 +31,14 @@ extension ProviderInstallationDetection {
         let deepseek = appInstalled(.deepseek, bundleID: "com.deepseek.dsh", name: "DeepSeek Harness") || cliInstalled("dsh") ||
             FileManager.default.fileExists(atPath: DeepSeekHome.resolve(environment: environment, userHome: userHome)
                 .appendingPathComponent("sessions").path)
-        return Self(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek)
+        let additional = HarnessRegistry.localHarnesses.filter { definition in
+            guard definition.platforms.contains(.macOS) else { return false }
+            return definition.macBundleIdentifiers.contains { identifier in
+                definition.macApplicationNames.contains {
+                    appInstalled(definition.descriptor.id, bundleID: identifier, name: $0)
+                }
+            }
+        }.map(\.descriptor.id)
+        return Self(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek, additional: Set(additional))
     }
 }

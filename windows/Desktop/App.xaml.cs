@@ -18,6 +18,7 @@ public partial class App : Application
     private EngineClient? engine;
     private DeepSeekConnectionCoordinator? webConnection;
     private ClaudeConnectionCoordinator? claudeConnection;
+    private HarnessAccountConnection? workBuddyAccount;
     private Forms.NotifyIcon? tray;
     private System.Drawing.Icon? trayIcon;
     private IslandWindow? island;
@@ -199,6 +200,13 @@ public partial class App : Application
         claudeConnection = new ClaudeConnectionCoordinator(engine, demo ? new OfflineClaudeWebSession() : new ClaudeWebSession(ui),
             Dispatcher, bridgeEnabled: !demo, newSession: async () => settingsSession != null &&
                 await settingsSession.ChangeAsync(value => value with { ClaudeOrganization = "" }) == PreferencesApplyResult.Applied);
+        if (!demo)
+        {
+            workBuddyAccount = new(new WorkBuddyAccountSession(ui, false), new WorkBuddyAccountSession(ui, true),
+                preferences.UsesWorkBuddyChina(language == "zh-Hans"), Dispatcher);
+            engine.Snapshot += snapshot => workBuddyAccount.SetEnabled(snapshot.Modules?.Any(module =>
+                module.Provider == "workbuddy" && module is { Enabled: true, ReportsAccountCredits: true }) == true);
+        }
         Activated += async (_, _) =>
         {
             if (quitting || !engineReady.Task.IsCompletedSuccessfully) return;
@@ -209,7 +217,7 @@ public partial class App : Application
         var applications = demo ? new WindowsDesktopApplications(_ => true, _ => true) : new WindowsDesktopApplications();
         island = new IslandWindow(engine, demo, language == "zh-Hans", position, desktopApplications: applications,
             displayMode: positionIndex >= 0 ? 2 : Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode),
-            canConnectDeepSeekWeb: () => webConnection.Available);
+            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccount: workBuddyAccount);
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
             {
@@ -363,7 +371,8 @@ public partial class App : Application
         if (settings == null)
         {
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
-                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore, updater: updates);
+                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore,
+                updater: updates, harnessAccount: workBuddyAccount);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
             settings.WelcomeRequested += () => _ = ShowGuideAsync(true);
             settings.SignedReleaseNotesRequested += ShowSignedUpdateNotes;
@@ -374,7 +383,7 @@ public partial class App : Application
 
     private async void OpenProviderSettings(string provider)
     {
-        if (provider is not ("codex" or "claude" or "deepseek")) return;
+        if (provider is not ("codex" or "claude" or "deepseek" or "workbuddy")) return;
         OpenSettings();
         if (settings != null) await settings.NavigateAsync(provider);
     }
@@ -436,6 +445,7 @@ public partial class App : Application
         if (settings != null) { settings.AllowClose = true; settings.Close(); }
         if (webConnection != null) await webConnection.DisposeAsync();
         if (claudeConnection != null) await claudeConnection.DisposeAsync();
+        if (workBuddyAccount != null) await workBuddyAccount.DisposeAsync();
         if (updates != null) await updates.DisposeAsync();
         island?.StopPresentation();
         if (engine != null && notifications != null) engine.Snapshot -= notifications.Receive;
@@ -456,6 +466,7 @@ public partial class App : Application
         Dispatcher.BeginInvoke(new Action(async () =>
         {
             if (quitting || !engineReady.Task.IsCompletedSuccessfully || engine == null) return;
+            workBuddyAccount?.SetSleeping(change.Mode == PowerModes.Suspend);
             try { await engine.SendAsync(method); }
             catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
             { if (!quitting && ui != null) island?.SetStatus(ui.Text("windows.connection.refresh_failed")); }

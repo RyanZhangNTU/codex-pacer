@@ -26,10 +26,11 @@ final class ActivityApplicationStateTests: XCTestCase {
         let codex = task(), claude = DemoScenario.claudeTask(stage: .thinking, at: now)
         let deepseek = DemoScenario.deepseekTask(stage: .thinking, at: now)
         var state = ActivityApplicationState()
-        state.localActivities = [codex]; state.claudeActivities = [claude]; state.deepseekActivities = [deepseek]
-        state.claudeReceivedRequests = [request(claude)]
+        state.replaceHarness(.codex, with: .init(activities: [codex]))
+        state.replaceHarness(.claude, with: .init(activities: [claude], requests: [request(claude)]))
+        state.replaceHarness(.deepseek, with: .init(activities: [deepseek]))
         state.reconcile(at: now, retention: 300, visibility: visible)
-        XCTAssertEqual(Set(state.activities.map(\.provider)), Set(AgentProvider.allCases))
+        XCTAssertEqual(Set(state.activities.map(\.provider)), Set(HarnessRegistry.legacyIDs))
         XCTAssertEqual(state.requests.map(\.provider), [.claude])
         state.demoActivities = [codex, claude, deepseek]; state.demoRequests = [request(claude)]
         state.includesDemoMetadata = true
@@ -37,7 +38,7 @@ final class ActivityApplicationStateTests: XCTestCase {
         XCTAssertEqual(state.activities.map(\.provider), [.deepseek])
         XCTAssertTrue(state.requests.isEmpty)
         state.reconcile(at: now, retention: 300, visibility: visible)
-        XCTAssertEqual(Set(state.activities.map(\.provider)), Set(AgentProvider.allCases), "Observed snapshots do not inherit demo module filtering")
+        XCTAssertEqual(Set(state.activities.map(\.provider)), Set(HarnessRegistry.legacyIDs), "Observed snapshots do not inherit demo module filtering")
         XCTAssertEqual(state.requests.map(\.provider), [.claude])
     }
 
@@ -103,7 +104,7 @@ final class ActivityApplicationStateTests: XCTestCase {
     func testLogRequestIsSupersededOnlyByMatchingLiveEvidence() {
         var state = ActivityApplicationState()
         let value = task(), logged = request(value)
-        state.localActivities = [value]; state.codexLogRequests = [logged]
+        state.replaceHarness(.codex, with: .init(activities: [value], requests: [logged]))
         state.codexAttentionThreadIDs = [value.threadID!]
         state.remoteActivities = [task(host: "remote-control:other")]
         state.reconcile(at: now, retention: 300, visibility: visible)

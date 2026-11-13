@@ -36,6 +36,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public private(set) var title: String?
     private(set) var titleWasExplicitlyCleared = false
     public var project: String
+    /// A public provider label for collectors that do not read task titles.
+    public private(set) var observedSessionLabel: String?
     public private(set) var threadID: String?
     public private(set) var navigationDirectory: URL?
     public private(set) var desktopSessionID: String?
@@ -60,7 +62,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             url.queryItems = [URLQueryItem(name: "session", value: desktopSessionID)]
             return url.url
         }
-        guard let threadID else { return nil }
+        guard provider == .codex, let threadID else { return nil }
         var url = URLComponents()
         url.scheme = "codex"; url.host = "threads"; url.path = "/" + threadID
         if let sourceHostID {
@@ -103,17 +105,39 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var reasoningEffortReported = false
     private var reasoningEffortReportedAt: Date?
     public private(set) var isInternalReview = false
+    enum Charge: Equatable, Sendable {
+        case estimatedYuan(total: Double, peak: Double)
+        case credits(Double)
+    }
+    private struct TurnCharge: Equatable, Sendable {
+        let turnID: String
+        let amount: Charge
+    }
+    private var reportedCharge: TurnCharge?
+    var turnCharge: Charge? {
+        guard let reportedCharge, reportedCharge.turnID == turnID else { return nil }
+        return reportedCharge.amount
+    }
+
     /// DeepSeek's estimated cost of the current turn in CNY, from local token
     /// counts and the published price list; the platform bill is authoritative.
-    public var turnCost: Double? { costTurnID != nil && costTurnID == turnID ? estimatedCost : nil }
+    public var turnCost: Double? {
+        guard case .estimatedYuan(let total, _)? = turnCharge else { return nil }
+        return total
+    }
     /// The part of `turnCost` billed at the doubled peak price.
-    public var turnPeakCost: Double? { turnCost == nil ? nil : estimatedPeakCost }
-    private var estimatedCost: Double?
-    private var estimatedPeakCost = 0.0
-    private var costTurnID: String?
+    public var turnPeakCost: Double? {
+        guard case .estimatedYuan(_, let peak)? = turnCharge else { return nil }
+        return peak
+    }
     mutating func setTurnCost(_ value: Double, peak: Double = 0, turnID: String) {
         guard provider == .deepseek, value.isFinite, value >= 0, self.turnID == turnID else { return }
-        estimatedCost = value; estimatedPeakCost = peak.isFinite ? min(value, max(0, peak)) : 0; costTurnID = turnID
+        let peakCost = peak.isFinite ? min(value, max(0, peak)) : 0
+        reportedCharge = TurnCharge(turnID: turnID, amount: .estimatedYuan(total: value, peak: peakCost))
+    }
+    mutating func setTurnCredits(_ value: Double, turnID: String) {
+        guard (0...1_000_000).contains(value), self.turnID == turnID else { return }
+        reportedCharge = TurnCharge(turnID: turnID, amount: .credits(value))
     }
     /// A source that reports a model without its effort keeps the known effort
     /// only while the model is unchanged; an explicit null clears it.
@@ -305,8 +329,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         // previous turn must not supply a model for the current one.
         let sameTurn = turnID != nil && turnID == other.turnID
         let bothUnattached = turnID == nil && other.turnID == nil && phase == .unknown && other.phase == .unknown
-        if sameTurn, turnCost == nil, other.turnCost != nil {
-            estimatedCost = other.estimatedCost; estimatedPeakCost = other.estimatedPeakCost; costTurnID = other.costTurnID
+        if sameTurn, turnCharge == nil, other.turnCharge != nil {
+            reportedCharge = other.reportedCharge
         }
         if sameTurn, provider == .codex {
             mergeCodexRequestEvidence(from: other)
@@ -424,6 +448,51 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         // not strip a supposed file extension before checking their UUID tail.
         if let sessionID { threadID = provider.validatedSessionID(sessionID) }
         else { threadID = provider.sessionID(in: id) }
+    }
+
+    /// A session store can establish activity without identifying a turn.
+    package static func observedSession(provider: AgentProvider, session: String, stage: ActivityStage, at date: Date) -> Self {
+        var activity = Self(id: provider.activityID(sessionID: session), project: provider.displayName,
+            provider: provider, sessionID: session)
+        activity.observedSessionLabel = provider.displayName
+        activity.phase = .running
+        activity.stage = stage
+        activity.lastObserved = date
+        activity.phaseChangedAt = date
+        return activity
+    }
+
+    enum ObservedTurnState {
+        case working(ActivityStage)
+        case waiting(PendingAttentionRequest.Kind)
+        case finished
+        case interrupted(failed: Bool)
+    }
+
+    /// A source may attach a proven turn to a session without synthesizing
+    /// provider-specific events or claiming live output measurements.
+    mutating func applyObservedTurn(_ state: ObservedTurnState, id: String, started: Date, at date: Date,
+                                    live: Bool, model: String? = nil, effort: String? = nil) {
+        beginTurn(id, at: started, observed: false)
+        if let model {
+            updateModel(in: ["model": model, "effort": (effort as Any?) ?? NSNull()], effort: "effort", at: date)
+        }
+        lastObserved = date
+        phaseChangedAt = date
+        hasLiveEvidence = live
+        liveTurnStarted = live
+        switch state {
+        case .working(let value): stage = value
+        case .waiting(let kind):
+            phase = .waitingForInput
+            waitingForApproval = kind == .approval
+            stage = .tool
+        case .finished: phase = .completed
+        case .interrupted(let failed):
+            phase = .interrupted
+            turnFailed = failed
+        }
+        if !live { suppressHistoricalCompletionNotifications() }
     }
 
     mutating func updateTitle(_ value: String?) {

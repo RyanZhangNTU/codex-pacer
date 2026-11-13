@@ -48,9 +48,16 @@ internal sealed partial class SettingsWindow
     }
 
     private static bool HasDeepSeekBudget(DesktopPreferences p) => p.DeepSeekMode == "budget" && (p.DeepSeekDailyBudget != null || p.DeepSeekWeeklyBudget != null);
+    private string[] PanelProviders(DesktopPreferences preferences)
+    {
+        var snapshot = engine?.LatestSnapshot;
+        var quota = NativeCompactBar.Providers(preferences, snapshot);
+        return quota.Concat((snapshot?.Modules ?? []).Where(module => module.Enabled && module.ReportsAccountCredits == true)
+            .Select(module => module.Provider)).Distinct(StringComparer.Ordinal).ToArray();
+    }
     private object PanelInput(DesktopPreferences p, PanelAction? action = null) => new
     {
-        panel = new { layout = p.ExpandedPanelLayout, options = p.ExpandedPanelOptions, providers = NativeCompactBar.Providers(p, engine?.LatestSnapshot),
+        panel = new { layout = p.ExpandedPanelLayout, options = p.ExpandedPanelOptions, providers = PanelProviders(p),
             deepseekDetailed = p.DeepSeekPanelStyle != "simple", hasBudget = HasDeepSeekBudget(p), language = ui.Language, action }
     };
     private static bool ValidPanel(PanelEditorProjection value) => value.IsValid;
@@ -139,6 +146,7 @@ internal sealed partial class SettingsWindow
         : panelProjection?.Catalog.FirstOrDefault(value => value.Id == id)?.Detail ?? "";
     private string BlockSymbol(string id) => id == ActionsBlock ? "ellipsis.circle"
         : panelProjection?.Catalog.FirstOrDefault(value => value.Id == id)?.Symbol ?? "square.grid.2x2";
+    private string? BlockProvider(string id) => panelProjection?.Catalog.FirstOrDefault(value => value.Id == id && value.Group == "quota")?.Id;
     /// The settings cards' ink for a block's service.
     private static string BlockTint(string id) => id switch
     {
@@ -157,7 +165,7 @@ internal sealed partial class SettingsWindow
                 if (tile == null || !panelTiles.TryGetValue(id, out var current) || !ReferenceEquals(tile, current)) return;
                 if (panelProjection?.Catalog.FirstOrDefault(value => value.Id == id) is { Locked: true }) return;
                 await EditPanel(new("toggle", id));
-            }), fixedTile ? ui.Text("main.panel.always") : null);
+            }), fixedTile ? ui.Text("main.panel.always") : null, provider: BlockProvider(id));
         tile.Root.Margin = new Thickness(0, 0, 0, 5);
         panelTiles[id] = tile;
         return tile.Root;
@@ -232,19 +240,22 @@ internal sealed partial class SettingsWindow
         tasks.Children.Add(Link("settings.hide_projects", "main.panel.in_general", "panel.link.hide_projects", "general"));
         panelInspectorPanels["tasks"] = tasks; body.Children.Add(tasks);
 
-        // Codex and Claude: each its own windows; the rest is shared by every quota.
-        foreach (string provider in new[] { "codex", "claude" })
+        foreach (string provider in new[] { "codex", "claude", "workbuddy" })
         {
             var quota = new StackPanel();
-            quota.Children.Add(Stacked(provider + "Periods", "main.panel.periods", PanelSegmentChoices(provider + "Periods", "main.panel.periods",
-                [("both", "main.panel.periods_both"), ("weekly", "main.panel.periods_weekly"), ("fiveHour", "main.panel.periods_five")],
-                value => ChoosePanel(provider + "Periods", value))));
+            bool account = provider == "workbuddy";
+            if (!account)
+                quota.Children.Add(Stacked(provider + "Periods", "main.panel.periods", PanelSegmentChoices(provider + "Periods", "main.panel.periods",
+                    [("both", "main.panel.periods_both"), ("weekly", "main.panel.periods_weekly"), ("fiveHour", "main.panel.periods_five")],
+                    value => ChoosePanel(provider + "Periods", value))));
             quota.Children.Add(Inline(provider + ".style", "main.panel.style", PanelSegmentChoices(provider + ".style", "main.panel.style",
                 [("split", "appearance.quota_split"), ("classic", "appearance.quota_classic")], value => Change(p => p with { ExpandedQuotaStyle = value }))));
             quota.Children.Add(Inline(provider + ".arrange", "main.panel.arrange", PanelSegmentChoices(provider + ".arrange", "main.panel.arrange",
                 [("pair", "main.panel.arrange_pair"), ("stack", "main.panel.arrange_stack")], value => ChoosePanel("quotaArrange", value))));
-            quota.Children.Add(Switch(provider + ".details", "main.panel.details", "main.panel.details_help", value => ChoosePanel("quotaDetails", value)));
-            quota.Children.Add(Switch(provider + ".paceTick", "main.panel.pace_tick", "main.panel.pace_tick_help", value => ChoosePanel("paceTick", value)));
+            quota.Children.Add(Switch(provider + ".details", "main.panel.details", account ? "harness.account.details_help" : "main.panel.details_help",
+                value => ChoosePanel("quotaDetails", value)));
+            if (account) quota.Children.Add(Link("harness.account.connection", "harness.account.open_settings", "panel.link.workbuddy", provider));
+            else quota.Children.Add(Switch(provider + ".paceTick", "main.panel.pace_tick", "main.panel.pace_tick_help", value => ChoosePanel("paceTick", value)));
             panelInspectorPanels[provider] = quota; body.Children.Add(quota);
         }
 
@@ -412,8 +423,16 @@ internal sealed partial class SettingsWindow
         bool shown = actions || entry!.Placed;
         panelInspectorTitle!.Text = BlockLabel(selected); AutomationProperties.SetName(panelInspectorTitle, panelInspectorTitle.Text);
         if (panelInfoButton != null) AutomationProperties.SetName(panelInfoButton, ui.Text("main.info").Replace("%@", panelInspectorTitle.Text, StringComparison.Ordinal));
-        var glyph = new IconGlyph { Symbol = BlockSymbol(selected), Width = 16, Height = 16 }; glyph.SetResourceReference(IconGlyph.InkProperty, BlockTint(selected));
-        panelInspectorIcon!.Child = glyph; panelInspectorIcon.SetResourceReference(Border.BackgroundProperty, BlockTint(selected) + "Soft");
+        if (BlockProvider(selected) is { } brand)
+        {
+            panelInspectorIcon!.Child = ProviderIcon.Create(brand, 30, BlockSymbol(selected));
+            panelInspectorIcon.ClearValue(Border.BackgroundProperty);
+        }
+        else
+        {
+            var glyph = new IconGlyph { Symbol = BlockSymbol(selected), Width = 16, Height = 16 }; glyph.SetResourceReference(IconGlyph.InkProperty, BlockTint(selected));
+            panelInspectorIcon!.Child = glyph; panelInspectorIcon.SetResourceReference(Border.BackgroundProperty, BlockTint(selected) + "Soft");
+        }
         panelInspectorDetail!.Text = BlockDetail(selected);
         panelInspectorToggle!.Visibility = actions ? Visibility.Collapsed : Visibility.Visible;
         panelInspectorToggle.Content = ui.Text(shown ? "main.collapsed.remove" : "main.collapsed.add");
@@ -442,7 +461,7 @@ internal sealed partial class SettingsWindow
         }
         panelPreview?.Update(options);
         panelRetention!.SelectedValue = preferences.RetentionMinutes;
-        foreach (string provider in new[] { "codex", "claude" })
+        foreach (string provider in new[] { "codex", "claude", "workbuddy" })
         {
             Pick(provider + "Periods", options.Periods(provider)); Pick(provider + ".style", preferences.ExpandedQuotaStyle);
             Pick(provider + ".arrange", options.QuotaArrange); Flip(provider + ".details", options.QuotaDetails); Flip(provider + ".paceTick", options.PaceTick);
@@ -455,7 +474,7 @@ internal sealed partial class SettingsWindow
 
     private static string BlockProviderName(string block) => block switch
     {
-        "codex" => "Codex", "claude" => "Claude", _ => "DeepSeek"
+        "codex" => "Codex", "claude" => "Claude", "workbuddy" => "WorkBuddy", _ => "DeepSeek"
     };
 
     /// A section's title in the outline, as the panel's own headers read.
@@ -463,10 +482,11 @@ internal sealed partial class SettingsWindow
     {
         if (section.Kind != "quota") return section.Kind switch
         {
-            "tasks" => ui.Text("layout.group.tasks"), "deepseekSpend" => ui.Text("deepseek.where"), "deepseekWeek" => ui.Text("deepseek.week_title"), _ => BlockLabel(section.Kind)
+            "tasks" => ui.Text("layout.group.tasks"), "deepseekSpend" => ui.Text("deepseek.where"), "deepseekWeek" => ui.Text("deepseek.week_title"),
+            _ => BlockLabel(section.Kind)
         };
         string key = section.Providers is ["deepseek"] ? "layout.group.balance"
-            : section.Providers.Contains("deepseek") ? "layout.group.quota_balance" : "layout.group.quota";
+            : section.Providers.Any(provider => provider is "deepseek" or "workbuddy") ? "layout.group.quota_balance" : "layout.group.quota";
         return ui.Text(key);
     }
 
@@ -553,6 +573,7 @@ internal sealed partial class SettingsWindow
             "deepseek" => Both("main.panel.dial", ui.Text(options.DeepseekDial == "day" ? "main.panel.dial_day" : "main.panel.dial_budget")),
             "deepseekSpend" => Both("main.panel.spend_tasks", ui.Text("main.panel.spend_count").Replace("%ld", count, StringComparison.Ordinal)),
             "deepseekWeek" => Both("main.panel.week_line", ui.Text(options.WeekLine ? "main.panel.show" : "main.panel.hide")),
+            "workbuddy" => ui.Text("harness.account.title"),
             _ => ""
         };
     }
@@ -564,8 +585,9 @@ internal sealed partial class SettingsWindow
     private Button PanelBlockButton(string id, string selected, PanelOptions options, int row = 1)
     {
         bool isSelected = id == selected, paired = row > 1, narrow = row > 2;
-        Brush tint = id switch { "codex" or "claude" or "deepseek" => PacerPalette.Provider(id), "deepseekSpend" or "deepseekWeek" => PacerPalette.DeepSeek, _ => PacerPalette.Secondary };
-        var dot = new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = tint, VerticalAlignment = VerticalAlignment.Center };
+        Brush tint = id is "deepseekSpend" or "deepseekWeek" ? PacerPalette.DeepSeek : PacerPalette.Secondary;
+        FrameworkElement marker = BlockProvider(id) is { } provider ? ProviderIcon.Create(provider, 14)
+            : new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = tint, VerticalAlignment = VerticalAlignment.Center };
         var name = new TextBlock { Text = paired ? BlockProviderName(id) : BlockLabel(id), FontSize = 12.5, FontWeight = FontWeights.SemiBold,
             Foreground = PacerPalette.Primary, TextTrimming = TextTrimming.CharacterEllipsis };
         string summary = paired ? "" : PanelSummary(id, options);
@@ -573,8 +595,8 @@ internal sealed partial class SettingsWindow
         if (narrow)
         {
             name.HorizontalAlignment = HorizontalAlignment.Center; name.Margin = new Thickness(0, 5, 0, 0);
-            dot.HorizontalAlignment = HorizontalAlignment.Center;
-            content = new StackPanel { Margin = new Thickness(4, 8, 4, 8), VerticalAlignment = VerticalAlignment.Center, Children = { dot, name } };
+            marker.HorizontalAlignment = HorizontalAlignment.Center;
+            content = new StackPanel { Margin = new Thickness(4, 8, 4, 8), VerticalAlignment = VerticalAlignment.Center, Children = { marker, name } };
         }
         else
         {
@@ -583,7 +605,7 @@ internal sealed partial class SettingsWindow
             grid.ColumnDefinitions.Add(new ColumnDefinition());
             grid.Children.Add(new System.Windows.Shapes.Path { Data = Geometry.Parse("M3,3 h0.01 M7,3 h0.01 M3,6 h0.01 M7,6 h0.01 M3,9 h0.01 M7,9 h0.01"), Stroke = PacerPalette.Tertiary,
                 StrokeThickness = 1.6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, Width = 10, Height = 12, VerticalAlignment = VerticalAlignment.Center });
-            dot.Margin = new Thickness(6, 0, 6, 0); Grid.SetColumn(dot, 1); grid.Children.Add(dot);
+            marker.Margin = new Thickness(6, 0, 6, 0); Grid.SetColumn(marker, 1); grid.Children.Add(marker);
             var names = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { name } };
             if (summary.Length > 0)
                 names.Children.Add(new TextBlock { Text = summary, FontSize = 11, Foreground = PacerPalette.Secondary, Margin = new Thickness(0, 1, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });

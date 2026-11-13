@@ -242,6 +242,30 @@ final class ExpandedPanelTests: XCTestCase {
 
     // MARK: Settings page projection
 
+    func testAccountCreditsBlockKeepsLegacyQuotaAndWorksWithAllProviders() throws {
+        var request = P.Request(providers: [.codex, .claude, .deepseek, .workbuddy], language: "en")
+        let all = try XCTUnwrap(P.project(request))
+        XCTAssertEqual(all.sections.map(\.kind), [.tasks, .quota])
+        XCTAssertEqual(all.sections[1].providers, [.codex, .claude, .deepseek, .workbuddy])
+        for style in QuotaDashboardPresentation.Style.allCases {
+            let slots = QuotaDashboardPresentation.slots(providers: all.sections[1].providers, style: style)
+            XCTAssertEqual(slots.count, 4)
+            XCTAssertEqual(slots.last?.id, "workbuddy:credits")
+            XCTAssertNil(slots.last?.period)
+            XCTAssertEqual(QuotaDashboardPresentation.Layout.columns(for: slots.count), 2)
+        }
+        XCTAssertTrue(all.visible.contains("workbuddy"))
+        request.action = .init(kind: "move", block: "workbuddy", before: "tasks")
+        let moved = try XCTUnwrap(P.project(request))
+        XCTAssertEqual(moved.sections.first?.kind, .quota)
+        XCTAssertEqual(moved.sections.first?.providers, [.workbuddy])
+        XCTAssertEqual(moved.sections.first?.actions, true)
+        request.layout = moved.layoutJSON; request.action = nil; request.providers.removeAll { $0 == .workbuddy }
+        let disabled = try XCTUnwrap(P.project(request))
+        XCTAssertFalse(disabled.visible.contains("workbuddy"))
+        XCTAssertTrue(disabled.blocks.contains("workbuddy"))
+    }
+
     func testProjectionEditsSavesAndRestoresTheLayout() throws {
         let request = P.Request(providers: [.codex, .claude], language: "en")
         let automatic = try XCTUnwrap(P.project(request))

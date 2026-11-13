@@ -102,6 +102,10 @@ Spend made elsewhere on your account, such as web searches or another device, is
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
 
+**WorkBuddy AI.** Turn on WorkBuddy in Settings to see local tasks, questions and completed work. Click a linked task to return to its conversation. The task row shows the credits spent on that turn once WorkBuddy records the charge. To see how many credits you have left, choose **Connect account**, sign in on your WorkBuddy site and select **Done**. The balance appears in Settings, Overview and the expanded island's **Quota & Balance** section. When available, Pacer also shows the current plan's credits and reset date, plus how many credits will expire next and when. To move or hide the WorkBuddy dial, open **Expanded Panel**.
+
+Turn on the task progress ring under **Settings → WorkBuddy → Display**. Pacer adds the progress tool and a rule that asks new tasks to report progress. Click **Open Connectors**, then choose **Custom Connector** in WorkBuddy. The first time, click **Trust** next to `pacer_progress`. If it’s missing, reopen WorkBuddy. Pacer updates the trust status when you return to its settings. Turning the ring off removes the tool and the rule.
+
 **SSH hosts.** Pacer follows the hosts you already use in Codex and Claude. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.
 
 **WSL on Windows.** Turn on WSL monitoring in **Settings → Remote** when you need it. At least one distribution must be installed. Monitoring increases power use. Use **Refresh Now** after installing a distribution or to check which ones are running.

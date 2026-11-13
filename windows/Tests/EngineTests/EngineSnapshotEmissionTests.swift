@@ -28,6 +28,17 @@ final class EngineSnapshotEmissionTests: XCTestCase {
         XCTAssertTrue(try gate.accepts(wire(104, 302, ["rate": 12, "rateFresh": false])), "Freshness expiry is a real state change")
     }
 
+    func testWireComparisonDistinguishesBooleanAndNumericValues() throws {
+        var gate = EngineSnapshotEmission()
+        let boolean = Data(#"{"value":true,"notices":[]}"#.utf8)
+        let integer = Data(#"{"value":1,"notices":[]}"#.utf8)
+        XCTAssertTrue(try gate.accepts(boolean))
+        XCTAssertFalse(try gate.accepts(boolean))
+        XCTAssertTrue(try gate.accepts(integer))
+        XCTAssertFalse(try gate.accepts(integer))
+        XCTAssertTrue(try gate.accepts(boolean))
+    }
+
     func testEveryProjectedChangeAndNoticeIsRetained() throws {
         let changes: [[String: Any]] = [
             ["quota": [["pacePercent": 80.0, "remainingTimePercent": 60.0]]],

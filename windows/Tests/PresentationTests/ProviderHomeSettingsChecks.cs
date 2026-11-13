@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
@@ -17,6 +18,86 @@ using CodexPacer.Windows;
 
 internal static class ProviderHomeSettingsChecks
 {
+    internal static async Task RunTaskModule(string language, bool dark)
+    {
+        await using var engine = new EngineClient();
+        var ui = UiText.For(language == "zh-Hans");
+        var initial = new DesktopPreferences
+        {
+            LastSettingsPane = "overview", MonitorSSH = false,
+            ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled",
+                ["workbuddy"] = "disabled", ["future-harness"] = "enabled" }
+        };
+        var session = new PreferencesSession(initial, value => engine.SendAsync("configure", value), _ => true);
+        await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), false, language,
+            configuration: initial.EngineConfiguration(), readOnlyDiagnostics: true);
+        var window = new SettingsWindow(ui, session, new Startup(), true, dark, engine) { IsHitTestVisible = false, ShowActivated = false };
+        const string id = "settings.workbuddy";
+        CheckBox? ModuleSwitch() => Descendants(window).OfType<CheckBox>().FirstOrDefault(value => AutomationProperties.GetAutomationId(value) == id + ".enabled");
+        try
+        {
+            window.Show();
+            var row = Find<RadioButton>(window, "settings.pane.workbuddy");
+            Check(AutomationProperties.GetName(row) == "WorkBuddy" && row.IsEnabled &&
+                Descendants(row).OfType<Image>().Any(icon => icon.Source != null && ReferenceEquals(icon.Source, ProviderIcon.Source("workbuddy"))),
+                "WorkBuddy appears with its official icon in the Services sidebar while disabled");
+            Find<TextBox>(window, "settings.search").Text = "workbuddy";
+            await Pump();
+            Check(window.SearchMatches().SequenceEqual(["workbuddy"]), "Searching for WorkBuddy finds the service page");
+            Invoke(Find<Button>(window, "settings.search.result.workbuddy"));
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: false },
+                "The search result opens the disabled module’s settings page");
+            Check(session.Current.LastSettingsPane == "harness.workbuddy" && row.IsChecked == true, "The selected service is saved");
+            var toggle = Find<CheckBox>(window, id + ".enabled");
+            Check(AutomationProperties.GetName(toggle) == "WorkBuddy", "The module has an accessible label from its descriptor");
+            Toggle(toggle);
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: true }
+                && session.Current.ProviderModes["workbuddy"] == "enabled"
+                && engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "workbuddy" && module.Enabled) == true,
+                "The service page can enable a task module and keeps unknown choices out of the engine handshake");
+            Check(Find<TextBlock>(window, id + ".status").IsVisible && Find<Button>(window, id + ".accountUsage").IsVisible,
+                "The enabled service has local task status and an account usage link");
+            var detected = engine.LatestSnapshot?.Modules?.First(value => value.Provider == "workbuddy").Installed;
+            string detection = ui.Text(detected switch { true => "windows.provider.detected", false => "windows.provider.not_detected", _ => "provider.state.searching" });
+            Check(Descendants(window).OfType<TextBlock>().Any(value => value.Text == detection), "The header describes detection on a Windows PC");
+            var progress = Find<CheckBox>(window, id + ".progress");
+            Check(progress.IsEnabled && progress.IsChecked == false, "The external reporting tool is opt-in");
+            Toggle(progress);
+            await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == true
+                && session.Current.EnabledHarnessProgress.SequenceEqual(["workbuddy"]), "The progress switch saves independently of the module mode");
+            await window.NavigateAsync("overview");
+            Check(engine.LatestSnapshot?.QuotaDashboard?.Providers.Count == 0
+                && !Descendants(window).OfType<TextBlock>().Any(value => value.Text == ui.Text("provider.none_enabled")),
+                "An enabled task module appears in Overview without a quota card");
+            Invoke(Find<Button>(window, "settings.overview.details.workbuddy"));
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: true }, "The Overview detail link opens WorkBuddy settings");
+            progress = Find<CheckBox>(window, id + ".progress");
+            Check(progress.IsChecked == true, "The progress choice survives navigation");
+            Toggle(progress);
+            await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false && session.Current.EnabledHarnessProgress.Length == 0,
+                "Turning off progress removes its provider choice");
+            Invoke(Find<Button>(window, id + ".automatic"));
+            await PresentationWait.UntilAsync(() => session.Current.ProviderModes["workbuddy"] == "automatic"
+                && engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "workbuddy" && module.Mode == "automatic") == true,
+                "Automatic detection can be restored from the service header");
+            if (Find<CheckBox>(window, id + ".enabled").IsChecked != true)
+            {
+                Toggle(Find<CheckBox>(window, id + ".enabled"));
+                await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: true }
+                    && session.Current.ProviderModes["workbuddy"] == "enabled", "The module can be explicitly enabled after automatic detection");
+            }
+            Toggle(Find<CheckBox>(window, id + ".enabled"));
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: false }
+                && session.Current.ProviderModes["workbuddy"] == "disabled"
+                && engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "workbuddy" && !module.Enabled) == true,
+                "The service page can disable the task module again");
+            Check(session.Current.ProviderModes["future-harness"] == "enabled", "Editing WorkBuddy keeps unrecognized module choices");
+            await engine.SendAsync("shutdown");
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: false }, "A disconnected engine disables module controls");
+        }
+        finally { window.Close(); }
+    }
+
     internal static async Task Run(string provider, string language, bool dark, string output)
     {
         var previous = CultureInfo.CurrentUICulture; CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(language);

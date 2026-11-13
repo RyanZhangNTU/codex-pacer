@@ -50,6 +50,7 @@ What uninstall removes, and only when Pacer owns it:
 - **Claude:** the shared `ClaudeHookInstaller` rules remove only Pacer's current and old hook commands, restore the status line if it is still Pacer's wrapper, and remove only environment values Pacer added that the user has not changed. It covers the default, configured and recorded local Claude homes, not remote ones, and never guesses ownership without an install record. The [shared Python runtime](windows-engine.md#claude-python-runtime) is deleted last, only if owned and unreferenced. Adapter scripts and cleaned bookkeeping in the Claude home stay; nothing references them any more.
 - **Codex progress:** Pacer revokes running reporters and removes its `pacer_progress` entry and Dot progress plugin. Invalid TOML blocks uninstall. The reporter's runtime (`%LOCALAPPDATA%\CodexPacer\CodexProgressRuntime`) stays with user data.
 - **DeepSeek Harness:** in `%USERPROFILE%\.dsh` (or `DSH_HOME`) and the data folder chosen in Settings, only folders containing `pacer\deepseek-progress` are touched. Pacer's entries in `cordis.patch.yml` whose checksum still matches, the switch file and the marked reporter script are removed. A changed entry is kept and reported, with instructions to delete the two marker lines and everything between them.
+- **WorkBuddy:** Pacer removes its `pacer_progress` entry in `mcp.json` and its progress rule. It keeps other connectors and rules. The tool uses the same private runtime as Codex. Removing the enable file stops a running reporter from accepting progress.
 
 ## Demo
 

@@ -191,7 +191,7 @@ internal sealed partial class SettingsWindow
         if (trailing is FrameworkElement end) { end.VerticalAlignment = VerticalAlignment.Center; end.Margin = new Thickness(8, 0, 0, 0); Grid.SetColumn(end, 2); row.Children.Add(end); }
         return row;
     }
-    private static Border ProviderTile(string provider, double size = 22) => GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), size, true);
+    private static Border ProviderTile(string provider, double size = 22) => ProviderIcon.Tile(provider, size);
     /// A connected source's session count, including none, as the Mac shows it.
     private string SessionCount(int sessions) => sessions == 1 ? ui.Text("connections.sessions_one") : ui.Text("connections.sessions").Replace("%ld", sessions.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal);
     private Border Hairline(double inset, double end = 14)
@@ -249,7 +249,8 @@ internal sealed partial class SettingsWindow
         var button = new Button { Content = title, IsEnabled = enabled, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
         Identify(button, id, title); connectionActions.Add(button); return button;
     }
-    private static string ProviderName(string provider) => provider switch { "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek", _ => provider };
+    private string ProviderName(string provider) => engine?.LatestSnapshot?.Modules?.FirstOrDefault(module => module.Provider == provider)?.DisplayName
+        ?? (provider switch { "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek", _ => provider });
     private static string Tone(string? tone) => tone switch { "warning" => "SettingsWarning", "success" => "SettingsSuccess", _ => "SettingsSecondary" };
     private async Task RunConnectionAction(Func<Task> action)
     {

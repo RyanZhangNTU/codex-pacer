@@ -12,6 +12,7 @@ struct EngineCommand: Decodable {
     let id: String
     let method: String
     let params: Parameters?
+    let supportsHarnessModules: Bool?
 
     struct Parameters: Decodable {
         var shell: EngineShellProjection.Request?
@@ -44,6 +45,7 @@ struct EngineCommand: Decodable {
         var claudeProgressRing: Bool?
         var codexProgressRing: Bool?
         var deepseekProgressRing: Bool?
+        var enabledHarnessProgress: [String]?
         var retentionMinutes: Int?
         var enabledProviders: [String]?
         var providerModes: [String: String]?
@@ -133,13 +135,13 @@ struct EngineTask: Codable, Equatable {
         let rate = activity.displayedOutputEstimate(at: now)
         id = activity.id; provider = activity.provider.rawValue
         sessionID = activity.threadID; turnID = activity.turnID; parentThreadID = activity.parentThreadID
-        title = hideProjects ? L10n.text("activity.local_task") : activity.title ?? activity.project
+        title = activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.local_task") : activity.title ?? activity.project)
         source = hideProjects && activity.claudeCloud != nil ? L10n.text("connections.kind.claude_cloud")
             : activity.sourceHost ?? L10n.text("common.local")
         sourceID = activity.sourceHostID
         phase = activity.observedPhase(at: now).rawValue; stage = activity.stage.rawValue
         stageLabel = [.completed, .interrupted].contains(activity.phase) ? activity.endingLabel : activity.stage.label
-        model = activity.modelName.map(ModelDisplay.name); effort = activity.reasoningEffort
+        model = activity.modelName.map { ModelDisplay.name($0, provider: activity.provider) }; effort = activity.reasoningEffort
         tokensPerSecond = rate?.value; rateReportedAt = rate?.reportedAt.timeIntervalSince1970
         rateIsFresh = rate?.isFresh == true; rateIsEstimated = activity.displayedRateIsEstimated(at: now)
         firstTokenLatency = activity.firstTokenLatency
@@ -184,6 +186,17 @@ struct EngineModule: Codable, Equatable {
     let mode: String
     let installed: Bool?
     let enabled: Bool
+    var displayName: String? = nil
+    var symbol: String? = nil
+    var status: String? = nil
+    var usage: HarnessUsage? = nil
+    var usageGuideURL: URL? = nil
+    var progressConnector: Bool? = nil
+    var hasTaskProgress: Bool? = nil
+    var reportsSessionUsage: Bool? = nil
+    var reportsAccountCredits: Bool? = nil
+    var progressSetup: LocalHarnessProgressStatus? = nil
+    var progressConnection: LocalHarnessProgressConnection? = nil
 }
 
 struct EngineQuota: Codable, Equatable {

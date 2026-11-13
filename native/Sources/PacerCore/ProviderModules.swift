@@ -5,19 +5,20 @@ public enum ProviderModuleMode: String, CaseIterable, Codable, Sendable {
 }
 
 public struct ProviderInstallationDetection: Equatable, Sendable {
-    public let codexInstalled: Bool
-    public let claudeInstalled: Bool
-    public let deepseekInstalled: Bool
-    public init(codexInstalled: Bool, claudeInstalled: Bool, deepseekInstalled: Bool = false) {
-        self.codexInstalled = codexInstalled; self.claudeInstalled = claudeInstalled; self.deepseekInstalled = deepseekInstalled
+    public let installed: Set<AgentProvider>
+    public var codexInstalled: Bool { isInstalled(.codex) }
+    public var claudeInstalled: Bool { isInstalled(.claude) }
+    public var deepseekInstalled: Bool { isInstalled(.deepseek) }
+
+    public init(installed: Set<AgentProvider>) { self.installed = installed }
+    public init(codexInstalled: Bool, claudeInstalled: Bool, deepseekInstalled: Bool = false, additional: Set<AgentProvider> = []) {
+        var installed = additional
+        if codexInstalled { installed.insert(.codex) }
+        if claudeInstalled { installed.insert(.claude) }
+        if deepseekInstalled { installed.insert(.deepseek) }
+        self.init(installed: installed)
     }
-    public func isInstalled(_ provider: AgentProvider) -> Bool {
-        switch provider {
-        case .codex: codexInstalled
-        case .claude: claudeInstalled
-        case .deepseek: deepseekInstalled
-        }
-    }
+    public func isInstalled(_ provider: AgentProvider) -> Bool { installed.contains(provider) }
 
     public static func detect(using probe: any ProviderInstallationProbe) -> Self { probe.detect() }
 
@@ -25,29 +26,26 @@ public struct ProviderInstallationDetection: Equatable, Sendable {
 
 /// Automatic detection is a default, never an override of an explicit user choice.
 public struct ProviderModules: Equatable, Sendable {
-    public var codexMode: ProviderModuleMode
-    public var claudeMode: ProviderModuleMode
-    public var deepseekMode: ProviderModuleMode
+    private var modes: [AgentProvider: ProviderModuleMode] = [:]
+    public var claudeMode: ProviderModuleMode {
+        get { mode(for: .claude) }
+        set { setMode(newValue, for: .claude) }
+    }
     public init(codexMode: ProviderModuleMode = .automatic, claudeMode: ProviderModuleMode = .automatic,
                 deepseekMode: ProviderModuleMode = .automatic) {
-        self.codexMode = codexMode; self.claudeMode = claudeMode; self.deepseekMode = deepseekMode
+        setMode(codexMode, for: .codex); setMode(claudeMode, for: .claude); setMode(deepseekMode, for: .deepseek)
     }
     public func mode(for provider: AgentProvider) -> ProviderModuleMode {
-        switch provider {
-        case .codex: codexMode
-        case .claude: claudeMode
-        case .deepseek: deepseekMode
-        }
+        modes[provider] ?? Self.defaultMode(provider)
     }
     public mutating func setMode(_ mode: ProviderModuleMode, for provider: AgentProvider) {
-        switch provider {
-        case .codex: codexMode = mode
-        case .claude: claudeMode = mode
-        case .deepseek: deepseekMode = mode
-        }
+        modes[provider] = mode == Self.defaultMode(provider) ? nil : mode
     }
-    public func enabledProviders(detection: ProviderInstallationDetection) -> Set<AgentProvider> {
-        Set(AgentProvider.allCases.filter { provider in
+    private static func defaultMode(_ provider: AgentProvider) -> ProviderModuleMode {
+        HarnessRegistry.descriptor(for: provider)?.defaultMode ?? .disabled
+    }
+    public func enabledProviders(detection: ProviderInstallationDetection, supported: [AgentProvider] = HarnessRegistry.legacyIDs) -> Set<AgentProvider> {
+        Set(supported.filter { provider in
             switch mode(for: provider) {
             case .automatic: detection.isInstalled(provider)
             case .enabled: true
@@ -56,10 +54,13 @@ public struct ProviderModules: Equatable, Sendable {
         })
     }
     public static func load(from defaults: UserDefaults = .standard) -> Self {
-        func mode(_ provider: AgentProvider) -> ProviderModuleMode {
-            defaults.string(forKey: key(provider)).flatMap(ProviderModuleMode.init(rawValue:)) ?? .automatic
+        var modules = Self()
+        for id in AgentProvider.allCases {
+            if let mode = defaults.string(forKey: key(id)).flatMap(ProviderModuleMode.init(rawValue:)) {
+                modules.setMode(mode, for: id)
+            }
         }
-        return Self(codexMode: mode(.codex), claudeMode: mode(.claude), deepseekMode: mode(.deepseek))
+        return modules
     }
     public func save(to defaults: UserDefaults = .standard) {
         for provider in AgentProvider.allCases { defaults.set(mode(for: provider).rawValue, forKey: Self.key(provider)) }

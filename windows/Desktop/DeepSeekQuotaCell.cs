@@ -32,7 +32,11 @@ internal sealed class DeepSeekQuotaCell : StackPanel
         var caption = new QuotaReadingHost { Orientation = Orientation.Horizontal, Height = 15, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 8, 0, 6) };
         AutomationProperties.SetName(caption, budget?.Count > 0 ? "DeepSeek" + (budget[0].Verdict == "fast" ? ", " + budget[0].VerdictText : "")
             : wallet?.Dial?.StaleCaption == true ? "DeepSeek, " + ui.Text("common.not_updated") : "DeepSeek" + (wallet?.Dial?.PeakText is string peak ? ", " + peak : ""));
-        if (showsName) caption.Children.Add(new TextBlock { Text = "DeepSeek", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, VerticalAlignment = VerticalAlignment.Center });
+        if (showsName)
+        {
+            caption.Children.Add(ProviderIcon.Caption("deepseek"));
+            caption.Children.Add(new TextBlock { Text = "DeepSeek", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, VerticalAlignment = VerticalAlignment.Center });
+        }
         if (budget?.Count > 0)
         {
             if (budget[0].Verdict == "fast")

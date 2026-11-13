@@ -54,9 +54,8 @@ internal static class ShellProjection
         lock (Gate) { generation++; binding.Cancel(); Entries.Clear(); LastFailure = "unavailable"; }
         Changed?.Invoke("");
     }
-    private static Entry Get<T>(string method, object request, Func<T, bool>? valid) where T : class
+    private static Entry Get<T>(string method, JsonElement input, Func<T, bool>? valid) where T : class
     {
-        JsonElement input = JsonSerializer.SerializeToElement(request, Json);
         string key = method + ":" + input.GetRawText();
         Entry entry; EngineClient owner; int epoch; CancellationToken token;
         lock (Gate)
@@ -103,13 +102,16 @@ internal static class ShellProjection
         if (current) Changed?.Invoke(method);
     }
     internal static State<T> Read<T>(string method, object request, Func<T, bool>? valid = null) where T : class
+        => Read(method, request, out _, valid);
+    internal static State<T> Read<T>(string method, object request, out JsonElement input, Func<T, bool>? valid = null) where T : class
     {
-        var entry = Get(method, request, valid);
+        input = JsonSerializer.SerializeToElement(request, Json);
+        var entry = Get(method, input, valid);
         lock (Gate) return new(entry.Value as T, !entry.Completion.Task.IsCompleted, entry.Error);
     }
     internal static async Task<T> QueryAsync<T>(string method, object request, Func<T, bool>? valid = null) where T : class
     {
-        var entry = Get(method, request, valid);
+        var entry = Get(method, JsonSerializer.SerializeToElement(request, Json), valid);
         return await entry.Completion.Task.ConfigureAwait(false) as T ?? throw new IOException("The presentation engine did not return a usable value.");
     }
     internal static async Task WhenIdleAsync()

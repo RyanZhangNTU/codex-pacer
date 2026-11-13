@@ -6,6 +6,7 @@ import CWindowsSupport
 
 public enum PacerEngine {
     public static func run() async {
+        if TaskProgressReporter.serveLocalHarnessIfRequested(arguments: CommandLine.arguments, read: EngineInput.read) { return }
         #if os(Windows)
         // First, so a failure anywhere below leaves a report.
         WindowsCrashReport.install()
@@ -125,7 +126,7 @@ public enum PacerEngine {
             wslServices: wsl,
             sshServices: ssh, claudeRemoteServices: .live(ssh: ssh, wsl: wsl),
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices,
-            managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly,
+            managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly, managesLocalHarnessProgress: !demo && !readOnly,
             codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
         await runtime.hello()
         let input = EngineInput()
@@ -182,19 +183,22 @@ private actor WindowsDesktopDiagnostic {
 
 private final class EngineInput: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.codexpacer.windows.host-input", qos: .utility)
+    static func read() throws -> Data? {
+        #if os(Windows)
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let count = pacer_read_stdin(&buffer, buffer.count)
+        guard count >= 0 else { throw CocoaError(.fileReadUnknown) }
+        return count == 0 ? nil : Data(buffer.prefix(Int(count)))
+        #else
+        let bytes = try FileHandle.standardInput.read(upToCount: 4096)
+        return bytes?.isEmpty == false ? bytes : nil
+        #endif
+    }
     func next() async throws -> Data? {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 do {
-                    #if os(Windows)
-                    var buffer = [UInt8](repeating: 0, count: 4096)
-                    let count = pacer_read_stdin(&buffer, buffer.count)
-                    guard count >= 0 else { throw CocoaError(.fileReadUnknown) }
-                    continuation.resume(returning: count == 0 ? nil : Data(buffer.prefix(Int(count))))
-                    #else
-                    let bytes = try FileHandle.standardInput.read(upToCount: 4096)
-                    continuation.resume(returning: bytes?.isEmpty == false ? bytes : nil)
-                    #endif
+                    continuation.resume(returning: try Self.read())
                 } catch { continuation.resume(throwing: error) }
             }
         }
@@ -279,6 +283,11 @@ actor EngineRuntime {
     private var claudeProgressRing = false
     private var codexProgressRing = false
     private var deepseekProgressRing = false
+    private var enabledHarnessProgress: Set<AgentProvider> = []
+    private let managesLocalHarnessProgress: Bool
+    private var localProgressQueues: [AgentProvider: ProgressSetupQueue<LocalHarnessProgressSetup.Target>] = [:]
+    private var localProgressTasks: [AgentProvider: Task<Void, Never>] = [:]
+    private var localProgressStatuses: [AgentProvider: LocalHarnessProgressSetup.State] = [:]
     private let managesDeepSeekProgress: Bool
     private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
     /// The latest DeepSeek setup, which shutdown lets finish.
@@ -294,6 +303,7 @@ actor EngineRuntime {
         if claudeProgressRing { providers.insert(.claude) }
         if codexProgressRing { providers.insert(.codex) }
         if deepseekProgressRing { providers.insert(.deepseek) }
+        providers.formUnion(enabledHarnessProgress)
         return providers
     }
     /// The Claude home where this engine switched the ring on.
@@ -301,7 +311,46 @@ actor EngineRuntime {
     private var deepseekNoticePolicy = DeepSeekNoticePolicy()
     private var spikeSnoozedUntil = Date.distantPast
     private var retention: TimeInterval = 30 * 60
-    private var enabled = Set(AgentProvider.allCases)
+    private var enabled = Set(HarnessRegistry.legacyIDs)
+    private var clientSupportsHarnessModules = false
+    private var supportedProviders: [AgentProvider] {
+        HarnessRegistry.legacyIDs + (clientSupportsHarnessModules && !demo ? localHarnesses.definitions.map(\.descriptor.id) : [])
+    }
+    private let localHarnessDefinitions: [LocalHarnessDefinition]
+    private lazy var localHarnesses = LocalHarnessMonitors(platform: .windows,
+        io: .init(files: WindowsFileSystem(), events: WindowsActivityLogWatcher(), now: now), registered: localHarnessDefinitions)
+    private typealias ActivityAdapters = HarnessActivityAdapters<@Sendable () async -> Void>
+    private lazy var activityAdapters: ActivityAdapters = makeActivityAdapters()
+
+    private func makeActivityAdapters() -> ActivityAdapters {
+        let desktop = desktopMonitor, claude = claudeActivityMonitor, deepseek = deepseekActivityMonitor
+        let codex = ActivityAdapters.Adapter(start: { [weak self] in await self?.refresh(discover: true, refreshActivityMonitors: false) },
+            reset: { [weak self] in await self?.resetCodexActivity() },
+            discoverRoutes: { [weak self] in await self?.discoverCodexActivityRoutes() },
+            updatePolicy: { [weak self] policy, flush in await self?.applyCodexActivityPolicy(policy, flush: flush) },
+            stop: { deadline, reason, _ in await desktop?.shutdown(deadline: deadline, retainingRemoteControlCatalog: reason == .sleep) },
+            collect: { [weak self] context in await self?.collectCodexLogs(context) })
+        return ActivityAdapters([
+            .codex: codex,
+            .claude: .init(start: { [weak self] in await self?.bindClaudeActivity() },
+                reset: { [weak self] in await self?.resetClaudeActivity() },
+                discoverRoutes: { [weak self] in await self?.discoverClaudeActivityRoutes() },
+                refresh: { await claude.refresh() },
+                updatePolicy: { policy, flush in await claude.updateRefreshPolicy(policy, flushPending: flush) },
+                stop: { deadline, _, _ in await claude.shutdown(deadline: deadline) }),
+            .deepseek: .init(start: { [weak self] in await self?.bindDeepSeekActivity() },
+                reset: { [weak self] in await self?.resetDeepSeekActivity() }, refresh: { await deepseek.refresh() },
+                updatePolicy: { policy, flush in await deepseek.updateRefreshPolicy(policy, flushPending: flush) },
+                stop: { _, _, _ in await deepseek.shutdown() })
+        ], local: localHarnesses.definitions) { provider in
+            .local(start: { [weak self] in await self?.bindLocalHarness(provider) },
+                   reset: { [weak self] in await self?.resetLocalHarness(provider) },
+                   monitor: { [weak self] in await self?.localActivityMonitor(provider) })
+        }
+    }
+
+    private func localActivityMonitor(_ provider: AgentProvider) -> (any LocalHarnessMonitor)? { localHarnesses[provider] }
+    private var harnessActivities = HarnessActivitySources()
     private var moduleSettings = ProviderModules()
     private var moduleConfigurationActive = false
     private var installation: ProviderInstallationDetection?
@@ -321,15 +370,9 @@ actor EngineRuntime {
     private var notificationActivities: [SessionActivity] = []
     private var notificationRegistry: EngineNotificationRegistry
     private let navigationServices: ActivityNavigationServices
-    private struct LocalActivitySnapshot {
-        var activities: [SessionActivity] = []
-        var requests: [PendingAttentionRequest] = []
-        var available = false
-    }
     private lazy var claudeActivityMonitor = ClaudeActivityMonitor(clock: now, ssh: sshServices, wsl: wslServices,
         wslDisconnected: { [weak self] provider, source in await self?.wslHelperDisconnected(provider: provider, source: source) })
     private lazy var deepseekActivityMonitor = DeepSeekActivityMonitor(clock: now)
-    private var claudeLocal = LocalActivitySnapshot(), deepseekLocal = LocalActivitySnapshot()
     private var deepseekUsage = DeepSeekLocalUsage()
     private var activityState = ActivityApplicationState()
     private var inbox: CompletionInbox { get { activityState.inbox } set { activityState.inbox = newValue } }
@@ -354,9 +397,7 @@ actor EngineRuntime {
     private let navigationClock: @Sendable () -> TimeInterval
     private let navigationErrorDuration: TimeInterval
     private var sources: [EngineSource] = []
-    private var loggedActivities: [SessionActivity] = []
-    private var loggedRequests: [PendingAttentionRequest] = []
-    private var loggedSources: [EngineSource] = []
+    private var demoActivity = HarnessActivity()
     private let desktopServices: CodexDesktopServices?
     private var desktopState: CodexDesktopState?
     private var pendingDesktopEndings: [String: SessionActivity] { get { activityState.pendingCodexEndings } set { activityState.pendingCodexEndings = newValue } }
@@ -457,9 +498,11 @@ actor EngineRuntime {
          claudeHookServices: EngineClaudeHookServices? = nil,
          managesCodexProgress: Bool = false,
          managesDeepSeekProgress: Bool = false,
+         managesLocalHarnessProgress: Bool = false,
          codexProgressPaths: WindowsCodexProgressPaths = .init(root: WindowsCodexProgressPaths.defaultRoot),
          allowsStorageRecovery: Bool = true,
          sourceSettings: CodexSourceSettingsServices = .live,
+         localHarnessDefinitions: [LocalHarnessDefinition] = HarnessRegistry.localHarnesses,
          installationDetection: @escaping @Sendable () async -> ProviderInstallationDetection = {
              await Task.detached(priority: .utility) { ProviderInstallationDetection.detect() }.value
          },
@@ -467,6 +510,7 @@ actor EngineRuntime {
         self.demo = demo; self.now = now; self.output = output; self.quotaServices = quotaServices; self.desktopServices = desktopServices
         self.allowsStorageRecovery = allowsStorageRecovery
         self.sourceSettings = sourceSettings
+        self.localHarnessDefinitions = localHarnessDefinitions
         self.balanceServices = balanceServices
         self.claudeServices = claudeServices; self.allowsLiveClaudeWeb = allowsLiveClaudeWeb
         self.cloudServices = cloudServices
@@ -480,6 +524,7 @@ actor EngineRuntime {
         self.claudeHookServices = claudeHookServices
         self.managesCodexProgress = managesCodexProgress; self.codexProgressPaths = codexProgressPaths
         self.managesDeepSeekProgress = managesDeepSeekProgress
+        self.managesLocalHarnessProgress = managesLocalHarnessProgress
         self.detectInstallation = installationDetection
         self.activityState = ActivityApplicationState(inbox: CompletionInbox(dismissalStore: demo ? nil : dismissalStore))
         self.notificationRegistry = .init(store: notificationStore, now: now())
@@ -507,7 +552,8 @@ actor EngineRuntime {
     }
 
     func hello() {
-        send(["protocolVersion": EngineProtocol.version, "type": "hello", "engine": "PacerEngine"])
+        send(["protocolVersion": EngineProtocol.version, "type": "hello", "engine": "PacerEngine",
+              "harnessModules": demo ? [] : localHarnesses.definitions.map(\.descriptor.id.rawValue)])
     }
 
     private func setOwnedTask(_ task: Task<Void, Never>?, key: ApplicationWorkRegistry.Key) {
@@ -615,7 +661,13 @@ actor EngineRuntime {
                 input.wslProfile = target.sourceHostID.flatMap { wslServices?.registry.profile(id: $0, provider: target.provider) }
                 if let profile = input.wslProfile, let services = wslServices,
                    !(await services.validate(profile, provider: target.provider)) { throw ActivityNavigationError.unavailable }
-                let plan = try await navigationServices.resolve(input)
+                let plan: EngineNavigationPlan
+                if localHarnesses.definition(for: target.provider) != nil {
+                    guard let url = harnessActivities[target.provider]?.conversationURLs[target.id] else {
+                        throw ActivityNavigationError.unavailable
+                    }
+                    plan = .init(context: context, provider: target.provider, url: url)
+                } else { plan = try await navigationServices.resolve(input) }
                 guard navigationIsCurrent(entry), navigationState.owns(operation), operation.isCurrent(version: lifecycle.version(target.provider), active: active, inbox: inbox, scope: entry.cloudContext),
                       home == navigationHome(for: target.provider),
                       plan.context == context, plan.provider == target.provider.rawValue else {
@@ -698,7 +750,7 @@ actor EngineRuntime {
             func counts(_ values: [SessionActivity]) -> [String: Int] {
                 Dictionary(grouping: values.filter { $0.provider == .claude && $0.claudeCloud == nil }, by: { $0.phase.rawValue }).mapValues(\.count)
             }
-            let rows = claudeLocal.activities
+            let rows = harnessActivities[.claude]?.activities ?? []
             var isolated = CompletionInbox(dismissalStore: nil)
             _ = isolated.observe(rows, at: now(), retention: retention)
             let timing = ["missingEnd": rows.filter { $0.phaseChangedAt == nil }.count,
@@ -745,6 +797,17 @@ actor EngineRuntime {
                 enabled: usesClaudeWeb && enabled.contains(.claude) && !claudeWebPaused, context: lifecycle.version(.claude), reset: true)
             await claudeCloudMonitor?.startAfterPublication()
             _ = await monitor.refreshIfDue(expanded: expanded, force: true)
+        case "retryHarnessProgressSetup":
+            guard active, managesLocalHarnessProgress, clientSupportsHarnessModules, let name = command.params?.provider,
+                  let definition = localHarnesses.definitions.first(where: { $0.descriptor.id.rawValue == name }),
+                  definition.progressConfigFile != nil else { failure(id: command.id, code: "unavailable"); return true }
+            scheduleLocalHarnessProgress(definition, force: true)
+            if projectionReady { publish(notices: []) }
+        case "refreshHarnessProgressConnection":
+            guard active, let name = command.params?.provider,
+                  let definition = localHarnesses.definitions.first(where: { $0.descriptor.id.rawValue == name }),
+                  definition.progressConnection != nil else { failure(id: command.id, code: "unavailable"); return true }
+            scheduleLocalHarnessProgress(definition, inspectOnly: true)
         case "inspectProviderHome":
             guard let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
                   provider == .claude || provider == .deepseek else { failure(id: command.id, code: "invalidCommand"); return true }
@@ -806,8 +869,10 @@ actor EngineRuntime {
             publish(notices: [])
         case "initialize", "configure":
             let plan: ApplicationLifecycleCoordinator.Plan
+            let previous = clientSupportsHarnessModules
+            if command.method == "initialize", !initialized { clientSupportsHarnessModules = command.supportsHarnessModules == true }
             do { plan = try await configure(command.params) }
-            catch { failure(id: command.id, code: "invalidConfiguration"); return true }
+            catch { clientSupportsHarnessModules = previous; failure(id: command.id, code: "invalidConfiguration"); return true }
             if command.method == "initialize" { snapshotEmission = .init() }
             initialized = true
             await bindQuotaMonitor()
@@ -833,6 +898,12 @@ actor EngineRuntime {
             await claudeCloudMonitor?.refresh()
             forceBalanceRequested = true
             await refresh(discover: command.params?.discover ?? false)
+        case "refreshLocalHarness":
+            guard active, let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
+                  enabled.contains(provider), localHarnesses[provider] != nil, let refresh = activityAdapters[provider]?.refresh else {
+                failure(id: command.id, code: "unavailable"); return true
+            }
+            await refresh()
         case "refreshRemoteControl":
             guard active, initialized, enabled.contains(.codex), monitorRemoteControl, let monitor = desktopMonitor else {
                 failure(id: command.id, code: "unavailable"); return true
@@ -918,12 +989,12 @@ actor EngineRuntime {
             guard let value = command.params?.expanded else { failure(id: command.id, code: "invalidCommand"); return true }
             expanded = value
             if !demo {
-                await claudeActivityMonitor.updateRefreshPolicy(value ? .expanded : .collapsed, flushPending: true)
-                await deepseekActivityMonitor.updateRefreshPolicy(value ? .expanded : .collapsed, flushPending: true)
+                for provider in supportedProviders where provider == .codex || enabled.contains(provider) {
+                    let policy: ActivityRefreshPolicy = value ? .expanded : .collapsed
+                    await activityAdapters[provider]?.updatePolicy(policy, true)
+                }
             }
-            await desktopMonitor?.updateRefreshPolicy(value ? .expanded : .collapsed, flushPending: value)
             await claudeCloudMonitor?.setExpanded(value)
-            await updateSourceWatches(flushPending: value)
             if !demo {
                 restartPresentationClock()
                 await quotaMonitor?.refreshIfDue(expanded: value, expansion: value)
@@ -967,9 +1038,10 @@ actor EngineRuntime {
             guard executable.utf8.count <= 32 * 1024,
                   !executable.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw EngineCommand.Failure.invalid }
         }
+        let byProviderID = Dictionary(uniqueKeysWithValues: supportedProviders.map { ($0.rawValue, $0) })
         let explicitProviders = try parameters.enabledProviders.map { names -> Set<AgentProvider> in
-            guard names.count <= AgentProvider.allCases.count else { throw EngineCommand.Failure.invalid }
-            let values = names.compactMap(AgentProvider.init(rawValue:))
+            guard names.count <= supportedProviders.count else { throw EngineCommand.Failure.invalid }
+            let values = names.compactMap { byProviderID[$0] }
             guard values.count == names.count else { throw EngineCommand.Failure.invalid }
             return Set(values)
         }
@@ -977,15 +1049,22 @@ actor EngineRuntime {
         if let value = parameters.deepseekSettings, !value.isValid { throw EngineCommand.Failure.invalid }
         if let value = parameters.reminderSettings, !value.isValid { throw EngineCommand.Failure.invalid }
         if let value = parameters.expandedPanel, !value.isValid { throw EngineCommand.Failure.invalid }
+        let selectedProgress = try parameters.enabledHarnessProgress.map { names -> Set<AgentProvider> in
+            let eligible = Set(localHarnesses.definitions.filter { $0.descriptor.hasTaskProgress }.map(\.descriptor.id))
+            let providers = names.compactMap { byProviderID[$0] }.filter(eligible.contains)
+            guard names.count <= 128, providers.count == names.count else { throw EngineCommand.Failure.invalid }
+            return Set(providers)
+        }
         guard parameters.providerModes == nil || explicitProviders == nil else { throw EngineCommand.Failure.invalid }
         var updatedSettings = moduleSettings
         if let explicitProviders {
-            for provider in AgentProvider.allCases { updatedSettings.setMode(explicitProviders.contains(provider) ? .enabled : .disabled, for: provider) }
+            for provider in supportedProviders { updatedSettings.setMode(explicitProviders.contains(provider) ? .enabled : .disabled, for: provider) }
         }
         if let modes = parameters.providerModes {
-            guard modes.count <= AgentProvider.allCases.count else { throw EngineCommand.Failure.invalid }
+            guard modes.count <= supportedProviders.count else { throw EngineCommand.Failure.invalid }
             for (name, raw) in modes {
-                guard let provider = AgentProvider(rawValue: name), let mode = ProviderModuleMode(rawValue: raw) else { throw EngineCommand.Failure.invalid }
+                guard let provider = byProviderID[name],
+                      let mode = ProviderModuleMode(rawValue: raw) else { throw EngineCommand.Failure.invalid }
                 updatedSettings.setMode(mode, for: provider)
             }
         }
@@ -997,7 +1076,7 @@ actor EngineRuntime {
             guard generation == previous else { throw EngineCommand.Failure.invalid }
         }
         let selectedProviders = explicitProviders ?? (parameters.providerModes == nil ? nil :
-            updatedSettings.enabledProviders(detection: detected ?? .init(codexInstalled: false, claudeInstalled: false)))
+            updatedSettings.enabledProviders(detection: detected ?? .init(installed: []), supported: supportedProviders))
         let changesCodex = codex.map { $0 != codexHome } ?? false
         let changesClaude = claude.map { $0 != claudeHome } ?? false
         let changesDeepSeek = deepseek.map { $0 != deepseekHome } ?? false
@@ -1033,6 +1112,7 @@ actor EngineRuntime {
         if let value = parameters.claudeProgressRing { claudeProgressRing = value }
         if let value = parameters.codexProgressRing { codexProgressRing = value }
         if let value = parameters.deepseekProgressRing { deepseekProgressRing = value }
+        if let selectedProgress { enabledHarnessProgress = selectedProgress }
         moduleSettings = updatedSettings; installation = detected
         if parameters.providerModes != nil { moduleConfigurationActive = true }
         else if explicitProviders != nil { moduleConfigurationActive = false }
@@ -1074,7 +1154,7 @@ actor EngineRuntime {
         if changesCodex { codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) }) }
         if changesClaude { resetClaudeLocalSource() }
         if changesDeepSeek {
-            deepseekLocal = LocalActivitySnapshot(); deepseekUsage = DeepSeekLocalUsage()
+            harnessActivities.remove(.deepseek); deepseekUsage = DeepSeekLocalUsage()
             deepseekNoticePolicy = .init()
         }
         if changesCodex || changesClaude || changesDeepSeek { activityState.clearFirstOutput() }
@@ -1090,6 +1170,7 @@ actor EngineRuntime {
         // The Dot switch installs or removes the Durable progress plugin.
         scheduleCodexProgressSetup(force: durableChanged)
         scheduleDeepSeekProgressSetup()
+        for definition in localHarnesses.definitions { scheduleLocalHarnessProgress(definition) }
         boundWSLCompletionProfiles = wslCompletionProfiles
         bindCodexCompletionSources()
         bindWSLCompletionSources(.claude)
@@ -1106,9 +1187,18 @@ actor EngineRuntime {
     }
 
     private var lifecycleConfiguration: ApplicationLifecycleCoordinator.Configuration {
-        .init(enabled: enabled, sources: [.codex: codexHome.path + "|" + codexExecutable,
+        var sources: [AgentProvider: String] = [.codex: codexHome.path + "|" + codexExecutable,
             .claude: claudeHome.path,
-            .deepseek: deepseekHome.path])
+            .deepseek: deepseekHome.path]
+        for definition in localHarnesses.definitions where enabled.contains(definition.descriptor.id) {
+            sources[definition.descriptor.id] = localHarnessHome(definition).path
+        }
+        return .init(enabled: enabled, sources: sources)
+    }
+
+    private func localHarnessHome(_ definition: LocalHarnessDefinition) -> URL {
+        definition.resolveHome(override: WindowsEnvironment.value(definition.homeEnvironmentKey, in: ProcessInfo.processInfo.environment),
+            isAbsolute: WindowsCodexExecutableDiscovery.absolute)
     }
 
     private func bindQuotaMonitor() async {
@@ -1134,30 +1224,174 @@ actor EngineRuntime {
     }
 
     private func resetClaudeLocalSource() {
-        claudeLocal = LocalActivitySnapshot()
+        harnessActivities.remove(.claude)
         localStreamStatuses[.claude] = nil
     }
 
-    private func bindActivityMonitor(_ provider: AgentProvider, retryingWSL: Set<String> = []) async {
+    private func bindActivityMonitor(_ provider: AgentProvider) async {
         guard !demo, active else { return }
-        let context = lifecycle.version(provider)
-        if provider == .claude {
-            scheduleClaudeHooks()
-            lastClaudeDiscovery = now()
-            if enabled.contains(.claude) {
-                await claudeActivityMonitor.start(home: claudeHome, remoteTargets: monitoredRemoteTargets(.claude),
-                    refreshPolicy: expanded ? .expanded : .collapsed, retryingRemoteSources: retryingWSL) { [weak self] rows, statuses, attention, performance in
-                    await self?.receiveClaudeLocal(rows, statuses: statuses, attention: attention, performance: performance, context: context)
-                }
-            } else { await claudeActivityMonitor.shutdown(); claudeLocal = LocalActivitySnapshot() }
-            await bindClaudeRemoteSetup()
-        } else if provider == .deepseek {
-            if enabled.contains(.deepseek) {
-                await deepseekActivityMonitor.start(home: deepseekHome, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance, usage in
-                    await self?.receiveDeepSeekLocal(rows, statuses: statuses, attention: attention, performance: performance, usage: usage, context: context)
-                }
-            } else { await deepseekActivityMonitor.shutdown(); deepseekLocal = LocalActivitySnapshot(); deepseekUsage = DeepSeekLocalUsage() }
+        await activityAdapters[provider]?.start()
+    }
+
+    private func refreshHarnesses() async {
+        for provider in supportedProviders where enabled.contains(provider) {
+            await activityAdapters[provider]?.refresh?()
         }
+    }
+
+    private func discoverCodexActivityRoutes() async {
+        lastRemoteDiscovery = now()
+        scheduleRemoteDiscovery()
+        await bindDesktopMonitor()
+    }
+
+    private func discoverClaudeActivityRoutes() async {
+        await bindActivityMonitor(.claude)
+        scheduleRemoteDiscovery()
+    }
+
+    private func resetCodexActivity() async {
+        if enabled.contains(.codex) { await quotaMonitor?.refreshIfDue(expanded: expanded, force: true) }
+    }
+
+    private func resetClaudeActivity() async {
+        if enabled.contains(.claude) { _ = await claudeQuotaMonitor?.refreshIfDue(expanded: expanded, force: true) }
+        await bindActivityMonitor(.claude)
+    }
+
+    private func resetDeepSeekActivity() async {
+        if enabled.contains(.deepseek) { _ = await balanceMonitor?.refreshIfDue(active: expanded, requested: true) }
+        await bindActivityMonitor(.deepseek)
+    }
+
+    private func applyCodexActivityPolicy(_ policy: ActivityRefreshPolicy, flush: Bool) async {
+        await desktopMonitor?.updateRefreshPolicy(policy, flushPending: flush && policy == .expanded)
+        await updateSourceWatches(flushPending: flush && policy == .expanded)
+    }
+
+    private func bindClaudeActivity(retryingWSL: Set<String> = []) async {
+        guard !demo, active else { return }
+        let context = lifecycle.version(.claude)
+        scheduleClaudeHooks()
+        lastClaudeDiscovery = now()
+        if enabled.contains(.claude) {
+            await claudeActivityMonitor.start(home: claudeHome, remoteTargets: monitoredRemoteTargets(.claude),
+                refreshPolicy: expanded ? .expanded : .collapsed, retryingRemoteSources: retryingWSL) { [weak self] rows, statuses, attention, performance in
+                await self?.receiveClaudeLocal(rows, statuses: statuses, attention: attention, performance: performance, context: context)
+            }
+        } else { await activityAdapters[.claude]?.stop(ShutdownDeadline(), .reset, nil); resetClaudeLocalSource() }
+        await bindClaudeRemoteSetup()
+    }
+
+    private func bindDeepSeekActivity() async {
+        guard !demo, active else { return }
+        let context = lifecycle.version(.deepseek)
+        if enabled.contains(.deepseek) {
+            await deepseekActivityMonitor.start(home: deepseekHome, refreshPolicy: expanded ? .expanded : .collapsed) { [weak self] rows, statuses, attention, performance, usage in
+                await self?.receiveDeepSeekLocal(rows, statuses: statuses, attention: attention, performance: performance, usage: usage, context: context)
+            }
+        } else {
+            await activityAdapters[.deepseek]?.stop(ShutdownDeadline(), .reset, nil)
+            harnessActivities.remove(.deepseek); deepseekUsage = DeepSeekLocalUsage()
+        }
+    }
+
+    private func bindLocalHarness(_ provider: AgentProvider) async {
+        guard enabled.contains(provider), let definition = localHarnesses.definition(for: provider) else { return }
+        let context = lifecycle.version(provider)
+        let monitor = localHarnesses.monitor(for: definition)
+        let home = localHarnessHome(definition)
+        if harnessActivities.isBound(provider) { await monitor.refresh(); return }
+        harnessActivities.bind(provider, home: home, generation: context)
+        await monitor.start(home: home, policy: expanded ? .expanded : .collapsed) { [weak self] snapshot in
+            await self?.receiveHarness(provider, snapshot: snapshot, version: context)
+        }
+    }
+
+    private func resetLocalHarness(_ provider: AgentProvider) async {
+        guard active else { return }
+        let context = lifecycle.version(provider)
+        if let monitor = localHarnesses.remove(provider), let stop = activityAdapters[provider]?.stop {
+            let deadline = ShutdownDeadline()
+            await deadline.perform([{ await stop(deadline, .reset, monitor) }])
+        }
+        guard active, lifecycle.version(provider) == context else { return }
+        await bindActivityMonitor(provider)
+    }
+
+    private func receiveHarness(_ provider: AgentProvider, snapshot: HarnessActivity, version: UInt64) {
+        guard active, lifecycle.version(provider) == version, enabled.contains(provider),
+              let update = harnessActivities.receive(provider, snapshot: snapshot) else { return }
+        if update.scopeChanged {
+            navigationState.cancel(provider: provider)
+            navigationOpens = navigationOpens.filter { $0.value.activity.provider != provider }
+            activityState.removeHarness(provider)
+        }
+        if update.needsSourceBinding {
+            inbox.bindSourceHomes(provider: provider, localHome: navigationHome(for: provider), localAccountScope: update.activity.scope)
+        }
+        if projectionReady, refreshTask == nil { projectCollected(at: now()) }
+    }
+
+    private func moduleProjection(_ provider: AgentProvider) -> EngineModule {
+        let descriptor = localHarnesses.definition(for: provider)?.descriptor
+        let status = descriptor == nil ? nil : harnessActivities[provider]?.status?.rawValue
+        return .init(provider: provider.rawValue, mode: moduleSettings.mode(for: provider).rawValue,
+            installed: installation?.isInstalled(provider), enabled: enabled.contains(provider),
+            displayName: descriptor?.name, symbol: descriptor?.symbol, status: status,
+            usage: harnessActivities[provider]?.usage, usageGuideURL: descriptor?.usageGuide,
+            progressConnector: descriptor.map(\.progressConnector), hasTaskProgress: descriptor.map(\.hasTaskProgress),
+            reportsSessionUsage: descriptor.map(\.reportsSessionUsage), reportsAccountCredits: descriptor.map(\.reportsAccountCredits),
+            progressSetup: localProgressStatuses[provider]?.setup,
+            progressConnection: localProgressStatuses[provider]?.connection)
+    }
+
+    private func scheduleLocalHarnessProgress(_ definition: LocalHarnessDefinition, force: Bool = false, inspectOnly: Bool = false) {
+        guard !demo, managesLocalHarnessProgress, clientSupportsHarnessModules, let configFile = definition.progressConfigFile else { return }
+        let provider = definition.descriptor.id
+        let home = localHarnessHome(definition)
+        let reporter = EngineCodexSourceReport.path(URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL)
+        let wanted = enabled.contains(provider) && enabledHarnessProgress.contains(provider)
+        if inspectOnly {
+            guard wanted, localProgressStatuses[provider]?.setup == .configured, localProgressTasks[provider] == nil else { return }
+        }
+        let target = LocalHarnessProgressSetup.Target(home: home, configFile: configFile, reporter: reporter, enabled: wanted,
+                                                       ruleDirectory: definition.progressRuleDirectory)
+        guard let ticket = localProgressQueues[provider, default: .init()].request(target, force: force || inspectOnly) else { return }
+        if !inspectOnly { localProgressStatuses[provider] = wanted ? .init(.settingUp) : nil }
+        let paths = codexProgressPaths
+        let task = Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                await LocalHarnessProgressSetup.sync(ticket, storage: WindowsLocalProfileStorage(),
+                    connection: definition.progressConnection, inspectOnly: inspectOnly, prepare: { home in
+                    guard let command = await Self.prepareProgressReporter(home: home, paths: paths) else { return nil }
+                    return paths.localHarnessCommand(command, home: home)
+                }, owns: { paths.ownsLocalHarness($0, arguments: $1, home: $2) })
+            }.value
+            await self?.receiveLocalHarnessProgress(result, provider: provider, ticket: ticket)
+        }
+        localProgressQueues[provider]?.track(task)
+        localProgressTasks[provider] = task
+    }
+
+    private static func prepareProgressReporter(home: URL, paths: WindowsCodexProgressPaths) async -> CodexProgressCommand? {
+        let engine = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        let install = engine.deletingLastPathComponent().deletingLastPathComponent().path.lowercased()
+        let root = paths.root.path.lowercased()
+        guard root != install, !root.hasPrefix(install + "/") else { return nil }
+        let helper = engine.deletingLastPathComponent().appendingPathComponent("PacerInstallerHooks.exe")
+        guard let data = await WindowsSubprocess.capture(executable: helper,
+                arguments: ["--prepare-codex-progress", paths.root.path, home.path], timeout: 8, limit: 8192),
+              let command = try? JSONDecoder().decode(CodexProgressCommand.self, from: data), paths.owns(command, home: home) else { return nil }
+        return command
+    }
+
+    private func receiveLocalHarnessProgress(_ status: LocalHarnessProgressSetup.State?, provider: AgentProvider,
+                                             ticket: ProgressSetupQueue<LocalHarnessProgressSetup.Target>.Ticket) {
+        guard localProgressQueues[provider]?.finish(ticket) == true else { return }
+        localProgressTasks[provider] = nil
+        localProgressStatuses[provider] = status
+        if projectionReady { publish(notices: []) }
     }
     private func scheduleClaudeHooks(force: Bool = false) {
         guard let services = claudeHookServices else { return }
@@ -1237,15 +1471,7 @@ actor EngineRuntime {
         guard enabled || CodexProgressSetup.wasConfigured(in: home) || WindowsDurableProgressSetup.wasConfigured(in: home) else { return nil }
         let reporter: CodexProgressCommand?
         if enabled {
-            let engine = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-            let install = engine.deletingLastPathComponent().deletingLastPathComponent().path.lowercased()
-            let root = paths.root.path.lowercased()
-            guard root != install, !root.hasPrefix(install + "/") else { return .failed }
-            let helper = engine.deletingLastPathComponent().appendingPathComponent("PacerInstallerHooks.exe")
-            guard let data = await WindowsSubprocess.capture(executable: helper,
-                    arguments: ["--prepare-codex-progress", paths.root.path, home.path], timeout: 8, limit: 8192),
-                  let command = try? JSONDecoder().decode(CodexProgressCommand.self, from: data),
-                  paths.owns(command, home: home) else { return .failed }
+            guard let command = await prepareProgressReporter(home: home, paths: paths) else { return .failed }
             reporter = command
         } else { reporter = nil }
         let status = await CodexProgressSetup.apply(home: home, reporter: reporter, storage: WindowsLocalProfileStorage(),
@@ -1303,41 +1529,36 @@ actor EngineRuntime {
         claudeRemoteStatuses = statuses.filter { $0.key != "local" && allowsRemoteSource($0.key, provider: .claude) }
         await bindClaudeRemoteSetup()
         guard active, lifecycle.version(.claude) == context else { return }
-        claudeLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance).filter { allowsRemoteSource($0.sourceHostID, provider: .claude) },
+        harnessActivities.replace(.claude, with: .init(
+            activities: Self.measured(rows, performance).filter { allowsRemoteSource($0.sourceHostID, provider: .claude) },
             requests: attention.filter { allowsRemoteSource($0.sourceHostID, provider: .claude) },
-            available: status?.connected == true && status?.sourceAvailable != false)
-        if projectionReady, refreshTask == nil { projectLocal(.claude, snapshot: claudeLocal) }
+            status: status?.connected == true && status?.sourceAvailable != false ? .ready : .unavailable))
+        cloudLocalSessions.update(harnessActivities[.claude]?.activities ?? [])
+        if projectionReady, refreshTask == nil { projectCollected(at: now()) }
     }
     private func receiveDeepSeekLocal(_ rows: [SessionActivity], statuses: [String: RuntimeStreamStatus],
         attention: [PendingAttentionRequest], performance: [SessionPerformanceUpdate], usage: DeepSeekLocalUsage, context: UInt64) async {
         guard active, lifecycle.version(.deepseek) == context, enabled.contains(.deepseek) else { return }
-        let previous = Set(deepseekLocal.activities.filter { $0.phase == .running }.map { $0.id + "|" + ($0.turnID ?? "") })
+        let previous = Set((harnessActivities[.deepseek]?.activities ?? []).filter { $0.phase == .running }.map { $0.id + "|" + ($0.turnID ?? "") })
         deepseekUsage = usage
         let status = statuses["local"]
         localStreamStatuses[.deepseek] = status
-        deepseekLocal = LocalActivitySnapshot(activities: Self.measured(rows, performance), requests: attention,
-            available: status?.connected == true && status?.sourceAvailable != false)
+        harnessActivities.replace(.deepseek, with: .init(activities: Self.measured(rows, performance), requests: attention,
+            status: status?.connected == true && status?.sourceAvailable != false ? .ready : .unavailable))
         updateLocalWallet()
         if projectionReady, refreshTask == nil {
-            projectLocal(.deepseek, snapshot: deepseekLocal)
+            projectCollected(at: now())
             await bindBalanceMonitor()
             guard active, lifecycle.version(.deepseek) == context else { return }
             let ended = rows.contains { [.completed, .interrupted].contains($0.phase) && previous.contains($0.id + "|" + ($0.turnID ?? "")) }
             _ = await balanceMonitor?.refreshIfDue(active: expanded || rows.contains { $0.phase == .running }, turnEnded: ended)
         }
     }
-    private func projectLocal(_ provider: AgentProvider, snapshot: LocalActivitySnapshot) {
-        loggedActivities.removeAll { $0.provider == provider }; loggedActivities += snapshot.activities
-        loggedRequests.removeAll { $0.provider == provider }; loggedRequests += snapshot.requests
-        let id = provider.rawValue + ":local-logs"
-        loggedSources.removeAll { $0.id == id }
-        loggedSources.append(.init(id: id, provider: provider.rawValue, available: snapshot.available, transport: "logs", reason: nil))
-        cloudLocalSessions.update(loggedActivities)
-        projectCollected(at: now())
-    }
     private func updateLocalWallet() {
         var titles = deepseekUsage.titles
-        for activity in deepseekLocal.activities { if let task = activity.threadID { titles[task] = activity.title ?? activity.project } }
+        for activity in harnessActivities[.deepseek]?.activities ?? [] {
+            if let task = activity.threadID { titles[task] = activity.title ?? activity.project }
+        }
         walletSource = EngineWalletSource(balance: balanceState?.balance,
             connected: balanceState.map { $0.error == nil || $0.balance != nil } ?? false,
             ledger: deepseekUsage.ledger, history: balanceState?.history ?? .init(), titles: titles)
@@ -1362,14 +1583,14 @@ actor EngineRuntime {
         guard active else { return }
         // Automatic modules notice a new or removed app within ten minutes;
         // Settings and source changes detect at once through configure.
-        if !demo, moduleConfigurationActive, AgentProvider.allCases.contains(where: { moduleSettings.mode(for: $0) == .automatic }),
+        if !demo, moduleConfigurationActive, supportedProviders.contains(where: { moduleSettings.mode(for: $0) == .automatic }),
            now().timeIntervalSince(lastInstallationDetection) >= 600 {
             let previous = generation
             lastInstallationDetection = now()
             let detected = await detectInstallation()
             guard active, generation == previous, !Task.isCancelled else { return }
             installation = detected
-            let next = moduleSettings.enabledProviders(detection: detected)
+            let next = moduleSettings.enabledProviders(detection: detected, supported: supportedProviders)
             if next != enabled {
                 for provider in enabled.subtracting(next) { inbox.remove(provider: provider) }
                 if next.intersection(WindowsWSLProfile.providers) != enabled.intersection(WindowsWSLProfile.providers) {
@@ -1377,6 +1598,7 @@ actor EngineRuntime {
                     wslNeedsReconcile = true
                 }
                 enabled = next; projectionReady = false
+                for definition in localHarnesses.definitions { scheduleLocalHarnessProgress(definition) }
                 let plan = lifecycle.settings(lifecycleConfiguration)
                 for provider in plan.changedProviders { resetSourceState(provider) }
                 await bindQuotaMonitor()
@@ -1416,11 +1638,10 @@ actor EngineRuntime {
                 // Mac's start/wake is an explicit request, without bypassing a
                 // signed-out/challenge or failed-disconnect connection state.
                 case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: active, requested: force)
+                default: break
                 }
-            case .codexActivity: await refresh(discover: true, refreshActivityMonitors: false)
-            case .remoteActivity: lastRemoteDiscovery = now(); scheduleRemoteDiscovery(); await bindDesktopMonitor()
             case .activity(let provider): await bindActivityMonitor(provider)
-            case .claudeTargets: await bindActivityMonitor(.claude); scheduleRemoteDiscovery()
+            case .discoverActivityRoutes(let provider): await activityAdapters[provider]?.discoverRoutes?()
             case .clock: if !demo { restartPresentationClock() }
             case .displayExpiry: scheduleActivityDisplay(at: now())
             case .pruneActivities: activityState.prune(at: now(), retention: retention)
@@ -1442,14 +1663,7 @@ actor EngineRuntime {
         navigationOpens = navigationOpens.filter { $0.value.activity.provider != provider }
         hostTracking.cancel(provider: provider, clearApplications: true)
         ownedWork.cancel(provider: provider, kinds: [.hostScan, .hostRetry])
-        if enabled.contains(provider) {
-            switch provider {
-            case .codex: await quotaMonitor?.refreshIfDue(expanded: expanded, force: true)
-            case .claude: _ = await claudeQuotaMonitor?.refreshIfDue(expanded: expanded, force: true)
-            case .deepseek: _ = await balanceMonitor?.refreshIfDue(active: expanded, requested: true)
-            }
-        }
-        if provider != .codex { await bindActivityMonitor(provider) }
+        await activityAdapters[provider]?.reset()
     }
 
     private func resetSourceState(_ provider: AgentProvider) {
@@ -1458,9 +1672,8 @@ actor EngineRuntime {
         inbox.remove(provider: provider)
         activities.removeAll { $0.provider == provider }
         requests.removeAll { $0.provider == provider }
-        loggedActivities.removeAll { $0.provider == provider }
-        loggedRequests.removeAll { $0.provider == provider }
-        loggedSources.removeAll { $0.provider == provider.rawValue }
+        harnessActivities.remove(provider)
+        activityState.removeHarness(provider)
         switch provider {
         case .codex:
             desktopBinding = UUID(); remoteControlHostIDs = []; remoteControlScope = nil; durableAccountScope = nil
@@ -1472,10 +1685,12 @@ actor EngineRuntime {
             activityState.codexAttention = .init()
         case .claude:
             resetClaudeLocalSource(); claudeQuotaState = nil; cloudState = nil
+            cloudLocalSessions.update([])
             claudeQuotaAttention = .init(); activityState.claudeAttention = .init()
         case .deepseek:
-            deepseekLocal = LocalActivitySnapshot(); deepseekUsage = .init(); deepseekNoticePolicy = .init()
+            deepseekUsage = .init(); deepseekNoticePolicy = .init()
             balanceState = nil; walletSource = nil; activityState.deepseekAttention = .init()
+        default: break
         }
         activityState.clearFirstOutput()
     }
@@ -1774,7 +1989,7 @@ actor EngineRuntime {
             boundWSLCodex = codex; boundWSLClaude = claude
             await desktopMonitor?.retryInactiveHelpers(sources: retryCodex)
             guard active, epoch == wslEpoch else { return }
-            await bindActivityMonitor(.claude, retryingWSL: retryClaude)
+            await bindClaudeActivity(retryingWSL: retryClaude)
             guard active, epoch == wslEpoch else { return }
             await bindDesktopMonitor(force: true)
         }
@@ -1956,8 +2171,7 @@ actor EngineRuntime {
         await desktopMonitor?.retryInactiveHelpers()
         guard active, ownedWork.owns(owner), owner.version == generation else { return }
         await bindDesktopMonitor(force: true)
-        if enabled.contains(.claude) { await claudeActivityMonitor.refresh() }
-        if enabled.contains(.deepseek) { await deepseekActivityMonitor.refresh() }
+        await refreshHarnesses()
         guard active, ownedWork.owns(owner), owner.version == generation else { return }
         for row in claudeRemoteSetups where row.canRetry && row.message != nil {
             _ = await claudeRemoteSetup?.retry(sourceID: row.sourceID, context: row.context)
@@ -1984,6 +2198,14 @@ actor EngineRuntime {
             } else {
                 streams[provider] = provider == .claude ? claudeRemoteStatuses : [:]
                 if let status = localStreamStatuses[provider] { streams[provider, default: [:]]["local"] = status }
+                else if let harness = harnessActivities[provider], let health = harness.status {
+                    var status = RuntimeStreamStatus()
+                    status.connected = health == .ready
+                    status.sourceAvailable = health != .missing && health != .incompatible
+                    status.attachedThreads = harness.activities.count
+                    status.sourceName = provider.displayName
+                    streams[provider, default: [:]]["local"] = status
+                }
             }
             streams[provider] = streams[provider]?.filter { source, _ in
                 if source == "local" { return true }
@@ -2059,14 +2281,15 @@ actor EngineRuntime {
         let previousDeepSeekTurns = Set(activities.filter {
             $0.provider == .deepseek && $0.phase == .running
         }.map { $0.id + "|" + ($0.turnID ?? "") })
-        var current: [SessionActivity] = [], pending: [PendingAttentionRequest] = [], status: [EngineSource] = []
         if demo {
-            current = DemoScenario.tasks(stage: stage, at: date)
+            var rows = DemoScenario.tasks(stage: stage, at: date)
                 + [DemoScenario.claudeTask(stage: stage, at: date), DemoScenario.deepseekTask(stage: stage, at: date)]
+            var requests: [PendingAttentionRequest] = []
             if !claudeWebReference {
                 let cloud = DemoScenario.claudeCloud(stage: stage, at: date)
-                current += cloud.activities; pending = cloud.attention
+                rows += cloud.activities; requests = cloud.attention
             }
+            demoActivity = HarnessActivity(activities: rows, requests: requests)
             quota = Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].compactMap { provider in
                 DemoScenario.quota(provider, at: date).last.map { (provider, $0) }
             })
@@ -2077,45 +2300,30 @@ actor EngineRuntime {
                 else { claudeHistory.receive(snapshot: quota[provider], history: history, warning: nil) }
             }
             walletSource = .demo(at: date)
-            status = AgentProvider.allCases.map { .init(id: $0.rawValue + ":demo", provider: $0.rawValue,
-                available: true, transport: "demo", reason: nil) }
         } else {
-            if enabled.contains(.codex) {
-                let result = await codexReader.read(home: codexHome, now: date, phaseAwareRate: true, metricsOnly: !discover)
-                guard generation == revision else { return }
-                inbox.remove(activityIDs: result.excludedIDs)
-                current += result.activities; pending += result.requests
-                status.append(.init(id: "codex:local-logs", provider: "codex",
-                    available: FileManager.default.fileExists(atPath: codexHome.appendingPathComponent("sessions").path),
-                    transport: "logs", reason: nil))
+            for provider in supportedProviders where enabled.contains(provider) {
+                guard let collect = activityAdapters[provider]?.collect else { continue }
+                await collect(.init(observedAt: date, discover: discover))
+                guard active, generation == revision, !Task.isCancelled else { return }
             }
             if refreshMonitors {
-                if enabled.contains(.claude) { await claudeActivityMonitor.refresh() }
-                if enabled.contains(.deepseek) { await deepseekActivityMonitor.refresh() }
+                await refreshHarnesses()
                 guard active, generation == revision else { return }
             }
-            if enabled.contains(.claude) {
-                current += claudeLocal.activities; pending += claudeLocal.requests
-                status.append(.init(id: "claude:local-logs", provider: "claude", available: claudeLocal.available, transport: "logs", reason: nil))
-            }
-            if enabled.contains(.deepseek) {
-                current += deepseekLocal.activities; pending += deepseekLocal.requests
-                updateLocalWallet()
-                status.append(.init(id: "deepseek:local-logs", provider: "deepseek", available: deepseekLocal.available, transport: "logs", reason: nil))
-            }
+            if enabled.contains(.deepseek) { updateLocalWallet() }
         }
         await bindBalanceMonitor()
         guard active, generation == revision, !Task.isCancelled else { return }
-        let ended = current.contains { $0.provider == .deepseek && [.completed, .interrupted].contains($0.phase) &&
+        let deepseekRows = demo ? demoActivity.activities.filter { $0.provider == .deepseek } : harnessActivities[.deepseek]?.activities ?? []
+        let ended = deepseekRows.contains { [.completed, .interrupted].contains($0.phase) &&
             previousDeepSeekTurns.contains($0.id + "|" + ($0.turnID ?? "")) }
         let forceBalance = forceBalanceRequested; forceBalanceRequested = false
-        _ = await balanceMonitor?.refreshIfDue(active: expanded || current.contains { $0.provider == .deepseek && $0.phase == .running },
+        _ = await balanceMonitor?.refreshIfDue(active: expanded || deepseekRows.contains { $0.phase == .running },
             force: forceBalance, turnEnded: ended)
         guard active, generation == revision, !Task.isCancelled else { return }
-        loggedActivities = current; loggedRequests = pending; loggedSources = status
-        cloudLocalSessions.update(current)
         projectCollected(at: date)
-        let candidates = current.filter { $0.provider == .codex }.sorted {
+        let codexRows = demo ? demoActivity.activities.filter { $0.provider == .codex } : harnessActivities[.codex]?.activities ?? []
+        let candidates = codexRows.sorted {
             let left = [.running, .waitingForInput].contains($0.phase), right = [.running, .waitingForInput].contains($1.phase)
             if left != right { return left }
             return ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast)
@@ -2126,14 +2334,46 @@ actor EngineRuntime {
         await claudeCloudMonitor?.startAfterPublication()
     }
 
+    private func collectCodexLogs(_ context: ActivityAdapters.Adapter.SnapshotContext) async {
+        let revision = generation, home = codexHome
+        let result = await codexReader.read(home: home, now: context.observedAt, phaseAwareRate: true, metricsOnly: !context.discover)
+        guard active, generation == revision, !Task.isCancelled else { return }
+        inbox.remove(activityIDs: result.excludedIDs)
+        let found = FileManager.default.fileExists(atPath: home.appendingPathComponent("sessions").path)
+        harnessActivities.replace(.codex, with: .init(activities: result.activities, requests: result.requests,
+                                                      status: found ? .ready : .missing))
+    }
+
     private func projectCollected(at date: Date) {
-        var current = loggedActivities, pending = loggedRequests, status = loggedSources
-        if usesClaudeWeb, enabled.contains(.claude), let cloud = cloudState, cloud.enabled {
-            current += cloud.activities; pending += cloud.attention
-            if let availability = cloud.status {
-                status.append(.init(id: "claude:cloud-projects", provider: "claude", available: availability.connected && availability.sourceAvailable != false,
-                    transport: "https", reason: nil))
+        var current: [SessionActivity] = []
+        var status: [EngineSource] = []
+        let cloud = usesClaudeWeb && enabled.contains(.claude) && cloudState?.enabled == true ? cloudState : nil
+        if demo {
+            current = demoActivity.activities
+            status = HarnessRegistry.legacyIDs.map { .init(id: $0.rawValue + ":demo", provider: $0.rawValue,
+                available: true, transport: "demo", reason: nil) }
+            if let cloud { current.append(contentsOf: cloud.activities) }
+        } else {
+            for provider in supportedProviders where enabled.contains(provider) {
+                let observation = harnessActivities[provider]
+                var rows = observation ?? HarnessActivity()
+                if provider == .claude, let cloud {
+                    rows.activities.append(contentsOf: cloud.activities)
+                    rows.requests.append(contentsOf: cloud.attention)
+                }
+                activityState.replaceHarness(provider, with: rows)
+                current.append(contentsOf: rows.activities)
+                // Keep the source IDs used by the existing connection panels.
+                let registeredLocal = localHarnesses.definition(for: provider) != nil
+                if observation != nil || !registeredLocal {
+                    status.append(.init(id: provider.rawValue + (registeredLocal ? ":local" : ":local-logs"), provider: provider.rawValue,
+                        available: observation?.status == .ready, transport: registeredLocal ? "local" : "logs", reason: nil))
+                }
             }
+        }
+        if let availability = cloud?.status {
+            status.append(.init(id: "claude:cloud-projects", provider: "claude",
+                available: availability.connected && availability.sourceAvailable != false, transport: "https", reason: nil))
         }
         if !demo, monitorWSL, let services = wslServices {
             let catalog = services.registry.snapshot()
@@ -2157,22 +2397,12 @@ actor EngineRuntime {
                         sessions: source.sessions, quotaWindows: quota?.windows, quotaRefreshing: quota?.refreshing ?? false, quotaError: quota?.error)
                 }
         }
-        if !demo {
-            current = current.filter { enabled.contains($0.provider) }
-            pending = pending.filter { enabled.contains($0.provider) }
-        }
         if !demo, monitorSSH {
             status += claudeRemoteStatuses.filter { $0.key.hasPrefix(ConnectionSource.sshPrefix) }.map { id, value in
                 EngineSource(id: "claude:" + id, provider: "claude", available: value.connected && value.sourceAvailable != false,
                     transport: "ssh", reason: nil)
             }
         }
-        activityState.localActivities = current.filter { $0.provider == .codex }
-        activityState.claudeActivities = current.filter { $0.provider == .claude }
-        activityState.deepseekActivities = current.filter { $0.provider == .deepseek }
-        activityState.codexLogRequests = pending.filter { $0.provider == .codex }
-        activityState.claudeReceivedRequests = pending.filter { $0.provider == .claude }
-        activityState.deepseekReceivedRequests = pending.filter { $0.provider == .deepseek }
         if !demo, enabled.contains(.codex), let desktop = desktopState, desktop.context == lifecycle.version(.codex) {
             activityState.remoteActivities = desktop.activities
             activityState.codexReceivedRequests = desktop.attention
@@ -2200,7 +2430,9 @@ actor EngineRuntime {
         sources = status.filter { enabled.contains(AgentProvider(rawValue: $0.provider) ?? .codex) }
         let update: ActivityApplicationUpdate
         if demo {
-            activityState.demoActivities = current; activityState.demoRequests = pending; activityState.includesDemoMetadata = true
+            activityState.demoActivities = current
+            activityState.demoRequests = demoActivity.requests + (cloud?.attention ?? [])
+            activityState.includesDemoMetadata = true
             inbox.observe(current, at: date, retention: retention)
             update = activityState.applyDemoSnapshot(enabled: enabled, at: date, visibility: activityVisibility)
         } else {
@@ -2253,14 +2485,21 @@ actor EngineRuntime {
             hasBudget = reading.daily != nil || reading.weekly != nil
             compactWallet = .init(reading, preferred: .init(rawValue: deepseekSettings.ringPeriod) ?? .day)
             wallet = source.presentation(wallet: reading, at: date, hideProjects: hideProjects, configuration: deepseekSettings,
-                compactUsesBudget: enabled.subtracting([.deepseek]).count < 2, reminders: reminderSettings, connection: balanceState,
+                compactUsesBudget: enabled.intersection([.codex, .claude]).count < 2, reminders: reminderSettings, connection: balanceState,
                 panel: panelOptions)
             walletNotices = deepseekNoticePolicy.balanceNotices(reading, low: reminderSettings.contains(.lowBalance))
                 + deepseekNoticePolicy.spendNotices(reading, spike: reminderSettings.contains(.spendSpike), budget: reminderSettings.contains(.budget),
                     snoozedUntil: spikeSnoozedUntil, now: date)
         }
-        let visibleActivities = activities, visibleRequests = requests
-        let visibleNotices = activityState.visibleNotices(notices + walletNotices, visibility: activityVisibility)
+        let legacy = HarnessRegistry.legacyIDSet
+        let selected: Set<String>?
+        if activities.count > 256, !enabled.isSubset(of: legacy) {
+            let additional = activities.filter { !legacy.contains($0.provider) }
+            selected = additional.count > 256 ? HarnessRowBudget.select(activities: additional, maximum: 256) : nil
+        } else { selected = nil }
+        let visibleActivities = selected.map { ids in activities.filter { legacy.contains($0.provider) || ids.contains($0.id) } } ?? activities
+        let visibleRequests = selected.map { ids in requests.filter { legacy.contains($0.provider) || ids.contains($0.activity.id) } } ?? requests
+        let visibleNotices = Array(activityState.visibleNotices(notices + walletNotices, visibility: activityVisibility).prefix(256))
         var snapshots = quota
         var displayedSources = sources
         if !demo {
@@ -2281,13 +2520,13 @@ actor EngineRuntime {
                 reason: state.error?.localizedDescription))
         }
         snapshots = snapshots.filter { enabled.contains($0.key) }
-        activityState.replaceActivities(visibleActivities, at: date)
-        let taskPresentation = activityState.presentation(at: date,
-            options: .init(hideProjects: hideProjects,
+        let presentationOptions = TaskPresentationOptions(hideProjects: hideProjects,
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
                 }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
-                progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize))
+                progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize)
+        let taskPresentation = selected == nil ? activityState.presentation(at: date, options: presentationOptions) :
+            ActivityTaskPresentation(activities: visibleActivities, requests: visibleRequests, inbox: inbox, options: presentationOptions, at: date)
         scheduleActivityDisplay(at: date)
         var failedProviders = Set<AgentProvider>(), refreshingProviders = Set<AgentProvider>(), quotaErrors: [AgentProvider: String] = [:], sourceTexts: [AgentProvider: String] = [:]
         if !demo {
@@ -2309,7 +2548,7 @@ actor EngineRuntime {
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
             failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, now: date)
         let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests, completions: inbox.unreadActivities,
-            sources: AgentProvider.allCases.filter { enabled.contains($0) }.map { provider in
+            sources: HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay && enabled.contains($0.id) }.map(\.id).map { provider in
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))
             }, wallet: compactWallet, firstOutput: latestFirstOutput?.seconds, warnings: compactWarnings, groups: taskPresentation.groups, overview: taskPresentation.overview,
             firstOutputs: activityState.firstOutputHistory.values, now: date)
@@ -2338,6 +2577,9 @@ actor EngineRuntime {
                 guard !activity.isInternalReview, !activity.isIgnoredCodexSession else { return false }
                 if activity.provider == .deepseek { return true }
                 if demo { return true }
+                if localHarnesses.definition(for: activity.provider) != nil {
+                    return harnessActivities[activity.provider]?.conversationURLs[activity.id] != nil
+                }
                 if activity.claudeCloud != nil { return activity.threadURL != nil }
                 if let host = activity.sourceHostID {
                     if host == DurableActivityCatalog.hostID {
@@ -2355,12 +2597,15 @@ actor EngineRuntime {
             }
             // Retain a separate navigation view of cold log endings. They do
             // not become visible cards or replay notification baselines.
-            var candidates = Dictionary((visibleActivities + notificationActivities).filter { enabled.contains($0.provider) }
+            var candidates = Dictionary((visibleActivities + notificationActivities).filter {
+                enabled.contains($0.provider) && (selected == nil || legacy.contains($0.provider) || selected?.contains($0.id) == true)
+            }
                 .map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }).values.map { $0 }
             let hidden = activityState.hiddenActivityIDs(activityVisibility)
             candidates.removeAll { hidden.contains($0.canonicalized().id) }
             notificationNavigation.update(activities: candidates, requests: visibleRequests, inbox: inbox, cloudContext: cloudNavigationContext) {
-                [.codex, .claude].contains($0.provider) && !$0.isInternalReview && !$0.isIgnoredCodexSession
+                ([.codex, .claude].contains($0.provider) || harnessActivities[$0.provider]?.conversationURLs[$0.id] != nil)
+                    && !$0.isInternalReview && !$0.isIgnoredCodexSession
             }
             for (context, operation) in navigationOpens where navigationEntry(context: context) == nil {
                 navigationState.abandon(operation); navigationOpens.removeValue(forKey: context)
@@ -2371,10 +2616,8 @@ actor EngineRuntime {
         var snapshot = EngineSnapshot(sequence: sequence + 1, demo: demo, activities: visibleActivities, requests: visibleRequests,
             sources: displayedSources, quota: displayedQuota,
             notices: visibleNotices, inbox: inbox, hideProjects: hideProjects, now: date, wallet: enabled.contains(.deepseek) ? wallet : nil,
-            modules: moduleConfigurationActive ? AgentProvider.allCases.map {
-                .init(provider: $0.rawValue, mode: moduleSettings.mode(for: $0).rawValue,
-                    installed: installation?.isInstalled($0), enabled: enabled.contains($0))
-            } : nil, quotaDashboard: dashboard, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
+            modules: moduleConfigurationActive ? supportedProviders.map(moduleProjection) : nil,
+            quotaDashboard: dashboard, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
             progressRingProviders: progressRingProviders,
             compactWarnings: compactWarnings, compactContext: compactContext, taskPresentation: taskPresentation,
             deepseekConnection: balanceState.map { EngineDeepSeekConnection($0, now: date) },
@@ -2417,6 +2660,9 @@ actor EngineRuntime {
     func resumeAfterSleep() async {
         guard lifecycle.isSleeping else { return }
         let plan = lifecycle.resume()
+        // A reattached source may report the same rows as before sleep.
+        // Send the first rebuilt projection so the host can leave its sleep UI.
+        snapshotEmission = .init()
         if !demo { scheduleClaudeHooks() }
         quotaMonitor = quotaServices.map { services in
             CodexQuotaMonitor(services: services, seed: codexQuotaState, now: now) { [weak self] state in await self?.receiveQuota(state) }
@@ -2446,8 +2692,8 @@ actor EngineRuntime {
         guard plan.actions.contains(.stopSources) else { return }
         // A switch turned off just before quitting still removes Pacer's
         // Harness entry, so Harness stops loading the reporter.
-        let deepseekSetup = deepseekProgressTask
-        await ShutdownDeadline().perform([{ await deepseekSetup?.value }])
+        let progressTasks = Array(localProgressTasks.values) + [deepseekProgressTask].compactMap { $0 }
+        await ShutdownDeadline().perform(progressTasks.map { task in { await task.value } })
         initialized = false; projectionReady = false
         releaseHostWork()
         await cleanupSources(quota: quotaMonitor, claude: claudeQuotaMonitor, balance: balanceMonitor, sleeping: false)
@@ -2466,14 +2712,14 @@ actor EngineRuntime {
         #endif
     }
     private func cleanupSources(quota: CodexQuotaMonitor?, claude: ClaudeQuotaMonitor?, balance: DeepSeekBalanceMonitor?, sleeping: Bool) async {
-        let cloud = claudeCloudMonitor, desktop = desktopMonitor, web = webBridge, claudeWeb = claudeWebBridge, remoteSetup = claudeRemoteSetup
-        let deadline = ShutdownDeadline(), claudeActivity = claudeActivityMonitor, deepseekActivity = deepseekActivityMonitor
+        let cloud = claudeCloudMonitor, web = webBridge, claudeWeb = claudeWebBridge, remoteSetup = claudeRemoteSetup
+        let deadline = ShutdownDeadline()
+        let harnesses = localHarnesses.detach()
+        harnessActivities.detachLocalBindings()
         var operations: [ApplicationLifecycleCoordinator.Resource: ApplicationLifecycleCoordinator.Cleanup] = [
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claude?.stop() },
             .cloud: { if sleeping { await cloud?.suspend() } else { await cloud?.stop() } },
-            .realtime: { await desktop?.shutdown(deadline: deadline, retainingRemoteControlCatalog: sleeping) }, .balance: { await balance?.stop() },
-            .claudeActivity: { await claudeActivity.shutdown(deadline: deadline) }, .deepseekActivity: { await deepseekActivity.shutdown() },
-            .remoteSetup: { await remoteSetup?.shutdown() }
+            .balance: { await balance?.stop() }, .remoteSetup: { await remoteSetup?.shutdown() }
         ]
         if !sleeping {
             operations[.web] = { await web.setAvailable(false) }
@@ -2483,7 +2729,8 @@ actor EngineRuntime {
         let watcher = logWatcher, stopWatching = !demo
         operations[.watches] = { if stopWatching { watcher.stop(); _ = await watcher.activeWatchCount() } }
         #endif
-        let completed = await ApplicationLifecycleCoordinator.cleanup(operations, deadline: deadline)
+        let completed = await ApplicationLifecycleCoordinator.cleanup(operations,
+            activity: activityAdapters.cleanup(sleeping ? .sleep : .shutdown, deadline: deadline, detached: harnesses), deadline: deadline)
         if !completed { OwnedProcessTermination.terminateAll() }
     }
     private func invalidateNavigation() {
@@ -2545,7 +2792,12 @@ actor EngineRuntime {
         trackActivityHosts(for: scan.provider)
     }
     private func navigationHome(for provider: AgentProvider) -> URL {
-        switch provider { case .codex: codexHome; case .claude: claudeHome; case .deepseek: deepseekHome }
+        switch provider {
+        case .codex: codexHome
+        case .claude: claudeHome
+        case .deepseek: deepseekHome
+        default: localHarnesses.definition(for: provider).map(localHarnessHome) ?? defaultCodexHome
+        }
     }
     private func scheduleNavigationFailure() {
         navigationFailureTask?.cancel(); navigationFailureTask = nil
@@ -2562,7 +2814,7 @@ actor EngineRuntime {
     }
     private var cloudNavigationContext: String? { cloudState.map { $0.connectionContext + "|" + claudeOrganization } }
     private func notificationSource(_ provider: AgentProvider, scope: String) -> String? {
-        let home = provider == .codex ? codexHome : provider == .claude ? claudeHome : deepseekHome
+        let home = navigationHome(for: provider)
         var fields = ["notification-source-v1", provider.rawValue, home.standardizedFileURL.resolvingSymlinksInPath().path]
         switch provider {
         case .codex:
@@ -2582,6 +2834,9 @@ actor EngineRuntime {
             }
         case .deepseek:
             fields += [deepseekSettings.selection.rawValue, DeepSeekAuthMode.detect(home: deepseekHome)?.rawValue ?? ""]
+        default:
+            guard let source = harnessActivities[provider]?.scope else { return nil }
+            fields.append(source)
         }
         if scope == "quota" {
             guard enabled.contains(provider), let account = (provider == .claude ? claudeQuotaState?.snapshot : codexQuota)?.accountScope else { return nil }
@@ -2592,19 +2847,22 @@ actor EngineRuntime {
     }
     private func notificationProjection(_ notice: IslandNotice, requests: [PendingAttentionRequest], at date: Date) -> EngineNotice {
         var value = EngineNotice(notice, hideProjects: hideProjects)
-        let requested = requests.first { "request:" + $0.id == notice.id }?.activity.id
+        let request = requests.first { "request:" + $0.id == notice.id }
+        let requested = request?.activity.id
         let entry = notificationNavigation.entries.values.first { entry in
             entry.members.contains { member in requested == member.id || notice.id.hasPrefix(member.id + ":") }
         }
-        let deepseek = notice.category?.hasPrefix("deepseek.") == true || notice.id.hasPrefix("deepseek:") ||
-            notificationActivities.contains { $0.provider == .deepseek && (requested == $0.id || notice.id.hasPrefix($0.id + ":")) }
-        let provider = entry?.target.provider ?? (deepseek ? .deepseek : notice.id.hasPrefix("claude:") ? .claude : .codex)
+        let observed = notificationActivities.first { requested == $0.id || notice.id.hasPrefix($0.id + ":") }?.provider
+        let fallback = supportedProviders.first { notice.id.hasPrefix($0.rawValue + ":") }
+        let provider = entry?.target.provider ?? request?.provider ?? observed ?? fallback ??
+            (notice.category?.hasPrefix("deepseek.") == true ? .deepseek : .codex)
+        let deepseek = provider == .deepseek
         let scope = entry?.target.sourceHostID == DurableActivityCatalog.hostID ? DurableActivityCatalog.hostID
             : entry?.target.claudeCloud != nil ? "cloud" : deepseek ? "wallet" : notice.kind == .lowQuota ? "quota" : "local"
         guard let source = notificationSource(provider, scope: scope) else { value.actions = []; return value }
         let target = entry.map(EngineNotificationRegistry.target)
         let kind = target != nil ? "openTask" : deepseek && notice.kind != .lowQuota ? "openHarness" : "showIsland"
-        value.defaultAction = .init(kind: kind, title: L10n.text("common.open_chat"),
+        value.defaultAction = .init(kind: kind, title: L10n.text(kind == "showIsland" ? "main.overview.open" : "common.open_chat"),
             reference: notificationRegistry.issue(kind: kind, provider: provider, source: source, scope: scope, target: target, now: date))
         var actions = value.actions ?? []
         if target != nil { actions.insert(.init(kind: "openTask", title: L10n.text("common.open_chat")), at: 0) }

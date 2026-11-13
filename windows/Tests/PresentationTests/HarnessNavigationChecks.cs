@@ -11,6 +11,7 @@ using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using CodexPacer.Windows;
 
@@ -36,8 +37,40 @@ internal static class HarnessNavigationChecks
             var buttons = (StackPanel)island.FindName("AppButtons");
             var harness = buttons.Children.OfType<Button>().Single();
             Check(AutomationProperties.GetAutomationId(harness) == "island.open.deepseek"
-                && new ButtonAutomationPeer(harness).GetName() == ui.Text("windows.open.deepseek")
-                && harness.Content is IconGlyph { Symbol: "water.waves" }, "The toolbar needs the shared provider symbol and localized desktop action");
+                && new ButtonAutomationPeer(harness).GetName() == ui.Text("windows.open.deepseek"),
+                "The toolbar needs the localized desktop action");
+            CheckLaunchIcon(harness.Content, harness.Foreground, 17);
+            if (language == "en" && !motion)
+            {
+                var outlineSources = new HashSet<ImageSource>();
+                foreach (string provider in new[] { "codex", "claude", "deepseek", "workbuddy" })
+                {
+                    var source = ProviderIcon.Source(provider, outline: true) as BitmapSource
+                        ?? throw new InvalidOperationException("Missing launch icon for " + provider);
+                    var rgba = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+                    int stride = rgba.PixelWidth * 4;
+                    var pixels = new byte[stride * rgba.PixelHeight];
+                    rgba.CopyPixels(pixels, stride, 0);
+                    int solid = 0, transparent = 0;
+                    for (int i = 3; i < pixels.Length; i += 4)
+                    {
+                        if (pixels[i] >= 224) solid++;
+                        if (pixels[i] == 0) transparent++;
+                    }
+                    int area = rgba.PixelWidth * rgba.PixelHeight;
+                    Check(outlineSources.Add(source) && !ReferenceEquals(source, ProviderIcon.Source(provider)) &&
+                        solid > area * 0.03 && transparent > area * 0.70 && pixels[3] == 0 && pixels[^1] == 0,
+                        "Each app needs its own transparent line artwork with open space around the strokes");
+                }
+                island.ApplyPreferences(new() { IslandAppearance = "liquidGlassLight" });
+                await island.WaitForPresentationAsync(); await Pump();
+                CheckLaunchIcon(harness.Content, PacerPalette.Secondary, 17);
+                island.CapturePreview(Path.Combine(output, "harness-launch-outline-light.png"));
+                island.ApplyPreferences(new() { IslandAppearance = "classic" });
+                await island.WaitForPresentationAsync(); await Pump();
+                CheckLaunchIcon(harness.Content, PacerPalette.Secondary, 17);
+                island.CapturePreview(Path.Combine(output, "harness-launch-outline-dark.png"));
+            }
             Check(Descendants(island).OfType<TaskRow>().Where(row => State(row).Provider != "deepseek").All(row =>
                 row.IsEnabled == (engine.LatestSnapshot!.ActivityLinks?.Any(link => link.ActivityID == State(row).Id && link.Provider == State(row).Provider) == true)),
                 "Conversation actions must be backed by the engine's current source-scoped links");
@@ -54,6 +87,21 @@ internal static class HarnessNavigationChecks
             island.ApplyPreferences(new() { IslandAppearance = "classic", ShowAppButtons = false });
             Check(buttons.Visibility == Visibility.Collapsed && row.IsEnabled, "Hiding app buttons cannot disable task navigation");
             Invoke(harness); await Pump(); Check(opened.Count == 0, "A cached toolbar button cannot bypass the hidden-app-button preference");
+            if (language == "en" && !motion)
+            {
+                var more = (Button)island.FindName("MoreButton");
+                Invoke(more);
+                await Until(() => more.ContextMenu.IsOpen, "More must show its application menu");
+                var menuApp = more.ContextMenu.Items.OfType<MenuItem>()
+                    .Single(item => AutomationProperties.GetAutomationId(item) == "island.menu.open.deepseek");
+                menuApp.ApplyTemplate();
+                Check(menuApp.Template.FindName("MenuIcon", menuApp) is ContentPresenter presenter &&
+                    presenter.IsVisible && ReferenceEquals(presenter.Content, menuApp.Icon),
+                    "The application's menu entry must display its launch icon");
+                CheckLaunchIcon(menuApp.Icon, menuApp.Foreground, 14);
+                more.ContextMenu.IsOpen = false;
+                await Pump();
+            }
             Hover(row, true);
             Check(motion ? row.HasAnimatedProperties : row.HoverProgress == 1 && !row.HasAnimatedProperties,
                 "Hover must use the native finite clock or settle immediately under reduced motion");
@@ -115,11 +163,17 @@ internal static class HarnessNavigationChecks
             Hover(missingRow, true);
             Check(missingRow.HoverProgress == 0 && !missingRow.HasAnimatedProperties && opened.Count == 3,
                 "A disabled row cannot animate an available-action surface or launch a candidate");
-            Console.WriteLine("PASS Harness navigation " + language + (motion ? "-motion" : "-reduced") + ": native metadata fixture, localized actions, row timing, UIA and acknowledged opens; installed-app acceptance pending");
+            Console.WriteLine("PASS Harness navigation " + language + (motion ? "-motion" : "-reduced") +
+                ": transparent launch icons, localized actions, row timing, UIA and acknowledged opens");
         }
         finally { island.StopPresentation(); island.AllowClose = true; island.Close(); }
     }
     private static EngineTaskRow State(TaskRow row) => ((TaskRowState)row.DataContext).Value;
+    private static void CheckLaunchIcon(object? content, Brush ink, double size) =>
+        Check(content is Border { OpacityMask: ImageBrush mask } outline &&
+            ReferenceEquals(mask.ImageSource, ProviderIcon.Source("deepseek", outline: true)) &&
+            ReferenceEquals(outline.Background, ink) && outline.Width == size && outline.Height == size &&
+            !outline.IsHitTestVisible, "The launch action needs its generated icon in the current foreground color");
     private static void Hover(TaskRow row, bool inside) => row.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
         { RoutedEvent = inside ? Mouse.MouseEnterEvent : Mouse.MouseLeaveEvent });
     private static void Invoke(Button button)

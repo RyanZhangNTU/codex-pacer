@@ -55,7 +55,7 @@ struct OverviewPane: View {
     /// share rows two at a time above them.
     private var serviceRows: [[AgentProvider]] {
         let options = model.panelOptions
-        let wide = model.enabledProviders.filter { provider in
+        let wide = model.quotaProviders.filter { provider in
             guard provider != .deepseek, options.quotaDetails, options.periods(for: provider) == .both,
                   let snapshot = model.providerQuota(provider) else { return false }
             return [QuotaDashboardPresentation.Period.fiveHour, .weekly].allSatisfy {
@@ -101,13 +101,25 @@ struct OverviewPane: View {
     private func serviceCard(_ provider: AgentProvider) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72))
+                ProviderAppIcon(provider: provider)
                 Text(provider.displayName).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(PacerPalette.primary)
                 Spacer(minLength: 8)
                 Button(L10n.text("main.overview.details")) { open(SettingsPane(provider: provider)) }
                     .buttonStyle(.link).font(.system(size: 12))
             }
-            if provider == .deepseek { deepseekContent } else { QuotaDashboardView(model: model, providers: [provider]) }
+            if provider == .deepseek {
+                deepseekContent
+            } else if let descriptor = model.localHarnessDescriptors.first(where: { $0.id == provider }) {
+                let status = HarnessSettingsStatus(model: model, provider: descriptor.id)
+                if descriptor.reportsAccountCredits { QuotaDashboardView(model: model, providers: [provider]) }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(status.text)
+                    ForEach(harnessUsageLines(model.localHarnessUsage(provider)), id: \.self) { Text($0) }
+                }
+                .font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
+            } else {
+                QuotaDashboardView(model: model, providers: [provider])
+            }
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -159,7 +171,7 @@ struct OverviewPane: View {
                     let activity = row.activity
                     TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
                         enabled: model.canOpen(activity), accent: model.taskAccent,
-                        costDetail: model.deepseekCostDetail(activity)) {
+                        costHelp: model.deepseekCostHelp(activity)) {
                             model.open(activity)
                         }
                         .frame(height: 54)
@@ -188,7 +200,7 @@ struct HistoryPane: View {
                 quotaCard(provider)
             }
             if model.enabledProviders.contains(.deepseek) { deepseekCard }
-            if model.enabledProviders.isEmpty {
+            if model.quotaProviders.isEmpty {
                 MainCard { CardRow(title: L10n.text("provider.none_enabled")) }
             }
         }

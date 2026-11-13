@@ -10,6 +10,10 @@ internal static class UpdateAuthenticode
     internal static bool Verify(string path, string expectedSigner)
     {
         UpdateFiles.Check(path);
+        return VerifySigner(path, encoded => string.Equals(Convert.ToHexString(SHA256.HashData(encoded)), expectedSigner, StringComparison.OrdinalIgnoreCase));
+    }
+    internal static bool VerifySigner(string path, Func<byte[], bool> accepts)
+    {
         IntPtr name = Marshal.StringToCoTaskMemUni(Path.GetFullPath(path)), infoPointer = IntPtr.Zero;
         var policy = new Guid("00aac56b-cd44-11d0-8cc2-00c04fc295ee");
         var data = new TrustData();
@@ -31,7 +35,7 @@ internal static class UpdateAuthenticode
             var context = Marshal.PtrToStructure<CertContext>(wrapper.Cert);
             if (context.Length is 0 or > 65536) return false;
             byte[] encoded = new byte[context.Length]; Marshal.Copy(context.Encoded, encoded, 0, encoded.Length);
-            return string.Equals(Convert.ToHexString(SHA256.HashData(encoded)), expectedSigner, StringComparison.OrdinalIgnoreCase);
+            return accepts(encoded);
         }
         finally
         {

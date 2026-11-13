@@ -11,6 +11,11 @@ private let showExistingIsland = Notification.Name("com.codexpacer.island.showEx
 enum PacerMain {
     @MainActor static func main() {
         let arguments = CommandLine.arguments
+        if TaskProgressReporter.serveLocalHarnessIfRequested(arguments: arguments, read: {
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            let count = Darwin.read(STDIN_FILENO, &buffer, buffer.count)
+            return count > 0 ? Data(buffer.prefix(count)) : nil
+        }) { return }
         let durableReporter = arguments.count == 4 && arguments[3] == CodexProgressReporter.durableArgument
         if arguments.count == 3 || durableReporter, arguments[1] == CodexProgressReporter.argument {
             let home = URL(fileURLWithPath: arguments[2], isDirectory: true)
@@ -397,6 +402,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if model.isDemo {
             return showDemoDestination(title: L10n.text("demo.app_title")) { DemoConversationView(application: provider, onReturn: $0) }
         }
+        if !HarnessRegistry.legacyIDs.contains(provider), await MacLocalHarnessApplication.find(provider: provider) != application {
+            return .failed(L10n.text("activity.open_failed"))
+        }
         model.close()
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
@@ -411,6 +419,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private func openActivity(_ activity: SessionActivity) async -> ActivityOpenOutcome {
         if model.isDemo {
             return showDemoDestination(title: L10n.text("demo.chat_title")) { DemoConversationView(activity: activity, onReturn: $0) }
+        }
+        if let destination = model.localHarnessDestination(for: activity) {
+            model.close()
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            return await withCheckedContinuation { continuation in
+                NSWorkspace.shared.open([destination.url], withApplicationAt: destination.application, configuration: configuration) { _, error in
+                    continuation.resume(returning: error == nil ? .openedConversation : .failed(L10n.text("activity.open_failed")))
+                }
+            }
         }
         if activity.provider == .claude {
             guard model.canOpen(activity) else { return .failed(L10n.text("activity.open_failed")) }

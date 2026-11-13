@@ -29,7 +29,7 @@ final class PresentationEnumCodableTests: XCTestCase {
         try check(DeepSeekAlertPresentation.Kind.allCases, ["exhausted", "lowBalance", "spike", "overBudget", "nearingBudget"])
         try check(DeepSeekConnectionPresentation.Action.allCases, ["signIn", "refresh"])
         try check(DeepSeekConnectionPresentation.Color.allCases, ["green", "secondary", "orange"])
-        try check(AgentProvider.allCases, ["codex", "claude", "deepseek"])
+        try check(AgentProvider.allCases, ["codex", "claude", "deepseek", "workbuddy"])
         try check([QuotaDashboardPresentation.Verdict.spare, .steady, .fast], ["spare", "steady", "fast"])
         try check(P.SingleTask.allCases, ["stage", "count", "percent"])
         typealias O = CompactComponentOptions
