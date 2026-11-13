@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.4.3
+
+- Urgent fix for today's Codex update: tasks on SSH hosts show again. Codex now keeps its SSH connection settings under the signed-in account, so Pacer 4.4.2 and earlier found no SSH hosts. Pacer reads the current account's settings, still reads the older layout, and never uses another account's hosts.
+
 ## 4.4.2
 
 - Use much less power in the background. With the same real tasks and the panel collapsed, Pacer used about 60% less CPU than 4.4.1 on Windows and about 65% less on Mac. Pacer no longer redraws or sends updates that change nothing on screen. It checks unreachable SSH hosts and failed connections less often, backing off to every 15 minutes, and stops rescanning apps it has already identified. On Windows, collapsed animations run at lower frame rates and stop while the screen is locked or off. On Mac, the Dot task check pauses while the screen is dark.
