@@ -119,6 +119,11 @@ final class IslandModel: ObservableObject {
     var deepseekBalanceReads = DeepSeekBalanceReadDependencies()
     var deepseekBalanceCoordinator: DeepSeekBalanceCoordinator?
     var deepseekBalanceCoordinatorID = UUID()
+    /// The newest balance history not yet written; readings arrive up to once a minute.
+    var pendingDeepSeekHistory: DeepSeekBalanceHistory?
+    var deepseekHistorySaveWork: DispatchWorkItem?
+    /// One wallet per distinct input; a render reads it from many views.
+    var deepseekWalletMemo: (inputs: DeepSeekWalletInputs, wallet: DeepSeekWallet)?
     var deepseekBalanceState: DeepSeekBalanceState?
     var deepseekCredentialInput: MacDeepSeekCredentialInput?
     var deepseekBalanceStarting = false
@@ -377,7 +382,7 @@ final class IslandModel: ObservableObject {
         guard !demo, !stopped, installationOverride == nil, let reporter = Bundle.main.executableURL,
               let ticket = codexProgressQueue.request(.init(home: home, executable: defaults.string(forKey: "codexExecutable") ?? "",
                                                             enabled: showsCodexProgressRing && isModuleEnabled(.codex)), force: force) else { return }
-        let target = ticket.target
+        let target = ticket.target, durable = monitorsDurable
         // Apply flag changes in order, off the main actor and independently
         // of any earlier setup that is still waiting for Codex.
         let gate = codexProgressGate, previousHome = ticket.previous?.home
@@ -393,10 +398,10 @@ final class IslandModel: ObservableObject {
                 let generation = await flagTask.value
                 await ticket.waitForPrevious()
                 if let previous = ticket.previous, previous.home != target.home {
-                    _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false)
+                    _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, reporter: reporter, enabled: false, durable: false)
                 }
                 return await Self.configureCodexReporter(home: target.home, executable: target.executable, reporter: reporter, enabled: target.enabled,
-                                                         gate: gate, request: generation)
+                                                         durable: durable, gate: gate, request: generation)
             }.value
             guard let self, !stopped, codexProgressQueue.finish(ticket) else { return }
             codexProgressFlagTask = nil
@@ -405,7 +410,7 @@ final class IslandModel: ObservableObject {
         codexProgressQueue.track(task)
     }
 
-    private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool,
+    private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool, durable: Bool,
                                                            gate: CodexProgressSwitchGate? = nil, request: Int = 0) async -> CodexProgressSetupStatus? {
         let command: CodexProgressCommand? = enabled ? .native(executable: reporter, home: home) : nil
         let status = await CodexProgressSetup.apply(home: home, reporter: command, storage: MacClaudeHookStorage(),
@@ -419,7 +424,8 @@ final class IslandModel: ObservableObject {
         if !enabled || status == .ready {
             // The Dot plugin is best effort: a failed install leaves local
             // sessions reporting and is retried by the next setup.
-            _ = await MacDurableProgressSetup.apply(home: home, reporter: enabled ? reporter : nil,
+            // With Dot off the plugin is removed, as when the ring is off.
+            _ = await MacDurableProgressSetup.apply(home: home, reporter: enabled && durable ? reporter : nil,
                                                     customExecutable: executable)
         }
         return status
@@ -435,6 +441,8 @@ final class IslandModel: ObservableObject {
     var showsClaudeProgressRing: Bool { Self.progressRingEnabled(Self.claudeProgressRingKey, in: defaults) }
     /// The setting the last settings pass applied, so a switch reaches SSH hosts once.
     private var appliedClaudeProgressRing = false
+    /// The Dot switch the Codex progress setup last applied.
+    private var appliedDurable = false
     /// The Claude home where this app turned the ring's switch on.
     private var claudeProgressSwitchHome: URL?
     /// Only an app that manages the hooks writes the switch; a demo never
@@ -473,7 +481,9 @@ final class IslandModel: ObservableObject {
     }
     @Published var expanded = false
     @Published var pinned = false
-    @Published var now = Date()
+    /// The reference time for each pass. Setting it alone does not redraw: changed
+    /// values publish themselves; the clock and expiry wake-ups call `redrawClock()`.
+    var now = Date()
     @Published var settingsRevision = 0
     @Published var isAttached = false
     /// Attached to a real hardware notch, where the collapsed bar is pure black.
@@ -985,7 +995,40 @@ final class IslandModel: ObservableObject {
     }
     var displayMode: IslandDisplayMode { .load() }
     var islandPosition: IslandPosition { .load(from: defaults) }
-    var activityRefreshPolicy: ActivityRefreshPolicy { expanded ? .expanded : .collapsed }
+    var activityRefreshPolicy: ActivityRefreshPolicy { visiblyExpanded ? .expanded : .collapsed }
+    /// Why an open panel cannot be seen. It then refreshes at the collapsed cadence.
+    enum VisibilityBlocker: Hashable { case displaySleep, screenLock, inactiveSession, occluded }
+    private(set) var visibilityBlockers: Set<VisibilityBlocker> = []
+    /// Expanded and actually on screen: only then do clocks, quotas and activity use the fast cadence.
+    var visiblyExpanded: Bool { expanded && visibilityBlockers.isEmpty }
+    func setVisibilityBlocked(_ blocker: VisibilityBlocker, _ blocked: Bool) {
+        let wasLive = visiblyExpanded
+        if blocked { visibilityBlockers.insert(blocker) } else { visibilityBlockers.remove(blocker) }
+        guard visiblyExpanded != wasLive else { return }
+        applyRefreshCadence()
+        guard visiblyExpanded else { return }
+        // Back in view: catch up once, as opening the panel does.
+        redrawClock()
+        if !demo, !sleeping, !stopped { refreshActivity(metricsOnly: true) }
+        if Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshQuota() }
+    }
+    private func applyRefreshCadence() {
+        if !demo, !sleeping, !stopped {
+            logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: visiblyExpanded)
+            let generation = sourceGeneration
+            launchOwnedWork(.init(.presentation, identifier: "activity-policy")) { [weak self] ticket in
+                guard let self, generation == self.sourceGeneration, self.lifecycle.owns(ticket) else { return }
+                await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
+                guard self.lifecycle.owns(ticket) else { return }
+                await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
+                guard self.lifecycle.owns(ticket) else { return }
+                await self.claudeCloudCoordinator?.setExpanded(self.visiblyExpanded)
+                guard self.lifecycle.owns(ticket) else { return }
+                await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
+            }
+        }
+        if clock != nil { scheduleClock() }
+    }
     var appearance: IslandAppearance { .stored(in: defaults) }
     var expandedQuotaStyle: ExpandedQuotaStyle { .load(from: defaults) }
     var showInFullscreen: Bool { defaults.bool(forKey: "showInFullscreen") }
@@ -1061,6 +1104,14 @@ final class IslandModel: ObservableObject {
     var rateIsFresh: Bool { overview.rateIsFresh }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
     var monitorsRemoteControl: Bool { defaults.bool(forKey: "monitorRemoteControl") }
+    /// Dot tasks are opt-in; see `migrateDurableSwitch`.
+    nonisolated static let monitorsDurableKey = "monitorDurable"
+    var monitorsDurable: Bool { defaults.bool(forKey: Self.monitorsDurableKey) }
+    /// An upgraded profile decides once: Dot stays on where its tasks already reported progress.
+    static func migrateDurableSwitch(in defaults: UserDefaults, home: URL, files: any PlatformFileSystem = MacFileSystem()) {
+        guard defaults.object(forKey: monitorsDurableKey) == nil else { return }
+        defaults.set(DurableUsageEvidence.hasReceipts(home: home, files: files), forKey: monitorsDurableKey)
+    }
     static let showsClaudeCloudProjectsKey = "showClaudeCloudProjects"
     var showsClaudeCloudProjects: Bool {
         defaults.object(forKey: Self.showsClaudeCloudProjectsKey) == nil || defaults.bool(forKey: Self.showsClaudeCloudProjectsKey)
@@ -1110,6 +1161,8 @@ final class IslandModel: ObservableObject {
         if let saved = defaults.string(forKey: "selectedQuotaProvider").flatMap(AgentProvider.init(rawValue:)), enabledProviders.contains(saved) {
             selectedProvider = saved
         } else { selectedProvider = enabledProviders.first ?? .codex }
+        if !demo { Self.migrateDurableSwitch(in: defaults, home: home) }
+        appliedDurable = defaults.bool(forKey: Self.monitorsDurableKey)
         lifecycle = ApplicationLifecycleCoordinator(demo: demo, configuration: .init(enabled: Set(enabledProviders),
             sources: [.codex: currentCodexSourceSignature, .claude: currentClaudeSourceSignature, .deepseek: currentDeepSeekSourceSignature],
             hasDemoSnapshot: demo && demoArguments != nil))
@@ -1144,6 +1197,21 @@ final class IslandModel: ObservableObject {
                 self?.resumeAfterSleep()
             }
         })
+        // A pinned panel behind a dark display, the lock screen or another user's session is not seen.
+        for (name, blocker, blocked) in [(NSWorkspace.screensDidSleepNotification, VisibilityBlocker.displaySleep, true),
+                                         (NSWorkspace.screensDidWakeNotification, .displaySleep, false),
+                                         (NSWorkspace.sessionDidResignActiveNotification, .inactiveSession, true),
+                                         (NSWorkspace.sessionDidBecomeActiveNotification, .inactiveSession, false)] {
+            observations.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.setVisibilityBlocked(blocker, blocked) }
+            })
+        }
+        let distributed = DistributedNotificationCenter.default()
+        for (name, blocked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
+            observations.append(distributed.addObserver(forName: .init(name), object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.setVisibilityBlocked(.screenLock, blocked) }
+            })
+        }
     }
     func prepareForSleep() async {
         let plan = lifecycle.prepareForSleep()
@@ -1167,29 +1235,17 @@ final class IslandModel: ObservableObject {
     func resumeAfterSleep() {
         let plan = lifecycle.resume()
         guard !plan.actions.isEmpty else { return }
-        now = Date(); performLifecycle(plan)
+        redrawClock(); performLifecycle(plan)
     }
+    /// Elapsed times, countdowns and rate expiry change with time alone.
+    func redrawClock(_ date: Date = Date()) { now = date; objectWillChange.send() }
     func setExpanded(_ value: Bool) {
         guard !value || !interactionSuspended else { return }
         closeWork?.cancel()
         guard expanded != value else { return }
         expanded = value
-        if !demo, !sleeping, !stopped {
-            logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: value)
-            let generation = sourceGeneration
-            launchOwnedWork(.init(.presentation, identifier: "activity-policy")) { [weak self] ticket in
-                guard let self, generation == self.sourceGeneration, self.lifecycle.owns(ticket) else { return }
-                await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.claudeCloudCoordinator?.setExpanded(self.expanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
-            }
-            if value { refreshActivity(metricsOnly: true) }
-        }
-        if clock != nil { scheduleClock() }
+        applyRefreshCadence()
+        if value, !demo, !sleeping, !stopped { refreshActivity(metricsOnly: true) }
         onLayoutChange?()
         if value && Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshQuota() }
         if value { refreshDesktopApplications(force: false) }
@@ -1212,7 +1268,8 @@ final class IslandModel: ObservableObject {
         interactionSuspended = suspended
         if suspended { close() }
     }
-    func close() { pinned = false; setExpanded(false) }
+    /// A published write redraws every view even when the value is unchanged.
+    func close() { if pinned { pinned = false }; setExpanded(false) }
     private func navigationScope(for activity: SessionActivity) -> String? {
         if activity.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) == true { return remoteControlAccountScope }
         return activity.claudeCloud == nil ? nil : claudeCloudNavigationScope
@@ -1329,7 +1386,7 @@ final class IslandModel: ObservableObject {
     }
     private func refreshCodexQuota(force: Bool = true) {
         guard isModuleEnabled(.codex), refreshTask == nil, !sleeping, !stopped, !demo else { return }
-        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: codexQuotaState?.lastAttempt, expanded: expanded,
+        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: codexQuotaState?.lastAttempt, expanded: visiblyExpanded,
             failures: codexQuotaState?.failureCount ?? 0, now: Date(), force: force) else { return }
         let generation = sourceGeneration, sourceHome = home, custom = defaults.string(forKey: "codexExecutable") ?? ""
         let owner = codexQuotaOwnerID, receipt = UUID()
@@ -1355,7 +1412,7 @@ final class IslandModel: ObservableObject {
             guard generation == self.sourceGeneration, !Task.isCancelled else { return }
             await coordinator.configure(home: sourceHome, customPath: custom, enabled: true, context: UInt64(generation))
             guard generation == self.sourceGeneration, !Task.isCancelled else { return }
-            await coordinator.refreshIfDue(expanded: self.expanded, force: force)
+            await coordinator.refreshIfDue(expanded: self.visiblyExpanded, force: force)
             if self.codexQuotaReceiptID == receipt { self.codexQuotaStarting = false }
             self.receiveCodexQuota(await coordinator.currentState(), owner: owner)
             await coordinator.waitForRefresh()
@@ -1437,7 +1494,7 @@ final class IslandModel: ObservableObject {
     }
     private func refreshClaudeQuota(force: Bool = true) {
         guard isModuleEnabled(.claude), claudeQuotaTask == nil, claudeQuotaRestartTask == nil, !sleeping, !stopped, !demo else { return }
-        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: claudeQuotaState?.lastAttempt, expanded: expanded,
+        guard ProviderQuotaRefreshPolicy.isDue(lastAttempt: claudeQuotaState?.lastAttempt, expanded: visiblyExpanded,
             failures: claudeQuotaState?.failureCount ?? 0, now: Date(), force: force) else { return }
         let generation = claudeGeneration, sourceHome = claudeHome
         let organization = defaults.string(forKey: "claudeWebOrganizationID") ?? ""
@@ -1474,7 +1531,7 @@ final class IslandModel: ObservableObject {
             guard self.isCurrentClaudeQuotaRead(generation) else { return }
             await coordinator.configure(home: sourceHome, organization: organization, enabled: true, context: UInt64(generation))
             guard self.isCurrentClaudeQuotaRead(generation) else { return }
-            _ = await coordinator.refreshIfDue(expanded: self.expanded, force: force)
+            _ = await coordinator.refreshIfDue(expanded: self.visiblyExpanded, force: force)
             if self.claudeQuotaReceiptID == receipt { self.claudeQuotaStarting = false }
             self.receiveClaudeQuota(await coordinator.currentState(), owner: owner)
             await coordinator.waitForRefresh()
@@ -1534,7 +1591,7 @@ final class IslandModel: ObservableObject {
     /// meanwhile. Stopping the source forgets it.
     private func syncClaudeCloudMonitor() {
         guard isModuleEnabled(.claude), showsClaudeCloudProjects, !sleeping, !stopped, !demo else { stopClaudeCloudMonitor(); return }
-        let generation = claudeGeneration, expanded = expanded
+        let generation = claudeGeneration, expanded = visiblyExpanded
         if claudeCloudCoordinator == nil {
             guard let factory = makeClaudeCloudMonitor else { return }
             let clients = MacClaudeCloudClients(prepared: factory(), factory: factory)
@@ -1685,7 +1742,8 @@ final class IslandModel: ObservableObject {
         launchOwnedWork(.init(.remote, provider: .codex)) { [weak self] workTicket in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.ownedWork.finish(workTicket) } }
-            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl, refreshPolicy: self.activityRefreshPolicy) { [weak self] snapshot in
+            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl,
+                includeDurable: self.monitorsDurable, refreshPolicy: self.activityRefreshPolicy) { [weak self] snapshot in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
@@ -1699,7 +1757,7 @@ final class IslandModel: ObservableObject {
                 }
             }
             // A hover/collapse can occur while start is awaiting the monitor.
-            await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.expanded)
+            await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
         }
     }
 
@@ -1730,12 +1788,16 @@ final class IslandModel: ObservableObject {
         }
         completionInbox.updateNames(names.filter { !ignored.contains($0.id) })
         completionInbox.updatePerformance(performance.filter { !ignored.contains($0.id) })
-        if streamStatuses != statuses { streamStatuses = statuses }
+        if !Self.sameVisibleStreamState(streamStatuses, statuses) { streamStatuses = statuses }
         if unavailableSSH != unavailable { unavailableSSH = unavailable }
         codexReceivedRequests = requests
         refilterEmbeddedSessions()
         if oldLocal != newLocal { refreshActivity() }
         else if agentStatesChanged { refreshActivity(metricsOnly: true) }
+    }
+    /// Helper CPU, loop and notification counters change on every heartbeat and are never shown.
+    static func sameVisibleStreamState(_ lhs: [String: RuntimeStreamStatus], _ rhs: [String: RuntimeStreamStatus]) -> Bool {
+        lhs.count == rhs.count && lhs.allSatisfy { key, value in rhs[key].map(value.sameState(as:)) == true }
     }
     func applyActivityUpdate(_ update: ActivityApplicationUpdate) {
         if activities != update.activities { activities = update.activities }
@@ -1762,7 +1824,7 @@ final class IslandModel: ObservableObject {
     }
 
     private var currentCodexSourceSignature: String {
-        home.path + "|" + (defaults.string(forKey: "codexExecutable") ?? "") + "|" + String(monitorsRemoteControl)
+        home.path + "|" + (defaults.string(forKey: "codexExecutable") ?? "") + "|" + String(monitorsRemoteControl) + "|" + String(monitorsDurable)
     }
     private var currentClaudeSourceSignature: String {
         claudeHome.path + "|" + String(monitorsSSH) + (monitorsSSH
@@ -1800,6 +1862,10 @@ final class IslandModel: ObservableObject {
         }
         // A restarted Claude source applies the ring's switch as part of its setup.
         if !plan.changedProviders.contains(.claude) || !isModuleEnabled(.claude) { syncClaudeProgressSwitch() }
+        if appliedDurable != monitorsDurable {
+            appliedDurable = monitorsDurable
+            syncCodexProgressSwitch(force: true)
+        }
         if appliedClaudeProgressRing != showsClaudeProgressRing {
             appliedClaudeProgressRing = showsClaudeProgressRing
             scheduleClaudeRemoteSetup()
@@ -1901,11 +1967,12 @@ final class IslandModel: ObservableObject {
         // applied its pending changes.
         if codexProgressQueue.target?.enabled == true, !showsCodexProgressRing { syncCodexProgressSwitch() }
         if deepseekProgressQueue.target?.enabled == true, !showsDeepSeekProgressRing { syncDeepSeekProgressSwitch() }
+        flushDeepSeekHistory()
         let plan = lifecycle.shutdown()
         guard plan.actions.contains(.stopSources) else { return }
         desktopApplicationScan?.cancel()
         clock?.invalidate(); closeWork?.cancel()
-        observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0); DistributedNotificationCenter.default().removeObserver($0) }
         performLifecycle(plan)
         navigation.cancel(); clearNavigationError()
         invalidateWork(invalidateSource: false)
@@ -1943,7 +2010,7 @@ final class IslandModel: ObservableObject {
     }
     private func scheduleClock() {
         clock?.invalidate()
-        let interval: TimeInterval = !expanded ? 30 : 2
+        let interval: TimeInterval = !visiblyExpanded ? 30 : 2
         clock = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -1958,7 +2025,7 @@ final class IslandModel: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.sleeping, !self.stopped else { return }
             self.rateExpiryWork = nil; self.rateExpiryAt = nil
-            self.now = Date()
+            self.redrawClock()
             self.pruneCompletions()
             self.scheduleRateExpiry()
             self.onStatusChange?()
@@ -1968,8 +2035,8 @@ final class IslandModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow) + 0.01, execute: work)
     }
     private func tick() {
-        now = Date()
-        performLifecycle(lifecycle.tick(.init(now: now, expanded: expanded, codexConnected: streamStatuses["local"]?.connected == true,
+        redrawClock()
+        performLifecycle(lifecycle.tick(.init(now: now, expanded: visiblyExpanded, codexConnected: streamStatuses["local"]?.connected == true,
             lastCodexDiscovery: lastDiscovery, lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
             deepseekRunning: running.contains { $0.provider == .deepseek })))
         if !sleeping, !stopped, !demo { onStatusChange?() }
@@ -2027,7 +2094,7 @@ final class IslandModel: ObservableObject {
     }
     /// Each provider gets its own sample, whichever one Settings showed last.
     private func makeDemo() {
-        now = demoClock()
+        redrawClock(demoClock())
         for snapshot in DemoScenario.quota(.codex, at: now) { codexHistory.record(snapshot); codexQuota = snapshot }
         for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
         makeDeepSeekDemo()
@@ -2041,7 +2108,7 @@ final class IslandModel: ObservableObject {
     }
     func setDemoStage(_ stage: DemoTaskStage) {
         guard demo else { return }
-        now = demoClock()
+        redrawClock(demoClock())
         let demoArguments = demoArguments ?? []
         var observed = demoArguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
         if demoArguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }

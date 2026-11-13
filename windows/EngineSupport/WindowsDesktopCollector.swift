@@ -331,19 +331,36 @@ private final class WindowsDesktopSourceGate {
     private var owners: [String: String] = [:]
     private struct Denial { let at: Date; let attempts: Int }
     private var denied: [String: Denial] = [:]
+    /// A streaming thread sends several frames a second. Its proof (two
+    /// process handles, two file stamps and the rollout header) is rechecked
+    /// at most once a second.
+    private var checked: [String: (at: Date, row: CodexRolloutMetadata)] = [:]
+    /// The first denials cover a rollout header written after its routing
+    /// hint; later ones (CLI sessions, other owners) retry every 5 minutes,
+    /// each a Restart Manager scan. A follow naming an owner retries at once.
+    private static let retryDelays: [TimeInterval] = [2, 2, 2, 300]
     private(set) var revoked = false
     init(home: URL, peer: WindowsProcessIdentity) { binding = .init(home: home, peer: peer) }
+    private func current(_ id: String, _ proof: WindowsDesktopSourceBinding.Proof) -> CodexRolloutMetadata? {
+        let now = Date()
+        if let entry = checked[id], now.timeIntervalSince(entry.at) < 1, now >= entry.at { return entry.row }
+        guard let row = binding.currentMetadata(proof) else { checked.removeValue(forKey: id); return nil }
+        checked[id] = (now, row)
+        return row
+    }
     func permit(_ value: String, owner: String? = nil) -> Bool {
         guard !revoked, let id = UUID(uuidString: value)?.uuidString.lowercased() else { return false }
         if let proof = proofs[id] {
-            guard binding.isCurrent(proof) else { revoked = true; return false }
+            guard current(id, proof) != nil else { revoked = true; return false }
             if let owner, owners[id] != owner {
                 guard UUID(uuidString: owner) != nil, let renewed = binding.authorize(id) else { revoked = true; return false }
-                proofs[id] = renewed; owners[id] = owner
+                proofs[id] = renewed; owners[id] = owner; checked.removeValue(forKey: id)
             }
             return true
         }
-        guard proofs.count < 256, denied[id].map({ Date().timeIntervalSince($0.at) >= 2 }) ?? true else { return false }
+        guard proofs.count < 256, owner != nil || denied[id].map({
+            Date().timeIntervalSince($0.at) >= Self.retryDelays[min(max($0.attempts, 1), Self.retryDelays.count) - 1]
+        }) ?? true else { return false }
         guard let proof = binding.authorize(id) else {
             denied[id] = Denial(at: Date(), attempts: min(4, (denied[id]?.attempts ?? 0) + 1))
             if denied.count > 256 { denied.removeValue(forKey: denied.min(by: { $0.value.at < $1.value.at })!.key) }
@@ -353,7 +370,8 @@ private final class WindowsDesktopSourceGate {
         proofs[id] = proof; denied.removeValue(forKey: id); return true
     }
     func origin(_ thread: String) -> CodexRolloutMetadata? {
-        if permit(thread), let proof = proofs[thread.lowercased()], let row = binding.currentMetadata(proof) { return row }
+        let id = thread.lowercased()
+        if permit(thread), let proof = proofs[id], let row = current(id, proof) { return row }
         return .init(origin: .init(embedded: false, ignored: true), url: binding.home, observedAt: nil, parentThreadID: nil)
     }
     func validate() -> Bool {

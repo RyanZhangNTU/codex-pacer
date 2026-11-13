@@ -33,6 +33,7 @@ struct EngineCommand: Decodable {
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
         var monitorRemoteControl: Bool?
+        var monitorDurable: Bool?
         var monitorWSL: Bool?
         var showEmbeddedClaudeSessions: Bool?
         var showClaudeCloudProjects: Bool?

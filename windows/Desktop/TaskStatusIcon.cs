@@ -207,6 +207,8 @@ public sealed class TaskStatusIcon : Grid
                     : new EasingDoubleKeyFrame(rhythm.Values[index], time, new SineEase { EasingMode = EasingMode.EaseInOut }));
             }
             if (rhythm.Stepped) loop.KeyFrames.Add(new DiscreteDoubleKeyFrame(rhythm.Values[0], KeyTime.FromTimeSpan(TimeSpan.FromSeconds(rhythm.Period))));
+            // Each tick repaints the whole layered island; a slow pulse reads the same at a low rate.
+            Timeline.SetDesiredFrameRate(loop, TaskProgressRing.PulseFrameRate);
             part.Opacity = rhythm.Values[0];
             rhythms.Add(new AnimationLease(loop, clock => part.ApplyAnimationClock(OpacityProperty, clock)));
         }

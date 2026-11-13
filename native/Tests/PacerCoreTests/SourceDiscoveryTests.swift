@@ -126,6 +126,30 @@ final class SourceDiscoveryTests: XCTestCase {
         try JSONSerialization.data(withJSONObject:state).write(to:home.appendingPathComponent(".codex-global-state.json"))
         XCTAssertEqual(RemoteActivityTarget.configured(home:home).map(\.alias), ["one"])
     }
+    func testSshAndRemoteControlDiscoveryShareOneScanAndFollowEachRewrite() throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let file = home.appendingPathComponent(".codex-global-state.json")
+        func write(_ rows: [Any], flag: Any, padding: Int) throws {
+            let state: [String: Any] = [
+                "codex-managed-remote-connections": rows,
+                "remote-connection-auto-connect-by-host-id": ["remote-ssh-discovered:one": flag],
+                "app-server-migrated-pinned-thread-ids-by-host": ["remote-ssh-discovered:one:/srv/codex": [], "remote-control:desk:/": []],
+                "thread-project-membership-host-ids": ["019a0000-0000-7000-8000-000000000001": "remote-control:laptop"],
+                "unrelated": String(repeating: "x", count: padding)]
+            try JSONSerialization.data(withJSONObject: state).write(to: file)
+        }
+        let row: [String: Any] = ["hostId": "remote-ssh-discovered:one", "displayName": "Build \"one\"", "source": "discovered", "alias": "one"]
+        try write([row], flag: true, padding: 1)
+        let ssh = try XCTUnwrap(RemoteActivityTarget.readConfiguration(home: home))
+        XCTAssertEqual(ssh.map(\.alias), ["one"]); XCTAssertEqual(ssh.first?.home, "/srv/codex"); XCTAssertEqual(ssh.first?.name, "Build \"one\"")
+        XCTAssertEqual(RemoteControlActivityTarget.configured(home: home).map(\.id), ["remote-control:desk", "remote-control:laptop"])
+        // A malformed row voids only the SSH list; a non-Boolean flag reads as off.
+        try write([row, "not an object"], flag: true, padding: 2)
+        XCTAssertNil(RemoteActivityTarget.readConfiguration(home: home))
+        XCTAssertEqual(RemoteControlActivityTarget.configured(home: home).count, 2)
+        try write([row], flag: 1, padding: 3)
+        XCTAssertEqual(RemoteActivityTarget.readConfiguration(home: home)?.count, 0)
+    }
     func testLocalAndSshFreshRatesAggregateAndOldRatesRemainMarkedWithoutSelection() throws {
         let start = Date(timeIntervalSince1970: 1000000)
         var local = SessionActivity(id: "local")

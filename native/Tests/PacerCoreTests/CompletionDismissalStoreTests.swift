@@ -199,6 +199,10 @@ final class CompletionDismissalStoreTests: XCTestCase {
     }
 
 
+    func testDigestKeepsItsLengthPrefixedLowercaseHexFormat() {
+        XCTAssertEqual(CompletionDismissalStore.digest(["a", "bc"]), "5310a58788781ab25d5ad7c3f85035824b4eb7bdfa394e0ac2186271472b5492")
+        XCTAssertEqual(CompletionDismissalStore.hex([0x00, 0x0f, 0xa0, 0xff]), "000fa0ff")
+    }
     func testCorruptUnsupportedOrOversizedStoreFailsOpen() throws {
         let file = try fixture(), ended = completion()
         var initial = inbox(file)

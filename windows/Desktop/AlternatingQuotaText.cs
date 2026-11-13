@@ -21,6 +21,7 @@ namespace CodexPacer.Windows;
 /// values sit side by side instead.</summary>
 public sealed class AlternatingQuotaText : Grid
 {
+    internal const int FadeFrameRate = 15;
     internal readonly record struct Item(string Provider, string Text, bool Dimmed, bool Low = false);
     private readonly List<FrameworkElement> layers = [];
     private readonly List<TranslateTransform> offsets = [];
@@ -198,7 +199,9 @@ public sealed class AlternatingQuotaText : Grid
             if (!incoming && !outgoing) continue;
             var animation = new DoubleAnimation(from, target, TimeSpan.FromSeconds(frame.FadeRemaining))
                 { BeginTime = TimeSpan.FromSeconds(plan.WaitBeforeFade), FillBehavior = FillBehavior.Stop };
-            Timeline.SetDesiredFrameRate(animation, 30);
+            // Each frame repaints the layered island; 15 fps keeps the 350 ms swap
+            // smooth enough at half the cost of a swap every four seconds.
+            Timeline.SetDesiredFrameRate(animation, FadeFrameRate);
             fades.Add(new(animation, clock => text.ApplyAnimationClock(OpacityProperty, clock), incoming ? () => Step(plan.EndsAt) : null));
             // The old value leaves upward while the next one rises into its place.
             var offset = offsets[index];
@@ -206,7 +209,7 @@ public sealed class AlternatingQuotaText : Grid
             offset.Y = start;
             var slide = new DoubleAnimation(start, end, TimeSpan.FromSeconds(frame.FadeRemaining))
                 { BeginTime = TimeSpan.FromSeconds(plan.WaitBeforeFade), FillBehavior = FillBehavior.Stop, EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-            Timeline.SetDesiredFrameRate(slide, 30);
+            Timeline.SetDesiredFrameRate(slide, FadeFrameRate);
             fades.Add(new(slide, clock => offset.ApplyAnimationClock(TranslateTransform.YProperty, clock)));
             if (incoming) Report(items.ElementAtOrDefault(index).Provider);
         }

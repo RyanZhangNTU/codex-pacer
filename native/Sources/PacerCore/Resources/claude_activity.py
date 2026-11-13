@@ -638,12 +638,21 @@ def main():
     try:interval=min(5,max(.1,float(sys.argv[2])))
     except (IndexError,ValueError):interval=5
     pending=[];pending_due=None
-    urgent={'prompt','responseDelta','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
+    # Only the first reply of a turn is urgent; later streaming text waits for the batch.
+    urgent={'prompt','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
+    turn_ends={'prompt','stop','stopVerified','failure','interrupt'};replying=set()
+    def is_urgent(row):
+        kind=row.get('kind');session=row.get('sessionId')
+        if kind in turn_ends:replying.discard(session)
+        if kind=='responseDelta' and session not in replying:
+            if len(replying)>=1024:replying.clear()
+            replying.add(session);return True
+        return kind in urgent or bool(row.get('historical'))
     def queue_rows(rows):
         nonlocal pending,pending_due
         if not rows:return
         pending.extend(rows)
-        if any(row.get('kind') in urgent or row.get('historical') for row in rows) or len(pending)>=512:
+        if [row for row in rows if is_urgent(row)] or len(pending)>=512:
             publish(pending);pending=[];pending_due=None
         elif pending_due is None:pending_due=time.monotonic()+interval
     publish(rows);next_scan=time.monotonic()+60;next_poll=time.monotonic()+2;heartbeat=0;loops=0;stdin=b''

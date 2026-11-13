@@ -36,6 +36,11 @@ final class WindowsDesktopTransport: @unchecked Sendable {
         guard withExtendedLifetime(self, { pacer_pipe_peer_identity(handle, &identity) }) != 0 else { return nil }
         return .init(pid: identity.pid, started: identity.started)
     }
+    /// Codex Desktop is running its IPC server. Cheap enough for every
+    /// discovery tick: no connection, package query or process lookup.
+    static func desktopEndpointExists() -> Bool {
+        Array("codex-ipc".utf16 + [0]).withUnsafeBufferPointer { pacer_pipe_exists($0.baseAddress) != 0 }
+    }
     static func connectCodex(packageLocations: () -> [URL] = WindowsCodexExecutableDiscovery.packageLocations) throws -> WindowsDesktopTransport {
         var identityMismatch = false
         for root in packageLocations().prefix(12) {

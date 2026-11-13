@@ -29,6 +29,21 @@ package struct DurableProgressReceipt: Codable, Sendable {
     }
 }
 
+/// Upgrade evidence for the opt-in Dot switch: the local Durable reporter has
+/// recorded at least one receipt in this Codex home. Recency is ignored, so a
+/// profile that used Dot keeps it after an upgrade; other profiles start off.
+public enum DurableUsageEvidence {
+    public static let receiptsPath = "pacer/codex-progress/durable-marketplace/receipts/latest.json"
+
+    public static func hasReceipts(home: URL, files: any PlatformFileSystem) -> Bool {
+        let url = home.appendingPathComponent(receiptsPath)
+        guard files.metadata(url)?.isRegularFile == true,
+              let data = try? files.read(url, offset: 0, maximumBytes: 64 * 1024 + 1), data.count <= 64 * 1024,
+              let values = try? JSONDecoder().decode([String: DurableProgressReceipt].self, from: data) else { return false }
+        return !values.isEmpty
+    }
+}
+
 /// Metadata from the Durable app server's read-only turn and item pages.
 /// The parser retains no transcript or tool output.
 package struct DurableTurnHistory: Sendable {

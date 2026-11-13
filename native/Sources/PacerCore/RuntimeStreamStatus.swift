@@ -21,4 +21,16 @@ public struct RuntimeStreamStatus: Equatable, Sendable {
     /// request telemetry reaches it whatever its settings say.
     public var exactRequestSpans = false
     public init() {}
+
+    /// Equal apart from the diagnostic counters (`notifications`,
+    /// `fallbackScans` and the helper's CPU and loop counts), which only feed
+    /// runtime traces. A heartbeat that changes only those is not news.
+    public func sameState(as other: RuntimeStreamStatus) -> Bool {
+        var lhs = self, rhs = other
+        lhs.clearDiagnostics(); rhs.clearDiagnostics()
+        return lhs == rhs
+    }
+    private mutating func clearDiagnostics() {
+        notifications = 0; fallbackScans = 0; helperCpuSeconds = 0; helperLoopIterations = 0
+    }
 }

@@ -40,6 +40,11 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         if (!KeepBrowserAlive || disposed || page is not { IsUsable: true }) return;
         var previous = browserKeeper; browserKeeper = page; page = null; previous?.Dispose();
     }
+    /// Created by the first sign-in window or read; absent, there is nothing to read.
+    public bool HasProfile
+    {
+        get { try { return Directory.Exists(directory); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; } }
+    }
     public bool Available
     {
         get

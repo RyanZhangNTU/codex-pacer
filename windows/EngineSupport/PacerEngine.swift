@@ -225,6 +225,9 @@ actor EngineRuntime {
     private var hideProjects = false
     private var showEmbeddedCodexSessions = true
     private var monitorRemoteControl = false
+    /// Dot (Durable) tasks are opt-in: off, the Desktop collector starts no
+    /// catalog poll and the Durable progress plugin is removed.
+    private var monitorDurable = false
     private var monitorWSL = false
     private let wslServices: WindowsWSLServices?
     private var wslNeedsReconcile = false
@@ -302,6 +305,7 @@ actor EngineRuntime {
     private var moduleSettings = ProviderModules()
     private var moduleConfigurationActive = false
     private var installation: ProviderInstallationDetection?
+    private var lastInstallationDetection = Date.distantPast
     private let detectInstallation: @Sendable () async -> ProviderInstallationDetection
     private var codexHome: URL
     private let defaultCodexHome: URL
@@ -989,7 +993,7 @@ actor EngineRuntime {
         if parameters.providerModes != nil {
             let previous = generation
             if demo { detected = .init(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) }
-            else { detected = await detectInstallation() }
+            else { lastInstallationDetection = now(); detected = await detectInstallation() }
             guard generation == previous else { throw EngineCommand.Failure.invalid }
         }
         let selectedProviders = explicitProviders ?? (parameters.providerModes == nil ? nil :
@@ -1044,6 +1048,11 @@ actor EngineRuntime {
             monitorRemoteControl = value
             if !value { discardPendingControlEndings() }
         }
+        var durableChanged = false
+        if let value = parameters.monitorDurable, value != monitorDurable {
+            monitorDurable = value; durableChanged = true
+            if !value { pendingDesktopEndings = pendingDesktopEndings.filter { $0.value.sourceHostID != DurableActivityCatalog.hostID } }
+        }
         if let value = requestedWSL, value != monitorWSL {
             monitorWSL = value; wslNeedsReconcile = true
             stopWSLMonitoring()
@@ -1078,7 +1087,8 @@ actor EngineRuntime {
             codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
         }
         applyClaudeProgressSwitch()
-        scheduleCodexProgressSetup()
+        // The Dot switch installs or removes the Durable progress plugin.
+        scheduleCodexProgressSetup(force: durableChanged)
         scheduleDeepSeekProgressSetup()
         boundWSLCompletionProfiles = wslCompletionProfiles
         bindCodexCompletionSources()
@@ -1197,7 +1207,7 @@ actor EngineRuntime {
     private func scheduleCodexProgressSetup(force: Bool = false) {
         guard managesCodexProgress, let ticket = codexProgressQueue.request(
             .init(home: codexHome, executable: codexExecutable, enabled: codexProgressRing && enabled.contains(.codex)), force: force) else { return }
-        let paths = codexProgressPaths, target = ticket.target
+        let paths = codexProgressPaths, target = ticket.target, durable = monitorDurable
         // Turning reporting off, or leaving a home, takes effect at once: an
         // earlier setup may still be waiting for Codex, and Pacer may exit
         // before the registration itself is removed.
@@ -1210,7 +1220,7 @@ actor EngineRuntime {
                 _ = await Self.configureCodexReporter(home: previous.home, executable: previous.executable, enabled: false, paths: paths)
             }
             let status = await Self.configureCodexReporter(home: target.home, executable: target.executable, enabled: target.enabled, paths: paths,
-                                                           gate: gate, request: generation)
+                                                           durable: durable, gate: gate, request: generation)
             await self?.receiveCodexProgressSetup(status, ticket: ticket)
         })
     }
@@ -1222,7 +1232,8 @@ actor EngineRuntime {
     }
 
     private static func configureCodexReporter(home: URL, executable: String, enabled: Bool, paths: WindowsCodexProgressPaths,
-                                              gate: CodexProgressSwitchGate? = nil, request: Int = 0) async -> CodexProgressSetupStatus? {
+                                              durable: Bool = false, gate: CodexProgressSwitchGate? = nil,
+                                              request: Int = 0) async -> CodexProgressSetupStatus? {
         guard enabled || CodexProgressSetup.wasConfigured(in: home) || WindowsDurableProgressSetup.wasConfigured(in: home) else { return nil }
         let reporter: CodexProgressCommand?
         if enabled {
@@ -1243,12 +1254,13 @@ actor EngineRuntime {
         }) {
             CodexClient.findExecutable(customPath: executable).map { CodexClient(executable: $0, home: home, timeout: 3) }
         }
-        if !enabled || status == .ready {
+        if !enabled || status == .ready, durable || WindowsDurableProgressSetup.wasConfigured(in: home) {
             // The Dot plugin is best effort: a failed install leaves local
             // sessions reporting and is retried by the next setup. Removal
             // still reports failure so the switch can retry the cleanup.
-            let durable = await WindowsDurableProgressSetup.apply(home: home, reporter: reporter, fallbackExecutable: executable)
-            if !enabled, !durable { return .failed }
+            // Dot tracking off removes the plugin while local reporting stays.
+            let applied = await WindowsDurableProgressSetup.apply(home: home, reporter: durable ? reporter : nil, fallbackExecutable: executable)
+            if !enabled, !applied { return .failed }
         }
         return status
     }
@@ -1348,8 +1360,12 @@ actor EngineRuntime {
 
     func maintenanceRefresh() async {
         guard active else { return }
-        if !demo, moduleConfigurationActive, AgentProvider.allCases.contains(where: { moduleSettings.mode(for: $0) == .automatic }) {
+        // Automatic modules notice a new or removed app within ten minutes;
+        // Settings and source changes detect at once through configure.
+        if !demo, moduleConfigurationActive, AgentProvider.allCases.contains(where: { moduleSettings.mode(for: $0) == .automatic }),
+           now().timeIntervalSince(lastInstallationDetection) >= 600 {
             let previous = generation
+            lastInstallationDetection = now()
             let detected = await detectInstallation()
             guard active, generation == previous, !Task.isCancelled else { return }
             installation = detected
@@ -1807,19 +1823,19 @@ actor EngineRuntime {
             desktopState = nil; durableAccountScope = nil; bindCodexCompletionSources()
             await desktopMonitor?.shutdown(); return
         }
-        let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorRemoteControl)|\(monitorWSL)|\(monitorSSH)"
+        let configuration = "\(context)|\(codexHome.path)|\(codexExecutable)|\(monitorRemoteControl)|\(monitorDurable)|\(monitorWSL)|\(monitorSSH)"
         let replace = configuration != desktopConfiguration
         guard force || replace || ownedWork.task(key) == nil else { return }
         desktopConfiguration = configuration
         desktopServices?.setExecutable(codexExecutable)
         let binding = replace ? UUID() : desktopBinding
         desktopBinding = binding
-        let monitor = desktopMonitor, home = codexHome, control = monitorRemoteControl
+        let monitor = desktopMonitor, home = codexHome, control = monitorRemoteControl, durable = monitorDurable
         let includeWSL = (monitorWSL && wslServices != nil) || (monitorSSH && sshServices != nil)
         let policy: ActivityRefreshPolicy = expanded ? .expanded : .collapsed
         let start: @Sendable () async -> Void = { [weak self] in
             await monitor?.startAsync(home: home, includeSSH: includeWSL, includeRemoteControl: control,
-                useSSHFallback: true, refreshPolicy: policy) { [weak self] value in
+                useSSHFallback: true, includeDurable: durable, refreshPolicy: policy) { [weak self] value in
                     await self?.receiveDesktop(CodexDesktopState(context: context, activities: value.activities,
                         attention: value.attention, attentionThreads: value.attentionThreads, names: value.names,
                         performance: value.performance, status: value.localDesktopStatus, statuses: value.statuses,
@@ -1877,7 +1893,7 @@ actor EngineRuntime {
     }
     private func allowsRemoteSource(_ source: String?, provider: AgentProvider) -> Bool {
         guard let source else { return true }
-        if source == DurableActivityCatalog.hostID { return provider == .codex && durableAccountScope != nil }
+        if source == DurableActivityCatalog.hostID { return provider == .codex && monitorDurable && durableAccountScope != nil }
         if source.hasPrefix(ConnectionSource.wslPrefix) { return monitorWSL && wslServices?.registry.profile(id: source, provider: provider) != nil }
         if source.hasPrefix(ConnectionSource.controlPrefix) {
             return provider == .codex && monitorRemoteControl && inbox.isSourceVisible(source) && remoteControlHostIDs.contains(source)

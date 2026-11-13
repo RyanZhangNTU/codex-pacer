@@ -28,10 +28,13 @@ static int pacer_directory_read(PacerDirectoryWatch *watch) {
     ZeroMemory(&watch->overlapped, sizeof(watch->overlapped));
     watch->overlapped.hEvent = watch->event;
     ResetEvent(watch->event);
-    DWORD flags = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-                  FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
+    // Like the Mac's vnode watches: a folder watch reports only its own
+    // entries being created, removed or renamed. Writes, including appends to
+    // logs further down the tree, belong to the file watches Core keeps.
+    DWORD flags = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME;
+    if (watch->filename != NULL) flags |= FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
     if (!ReadDirectoryChangesW(watch->directory, watch->buffer, sizeof(watch->buffer),
-                               watch->filename == NULL, flags, NULL, &watch->overlapped, NULL)) return 0;
+                               FALSE, flags, NULL, &watch->overlapped, NULL)) return 0;
     SetThreadpoolWait(watch->wait, watch->event, NULL);
     return 1;
 }

@@ -5,9 +5,15 @@ import PacerCore
 /// The Desktop owner supplies live IPC. For an assigned thread without usable
 /// IPC, read bounded turn and tool-result pages over the same catalog connection.
 enum MacDurableCatalog {
+    /// A Dot task in flight or updated within the recent window, or a panel in
+    /// view, polls every 15 seconds; otherwise every 90. A dark display pauses it.
+    static let activeInterval: TimeInterval = 15, idleInterval: TimeInterval = 90
+
     static func observe(home: URL, peer: pid_t, publish: @Sendable (DurableActivityCatalog?) -> Void,
                         ipcObservations: @Sendable () -> [String: Date],
-                        publishHistory: @Sendable (String, [DurableTurnHistory]) -> Void) async {
+                        publishHistory: @Sendable (String, [DurableTurnHistory]) -> Void,
+                        panelInView: @Sendable () -> Bool = { false },
+                        display: MacDisplayActivity? = .shared) async {
         var connection: Connection?
         var previous: DurableActivityCatalog?
         var polls = DurableHistoryPoll()
@@ -61,7 +67,10 @@ enum MacDurableCatalog {
                     publishHistory(result.catalog.scope, history)
                 }
                 retryDelay = 5
-                delay = max(1, 15 - Date().timeIntervalSince(now))
+                let recent = now.addingTimeInterval(-DurableActivityCatalog.recentWindow)
+                let busy = polls.followsActiveTurn || result.entries.contains { $0.active || ($0.updatedAt ?? .distantPast) >= recent } ||
+                    ipcObservations().values.contains { $0 >= recent }
+                delay = max(1, (busy ? activeInterval : idleInterval) - Date().timeIntervalSince(now))
             } catch {
                 connection?.close()
                 connection = nil
@@ -70,7 +79,27 @@ enum MacDurableCatalog {
                 delay = retryDelay
                 retryDelay = min(60, retryDelay * 2)
             }
-            do { try await Task.sleep(for: .seconds(delay)) } catch { break }
+            do { try await pace(delay, panelInView: panelInView, isDark: { display?.isDark == true }) } catch { break }
+        }
+    }
+
+    /// Opening the panel shortens an idle wait to the active interval; a dark
+    /// display holds the next read until it lights, then reads at once.
+    static func pace(_ delay: TimeInterval, panelInView: () -> Bool, isDark: () -> Bool,
+                     clock: () -> Date = { Date() }, step: TimeInterval = 5) async throws {
+        let start = clock()
+        var darkened = false
+        while true {
+            if isDark() { darkened = true }
+            else if darkened { return }
+            else {
+                let due = panelInView() ? min(delay, activeInterval) : delay
+                let remaining = due - clock().timeIntervalSince(start)
+                if remaining <= 0 { return }
+                try await Task.sleep(for: .seconds(min(step, remaining)))
+                continue
+            }
+            try await Task.sleep(for: .seconds(step))
         }
     }
 

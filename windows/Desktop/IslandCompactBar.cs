@@ -170,6 +170,10 @@ public partial class IslandWindow
     /// carry a unit, a countdown says its own.
     internal static void RenderTime(StackPanel host, CompactComponent value, bool column, CompactMetrics sizes)
     {
+        // The same entries in the same tone keep their text elements.
+        var drawn = new TimeDrawing(value.Entries, value.StripUnit, column, sizes, PacerPalette.Accent, PacerPalette.Light);
+        if (host.Tag is TimeDrawing previous && previous.Same(drawn)) return;
+        host.Tag = drawn;
         host.Children.Clear();
         var glyph = CompactInk.Glyph(CompactInk.Hourglass, 9, 12, sizes.Scale);
         glyph.Margin = column ? new Thickness(0, 0, 0, 2 * sizes.Scale) : new Thickness(0, 0, 5 * sizes.Scale, 0);
@@ -200,6 +204,10 @@ public partial class IslandWindow
             host.Children.Add(entry);
         }
         if (column && percent) { var unit = CompactInk.Text(sizes.StripUnit, FontWeights.Medium, CompactInk.Unit); unit.Text = "%"; host.Children.Add(unit); }
+    }
+    private sealed record TimeDrawing(CompactEntry[] Entries, string? StripUnit, bool Column, CompactMetrics Sizes, string Accent, bool Light)
+    {
+        internal bool Same(TimeDrawing other) => Entries.SequenceEqual(other.Entries) && this with { Entries = other.Entries } == other;
     }
     /// Sets a strip number at `size`, shrinking it only if it cannot fit `width`.
     internal static void FitStripNumber(TextBlock text, string? value, double size = 11.5, double width = 22)

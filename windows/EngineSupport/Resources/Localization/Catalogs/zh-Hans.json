@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "ecea19c0e0e9050b6778189b7350daa0bfcf5693d171dca425bfeec18a789e74",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "b5d5fa3f774531cf1e10e41f26f12c1a5027e27738f3b0d7fa73351813d1b8ae",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "143c60a53b13f1123645b34f3954a610860a3f8e9e96435ce1e6d050ce0c4a1a"
   },
   "strings": {
@@ -1073,6 +1073,7 @@
     "settings.codex_home": "Codex \u76ee\u5f55",
     "settings.compact_metric": "\u663e\u793a\u4e3a",
     "settings.display_picker": "\u663e\u793a\u5668",
+    "settings.durable_help": "\u663e\u793a\u5206\u914d\u7ed9\u8fd9\u53f0\u7535\u8111\u7684 Dot \u4efb\u52a1\uff0c\u5373\u4f7f\u5bf9\u8bdd\u5df2\u5173\u95ed\u3002Pacer \u901a\u8fc7 Codex \u684c\u9762\u7aef\u68c0\u67e5\u8fd9\u4e9b\u4efb\u52a1\uff0c\u4f1a\u589e\u52a0\u8017\u7535\u3002",
     "settings.fifteen_minutes": "15 \u5206\u949f",
     "settings.five_minutes": "5 \u5206\u949f",
     "settings.four_hours": "4 \u5c0f\u65f6",
@@ -1090,6 +1091,7 @@
     "settings.login_item_open": "\u767b\u5f55\u9879\u2026",
     "settings.main_display": "\u4e3b\u663e\u793a\u5668",
     "settings.module_off": "\u5df2\u5173\u95ed",
+    "settings.monitor_durable": "\u7edf\u8ba1 Codex Dot \u4efb\u52a1",
     "settings.monitor_remote_control": "\u7edf\u8ba1 Codex Remote Control \u4efb\u52a1",
     "settings.monitor_ssh": "\u76d1\u6d4b SSH \u4e3b\u673a\u4e0a\u7684\u4efb\u52a1",
     "settings.notch": "\u7075\u52a8\u5c9b",

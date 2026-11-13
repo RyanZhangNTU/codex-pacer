@@ -6,7 +6,12 @@ public actor RealtimeActivityMonitor {
     private let services: RealtimeActivityServices
     private let retryInterval: TimeInterval
     private var retryTask: Task<Void, Never>?
-    private struct Configuration { let home: URL; let includeSSH: Bool; let includeRemoteControl: Bool; let useSSHFallback: Bool }
+    private struct Configuration {
+        let home: URL; let includeSSH: Bool; let includeRemoteControl: Bool; let useSSHFallback: Bool
+        /// Dot (Durable) tasks are an opt-in source. Off: no Durable host, so the
+        /// Desktop collector never starts the catalog poll.
+        var includeDurable = true
+    }
     private var configuration: Configuration?
     public typealias Update = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String]) -> Void
     public typealias AttentionUpdate = @Sendable ([SessionActivity], [String: RuntimeStreamStatus], [String], [PendingAttentionRequest]) -> Void
@@ -53,6 +58,15 @@ public actor RealtimeActivityMonitor {
     private var desktop: DesktopConnection?
     private var lastDesktopObservedRuntimeHosts: Set<String> = []
     private var desktopRetryAfter = Date.distantPast
+    /// Consecutive failures per source ("" is the Desktop pipe). An unreachable
+    /// host or a closed Desktop is a normal state: retries back off from the
+    /// retry interval to thirty times it (30 s to 15 minutes in production).
+    private var failureCounts: [String: Int] = [:]
+    private func backoff(_ source: String) -> TimeInterval {
+        let count = failureCounts[source, default: 0] + 1
+        failureCounts[source] = count
+        return min(retryInterval * 30, retryInterval * pow(2, Double(min(count - 1, 10))))
+    }
     private var primaryLocalIsDesktop = false
     private var attentionRequests: [String: PendingAttentionRequest] = [:]
     private var failed: [String: Source] = [:]
@@ -124,7 +138,7 @@ public actor RealtimeActivityMonitor {
             }
     }
     public func startAsync(home: URL, includeSSH: Bool = true, includeRemoteControl: Bool = true, useSSHFallback: Bool = true,
-                           refreshPolicy: ActivityRefreshPolicy = .collapsed,
+                           includeDurable: Bool = true, refreshPolicy: ActivityRefreshPolicy = .collapsed,
                            update: @escaping @Sendable (RealtimeActivitySnapshot) async -> Void) async {
         startGeneration += 1
         let generation = startGeneration
@@ -136,14 +150,15 @@ public actor RealtimeActivityMonitor {
             let old = desktop; desktop = nil
             let children = connections.values.map(\.process)
             for id in Array(connections.keys) { stop(id) }
-            attentionRequests = [:]; failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]
+            attentionRequests = [:]; failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]; failureCounts = [:]
             desktopRetryAfter = .distantPast; lastDesktopObservedRuntimeHosts = []
             let deadline = ShutdownDeadline()
             await deadline.perform([{ await old?.collector.stop() }, { await deadline.finish(readers: [], children: children) }])
             for child in children where child.isRunning { child.terminateImmediately() }
             guard generation == startGeneration else { return }
         }
-        configuration = Configuration(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl, useSSHFallback: useSSHFallback)
+        configuration = Configuration(home: home, includeSSH: includeSSH, includeRemoteControl: includeRemoteControl,
+                                      useSSHFallback: useSSHFallback, includeDurable: includeDurable)
         self.refreshPolicy = refreshPolicy
         callback = update
         if includeRemoteControl {
@@ -324,7 +339,8 @@ public actor RealtimeActivityMonitor {
         let controlTargets = verifiedCatalog.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }) }
         knownControls = controlTargets
         var names = Dictionary(targets.map { ($0.id, $0.name) } + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
-        if services.supportsDurable { names[DurableActivityCatalog.hostID] = "" }
+        if services.supportsDurable, configuration?.includeDurable != false { names[DurableActivityCatalog.hostID] = "" }
+        else { durableAccountScope = nil }
         let desktopAvailable = services.desktopAvailable(home)
         if let current = desktop, current.source != local || !desktopAvailable {
             desktop = nil
@@ -426,7 +442,7 @@ public actor RealtimeActivityMonitor {
         durableAccountScope = nil
         attentionRequests.removeAll()
         for id in Array(connections.keys) { stop(id) }
-        failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]
+        failed = [:]; retryAfter = [:]; disconnected = [:]; pendingHints = [:]; failureCounts = [:]
         localCandidates = []
         knownControls = nil; desktopRetryAfter = .distantPast
         lastDesktopObservedRuntimeHosts = []
@@ -442,9 +458,9 @@ public actor RealtimeActivityMonitor {
     /// A manual source retry clears only inactive helpers' backoff. Live
     /// transports and their unread/session state remain owned by this monitor.
     public func retryInactiveHelpers(sources: Set<String>? = nil) {
-        if sources == nil { desktopRetryAfter = .distantPast }
+        if sources == nil { desktopRetryAfter = .distantPast; failureCounts[""] = nil }
         for id in Array(retryAfter.keys) where connections[id] == nil && sources?.contains(id) != false {
-            retryAfter.removeValue(forKey: id)
+            retryAfter.removeValue(forKey: id); failureCounts[id] = nil
         }
     }
     private func connectDesktop(_ source: Source, hosts: [String: String], catalog: [String: RemoteControlActivityTarget]?) async {
@@ -461,12 +477,12 @@ public actor RealtimeActivityMonitor {
         do {
             try await collector.start()
             guard desktop?.id == id else { await collector.stop(); return }
-            failed.removeValue(forKey: source.id)
+            failed.removeValue(forKey: source.id); failureCounts[""] = nil
             await collector.discover(localCandidates)
         } catch {
             guard desktop?.id == id else { await collector.stop(); return }
             desktop = nil; await collector.stop()
-            desktopRetryAfter = Date().addingTimeInterval(retryInterval)
+            desktopRetryAfter = Date().addingTimeInterval(backoff(""))
             if source.desktopIPC { failed[source.id] = source }
         }
     }
@@ -543,7 +559,14 @@ public actor RealtimeActivityMonitor {
             if frame["kind"] as? String == "runtimeBatch", !state.status.connected {
                 state.consume(["kind": "status", "connected": true])
             }
+            let heartbeat = frame["kind"] as? String == "status" && current.states[host] != nil && disconnected[host] == nil
+            let previousStatus = state.status, previousActivities = state.activities
             state.consume(frame); current.states[host] = state
+            // A 15-second heartbeat that changes only diagnostic counters
+            // updates the state without a publication.
+            if heartbeat, state.status.sameState(as: previousStatus), state.activities == previousActivities {
+                desktop = current; return
+            }
             if state.status.connected { disconnected.removeValue(forKey: host) }
             if host.hasPrefix(ConnectionSource.controlPrefix) {
                 if state.status.connected {
@@ -616,7 +639,7 @@ public actor RealtimeActivityMonitor {
             retryAfter.removeValue(forKey: source.id)
             sendHints(to: source.id)
         } catch {
-            failed[source.id] = source; retryAfter[source.id] = Date().addingTimeInterval(retryInterval)
+            failed[source.id] = source; retryAfter[source.id] = Date().addingTimeInterval(backoff(source.id))
         }
     }
     private func sendHints(to source: String) {
@@ -640,12 +663,20 @@ public actor RealtimeActivityMonitor {
             connection.buffer.removeSubrange(...end)
             guard let frame = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
             connection.lastFrame = Date()
+            let kind = frame["kind"] as? String
+            let recovered = failed[id] != nil || disconnected[id] != nil
+            let previousStatus = connection.state.status
+            let previousActivities = kind == "status" ? connection.state.activities : []
             connection.state.consume(frame)
             if services.diagnostics.enabled { services.diagnostics.record("remoteFrame", source: id, frame: frame,
                 activities: connection.state.activities, status: connection.state.status) }
-            failed.removeValue(forKey: id)
+            failed.removeValue(forKey: id); failureCounts[id] = nil
             disconnected.removeValue(forKey: id)
-            if frame["kind"] as? String != "fallbackChunk" || frame["final"] as? Bool == true { publishFrame = true }
+            if kind == "status" {
+                // Helper heartbeats carry CPU and loop counters every 15 seconds.
+                if recovered || !connection.state.status.sameState(as: previousStatus) ||
+                    connection.state.activities != previousActivities { publishFrame = true }
+            } else if kind != "fallbackChunk" || frame["final"] as? Bool == true { publishFrame = true }
         }
         connections[id] = connection
         if publishFrame { await publish() }
@@ -657,7 +688,9 @@ public actor RealtimeActivityMonitor {
             if ![.completed, .interrupted].contains(value.phase) { value.markUnconfirmed() }
             return value
         }
-        failed[id] = connection.source; retryAfter[id] = Date().addingTimeInterval(retryInterval)
+        // A helper that delivered frames recovered; one that dies before its
+        // first frame (an unreachable host) keeps backing off.
+        failed[id] = connection.source; retryAfter[id] = Date().addingTimeInterval(backoff(id))
         stop(id); scheduleRetry(); await publish()
     }
     private func stop(_ id: String) {

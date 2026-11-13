@@ -41,6 +41,13 @@ internal sealed class FullscreenOcclusionObserver : IDisposable
     private void Event(IntPtr hook, uint kind, IntPtr hwnd, int objectId, int child, uint thread, uint time)
     {
         if (hwnd == IntPtr.Zero || objectId != 0 || child != 0) return;
+        // Only top-level windows are enumerated; a child moving inside its window changes nothing.
+        if (kind != 0x8001 && GetAncestor(hwnd, 2) is var root && root != IntPtr.Zero && root != hwnd) return;
+        // The island's own see-through surfaces (content, backdrop, decoration and
+        // orbit) never cover anything and follow every frame of its motion; the
+        // content's own moves arrive through its window messages.
+        if (hwnd == content || GetWindowThreadProcessId(hwnd, out uint process) != 0 && process == Environment.ProcessId
+            && (GetWindowLongPtr(hwnd, -20).ToInt64() & (0x80000 | 0x200000)) != 0) return;
         Request();
     }
     internal void Request() => throttle.Request();
@@ -112,6 +119,8 @@ internal sealed class FullscreenOcclusionObserver : IDisposable
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowInfo(IntPtr hwnd, ref WindowInfo value);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint process);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
     [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder value, int capacity);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, uint attribute, out int value, int size);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);

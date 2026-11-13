@@ -109,10 +109,13 @@ internal static class DeepSeekWebConnectionChecks
             await Until(() => engine.LatestSnapshot?.DeepseekConnection?.WebAvailable == false);
             await island.WaitForPresentationAsync();
             Check(!Find<Button>(window, "settings.deepseek.sign_in").IsEnabled, "A missing runtime cannot advertise a working sign-in");
+            // A collapsed island builds no hidden panel; open it to inspect the dial.
+            island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             Check(!Find<Button>(island, "deepseek.balance.connect").IsEnabled, "The island must also disable web sign-in without a runtime");
             session.Unavailable = false; await connection.StartAsync();
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { WebAvailable: true, Refreshing: false } &&
                 Find<Button>(window, "settings.deepseek.sign_in").IsEnabled);
+            await island.WaitForPresentationAsync();
             await Pump(); Check(Find<Button>(island, "deepseek.balance.connect").IsEnabled, "Restoring the runtime must restore the actual dial action");
             Check(site.Outside == 0, "The real browser integration must keep all page traffic inside its fixture");
             Console.WriteLine("PASS web connection " + language + (dark ? "-dark" : "-light") +

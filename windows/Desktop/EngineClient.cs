@@ -183,18 +183,18 @@ internal sealed class EngineClient : IAsyncDisposable
             {
                 int count = await stream.ReadAsync(buffer, lifetime.Token).ConfigureAwait(false);
                 if (count == 0) break;
-                for (int i = 0; i < count; i++)
+                // Copy each run up to a newline at once; a frame is parsed from the
+                // line buffer itself, which is reused only after Receive returns.
+                for (int offset = 0; offset < count;)
                 {
-                    if (buffer[i] == 10)
-                    {
-                        if (line.Length != 0) Receive(line.ToArray());
-                        line.SetLength(0);
-                    }
-                    else
-                    {
-                        if (line.Length >= MaximumFrame) throw new InvalidDataException("Engine frame limit exceeded.");
-                        line.WriteByte(buffer[i]);
-                    }
+                    int newline = Array.IndexOf(buffer, (byte)10, offset, count - offset);
+                    int length = (newline < 0 ? count : newline) - offset;
+                    if (line.Length + length > MaximumFrame) throw new InvalidDataException("Engine frame limit exceeded.");
+                    line.Write(buffer, offset, length);
+                    if (newline < 0) break;
+                    if (line.Length != 0) Receive(new ReadOnlyMemory<byte>(line.GetBuffer(), 0, (int)line.Length));
+                    line.SetLength(0);
+                    offset = newline + 1;
                 }
             }
             // The engine's output ended on its own. Its exit is recorded first, whatever its last
@@ -222,8 +222,30 @@ internal sealed class EngineClient : IAsyncDisposable
         }
     }
 
-    private void Receive(byte[] frame)
+    /// The envelope's version and type, read without building a document: a
+    /// snapshot is most of the traffic and is deserialized from the frame once.
+    private static (int? Version, string? Type) Envelope(ReadOnlySpan<byte> frame)
     {
+        var reader = new Utf8JsonReader(frame);
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) throw new InvalidDataException("Invalid engine frame.");
+        int? version = null; string? type = null;
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName && (version == null || type == null))
+        {
+            if (reader.ValueTextEquals("protocolVersion"u8)) { reader.Read(); version = reader.GetInt32(); }
+            else if (reader.ValueTextEquals("type"u8)) { reader.Read(); type = reader.GetString(); }
+            else reader.Skip();
+        }
+        return (version, type);
+    }
+
+    private void Receive(ReadOnlyMemory<byte> frame)
+    {
+        if (Envelope(frame.Span) is (int version, "snapshot"))
+        {
+            if (version != Version) throw new InvalidDataException("Protocol version mismatch.");
+            ReceiveSnapshot(frame.Span);
+            return;
+        }
         using JsonDocument document = JsonDocument.Parse(frame);
         JsonElement root = document.RootElement;
         if (root.GetProperty("protocolVersion").GetInt32() != Version) throw new InvalidDataException("Protocol version mismatch.");
@@ -245,14 +267,7 @@ internal sealed class EngineClient : IAsyncDisposable
                 ready.TrySetResult();
                 break;
             case "snapshot":
-                if (!ready.Task.IsCompletedSuccessfully) throw new InvalidDataException("Snapshot before handshake.");
-                var snapshot = JsonSerializer.Deserialize<EngineSnapshot>(frame, Json) ?? throw new InvalidDataException("Empty snapshot.");
-                if (snapshot.Tasks == null || snapshot.Requests == null || snapshot.Sources == null || snapshot.Quota == null || snapshot.Notices == null)
-                    throw new InvalidDataException("Incomplete snapshot.");
-                if (snapshot.Sequence <= sequence) throw new InvalidDataException("Out-of-order snapshot.");
-                sequence = snapshot.Sequence;
-                Volatile.Write(ref latestSnapshot, snapshot);
-                Publish(() => Snapshot?.Invoke(snapshot));
+                ReceiveSnapshot(frame.Span);
                 break;
             case "result":
                 if (root.GetProperty("id").GetString() is not string resultId || !root.GetProperty("ok").GetBoolean())
@@ -270,6 +285,20 @@ internal sealed class EngineClient : IAsyncDisposable
                 break;
             default: throw new InvalidDataException("Unknown engine message.");
         }
+    }
+
+    /// Every snapshot reaches every subscriber in order: notifications read
+    /// each one's notices. Renderers coalesce on their own side.
+    private void ReceiveSnapshot(ReadOnlySpan<byte> frame)
+    {
+        if (!ready.Task.IsCompletedSuccessfully) throw new InvalidDataException("Snapshot before handshake.");
+        var snapshot = JsonSerializer.Deserialize<EngineSnapshot>(frame, Json) ?? throw new InvalidDataException("Empty snapshot.");
+        if (snapshot.Tasks == null || snapshot.Requests == null || snapshot.Sources == null || snapshot.Quota == null || snapshot.Notices == null)
+            throw new InvalidDataException("Incomplete snapshot.");
+        if (snapshot.Sequence <= sequence) throw new InvalidDataException("Out-of-order snapshot.");
+        sequence = snapshot.Sequence;
+        Volatile.Write(ref latestSnapshot, snapshot);
+        Publish(() => Snapshot?.Invoke(snapshot));
     }
 
     private async Task DrainErrorsAsync(Stream stream)

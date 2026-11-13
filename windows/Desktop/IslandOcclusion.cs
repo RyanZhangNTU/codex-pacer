@@ -13,8 +13,35 @@ public partial class IslandWindow
     private bool visibleRequested, applyingPolicyVisibility;
     internal bool FullscreenSuppressed => visibleRequested && !IsVisible && fullscreen.HasApplication && fullscreen.Monitor == TargetMonitorBounds();
     internal bool FullscreenRaiseFailed { get; private set; }
-    private bool DecorationsAnimate => IsVisible && AnimationsEnabled && !decorationsOccluded;
+    private bool DecorationsAnimate => IsVisible && AnimationsEnabled && !decorationsOccluded && presence.Present;
     internal bool DecorationsOccluded => decorationsOccluded;
+    private DisplayPresence presence = null!;
+    private bool ownsPresence;
+    /// Whether the session's desktop can be seen; the engine wiring can share it.
+    internal DisplayPresence Presence => presence;
+    private void InitializePresence(DisplayPresence? shared)
+    {
+        ownsPresence = shared == null;
+        presence = shared ?? new DisplayPresence();
+        presence.Changed += PresenceChanged;
+    }
+    /// A locked session or a dark display stops every decoration loop, as a
+    /// fullscreen cover does; they resume on the shared clock.
+    private void PresenceChanged()
+    {
+        if (presentationStopped) return;
+        if (!presence.Present) FinishPageTransition();
+        UpdateCompactBar(); RefreshRowMotion();
+        Badge.SetAnimations(DecorationsAnimate); StripBadge.SetAnimations(DecorationsAnimate);
+    }
+    /// The badge's loops run at full rate only while the panel is open.
+    private void PaceBadges()
+    { Badge.FrameRate = StripBadge.FrameRate = expanded ? ActivityBadge.OpenFrameRate : ActivityBadge.CollapsedFrameRate; }
+    private void DisposePresence()
+    {
+        presence.Changed -= PresenceChanged;
+        if (ownsPresence) presence.Dispose();
+    }
     private void InitializeOcclusion()
     {
         SourceInitialized += (_, _) =>

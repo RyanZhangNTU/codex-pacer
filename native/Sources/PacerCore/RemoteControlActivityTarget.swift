@@ -23,7 +23,6 @@ public struct RemoteControlSourceBindings: Equatable, Sendable {
 
 /// Saved routes discover hosts; only Desktop stream evidence creates activity.
 public struct RemoteControlActivityTarget: Equatable, Sendable {
-    private static let configuredTargets = FileSignatureCache<[Self]>()
     public let id: String
     public let name: String
     public let online: Bool?
@@ -33,14 +32,11 @@ public struct RemoteControlActivityTarget: Equatable, Sendable {
     }
 
     public static func configured(home: URL) -> [RemoteControlActivityTarget] {
-        let file = home.appendingPathComponent(".codex-global-state.json")
-        return configuredTargets.value(for: file) { readConfigured(file) }
+        CodexGlobalStateSummary.read(home: home).remoteControlTargets
     }
-    private static func readConfigured(_ file: URL) -> [RemoteControlActivityTarget] {
-        guard let data = try? Data(contentsOf: file), data.count < 8 * 1024 * 1024,
-              let value = try? JSONFieldView.document(data),
-              let fields = try? value.fields(["thread-project-membership-host-ids", "remote-projects", "added-remote-control-env-ids",
-                                             "app-server-migrated-pinned-thread-ids-by-host", "selected-remote-host-id"]) else { return [] }
+    static let globalStateFields: Set<String> = ["thread-project-membership-host-ids", "remote-projects", "added-remote-control-env-ids",
+                                                 "app-server-migrated-pinned-thread-ids-by-host", "selected-remote-host-id"]
+    static func configured(_ fields: [String: JSONFieldView]) -> [RemoteControlActivityTarget] {
         var ids: Set<String> = []
         func add(_ host: String?) {
             let prefix = "remote-control:"

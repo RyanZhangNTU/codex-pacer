@@ -75,7 +75,10 @@ Opaque WPF windows (Settings, sign-in windows, dialogs and non-layered popups) u
 - Quota rotation uses a one-shot timer to the next switch deadline (four-second slots, 350 ms fade); a late wake jumps to the current phase.
 - Finite animations hold controllable clocks and stop them explicitly when they finish, are replaced or unload. Production code never forces garbage collection.
 - When an opaque fullscreen window fully covers the island, cosmetic motion pauses. Detection is driven by WinEvents with a 250 ms trailing throttle; nothing runs without events. Layered and `WS_EX_NOREDIRECTIONBITMAP` windows never count as covering, because their transparency cannot be proven.
-- The engine publishes a snapshot only when its encoded state changed, ignoring only the sequence number and capture times.
+- The engine publishes a snapshot only when its encoded state changed at display precision, ignoring the sequence number, capture times and sub-display changes of clock-derived numbers.
+- Each frame of the layered island costs a few milliseconds, so repeating motion is rationed: estimate and breath loops run at 30 fps expanded and 12 fps collapsed, task-row icon and progress-ring loops at 12 to 20 fps, and the quota swap fades at 15 fps. When a transition settles, the window shrinks to the settled size instead of keeping the expanded panel's area.
+- A locked session, a disconnected remote session or a display that is off (`DisplayPresence`) stops every decoration, like fullscreen cover.
+- While collapsed, a snapshot only marks the hidden panel dirty; it is rebuilt once when it opens. While open, rows with the same tasks update in place and quota, DeepSeek and menu sections rebuild only when their inputs change. A burst of snapshots renders once with the newest, while every snapshot still reaches notification subscribers.
 
 Targets and measurement commands are in [idle CPU checks](windows-engine.md#idle-cpu-checks).
 
@@ -146,7 +149,7 @@ Preferences live in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`; keep the fi
 | DeepSeek | `deepseekPanelStyle`, `deepseekMode`, `deepseekBalanceSource`, `deepseekDailyBudget`, `deepseekWeeklyBudget`, `deepseekRingPeriod`, `deepseekSpeedSource`, `deepseekShowsTurnCost`, `deepseekLowBalanceLine`, `deepseekSpikeLimit` | `detailed`, `balance`, `automatic`, no amounts, `day`, `local`, turn cost on |
 | Task progress rings | `codexProgressRing`, `claudeProgressRing`, `deepseekProgressRing` | on |
 | Privacy and visible tasks | `hideProjects`, `showAppButtons`, `showEmbeddedCodexSessions`, `showEmbeddedClaudeSessions`, `showClaudeCloudProjects` | off, then on |
-| Remote sources | `monitorSSH`, `monitorRemoteControl`, `monitorWSL` (Windows only) | on, off, off |
+| Remote sources | `monitorSSH`, `monitorRemoteControl`, `monitorDurable`, `monitorWSL` (Windows only) | on, off, off (see Dot), off |
 | Retention and page | `completedRetentionMinutes`, `settingsPane` | `30`, `overview` |
 | Source overrides | `codexExecutable`, `codexHome`, `claudeHome`, `deepseekHome`, `claudeWebOrganizationID` | empty |
 | Modules | `providerModule.codex`, `providerModule.claude`, `providerModule.deepseek` | `automatic` |
@@ -229,7 +232,7 @@ Checks use synthetic catalogs, RPC replies and a private named-pipe fixture; the
 
 ## Dot Durable Codex
 
-The Microsoft Store version of Codex Desktop supplies the named pipe. With the default Codex profile, Pacer checks the pipe's package and looks for one matching executor under that Desktop process. A managed copy of the CLI can identify the executor, but Pacer launches the CLI from the verified package.
+`monitorDurable` is off for new profiles. The first launch after an upgrade sets it once from local Dot receipts (`durableOptInMigrated` records the decision), and the Remote page's Codex Dot card changes it. The Microsoft Store version of Codex Desktop supplies the named pipe. With the default Codex profile, Pacer checks the pipe's package and looks for one matching executor under that Desktop process. A managed copy of the CLI can identify the executor, but Pacer launches the CLI from the verified package.
 
 The catalog and turn history use WinHTTP over TLS. Pacer checks the executor and the profile's authentication file before publishing either. The Codex **Progress Ring** switch installs or removes Pacer's local plugin. Turning it off revokes connected reporters immediately. Desktop picks up plugin changes on its next executor registration, which a Codex restart triggers. When the reporter script changes, Pacer uses a new runtime path so Store Codex can load it even if its private cache still holds an older copy.
 

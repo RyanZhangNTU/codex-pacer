@@ -148,14 +148,32 @@ public enum ClaudeDesktopRecords {
                 checked += 1
                 let name = file.deletingPathExtension().lastPathComponent
                 guard UUID(uuidString: String(name.dropFirst("local_".count))) != nil,
-                      files.metadata(file)?.isRegularFile == true,
-                      let data = ClaudeCredentialStore.boundedData(at: file, files: files),
-                      let metadata = try? JSONDecoder().decode(DesktopSessionMetadata.self, from: data), metadata.sessionId == name,
-                      metadata.canonicalCLI != nil else { continue }
+                      let signature = files.metadata(file), signature.isRegularFile,
+                      let metadata = sessionCache.value(for: file, signature: signature, read: {
+                          guard let data = ClaudeCredentialStore.boundedData(at: file, files: files) else { return nil }
+                          return try? JSONDecoder().decode(DesktopSessionMetadata.self, from: data)
+                      }), metadata.sessionId == name, metadata.canonicalCLI != nil else { continue }
                 result.append(metadata)
             }
         }
         return result
+    }
+
+    /// Discovery and the cloud monitor look at the same session files several
+    /// times a minute; an unchanged file (same identity, size and time) is not
+    /// read or decoded again.
+    private static let sessionCache = SessionMetadataCache()
+    private final class SessionMetadataCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [String: (signature: PlatformFileMetadata, value: DesktopSessionMetadata?)] = [:]
+        func value(for file: URL, signature: PlatformFileMetadata, read: () -> DesktopSessionMetadata?) -> DesktopSessionMetadata? {
+            lock.lock(); defer { lock.unlock() }
+            if let entry = entries[file.path], entry.signature == signature { return entry.value }
+            let value = read()
+            if entries.count >= 512 { entries.removeAll() }
+            entries[file.path] = (signature, value)
+            return value
+        }
     }
 
 }

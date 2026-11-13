@@ -59,6 +59,8 @@ int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product,
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity);
 int pacer_codex_package_path(size_t index, uint16_t *path, size_t capacity);
 int pacer_package_path(const uint16_t *family, size_t index, uint16_t *path, size_t capacity);
+// True when a local pipe of this name exists; it neither connects nor waits.
+int pacer_pipe_exists(const uint16_t *name);
 // Local named pipes only. The caller supplies a registered package root and
 // family, or an explicit fixture root with a null family in isolated tests.
 void *pacer_pipe_open(const uint16_t *name, const uint16_t *root, const uint16_t *family, uint32_t timeout_ms, int32_t *failure);

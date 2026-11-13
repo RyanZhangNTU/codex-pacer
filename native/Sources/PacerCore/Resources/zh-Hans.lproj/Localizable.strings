@@ -353,6 +353,8 @@
 "settings.monitor_ssh" = "监测 SSH 主机上的任务";
 "settings.monitor_remote_control" = "统计 Codex Remote Control 任务";
 "settings.remote_control_help" = "通过已连接的 Codex 桌面端获取数据。请保持 Codex 开启并连接远程主机。";
+"settings.monitor_durable" = "统计 Codex Dot 任务";
+"settings.durable_help" = "显示分配给这台电脑的 Dot 任务，即使对话已关闭。Pacer 通过 Codex 桌面端检查这些任务，会增加耗电。";
 "settings.remote_control_devices" = "已配对设备";
 "settings.remote_control_refresh" = "刷新设备列表";
 "settings.remote_control_refreshing" = "正在刷新设备列表…";

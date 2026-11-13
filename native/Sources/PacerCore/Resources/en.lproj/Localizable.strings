@@ -353,6 +353,8 @@
 "settings.monitor_ssh" = "Monitor Tasks on SSH Hosts";
 "settings.monitor_remote_control" = "Include Codex Remote Control Tasks";
 "settings.remote_control_help" = "Uses the connected Codex desktop app. Keep Codex open and connected to the remote host.";
+"settings.monitor_durable" = "Include Codex Dot Tasks";
+"settings.durable_help" = "Shows Dot tasks assigned to this computer, even when their chats are closed. Pacer checks them through the Codex desktop app, which uses more power.";
 "settings.remote_control_devices" = "Paired Devices";
 "settings.remote_control_refresh" = "Refresh Devices";
 "settings.remote_control_refreshing" = "Refreshing devices…";

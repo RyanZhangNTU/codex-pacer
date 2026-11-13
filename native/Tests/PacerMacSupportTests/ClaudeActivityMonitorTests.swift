@@ -13,8 +13,7 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         private var latest: [String: RuntimeStreamStatus] = [:]
         func quiet(_ statuses: [String: RuntimeStreamStatus], hosts: [String], expectation: XCTestExpectation) {
             lock.lock(); defer { lock.unlock() }; updates += 1; latest = statuses
-            if !quietDelivered && hosts.allSatisfy({ statuses[$0]?.connected == true && statuses[$0]?.watchingLogs == false &&
-                (statuses[$0]?.helperLoopIterations ?? 0) >= 3 }) {
+            if !quietDelivered && hosts.allSatisfy({ statuses[$0]?.connected == true && statuses[$0]?.watchingLogs == false }) {
                 quietDelivered = true; expectation.fulfill()
             }
         }
@@ -178,7 +177,7 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         """
         let monitor = ClaudeActivityMonitor(sshExecutable: try executable(in: fixture.root, script: script))
         let targets = [target("quiet-one"), target("quiet-two"), target("quiet-three")]
-        let quiet = expectation(description: "quiet SSH heartbeats reached the actor promptly")
+        let quiet = expectation(description: "quiet SSH heartbeats published the connection promptly")
         let observations = Observations(), hosts = targets.map(\.id), started = Date()
         await monitor.start(home: fixture.home, remoteTargets: targets, refreshPolicy: .collapsed) { values, statuses, requests, performance in
             XCTAssertTrue(values.isEmpty); XCTAssertTrue(requests.isEmpty); XCTAssertTrue(performance.isEmpty)
@@ -186,7 +185,14 @@ final class ClaudeActivityMonitorTests: XCTestCase {
         }
         await fulfillment(of: [quiet], timeout: 2)
         XCTAssertLessThan(Date().timeIntervalSince(started), 2, "Transport health must not wait for the collapsed five-second activity batch")
-        let statuses = await monitor.statuses()
+        // Later fragmented heartbeats still reach the actor, but change only
+        // diagnostic counters, so they are not published again.
+        var statuses: [String: RuntimeStreamStatus] = [:]
+        let counted = try await TestWait.until {
+            statuses = await monitor.statuses()
+            return hosts.allSatisfy { (statuses[$0]?.helperLoopIterations ?? 0) >= 3 }
+        }
+        XCTAssertTrue(counted, "Every fragmented heartbeat reached the actor")
         for host in hosts { XCTAssertTrue(statuses[host]?.connected == true); XCTAssertFalse(statuses[host]?.watchingLogs == true) }
         let pids = try targets.map { try XCTUnwrap(Int32(String(contentsOf: fixture.root.appendingPathComponent($0.alias + ".pid"), encoding: .utf8))) }
         await monitor.shutdown()

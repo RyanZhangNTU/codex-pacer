@@ -259,6 +259,22 @@ final class DeepSeekIslandTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testBalanceHistoryWritesCoalesceUntilQuitAndAnEmptyHistoryClearsAtOnce() async throws {
+        let (defaults, _) = try defaults(.init(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
+        let model = IslandModel(defaults: defaults, installation: .init(codexInstalled: false, claudeInstalled: false))
+        var history = DeepSeekBalanceHistory()
+        history.record(total: 100, at: Date(timeIntervalSince1970: 1_800_000_000), source: "web")
+        model.saveDeepSeekHistory(history)
+        history.record(total: 90, at: Date(timeIntervalSince1970: 1_800_000_060), source: "web")
+        model.saveDeepSeekHistory(history)
+        XCTAssertNil(defaults.data(forKey: DeepSeekBalanceHistory.defaultsKey), "Readings wait for the coalesced write")
+        await model.shutdown()
+        let saved = try XCTUnwrap(defaults.data(forKey: DeepSeekBalanceHistory.defaultsKey))
+        XCTAssertEqual(try JSONDecoder().decode(DeepSeekBalanceHistory.self, from: saved), history, "Quitting writes the newest one")
+        model.saveDeepSeekHistory(DeepSeekBalanceHistory())
+        XCTAssertNil(defaults.data(forKey: DeepSeekBalanceHistory.defaultsKey))
+    }
+
     func testBalanceHistoryIsClearedBeforeAChangedSourceCanReadAndCheckedOnRelaunch() async throws {
         let (defaults, _) = try defaults(.init(codexMode: .disabled, claudeMode: .disabled, deepseekMode: .enabled))
         defaults.set("web", forKey: DeepSeekBalanceSource.defaultsKey)
@@ -457,8 +473,8 @@ final class DeepSeekIslandTests: XCTestCase {
                     XCTAssertFalse(model.deepseekRefreshing)
                     XCTAssertEqual(model.deepseekFailureCount, 0)
                     XCTAssertEqual(model.deepseekHistory, expectedHistory, "A stale result cannot record a balance drop")
-                    XCTAssertEqual(DeepSeekBalanceHistory.load(from: defaults), expectedHistory)
                     await model.shutdown()
+                    XCTAssertEqual(DeepSeekBalanceHistory.load(from: defaults), expectedHistory, "Quitting writes the coalesced history")
                 }
             }
         }

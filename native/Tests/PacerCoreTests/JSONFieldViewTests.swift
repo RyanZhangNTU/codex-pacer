@@ -21,10 +21,13 @@ final class JSONFieldViewTests: XCTestCase {
         XCTAssertThrowsError(try JSONFieldView.document(Data([34, 0xC0, 0x80, 34])))
     }
     func testEscapesDuplicateKeysNumbersAndContainerBounds() throws {
-        let value = try JSONFieldView.document(Data(#"{"a":1,"a":2,"unicode":"\uD83D\uDE00","float":-1.5e2,"items":[null,true,{"id":"x"}]}"#.utf8))
+        let value = try JSONFieldView.document(Data(#"{"a":1,"a":2,"unicode":"\uD83D\uDE00","float":-1.5e2,"items":[null,true,{"id":"x"}],"k\u0065y":"v\/x","plain":"名称"}"#.utf8))
         let fields = try value.fields()
         XCTAssertEqual(fields["a"]?.integer(), 2)
         XCTAssertEqual(fields["unicode"]?.string(), "😀")
+        XCTAssertEqual(fields["key"]?.string(), "v/x")
+        XCTAssertEqual(fields["plain"]?.string(), "名称")
+        XCTAssertEqual(fields["plain"]?.string(limit: 1), "名")
         XCTAssertEqual(fields["float"]?.number(), -150)
         XCTAssertNil(fields["float"]?.integer())
         XCTAssertEqual(try fields["items"]?.countElements(), 3)

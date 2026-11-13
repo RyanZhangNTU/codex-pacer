@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -135,9 +136,24 @@ public partial class IslandWindow
         else detail.SetResourceReference(TextBlock.ForegroundProperty, "Island.Tertiary");
     }
 
-    /// Fills every section and, only when the shape changed, rebuilds their order.
-    private void RenderPanel(EngineSnapshot snapshot)
+    /// What each quota section and chart was last drawn from; equal inputs keep their views.
+    private readonly Dictionary<FrameworkElement, string> drawnFrom = new();
+    private static readonly JsonSerializerOptions SignatureJson = new() { NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals };
+    /// Whether `element` must be drawn again for `inputs`, which also carry the island's tone and accent.
+    private bool Redraw(FrameworkElement element, object inputs)
     {
+        string signature = JsonSerializer.Serialize(new { inputs, PacerPalette.Accent, PacerPalette.Light }, SignatureJson);
+        if (drawnFrom.TryGetValue(element, out var drawn) && drawn == signature) return false;
+        drawnFrom[element] = signature; return true;
+    }
+
+    /// Fills every section and, only when the shape changed, rebuilds their order.
+    /// Returns whether anything the panel measures may have changed.
+    private bool RenderPanel(EngineSnapshot snapshot)
+    {
+        PanelBuilds++;
+        bool changed = false;
+        var headings = new List<string>();
         var current = panel ?? DefaultPanel(snapshot);
         var placed = new List<(PanelSection Section, FrameworkElement Element, StackPanel Trailing, FrameworkElement Header)>();
         int quotaIndex = 0;
@@ -154,7 +170,8 @@ public partial class IslandWindow
                     quotaIndex++;
                     parts.Title.Text = section.Title.Length > 0 ? section.Title : ui.Text("layout.group.quota_balance");
                     SetDetail(parts.Detail, section.Detail, section.Providers.Count == 1 ? section.Providers[0] : null);
-                    FillQuota(parts.Slots, section, snapshot);
+                    headings.Add(parts.Title.Text + "\u001f" + parts.Detail.Text);
+                    changed |= FillQuota(parts.Slots, section, snapshot);
                     AutomationProperties.SetAutomationId(parts.Section, "island.section.quota." + string.Join("-", section.Providers));
                     placed.Add((section, parts.Section, parts.Trailing, parts.Header));
                     break;
@@ -164,16 +181,21 @@ public partial class IslandWindow
                     bool spend = section.Kind == "deepseekSpend";
                     var parts = spend ? Chart(ref spendSection, "spend") : Chart(ref weekSection, "week");
                     var data = snapshot.Wallet?.Solo;
-                    FrameworkElement? content = spend
-                        ? data?.Distribution is { } distribution ? new DeepSeekDistributionView(distribution, showsTitle: !section.ShowsHeader) : null
-                        : data?.Week is { } week ? new DeepSeekWeekView(week, showsTitle: !section.ShowsHeader) : null;
+                    object? chart = spend ? data?.Distribution : data?.Week;
                     // An empty chart takes no room unless it carries the panel's buttons.
-                    if (content == null && !section.ShowsHeader) break;
+                    if (chart == null && !section.ShowsHeader) break;
                     parts.Header.Visibility = section.ShowsHeader ? Visibility.Visible : Visibility.Collapsed;
                     parts.Title.Text = section.Title;
                     SetDetail(parts.Detail, spend ? null : data?.Week?.LineText, null);
-                    parts.Content.Child = content;
-                    parts.Content.Margin = new Thickness(9, section.ShowsHeader && content != null ? 8 : 0, 9, content == null ? 0 : 4);
+                    headings.Add(parts.Title.Text + "\u001f" + parts.Detail.Text + "\u001f" + section.ShowsHeader);
+                    if (Redraw(parts.Content, new { chart, section.ShowsHeader }))
+                    {
+                        FrameworkElement? content = spend
+                            ? data?.Distribution is { } distribution ? new DeepSeekDistributionView(distribution, showsTitle: !section.ShowsHeader) : null
+                            : data?.Week is { } week ? new DeepSeekWeekView(week, showsTitle: !section.ShowsHeader) : null;
+                        parts.Content.Child = content; changed = true;
+                    }
+                    parts.Content.Margin = new Thickness(9, section.ShowsHeader && chart != null ? 8 : 0, 9, chart == null ? 0 : 4);
                     placed.Add((section, parts.Section, parts.Trailing, parts.Header));
                     break;
                 }
@@ -189,7 +211,7 @@ public partial class IslandWindow
         string signature = string.Join("|", placed.Select(item => item.Section.Key + ":" + item.Section.Joined + ":" + item.Element.GetHashCode())) + ":" + noServices;
         if (signature != sectionSignature)
         {
-            sectionSignature = signature;
+            sectionSignature = signature; changed = true;
             if (PanelActions.Parent is Panel owner) owner.Children.Remove(PanelActions);
             PanelContent.Children.Clear(); sectionHeaders.Clear();
             for (int index = 0; index < placed.Count; index++)
@@ -223,7 +245,12 @@ public partial class IslandWindow
         PageDivider.Visibility = ReferenceEquals(PanelActions.Parent, TaskHeaderTrailing) ? Visibility.Visible : Visibility.Collapsed;
         ApplyHeaderActions();
         if (!MoreButton.ContextMenu.IsOpen) BuildMoreMenu();
+        // New heading text can widen the panel.
+        string headingText = string.Join("\u001e", headings);
+        if (headingText != drawnHeadings) { drawnHeadings = headingText; changed = true; }
+        return changed;
     }
+    private string? drawnHeadings;
 
     /// Measuring the panel with an unchanged width reuses each section's cached
     /// size, so everything that render replaced is marked up to the panel first.
@@ -243,15 +270,25 @@ public partial class IslandWindow
     }
 
     /// One quota section in the chosen style, as Core drew it for its services.
-    private void FillQuota(Grid slots, PanelSection section, EngineSnapshot snapshot)
+    /// Returns false, keeping the section's views, when nothing it draws changed.
+    private bool FillQuota(Grid slots, PanelSection section, EngineSnapshot snapshot)
     {
-        slots.Children.Clear(); slots.ColumnDefinitions.Clear();
-        string connectUnavailable = ui.Text(demo ? "windows.deepseek.demo_web_help" : "windows.deepseek.runtime_required");
         var dashboard = snapshot.QuotaDashboard is { SchemaVersion: 1 } data ? data : null;
         var layout = expandedQuotaStyle == "classic" ? section.Classic : section.Split;
         var options = panelOptions;
         DashboardProvider? Reading(string provider) => dashboard?.Providers.FirstOrDefault(value => value.Provider == provider);
         string? Help(string provider) => snapshot.Sources.FirstOrDefault(source => source.Provider == provider && source.Transport == "app-server")?.Reason;
+        bool deepseek = section.Providers.Contains("deepseek") || layout?.Slots.Any(slot => slot.Provider == "deepseek") == true;
+        if (!Redraw(slots, new
+        {
+            section, layout, style = expandedQuotaStyle, deepseekPanelStyle, options = options.Key, panelBudgetDial,
+            readings = section.Providers.Select(Reading), legacy = layout?.Kind == "legacyCodex" ? dashboard?.LegacyCodex : null,
+            quota = snapshot.Quota.Where(value => section.Providers.Contains(value.Provider)), help = section.Providers.Select(Help),
+            gauges = section.Providers.Select(provider => panel?.Gauge(provider)), wallet = deepseek ? snapshot.Wallet : null,
+            connection = deepseek ? snapshot.DeepseekConnection : null, web = deepseek && canConnectDeepSeekWeb?.Invoke() == true
+        })) return false;
+        slots.Children.Clear(); slots.ColumnDefinitions.Clear();
+        string connectUnavailable = ui.Text(demo ? "windows.deepseek.demo_web_help" : "windows.deepseek.runtime_required");
         if (layout?.Kind == "legacyCodex" && dashboard?.LegacyCodex is { } legacy)
             slots.Children.Add(new LegacyQuotaView(legacy, ui, Help("codex"), QuotaStatus(Reading("codex"))));
         else if (layout?.Kind == "classicRings" && dashboard != null)
@@ -280,6 +317,7 @@ public partial class IslandWindow
                 Grid.SetColumn(cell, column); slots.Children.Add(cell);
             }
         }
+        return true;
     }
 
     /// The header shows the chosen buttons; the rest wait in the More menu.
@@ -291,9 +329,14 @@ public partial class IslandWindow
     }
 
     /// Unchecked header buttons first, then Refresh and Quit, which always live here.
+    private string? menuShape;
     private void BuildMoreMenu()
     {
         var menu = MoreButton.ContextMenu;
+        // The menu is rebuilt only when what it lists changed.
+        string shape = string.Join(",", showAppButtons ? Array.Empty<string>() : AvailableApplications()) + ";" + panelOptions.Key + ";" + MarkReadButton.IsEnabled + ";" + pinned;
+        if (shape == menuShape && menu.Items.Count > 0) return;
+        menuShape = shape;
         menu.Items.Clear();
         int hidden = 0;
         if (!showAppButtons)

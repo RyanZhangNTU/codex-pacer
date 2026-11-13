@@ -49,6 +49,7 @@ struct SettingsView: View {
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
     @State private var monitorRemoteControl = UserDefaults.standard.bool(forKey: "monitorRemoteControl")
+    @State private var monitorDurable = UserDefaults.standard.bool(forKey: IslandModel.monitorsDurableKey)
     /// Shared with the update note, which can change them while this is open.
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
@@ -296,7 +297,7 @@ struct SettingsView: View {
         case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
         case .remote:
-            SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl,
+            SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl, monitorDurable: $monitorDurable,
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
         case .about:
             SettingsAboutPane(updater: updater, automaticallyChecks: $automaticUpdateChecks, launchAtLogin: launchAtLogin,
@@ -519,7 +520,7 @@ struct SettingsView: View {
             barSize: barSize, appearance: appearance, theme: theme, accent: accent,
             quotaStyle: quotaStyle, fullscreen: fullscreen, displayID: displayID, positionPerDisplay: positionPerDisplay, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
-            monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
+            monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, monitorDurable: monitorDurable, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
             codexProgressRing: codexProgressRing, deepseekProgressRing: deepseekProgressRing,
             showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
@@ -540,6 +541,7 @@ struct SettingsView: View {
         let defaults = UserDefaults.standard
         defaults.set(monitorSSH, forKey: "monitorSSH")
         defaults.set(monitorRemoteControl, forKey: "monitorRemoteControl")
+        defaults.set(monitorDurable, forKey: IslandModel.monitorsDurableKey)
         modules.save(to: defaults)
         displayMode.save(to: defaults)
         position?.save(to: defaults)
@@ -656,6 +658,7 @@ private struct LiveSettings: Equatable {
     var showsAppButtons: Bool
     var monitorSSH: Bool
     var monitorRemoteControl: Bool
+    var monitorDurable: Bool
     var showEmbeddedClaudeSessions: Bool
     var showEmbeddedCodexSessions: Bool
     var showClaudeCloudProjects: Bool
