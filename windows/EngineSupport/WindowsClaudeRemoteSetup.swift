@@ -208,10 +208,11 @@ final class WindowsClaudeSetupOperation: ClaudeRemoteSetupOperation, @unchecked 
         lock.lock(); defer { lock.unlock() }
         guard problem == nil, child == nil else { throw problem ?? .connectionFailed }
         if arguments.first == "--pacer-wsl" {
-            guard arguments.count == 4, arguments[1] == "claude", let wsl,
-                  let profile = wsl.registry.profile(id: arguments[2], provider: .claude),
-                  let invocation = WindowsWSLInvocation(profile: profile, provider: .claude, command: arguments[3], setup: true) else { throw ClaudeRemoteSetup.Failure.invalidTarget }
-            sourceIsCurrent = { wsl.registry.profile(id: profile.id, provider: .claude) == profile }
+            // Claude's hooks or Codex's progress tool, each in its own provider route.
+            guard arguments.count == 4, let provider = AgentProvider(rawValue: arguments[1]), [.claude, .codex].contains(provider), let wsl,
+                  let profile = wsl.registry.profile(id: arguments[2], provider: provider),
+                  let invocation = WindowsWSLInvocation(profile: profile, provider: provider, command: arguments[3], setup: true) else { throw ClaudeRemoteSetup.Failure.invalidTarget }
+            sourceIsCurrent = { wsl.registry.profile(id: profile.id, provider: provider) == profile }
             child = try wsl.start(.init(executable: wsl.executable, arguments: invocation.arguments, environment: WindowsWSLInvocation.environment(environment)),
                 invocation.input, { [weak self] in self?.receive($0) }, {})
             // WSL's small supervisor owns the Linux child group. Keep stdin

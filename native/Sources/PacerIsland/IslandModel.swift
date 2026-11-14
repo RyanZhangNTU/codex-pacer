@@ -467,6 +467,81 @@ final class IslandModel: ObservableObject {
             codexProgressSetup = status
         }
         codexProgressQueue.track(task)
+        scheduleCodexRemoteProgress()
+    }
+
+    /// Codex starts MCP servers from the config.toml of the host a task runs
+    /// on, so connected SSH hosts get Pacer's progress tool too, on Claude's
+    /// schedule. Nothing is shown: a failed run only backs off. With the ring
+    /// off, only hosts this Mac set up are visited, to take the tool away.
+    private var codexRemoteProgressRequests: [String: UUID] = [:]
+    private var codexRemoteProgressFailedAt: [String: Date] = [:]
+    /// This launch's successful runs, so hosts set up earlier are checked again.
+    private var codexRemoteProgressCheckedAt: [String: Date] = [:]
+    private lazy var codexRemoteProgressDigests: (off: String, on: String)? = {
+        guard let off = try? CodexRemoteProgressSetup.digest(enabled: false),
+              let on = try? CodexRemoteProgressSetup.digest(enabled: true) else { return nil }
+        return (off, on)
+    }()
+    private var codexRemoteProgressRing: Bool { showsCodexProgressRing && isModuleEnabled(.codex) }
+    private var codexRemoteProgressDigest: String? { codexRemoteProgressDigests.map { codexRemoteProgressRing ? $0.on : $0.off } }
+
+    /// Hosts that need a run now. Off visits only hosts with a recorded setup.
+    static func codexRemoteProgressPending(targets: [RemoteActivityTarget], statuses: [String: RuntimeStreamStatus],
+                                           configured: [String: String], ring: Bool, digest: String, failures: [String: Date],
+                                           inFlight: Set<String>, checkedAt: [String: Date], now: Date) -> [RemoteActivityTarget] {
+        ClaudeRemoteAutoSetup.pending(targets: targets.filter { ring || configured[$0.alias] != nil }, statuses: statuses,
+            configured: configured, digest: digest, failures: failures, inFlight: inFlight, now: now, checkedAt: checkedAt)
+    }
+
+    private func scheduleCodexRemoteProgress() {
+        guard isModuleEnabled(.codex), monitorsSSH, !demo, !sleeping, !stopped, let digest = codexRemoteProgressDigest else { return }
+        let pending = Self.codexRemoteProgressPending(targets: RemoteActivityTarget.configured(home: home), statuses: streamStatuses,
+            configured: CodexRemoteProgressSetup.configuredDigests(defaults: defaults), ring: codexRemoteProgressRing, digest: digest,
+            failures: codexRemoteProgressFailedAt, inFlight: Set(codexRemoteProgressRequests.keys),
+            checkedAt: codexRemoteProgressCheckedAt, now: Date())
+        for target in pending {
+            launchOwnedWork(.init(.setup, provider: .codex, identifier: "remote-progress:" + target.id)) { [weak self] _ in
+                _ = await self?.configureCodexRemoteProgress(target: target)
+            }
+        }
+    }
+
+    /// One run on `target` with the current ring. Success records the digest,
+    /// so the host stays quiet until an update or the ring changes it. A
+    /// host whose own `pacer_progress` entry was kept counts as checked too.
+    @discardableResult
+    func configureCodexRemoteProgress(target: RemoteActivityTarget) async -> CodexRemoteProgressSetup.Status? {
+        guard isModuleEnabled(.codex), monitorsSSH, !sleeping, !stopped, !Task.isCancelled,
+              codexRemoteProgressRequests[target.id] == nil, let digest = codexRemoteProgressDigest else { return nil }
+        let generation = sourceGeneration, requestID = UUID(), ring = codexRemoteProgressRing, transport = claudeRemoteSetup
+        codexRemoteProgressRequests[target.id] = requestID
+        // Runs after the defer below has cleared this host's in-flight state.
+        var outdated = false
+        defer { if outdated { scheduleCodexRemoteProgress() } }
+        defer { if codexRemoteProgressRequests[target.id] == requestID { codexRemoteProgressRequests.removeValue(forKey: target.id) } }
+        do {
+            let status = try await CodexRemoteProgressSetup.install(target: target, enabled: ring, transport: transport)
+            guard !Task.isCancelled, generation == sourceGeneration, codexRemoteProgressRequests[target.id] == requestID,
+                  isModuleEnabled(.codex), monitorsSSH, !sleeping, !stopped else { return nil }
+            CodexRemoteProgressSetup.recordConfigured(alias: target.alias, digest: digest, defaults: defaults)
+            codexRemoteProgressCheckedAt[target.id] = Date(); codexRemoteProgressFailedAt.removeValue(forKey: target.id)
+            outdated = digest != codexRemoteProgressDigest
+            return status
+        } catch {
+            guard !Task.isCancelled, generation == sourceGeneration, codexRemoteProgressRequests[target.id] == requestID,
+                  error as? ClaudeRemoteSetup.Failure != .cancelled else { return nil }
+            codexRemoteProgressFailedAt[target.id] = Date()
+            return nil
+        }
+    }
+
+    private func cancelCodexRemoteProgress(clearHistory: Bool = false) {
+        for targetID in codexRemoteProgressRequests.keys {
+            cancelOwnedWork(.init(.setup, provider: .codex, identifier: "remote-progress:" + targetID))
+        }
+        codexRemoteProgressRequests.removeAll()
+        if clearHistory { codexRemoteProgressFailedAt.removeAll(); codexRemoteProgressCheckedAt.removeAll() }
     }
 
     private nonisolated static func configureCodexReporter(home: URL, executable: String, reporter: URL, enabled: Bool, durable: Bool,
@@ -1913,6 +1988,8 @@ final class IslandModel: ObservableObject {
         refilterEmbeddedSessions()
         if oldLocal != newLocal { refreshActivity() }
         else if agentStatesChanged { refreshActivity(metricsOnly: true) }
+        // A host that just connected can get the progress tool.
+        scheduleCodexRemoteProgress()
     }
     /// Helper CPU, loop and notification counters change on every heartbeat and are never shown.
     static func sameVisibleStreamState(_ lhs: [String: RuntimeStreamStatus], _ rhs: [String: RuntimeStreamStatus]) -> Bool {
@@ -2060,6 +2137,7 @@ final class IslandModel: ObservableObject {
             let changed = appliedCodexSSH != nil
             appliedCodexSSH = monitorsSSH
             if changed && !plan.changedProviders.contains(.codex) { refreshRemote() }
+            if !monitorsSSH { cancelCodexRemoteProgress() }
         }
         // A restarted Claude source applies the ring's switch as part of its setup.
         if !plan.changedProviders.contains(.claude) || !isModuleEnabled(.claude) { syncClaudeProgressSwitch() }
@@ -2075,6 +2153,7 @@ final class IslandModel: ObservableObject {
     }
     private func resetCodexSource() {
         cancelHostTracking(for: .codex, clearApplications: true)
+        cancelCodexRemoteProgress(clearHistory: true)
         excludedCodexActivityIDs = []; codexReceivedRequests = []; codexLogRequests = []
         logWatcher.stop(); invalidateWork(invalidateSource: false)
         let previous = detachCodexQuota(preservingCadence: false)
@@ -2276,7 +2355,7 @@ final class IslandModel: ObservableObject {
             case .retryHostTracking: for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
             case .stopWatches: logWatcher.stop()
             case .cancelHostTracking: cancelHostTracking()
-            case .cancelRemoteSetup: cancelClaudeRemoteSetup()
+            case .cancelRemoteSetup: cancelClaudeRemoteSetup(); cancelCodexRemoteProgress()
             case .demoSnapshot: applyDemoSnapshot()
             case .suspendSources, .stopSources: break
             }

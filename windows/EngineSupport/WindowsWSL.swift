@@ -261,6 +261,12 @@ struct WindowsWSLServices: Sendable {
               let arguments = registry.arguments(target) else { throw ClaudeRemoteSetup.Failure.invalidTarget }
         return arguments + [try ClaudeRemoteSetup.command(home: profile.claudeHome, requireHome: requireHome, progressRing: progressRing, automatic: automatic)]
     }
+    /// Runs the Codex progress setup `command` in the distribution's Codex route.
+    func codexSetupArguments(_ target: RemoteActivityTarget, command: String) throws -> [String] {
+        guard let profile = registry.profile(id: target.id, provider: .codex), profile.target(.codex) == target,
+              target.home == profile.codexHome else { throw ClaudeRemoteSetup.Failure.invalidTarget }
+        return ["--pacer-wsl", AgentProvider.codex.rawValue, target.id, command]
+    }
 }
 
 private struct WindowsWSLHelperLauncher: HelperProcessLauncher {

@@ -34,6 +34,9 @@ public actor ClaudeRemoteSetup {
     /// Builds a setup command from the target, `requireHome`, whether the
     /// progress ring is on and whether the run is `automatic`.
     private let argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool, Bool) throws -> [String])?
+    /// Places another installer's command for a target, as `run(target:command:)`
+    /// uses it. Without one, the command runs over the target's validated SSH route.
+    private let commandBuilder: (@Sendable (RemoteActivityTarget, String) throws -> [String])?
     private let makeOperation: @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation
     private var operations: [UUID: any ClaudeRemoteSetupOperation] = [:]
 
@@ -41,13 +44,15 @@ public actor ClaudeRemoteSetup {
                 makeOperation: @escaping @Sendable (URL, [String]) -> any ClaudeRemoteSetupOperation,
                 validDestination: @escaping @Sendable (String) -> Bool,
                 validIdentityFile: (@Sendable (String) -> Bool)? = nil,
-                argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool, Bool) throws -> [String])? = nil) {
+                argumentBuilder: (@Sendable (RemoteActivityTarget, Bool, Bool, Bool) throws -> [String])? = nil,
+                commandBuilder: (@Sendable (RemoteActivityTarget, String) throws -> [String])? = nil) {
         self.executable = executable
         self.timeout = timeout.isFinite ? min(15, max(0.05, timeout)) : 15
         self.makeOperation = makeOperation
         self.validDestination = validDestination
         self.validIdentityFile = validIdentityFile
         self.argumentBuilder = argumentBuilder
+        self.commandBuilder = commandBuilder
     }
 
     /// `requireHome` is set for automatic setup so a host without Claude is skipped.
@@ -60,6 +65,23 @@ public actor ClaudeRemoteSetup {
         if let argumentBuilder { arguments = try argumentBuilder(target, requireHome, progressRing, automatic) }
         else { arguments = try Self.arguments(target: target, requireHome: requireHome, progressRing: progressRing, automatic: automatic,
                                               validDestination: validDestination, validIdentityFile: validIdentityFile) }
+        let result = try await run(arguments)
+        return try Self.status(data: result.data, exitStatus: result.exitStatus)
+    }
+
+    /// Runs another installer's `command` on `target` with the same transport,
+    /// deadline and cancellation, and returns its single response unparsed.
+    public func run(target: RemoteActivityTarget, command: String) async throws -> (data: Data, exitStatus: Int32) {
+        let arguments: [String]
+        if let commandBuilder { arguments = try commandBuilder(target, command) }
+        else {
+            guard let route = target.sshArguments(validDestination: validDestination, validIdentityFile: validIdentityFile) else { throw Failure.invalidTarget }
+            arguments = route + [command]
+        }
+        return try await run(arguments)
+    }
+
+    private func run(_ arguments: [String]) async throws -> (data: Data, exitStatus: Int32) {
         let identifier = UUID()
         let operation = makeOperation(executable, arguments)
         operations[identifier] = operation
@@ -71,7 +93,7 @@ public actor ClaudeRemoteSetup {
             while true {
                 if Task.isCancelled { throw Failure.cancelled }
                 if let failure = operation.failure { throw failure }
-                if let result = try operation.result() { return try Self.status(data: result.data, exitStatus: result.exitStatus) }
+                if let result = try operation.result() { return result }
                 if ProcessInfo.processInfo.systemUptime >= deadline {
                     operation.abort(.timedOut)
                     throw Failure.timedOut

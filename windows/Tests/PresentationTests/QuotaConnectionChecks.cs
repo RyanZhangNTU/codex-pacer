@@ -45,6 +45,9 @@ internal static class QuotaConnectionChecks
                 var retry = Button(view, "quota.codex.retry"); var config = Button(view, "quota.codex.settings");
                 Check(retry.IsEnabled && !config.IsEnabled && retry.ActualHeight == 22 && retry.Padding == new Thickness(9, 0, 9, 0),
                     "Recovery must retain the original capsule geometry and disable an unavailable settings action");
+                Check(retry.TranslatePoint(new Point(0, 0), view).Y == config.TranslatePoint(new Point(0, 0), view).Y,
+                    "A column that holds both capsules keeps them on one row");
+                double wholeRetry = retry.ActualWidth;
                 ulong before = latest!.Sequence; Invoke(retry);
                 await Until(() => acknowledged && retries == 1 && latest!.Sequence > before, "An accessible retry must receive the real engine acknowledgement");
                 Check(!retry.IsEnabled, "An in-flight retry cannot issue another command");
@@ -64,6 +67,26 @@ internal static class QuotaConnectionChecks
                 surface.Child = disconnected; window.UpdateLayout();
                 Check(Descendants(disconnected).OfType<Button>().Count() == 1, "Unread data must offer settings without inventing a quota retry");
                 Capture(surface, Path.Combine(output, "quota-connection-" + language + "-unavailable.png"));
+                // A classic ring column (#226) is narrower than both capsules: they stack instead of
+                // overflowing it, and only a capsule wider than the column trims its label.
+                foreach (double column in new[] { 104.0, 72.0 })
+                {
+                    var narrow = new QuotaConnectionView("codex", failure, ui, () => Task.CompletedTask, () => settings++);
+                    surface.Width = column + 16; surface.Child = narrow; window.UpdateLayout();
+                    var narrowRetry = Button(narrow, "quota.codex.retry"); var narrowSettings = Button(narrow, "quota.codex.settings");
+                    foreach (var capsule in new[] { narrowRetry, narrowSettings })
+                    {
+                        double left = capsule.TranslatePoint(new Point(0, 0), narrow).X;
+                        Check(left >= -0.5 && left + capsule.ActualWidth <= narrow.ActualWidth + 0.5 && capsule.ActualHeight == 22,
+                            "Each recovery capsule must stay whole inside a narrow ring column");
+                    }
+                    Check(narrowSettings.TranslatePoint(new Point(0, 0), narrow).Y >= narrowRetry.TranslatePoint(new Point(0, 0), narrow).Y + 27.5,
+                        "Capsules that do not fit side by side stack one per line");
+                    Check(wholeRetry > column || Math.Abs(narrowRetry.ActualWidth - wholeRetry) < 0.5,
+                        "A stacked capsule the column holds keeps its whole label");
+                    Capture(surface, Path.Combine(output, "quota-connection-" + language + "-narrow-" + column + ".png"));
+                }
+                surface.Width = 374;
             }
             finally { gate.TrySetResult(); window.Close(); }
         }

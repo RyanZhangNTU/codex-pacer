@@ -125,6 +125,7 @@ public enum PacerEngine {
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
             wslServices: wsl,
             sshServices: ssh, claudeRemoteServices: .live(ssh: ssh, wsl: wsl),
+            codexRemoteProgressServices: demo || readOnly ? nil : .codexProgress(ssh: ssh, wsl: wsl),
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices,
             managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly, managesLocalHarnessProgress: !demo && !readOnly,
             codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
@@ -273,6 +274,10 @@ actor EngineRuntime {
     private let claudeRemoteServices: EngineClaudeRemoteServices?
     private lazy var claudeRemoteSetup = claudeRemoteServices.map { WindowsClaudeRemoteCoordinator(services: $0, now: now, maximumTargets: 16) }
     private var claudeRemoteSetups: [EngineClaudeRemoteSetup] = []
+    /// Pacer's Codex progress tool on SSH and WSL hosts, with Claude's schedule.
+    private let codexRemoteProgressServices: EngineClaudeRemoteServices?
+    private lazy var codexRemoteProgress = codexRemoteProgressServices.map { WindowsClaudeRemoteCoordinator(services: $0, now: now, maximumTargets: 16) }
+    private var codexRemoteProgressInput: String?
     private var codexRemoteTargets: [RemoteActivityTarget] = [], claudeRemoteTargets: [RemoteActivityTarget] = []
     private var claudeRemoteStatuses: [String: RuntimeStreamStatus] = [:]
     private var localStreamStatuses: [AgentProvider: RuntimeStreamStatus] = [:]
@@ -469,10 +474,17 @@ actor EngineRuntime {
     private var refreshRequested = false
     private var discoveryRequested = false
     private var refreshActivityMonitorsRequested = false
+    private var immediateRefreshRequested = false
+    private var collectHandoff = EngineCollectHandoff()
     private var forceBalanceRequested = false
+    private var codexMetricsPending = false
+    private let codexMetricsWork = ApplicationWorkRegistry.Key(.presentation, provider: .codex, identifier: "log-metrics")
     #if os(Windows)
+    private var watchedCodexLogURLs: [URL] = []
+    // Give a burst of writes time to land before reading lifecycle evidence.
+    private static let codexFileEventCoalescing: TimeInterval = 0.1
     private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
-        Task { await self?.refresh(discover: discover, refreshActivityMonitors: false) }
+        Task { await self?.refresh(discover: discover, refreshActivityMonitors: false, fileEvent: true) }
     }
     #endif
     private let output: @Sendable (Data) -> Void
@@ -488,6 +500,7 @@ actor EngineRuntime {
          wslServices: WindowsWSLServices? = nil,
          sshServices: WindowsSSHServices? = nil,
          claudeRemoteServices: EngineClaudeRemoteServices? = nil,
+         codexRemoteProgressServices: EngineClaudeRemoteServices? = nil,
          cloudServices: ClaudeCloudServices? = nil,
          navigationServices: ActivityNavigationServices? = nil,
          navigationClock: @escaping @Sendable () -> TimeInterval = { ActivityNavigationState.monotonicNow },
@@ -517,6 +530,7 @@ actor EngineRuntime {
         self.wslServices = wslServices
         self.sshServices = sshServices
         self.claudeRemoteServices = claudeRemoteServices
+        self.codexRemoteProgressServices = codexRemoteProgressServices
         self.navigationServices = navigationServices ?? (demo ? .demo : .live)
         self.navigationClock = navigationClock; self.navigationErrorDuration = navigationErrorDuration
         self.activityHostServices = activityHostServices
@@ -882,7 +896,6 @@ actor EngineRuntime {
                 startWSLMonitoring()
                 await refresh(discover: true)
             } else { await performLifecycle(plan) }
-            await updateSourceWatches()
             startMaintenance()
             // The host must see the new account context before its browser
             // can answer a quota request for an organization selected here.
@@ -995,6 +1008,7 @@ actor EngineRuntime {
                 }
             }
             await claudeCloudMonitor?.setExpanded(value)
+            if !value, codexMetricsPending { scheduleCodexMetrics() }
             if !demo {
                 restartPresentationClock()
                 await quotaMonitor?.refreshIfDue(expanded: value, expansion: value)
@@ -1177,6 +1191,7 @@ actor EngineRuntime {
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
         let plan = lifecycle.settings(lifecycleConfiguration)
         await bindClaudeRemoteSetup()
+        await bindCodexRemoteProgress()
         for provider in plan.changedProviders {
             resetSourceState(provider)
             navigationState.cancel(provider: provider)
@@ -1266,7 +1281,7 @@ actor EngineRuntime {
 
     private func applyCodexActivityPolicy(_ policy: ActivityRefreshPolicy, flush: Bool) async {
         await desktopMonitor?.updateRefreshPolicy(policy, flushPending: flush && policy == .expanded)
-        await updateSourceWatches(flushPending: flush && policy == .expanded)
+        await updateCodexLogWatches(flushPending: flush && policy == .expanded)
     }
 
     private func bindClaudeActivity(retryingWSL: Set<String> = []) async {
@@ -1331,6 +1346,7 @@ actor EngineRuntime {
             inbox.bindSourceHomes(provider: provider, localHome: navigationHome(for: provider), localAccountScope: update.activity.scope)
         }
         if projectionReady, refreshTask == nil { projectCollected(at: now()) }
+        else { handOffToCollect(localSnapshot: true) }
     }
 
     private func moduleProjection(_ provider: AgentProvider) -> EngineModule {
@@ -1535,6 +1551,7 @@ actor EngineRuntime {
             status: status?.connected == true && status?.sourceAvailable != false ? .ready : .unavailable))
         cloudLocalSessions.update(harnessActivities[.claude]?.activities ?? [])
         if projectionReady, refreshTask == nil { projectCollected(at: now()) }
+        else { handOffToCollect(localSnapshot: true) }
     }
     private func receiveDeepSeekLocal(_ rows: [SessionActivity], statuses: [String: RuntimeStreamStatus],
         attention: [PendingAttentionRequest], performance: [SessionPerformanceUpdate], usage: DeepSeekLocalUsage, context: UInt64) async {
@@ -1552,7 +1569,12 @@ actor EngineRuntime {
             guard active, lifecycle.version(.deepseek) == context else { return }
             let ended = rows.contains { [.completed, .interrupted].contains($0.phase) && previous.contains($0.id + "|" + ($0.turnID ?? "")) }
             _ = await balanceMonitor?.refreshIfDue(active: expanded || rows.contains { $0.phase == .running }, turnEnded: ended)
-        }
+        } else { handOffToCollect(localSnapshot: true) }
+    }
+    /// A projection skipped because a collect is running still has to reach the host.
+    private func handOffToCollect(localSnapshot: Bool) {
+        guard refreshTask != nil, collectHandoff.skippedProjection(localSnapshot: localSnapshot) else { return }
+        refreshRequested = true; immediateRefreshRequested = true
     }
     private func updateLocalWallet() {
         var titles = deepseekUsage.titles
@@ -1648,7 +1670,7 @@ actor EngineRuntime {
             case .pruneHistory: codexHistory.prune(at: now()); claudeHistory.prune(at: now())
             case .resetSource(let provider):
                 await resetSource(provider)
-            case .updateActivityPolicy: await updateSourceWatches()
+            case .updateActivityPolicy: await updateCodexLogWatches()
             case .cloud: await bindClaudeCloudMonitor()
             case .balanceBinding: await bindBalanceMonitor()
             case .refilter, .demoSnapshot: await refresh(discover: true)
@@ -1676,6 +1698,11 @@ actor EngineRuntime {
         activityState.removeHarness(provider)
         switch provider {
         case .codex:
+            clearCodexMetricsBatch()
+            #if os(Windows)
+            watchedCodexLogURLs = []
+            logWatcher.stop()
+            #endif
             desktopBinding = UUID(); remoteControlHostIDs = []; remoteControlScope = nil; durableAccountScope = nil
             inbox.remoteControlRevalidating = false
             bindCodexCompletionSources()
@@ -1708,24 +1735,11 @@ actor EngineRuntime {
         return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
     }
 
-    private func updateSourceWatches(flushPending: Bool = false) async {
+    private func updateCodexLogWatches(flushPending: Bool = false) async {
         #if os(Windows)
-        guard !demo else { return }
-        var directories: [URL] = []
-        for (provider, home, components) in [
-            (AgentProvider.codex, codexHome, ["sessions"])
-        ] where enabled.contains(provider) {
-            for component in components {
-                let target = home.appendingPathComponent(component, isDirectory: true)
-                var isDirectory: ObjCBool = false
-                if FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory), isDirectory.boolValue { directories.append(target) }
-                else if FileManager.default.fileExists(atPath: home.path, isDirectory: &isDirectory), isDirectory.boolValue { directories.append(home) }
-            }
-        }
-        logWatcher.update(directories, interval: expanded ? ActivityRefreshPolicy.expanded.interval : ActivityRefreshPolicy.collapsed.interval,
+        guard active, !demo, enabled.contains(.codex) else { return }
+        logWatcher.update(watchedCodexLogURLs, interval: Self.codexFileEventCoalescing,
             flushPending: flushPending)
-        // Register before completing initialization or a source change, so a
-        // write immediately after the first read cannot fall through a gap.
         _ = await logWatcher.activeWatchCount()
         #endif
     }
@@ -1745,12 +1759,11 @@ actor EngineRuntime {
     private func tickPresentation() async {
         guard active, !Task.isCancelled else { return }
         await performLifecycle(lifecycle.tick(lifecycleTick))
-        guard projectionReady, refreshTask == nil else { return }
+        guard projectionReady else { return }
         // Only the metadata projection changes on a clock tick. Do not reopen
         // transcript files or rescan source directories while nothing is written.
-        if activities.contains(where: { [.running, .waitingForInput].contains($0.phase) }) || !quota.isEmpty || codexQuota != nil || claudeQuotaState?.snapshot != nil || enabled.contains(.deepseek) && walletSource != nil {
-            publish(notices: [])
-        }
+        guard activities.contains(where: { [.running, .waitingForInput].contains($0.phase) }) || !quota.isEmpty || codexQuota != nil || claudeQuotaState?.snapshot != nil || enabled.contains(.deepseek) && walletSource != nil else { return }
+        if refreshTask == nil { publish(notices: []) } else { handOffToCollect(localSnapshot: false) }
     }
 
     private func receiveBalance(_ state: DeepSeekBalanceState) {
@@ -2099,6 +2112,8 @@ actor EngineRuntime {
             unavailable: state.unavailable.filter { allowsRemoteSource($0, provider: .codex) },
             remoteControlDirectory: state.remoteControlDirectory)
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
+        // A host that just connected can get the progress tool.
+        Task { [weak self] in await self?.bindCodexRemoteProgress() }
         if projectionReady { projectCollected(at: now()) }
         else {
             // Initialization/source reads may be awaiting I/O. Keep endings
@@ -2137,11 +2152,32 @@ actor EngineRuntime {
         guard active, monitorSSH, current, !Task.isCancelled else { return }
         codexRemoteTargets = codex; claudeRemoteTargets = claude
         await bindClaudeRemoteSetup()
+        await bindCodexRemoteProgress()
         bindRemoteCompletionSources()
         await bindDesktopMonitor(); await bindActivityMonitor(.claude)
     }
     private func bindRemoteCompletionSources() {
         bindCodexCompletionSources(); bindWSLCompletionSources(.claude)
+    }
+
+    /// Codex starts MCP servers from the host a task runs on, so connected SSH
+    /// and WSL hosts get Pacer's progress tool too. With the ring off, only hosts
+    /// this PC set up are visited, to take it away again. Unchanged inputs are
+    /// skipped: desktop updates arrive far more often than hosts connect.
+    private func bindCodexRemoteProgress() async {
+        guard let setup = codexRemoteProgress, let services = codexRemoteProgressServices else { return }
+        let ring = codexProgressRing && enabled.contains(.codex)
+        let on = active && managesCodexProgress && (monitorSSH || monitorWSL) && enabled.contains(.codex)
+        let configured = on && !ring ? services.loadDigests() : [:]
+        let targets = on ? monitoredRemoteTargets(.codex).filter { ring || configured[$0.alias] != nil } : []
+        let statuses = (desktopState?.statuses ?? [:]).filter { id, _ in targets.contains { $0.id == id } }
+        let input = [String(on), String(ring), String(lifecycle.version(.codex))] + targets.map { target in
+            target.id + "=" + target.alias + "@" + target.home + ":" + String(statuses[target.id].map { $0.connected && $0.sourceAvailable != false } ?? false)
+        }
+        guard input.joined(separator: "\n") != codexRemoteProgressInput else { return }
+        codexRemoteProgressInput = input.joined(separator: "\n")
+        await setup.configure(targets: targets, statuses: statuses, enabled: on, progressRing: ring,
+            version: lifecycle.version(.codex), update: { _, _ in })
     }
 
     private func bindClaudeRemoteSetup() async {
@@ -2251,10 +2287,11 @@ actor EngineRuntime {
         await claudeActivityMonitor.refresh(remoteTargetID: source)
     }
 
-    func refresh(discover: Bool, refreshActivityMonitors: Bool = true) async {
+    func refresh(discover: Bool, refreshActivityMonitors: Bool = true, fileEvent: Bool = false) async {
         guard active else { return }
         refreshRequested = true; discoveryRequested = discoveryRequested || discover
         refreshActivityMonitorsRequested = refreshActivityMonitorsRequested || refreshActivityMonitors
+        immediateRefreshRequested = immediateRefreshRequested || !fileEvent
         if let refreshTask {
             await ApplicationLifecycleCoordinator.cleanup([.reader: { await refreshTask.value }])
             return
@@ -2267,20 +2304,24 @@ actor EngineRuntime {
     private func drainRefreshes(owner: ApplicationWorkRegistry.Ticket) async {
         while active, ownedWork.owns(owner), refreshRequested, !Task.isCancelled {
             let discover = discoveryRequested, refreshMonitors = refreshActivityMonitorsRequested
+            let batchCodexMetrics = !immediateRefreshRequested
             refreshRequested = false; discoveryRequested = false; refreshActivityMonitorsRequested = false
-            await collect(discover: discover, refreshMonitors: refreshMonitors)
+            immediateRefreshRequested = false
+            await collect(discover: discover, refreshMonitors: refreshMonitors, batchCodexMetrics: batchCodexMetrics)
             if refreshRequested { await Task.yield() }
         }
         // Clear inside the actor before the worker completes. A request that
         // arrives afterwards creates a new worker instead of joining a finished one.
         ownedWork.finish(owner)
     }
-    private func collect(discover: Bool, refreshMonitors: Bool) async {
+    private func collect(discover: Bool, refreshMonitors: Bool, batchCodexMetrics: Bool) async {
+        defer { collectHandoff.endCollect() }
         let date = now(), revision = generation
         if discover { lastCodexDiscovery = date }
         let previousDeepSeekTurns = Set(activities.filter {
             $0.provider == .deepseek && $0.phase == .running
         }.map { $0.id + "|" + ($0.turnID ?? "") })
+        let previousCodex = harnessActivities[.codex]
         if demo {
             var rows = DemoScenario.tasks(stage: stage, at: date)
                 + [DemoScenario.claudeTask(stage: stage, at: date), DemoScenario.deepseekTask(stage: stage, at: date)]
@@ -2321,15 +2362,22 @@ actor EngineRuntime {
         _ = await balanceMonitor?.refreshIfDue(active: expanded || deepseekRows.contains { $0.phase == .running },
             force: forceBalance, turnEnded: ended)
         guard active, generation == revision, !Task.isCancelled else { return }
-        projectCollected(at: date)
-        let codexRows = demo ? demoActivity.activities.filter { $0.provider == .codex } : harnessActivities[.codex]?.activities ?? []
+        // Snapshots received from here on were not part of this projection.
+        collectHandoff.readLocalSnapshots()
+        let codex = harnessActivities[.codex]
+        let publishNow = demo || collectHandoff.takePublication() || !batchCodexMetrics || !projectionReady ||
+            codex?.status != previousCodex?.status || codexLifecycleChanged(from: previousCodex, to: codex)
+        // A Claude, DeepSeek or WorkBuddy ending read during this collect can be
+        // newer than its start, so project at the time of publication.
+        if publishNow { projectCollected(at: now()) }
+        else if codex?.activities != previousCodex?.activities, !codexMetricsPending { scheduleCodexMetrics() }
+        let codexRows = demo ? demoActivity.activities.filter { $0.provider == .codex } : codex?.activities ?? []
         let candidates = codexRows.sorted {
             let left = [.running, .waitingForInput].contains($0.phase), right = [.running, .waitingForInput].contains($1.phase)
             if left != right { return left }
             return ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast)
         }.prefix(256).compactMap(\.threadID)
-        await desktopMonitor?.discover(candidates)
-        await updateSourceWatches()
+        if discover || publishNow { await desktopMonitor?.discover(candidates) }
         guard active, generation == revision, !Task.isCancelled else { return }
         await claudeCloudMonitor?.startAfterPublication()
     }
@@ -2338,13 +2386,63 @@ actor EngineRuntime {
         let revision = generation, home = codexHome
         let result = await codexReader.read(home: home, now: context.observedAt, phaseAwareRate: true, metricsOnly: !context.discover)
         guard active, generation == revision, !Task.isCancelled else { return }
+        #if os(Windows)
+        if context.discover {
+            watchedCodexLogURLs = result.watchURLs
+            await updateCodexLogWatches()
+            guard active, generation == revision, !Task.isCancelled else { return }
+        }
+        #endif
         inbox.remove(activityIDs: result.excludedIDs)
         let found = FileManager.default.fileExists(atPath: home.appendingPathComponent("sessions").path)
         harnessActivities.replace(.codex, with: .init(activities: result.activities, requests: result.requests,
                                                       status: found ? .ready : .missing))
     }
 
+    /// Whether a Codex log read changed what the island shows beyond its
+    /// counters. Counter-only changes wait for the collapsed batch.
+    private func codexLifecycleChanged(from old: HarnessActivity?, to new: HarnessActivity?) -> Bool {
+        guard (new?.requests ?? []).sorted(by: { $0.id < $1.id }) == (old?.requests ?? []).sorted(by: { $0.id < $1.id }) else { return true }
+        let before = Self.codexLogRows(old?.activities ?? []), next = Self.codexLogRows(new?.activities ?? [])
+        guard before.keys == next.keys else { return true }
+        return next.contains { id, value in
+            guard let previous = before[id] else { return true }
+            return value.phase != previous.phase || value.turnID != previous.turnID || value.stage != previous.stage ||
+                value.turnFailed != previous.turnFailed || value.firstTokenReportedAt != previous.firstTokenReportedAt ||
+                value.waitingForApproval != previous.waitingForApproval || value.codexGoalPause != previous.codexGoalPause
+        }
+    }
+
+    private static func codexLogRows(_ rows: [SessionActivity]) -> [String: SessionActivity] {
+        Dictionary(rows.lazy.filter { $0.provider == .codex && $0.lastObserved != nil }.map { ($0.canonicalized().id, $0) },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
+    private func scheduleCodexMetrics() {
+        let owner = ownedWork.begin(codexMetricsWork, version: lifecycle.version(.codex))
+        codexMetricsPending = true
+        let delay = UInt64(presentationInterval() * 1_000_000_000)
+        let task = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            await self?.flushCodexMetrics(owner)
+        }
+        ownedWork.attach(task, to: owner)
+    }
+
+    private func flushCodexMetrics(_ owner: ApplicationWorkRegistry.Ticket) {
+        guard lifecycle.owns(owner), ownedWork.finish(owner) else { return }
+        codexMetricsPending = false
+        if active { projectCollected(at: now()) }
+    }
+
+    private func clearCodexMetricsBatch() {
+        guard codexMetricsPending else { return }
+        codexMetricsPending = false
+        ownedWork.cancel(codexMetricsWork)
+    }
+
     private func projectCollected(at date: Date) {
+        clearCodexMetricsBatch()
         var current: [SessionActivity] = []
         var status: [EngineSource] = []
         let cloud = usesClaudeWeb && enabled.contains(.claude) && cloudState?.enabled == true ? cloudState : nil
@@ -2681,7 +2779,6 @@ actor EngineRuntime {
         await claudeCloudMonitor?.resume(context: lifecycle.version(.claude))
         await performLifecycle(plan)
         startWSLMonitoring(checkInstalled: true)
-        await updateSourceWatches()
         if !demo { restartPresentationClock() }
         startMaintenance()
         await refresh(discover: true)
@@ -2706,20 +2803,25 @@ actor EngineRuntime {
         cancelHostTracking(); invalidateNavigation()
         activityDisplayDeadline = nil
         refreshRequested = false; discoveryRequested = false; refreshActivityMonitorsRequested = false
+        immediateRefreshRequested = false; collectHandoff = EngineCollectHandoff()
+        clearCodexMetricsBatch()
         forceBalanceRequested = false
         #if os(Windows)
+        watchedCodexLogURLs = []
         logWatcher.stop()
         #endif
     }
     private func cleanupSources(quota: CodexQuotaMonitor?, claude: ClaudeQuotaMonitor?, balance: DeepSeekBalanceMonitor?, sleeping: Bool) async {
         let cloud = claudeCloudMonitor, web = webBridge, claudeWeb = claudeWebBridge, remoteSetup = claudeRemoteSetup
+        let codexRemote = codexRemoteProgress
+        codexRemoteProgressInput = nil
         let deadline = ShutdownDeadline()
         let harnesses = localHarnesses.detach()
         harnessActivities.detachLocalBindings()
         var operations: [ApplicationLifecycleCoordinator.Resource: ApplicationLifecycleCoordinator.Cleanup] = [
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claude?.stop() },
             .cloud: { if sleeping { await cloud?.suspend() } else { await cloud?.stop() } },
-            .balance: { await balance?.stop() }, .remoteSetup: { await remoteSetup?.shutdown() }
+            .balance: { await balance?.stop() }, .remoteSetup: { await remoteSetup?.shutdown(); await codexRemote?.shutdown() }
         ]
         if !sleeping {
             operations[.web] = { await web.setAvailable(false) }
