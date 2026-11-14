@@ -25,7 +25,7 @@ final class PresentationEnumCodableTests: XCTestCase {
 
     func testEveryCaseKeepsItsOriginalJSONStringAndRejectsUnknownStrings() throws {
         try check(CompactWarningPresentation.Item.Kind.allCases,
-            ["fiveHour", "ssh", "quotaDelay", "exhausted", "lowBalance", "spike", "overBudget", "nearingBudget"])
+            ["fiveHour", "ssh", "quotaDelay", "exhausted", "lowBalance", "spike", "overBudget", "nearingBudget", "lowCredits"])
         try check(DeepSeekAlertPresentation.Kind.allCases, ["exhausted", "lowBalance", "spike", "overBudget", "nearingBudget"])
         try check(DeepSeekConnectionPresentation.Action.allCases, ["signIn", "refresh"])
         try check(DeepSeekConnectionPresentation.Color.allCases, ["green", "secondary", "orange"])
@@ -46,7 +46,7 @@ final class PresentationEnumCodableTests: XCTestCase {
         try check(O.WarningStyle.allCases, ["capsule", "dot"])
         try check(CompactBarSize.allCases, ["small", "standard", "large", "extraLarge"])
         try check(P.Metric.allCases, ["remaining", "pace"])
-        try check(P.RingChoice.allCases, ["", "none", "codex", "claude", "deepseek"])
+        try check(P.RingChoice.allCases, ["", "none", "codex", "claude", "deepseek", "workbuddy"])
     }
 
     private func roundTrip<T: Codable & Equatable>(_ type: T.Type, _ oldJSON: String,
@@ -63,7 +63,7 @@ final class PresentationEnumCodableTests: XCTestCase {
         let options = try roundTrip(P.Options.self,
             #"{"singleTask":"count","metric":"pace","codexWindow":"five","claudeWindow":"auto","rings":["","deepseek"]}"#)
         XCTAssertEqual(options.singleTask, .count); XCTAssertEqual(options.metric, .pace)
-        XCTAssertEqual(options.rings, [.automatic, .deepseek]); XCTAssertTrue(options.valid)
+        XCTAssertEqual(options.rings, [.automatic, .init(provider: .deepseek)]); XCTAssertTrue(options.valid)
         for provider in ["codex", "claude", "deepseek"] {
             let entry = try roundTrip(P.Entry.self, "{\"provider\":\"\(provider)\",\"text\":\"43%\",\"stripText\":\"43\",\"dimmed\":false}")
             XCTAssertEqual(entry.provider.rawValue, provider)

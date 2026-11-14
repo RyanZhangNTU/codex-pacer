@@ -136,8 +136,7 @@ public struct ApplicationLifecycleCoordinator: Sendable {
             Self.activityOrder(configuration.enabled.subtracting([.codex])).map(Action.activity)
     }
     private static func activityOrder(_ providers: Set<AgentProvider>) -> [AgentProvider] {
-        let legacy = HarnessRegistry.legacyIDs
-        return legacy.filter(providers.contains) + providers.subtracting(legacy).sorted { $0.rawValue < $1.rawValue }
+        providers.sorted(by: HarnessRegistry.orderedBefore)
     }
     @discardableResult public static func cleanup(_ operations: [Resource: Cleanup], activity: [Cleanup] = [],
                                                    deadline: ShutdownDeadline = ShutdownDeadline()) async -> Bool {

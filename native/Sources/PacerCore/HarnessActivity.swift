@@ -107,10 +107,20 @@ package struct LocalHarnessDefinition: Sendable {
         userHome.appendingPathComponent(home, isDirectory: true)
     }
 
-    package var homeEnvironmentKey: String { descriptor.id.rawValue.uppercased() + "_CONFIG_DIR" }
-    package func resolveHome(override: String?, isAbsolute: (String) -> Bool) -> URL {
+    package var homeEnvironmentKey: String {
+        descriptor.id.rawValue.uppercased().replacingOccurrences(of: "-", with: "_") + "_CONFIG_DIR"
+    }
+
+    /// The app's data file counts as an installation, like DeepSeek's sessions
+    /// folder: it covers portable copies and custom install folders.
+    package func hasLocalData(home: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: home.appendingPathComponent(dataFile).path, isDirectory: &isDirectory) && !isDirectory.boolValue
+    }
+    package func resolveHome(override: String?, isAbsolute: (String) -> Bool,
+                             userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         guard let override, override.utf8.count <= 32 * 1024, isAbsolute(override),
-              !override.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return defaultHome() }
+              !override.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return defaultHome(userHome: userHome) }
         return URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL
     }
 }

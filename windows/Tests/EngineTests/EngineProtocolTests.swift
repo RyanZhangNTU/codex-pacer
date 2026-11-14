@@ -101,7 +101,7 @@ final class EngineProtocolTests: XCTestCase {
             XCTAssertEqual(Array(modules.prefix(3).map(\.provider)), HarnessRegistry.legacyIDs.map(\.rawValue))
             if supports == true {
                 let extra = try XCTUnwrap(modules.first { $0.provider == "workbuddy" })
-                XCTAssertEqual(extra.mode, "disabled")
+                XCTAssertEqual(extra.mode, "automatic", "A detected WorkBuddy turns on like the built-in modules")
                 XCTAssertEqual(extra.displayName, "WorkBuddy")
                 XCTAssertEqual(extra.hasTaskProgress, true)
                 XCTAssertEqual(extra.reportsSessionUsage, true)
@@ -122,17 +122,17 @@ final class EngineProtocolTests: XCTestCase {
             makeMonitor: { _ in ReportedHarnessMonitor(provider: provider, clock: clock) })
         let runtime = EngineRuntime(demo: false, now: { clock }, dismissalStore: nil,
             localHarnessDefinitions: [definition], installationDetection: { .init(installed: [provider]) }, output: { capture.append($0) })
-        _ = await runtime.receive(try command("initialize", ["enabledProviders": [provider.rawValue], "enabledHarnessProgress": [provider.rawValue],
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": [provider.rawValue],
             "monitorSSH": false, "monitorWSL": false], harnessModules: true))
         let shown = try XCTUnwrap(capture.snapshots().last?.presentation.rows.first)
         XCTAssertEqual(shown.progressFraction, 0.37)
-        _ = await runtime.receive(try command("configure", ["enabledHarnessProgress": []]))
+        _ = await runtime.receive(try command("configure", ["disabledHarnessProgress": [provider.rawValue]]))
         let hidden = try XCTUnwrap(capture.snapshots().last?.presentation.rows.first)
         XCTAssertEqual(hidden.id, shown.id)
         XCTAssertEqual(hidden.phase, shown.phase)
         XCTAssertNil(hidden.progressState)
         _ = await runtime.receive(try command("refreshLocalHarness", ["provider": provider.rawValue]))
-        _ = await runtime.receive(try command("configure", ["enabledHarnessProgress": [provider.rawValue]]))
+        _ = await runtime.receive(try command("configure", ["disabledHarnessProgress": []]))
         XCTAssertEqual(try capture.snapshots().last?.presentation.rows.first?.progressFraction, 0.37)
         await runtime.stop()
     }

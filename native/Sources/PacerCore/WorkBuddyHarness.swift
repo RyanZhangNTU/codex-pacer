@@ -4,9 +4,18 @@ import SQLite3
 
 enum WorkBuddyHarness {
     static let id = AgentProvider.workbuddy
+    static let accountCredits = HarnessAccountCreditsDefinition(
+        sites: [.init(id: "international", url: URL(string: "https://www.workbuddy.ai/")!),
+                .init(id: "china", url: URL(string: "https://www.workbuddy.cn/")!)],
+        chineseSite: "china", loginPath: "profile/plans-usage",
+        billingPath: "/billing/meter/get-user-resource-summary", scriptResource: "workbuddy-account-credits")
     static let definition = LocalHarnessDefinition(
-        descriptor: .init(id: id, name: "WorkBuddy", symbol: "briefcase", defaultMode: .disabled, hasRateDisplay: true, hasTaskProgress: true, reportsSessionUsage: true,
-                          reportsAccountCredits: true, usageGuide: URL(string: "https://www.workbuddy.ai/docs/workbuddy/usage"), progressConnector: true),
+        descriptor: .init(id: id, name: "WorkBuddy", symbol: "briefcase",
+                          brand: .init(dark: .init(0xC3ABF1), light: .init(0x6942A2), accentLift: 0.22, accentLuminance: 0.095),
+                          website: URL(string: "https://www.workbuddy.ai/"), balance: .accountCredits,
+                          hasRateDisplay: true, hasTaskProgress: true, reportsSessionUsage: true,
+                          usageGuide: URL(string: "https://www.workbuddy.ai/docs/workbuddy/usage"), progressConnector: true,
+                          accountCredits: accountCredits),
         platforms: [.windows, .macOS], home: ".workbuddy-ai", dataFile: "workbuddy.db",
         windowsExecutables: ["WorkBuddyAI/WorkBuddyAI.exe", "Programs/WorkBuddyAI/WorkBuddyAI.exe"],
         macApplicationNames: ["WorkBuddy AI", "WorkBuddy"], macBundleIdentifiers: ["com.tencent.workbuddy.mac"],

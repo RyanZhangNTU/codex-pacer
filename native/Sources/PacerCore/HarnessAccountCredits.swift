@@ -41,6 +41,18 @@ public struct HarnessAccountCredits: Codable, Equatable, Sendable {
     }
 
     private static func isAmount(_ value: Double) -> Bool { (0...128e12).contains(value) }
+
+    /// Credits for the collapsed bar: 87, 1.2k, 12k, 3.4M.
+    public static func compactAmount(_ value: Double) -> String {
+        let value = max(0, value)
+        func scaled(_ divisor: Double, _ suffix: String) -> String {
+            let scaled = value / divisor
+            return (scaled < 9.95 ? String(format: "%.1f", scaled) : String(format: "%.0f", scaled)) + suffix
+        }
+        if value >= 999_500 { return scaled(1_000_000, "M") }
+        if value >= 999.5 { return scaled(1000, "k") }
+        return value < 9.95 && value.rounded() != value ? String(format: "%.1f", value) : String(format: "%.0f", value)
+    }
     private static func futureDate(_ value: Double, at now: Date) -> Date? {
         (0..<4_102_444_800).contains(value) && value > now.timeIntervalSince1970 ? Date(timeIntervalSince1970: value) : nil
     }
@@ -53,6 +65,11 @@ public struct HarnessAccountCredits: Codable, Equatable, Sendable {
         public let cycle: PlanCycle?
         public let expiring: ExpiringCredits?
         public var fraction: Double? { total > 0 ? min(1, remaining / total) : nil }
+        /// What is left of the plan cycle, or of all credits without one, in percent.
+        public var percent: Double? {
+            if let cycle, cycle.total > 0 { return min(100, max(0, cycle.remaining / cycle.total * 100)) }
+            return fraction.map { $0 * 100 }
+        }
 
         public struct PlanCycle: Equatable, Sendable {
             public let total: Double
@@ -68,16 +85,47 @@ public struct HarnessAccountCredits: Codable, Equatable, Sendable {
     }
 }
 
-public enum WorkBuddyAccountWeb {
-    public static let china = URL(string: "https://www.workbuddy.cn/")!
-    public static let international = URL(string: "https://www.workbuddy.ai/")!
-    public static let billingPath = "/billing/meter/get-user-resource-summary"
-    public static let loginPath = "profile/plans-usage"
-    public static let summaryScript: String = {
-        guard let url = Bundle.module.url(forResource: "workbuddy-account-credits", withExtension: "js"),
+/// Where a module's account credits come from. Hosts sign in on one of the
+/// sites in their own web view, then run the summary script against the bill.
+public struct HarnessAccountCreditsDefinition: Sendable {
+    public struct Site: Equatable, Sendable {
+        /// Stored in preferences: `automatic` picks by the app language.
+        public let id: String
+        public let url: URL
+    }
+    public let sites: [Site]
+    /// The site `automatic` uses while the app is in Chinese.
+    public let chineseSite: String
+    /// The page that opens for sign-in, relative to the site.
+    public let loginPath: String
+    /// The bill request the summary script reads.
+    public let billingPath: String
+    private let scriptResource: String
+
+    package init(sites: [Site], chineseSite: String, loginPath: String, billingPath: String, scriptResource: String) {
+        self.sites = sites; self.chineseSite = chineseSite; self.loginPath = loginPath
+        self.billingPath = billingPath; self.scriptResource = scriptResource
+    }
+
+    public func site(_ preference: String, chinese: Bool) -> Site {
+        sites.first { $0.id == preference } ?? sites.first { $0.id == (chinese ? chineseSite : "") } ??
+            sites.first { $0.id != chineseSite } ?? sites[0]
+    }
+
+    public var summaryScript: String {
+        guard let url = Bundle.module.url(forResource: scriptResource, withExtension: "js"),
               let script = try? String(contentsOf: url, encoding: .utf8) else {
-            preconditionFailure("Missing WorkBuddy account credits script")
+            preconditionFailure("Missing account credits script " + scriptResource)
         }
         return script
-    }()
+    }
+}
+
+public enum WorkBuddyAccountWeb {
+    private static var definition: HarnessAccountCreditsDefinition { WorkBuddyHarness.accountCredits }
+    public static var china: URL { definition.site("china", chinese: true).url }
+    public static var international: URL { definition.site("international", chinese: false).url }
+    public static var billingPath: String { definition.billingPath }
+    public static var loginPath: String { definition.loginPath }
+    public static let summaryScript: String = WorkBuddyHarness.accountCredits.summaryScript
 }

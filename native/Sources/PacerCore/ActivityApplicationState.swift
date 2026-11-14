@@ -230,7 +230,9 @@ public struct ActivityApplicationState: Sendable {
             return []
         }
         let grouped = Dictionary(grouping: shown, by: \.provider)
-        return Set(grouped.keys).union(attention.keys).sorted(by: HarnessRegistry.orderedBefore).flatMap { provider in
+        // Every registered module keeps a baseline from the first reconcile, so a
+        // task first seen already waiting still notifies.
+        return Set(grouped.keys).union(attention.keys).union(HarnessRegistry.ids).sorted(by: HarnessRegistry.orderedBefore).flatMap { provider in
             attention[provider, default: AttentionPolicy()].requestNotices(grouped[provider] ?? [])
         }
     }
@@ -266,7 +268,7 @@ public struct ActivityApplicationState: Sendable {
         replaceActivities(combined, at: now)
         let tasks = taskGroups().filter { !($0.isRunning && [.completed, .interrupted].contains($0.primary.phase)) }.map(\.primary)
         let grouped = Dictionary(grouping: tasks, by: \.provider)
-        let activityNotices = Set(grouped.keys).union(attention.keys).sorted(by: HarnessRegistry.orderedBefore).flatMap { provider in
+        let activityNotices = Set(grouped.keys).union(attention.keys).union(HarnessRegistry.ids).sorted(by: HarnessRegistry.orderedBefore).flatMap { provider in
             attention[provider, default: AttentionPolicy()].activityNotices(grouped[provider] ?? [], at: now)
         }
         notices += AttentionPolicy.excludingPendingReplies(activityNotices, activityIDs: Set(requests.map { $0.activity.id }))

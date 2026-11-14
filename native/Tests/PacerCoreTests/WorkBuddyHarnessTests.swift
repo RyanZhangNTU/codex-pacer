@@ -341,7 +341,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertEqual(completed.modelName, "Deepseek-V4.1-Flash")
         XCTAssertEqual(completed.reasoningEffort, "high")
         let row = ActivityTaskRowPresentation(activity: completed, unread: true, at: at)
-        XCTAssertEqual(row.model, "Deepseek-V4.1-Flash")
+        XCTAssertEqual(row.model, "DeepSeek V4.1 Flash", "Another family keeps its brand in a short name")
         XCTAssertEqual(row.effort, L10n.text("model.effort.high"))
         XCTAssertEqual(row.rate?.value, 40)
         XCTAssertFalse(String(describing: completed).contains("PRIVATE"))

@@ -150,6 +150,8 @@ public struct TaskPresentationOptions: Equatable, Sendable {
     public var hostApplications: [String: TaskHostLabel]
     public var sourceNames: [String: String]
     public var showsDeepSeekTurnCost: Bool
+    /// Modules whose rows leave out the credits each turn used.
+    public var hiddenTurnCredits: Set<AgentProvider> = []
     /// Providers whose rows draw the self-reported progress ring.
     public var progressRingProviders: Set<AgentProvider>
     /// Rows on one page of the expanded panel's task list.
@@ -224,7 +226,7 @@ public struct ActivityTaskRowPresentation: Sendable {
         case .estimatedYuan(let total, let peak) where options.showsDeepSeekTurnCost:
             cost = DeepSeekWallet.turnAmount(total)
             peakCost = peak >= 0.005
-        case .credits(let amount):
+        case .credits(let amount) where !options.hiddenTurnCredits.contains(activity.provider):
             cost = Self.creditAmount(amount)
             peakCost = false
         default:

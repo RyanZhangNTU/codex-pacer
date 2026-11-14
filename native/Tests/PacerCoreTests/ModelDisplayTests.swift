@@ -14,6 +14,11 @@ final class ModelDisplayTests: XCTestCase {
         XCTAssertEqual(ModelDisplay.name("gpt-5.1-codex-max"), "GPT-5.1 Codex Max")
         XCTAssertEqual(ModelDisplay.name("gpt-5-mini"), "GPT-5 mini")
         XCTAssertEqual(ModelDisplay.name("gpt-4o"), "GPT-4o")
+        // Codex through a third-party API, or WorkBuddy, can run another family's model.
+        XCTAssertEqual(ModelDisplay.name("deepseek-v4-pro", provider: .codex), "DeepSeek V4 Pro")
+        XCTAssertEqual(ModelDisplay.name("deepseek-v4-pro", provider: .deepseek), "V4 Pro")
+        XCTAssertEqual(ModelDisplay.name("claude-sonnet-4", provider: .workbuddy), "Claude Sonnet 4")
+        XCTAssertEqual(ModelDisplay.name("claude-sonnet-4", provider: .claude), "Sonnet 4")
         for raw in ["gpt-oss-120b", "o4-mini", "qwen3-coder:30b", "claude-next", "claude-opus-2026-01"] {
             XCTAssertEqual(ModelDisplay.name(raw), raw, "Unrecognized ids stay as reported")
         }

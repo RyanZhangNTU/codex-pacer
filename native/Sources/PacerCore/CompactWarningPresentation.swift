@@ -13,7 +13,7 @@ public enum CompactWarningPresentation {
     }
     public struct Item: Codable, Equatable, Sendable {
         public enum Kind: String, Codable, CaseIterable, Sendable {
-            case fiveHour, ssh, quotaDelay, exhausted, lowBalance, spike, overBudget, nearingBudget
+            case fiveHour, ssh, quotaDelay, exhausted, lowBalance, spike, overBudget, nearingBudget, lowCredits
 
             init(_ wallet: DeepSeekAlertPresentation.Kind) {
                 switch wallet {
@@ -38,7 +38,7 @@ public enum CompactWarningPresentation {
         for item in items {
             switch item.kind {
             case .fiveHour: fiveHour.append(item.help)
-            case .ssh, .quotaDelay, .exhausted, .lowBalance, .spike, .overBudget, .nearingBudget: other.append(item.help)
+            case .ssh, .quotaDelay, .exhausted, .lowBalance, .spike, .overBudget, .nearingBudget, .lowCredits: other.append(item.help)
             }
         }
         return ([fiveHour.joined(separator: " · ")] + other).filter { !$0.isEmpty }.joined(separator: "\n")
@@ -46,8 +46,9 @@ public enum CompactWarningPresentation {
     public static func items(enabled: Set<AgentProvider>, warnings: Set<CompactIslandLayout.Warning>,
                              snapshots: [AgentProvider: QuotaSnapshot], failed: Set<AgentProvider> = [],
                              selections: [AgentProvider: QuotaWindowSelection] = [:], sshIssue: Bool = false,
-                             wallet: DeepSeekAlertPresentation? = nil, now: Date) -> [Item] {
-        let ordered = HarnessRegistry.legacyIDs.filter { enabled.contains($0) && $0 != .deepseek }
+                             wallet: DeepSeekAlertPresentation? = nil,
+                             credits: [AgentProvider: HarnessAccountCredits] = [:], now: Date) -> [Item] {
+        let ordered = HarnessRegistry.ids(where: \.hasQuotaWindows).filter(enabled.contains)
         func windows(_ provider: AgentProvider) -> [QuotaWindow] {
             guard let snapshot = snapshots[provider] else { return [] }
             return (snapshot.buckets.first { $0.id == provider.rawValue } ?? snapshot.buckets.first)?.windows ?? []
@@ -81,6 +82,14 @@ public enum CompactWarningPresentation {
                 result.append(.init(kind: .quotaDelay, provider: nil, solid: delayed.contains { failed.contains($0) },
                     label: L10n.text("warning.label.quotaDelay"), symbol: nil,
                     help: delayed.map(\.displayName).joined(separator: " · ") + " · " + L10n.text("warning.quotaDelay"), affectedProviders: delayed.map(\.rawValue)))
+            }
+        }
+        if warnings.contains(.lowCredits) {
+            for provider in HarnessRegistry.ids(where: \.reportsAccountCredits) where enabled.contains(provider) {
+                guard let reading = credits[provider]?.reading(at: now), let level = HarnessCreditsNoticePolicy.level(reading) else { continue }
+                result.append(.init(kind: .lowCredits, provider: provider.rawValue, solid: level == .exhausted, label: nil,
+                    symbol: "exclamationmark.circle",
+                    help: L10n.text("warning.low_credits_help", provider.displayName, HarnessAccountCredits.compactAmount(reading.remaining))))
             }
         }
         if enabled.contains(.deepseek), let wallet {

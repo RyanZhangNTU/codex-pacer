@@ -19,28 +19,30 @@ public enum ModelDisplay {
         return value
     }
 
-    /// Shorten model identifiers without losing the brand when the task comes
-    /// from a different provider. Drop bracketed variants such as `[1m]`.
+    /// Shorten model identifiers. A model from another provider's family keeps
+    /// its brand, as in `DeepSeek V4 Pro` for a Codex task. Drop bracketed
+    /// variants such as `[1m]`.
     public static func name(_ raw: String, provider: AgentProvider? = nil) -> String {
         let id = raw.replacingOccurrences(of: #"\[[^\]]*\]\z"#, with: "", options: .regularExpression)
         let lower = id.lowercased()
         let parts = lower.split(separator: "-").map(String.init)
-        if parts.first == "claude", parts.count >= 3, provider == nil || provider == .claude {
+        if parts.first == "claude", parts.count >= 3 {
             var words = Array(parts.dropFirst())
             if let last = words.last, last.count == 8, last.allSatisfy(\.isNumber) { words.removeLast() }
             let numbers = words.filter { $0.allSatisfy(\.isNumber) }
             let families = words.filter { !$0.allSatisfy(\.isNumber) }
             guard families.count == 1, (1...2).contains(numbers.count), numbers.allSatisfy({ $0.count <= 2 }) else { return id }
-            return families[0].capitalized + " " + numbers.joined(separator: ".")
+            return (provider == nil || provider == .claude ? "" : "Claude ") + families[0].capitalized + " " + numbers.joined(separator: ".")
         }
         if parts.first == "gpt", parts.count >= 2, parts[1].first?.isNumber == true {
             let suffix = parts.dropFirst(2).map { ["mini", "nano"].contains($0) || $0.contains(where: \.isNumber) ? $0 : $0.capitalized }
             return (["GPT-" + parts[1]] + suffix).joined(separator: " ")
         }
-        if parts.first == "deepseek", parts.count >= 2, provider == nil || provider == .deepseek {
+        if parts.first == "deepseek", parts.count >= 2 {
             // `deepseek-v4-pro` → V4 Pro, `deepseek-flash` → Flash.
-            return parts.dropFirst().map { $0.first == "v" && $0.dropFirst().allSatisfy(\.isNumber) ? $0.uppercased() : $0.capitalized }
+            let name = parts.dropFirst().map { $0.first == "v" && $0.dropFirst().allSatisfy(\.isNumber) ? $0.uppercased() : $0.capitalized }
                 .joined(separator: " ")
+            return provider == nil || provider == .deepseek ? name : "DeepSeek " + name
         }
         return id
     }

@@ -61,7 +61,9 @@ enum WindowsProviderInstallation {
             guard applicationURLs == nil else { return false }
             let roots = ["ProgramFiles", "LOCALAPPDATA"].compactMap { WindowsEnvironment.value($0, in: environment) }
                 .filter(WindowsCodexExecutableDiscovery.absolute)
-            return app(roots.map { URL(fileURLWithPath: $0) }, paths: definition.windowsExecutables)
+            let home = definition.resolveHome(override: WindowsEnvironment.value(definition.homeEnvironmentKey, in: environment),
+                isAbsolute: WindowsCodexExecutableDiscovery.absolute, userHome: userHome)
+            return app(roots.map { URL(fileURLWithPath: $0) }, paths: definition.windowsExecutables) || definition.hasLocalData(home: home)
         }.map(\.descriptor.id)
         return .init(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek, additional: Set(additional))
     }

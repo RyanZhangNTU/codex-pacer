@@ -288,7 +288,13 @@ actor EngineRuntime {
     private var claudeProgressRing = false
     private var codexProgressRing = false
     private var deepseekProgressRing = false
-    private var enabledHarnessProgress: Set<AgentProvider> = []
+    private var disabledHarnessProgress: Set<AgentProvider> = []
+    /// Account credits the host read after its own sign-in, by module.
+    private var accountCredits: [AgentProvider: (credits: HarnessAccountCredits, stale: Bool)] = [:]
+    private var creditsNoticePolicy = HarnessCreditsNoticePolicy()
+    private var hiddenTurnCredits: Set<AgentProvider> = []
+    /// Data folders chosen in Settings for local modules.
+    private var harnessHomeOverrides: [AgentProvider: URL] = [:]
     private let managesLocalHarnessProgress: Bool
     private var localProgressQueues: [AgentProvider: ProgressSetupQueue<LocalHarnessProgressSetup.Target>] = [:]
     private var localProgressTasks: [AgentProvider: Task<Void, Never>] = [:]
@@ -308,7 +314,8 @@ actor EngineRuntime {
         if claudeProgressRing { providers.insert(.claude) }
         if codexProgressRing { providers.insert(.codex) }
         if deepseekProgressRing { providers.insert(.deepseek) }
-        providers.formUnion(enabledHarnessProgress)
+        providers.formUnion(localHarnesses.definitions.filter { $0.descriptor.hasTaskProgress }.map(\.descriptor.id)
+            .filter { !disabledHarnessProgress.contains($0) })
         return providers
     }
     /// The Claude home where this engine switched the ring on.
@@ -319,7 +326,7 @@ actor EngineRuntime {
     private var enabled = Set(HarnessRegistry.legacyIDs)
     private var clientSupportsHarnessModules = false
     private var supportedProviders: [AgentProvider] {
-        HarnessRegistry.legacyIDs + (clientSupportsHarnessModules && !demo ? localHarnesses.definitions.map(\.descriptor.id) : [])
+        HarnessRegistry.legacyIDs + (clientSupportsHarnessModules ? localHarnesses.definitions.map(\.descriptor.id) : [])
     }
     private let localHarnessDefinitions: [LocalHarnessDefinition]
     private lazy var localHarnesses = LocalHarnessMonitors(platform: .windows,
@@ -567,7 +574,7 @@ actor EngineRuntime {
 
     func hello() {
         send(["protocolVersion": EngineProtocol.version, "type": "hello", "engine": "PacerEngine",
-              "harnessModules": demo ? [] : localHarnesses.definitions.map(\.descriptor.id.rawValue)])
+              "harnessModules": localHarnesses.definitions.map(\.descriptor.id.rawValue)])
     }
 
     private func setOwnedTask(_ task: Task<Void, Never>?, key: ApplicationWorkRegistry.Key) {
@@ -824,12 +831,16 @@ actor EngineRuntime {
             scheduleLocalHarnessProgress(definition, inspectOnly: true)
         case "inspectProviderHome":
             guard let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
-                  provider == .claude || provider == .deepseek else { failure(id: command.id, code: "invalidCommand"); return true }
-            let home = command.params?.sourceHome ?? EngineCodexSourceReport.path(provider == .claude ? claudeHome : deepseekHome)
+                  provider == .claude || provider == .deepseek || localHarnesses.definition(for: provider) != nil else {
+                failure(id: command.id, code: "invalidCommand"); return true
+            }
+            let local = localHarnesses.definition(for: provider)
+            let current = local.map(localHarnessHome) ?? (provider == .claude ? claudeHome : deepseekHome)
+            let home = command.params?.sourceHome ?? EngineCodexSourceReport.path(current)
             guard home.utf8.count <= 32768, !home.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
                 failure(id: command.id, code: "invalidCommand"); return true
             }
-            let fallback = provider == .claude ? defaultClaudeHome : defaultDeepseekHome, isDemo = demo
+            let fallback = local.map { $0.defaultHome() } ?? (provider == .claude ? defaultClaudeHome : defaultDeepseekHome), isDemo = demo
             let report = await Task.detached(priority: .utility) {
                 EngineProviderHomeReport.inspect(provider: provider, home: home, fallback: fallback, demo: isDemo)
             }.value
@@ -911,6 +922,17 @@ actor EngineRuntime {
             await claudeCloudMonitor?.refresh()
             forceBalanceRequested = true
             await refresh(discover: command.params?.discover ?? false)
+        case "setAccountCredits":
+            guard active, !demo, let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
+                  HarnessRegistry.descriptor(for: provider)?.reportsAccountCredits == true else {
+                failure(id: command.id, code: "unavailable"); return true
+            }
+            if let value = command.params?.accountCredits {
+                accountCredits[provider] = (value, command.params?.stale == true)
+            } else {
+                accountCredits[provider] = nil; creditsNoticePolicy.reset(provider)
+            }
+            if projectionReady { publish(notices: []) }
         case "refreshLocalHarness":
             guard active, let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
                   enabled.contains(provider), localHarnesses[provider] != nil, let refresh = activityAdapters[provider]?.refresh else {
@@ -1053,21 +1075,30 @@ actor EngineRuntime {
                   !executable.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw EngineCommand.Failure.invalid }
         }
         let byProviderID = Dictionary(uniqueKeysWithValues: supportedProviders.map { ($0.rawValue, $0) })
-        let explicitProviders = try parameters.enabledProviders.map { names -> Set<AgentProvider> in
-            guard names.count <= supportedProviders.count else { throw EngineCommand.Failure.invalid }
-            let values = names.compactMap { byProviderID[$0] }
-            guard values.count == names.count else { throw EngineCommand.Failure.invalid }
-            return Set(values)
+        // A host can know modules this engine doesn't support yet, or the other
+        // way round. Ignore those IDs and apply the rest of the update.
+        func moduleIDs(_ names: [String]) throws -> [AgentProvider] {
+            guard names.count <= 128, names.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 64 }) else { throw EngineCommand.Failure.invalid }
+            return names.compactMap { byProviderID[$0] }
         }
+        let explicitProviders = try parameters.enabledProviders.map { Set(try moduleIDs($0)) }
         if let minutes = parameters.retentionMinutes, !(0...10080).contains(minutes) { throw EngineCommand.Failure.invalid }
         if let value = parameters.deepseekSettings, !value.isValid { throw EngineCommand.Failure.invalid }
         if let value = parameters.reminderSettings, !value.isValid { throw EngineCommand.Failure.invalid }
         if let value = parameters.expandedPanel, !value.isValid { throw EngineCommand.Failure.invalid }
-        let selectedProgress = try parameters.enabledHarnessProgress.map { names -> Set<AgentProvider> in
+        let selectedProgress = try parameters.disabledHarnessProgress.map { names -> Set<AgentProvider> in
             let eligible = Set(localHarnesses.definitions.filter { $0.descriptor.hasTaskProgress }.map(\.descriptor.id))
-            let providers = names.compactMap { byProviderID[$0] }.filter(eligible.contains)
-            guard names.count <= 128, providers.count == names.count else { throw EngineCommand.Failure.invalid }
-            return Set(providers)
+            return Set(try moduleIDs(names).filter(eligible.contains))
+        }
+        let selectedHiddenCredits = try parameters.hiddenTurnCredits.map { Set(try moduleIDs($0)) }
+        let selectedHomes = try parameters.harnessHomes.map { homes -> [AgentProvider: URL] in
+            _ = try moduleIDs(Array(homes.keys))
+            var result: [AgentProvider: URL] = [:]
+            for (name, path) in homes where !path.isEmpty {
+                guard let provider = byProviderID[name], localHarnesses.definition(for: provider) != nil else { continue }
+                result[provider] = try Self.home(path)
+            }
+            return result
         }
         guard parameters.providerModes == nil || explicitProviders == nil else { throw EngineCommand.Failure.invalid }
         var updatedSettings = moduleSettings
@@ -1075,18 +1106,20 @@ actor EngineRuntime {
             for provider in supportedProviders { updatedSettings.setMode(explicitProviders.contains(provider) ? .enabled : .disabled, for: provider) }
         }
         if let modes = parameters.providerModes {
-            guard modes.count <= supportedProviders.count else { throw EngineCommand.Failure.invalid }
+            _ = try moduleIDs(Array(modes.keys))
             for (name, raw) in modes {
-                guard let provider = byProviderID[name],
-                      let mode = ProviderModuleMode(rawValue: raw) else { throw EngineCommand.Failure.invalid }
+                guard let provider = byProviderID[name] else { continue }
+                guard let mode = ProviderModuleMode(rawValue: raw) else { throw EngineCommand.Failure.invalid }
                 updatedSettings.setMode(mode, for: provider)
             }
         }
         var detected = installation
         if parameters.providerModes != nil {
             let previous = generation
-            if demo { detected = .init(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) }
-            else { lastInstallationDetection = now(); detected = await detectInstallation() }
+            if demo {
+                detected = .init(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true,
+                                 additional: Set(localHarnesses.definitions.map(\.descriptor.id)))
+            } else { lastInstallationDetection = now(); detected = withCustomHomes(await detectInstallation(), selectedHomes ?? harnessHomeOverrides) }
             guard generation == previous else { throw EngineCommand.Failure.invalid }
         }
         let selectedProviders = explicitProviders ?? (parameters.providerModes == nil ? nil :
@@ -1126,7 +1159,11 @@ actor EngineRuntime {
         if let value = parameters.claudeProgressRing { claudeProgressRing = value }
         if let value = parameters.codexProgressRing { codexProgressRing = value }
         if let value = parameters.deepseekProgressRing { deepseekProgressRing = value }
-        if let selectedProgress { enabledHarnessProgress = selectedProgress }
+        if let selectedProgress { disabledHarnessProgress = selectedProgress }
+        if let selectedHiddenCredits { hiddenTurnCredits = selectedHiddenCredits }
+        // A moved data folder changes the module's source identity, which
+        // resets it through the lifecycle plan below.
+        if let selectedHomes { harnessHomeOverrides = selectedHomes }
         moduleSettings = updatedSettings; installation = detected
         if parameters.providerModes != nil { moduleConfigurationActive = true }
         else if explicitProviders != nil { moduleConfigurationActive = false }
@@ -1212,8 +1249,9 @@ actor EngineRuntime {
     }
 
     private func localHarnessHome(_ definition: LocalHarnessDefinition) -> URL {
-        definition.resolveHome(override: WindowsEnvironment.value(definition.homeEnvironmentKey, in: ProcessInfo.processInfo.environment),
-            isAbsolute: WindowsCodexExecutableDiscovery.absolute)
+        harnessHomeOverrides[definition.descriptor.id] ??
+            definition.resolveHome(override: WindowsEnvironment.value(definition.homeEnvironmentKey, in: ProcessInfo.processInfo.environment),
+                isAbsolute: WindowsCodexExecutableDiscovery.absolute)
     }
 
     private func bindQuotaMonitor() async {
@@ -1350,9 +1388,10 @@ actor EngineRuntime {
     }
 
     private func moduleProjection(_ provider: AgentProvider) -> EngineModule {
-        let descriptor = localHarnesses.definition(for: provider)?.descriptor
+        let definition = localHarnesses.definition(for: provider)
+        let descriptor = definition?.descriptor
         let status = descriptor == nil ? nil : harnessActivities[provider]?.status?.rawValue
-        return .init(provider: provider.rawValue, mode: moduleSettings.mode(for: provider).rawValue,
+        var module = EngineModule(provider: provider.rawValue, mode: moduleSettings.mode(for: provider).rawValue,
             installed: installation?.isInstalled(provider), enabled: enabled.contains(provider),
             displayName: descriptor?.name, symbol: descriptor?.symbol, status: status,
             usage: harnessActivities[provider]?.usage, usageGuideURL: descriptor?.usageGuide,
@@ -1360,6 +1399,28 @@ actor EngineRuntime {
             reportsSessionUsage: descriptor.map(\.reportsSessionUsage), reportsAccountCredits: descriptor.map(\.reportsAccountCredits),
             progressSetup: localProgressStatuses[provider]?.setup,
             progressConnection: localProgressStatuses[provider]?.connection)
+        if let registered = HarnessRegistry.descriptor(for: provider) {
+            module.brand = .init(registered.brand); module.website = registered.website
+            module.balance = registered.balance?.rawValue
+        }
+        module.prominent = moduleLibrary.entries.first { $0.provider == provider }?.prominent
+        if let definition {
+            module.local = true
+            module.home = EngineCodexSourceReport.path(localHarnessHome(definition))
+            module.defaultHome = EngineCodexSourceReport.path(definition.defaultHome())
+        }
+        return module
+    }
+
+    /// A data folder chosen in Settings counts as an installation once it
+    /// holds the app's data.
+    private func withCustomHomes(_ detection: ProviderInstallationDetection, _ homes: [AgentProvider: URL]) -> ProviderInstallationDetection {
+        let custom = homes.filter { localHarnesses.definition(for: $0.key)?.hasLocalData(home: $0.value) == true }.keys
+        return custom.isEmpty ? detection : .init(installed: detection.installed.union(custom))
+    }
+
+    private var moduleLibrary: ModuleLibrary {
+        ModuleLibrary(modules: moduleSettings, detection: installation ?? .init(installed: []), supported: supportedProviders)
     }
 
     private func scheduleLocalHarnessProgress(_ definition: LocalHarnessDefinition, force: Bool = false, inspectOnly: Bool = false) {
@@ -1367,7 +1428,7 @@ actor EngineRuntime {
         let provider = definition.descriptor.id
         let home = localHarnessHome(definition)
         let reporter = EngineCodexSourceReport.path(URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL)
-        let wanted = enabled.contains(provider) && enabledHarnessProgress.contains(provider)
+        let wanted = enabled.contains(provider) && !disabledHarnessProgress.contains(provider)
         if inspectOnly {
             guard wanted, localProgressStatuses[provider]?.setup == .configured, localProgressTasks[provider] == nil else { return }
         }
@@ -1609,7 +1670,7 @@ actor EngineRuntime {
            now().timeIntervalSince(lastInstallationDetection) >= 600 {
             let previous = generation
             lastInstallationDetection = now()
-            let detected = await detectInstallation()
+            let detected = withCustomHomes(await detectInstallation(), harnessHomeOverrides)
             guard active, generation == previous, !Task.isCancelled else { return }
             installation = detected
             let next = moduleSettings.enabledProviders(detection: detected, supported: supportedProviders)
@@ -2325,6 +2386,7 @@ actor EngineRuntime {
         if demo {
             var rows = DemoScenario.tasks(stage: stage, at: date)
                 + [DemoScenario.claudeTask(stage: stage, at: date), DemoScenario.deepseekTask(stage: stage, at: date)]
+                + (enabled.contains(.workbuddy) ? [DemoScenario.workbuddyTask(stage: stage, at: date)] : [])
             var requests: [PendingAttentionRequest] = []
             if !claudeWebReference {
                 let cloud = DemoScenario.claudeCloud(stage: stage, at: date)
@@ -2589,6 +2651,11 @@ actor EngineRuntime {
                 + deepseekNoticePolicy.spendNotices(reading, spike: reminderSettings.contains(.spendSpike), budget: reminderSettings.contains(.budget),
                     snoozedUntil: spikeSnoozedUntil, now: date)
         }
+        let creditModules = HarnessRegistry.ids(where: \.reportsAccountCredits).filter(enabled.contains)
+        let credits: [AgentProvider: HarnessAccountCredits] = Dictionary(uniqueKeysWithValues: creditModules.compactMap { provider in
+            (demo ? DemoScenario.workbuddyCredits(at: date) : accountCredits[provider]?.credits).map { (provider, $0) }
+        })
+        walletNotices += creditsNoticePolicy.notices(credits, low: reminderSettings.contains(.lowCredits), now: date)
         let legacy = HarnessRegistry.legacyIDSet
         let selected: Set<String>?
         if activities.count > 256, !enabled.isSubset(of: legacy) {
@@ -2618,11 +2685,12 @@ actor EngineRuntime {
                 reason: state.error?.localizedDescription))
         }
         snapshots = snapshots.filter { enabled.contains($0.key) }
-        let presentationOptions = TaskPresentationOptions(hideProjects: hideProjects,
+        var presentationOptions = TaskPresentationOptions(hideProjects: hideProjects,
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
                 }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
                 progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize)
+        presentationOptions.hiddenTurnCredits = hiddenTurnCredits
         let taskPresentation = selected == nil ? activityState.presentation(at: date, options: presentationOptions) :
             ActivityTaskPresentation(activities: visibleActivities, requests: visibleRequests, inbox: inbox, options: presentationOptions, at: date)
         scheduleActivityDisplay(at: date)
@@ -2644,11 +2712,13 @@ actor EngineRuntime {
             }
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
-            failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, now: date)
+            failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, credits: credits, now: date)
         let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests, completions: inbox.unreadActivities,
             sources: HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay && enabled.contains($0.id) }.map(\.id).map { provider in
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))
-            }, wallet: compactWallet, firstOutput: latestFirstOutput?.seconds, warnings: compactWarnings, groups: taskPresentation.groups, overview: taskPresentation.overview,
+            }, wallet: compactWallet, credits: creditModules.map { provider in
+                .init(provider: provider, credits: credits[provider], stale: accountCredits[provider]?.stale == true, now: date)
+            }, firstOutput: latestFirstOutput?.seconds, warnings: compactWarnings, groups: taskPresentation.groups, overview: taskPresentation.overview,
             firstOutputs: activityState.firstOutputHistory.values, now: date)
         let displayedQuota = AgentProvider.allCases.compactMap { provider in snapshots[provider].map { EngineQuota($0, provider: provider, at: date) } }
         let weekly = QuotaDashboardPresentation.Reading(provider: .codex, period: .weekly, snapshot: snapshots[.codex],
@@ -2730,6 +2800,9 @@ actor EngineRuntime {
         snapshot.expandedPanel = EngineExpandedPanel(settings: panelSettings, enabled: enabled, snapshots: snapshots,
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
+        snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in
+            credits[provider].map { .init(provider: provider.rawValue, credits: $0, stale: accountCredits[provider]?.stale == true) }
+        }
         snapshot.remoteControlDirectory = monitorRemoteControl ? desktopState?.remoteControlDirectory : nil
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
             failure(id: nil, code: "snapshotLimit"); return

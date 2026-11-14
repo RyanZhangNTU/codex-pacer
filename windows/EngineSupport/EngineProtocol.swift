@@ -45,11 +45,20 @@ struct EngineCommand: Decodable {
         var claudeProgressRing: Bool?
         var codexProgressRing: Bool?
         var deepseekProgressRing: Bool?
-        var enabledHarnessProgress: [String]?
+        /// Modules whose progress ring is off. A ring is on unless listed.
+        var disabledHarnessProgress: [String]?
         var retentionMinutes: Int?
         var enabledProviders: [String]?
         var providerModes: [String: String]?
         var provider: String?
+        /// A module's account credits from the host's sign-in; null clears them.
+        var accountCredits: HarnessAccountCredits?
+        var stale: Bool?
+        /// Data folders chosen in Settings for local modules, by module ID.
+        /// An empty path restores the default.
+        var harnessHomes: [String: String]?
+        /// Modules whose task rows leave out the credits each turn used.
+        var hiddenTurnCredits: [String]?
         var activityID: String?
         var snapshotSequence: UInt64?
         var deepseekKey: String?
@@ -197,6 +206,36 @@ struct EngineModule: Codable, Equatable {
     var reportsAccountCredits: Bool? = nil
     var progressSetup: LocalHarnessProgressStatus? = nil
     var progressConnection: LocalHarnessProgressConnection? = nil
+    /// Registry facts, so the host draws every module from one description.
+    var brand: EngineModuleBrand? = nil
+    var website: URL? = nil
+    var balance: String? = nil
+    /// Found on this computer or turned on explicitly: listed without
+    /// opening the module library.
+    var prominent: Bool? = nil
+    /// Read by the shared local adapter, with a data folder Settings can change.
+    var local: Bool? = nil
+    var home: String? = nil
+    var defaultHome: String? = nil
+}
+
+struct EngineModuleBrand: Codable, Equatable {
+    let dark: String
+    let light: String
+    let accentLift: Double
+    let accentLuminance: Double
+    init(_ brand: HarnessBrand) {
+        dark = brand.dark.hex; light = brand.light.hex
+        accentLift = brand.accentLift; accentLuminance = brand.accentLuminance
+    }
+}
+
+/// A module's account credits as the engine knows them: from the host's
+/// sign-in, or the demo's sample.
+struct EngineAccountCredits: Codable, Equatable {
+    let provider: String
+    let credits: HarnessAccountCredits
+    let stale: Bool
 }
 
 struct EngineQuota: Codable, Equatable {
@@ -302,6 +341,7 @@ struct EngineSnapshot: Codable, Equatable {
     let navigationError: EngineNavigationFailure?
     let openingActivityIDs: [String]?
     var expandedPanel: EngineExpandedPanel? = nil
+    var accountCredits: [EngineAccountCredits]? = nil
     var wslAvailability: WindowsWSLAvailability?
     var remoteControlDirectory: RemoteControlDirectoryStatus?
 

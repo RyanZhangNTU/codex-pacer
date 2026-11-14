@@ -32,7 +32,7 @@ final class CompactBarPresentationTests: XCTestCase {
         var request = CompactBarPresentation.Request(layout: legacy, language: "en", providers: [])
         let initial = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertEqual(initial.editorLeading, ["firstOutput", "tps"])
-        XCTAssertEqual(initial.warnings, ["ssh", "lowBalance", "spendSpike", "budget"])
+        XCTAssertEqual(initial.warnings, ["ssh", "lowBalance", "spendSpike", "budget", "lowCredits"])
         request.action = .init(kind: "shift", component: "tps", offset: -1)
         let moved = try XCTUnwrap(CompactBarPresentation.project(request))
         let saved = try JSONDecoder().decode(CompactIslandLayout.self, from: Data(moved.layoutJSON.utf8))
@@ -90,7 +90,7 @@ final class CompactBarPresentationTests: XCTestCase {
         var value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertTrue(value.gaugeClock); XCTAssertTrue(value.rings.isEmpty)
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, input.wallet?.balance)
-        request.options.rings = [.deepseek, .deepseek]
+        request.options.rings = [.init(provider: .deepseek), .init(provider: .deepseek)]
         value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertFalse(value.gaugeClock); XCTAssertEqual(value.rings.count, 1)
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, input.wallet?.budget)

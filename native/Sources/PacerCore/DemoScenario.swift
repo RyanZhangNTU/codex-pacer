@@ -143,6 +143,35 @@ public enum DemoScenario {
         return state.activities[0]
     }
 
+    static let demoWorkBuddySession = "00000000-0000-4000-8000-000000000006"
+
+    /// A WorkBuddy task with its model, rate, credits and reported progress,
+    /// through the same observed-turn path as the local adapter.
+    public static func workbuddyTask(stage: DemoTaskStage, at now: Date) -> SessionActivity {
+        let turnID = "demo-workbuddy-turn"
+        var task = SessionActivity.observedSession(provider: .workbuddy, session: demoWorkBuddySession, stage: .working,
+                                                    at: now.addingTimeInterval(-6))
+        task.applyObservedTurn(stage == .completed ? .finished : .working(stage == .tool ? .tool : .working), id: turnID,
+            started: now.addingTimeInterval(-64), at: now.addingTimeInterval(stage == .completed ? 0 : -6), live: true,
+            model: "Deepseek-V4.1-Flash", effort: "high")
+        task.updateTitle(L10n.text("demo.workbuddy_task"))
+        if let response = ResponsePerformance(responseID: "demo-workbuddy-response", turnID: turnID, outputTokens: 1_840,
+                                              startedAt: now.addingTimeInterval(-58), completedAt: now.addingTimeInterval(-8), source: .requestUsage),
+           let update = SessionPerformanceUpdate(id: task.id, turnID: turnID, response: response, firstTokenLatency: nil, firstTokenReportedAt: nil) {
+            update.apply(to: &task)
+        }
+        task.setTurnCredits(stage == .completed ? 1.69 : 0.57, turnID: turnID)
+        task.reportProgress(stage == .completed ? 100 : 45, at: now.addingTimeInterval(-10), turnID: turnID)
+        return task
+    }
+
+    /// Plan credits partway through the month, with a pack that expires sooner.
+    public static func workbuddyCredits(at now: Date) -> HarnessAccountCredits {
+        HarnessAccountCredits(state: .ready, remaining: 3_260, total: 5_000, reserved: 12, plan: "Pro",
+            cycle: .init(total: 4_000, remaining: 2_660, used: 1_340, reset: now.addingTimeInterval(12 * 86_400).timeIntervalSince1970),
+            expiration: .init(credits: 600, at: now.addingTimeInterval(9 * 86_400).timeIntervalSince1970))
+    }
+
     /// A week of uneven spending with peak-hour work on weekdays.
     public static func deepseekUsage(at now: Date, calendar: Calendar = .current) -> DeepSeekLocalUsage {
         var ledger = DeepSeekSpendLedger()
