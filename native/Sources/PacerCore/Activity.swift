@@ -848,6 +848,45 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         outputRate.finishTurn(); generationRate.finish(); liveItems.removeAll(); toolWaitStartedAt = nil; backgroundWait = nil; backgroundWaitObservedAt = nil; hasLiveEvidence = false; liveTurnStarted = false; liveStatusOnly = false
     }
 
+    struct CodexLogGap {
+        let lastObserved: Date?
+        let activeTurnID: String?
+        let startedAt: Date?
+
+        init(previous: SessionActivity?) {
+            lastObserved = previous?.lastObserved
+            if let previous, [.running, .waitingForInput].contains(previous.phase) {
+                activeTurnID = previous.turnID
+                startedAt = previous.turnStartedAt
+            } else {
+                activeTurnID = nil
+                startedAt = nil
+            }
+        }
+    }
+
+    /// An explicit ending can survive when the read window skips its turn anchor.
+    mutating func recoverCodexEnding(_ value: [String: Any], after gap: CodexLogGap, now: Date) {
+        guard acceptsLogAttention, turnID == nil, threadID != nil,
+              [.unknown, .running, .waitingForInput].contains(phase),
+              value["type"] as? String == "event_msg", let payload = value["payload"] as? [String: Any],
+              let kind = payload["type"] as? String, ["task_complete", "turn_aborted"].contains(kind),
+              let turn = CodexProgressEvidence.identifier(payload["turn_id"]), !retiredTurns.contains(turn),
+              payload["thread_id"].map({ ($0 as? String)?.lowercased() == threadID }) ?? true,
+              let stamp = value["timestamp"] as? String, let ended = Self.parseDate(stamp),
+              ended >= (lastObserved ?? .distantPast), ended >= (hostLaunchAt ?? .distantPast),
+              ended >= (gap.lastObserved ?? .distantPast),
+              ended.timeIntervalSince(now) <= 1 else { return }
+        let observedStart = gap.activeTurnID == turn
+        turnStartedAt = observedStart ? gap.startedAt : nil
+        if turnStartedAt == nil, let ms = payload["duration_ms"] as? Double, ms.isFinite, (0...604_800_000).contains(ms) {
+            turnStartedAt = ended.addingTimeInterval(-ms / 1000)
+        }
+        identifyTurn(turn)
+        consume(value)
+        isHistoricalCompletion = !observedStart && [.completed, .interrupted].contains(phase)
+    }
+
     mutating func markPartialRate() {
         guard phaseAwareRate else { return }
         logTurnStart = nil

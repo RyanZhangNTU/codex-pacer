@@ -9,6 +9,7 @@ public actor LocalActivityReader {
         var activity: SessionActivity
         var identity: String
         var parentCompletion: SessionActivity.SubagentEvidence?
+        var gap: SessionActivity.CodexLogGap?
         var attention = CodexLogAttention()
     }
     private var cursors: [URL: Cursor] = [:]
@@ -48,30 +49,36 @@ public actor LocalActivityReader {
             if let id = value.threadID, let evidence = subagentStates[id] { value.applySubagentEvidence(evidence) }
             return value
         }
-        let calendar = Calendar.current
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy/MM/dd"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        let days = [now, calendar.date(byAdding: .day, value: -1, to: now)!]
         var files: [(URL, Date)] = []
         var watchURLs: [URL] = []
+        var watchedDirectories: Set<String> = []
         let manager = FileManager.default
-        if !metricsOnly { for day in days {
-            let directory = home.appendingPathComponent("sessions/\(formatter.string(from: day))")
-            var existing = directory
-            while !manager.fileExists(atPath: existing.path), existing.path != home.path {
-                existing.deleteLastPathComponent()
-            }
-            if manager.fileExists(atPath: existing.path) { watchURLs.append(existing) }
-            let entries = (try? manager.contentsOfDirectory(at: directory,
-                includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])) ?? []
-            for file in entries where file.pathExtension == "jsonl" {
-                let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                files.append((file, date))
-            }
-        }
-        } else {
+        if metricsOnly {
             files = cursors.keys.map { ($0, cursors[$0]?.activity.lastObserved ?? .distantPast) }
+        } else {
+            let calendar = Calendar.current
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy/MM/dd"
+            for offset in [0, -1, 1] {
+                guard let day = calendar.date(byAdding: .day, value: offset, to: now) else { continue }
+                let directory = home.appendingPathComponent("sessions/\(formatter.string(from: day))", isDirectory: true)
+                var existing = directory
+                var isDirectory: ObjCBool = false
+                while !manager.fileExists(atPath: existing.path, isDirectory: &isDirectory) || !isDirectory.boolValue {
+                    if existing.path == home.path { break }
+                    existing.deleteLastPathComponent()
+                }
+                if isDirectory.boolValue, watchedDirectories.insert(existing.path).inserted { watchURLs.append(existing) }
+                // Watch for tomorrow's first rollout even if its folder is created at midnight.
+                guard offset <= 0 else { continue }
+                let entries = (try? manager.contentsOfDirectory(at: directory,
+                    includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])) ?? []
+                for file in entries where file.pathExtension == "jsonl" {
+                    let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                    files.append((file, date))
+                }
+            }
         }
         let indexed = metricsOnly ? [] : SessionIndex.entries(home: home)
         for entry in indexed {
@@ -166,8 +173,10 @@ public actor LocalActivityReader {
             guard let handle = try? FileHandle(forReadingFrom: file) else { continue }
             defer { try? handle.close() }
             var cursor = cursors[file]
-            if cursor == nil || cursor!.offset > size || cursor!.identity != identity {
+            let attaching = cursor.map { $0.offset > size || $0.identity != identity } ?? true
+            if attaching {
                 var activity = metadata[file]?.activity ?? SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
+                activity.setCodexRollout(file)
                 if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: activity.threadID) { activity.consume(anchor) }
                 cursor = Cursor(offset: 0, fragment: Data(), activity: activity, identity: identity)
             }
@@ -175,13 +184,15 @@ public actor LocalActivityReader {
             var dropPartial = false
             let budget = current.offset == 0 ? startupBytes : maxBytes
             if size - current.offset > UInt64(budget) {
+                if current.gap == nil { current.gap = .init(previous: attaching ? nil : current.activity) }
                 current.offset = size - UInt64(budget)
                 current.fragment.removeAll()
-                if cursors[file] != nil {
+                if !attaching {
                     current.activity.markDiscontinuity()
                     current.attention.reset()
                     if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: current.activity.threadID) { current.activity.consume(anchor) }
                 }
+                if current.activity.turnID != nil { current.gap = nil }
                 dropPartial = true
                 current.activity.markPartialRate()
             }
@@ -195,7 +206,9 @@ public actor LocalActivityReader {
                 }
                 while let end = current.fragment.firstIndex(of: 10) {
                     if let value = try? JSONSerialization.jsonObject(with: current.fragment.prefix(upTo: end)) as? [String: Any] {
+                        if let gap = current.gap { current.activity.recoverCodexEnding(value, after: gap, now: now) }
                         current.activity.consume(value)
+                        if current.activity.turnID != nil { current.gap = nil }
                         current.attention.consume(value, activity: current.activity, now: now)
                     }
                     current.fragment.removeSubrange(...end)
@@ -221,7 +234,10 @@ public actor LocalActivityReader {
         // the log baseline. Withdrawing a running hint must work at unchanged
         // EOF, while explicitly observed endings remain independently known.
         let watched = selected.filter { metadata[$0]?.activity.isIgnoredCodexSession != true }
-        watchURLs += watched.map { $0.deletingLastPathComponent() }
+        for file in watched {
+            let directory = file.deletingLastPathComponent()
+            if watchedDirectories.insert(directory.path).inserted { watchURLs.append(directory) }
+        }
         return (CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
                 watchURLs + watched.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) }, ignoredIDs,
                 cursors.values.flatMap { $0.attention.requests(for: projected($0)) }.filter { !ignoredIDs.contains($0.activity.id) })
