@@ -5,6 +5,7 @@ internal static class PreferencesChecks
 {
     internal static DesktopPreferences Run()
     {
+        ConversationOrderChecks.Run();
         var groups = new[] { new ConversationGroup("a", "Development", ["one", "two"]), new ConversationGroup("b", "Notes", ["three"]) };
         var reordered = ConversationGroups.DropGroup(groups, "a", "b", after: true, merge: false);
         Check(reordered.Select(g => g.Id).SequenceEqual(new[] { "b", "a" }) && reordered[1] == groups[0] && reordered[0] == groups[1], "Ordinary group drops reorder without merging or changing membership");

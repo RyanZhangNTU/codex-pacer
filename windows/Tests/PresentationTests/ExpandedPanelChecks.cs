@@ -160,6 +160,7 @@ internal static class ExpandedPanelChecks
             await Until(() => ConversationGroups.Read(session.Current.ConversationGroups).For("").Length == 1);
             Check(ConversationGroups.Read(session.Current.ConversationGroups).For("")[0] is { Id: "notes", Members.Length: 3 }, "Only a Shift drop merges groups through the native drop handler");
             Console.WriteLine("PASS expanded panel " + name + ": automatic layout, block moves, arrangement, rows, header buttons, removal and restore");
+            await ConversationActivityChecks.Run(language, output);
         }
         finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); await engine.DisposeAsync(); }
     }

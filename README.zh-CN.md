@@ -4,7 +4,7 @@
 
 <h1 align="center">Codex Pacer</h1>
 
-此 fork 的 Windows 版本常驻显示 Codex 侧边栏中的所有置顶对话，包括空闲会话。支持拖拽建组、合并、移出和改名，分组及折叠状态只保存在 Pacer，重启后保留。取消置顶后隐藏对应任务及提醒；子代理仍归在所属对话下，并修复续接对话后漏掉任务的问题。使用说明见[置顶对话监听](docs/guide.zh-CN.md#置顶对话监听windows-fork)。
+此 fork 的 Windows 版本常驻显示 Codex 侧边栏中的所有置顶对话，包括空闲会话。运行中的会话及其分组自动排到前面，结束后恢复手动顺序。拖动组名排序，按住 Shift 拖动合并；支持建组、移出和改名，分组及折叠状态只保存在 Pacer，重启后保留。取消置顶后隐藏对应任务及提醒；子代理仍归在所属对话下，并修复续接对话后漏掉任务的问题。使用说明见[置顶对话监听](docs/guide.zh-CN.md#置顶对话监听windows-fork)。
 
 <p align="center">
   为 <b>Codex</b>、<b>Claude Code</b> 和 <b>DeepSeek Harness</b> 打造的灵动岛，支持 Mac 和 Windows。<br>

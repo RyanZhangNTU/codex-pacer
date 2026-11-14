@@ -163,4 +163,6 @@ Changes apply right away. When an update is available, it shows in the sidebar a
 
 ### Windows fork: pinned conversations and groups
 
+Groups containing a running chat appear first, and running chats appear first within each group. Ungrouped follows the same rule. Equal activity keeps manual order; once activity ends, the original order returns. Collapsed groups stay collapsed. Automatic reordering waits while dragging or editing a group name, and does not rewrite the saved order.
+
 All pinned Codex chats stay in the expanded list, including idle chats. Drop a chat onto another to create a group, onto a group header to move it, or onto Ungrouped to move it out. Drag group headers to reorder them; the insertion line shows the new position. Hold Shift while dropping a group onto another to merge them; the hint changes to confirm the merge. Click a name to rename, and use the arrow to collapse. The row context menu also offers move targets. Groups, order and collapsed state persist only in Pacer, scoped to the Codex data folder; the Codex sidebar is unchanged.

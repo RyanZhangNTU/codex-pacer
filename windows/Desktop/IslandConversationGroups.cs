@@ -17,7 +17,7 @@ public partial class IslandWindow
     private sealed record ConversationDrag(string Profile, string[] Members, string? Group);
     private ConversationDrag? activeConversationDrag;
     private string? conversationDragToken;
-    private bool groupSavePending, conversationDragging;
+    private bool groupSavePending, conversationDragging, conversationRenaming;
     private string conversationStructure = "";
     private string ConversationStructure => string.Join("|", ConversationSections().Select(s => (s.Group?.Id ?? "") + ":" + s.Group?.Name + ":" + s.Group?.Collapsed + ":" + string.Join(",", s.Rows.Select(r => r.Id))));
     private ScrollViewer? conversationScroll;
@@ -30,19 +30,7 @@ public partial class IslandWindow
     private string ConversationProfile => compactPreferences.CodexHome.Trim().TrimEnd('\\', '/').ToUpperInvariant();
     private ConversationGroup[] SavedGroups => ConversationGroups.Read(compactPreferences.ConversationGroups).For(ConversationProfile);
     private double ConversationHeight => Math.Min(360, Math.Max(44, ConversationSections().Sum(s => 32 + (s.Group?.Collapsed == true ? 0 : s.Rows.Length * (RowHeight + 2)))));
-    private (ConversationGroup? Group, EngineTaskRow[] Rows)[] ConversationSections()
-    {
-        var remaining = rows.ToDictionary(r => r.Id);
-        var result = new List<(ConversationGroup?, EngineTaskRow[])>();
-        foreach (var group in SavedGroups)
-        {
-            var members = group.Members.Where(remaining.ContainsKey).Select(id => remaining[id]).ToArray();
-            foreach (var member in members) remaining.Remove(member.Id);
-            if (members.Length > 0) result.Add((group, members));
-        }
-        result.Add((null, remaining.Values.OrderBy(r => r.Id, StringComparer.Ordinal).ToArray()));
-        return result.ToArray();
-    }
+    private (ConversationGroup? Group, EngineTaskRow[] Rows)[] ConversationSections() => ConversationGroups.Sections(SavedGroups, rows);
     private async Task SaveGroups(Func<ConversationGroup[], ConversationGroup[]> edit)
     {
         if (groupSavePending || SaveIslandPlacement == null) return;
@@ -128,7 +116,7 @@ public partial class IslandWindow
     }
     private bool UpdateConversationRows()
     {
-        if (conversationDragging) return true;
+        if (conversationDragging || conversationRenaming) return true;
         if (conversationStructure != ConversationStructure) return false;
         var values = ConversationSections().Where(s => s.Group?.Collapsed != true).SelectMany(s => s.Rows).ToArray();
         if (!values.Select(r => r.Id).Order().SequenceEqual(conversationControls.Keys.Order())) return false;
@@ -167,10 +155,11 @@ public partial class IslandWindow
                 headingHost.ToolTip = ui.Text("windows.conversation_groups.drag_help");
                 ConversationDragSource(headingHost, () => group.Members, group.Id);
                 name.Click += (_, _) => {
+                    conversationRenaming = true; collapse.Stop();
                     var input = new TextBox { Text = group.Name, MaxLength = 64, Width = 200, VerticalContentAlignment = VerticalAlignment.Center };
                     heading.Children.Remove(name); heading.Children.Add(input); Activate(); input.Focus(); input.SelectAll();
                     bool finished = false;
-                    async Task Finish(bool save) { if (finished) return; finished = true; var text = input.Text.Trim(); if (save && text.Length > 0) await SaveGroups(groups => groups.Select(g => g.Id == group.Id ? g with { Name = text } : g).ToArray()); else InvalidatePanel(true); }
+                    async Task Finish(bool save) { if (finished) return; finished = true; conversationRenaming = false; var text = input.Text.Trim(); if (save && text.Length > 0) await SaveGroups(groups => groups.Select(g => g.Id == group.Id ? g with { Name = text } : g).ToArray()); else InvalidatePanel(true); }
                     input.KeyDown += async (_, e) => { if (e.Key is Key.Enter or Key.Escape) { e.Handled = true; await Finish(e.Key == Key.Enter); } };
                     input.LostKeyboardFocus += async (_, _) => await Finish(true);
                 };

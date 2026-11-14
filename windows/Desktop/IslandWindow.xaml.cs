@@ -128,7 +128,7 @@ public partial class IslandWindow : Window
         InitializeCompactBar(); PaceBadges();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
         // Closing under the pointer can still raise a leave that starts the timer.
-        collapse.Tick += (_, _) => { collapse.Stop(); if (!presentationStopped && !pinned && !conversationDragging) SetExpanded(false); };
+        collapse.Tick += (_, _) => { collapse.Stop(); if (!presentationStopped && !pinned && !conversationDragging && !conversationRenaming) SetExpanded(false); };
         // The open menu holds the pointer, so leaving the island meanwhile raised no leave event.
         MoreButton.ContextMenu.Closed += (_, _) => Dispatcher.BeginInvoke(() =>
         { if (!presentationStopped && move == null && IsVisible && !pinned && expanded && !IsMouseOver) collapse.Start(); }, DispatcherPriority.Input);
@@ -377,7 +377,7 @@ public partial class IslandWindow : Window
         else ShowNavigationError(ui.Text("windows.app.open_failed"));
     }
     private void OnMouseEnter(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-in"); collapse.Stop(); SetExpanded(true); }
-    private void OnMouseLeave(object sender, MouseEventArgs e) { if (move != null || conversationDragging) return; RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
+    private void OnMouseLeave(object sender, MouseEventArgs e) { if (move != null || conversationDragging || conversationRenaming) return; RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
     private void OnPin(object sender, RoutedEventArgs e) => SetPinned(!pinned);
     private void SetPinned(bool value)
     {

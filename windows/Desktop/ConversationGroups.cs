@@ -26,6 +26,22 @@ internal sealed record ConversationGroups(Dictionary<string, ConversationGroup[]
         var copy = new Dictionary<string, ConversationGroup[]>(Profiles) { [profile] = groups };
         return JsonSerializer.Serialize(new ConversationGroups(copy));
     }
+    // Activity is a display projection, never a rewrite of the user's saved order.
+    internal static (ConversationGroup? Group, EngineTaskRow[] Rows)[] Sections(ConversationGroup[] groups, IEnumerable<EngineTaskRow> rows)
+    {
+        var remaining = rows.ToDictionary(row => row.Id);
+        var sections = new List<(ConversationGroup? Group, EngineTaskRow[] Rows)>();
+        foreach (var group in groups)
+        {
+            var members = group.Members.Where(remaining.ContainsKey).Select(id => remaining[id]).ToArray();
+            foreach (var member in members) remaining.Remove(member.Id);
+            if (members.Length > 0) sections.Add((group, members.OrderByDescending(IsRunning).ToArray()));
+        }
+        sections.Add((null, remaining.Values.OrderBy(row => row.Id, StringComparer.Ordinal).OrderByDescending(IsRunning).ToArray()));
+        // LINQ's stable sort preserves manual group/member order among equal activity states.
+        return sections.OrderByDescending(section => section.Rows.Any(IsRunning)).ToArray();
+    }
+    private static bool IsRunning(EngineTaskRow row) => row.Phase == "running";
     internal static ConversationGroup[] Move(ConversationGroup[] groups, string[] members, string? destination, string? name = null)
     {
         var moved = members.ToHashSet(StringComparer.Ordinal);
