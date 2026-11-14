@@ -7,8 +7,17 @@
 | Windows engine and Core suite | 1,250 tests, 2 opt-in tests skipped, no failures. Includes the multi-record directory-change parser test, which fails on the earlier pointer arithmetic. |
 | Windows desktop integration | 38 checks passed: preferences round trips with the new module keys, tolerant module IDs and rings, engine acknowledgement, signed app handlers from module data. |
 | Windows presentation | The Harness, settings, pages, collapsed bar, panel, quota and DeepSeek groups passed, except the hover-animation check, which needs an unlocked display: Pacer stops animations while the screen is locked. |
-| macOS | `make test` (1,282 tests) and `make build` passed with no warnings. Offscreen renders in English and Chinese of the module library (found and not-found tiles), the WorkBuddy page with a demo bill, Help and History (DeepSeek's and WorkBuddy's weeks) showed no clipping. With only WorkBuddy on, History shows its week instead of asking to turn a module on. |
+| macOS | `make test` (1,283 tests) and `make build` passed with no warnings. Offscreen renders in English and Chinese of the module library (found and not-found tiles), the WorkBuddy page with a demo bill, Help and History (DeepSeek's and WorkBuddy's weeks) showed no clipping. With only WorkBuddy on, History shows its week instead of asking to turn a module on. |
 | Live WorkBuddy 5.9.4 on Windows, read-only engine | Detected, on automatically, ready, listed as found, with its brand, website and launch data; one day of credits in the last week. |
+
+A final independent review found that waking from sleep could repeat a low-credits notice. Sleep now keeps the last reading and its alert state on both platforms; only signing out, switching account or site, or turning the module off starts over. The same review also fixed four smaller issues:
+
+- An unchanged week was published again on every read.
+- Long sessions could drop out of the week.
+- The Windows Notifications page missed credit rows that arrived after it opened.
+- On the Mac, an expired sign-in kept its connected state, and detection ignored a custom data folder.
+
+The table above includes the rerun after these fixes.
 
 Not yet checked live: a WorkBuddy task from start to finish on the new build (it spends account credits), a real WorkBuddy sign-in, and the Mac UI on screen (the Mac stayed locked; WorkBuddy is not installed there).
 

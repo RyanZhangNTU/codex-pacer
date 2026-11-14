@@ -151,13 +151,12 @@ internal sealed record DesktopPreferences
     private static bool ValidModuleList(string[]? ids, bool legacy) => ids is { Length: <= 128 }
         && ids.Distinct(StringComparer.Ordinal).Count() == ids.Length && ids.All(id => id != null && ValidProviderId(id) && (legacy || !IsLegacyProvider(id)));
 
-    internal static IReadOnlyList<string> LegacyProviders { get; } = ["codex", "claude", "deepseek"];
-    internal static bool IsLegacyProvider(string id) => LegacyProviders.Contains(id);
+    internal static IReadOnlyList<string> LegacyProviders => ModuleIds.Legacy;
+    internal static bool IsLegacyProvider(string id) => ModuleIds.IsLegacy(id);
     internal const string HarnessPanePrefix = "harness.";
     internal static bool IsStoredHarnessPane(string? value) => value?.StartsWith(HarnessPanePrefix, StringComparison.Ordinal) == true
         && ValidProviderId(value[HarnessPanePrefix.Length..]);
-    internal static bool ValidProviderId(string id) => id.Length is > 0 and <= 48 && id[0] is >= 'a' and <= 'z'
-        && id.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+    internal static bool ValidProviderId(string id) => ModuleIds.Valid(id);
     internal static bool ValidProviderMode(string? value) => value is "automatic" or "enabled" or "disabled";
 
     private static bool ValidPath(string? value) => value != null && Encoding.UTF8.GetByteCount(value) <= 32768

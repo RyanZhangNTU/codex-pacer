@@ -342,7 +342,7 @@ private final class WorkBuddySessionStore {
         guard let first = calendar.date(byAdding: .day, value: -6, to: today) else { return [] }
         return withQueryBudget(db) {
             let sql = """
-                SELECT u.updated_at,CASE WHEN length(u.credit_json)<=16384 THEN u.credit_json END
+                SELECT u.updated_at,CASE WHEN length(u.credit_json)<=65536 THEN u.credit_json END
                 FROM session_usage AS u JOIN sessions AS s ON s.id=u.session_id
                 WHERE s.user_id=?1 AND u.updated_at>=?2
                 ORDER BY u.updated_at DESC LIMIT 256
@@ -355,9 +355,9 @@ private final class WorkBuddySessionStore {
                   sqlite3_bind_int64(statement, 2, Int64(first.timeIntervalSince1970 * 1000)) == SQLITE_OK else { return [] }
             var totals: [Date: Double] = [:]
             while sqlite3_step(statement) == SQLITE_ROW {
-                guard let updated = Self.date(statement, 0), let raw = Self.text(statement, 1, limit: 16_384),
-                      let view = try? JSONFieldView.document(Data(raw.utf8), maximumBytes: 16_384) else { continue }
-                try? view.forEachField(maximumCount: 512) { key, field in
+                guard let updated = Self.date(statement, 0), let raw = Self.text(statement, 1, limit: 65_536),
+                      let view = try? JSONFieldView.document(Data(raw.utf8), maximumBytes: 65_536) else { continue }
+                try? view.forEachField(maximumCount: 2_048) { key, field in
                     guard let amount = field.number(), amount > 0, amount <= 1_000_000 else { return }
                     let at = WorkBuddyHarness.chargeTime(key) ?? updated
                     guard at >= first, at <= now.addingTimeInterval(60) else { return }
@@ -624,7 +624,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
             dailyCredits = store.dailyCredits(owner: owner, now: now); dailyCharged = charged; dailyReadAt = now
         }
         if let daily = dailyCredits, !daily.isEmpty {
-            var value = observation.usage ?? HarnessUsage(contextUsed: nil, contextCapacity: nil, sessionCredits: nil, measuredAt: now)
+            var value = observation.usage ?? HarnessUsage(contextUsed: nil, contextCapacity: nil, sessionCredits: nil, measuredAt: dailyReadAt ?? now)
             value.daily = daily
             observation.usage = value
         }

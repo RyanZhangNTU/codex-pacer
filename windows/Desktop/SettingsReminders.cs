@@ -16,6 +16,7 @@ internal sealed partial class SettingsWindow
     private readonly Dictionary<string, CheckBox> reminderKinds = new(), reminderFollows = new();
     private StackPanel? reminderQuotaRows, reminderWalletRows, reminderCreditRows;
     private readonly System.Collections.Generic.Dictionary<string, TextBlock> reminderCreditTitles = new();
+    private bool reminderRebuildPending;
     private FrameworkElement? reminderFooter;
     private TextBox? reminderLow, reminderSpike;
     private TextBlock? reminderAmountIssue, notificationIssue;
@@ -205,6 +206,13 @@ internal sealed partial class SettingsWindow
         foreach (var pair in reminderKinds) { pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && warnings != null; }
         reminderQuotaRows!.Visibility = Module("codex") || Module("claude") ? Visibility.Visible : Visibility.Collapsed;
         reminderWalletRows!.Visibility = Module("deepseek") ? Visibility.Visible : Visibility.Collapsed;
+        // The first snapshot, or a reconnect, can bring credit modules the page was built without.
+        var creditIds = (snapshot?.Modules ?? []).Where(module => module.ReportsAccountCredits == true).Select(module => module.Provider).Order().ToArray();
+        if (snapshot != null && !creditIds.SequenceEqual(reminderCreditTitles.Keys.Order()) && activePane == "notifications" && !reminderRebuildPending)
+        {
+            reminderRebuildPending = true;
+            _ = Dispatcher.InvokeAsync(() => { reminderRebuildPending = false; if (!sourceClosed && activePane == "notifications") { RebuildPane("notifications"); RefreshValues(); } });
+        }
         bool credits = false;
         foreach (var pair in reminderCreditTitles) { bool on = Module(pair.Key); pair.Value.Visibility = on ? Visibility.Visible : Visibility.Collapsed; credits |= on; }
         if (reminderCreditRows != null) reminderCreditRows.Visibility = credits ? Visibility.Visible : Visibility.Collapsed;

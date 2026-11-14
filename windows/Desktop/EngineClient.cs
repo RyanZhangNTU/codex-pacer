@@ -157,7 +157,7 @@ internal sealed class EngineClient : IAsyncDisposable
             if (config?["providerModes"] is System.Text.Json.Nodes.JsonObject modes)
             {
                 foreach (string provider in new List<string>(System.Linq.Enumerable.Select(modes, pair => pair.Key)))
-                    if (!DesktopPreferences.IsLegacyProvider(provider) && !harnessModules.Contains(provider)) modes.Remove(provider);
+                    if (!ModuleIds.IsLegacy(provider) && !harnessModules.Contains(provider)) modes.Remove(provider);
             }
             if (config?["disabledHarnessProgress"] is System.Text.Json.Nodes.JsonArray progress)
                 for (int index = progress.Count - 1; index >= 0; index--)
@@ -281,7 +281,7 @@ internal sealed class EngineClient : IAsyncDisposable
                 if (root.GetProperty("engine").GetString() != "PacerEngine") throw new InvalidDataException("Unexpected engine.");
                 if (!ready.Task.IsCompleted && root.TryGetProperty("harnessModules", out var modules) && modules.ValueKind == JsonValueKind.Array)
                     foreach (var module in modules.EnumerateArray())
-                        if (module.ValueKind == JsonValueKind.String && module.GetString() is { } name && DesktopPreferences.ValidProviderId(name)) harnessModules.Add(name);
+                        if (module.ValueKind == JsonValueKind.String && module.GetString() is { } name && ModuleIds.Valid(name)) harnessModules.Add(name);
                 ready.TrySetResult();
                 break;
             case "snapshot":

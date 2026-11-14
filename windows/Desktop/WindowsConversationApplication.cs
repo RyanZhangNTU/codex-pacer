@@ -64,7 +64,7 @@ internal sealed class WindowsConversationApplication
     {
         this.registered = registered; this.protocol = protocol ?? WindowsProtocolLauncher.OpenAsync; this.web = web ?? WindowsProtocolLauncher.OpenWebAsync;
         this.host = host ?? ((pid, started) => HostActivate.Value(pid, started) == 1);
-        this.signedHandler = signedHandler ?? ((provider, uri) => OpenSignedHandler(SignedHandlers[provider], uri));
+        this.signedHandler = signedHandler ?? ((provider, uri) => SignedHandlers.TryGetValue(provider, out var handler) && OpenSignedHandler(handler, uri));
     }
     private static readonly Lazy<ActivateHost> HostActivate = new(() => NativeMotion.SharedExport<ActivateHost>(
         Path.Combine(AppContext.BaseDirectory, "Engine"), "pacer_host_window_activate"));

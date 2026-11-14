@@ -149,6 +149,8 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
     internal bool Busy => operation != null;
     internal bool Available => !disposed && session.Available;
     internal bool CanDisconnect => session.IsConnected;
+    /// While asleep the reading is hidden but the account is unchanged.
+    internal bool Sleeping => sleeping;
     internal bool UsesChina => ReferenceEquals(session, china);
 
     /// The reading in Core's account credits shape, for the engine.

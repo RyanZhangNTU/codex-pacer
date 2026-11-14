@@ -394,7 +394,10 @@ public partial class App : Application
     private string? pushedAccountCredits;
     private async Task PushAccountCreditsAsync()
     {
-        if (quitting || workBuddyAccount is not { } account || engine is not { } client || !engineReady.Task.IsCompletedSuccessfully || account.Busy) return;
+        // Sleep hides the reading without changing the account; the engine keeps
+        // its last credits and alert state until a fresh reading arrives.
+        if (quitting || workBuddyAccount is not { } account || engine is not { } client || !engineReady.Task.IsCompletedSuccessfully
+            || account.Busy || account.Sleeping) return;
         var payload = new { provider = "workbuddy", accountCredits = account.EngineCredits(), stale = account.State == "unavailable" };
         string encoded = System.Text.Json.JsonSerializer.Serialize(payload);
         if (encoded == pushedAccountCredits) return;
