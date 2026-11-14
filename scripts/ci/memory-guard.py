@@ -79,13 +79,18 @@ def snapshot():
     return available, [(int(p), int(parent), int(rss) * 1024) for p, parent, rss in (line.split() for line in rows.splitlines())]
 
 
-def footprint(root, rows):
+def descendants(root, rows):
     owned = {root}
     while True:
         found = {pid for pid, parent, _ in rows if parent in owned}
         if found.issubset(owned):
             break
         owned.update(found)
+    return owned
+
+
+def footprint(root, rows):
+    owned = descendants(root, rows)
     memory = [rss for pid, _, rss in rows if pid in owned]
     if any(rss is None for rss in memory):
         raise RuntimeError('Could not read an owned process memory footprint')
@@ -98,7 +103,8 @@ def main():
         raise RuntimeError('Insufficient free memory to start this step')
     print(f'Memory before step: {available // 1048576} MiB available', flush=True)
     env = dict(os.environ, DOTNET_PROCESSOR_COUNT='1', DOTNET_GCHeapHardLimit='80000000', PACER_BUILD_JOBS='1')
-    child = subprocess.Popen(sys.argv[1:], env=env, **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}))
+    child = subprocess.Popen(sys.argv[1:], env=env, stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
+                             **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}))
     last_report = time.monotonic()
     try:
         while child.poll() is None:
@@ -120,7 +126,21 @@ def main():
             if os.name == 'nt':
                 subprocess.run(['taskkill', '/PID', str(child.pid), '/T', '/F'], check=False, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                os.killpg(child.pid, signal.SIGKILL)
+                # The test watchdog starts a nested session. Include its
+                # currently proven descendant groups instead of orphaning it.
+                groups = {child.pid}
+                try:
+                    data = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,pgid='], text=True, timeout=10)
+                    rows = [tuple(map(int, line.split())) for line in data.splitlines()]
+                    owned = descendants(child.pid, rows)
+                    groups.update(group for pid, _, group in rows if pid in owned and group in owned)
+                except (OSError, subprocess.TimeoutExpired, ValueError):
+                    pass  # Only the known Popen group can be stopped safely.
+                for group in sorted(groups, key=lambda group: group == child.pid):
+                    try:
+                        os.killpg(group, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
             child.wait(timeout=15)
 
 
