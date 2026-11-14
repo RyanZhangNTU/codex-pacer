@@ -283,6 +283,14 @@ jobs:
         run: |
           $taskArchive = (Get-ChildItem output/windows/*-windows-x64-preview-*.zip | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).FullName
           ./scripts/windows/test-patch.ps1 -Archive $taskArchive *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-patch-tests.log"
+      - name: Upload verified Windows preview
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-x64-preview
+          if-no-files-found: error
+          compression-level: 0
+          path: output/windows/*-windows-x64-preview-*.zip
+          retention-days: 3
       - name: Upload validation logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
