@@ -81,6 +81,8 @@ final class CodexPinnedThreadsTests: XCTestCase {
         let next = await reader.read(home: home, now: now, preferredThreads: pins)
         XCTAssertEqual(next.activities.filter { $0.threadID == id(1) }.count, 1)
         XCTAssertTrue(next.watchURLs.contains(resumed))
+        let covered = await LocalActivityReader().read(home: home, now: now, excludingThreads: [id(1)], preferredThreads: pins)
+        XCTAssertFalse(covered.activities.contains { $0.threadID == id(1) }, "A resumed rollout uses its header identity when already covered by the live stream")
     }
     func testSelectionKeepsDescendantsAndOtherProvidersAndHidesUnpinnedAttention() {
         let now = Date()

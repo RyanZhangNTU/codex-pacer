@@ -108,7 +108,8 @@ public actor LocalActivityReader {
         }
         // Reviews must not consume the user-task discovery slots.
         func covered(_ file: URL) -> Bool {
-            excludingThreads.contains(String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased())
+            guard let id = metadata[file]?.activity.threadID ?? cursors[file]?.activity.threadID else { return false }
+            return excludingThreads.contains(id)
         }
         var selected = metricsOnly ? Array(cursors.keys) : cursors.filter {
             [.running, .waitingForInput].contains(projected($0.value).phase) && !covered($0.key)
@@ -150,7 +151,10 @@ public actor LocalActivityReader {
             selected.removeAll { file in superseded(file) || metadata[file].flatMap { inherited[$0.activity.id] }?.isIgnoredCodexSession == true }
             // A newly pinned older task must not lose its slot to an unpinned
             // running cursor. Rebuild priority before applying the bound.
-            selected = Array((candidates.filter { preferred($0) && !superseded($0) && metadata[$0]?.activity.isInternalReview == false && metadata[$0]?.activity.isIgnoredCodexSession == false } + selected)
+            selected = Array((candidates.filter { file in
+                guard preferred(file), !superseded(file), !covered(file), let value = metadata[file]?.activity else { return false }
+                return !value.isInternalReview && inherited[value.id]?.isIgnoredCodexSession != true
+            } + selected)
                 .reduce(into: [URL]()) { if !$0.contains($1) { $0.append($1) } }.prefix(fileLimit))
             for file in candidates {
                 guard selected.count < fileLimit else { break }
@@ -162,13 +166,12 @@ public actor LocalActivityReader {
         }
         // Keep covered baselines for reconnects without spending fallback slots.
         if includeCoveredMetrics && !metricsOnly {
-            let metricFiles = candidates.filter { covered($0) && metadata[$0]?.activity.isIgnoredCodexSession != true }.prefix(32)
+            let metricFiles = candidates.filter { !superseded($0) && covered($0) && metadata[$0]?.activity.isIgnoredCodexSession != true }.prefix(32)
             selected += metricFiles.filter { !selected.contains($0) }
         }
-        if !metricsOnly { cursors = cursors.filter { selected.contains($0.key) || covered($0.key) } }
+        if !metricsOnly { cursors = cursors.filter { !superseded($0.key) && (selected.contains($0.key) || covered($0.key)) } }
         for file in selected {
-            let id = String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased()
-            if excludingThreads.contains(id), !includeCoveredMetrics { continue }
+            if covered(file), !includeCoveredMetrics { continue }
             guard let facts = signature(file) else {
                 if let cursor = cursors.removeValue(forKey: file) {
                     var activity = projected(cursor)
