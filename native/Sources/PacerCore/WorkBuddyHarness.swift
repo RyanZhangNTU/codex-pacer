@@ -21,10 +21,20 @@ enum WorkBuddyHarness {
         macApplicationNames: ["WorkBuddy AI", "WorkBuddy"], macBundleIdentifiers: ["com.tencent.workbuddy.mac"],
         macSigningOrganization: "Tencent Technology (Shenzhen) Company Limited",
         conversationScheme: "workbuddy-ai",
+        connectorsPath: "connectors",
         progressConfigFile: "mcp.json",
         progressRuleDirectory: "rules",
         progressConnection: progressConnection,
         makeMonitor: { WorkBuddyMonitor(io: $0) })
+
+    /// The time in a UUIDv7, with or without hyphens.
+    static func chargeTime(_ id: String) -> Date? {
+        let hex = id.replacingOccurrences(of: "-", with: "")
+        guard hex.count == 32, hex.allSatisfy(\.isHexDigit), hex[hex.index(hex.startIndex, offsetBy: 12)] == "7",
+              let milliseconds = UInt64(hex.prefix(12), radix: 16), milliseconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: Double(milliseconds) / 1000)
+    }
+
 
     @Sendable static func progressConnection(home: URL, command: String, arguments: [String],
                                    storage: any ClaudeHookStorage) -> LocalHarnessProgressConnection {
@@ -70,6 +80,8 @@ private final class WorkBuddySessionStore {
         let directory: String?
         let selectedModel: String?
         let thoughtLevel: String?
+        /// The session's title as WorkBuddy shows it; a renamed session uses its new name.
+        var title: String? = nil
         var isRunning: Bool { ["planning", "working", "running"].contains(status) }
     }
 
@@ -175,6 +187,8 @@ private final class WorkBuddySessionStore {
         let lastActivity = columns.contains("last_activity_at") ? "last_activity_at" : "NULL"
         let model = columns.contains("model") ? "model" : "NULL"
         let effort = columns.contains("thought_level") ? "thought_level" : "NULL"
+        let title = ["custom_title", "title"].filter(columns.contains).map { "NULLIF(trim(\($0)),'')" }
+        let titles = title.isEmpty ? "NULL" : title.count == 1 ? title[0] : "COALESCE(" + title.joined(separator: ",") + ")"
         // WorkBuddy's recent-activity index is partial and covers cloud rows
         // only. Read a bounded set of local candidates without forcing it.
         // Already observed sessions are also looked up by primary key. The
@@ -182,7 +196,7 @@ private final class WorkBuddySessionStore {
         let discovery = "SELECT rowid FROM (SELECT rowid FROM sessions ORDER BY rowid DESC LIMIT 512)"
         let sql = """
             WITH candidates AS (\(discovery)\(tracked))
-            SELECT id,status,updated_at,\(cwd),\(lastActivity),\(model),\(effort)
+            SELECT id,status,updated_at,\(cwd),\(lastActivity),\(model),\(effort),\(titles)
             FROM candidates CROSS JOIN sessions ON sessions.rowid=candidates.rowid
             WHERE user_id=?1 AND transport='local' AND deleted_at IS NULL
               AND visibility IS NULL
@@ -216,7 +230,7 @@ private final class WorkBuddySessionStore {
                     ? Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 4)) / 1000) : nil
                 rows.append(.init(id: id, status: status.lowercased(), updated: min(now, date), lastActivity: activity,
                                   directory: Self.text(statement, 3, limit: 16_384), selectedModel: Self.text(statement, 5),
-                                  thoughtLevel: Self.text(statement, 6, limit: 32)))
+                                  thoughtLevel: Self.text(statement, 6, limit: 32), title: Self.text(statement, 7, limit: 1_024)))
             case SQLITE_DONE: return rows
             default: return nil
             }
@@ -319,6 +333,41 @@ private final class WorkBuddySessionStore {
         return Date(timeIntervalSince1970: Double(milliseconds) / 1000)
     }
 
+    /// Credits charged on each of the last seven local days. WorkBuddy keys each
+    /// charge by its request ID, a UUIDv7 whose first 48 bits are the request
+    /// time in milliseconds; a charge without one counts on its session's last update.
+    func dailyCredits(owner: String, now: Date, calendar: Calendar = .current) -> [HarnessDailyAmount] {
+        guard let db else { return [] }
+        let today = calendar.startOfDay(for: now)
+        guard let first = calendar.date(byAdding: .day, value: -6, to: today) else { return [] }
+        return withQueryBudget(db) {
+            let sql = """
+                SELECT u.updated_at,CASE WHEN length(u.credit_json)<=16384 THEN u.credit_json END
+                FROM session_usage AS u JOIN sessions AS s ON s.id=u.session_id
+                WHERE s.user_id=?1 AND u.updated_at>=?2
+                ORDER BY u.updated_at DESC LIMIT 256
+                """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(statement) }
+            let copied = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            guard sqlite3_bind_text(statement, 1, owner, -1, copied) == SQLITE_OK,
+                  sqlite3_bind_int64(statement, 2, Int64(first.timeIntervalSince1970 * 1000)) == SQLITE_OK else { return [] }
+            var totals: [Date: Double] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let updated = Self.date(statement, 0), let raw = Self.text(statement, 1, limit: 16_384),
+                      let view = try? JSONFieldView.document(Data(raw.utf8), maximumBytes: 16_384) else { continue }
+                try? view.forEachField(maximumCount: 512) { key, field in
+                    guard let amount = field.number(), amount > 0, amount <= 1_000_000 else { return }
+                    let at = WorkBuddyHarness.chargeTime(key) ?? updated
+                    guard at >= first, at <= now.addingTimeInterval(60) else { return }
+                    totals[calendar.startOfDay(for: at), default: 0] += amount
+                }
+            }
+            return totals.sorted { $0.key < $1.key }.map { HarnessDailyAmount(day: $0.key, amount: $0.value) }
+        }
+    }
+
     /// Read the latest session's overview and the charges for the bounded set
     /// of turns that the transcript reader could identify.
     func usage(owner: String, now: Date, latest: String?, requests: [String: String]) -> UsageReading {
@@ -417,6 +466,9 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
     private var catchUpUntil: Date?
     private var failureCount = 0
     private var accountRetries = 0
+    private var dailyCredits: [HarnessDailyAmount]?
+    private var dailyCharged: Date?
+    private var dailyReadAt: Date?
 
     init(io: LocalHarnessIO) { self.io = io }
 
@@ -447,6 +499,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         let oldWatcher = watcher
         oldWatcher?.stop(); watcher = nil; watchURLs = []
         lastObservation = nil; lastSuccess = nil; failureCount = 0; accountRetries = 0
+        dailyCredits = nil; dailyCharged = nil; dailyReadAt = nil
         catchUpUntil = nil
         owner = nil; transcripts.removeAll(); witnessed.removeAll(); witnessedRuns.removeAll(); started = nil
         return oldWatcher
@@ -487,6 +540,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
             witnessedRuns.removeAll()
             lastSuccess = nil
             catchUpUntil = nil
+            dailyCredits = nil; dailyCharged = nil
             started = now
         }
         if let owner {
@@ -564,12 +618,23 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         let latest = allRows.max { $0.updated < $1.updated }?.id
         let usage = store.usage(owner: owner, now: now, latest: latest, requests: turns.mapValues(\.id))
         observation.usage = usage.latest
+        // The week's credits change only when a charge lands; read them at most every five minutes otherwise.
+        let charged = usage.latest?.measuredAt
+        if dailyCredits == nil || charged != dailyCharged || now.timeIntervalSince(dailyReadAt ?? .distantPast) >= 300 {
+            dailyCredits = store.dailyCredits(owner: owner, now: now); dailyCharged = charged; dailyReadAt = now
+        }
+        if let daily = dailyCredits, !daily.isEmpty {
+            var value = observation.usage ?? HarnessUsage(contextUsed: nil, contextCapacity: nil, sessionCredits: nil, measuredAt: now)
+            value.daily = daily
+            observation.usage = value
+        }
         for row in rows {
             let age = now.timeIntervalSince(row.updated)
             let running = row.isRunning && age < WorkBuddySessionStore.activityLifetime
             let stage: ActivityStage = row.status == "planning" ? .starting : .working
             let session = CompletionDismissalStore.digest(["workbuddy-session", owner, row.id])
             var task = SessionActivity.observedSession(provider: WorkBuddyHarness.id, session: session, stage: stage, at: row.updated)
+            task.applyObservedTitle(row.title, project: row.directory.map { URL(fileURLWithPath: $0).lastPathComponent })
             if let turn = turns[row.id], turn.started <= row.updated.addingTimeInterval(1) {
                 let turnID = CompletionDismissalStore.digest(["workbuddy-turn", session, turn.id])
                 let live = turn.started >= (started ?? now) || witnessed[row.id] == turn.id

@@ -120,12 +120,3 @@ public struct HarnessAccountCreditsDefinition: Sendable {
         return script
     }
 }
-
-public enum WorkBuddyAccountWeb {
-    private static var definition: HarnessAccountCreditsDefinition { WorkBuddyHarness.accountCredits }
-    public static var china: URL { definition.site("china", chinese: true).url }
-    public static var international: URL { definition.site("international", chinese: false).url }
-    public static var billingPath: String { definition.billingPath }
-    public static var loginPath: String { definition.loginPath }
-    public static let summaryScript: String = WorkBuddyHarness.accountCredits.summaryScript
-}

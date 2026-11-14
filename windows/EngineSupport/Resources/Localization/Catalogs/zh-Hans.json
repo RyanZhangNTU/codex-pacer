@@ -2,8 +2,8 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "7d8f0a68a15e010d5ab7fb43a551da80abd4d601973fe2687865453f99efa0d0",
-    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "143c60a53b13f1123645b34f3954a610860a3f8e9e96435ce1e6d050ce0c4a1a"
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "a2f1400587a9147e37cd87550dc030365c47219f9b03d57cf61951ff361f1a4d",
+    "windows/EngineSupport/Resources/Localization/zh-Hans.json": "cd35971431f9edb42927f6792686ac29bb4ac5e5ba804d2709ff095e491869e2"
   },
   "strings": {
     "account.credit_balance": "\u5269\u4f59\u79ef\u5206\uff1a%@",
@@ -556,6 +556,8 @@
     "harness.credit_unit_single": "\u79ef\u5206",
     "harness.credits": "\u79ef\u5206",
     "harness.credits.left": "\u5269\u4f59 %@",
+    "harness.credits_amount": "%@ \u79ef\u5206",
+    "harness.daily_average": "\u65e5\u5747 %@ \u79ef\u5206",
     "harness.data": "\u672c\u5730\u6570\u636e",
     "harness.data.found": "\u5df2\u627e\u5230",
     "harness.data.missing": "\u672a\u627e\u5230",
@@ -595,6 +597,7 @@
     "harness.unsupported_format": "\u6682\u4e0d\u652f\u6301\u6b64\u683c\u5f0f",
     "harness.usage": "\u7528\u91cf",
     "harness.waiting_for_tasks": "\u7b49\u5f85\u4efb\u52a1",
+    "harness.week_accessibility_total": "%1$@ \u8fd1 7 \u5929\u7528\u4e86 %2$@ \u79ef\u5206",
     "help.app_buttons.detail": "\u70b9\u51fb\u6807\u9898\u680f\u91cc\u7684\u6a21\u5757\u56fe\u6807\uff0c\u76f4\u63a5\u6253\u5f00\u5bf9\u5e94\u5e94\u7528\u3002",
     "help.app_buttons.title": "\u6253\u5f00\u5e94\u7528",
     "help.attention.detail": "\u5fbd\u6807\u53d8\u6210\u5b9e\u5fc3\u7425\u73c0\u8272\uff0c\u8bf4\u660e\u6709\u4efb\u52a1\u5728\u7b49\u4f60\u56de\u590d\u6216\u5ba1\u6279\u3002",
@@ -1531,7 +1534,7 @@
     "windows.updates.verifying": "\u6b63\u5728\u6821\u9a8c\u66f4\u65b0\u2026",
     "windows.updates.view_notes": "\u67e5\u770b\u53d1\u884c\u8bf4\u660e",
     "windows.updates.window_title": "\u8f6f\u4ef6\u66f4\u65b0",
-    "windows.workbuddy.login.instructions": "\u5728 WorkBuddy \u9875\u9762\u767b\u5f55\uff0c\u7136\u540e\u70b9\u300c\u5b8c\u6210\u300d\u3002",
+    "windows.workbuddy.login.instructions": "\u767b\u5f55\u540e\u67e5\u770b WorkBuddy \u79ef\u5206\u3002\u5b8c\u6210\u65b0\u767b\u5f55\u540e\u7a97\u53e3\u4f1a\u81ea\u52a8\u5173\u95ed\uff0c\u4e5f\u53ef\u70b9\u51fb\u201c\u7ee7\u7eed\u201d\u6216\u6309 Ctrl+Enter\u3002",
     "workbuddy.login.prompt": "\u767b\u5f55 WorkBuddy\uff0c\u663e\u793a\u79ef\u5206",
     "workbuddy.login.prompt_detail": "\u767b\u5f55\u5b8c\u6210\u540e\uff0c\u8fd9\u4e2a\u7a97\u53e3\u4f1a\u81ea\u52a8\u5173\u95ed\u3002Pacer \u53ea\u8bfb\u53d6\u79ef\u5206\u3002",
     "workbuddy.login.signed_in": "\u5df2\u767b\u5f55 WorkBuddy",

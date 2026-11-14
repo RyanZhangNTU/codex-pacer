@@ -47,6 +47,23 @@ public enum CompactBarPresentation {
             rings.count == 2 &&
                 [codexWindow, claudeWindow].allSatisfy { $0.utf8.count <= 1024 && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } }
         }
+        private enum CodingKeys: String, CodingKey { case singleTask, metric, codexWindow, claudeWindow, rings }
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            singleTask = try values.decode(SingleTask.self, forKey: .singleTask)
+            metric = try values.decode(Metric.self, forKey: .metric)
+            codexWindow = try values.decode(String.self, forKey: .codexWindow)
+            claudeWindow = try values.decode(String.self, forKey: .claudeWindow)
+            // A ring saved by a version with another module draws nothing here
+            // instead of invalidating the whole bar; a malformed value still does.
+            rings = try values.decode([String].self, forKey: .rings).map { value in
+                if let choice = RingChoice(rawValue: value) { return choice }
+                guard value.range(of: #"^[a-z][a-z0-9-]{0,47}\z"#, options: .regularExpression) != nil else {
+                    throw DecodingError.dataCorruptedError(forKey: .rings, in: values, debugDescription: "Malformed ring")
+                }
+                return .none
+            }
+        }
     }
     public struct Action: Codable, Equatable, Sendable {
         public let kind: String
@@ -188,7 +205,7 @@ public enum CompactBarPresentation {
                                components suppliedComponents: CompactComponentOptions? = nil) -> Output? {
         guard let language = AppLanguage(rawValue: request.language), request.providers.count <= HarnessRegistry.descriptors.count,
               Set(request.providers).count == request.providers.count, request.options.valid,
-              request.warnings.map({ $0.count <= 6 && $0.allSatisfy { CompactIslandLayout.Warning(rawValue: $0) != nil } }) ?? true,
+              request.warnings.map({ $0.count <= CompactIslandLayout.Warning.allCases.count && $0.allSatisfy { CompactIslandLayout.Warning(rawValue: $0) != nil } }) ?? true,
               request.layout.map({ $0.utf8.count <= 8192 }) ?? true,
               request.componentOptions.map({ $0.utf8.count <= CompactComponentOptions.byteLimit }) ?? true,
               request.size.map({ $0.utf8.count <= 64 }) ?? true else { return nil }

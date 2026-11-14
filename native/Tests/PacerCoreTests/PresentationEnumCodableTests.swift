@@ -122,7 +122,7 @@ final class PresentationEnumCodableTests: XCTestCase {
             }
         }
         let options: [String: Any] = ["singleTask": "stage", "metric": "remaining", "codexWindow": "auto", "claudeWindow": "auto", "rings": ["", ""]]
-        for (field, invalid) in [("singleTask", "future" as Any), ("metric", "future" as Any), ("rings", ["future", "none"] as Any)] {
+        for (field, invalid) in [("singleTask", "future" as Any), ("metric", "future" as Any), ("rings", ["Future Ring", "none"] as Any)] {
             var changed = options; changed[field] = invalid
             try rejects(P.Options.self, changed, field: field)
             let request: [String: Any] = ["language": "en", "providers": ["codex"], "options": changed, "attached": false, "strip": false]

@@ -217,6 +217,18 @@ struct EngineModule: Codable, Equatable {
     var local: Bool? = nil
     var home: String? = nil
     var defaultHome: String? = nil
+    /// The last seven days of account credits, for History.
+    var week: DeepSeekSoloPresentation.Week? = nil
+    /// How the host opens the app: its URL scheme, the signer its handler
+    /// must carry, and where the app installs.
+    var launch: EngineModuleLaunch? = nil
+}
+
+struct EngineModuleLaunch: Codable, Equatable {
+    let scheme: String
+    let publisher: String
+    let executables: [String]
+    let connectorsPath: String?
 }
 
 struct EngineModuleBrand: Codable, Equatable {

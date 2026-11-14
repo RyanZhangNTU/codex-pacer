@@ -155,8 +155,13 @@ final class CompactBarPresentationTests: XCTestCase {
         XCTAssertEqual(CompactBarPresentation.project(request)?.editorLeading, ["activity", "tps"])
         var unknown = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
         var options = try XCTUnwrap(unknown["options"] as? [String: Any])
-        options["rings"] = ["foreign", "none"]; unknown["options"] = options
+        options["rings"] = ["Foreign Ring", "none"]; unknown["options"] = options
         XCTAssertNil(CompactBarPresentation.project(try JSONSerialization.data(withJSONObject: unknown)))
+        options["rings"] = ["future-module", "none"]; unknown["options"] = options
+        let future = try JSONDecoder().decode(CompactBarPresentation.Request.self, from: JSONSerialization.data(withJSONObject: unknown))
+        XCTAssertEqual(future.options.rings, [.none, .none])
+        XCTAssertEqual(CompactBarPresentation.project(future)?.rings, [],
+                       "A ring from a module this version doesn't know draws nothing instead of rejecting the bar")
         request.options.rings = [.none]; XCTAssertNil(CompactBarPresentation.project(request))
         request.options = .init(); request.options.codexWindow = "bad\nwindow"; XCTAssertNil(CompactBarPresentation.project(request))
         request.options = .init(); request.action = .init(kind: "move", component: "activity", lane: "center"); XCTAssertNil(CompactBarPresentation.project(request))

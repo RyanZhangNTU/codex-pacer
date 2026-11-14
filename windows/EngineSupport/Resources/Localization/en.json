@@ -132,5 +132,6 @@
   "windows.updates.try_again": "Try Again",
   "windows.updates.notes_empty": "This version has no release notes.",
   "windows.main.pane_later": "Arrives with the next step of the redesign.",
-  "windows.appearance.position_per_display_info": "Each display keeps its own Island or Free Move place. A display used for the first time starts where the island is now."
+  "windows.appearance.position_per_display_info": "Each display keeps its own Island or Free Move place. A display used for the first time starts where the island is now.",
+  "windows.workbuddy.login.instructions": "Sign in to show your WorkBuddy credits. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter."
 }

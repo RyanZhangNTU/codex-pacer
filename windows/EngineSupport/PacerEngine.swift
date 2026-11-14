@@ -1078,7 +1078,10 @@ actor EngineRuntime {
         // A host can know modules this engine doesn't support yet, or the other
         // way round. Ignore those IDs and apply the rest of the update.
         func moduleIDs(_ names: [String]) throws -> [AgentProvider] {
-            guard names.count <= 128, names.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 64 }) else { throw EngineCommand.Failure.invalid }
+            // Module IDs are lowercase words joined by hyphens; anything else is malformed.
+            guard names.count <= 128, names.allSatisfy({ $0.range(of: #"^[a-z][a-z0-9-]{0,47}\z"#, options: .regularExpression) != nil }) else {
+                throw EngineCommand.Failure.invalid
+            }
             return names.compactMap { byProviderID[$0] }
         }
         let explicitProviders = try parameters.enabledProviders.map { Set(try moduleIDs($0)) }
@@ -1116,10 +1119,9 @@ actor EngineRuntime {
         var detected = installation
         if parameters.providerModes != nil {
             let previous = generation
-            if demo {
-                detected = .init(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true,
-                                 additional: Set(localHarnesses.definitions.map(\.descriptor.id)))
-            } else { lastInstallationDetection = now(); detected = withCustomHomes(await detectInstallation(), selectedHomes ?? harnessHomeOverrides) }
+            // The demo's computer has the three original apps; WorkBuddy shows in
+            // the demo once turned on, so the reference scenes stay as they were.
+            if demo { detected = .init(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) } else { lastInstallationDetection = now(); detected = withCustomHomes(await detectInstallation(), selectedHomes ?? harnessHomeOverrides) }
             guard generation == previous else { throw EngineCommand.Failure.invalid }
         }
         let selectedProviders = explicitProviders ?? (parameters.providerModes == nil ? nil :
@@ -1404,6 +1406,13 @@ actor EngineRuntime {
             module.balance = registered.balance?.rawValue
         }
         module.prominent = moduleLibrary.entries.first { $0.provider == provider }?.prominent
+        if let daily = harnessActivities[provider]?.usage?.daily {
+            module.week = HarnessWeekPresentation.week(provider: provider, daily: daily, now: now())
+        }
+        if let definition, let scheme = definition.conversationScheme, let publisher = definition.macSigningOrganization {
+            module.launch = .init(scheme: scheme, publisher: publisher, executables: definition.windowsExecutables,
+                                  connectorsPath: definition.connectorsPath)
+        }
         if let definition {
             module.local = true
             module.home = EngineCodexSourceReport.path(localHarnessHome(definition))

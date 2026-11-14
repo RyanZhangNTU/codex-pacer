@@ -93,8 +93,10 @@ final class WorkBuddyHarnessTests: XCTestCase {
         let active = try XCTUnwrap(start.activities.first)
         XCTAssertFalse(active.id.contains("test-active"))
         XCTAssertEqual(active.project, "WorkBuddy")
-        XCTAssertEqual(ActivityTaskRowPresentation.title(active, hideProjects: true), "WorkBuddy")
-        XCTAssertNil(active.title)
+        XCTAssertEqual(active.title, "fixture title", "A WorkBuddy task shows its session title like other services' tasks")
+        XCTAssertEqual(ActivityTaskRowPresentation.title(active, hideProjects: false), "fixture title")
+        XCTAssertEqual(ActivityTaskRowPresentation.title(active, hideProjects: true), L10n.text("activity.hidden_name"),
+                       "Hide Project Names hides it")
         XCTAssertNil(active.turnID)
         XCTAssertNil(active.threadURL)
 
@@ -298,7 +300,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
             ALTER TABLE sessions ADD COLUMN model TEXT;
             ALTER TABLE sessions ADD COLUMN thought_level TEXT;
             INSERT INTO sessions VALUES ('\(session)','account','working',\(updated),NULL,'local',NULL,1,0,
-                'PRIVATE TITLE','C:/fixture','deepseek-v4.1-flash-sg','high');
+                'Fixture task','C:/fixture','deepseek-v4.1-flash-sg','high');
             """)
         let workspace = fixture.home.appendingPathComponent("projects/C-fixture", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
@@ -344,7 +346,8 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertEqual(row.model, "DeepSeek V4.1 Flash", "Another family keeps its brand in a short name")
         XCTAssertEqual(row.effort, L10n.text("model.effort.high"))
         XCTAssertEqual(row.rate?.value, 40)
-        XCTAssertFalse(String(describing: completed).contains("PRIVATE"))
+        XCTAssertEqual(completed.title, "Fixture task", "The session title is the task title, as for the other services")
+        XCTAssertEqual(completed.project, "fixture")
         await monitor.stop()
     }
 
@@ -384,6 +387,8 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertEqual(first.turnCharge, .credits(0.53))
         XCTAssertEqual(running?.activities.first { $0.phase == .completed }?.turnCharge, .credits(1))
         XCTAssertEqual(running?.usage?.sessionCredits, 12.53)
+        XCTAssertEqual(running?.usage?.daily?.reduce(0) { $0 + $1.amount } ?? 0, 13.53, accuracy: 1e-9,
+                       "History counts every charge of the week, by its session's update when the request ID has no time")
 
         let oldTurn = turn("r1", session: session, start: -9000, end: -800)
         try oldTurn.write(to: transcript)

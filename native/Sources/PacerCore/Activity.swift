@@ -495,6 +495,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         if !live { suppressHistoricalCompletionNotifications() }
     }
 
+    /// A session with its own title reads like other services' tasks, and Hide
+    /// Project Names hides it the same way; without one, the module's name stands in.
+    mutating func applyObservedTitle(_ value: String?, project: String?) {
+        updateTitle(value)
+        if let project, !project.isEmpty { self.project = String(project.prefix(240)) }
+        if title != nil { observedSessionLabel = nil }
+    }
+
     mutating func updateTitle(_ value: String?) {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         title = trimmed?.isEmpty == false ? String(trimmed!.prefix(240)) : nil

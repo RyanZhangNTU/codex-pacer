@@ -154,7 +154,7 @@ public enum DemoScenario {
         task.applyObservedTurn(stage == .completed ? .finished : .working(stage == .tool ? .tool : .working), id: turnID,
             started: now.addingTimeInterval(-64), at: now.addingTimeInterval(stage == .completed ? 0 : -6), live: true,
             model: "Deepseek-V4.1-Flash", effort: "high")
-        task.updateTitle(L10n.text("demo.workbuddy_task"))
+        task.applyObservedTitle(L10n.text("demo.workbuddy_task"), project: "launch-plan")
         if let response = ResponsePerformance(responseID: "demo-workbuddy-response", turnID: turnID, outputTokens: 1_840,
                                               startedAt: now.addingTimeInterval(-58), completedAt: now.addingTimeInterval(-8), source: .requestUsage),
            let update = SessionPerformanceUpdate(id: task.id, turnID: turnID, response: response, firstTokenLatency: nil, firstTokenReportedAt: nil) {

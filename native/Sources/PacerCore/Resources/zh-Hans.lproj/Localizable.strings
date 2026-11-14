@@ -1346,7 +1346,6 @@
 "harness.account.runtime" = "查看账号积分需要 Microsoft Edge WebView2。";
 "harness.account.reading" = "正在读取账号积分…";
 "workbuddy.login.title" = "登录 WorkBuddy";
-"windows.workbuddy.login.instructions" = "在 WorkBuddy 页面登录，然后点「完成」。";
 "workbuddy.login.signed_in_detail" = "正在读取积分…";
 "panel.block.workbuddy" = "WorkBuddy 积分";
 "panel.block_detail.workbuddy" = "显示可用积分、套餐重置和最近的积分到期时间。";
@@ -1415,3 +1414,6 @@
 "main.history.workbuddy_week" = "WorkBuddy · 近 7 天";
 "main.history.workbuddy_empty" = "有两天以上的积分消耗后显示。";
 "harness.account.sign_out" = "退出登录";
+"harness.credits_amount" = "%@ 积分";
+"harness.daily_average" = "日均 %@ 积分";
+"harness.week_accessibility_total" = "%1$@ 近 7 天用了 %2$@ 积分";

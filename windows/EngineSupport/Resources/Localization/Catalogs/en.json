@@ -2,8 +2,8 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "7747f25aadfeb1179c5f3fe28e535b9d8394d45094334c9d3b8b7a283669f90b",
-    "windows/EngineSupport/Resources/Localization/en.json": "6a0a4c7556788716d852ae2be97e169eeb1fe8a2480e1b41adba1f0b9e0eb76f"
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "5c2e6d186a3be4d1896746f82e56e937349cbddabb90b5ae3ac8f7687a734460",
+    "windows/EngineSupport/Resources/Localization/en.json": "9a139e87781dfb20793fbb19dc18638ab57ed1d95ac386ffe4beeac0e1bb84ae"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -556,6 +556,8 @@
     "harness.credit_unit_single": "credit",
     "harness.credits": "Credits",
     "harness.credits.left": "%@ left",
+    "harness.credits_amount": "%@ credits",
+    "harness.daily_average": "Avg %@ credits/day",
     "harness.data": "Local Data",
     "harness.data.found": "Found",
     "harness.data.missing": "Not found",
@@ -595,6 +597,7 @@
     "harness.unsupported_format": "Unsupported format",
     "harness.usage": "Usage",
     "harness.waiting_for_tasks": "Waiting for tasks",
+    "harness.week_accessibility_total": "%1$@ used %2$@ credits in the last 7 days",
     "help.app_buttons.detail": "Click a module icon in the title row to open its app.",
     "help.app_buttons.title": "Open an app",
     "help.attention.detail": "A solid amber badge means a task is waiting for your reply or approval.",
@@ -1531,7 +1534,7 @@
     "windows.updates.verifying": "Verifying the update\u2026",
     "windows.updates.view_notes": "View release notes",
     "windows.updates.window_title": "Software Update",
-    "windows.workbuddy.login.instructions": "Sign in on the WorkBuddy page, then select Done.",
+    "windows.workbuddy.login.instructions": "Sign in to show your WorkBuddy credits. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
     "workbuddy.login.prompt": "Sign in to show your WorkBuddy credits",
     "workbuddy.login.prompt_detail": "This window closes by itself once you\u2019re signed in. Pacer reads only your credits.",
     "workbuddy.login.signed_in": "Signed in to WorkBuddy",

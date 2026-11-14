@@ -22,6 +22,14 @@ public struct HarnessUsage: Codable, Equatable, Sendable {
     public let contextCapacity: Int?
     public let sessionCredits: Double?
     public let measuredAt: Date
+    /// Credits charged on each of the last seven local days, oldest first.
+    public var daily: [HarnessDailyAmount]? = nil
+}
+
+public struct HarnessDailyAmount: Codable, Equatable, Sendable {
+    /// The start of the local day.
+    public let day: Date
+    public let amount: Double
 }
 
 public enum HarnessSourceStatus: String, Equatable, Sendable {
@@ -98,6 +106,8 @@ package struct LocalHarnessDefinition: Sendable {
     package var macBundleIdentifiers: Set<String> = []
     package var macSigningOrganization: String?
     package var conversationScheme: String?
+    /// The app's own page for its connectors, under the conversation scheme.
+    package var connectorsPath: String?
     package var progressConfigFile: String?
     package var progressRuleDirectory: String?
     package var progressConnection: LocalHarnessProgressSetup.ConnectionReader?

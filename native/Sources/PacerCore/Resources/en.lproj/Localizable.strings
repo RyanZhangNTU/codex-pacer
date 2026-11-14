@@ -1346,7 +1346,6 @@
 "harness.account.runtime" = "Account credits require Microsoft Edge WebView2.";
 "harness.account.reading" = "Reading account credits…";
 "workbuddy.login.title" = "Sign in to WorkBuddy";
-"windows.workbuddy.login.instructions" = "Sign in on the WorkBuddy page, then select Done.";
 "workbuddy.login.signed_in_detail" = "Reading your credits…";
 "panel.block.workbuddy" = "WorkBuddy credits";
 "panel.block_detail.workbuddy" = "Available credits, plan reset and upcoming expiry.";
@@ -1415,3 +1414,6 @@
 "main.history.workbuddy_week" = "WorkBuddy · Last 7 Days";
 "main.history.workbuddy_empty" = "Shows after two days with credits used.";
 "harness.account.sign_out" = "Sign Out";
+"harness.credits_amount" = "%@ credits";
+"harness.daily_average" = "Avg %@ credits/day";
+"harness.week_accessibility_total" = "%1$@ used %2$@ credits in the last 7 days";
