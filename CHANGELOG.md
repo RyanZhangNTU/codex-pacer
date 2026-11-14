@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.4.4
+
+- On Windows, Codex tasks run outside the Codex app, such as in a terminal, update right away again instead of up to two minutes late. Task states and requests for your attention appear as soon as Codex writes them; speeds and token counts keep the panel's usual refresh.
+- On Mac and Windows, a Codex task that writes a very long output before it ends now shows as completed instead of "Status unconfirmed", and the first Codex task after midnight is found right away.
+- The Retry and Settings buttons under a quota ring are no longer cut off when three services are shown side by side. They stack when the column is too narrow for both ([#226](https://github.com/RyanZhangNTU/codex-pacer/issues/226)).
+
 ## 4.4.3
 
 - Urgent fix for today's Codex update: tasks on SSH hosts show again. Codex now keeps its SSH connection settings under the signed-in account, so Pacer 4.4.2 and earlier found no SSH hosts. Pacer reads the current account's settings, still reads the older layout, and never uses another account's hosts.
