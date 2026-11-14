@@ -129,6 +129,22 @@ internal static class ExpandedPanelChecks
             await island.WaitForPresentationAsync();
             Check(island.LogicalTarget.Height == 438 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
                 "Restoring the layout and choices returns the reference panel");
+            // The pinned catalog uses a scrollable grouped list; classic demo remains the legacy fixture.
+            island.PreviewConversationGroups = true;
+            island.SaveIslandPlacement = edit => session.ChangeAsync(edit);
+            var pinnedRows = engine.LatestSnapshot!.Presentation!.Rows;
+            var groupedIDs = pinnedRows.Take(2).Select(row => row.Id).ToArray();
+            var groupJson = ConversationGroups.Read(null).Update("", [new ConversationGroup("fixture", "Development", groupedIDs)]);
+            await session.ChangeAsync(p => p with { ConversationGroups = groupJson });
+            await Until(() => Present<ScrollViewer>(island, "island.conversations"));
+            Check(Descendants(island).OfType<TaskRow>().Count() == pinnedRows.Count, "Every pinned row is reachable in the grouped list");
+            Invoke(Find<Button>(island, "island.group.toggle.fixture"));
+            await Until(() => ConversationGroups.Read(session.Current.ConversationGroups).For("")[0].Collapsed);
+            Check(Descendants(island).OfType<TaskRow>().Count() == pinnedRows.Count - groupedIDs.Length, "Collapsing hides only that group's rows and saves the choice");
+            Invoke(Find<Button>(island, "island.group.toggle.fixture"));
+            await Until(() => !ConversationGroups.Read(session.Current.ConversationGroups).For("")[0].Collapsed);
+            Check(Descendants(island).OfType<TaskRow>().Count() == pinnedRows.Count, "Expanding restores every member");
+            island.CapturePreview(Path.Combine(output, "panel-" + name + "-groups.png"));
             Console.WriteLine("PASS expanded panel " + name + ": automatic layout, block moves, arrangement, rows, header buttons, removal and restore");
         }
         finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); await engine.DisposeAsync(); }

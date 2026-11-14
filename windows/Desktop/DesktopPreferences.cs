@@ -119,6 +119,7 @@ internal sealed record DesktopPreferences
         && (IslandDisplayPlaces == null || Encoding.UTF8.GetByteCount(IslandDisplayPlaces) <= IslandScreenMemory.ByteLimit)
         && (ExpandedPanelLayout == null || Encoding.UTF8.GetByteCount(ExpandedPanelLayout) <= PanelChoices.LayoutByteLimit)
         && (ExpandedPanelOptions == null || Encoding.UTF8.GetByteCount(ExpandedPanelOptions) <= PanelChoices.OptionsByteLimit)
+        && (ConversationGroups == null || Encoding.UTF8.GetByteCount(ConversationGroups) <= 262144)
         && BarSizes.Contains(CompactBarSize)
         && CompactSingleTask is "stage" or "count" or "percent" && CompactMetric is "remaining" or "pace"
         && ValidWindow(CodexQuotaWindow) && ValidWindow(ClaudeQuotaWindow)

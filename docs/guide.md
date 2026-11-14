@@ -160,3 +160,7 @@ Changes apply right away. When an update is available, it shows in the sidebar a
 2. Sign out of DeepSeek or remove the API key on the DeepSeek page.
 3. Turn off **Open at Login**, then quit Pacer.
 4. On a Mac, move Codex Pacer from Applications to the Trash. On Windows, uninstall it from **Apps** in Windows Settings.
+
+### Windows fork: pinned conversations and groups
+
+All pinned Codex chats stay in the expanded list, including idle chats. Drop a chat onto another to create a group, onto a group header to move it, or onto Ungrouped to move it out. Drop one group header onto another to merge, click a name to rename, and use the arrow to collapse. The row context menu also offers move targets. Groups and collapsed state persist only in Pacer, scoped to the Codex data folder; the Codex sidebar is unchanged.

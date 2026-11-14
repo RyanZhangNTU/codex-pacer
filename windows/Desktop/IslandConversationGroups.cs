@@ -19,7 +19,8 @@ public partial class IslandWindow
     private string ConversationStructure => string.Join("|", ConversationSections().Select(s => (s.Group?.Id ?? "") + ":" + s.Group?.Name + ":" + s.Group?.Collapsed + ":" + string.Join(",", s.Rows.Select(r => r.Id))));
     private ScrollViewer? conversationScroll;
     private readonly Dictionary<string, TaskRow> conversationControls = [];
-    private bool UsesConversationGroups => compactPreferences.CodexPinnedOnly;
+    internal bool PreviewConversationGroups { get; set; }
+    private bool UsesConversationGroups => (!demo || PreviewConversationGroups) && compactPreferences.CodexPinnedOnly;
     private string ConversationProfile => compactPreferences.CodexHome.Trim().TrimEnd('\\', '/').ToUpperInvariant();
     private ConversationGroup[] SavedGroups => ConversationGroups.Read(compactPreferences.ConversationGroups).For(ConversationProfile);
     private string GroupText(string zh, string en) => chinese ? zh : en;
@@ -70,10 +71,13 @@ public partial class IslandWindow
     private void ConversationDropTarget(FrameworkElement control, string? group, string? row = null)
     {
         control.AllowDrop = true;
+        control.DragEnter += (_, e) => { if (e.Data.GetDataPresent(ConversationDragFormat)) control.Opacity = 0.65; };
+        control.DragLeave += (_, _) => control.Opacity = 1;
         ConversationDrag? Payload(DragEventArgs e) => e.Data.GetData(ConversationDragFormat) is ConversationDrag value && value.Profile == ConversationProfile && !groupSavePending ? value : null;
         control.DragOver += (_, e) => { e.Effects = Payload(e) != null ? DragDropEffects.Move : DragDropEffects.None; e.Handled = true;
             if (conversationScroll != null) { var y = e.GetPosition(conversationScroll).Y; if (y < 24) conversationScroll.ScrollToVerticalOffset(conversationScroll.VerticalOffset-12); else if (y > conversationScroll.ActualHeight-24) conversationScroll.ScrollToVerticalOffset(conversationScroll.VerticalOffset+12); } };
         control.Drop += async (_, e) => {
+            control.Opacity = 1;
             var value = Payload(e); e.Handled = true;
             if (value == null || row != null && value.Members.Contains(row)) return;
             await SaveGroups(groups => {
@@ -109,6 +113,7 @@ public partial class IslandWindow
             var toggle = new Button { Content = group?.Collapsed == true ? "›" : "⌄", Width = 26, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0) };
             toggle.IsEnabled = group != null;
             if (group != null) toggle.Click += async (_, _) => await SaveGroups(groups => groups.Select(g => g.Id == group.Id ? g with { Collapsed = !g.Collapsed } : g).ToArray());
+            AutomationProperties.SetAutomationId(toggle, "island.group.toggle." + (group?.Id ?? "ungrouped"));
             heading.Children.Add(toggle);
             var name = new Button { Content = (group?.Name ?? GroupText("未分组", "Ungrouped")) + "  " + section.Rows.Length, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0), Padding = new Thickness(5,0,5,0) };
             AutomationProperties.SetName(name, group == null ? GroupText("未分组", "Ungrouped") : GroupText("重命名分组 ", "Rename group ") + group.Name);
