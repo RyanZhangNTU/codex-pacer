@@ -494,5 +494,74 @@ class WindowsLocalizationTests(unittest.TestCase):
                 self.localization.validate_formats({"value": "Backup: {0}"}, {"value": text})
 
 
+class CodexRemoteProgressTests(unittest.TestCase):
+    """SSH and WSL hosts run the same reporter as Windows, set up by one script."""
+    resources = contract.ROOT / "native/Sources/PacerCore/Resources"
+    setup = resources / "codex_remote_progress_setup.py"
+    reporter = resources / "codex_progress_mcp.py"
+
+    def test_remote_hosts_get_the_windows_reporter_byte_for_byte(self):
+        windows = contract.ROOT / "windows/InstallerSupport/Resources/pacer-codex-progress.py"
+        self.assertEqual(self.reporter.read_bytes(), windows.read_bytes())
+
+    def run_setup(self, home, enabled):
+        import subprocess, sys
+        payload = {"home": str(home), "enabled": enabled}
+        if enabled:
+            payload["reporter"] = base64.b64encode(self.reporter.read_bytes()).decode()
+        argument = base64.b64encode(json.dumps(payload).encode()).decode()
+        script = "import base64;exec(base64.b64decode(%r).decode())" % base64.b64encode(self.setup.read_bytes()).decode()
+        done = subprocess.run([sys.executable, "-u", "-c", script, argument], capture_output=True, text=True, timeout=30)
+        return json.loads(done.stdout)
+
+    @unittest.skipUnless(hasattr(__import__("os"), "getuid"), "POSIX hosts only")
+    def test_setup_owns_one_marked_table_and_leaves_other_entries_alone(self):
+        import os, subprocess, sys
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder) / ".codex"
+            self.assertEqual(self.run_setup(home, True), {"error": "missingHome"}, "Setup never creates a Codex home")
+            self.assertEqual(self.run_setup(home, False), {"configured": False, "conflict": False})
+            home.mkdir()
+            config = home / "config.toml"
+            user = 'model = "gpt-5"\n\n[mcp_servers.other]\ncommand = "other"\n'
+            config.write_text(user, encoding="utf-8")
+            self.assertEqual(self.run_setup(home, True), {"configured": True, "conflict": False})
+            text = config.read_text(encoding="utf-8")
+            self.assertTrue(text.startswith(user) and "[mcp_servers.pacer_progress]" in text and 'omit_tools_from = ["deferred"]' in text)
+            stamp = config.stat().st_mtime_ns
+            self.assertEqual(self.run_setup(home, True), {"configured": True, "conflict": False})
+            self.assertEqual(config.stat().st_mtime_ns, stamp, "A current host is not rewritten")
+            try:
+                import tomllib
+            except ImportError:
+                tomllib = None
+            if tomllib:
+                entry = tomllib.loads(text)["mcp_servers"]["pacer_progress"]
+                messages = [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "report_progress", "arguments": {"percent": 42}}}]
+                done = subprocess.run([entry["command"]] + entry["args"], input="".join(json.dumps(m) + "\n" for m in messages),
+                                      capture_output=True, text=True, timeout=30, env=dict(os.environ, **entry["env"]))
+                replies = [json.loads(line) for line in done.stdout.splitlines()]
+                self.assertEqual([tool["name"] for tool in replies[0]["result"]["tools"]], ["report_progress"])
+                self.assertEqual(replies[1]["result"]["content"][0]["text"], "pacer-progress:accepted")
+            self.assertEqual(self.run_setup(home, False), {"configured": False, "conflict": False})
+            self.assertEqual(config.read_text(encoding="utf-8"), user, "Turning off restores the user's file exactly")
+            self.assertFalse((home / "pacer/codex-progress/native/enabled").exists())
+            config.write_text(user + '\n[mcp_servers.pacer_progress]\ncommand = "mine"\n', encoding="utf-8")
+            self.assertEqual(self.run_setup(home, True), {"configured": False, "conflict": True})
+            self.assertNotIn("BEGIN Codex Pacer", config.read_text(encoding="utf-8"))
+            config.write_text(user, encoding="utf-8")
+            self.run_setup(home, True)
+            edited = config.read_text(encoding="utf-8").replace('"-S", ', "")
+            config.write_text(edited, encoding="utf-8")
+            for enabled in (True, False):
+                self.assertEqual(self.run_setup(home, enabled), {"configured": False, "conflict": True})
+                self.assertEqual(config.read_text(encoding="utf-8"), edited, "An edited table belongs to the user")
+            config.unlink()
+            (Path(folder) / "elsewhere.toml").write_text("", encoding="utf-8")
+            os.symlink(Path(folder) / "elsewhere.toml", config)
+            self.assertEqual(self.run_setup(home, True), {"error": "unsafePath"})
+
+
 if __name__ == "__main__":
     unittest.main()
