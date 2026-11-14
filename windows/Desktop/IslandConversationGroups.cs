@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -13,7 +14,7 @@ namespace CodexPacer.Windows;
 public partial class IslandWindow
 {
     private const string ConversationDragFormat = "PacerConversationGroup";
-    private sealed record ConversationDrag(string Profile, string[] Members);
+    private sealed record ConversationDrag(string Profile, string[] Members, string? Group);
     private ConversationDrag? activeConversationDrag;
     private string? conversationDragToken;
     private bool groupSavePending, conversationDragging;
@@ -21,6 +22,9 @@ public partial class IslandWindow
     private string ConversationStructure => string.Join("|", ConversationSections().Select(s => (s.Group?.Id ?? "") + ":" + s.Group?.Name + ":" + s.Group?.Collapsed + ":" + string.Join(",", s.Rows.Select(r => r.Id))));
     private ScrollViewer? conversationScroll;
     private readonly Dictionary<string, TaskRow> conversationControls = [];
+    private readonly Dictionary<string, Border> conversationGroupIndicators = [];
+    private Border? conversationDropIndicator;
+    private ToolTip? conversationDropHint;
     internal bool PreviewConversationGroups { get; set; }
     private bool UsesConversationGroups => (!demo || PreviewConversationGroups) && compactPreferences.CodexPinnedOnly;
     private string ConversationProfile => compactPreferences.CodexHome.Trim().TrimEnd('\\', '/').ToUpperInvariant();
@@ -54,7 +58,13 @@ public partial class IslandWindow
         }
         finally { groupSavePending = false; }
     }
-    private void ConversationDragSource(FrameworkElement control, Func<string[]> members)
+    private void ClearConversationDropFeedback(bool closeHint = true)
+    {
+        if (conversationDropIndicator != null) conversationDropIndicator.Visibility = Visibility.Collapsed;
+        conversationDropIndicator = null;
+        if (closeHint && conversationDropHint != null) conversationDropHint.IsOpen = false;
+    }
+    private void ConversationDragSource(FrameworkElement control, Func<string[]> members, string? group = null)
     {
         Point? start = null;
         control.PreviewMouseLeftButtonDown += (_, e) => start = e.GetPosition(control);
@@ -63,10 +73,10 @@ public partial class IslandWindow
             var position = e.GetPosition(control);
             if (Math.Abs(position.X-origin.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(position.Y-origin.Y) < SystemParameters.MinimumVerticalDragDistance) return;
             start = null; conversationDragging = true; collapse.Stop();
-            activeConversationDrag = new ConversationDrag(ConversationProfile, members());
+            activeConversationDrag = new ConversationDrag(ConversationProfile, members(), group);
             conversationDragToken = Guid.NewGuid().ToString("N");
             try { DragDrop.DoDragDrop(control, new DataObject(ConversationDragFormat, conversationDragToken), DragDropEffects.Move); }
-            finally { activeConversationDrag = null; conversationDragToken = null; conversationDragging = false; InvalidatePanel(true); }
+            finally { ClearConversationDropFeedback(); activeConversationDrag = null; conversationDragToken = null; conversationDragging = false; InvalidatePanel(true); }
             e.Handled = true;
         };
         control.PreviewMouseLeftButtonUp += (_, _) => start = null;
@@ -74,16 +84,40 @@ public partial class IslandWindow
     private void ConversationDropTarget(FrameworkElement control, string? group, string? row = null)
     {
         control.AllowDrop = true;
-        control.DragEnter += (_, e) => { if (e.Data.GetDataPresent(ConversationDragFormat)) control.Opacity = 0.65; };
-        control.DragLeave += (_, _) => control.Opacity = 1;
+        control.DragLeave += (_, _) => { control.Opacity = 1; ClearConversationDropFeedback(); };
         ConversationDrag? Payload(DragEventArgs e) => activeConversationDrag is { } value && value.Profile == ConversationProfile &&
             e.Data.GetData(ConversationDragFormat) is string token && token == conversationDragToken && !groupSavePending ? value : null;
-        control.DragOver += (_, e) => { e.Effects = Payload(e) != null ? DragDropEffects.Move : DragDropEffects.None; e.Handled = true;
+        bool Merge(DragEventArgs e) => (e.KeyStates & DragDropKeyStates.ShiftKey) != 0;
+        bool After(DragEventArgs e) => group != null && (row != null || e.GetPosition(control).Y >= control.ActualHeight / 2);
+        bool Allowed(ConversationDrag? value, DragEventArgs e) => value != null &&
+            (value.Group != null ? value.Group != group && (!Merge(e) || group != null) : row == null || !value.Members.Contains(row));
+        control.DragOver += (_, e) => {
+            var value = Payload(e);
+            var allowed = Allowed(value, e);
+            e.Effects = allowed ? DragDropEffects.Move : DragDropEffects.None; e.Handled = true;
+            ClearConversationDropFeedback(!allowed || value?.Group == null);
+            control.Opacity = allowed && value?.Group == null ? 0.65 : 1;
+            if (allowed && value?.Group != null && conversationGroupIndicators.TryGetValue(group ?? "", out var indicator))
+            {
+                conversationDropIndicator = indicator;
+                indicator.BorderThickness = Merge(e) ? new Thickness(1) : After(e) ? new Thickness(0,0,0,2) : new Thickness(0,2,0,0);
+                indicator.Visibility = Visibility.Visible;
+                conversationDropHint ??= new ToolTip { Placement = PlacementMode.Right, StaysOpen = true, IsHitTestVisible = false };
+                conversationDropHint.PlacementTarget = control;
+                conversationDropHint.Content = ui.Text(Merge(e) ? "windows.conversation_groups.merge_hint" : "windows.conversation_groups.reorder_hint");
+                conversationDropHint.IsOpen = true;
+            }
             if (conversationScroll != null) { var y = e.GetPosition(conversationScroll).Y; if (y < 24) conversationScroll.ScrollToVerticalOffset(conversationScroll.VerticalOffset-12); else if (y > conversationScroll.ActualHeight-24) conversationScroll.ScrollToVerticalOffset(conversationScroll.VerticalOffset+12); } };
         control.Drop += async (_, e) => {
-            control.Opacity = 1;
+            control.Opacity = 1; ClearConversationDropFeedback();
             var value = Payload(e); e.Handled = true;
-            if (value == null || row != null && value.Members.Contains(row)) return;
+            if (value == null || !Allowed(value, e)) return;
+            if (value.Group is { } source)
+            {
+                var after = After(e); var merge = Merge(e);
+                await SaveGroups(groups => ConversationGroups.DropGroup(groups, source, group, after, merge));
+                return;
+            }
             await SaveGroups(groups => {
                 var destination = group;
                 var members = value.Members;
@@ -105,6 +139,7 @@ public partial class IslandWindow
     {
         var offset = conversationScroll?.VerticalOffset ?? 0;
         conversationControls.Clear();
+        ClearConversationDropFeedback(); conversationGroupIndicators.Clear();
         conversationStructure = ConversationStructure;
         var list = new StackPanel();
         conversationScroll = new ScrollViewer { Content = list, Height = ConversationHeight, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
@@ -121,11 +156,16 @@ public partial class IslandWindow
             heading.Children.Add(toggle);
             var name = new Button { Content = (group?.Name ?? ui.Text("windows.conversation_groups.ungrouped")) + "  " + section.Rows.Length, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0), Padding = new Thickness(5,0,5,0) };
             AutomationProperties.SetName(name, group == null ? ui.Text("windows.conversation_groups.ungrouped") : string.Format(ui.Text("windows.conversation_groups.rename"), group.Name));
-            heading.Children.Add(name); list.Children.Add(heading);
-            ConversationDropTarget(heading, group?.Id);
+            var headingHost = new Grid { Height = 32, Background = Brushes.Transparent };
+            var indicator = new Border { BorderBrush = SystemColors.HighlightBrush, Visibility = Visibility.Collapsed, IsHitTestVisible = false };
+            conversationGroupIndicators[group?.Id ?? ""] = indicator;
+            heading.Children.Add(name); headingHost.Children.Add(heading); headingHost.Children.Add(indicator); list.Children.Add(headingHost);
+            AutomationProperties.SetAutomationId(headingHost, "island.group.header." + (group?.Id ?? "ungrouped"));
+            ConversationDropTarget(headingHost, group?.Id);
             if (group != null)
             {
-                ConversationDragSource(heading, () => group.Members);
+                headingHost.ToolTip = ui.Text("windows.conversation_groups.drag_help");
+                ConversationDragSource(headingHost, () => group.Members, group.Id);
                 name.Click += (_, _) => {
                     var input = new TextBox { Text = group.Name, MaxLength = 64, Width = 200, VerticalContentAlignment = VerticalAlignment.Center };
                     heading.Children.Remove(name); heading.Children.Add(input); Activate(); input.Focus(); input.SelectAll();

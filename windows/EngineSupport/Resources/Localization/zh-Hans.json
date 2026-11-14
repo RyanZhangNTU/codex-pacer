@@ -1,4 +1,7 @@
 {
+  "windows.conversation_groups.drag_help": "拖动调整顺序；按住 Shift 拖到另一组可合并。",
+  "windows.conversation_groups.reorder_hint": "松开调整顺序 · Shift：合并分组",
+  "windows.conversation_groups.merge_hint": "松开合并这两个分组",
   "windows.conversation_groups.ungrouped": "未分组",
   "windows.conversation_groups.new": "新分组",
   "windows.conversation_groups.rename": "重命名分组 {0}",

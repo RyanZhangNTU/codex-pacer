@@ -38,4 +38,15 @@ internal sealed record ConversationGroups(Dictionary<string, ConversationGroup[]
         }
         return result.Where(g => g.Members.Length > 0).ToArray();
     }
+    // Group drags reorder by default. Combining membership always requires an explicit merge.
+    internal static ConversationGroup[] DropGroup(ConversationGroup[] groups, string source, string? destination, bool after, bool merge)
+    {
+        var dragged = groups.FirstOrDefault(g => g.Id == source);
+        if (dragged == null || source == destination || destination != null && !groups.Any(g => g.Id == destination)) return groups;
+        if (merge) return destination == null ? groups : Move(groups, dragged.Members, destination);
+        var result = groups.Where(g => g.Id != source).ToList();
+        var index = destination == null ? result.Count : result.FindIndex(g => g.Id == destination) + (after ? 1 : 0);
+        result.Insert(index, dragged);
+        return result.ToArray();
+    }
 }

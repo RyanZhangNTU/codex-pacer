@@ -1,4 +1,7 @@
 {
+  "windows.conversation_groups.drag_help": "Drag to reorder. Hold Shift while dragging onto another group to merge.",
+  "windows.conversation_groups.reorder_hint": "Release to reorder · Shift: merge groups",
+  "windows.conversation_groups.merge_hint": "Release to merge these groups",
   "windows.conversation_groups.ungrouped": "Ungrouped",
   "windows.conversation_groups.new": "New group",
   "windows.conversation_groups.rename": "Rename group {0}",

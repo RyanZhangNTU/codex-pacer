@@ -163,4 +163,4 @@ Changes apply right away. When an update is available, it shows in the sidebar a
 
 ### Windows fork: pinned conversations and groups
 
-All pinned Codex chats stay in the expanded list, including idle chats. Drop a chat onto another to create a group, onto a group header to move it, or onto Ungrouped to move it out. Drop one group header onto another to merge, click a name to rename, and use the arrow to collapse. The row context menu also offers move targets. Groups and collapsed state persist only in Pacer, scoped to the Codex data folder; the Codex sidebar is unchanged.
+All pinned Codex chats stay in the expanded list, including idle chats. Drop a chat onto another to create a group, onto a group header to move it, or onto Ungrouped to move it out. Drag group headers to reorder them; the insertion line shows the new position. Hold Shift while dropping a group onto another to merge them; the hint changes to confirm the merge. Click a name to rename, and use the arrow to collapse. The row context menu also offers move targets. Groups, order and collapsed state persist only in Pacer, scoped to the Codex data folder; the Codex sidebar is unchanged.
