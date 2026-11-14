@@ -1203,10 +1203,12 @@ final class IslandModel: ObservableObject {
         set { activityState.demoRequests = newValue }
     }
     var isDemo: Bool { demo }
-    /// Demo shows every module this Mac can run.
-    private static var demoInstallation: ProviderInstallationDetection {
+    /// The demo computer has the three original services; WorkBuddy reads as
+    /// not found, so reference shots stay the same, unless `--demo-workbuddy`
+    /// puts it there too. A module on in the demo adds its task and dial.
+    private static func demoInstallation(_ arguments: [String]?) -> ProviderInstallationDetection {
         ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true,
-            additional: Set(HarnessRegistry.localHarnesses.filter { $0.platforms.contains(.macOS) }.map(\.descriptor.id)))
+            additional: arguments?.contains("--demo-workbuddy") == true ? [.workbuddy] : [])
     }
 
     var home: URL {
@@ -1367,7 +1369,7 @@ final class IslandModel: ObservableObject {
         self.claudeQuotaReads = claudeQuotaReads ?? ClaudeQuotaReadDependencies()
         self.installationOverride = installation
         self.installation = installation ?? (demo && demoArguments != nil
-            ? Self.demoInstallation : .detect())
+            ? Self.demoInstallation(demoArguments) : .detect())
         self.modules = .load(from: defaults)
         self.appliedClaudeProgressRing = Self.progressRingEnabled(Self.claudeProgressRingKey, in: defaults)
         self.demo = demo
@@ -2173,7 +2175,7 @@ final class IslandModel: ObservableObject {
     }
     func applySettings(sourceChanged: Bool) {
         installation = installationOverride ?? (demo && demoArguments != nil
-            ? Self.demoInstallation : .detect())
+            ? Self.demoInstallation(demoArguments) : .detect())
         modules = .load(from: defaults)
         PacerAccent.current = PacerAccent(defaults: defaults)
         // Light Liquid Glass turns the whole island light before it redraws.
@@ -2451,7 +2453,8 @@ final class IslandModel: ObservableObject {
         var observed = demoArguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
         if demoArguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }
         if demoArguments.contains("--demo-deepseek") { observed.append(DemoScenario.deepseekTask(stage: stage, at: now)) }
-        if demoArguments.contains("--demo-workbuddy"), isModuleEnabled(.workbuddy) { observed.append(DemoScenario.workbuddyTask(stage: stage, at: now)) }
+        // A module turned on in the demo joins it with its own task.
+        if isModuleEnabled(.workbuddy) { observed.append(DemoScenario.workbuddyTask(stage: stage, at: now)) }
         demoRequests = []
         if demoArguments.contains("--demo-cloud") {
             let cloud = DemoScenario.claudeCloud(stage: stage, at: now)

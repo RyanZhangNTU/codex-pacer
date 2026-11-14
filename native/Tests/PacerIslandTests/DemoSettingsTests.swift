@@ -22,9 +22,9 @@ final class DemoSettingsTests: XCTestCase {
     func testSettingsPreserveDemoTasksStageRatesAndRequests() async throws {
         let defaults = try defaults(), clock = now
         let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: arguments, defaults: defaults)
-        XCTAssertEqual(Set(model.enabledProviders), Set(model.supportedModules),
-                       "Demo automatic choices use synthetic installations of every module this Mac runs")
-        XCTAssertTrue(model.enabledProviders.contains(.workbuddy))
+        XCTAssertEqual(Set(model.enabledProviders), Set(HarnessRegistry.legacyIDs), "Demo automatic choices use synthetic installations")
+        XCTAssertEqual(model.moduleLibrary(.load(from: defaults)).collapsed.map(\.provider), [.workbuddy],
+                       "Other modules read as not found in the demo until turned on")
         for stage in DemoTaskStage.allCases {
             model.setDemoStage(stage)
             let before = model.activities.sorted { $0.id < $1.id }
@@ -104,5 +104,23 @@ final class DemoSettingsTests: XCTestCase {
             }
         }
         await model.shutdown()
+    }
+}
+
+@MainActor
+final class DemoWorkBuddyTests: XCTestCase {
+    func testDemoWorkBuddyFlagTurnsTheModuleOnWithItsTaskAndDial() throws {
+        let domain = testDefaultsName("demo-workbuddy-tests")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { removeTestDefaults(domain) }
+        let plain = IslandModel(demo: true, demoArguments: ["--demo"], defaults: defaults)
+        XCTAssertFalse(plain.isModuleEnabled(.workbuddy), "The reference demo keeps WorkBuddy off and folded")
+        XCTAssertNil(plain.harnessAccount(.workbuddy)?.reading)
+        let model = IslandModel(demo: true, demoArguments: ["--demo", "--demo-workbuddy"], defaults: defaults)
+        XCTAssertTrue(model.isModuleEnabled(.workbuddy))
+        model.setDemoStage(.thinking)
+        XCTAssertTrue(model.activities.contains { $0.provider == .workbuddy }, "Its demo task joins the others")
+        XCTAssertNotNil(model.harnessAccount(.workbuddy)?.reading, "Its credits dial shows the demo bill")
+        XCTAssertNil(defaults.string(forKey: "providerModule.workbuddy"), "The flag saves no module choice")
     }
 }
