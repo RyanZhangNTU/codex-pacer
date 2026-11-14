@@ -124,6 +124,7 @@ public enum PacerEngine {
             claudeServices: quotaDiagnostics ? .readOnlyDiagnostics : nil,
             wslServices: wsl,
             sshServices: ssh, claudeRemoteServices: .live(ssh: ssh, wsl: wsl),
+            codexRemoteProgressServices: demo || readOnly ? nil : .codexProgress(ssh: ssh, wsl: wsl),
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices,
             managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly,
             codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
@@ -269,6 +270,10 @@ actor EngineRuntime {
     private let claudeRemoteServices: EngineClaudeRemoteServices?
     private lazy var claudeRemoteSetup = claudeRemoteServices.map { WindowsClaudeRemoteCoordinator(services: $0, now: now, maximumTargets: 16) }
     private var claudeRemoteSetups: [EngineClaudeRemoteSetup] = []
+    /// Pacer's Codex progress tool on SSH and WSL hosts, with Claude's schedule.
+    private let codexRemoteProgressServices: EngineClaudeRemoteServices?
+    private lazy var codexRemoteProgress = codexRemoteProgressServices.map { WindowsClaudeRemoteCoordinator(services: $0, now: now, maximumTargets: 16) }
+    private var codexRemoteProgressInput: String?
     private var codexRemoteTargets: [RemoteActivityTarget] = [], claudeRemoteTargets: [RemoteActivityTarget] = []
     private var claudeRemoteStatuses: [String: RuntimeStreamStatus] = [:]
     private var localStreamStatuses: [AgentProvider: RuntimeStreamStatus] = [:]
@@ -454,6 +459,7 @@ actor EngineRuntime {
          wslServices: WindowsWSLServices? = nil,
          sshServices: WindowsSSHServices? = nil,
          claudeRemoteServices: EngineClaudeRemoteServices? = nil,
+         codexRemoteProgressServices: EngineClaudeRemoteServices? = nil,
          cloudServices: ClaudeCloudServices? = nil,
          navigationServices: ActivityNavigationServices? = nil,
          navigationClock: @escaping @Sendable () -> TimeInterval = { ActivityNavigationState.monotonicNow },
@@ -480,6 +486,7 @@ actor EngineRuntime {
         self.wslServices = wslServices
         self.sshServices = sshServices
         self.claudeRemoteServices = claudeRemoteServices
+        self.codexRemoteProgressServices = codexRemoteProgressServices
         self.navigationServices = navigationServices ?? (demo ? .demo : .live)
         self.navigationClock = navigationClock; self.navigationErrorDuration = navigationErrorDuration
         self.activityHostServices = activityHostServices
@@ -1103,6 +1110,7 @@ actor EngineRuntime {
         inbox.bindSourceHomes(provider: .deepseek, localHome: deepseekHome)
         let plan = lifecycle.settings(lifecycleConfiguration)
         await bindClaudeRemoteSetup()
+        await bindCodexRemoteProgress()
         for provider in plan.changedProviders {
             resetSourceState(provider)
             navigationState.cancel(provider: provider)
@@ -1888,6 +1896,8 @@ actor EngineRuntime {
             unavailable: state.unavailable.filter { allowsRemoteSource($0, provider: .codex) },
             remoteControlDirectory: state.remoteControlDirectory)
         inbox.updateNames(state.names); inbox.updatePerformance(state.performance)
+        // A host that just connected can get the progress tool.
+        Task { [weak self] in await self?.bindCodexRemoteProgress() }
         if projectionReady { projectCollected(at: now()) }
         else {
             // Initialization/source reads may be awaiting I/O. Keep endings
@@ -1926,11 +1936,32 @@ actor EngineRuntime {
         guard active, monitorSSH, current, !Task.isCancelled else { return }
         codexRemoteTargets = codex; claudeRemoteTargets = claude
         await bindClaudeRemoteSetup()
+        await bindCodexRemoteProgress()
         bindRemoteCompletionSources()
         await bindDesktopMonitor(); await bindActivityMonitor(.claude)
     }
     private func bindRemoteCompletionSources() {
         bindCodexCompletionSources(); bindWSLCompletionSources(.claude)
+    }
+
+    /// Codex starts MCP servers from the host a task runs on, so connected SSH
+    /// and WSL hosts get Pacer's progress tool too. With the ring off, only hosts
+    /// this PC set up are visited, to take it away again. Unchanged inputs are
+    /// skipped: desktop updates arrive far more often than hosts connect.
+    private func bindCodexRemoteProgress() async {
+        guard let setup = codexRemoteProgress, let services = codexRemoteProgressServices else { return }
+        let ring = codexProgressRing && enabled.contains(.codex)
+        let on = active && managesCodexProgress && (monitorSSH || monitorWSL) && enabled.contains(.codex)
+        let configured = on && !ring ? services.loadDigests() : [:]
+        let targets = on ? monitoredRemoteTargets(.codex).filter { ring || configured[$0.alias] != nil } : []
+        let statuses = (desktopState?.statuses ?? [:]).filter { id, _ in targets.contains { $0.id == id } }
+        let input = [String(on), String(ring), String(lifecycle.version(.codex))] + targets.map { target in
+            target.id + "=" + target.alias + "@" + target.home + ":" + String(statuses[target.id].map { $0.connected && $0.sourceAvailable != false } ?? false)
+        }
+        guard input.joined(separator: "\n") != codexRemoteProgressInput else { return }
+        codexRemoteProgressInput = input.joined(separator: "\n")
+        await setup.configure(targets: targets, statuses: statuses, enabled: on, progressRing: ring,
+            version: lifecycle.version(.codex), update: { _, _ in })
     }
 
     private func bindClaudeRemoteSetup() async {
@@ -2532,13 +2563,15 @@ actor EngineRuntime {
     }
     private func cleanupSources(quota: CodexQuotaMonitor?, claude: ClaudeQuotaMonitor?, balance: DeepSeekBalanceMonitor?, sleeping: Bool) async {
         let cloud = claudeCloudMonitor, desktop = desktopMonitor, web = webBridge, claudeWeb = claudeWebBridge, remoteSetup = claudeRemoteSetup
+        let codexRemote = codexRemoteProgress
+        codexRemoteProgressInput = nil
         let deadline = ShutdownDeadline(), claudeActivity = claudeActivityMonitor, deepseekActivity = deepseekActivityMonitor
         var operations: [ApplicationLifecycleCoordinator.Resource: ApplicationLifecycleCoordinator.Cleanup] = [
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claude?.stop() },
             .cloud: { if sleeping { await cloud?.suspend() } else { await cloud?.stop() } },
             .realtime: { await desktop?.shutdown(deadline: deadline, retainingRemoteControlCatalog: sleeping) }, .balance: { await balance?.stop() },
             .claudeActivity: { await claudeActivity.shutdown(deadline: deadline) }, .deepseekActivity: { await deepseekActivity.shutdown() },
-            .remoteSetup: { await remoteSetup?.shutdown() }
+            .remoteSetup: { await remoteSetup?.shutdown(); await codexRemote?.shutdown() }
         ]
         if !sleeping {
             operations[.web] = { await web.setAvailable(false) }

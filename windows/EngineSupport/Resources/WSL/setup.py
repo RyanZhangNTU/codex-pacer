@@ -28,7 +28,8 @@ if not 0 < size <= 1048576:
     raise SystemExit(2)
 command = exact(size).decode("utf-8", errors="strict")
 os.environ["HOME"] = str(home)
-os.environ["CLAUDE_CONFIG_DIR"] = str(root)
+# Claude's hooks or Codex's progress tool, each for its own provider root.
+os.environ["CODEX_HOME" if route["provider"] == "codex" else "CLAUDE_CONFIG_DIR"] = str(root)
 child = subprocess.Popen(["/bin/sh", "-c", command], stdin=subprocess.DEVNULL, start_new_session=True)
 try:
     while child.poll() is None:
