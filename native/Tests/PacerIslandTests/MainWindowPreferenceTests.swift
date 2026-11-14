@@ -20,16 +20,17 @@ final class MainWindowPreferenceTests: XCTestCase {
             XCTAssertEqual(SettingsPane.load(from: defaults), pane, stored)
         }
         let workBuddy = try XCTUnwrap(AgentProvider(rawValue: "workbuddy"))
-        let localProviders = [workBuddy]
-        let pages = SettingsPane.pages(localProviders: localProviders)
+        let services = HarnessRegistry.legacyIDs + [workBuddy]
+        let pages = SettingsPane.pages(services: services)
         for pane in pages {
             defaults.set(pane.rawValue, forKey: SettingsPane.defaultsKey)
             XCTAssertEqual(SettingsPane.load(from: defaults), pane, "Current pages reopen as saved")
         }
         defaults.set("removed", forKey: SettingsPane.defaultsKey)
         XCTAssertEqual(SettingsPane.load(from: defaults), .overview)
-        XCTAssertEqual(SettingsPane.groups(localProviders: localProviders)[1], [.codex, .claude, .deepseek, SettingsPane(provider: workBuddy), .remote])
-        XCTAssertFalse(SettingsPane.pages(localProviders: []).contains(SettingsPane(provider: workBuddy)))
+        XCTAssertEqual(SettingsPane.groups(services: services)[1], [.codex, .claude, .deepseek, SettingsPane(provider: workBuddy), .remote, .modules])
+        XCTAssertFalse(SettingsPane.pages(services: HarnessRegistry.legacyIDs).contains(SettingsPane(provider: workBuddy)),
+                       "A module the library keeps folded is not in the sidebar")
     }
 
     func testAboutKeepsTheHelpTabForAnOldHelpPage() {

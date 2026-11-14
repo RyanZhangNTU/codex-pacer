@@ -111,10 +111,12 @@ struct QuotaDashboardView: View {
         }.padding(.bottom, 4)
     }
 
-    private func accountCredits(_ slot: QuotaDashboardPresentation.Slot, size: CGFloat, details: Bool = false) -> some View {
-        HarnessAccountCard(connection: model.workBuddyAccount, style: .split, size: size, showsDetails: details, showsName: !details,
-            openSettings: { model.openSettings(for: slot.provider) })
-            .padding(.horizontal, details ? IslandMetrics.rowInset : 0)
+    @ViewBuilder private func accountCredits(_ slot: QuotaDashboardPresentation.Slot, size: CGFloat, details: Bool = false) -> some View {
+        if let connection = model.harnessAccount(slot.provider) {
+            HarnessAccountCard(connection: connection, style: .split, size: size, showsDetails: details, showsName: !details,
+                openSettings: { model.openSettings(for: slot.provider) })
+                .padding(.horizontal, details ? IslandMetrics.rowInset : 0)
+        }
     }
 
     private func providerHelp(_ provider: AgentProvider) -> String {

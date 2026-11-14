@@ -48,11 +48,13 @@ final class ClaudeProgressRingTests: XCTestCase {
     func testEveryProvidersRingIsOnUntilItsOwnSettingTurnsItOff() throws {
         let fixture = try fixture()
         func providers() -> Set<AgentProvider> { fixture.model.taskPresentationOptions(for: []).progressRingProviders }
-        XCTAssertEqual(providers(), [.claude, .codex, .deepseek], "A user who never chose sees every ring")
+        XCTAssertEqual(providers(), [.claude, .codex, .deepseek, .workbuddy], "A user who never chose sees every ring")
         fixture.defaults.set(false, forKey: IslandModel.claudeProgressRingKey)
-        XCTAssertEqual(providers(), [.codex, .deepseek])
+        XCTAssertEqual(providers(), [.codex, .deepseek, .workbuddy])
         fixture.defaults.set(false, forKey: IslandModel.deepseekProgressRingKey)
-        XCTAssertEqual(providers(), [.codex])
+        XCTAssertEqual(providers(), [.codex, .workbuddy])
+        fixture.defaults.set(["workbuddy"], forKey: IslandModel.disabledHarnessProgressKey)
+        XCTAssertEqual(providers(), [.codex], "A local module's ring is off only once listed")
         fixture.defaults.set(false, forKey: IslandModel.codexProgressRingKey)
         XCTAssertEqual(providers(), [])
         fixture.defaults.set(true, forKey: IslandModel.claudeProgressRingKey)

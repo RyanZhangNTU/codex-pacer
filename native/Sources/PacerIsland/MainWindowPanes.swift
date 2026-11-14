@@ -56,7 +56,7 @@ struct OverviewPane: View {
     private var serviceRows: [[AgentProvider]] {
         let options = model.panelOptions
         let wide = model.quotaProviders.filter { provider in
-            guard provider != .deepseek, options.quotaDetails, options.periods(for: provider) == .both,
+            guard HarnessRegistry.descriptor(for: provider)?.hasQuotaWindows == true, options.quotaDetails, options.periods(for: provider) == .both,
                   let snapshot = model.providerQuota(provider) else { return false }
             return [QuotaDashboardPresentation.Period.fiveHour, .weekly].allSatisfy {
                 QuotaDashboardPresentation.window(provider: provider, snapshot: snapshot, period: $0) != nil
@@ -110,13 +110,12 @@ struct OverviewPane: View {
             if provider == .deepseek {
                 deepseekContent
             } else if let descriptor = model.localHarnessDescriptors.first(where: { $0.id == provider }) {
-                let status = HarnessSettingsStatus(model: model, provider: descriptor.id)
+                // Like the other services: the dial, and a line only when local tasks need attention.
                 if descriptor.reportsAccountCredits { QuotaDashboardView(model: model, providers: [provider]) }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(status.text)
-                    ForEach(harnessUsageLines(model.localHarnessUsage(provider)), id: \.self) { Text($0) }
+                if let problem = localTaskProblem(provider) {
+                    Text(problem).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
             } else {
                 QuotaDashboardView(model: model, providers: [provider])
             }
@@ -124,6 +123,15 @@ struct OverviewPane: View {
         .padding(.horizontal, 16).padding(.vertical, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .islandSurface()
+    }
+
+    private func localTaskProblem(_ provider: AgentProvider) -> String? {
+        switch model.localHarnessStatus(provider) {
+        case .incompatible: L10n.text("harness.incompatible")
+        case .unavailable: L10n.text("harness.unavailable")
+        case .missing where !model.providerDetected(provider): L10n.text("harness.missing")
+        default: nil
+        }
     }
 
     /// The dial as the island draws it, with today or the budgets and the speed beside it.
@@ -356,7 +364,7 @@ struct SettingsNotificationsPane: View {
     }
 
     private var system: Bool { notificationPreference.enabled }
-    private var quotaModules: Bool { providers.contains { $0 != .deepseek } }
+    private var quotaModules: Bool { providers.contains { HarnessRegistry.descriptor(for: $0)?.hasQuotaWindows == true } }
 
     var body: some View {
         MainCard {
@@ -392,6 +400,13 @@ struct SettingsNotificationsPane: View {
                 row(L10n.text("main.notify.budget"),
                     field: Button(L10n.text("main.notify.budget_link"), action: openDeepSeek).buttonStyle(.link).font(.system(size: 12.5)),
                     bar: choice(.budget), system: follows(.budget))
+            }
+        }
+        // One card per module that reads account credits, like DeepSeek's wallet.
+        ForEach(providers.filter { HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true }, id: \.self) { provider in
+            MainCard(title: provider.displayName) {
+                row(L10n.text("main.notify.low_credits"), note: L10n.text("main.notify.low_credits_note"),
+                    bar: choice(.lowCredits), system: follows(.lowCredits))
             }
         }
         MainCard {

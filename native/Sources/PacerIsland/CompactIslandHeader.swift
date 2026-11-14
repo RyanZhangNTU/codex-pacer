@@ -203,6 +203,7 @@ struct CompactIslandComponent: View {
             case .spike: warning = .spendSpike
             case .overBudget, .nearingBudget: warning = .budget
             case .exhausted, .lowBalance: warning = .lowBalance
+            case .lowCredits: warning = .lowCredits
             }
             if !result.contains(warning) { result.append(warning) }
         }

@@ -39,9 +39,11 @@ struct ClassicQuotaDashboardView: View {
                     }.frame(maxWidth: .infinity, alignment: .top)
                 } else {
                     let details = slots.count == 1 && model.panelOptions.quotaDetails
-                    HarnessAccountCard(connection: model.workBuddyAccount, style: .classic, size: 88, showsDetails: details, showsName: !details,
-                        openSettings: { model.openSettings(for: slot.provider) })
-                        .padding(.horizontal, details ? IslandMetrics.rowInset : 0)
+                    if let connection = model.harnessAccount(slot.provider) {
+                        HarnessAccountCard(connection: connection, style: .classic, size: 88, showsDetails: details, showsName: !details,
+                            openSettings: { model.openSettings(for: slot.provider) })
+                            .padding(.horizontal, details ? IslandMetrics.rowInset : 0)
+                    }
                 }
             }
             if providers.count == 1, let provider = providers.first, slots.first?.period != nil {

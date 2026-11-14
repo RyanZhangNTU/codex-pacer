@@ -1,6 +1,7 @@
 import PacerCore
 import SwiftUI
 
+/// A module's account credits as a dial, in the panel and on Overview.
 struct HarnessAccountCard: View {
     @ObservedObject var connection: HarnessAccountConnection
     var style: ExpandedQuotaStyle?
@@ -24,8 +25,8 @@ struct HarnessAccountCard: View {
                         dial(style)
                         if showsName {
                             HStack(spacing: 5) {
-                                ProviderAppIcon(provider: .workbuddy, size: 13)
-                                Text(AgentProvider.workbuddy.displayName)
+                                ProviderAppIcon(provider: connection.provider, size: 13)
+                                Text(connection.provider.displayName)
                                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(primary)
                             }
                         }
@@ -84,7 +85,7 @@ struct HarnessAccountCard: View {
         return ZStack {
             if let value {
                 if let fraction = value.fraction {
-                    QuotaRingGauge(fraction: fraction, tint: AgentProvider.workbuddy.tint, stale: stale,
+                    QuotaRingGauge(fraction: fraction, tint: connection.provider.tint, stale: stale,
                         geometry: style == .classic ? .classic : .gauge)
                 } else {
                     Circle().stroke(PacerPalette.track, lineWidth: 1.5)
@@ -100,7 +101,7 @@ struct HarnessAccountCard: View {
                 }.frame(width: size * 0.72).opacity(stale ? 0.55 : 1)
             } else {
                 Circle().stroke(PacerPalette.track, lineWidth: 1.5)
-                ProviderAppIcon(provider: .workbuddy, size: 24)
+                ProviderAppIcon(provider: connection.provider, size: 24)
             }
         }.frame(width: size, height: size)
             .accessibilityElement(children: .ignore)
@@ -140,40 +141,5 @@ struct HarnessAccountCard: View {
 
     private func date(_ value: Date) -> String {
         value.formatted(.dateTime.month(.abbreviated).day().hour().minute().locale(L10n.locale))
-    }
-}
-
-struct WorkBuddyAccountSettings: View {
-    @ObservedObject var model: IslandModel
-    @ObservedObject var connection: HarnessAccountConnection
-    @State private var site = "automatic"
-
-    var body: some View {
-        MainCard(title: L10n.text("harness.account.title")) {
-            HarnessAccountCard(connection: connection)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-            CardRow(title: L10n.text("harness.account.connection")) {
-                Button(L10n.text(connection.reading == nil ? "harness.account.connect" : "harness.account.switch")) { connection.connect() }
-                    .buttonStyle(.main)
-                Button(L10n.text("common.refresh")) { connection.refresh() }.buttonStyle(.main)
-                if connection.canDisconnect {
-                    Button(L10n.text("harness.account.disconnect")) { connection.disconnect() }.buttonStyle(.main)
-                }
-            }
-            .disabled(connection.busy || model.isDemo)
-            CardRow(title: L10n.text("harness.account.site")) {
-                Picker(L10n.text("harness.account.site"), selection: $site) {
-                    Text(L10n.text("provider.automatic")).tag("automatic")
-                    Text("workbuddy.cn").tag("china")
-                    Text("workbuddy.ai").tag("international")
-                }
-                .labelsHidden()
-                .disabled(connection.busy || model.isDemo)
-            }
-        }
-        .onAppear { site = model.workBuddyAccountSite }
-        .onChange(of: site) { _, new in
-            if new != model.workBuddyAccountSite { model.setWorkBuddyAccountSite(new) }
-        }
     }
 }

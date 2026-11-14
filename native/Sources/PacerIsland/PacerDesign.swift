@@ -38,6 +38,12 @@ enum PacerPalette {
     }
 }
 
+extension Color {
+    init(_ rgb: HarnessBrand.RGB) {
+        self.init(red: Double(rgb.red) / 255, green: Double(rgb.green) / 255, blue: Double(rgb.blue) / 255)
+    }
+}
+
 extension AgentProvider {
     /// The color the service draws in: its own under Multicolor, otherwise a
     /// shade of the chosen accent. On the light island the brand colors take
@@ -47,24 +53,12 @@ extension AgentProvider {
     /// not the current one, and dark-tone for window icons that stay the same
     /// whatever the island's material.
     func shade(light: Bool) -> Color { PacerAccent.current.tint(for: self, light: light) ?? (light ? lightShade : brand) }
+    /// The module's colors, from its registry entry.
+    var palette: HarnessBrand { HarnessRegistry.descriptor(for: self)?.brand ?? .neutral }
     /// The brand color one shade darker, for light glass.
-    var lightShade: Color {
-        switch self {
-        case .codex: Color(red: 14 / 255, green: 140 / 255, blue: 120 / 255)
-        case .claude: Color(red: 196 / 255, green: 88 / 255, blue: 31 / 255)
-        case .deepseek: Color(red: 62 / 255, green: 91 / 255, blue: 219 / 255)
-        default: Color(red: 105 / 255, green: 66 / 255, blue: 162 / 255)
-        }
-    }
+    var lightShade: Color { Color(palette.light) }
     /// The service's own color, which its icon keeps whatever the accent.
-    var brand: Color {
-        switch self {
-        case .codex: Color(red: 0.49, green: 0.84, blue: 0.77)
-        case .claude: Color(red: 0.95, green: 0.61, blue: 0.42)
-        case .deepseek: color
-        default: Color(red: 195 / 255, green: 171 / 255, blue: 241 / 255)
-        }
-    }
+    var brand: Color { Color(palette.dark) }
     /// DeepSeek's blue (#7B93FF) reads at the same weight as the other two on black.
     var color: Color { Color(red: 0x7B / 255, green: 0x93 / 255, blue: 0xFF / 255) }
     /// Generic glyph for settings navigation and app buttons; never a vendor logo.
@@ -110,17 +104,16 @@ enum PacerAccent: String, CaseIterable, Identifiable {
     /// light color such as yellow keeps at least 3.5:1 against the light face.
     func tint(for provider: AgentProvider, light: Bool = false) -> Color? {
         guard let base = light ? lightComponents(for: provider) : components.map({ base in
-            let lift = switch provider { case .claude: 0.42; case .deepseek: 0.66; default: 0.0 }
+            let lift = provider.palette.accentLift
             func lifted(_ value: Double) -> Double { value + (1 - value) * lift }
             return (lifted(base.red), lifted(base.green), lifted(base.blue))
         }) else { return nil }
         return Color(red: base.red, green: base.green, blue: base.blue)
     }
-    /// Relative luminance of each service's shade on light glass: Codex 0.07,
-    /// Claude 0.12 and DeepSeek 0.20, about 7.4, 5.2 and 3.6:1 against #ECECF0.
-    static func lightLuminance(for provider: AgentProvider) -> Double {
-        switch provider { case .claude: 0.12; case .deepseek: 0.2; default: 0.07 }
-    }
+    /// Relative luminance of each service's shade on light glass, from its
+    /// registry entry: Codex 0.07, Claude 0.12 and DeepSeek 0.20 are about
+    /// 7.4, 5.2 and 3.6:1 against #ECECF0.
+    static func lightLuminance(for provider: AgentProvider) -> Double { provider.palette.accentLuminance }
     /// The color's linear light scaled evenly to the service's luminance, which
     /// keeps its hue and saturation.
     func lightComponents(for provider: AgentProvider) -> (red: Double, green: Double, blue: Double)? {

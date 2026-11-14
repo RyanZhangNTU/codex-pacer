@@ -47,23 +47,32 @@ extension IslandModel {
             providerQuota(provider).map { (provider, $0) }
         })
         let failed = Set(enabledProviders.filter { providerQuotaError($0) != nil })
-        let selections = Dictionary(uniqueKeysWithValues: enabledProviders.filter { $0 != .deepseek }.map { provider in
+        let windows = Set(HarnessRegistry.ids(where: \.hasQuotaWindows))
+        let selections = Dictionary(uniqueKeysWithValues: enabledProviders.filter(windows.contains).map { provider in
             (provider, QuotaWindowSelection(saved: defaults.string(forKey: provider == .codex ? "quotaWindowID" : "claudeQuotaWindowID"),
                 snapshot: providerQuota(provider)))
         })
         let alert = wallet.flatMap { DeepSeekAlertPresentation(wallet: $0,
             lowBalance: warnings.contains(.lowBalance), spike: warnings.contains(.spendSpike), budget: warnings.contains(.budget)) }
         return CompactWarningPresentation.items(enabled: enabled, warnings: warnings, snapshots: snapshots,
-            failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, wallet: alert, now: now)
+            failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, wallet: alert, credits: harnessCredits, now: now)
+    }
+
+    /// Each enabled module's account credits, dimmed while a refresh fails.
+    var compactCredits: [CompactBarContext.Credits] {
+        HarnessRegistry.ids(where: \.reportsAccountCredits).filter(isModuleEnabled).compactMap { provider in
+            harnessAccounts[provider].map { .init(provider: provider, credits: $0.credits, stale: $0.state == .unavailable, now: now) }
+        }
     }
 
     private func compactInputs() -> (context: CompactBarContext, tasks: ActivityTaskPresentation, wallet: DeepSeekWallet?) {
         let tasks = taskPresentation
         let wallet = compactWallet
         let context = CompactBarContext(activities: activities, requests: pendingInputRequests, completions: tasks.pendingCompletions,
-            sources: quotaProviders.filter { $0 != .deepseek }.map {
+            sources: quotaProviders.filter { HarnessRegistry.descriptor(for: $0)?.hasQuotaWindows == true }.map {
                 .init(provider: $0, snapshot: providerQuota($0), failed: providerQuotaError($0) != nil)
             }, wallet: wallet.map { .init($0, preferred: deepseekRingPeriod) },
+            credits: compactCredits,
             firstOutput: latestFirstOutputLatency, warnings: warningItems(warnings: compactLayout.warnings, wallet: wallet),
             groups: tasks.groups, overview: tasks.overview, firstOutputs: activityState.firstOutputHistory.values, now: now)
         return (context, tasks, wallet)

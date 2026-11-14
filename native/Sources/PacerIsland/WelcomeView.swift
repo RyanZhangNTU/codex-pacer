@@ -22,6 +22,7 @@ struct WelcomeView: View {
     private var step: Step { chosenStep ?? startStep }
     @State private var forward = true
     @State private var modules = ProviderModules.load()
+    @State private var showsMoreModules = false
     @AppStorage(IslandModel.claudeProgressRingKey) private var claudeRing = true
     @AppStorage(IslandModel.codexProgressRingKey) private var codexRing = true
     @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekRing = true
@@ -149,17 +150,40 @@ struct WelcomeView: View {
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
+    /// Services found on this computer, or turned on, as cards; the rest wait
+    /// folded below, as in the module library.
     private var servicesPage: some View {
-        VStack(spacing: 24) {
-            header(L10n.text("main.welcome.services_title"), L10n.text("welcome.modules_note"))
-            HStack(spacing: 12) {
-                moduleCard(.codex)
-                moduleCard(.claude)
-                moduleCard(.deepseek)
+        let library = model.moduleLibrary(modules)
+        return ScrollView {
+            VStack(spacing: 18) {
+                header(L10n.text("main.welcome.services_title"), L10n.text("welcome.modules_note"))
+                moduleCards(library.prominent.map(\.provider))
+                if !library.collapsed.isEmpty {
+                    Button {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { showsMoreModules.toggle() }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(showsMoreModules ? L10n.text("welcome.modules.less") : L10n.text("welcome.modules.more", library.collapsed.count))
+                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                                .rotationEffect(.degrees(showsMoreModules ? 180 : 0))
+                        }
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    if showsMoreModules { moduleCards(library.collapsed.map(\.provider)) }
+                }
             }
-            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 32).padding(.top, 44).padding(.bottom, 16)
         }
-        .padding(.horizontal, 32).padding(.top, 44)
+        .scrollIndicators(.never)
+    }
+
+    /// Up to three side by side; four make two rows of two.
+    private func moduleCards(_ providers: [AgentProvider]) -> some View {
+        let columns = providers.count <= 3 ? max(providers.count, 1) : 2
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: columns), spacing: 12) {
+            ForEach(providers, id: \.self) { moduleCard($0).frame(minHeight: 170) }
+        }
     }
 
     /// Titles only, like the main window: what a row does sits behind ⓘ,
@@ -195,9 +219,12 @@ struct WelcomeView: View {
 
     /// One switch for every service's ring; Settings keeps one per service.
     private var ringsBinding: Binding<Bool> {
-        Binding(get: { claudeRing || codexRing || deepseekRing }, set: { value in
+        let local = model.localHarnessDescriptors.filter(\.hasTaskProgress).map(\.id)
+        return Binding(get: { claudeRing || codexRing || deepseekRing || local.contains(where: model.showsHarnessProgress) }, set: { value in
             claudeRing = value; codexRing = value; deepseekRing = value
+            UserDefaults.standard.set(value ? [] : local.map(\.rawValue).sorted(), forKey: IslandModel.disabledHarnessProgressKey)
             model.applySettings(sourceChanged: false)
+            model.refreshProgressPresentation()
         })
     }
 
@@ -281,6 +308,12 @@ struct WelcomeView: View {
         let ready = ModuleStatus(text: L10n.text("welcome.module.ready") +
             (modules.mode(for: provider) == .automatic ? " · " + L10n.text("welcome.module.automatic") : ""), ready: true)
         if provider == .deepseek { return deepseekStatus(ready: ready) }
+        if let connection = model.harnessAccount(provider) {
+            if connection.reading != nil { return ready }
+            if connection.busy { return ModuleStatus(text: L10n.text("claude.account.checking")) }
+            return ModuleStatus(text: L10n.text("welcome.module.credits_sign_in_detail"),
+                                action: (L10n.text("welcome.module.sign_in"), true, { connection.connect() }))
+        }
         guard provider == .claude else { return ready }
         if model.claudeNeedsOrganizationSelection {
             return ModuleStatus(text: L10n.text("claude.account.workspace_needed"),

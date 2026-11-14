@@ -22,7 +22,9 @@ final class DemoSettingsTests: XCTestCase {
     func testSettingsPreserveDemoTasksStageRatesAndRequests() async throws {
         let defaults = try defaults(), clock = now
         let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: arguments, defaults: defaults)
-        XCTAssertEqual(Set(model.enabledProviders), Set(HarnessRegistry.legacyIDs), "Demo automatic choices use synthetic installations")
+        XCTAssertEqual(Set(model.enabledProviders), Set(model.supportedModules),
+                       "Demo automatic choices use synthetic installations of every module this Mac runs")
+        XCTAssertTrue(model.enabledProviders.contains(.workbuddy))
         for stage in DemoTaskStage.allCases {
             model.setDemoStage(stage)
             let before = model.activities.sorted { $0.id < $1.id }

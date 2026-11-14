@@ -17,13 +17,16 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
     static let overview = Self("overview"), history = Self("history"), codex = Self("codex"), claude = Self("claude"), deepseek = Self("deepseek")
     static let remote = Self("remote"), appearance = Self("appearance"), collapsedBar = Self("collapsedBar"), expandedPanel = Self("expandedPanel")
     static let notifications = Self("notifications"), general = Self("general"), about = Self("about"), support = Self("support")
+    static let modules = Self("modules")
     static let defaultsKey = "settingsPane"
     /// The sidebar's groups, in order; About and Support sit in its footer.
-    static func groups(localProviders: [AgentProvider]) -> [[Self]] {
-        [[.overview, .history], [.codex, .claude, .deepseek] + localProviders.map(Self.init(provider:)) + [.remote],
+    /// Services lists the modules found here or turned on, in registry order;
+    /// the module library holds the rest.
+    static func groups(services: [AgentProvider]) -> [[Self]] {
+        [[.overview, .history], services.map(Self.init(provider:)) + [.remote, .modules],
          [.appearance, .collapsedBar, .expandedPanel, .notifications, .general]]
     }
-    static func pages(localProviders: [AgentProvider]) -> [Self] { groups(localProviders: localProviders).flatMap { $0 } + [.about, .support] }
+    static func pages(services: [AgentProvider]) -> [Self] { groups(services: services).flatMap { $0 } + [.about, .support] }
     var id: String { rawValue }
 
     init?(rawValue: String) {
@@ -31,7 +34,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
         if rawValue.hasPrefix(prefix), let provider = AgentProvider(rawValue: String(rawValue.dropFirst(prefix.count))),
            !HarnessRegistry.legacyIDs.contains(provider) {
             self.init(rawValue, harness: provider)
-        } else if let pane = Self.pages(localProviders: []).first(where: { $0.rawValue == rawValue }) {
+        } else if let pane = Self.pages(services: HarnessRegistry.legacyIDs).first(where: { $0.rawValue == rawValue }) {
             self = pane
         } else { return nil }
     }
@@ -75,6 +78,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
         case .claude: AgentProvider.claude.displayName
         case .deepseek: AgentProvider.deepseek.displayName
         case .remote: L10n.text("main.pane.remote")
+        case .modules: L10n.text("main.pane.modules")
         case .appearance: L10n.text("settings.pane.appearance")
         case .collapsedBar: L10n.text("settings.pane.collapsed")
         case .expandedPanel: L10n.text("settings.pane.expanded_panel")
@@ -95,6 +99,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
         case .claude: AgentProvider.claude.glyph
         case .deepseek: AgentProvider.deepseek.glyph
         case .remote: "server.rack"
+        case .modules: "square.on.square"
         case .appearance: "circle.lefthalf.filled"
         case .collapsedBar: "rectangle.topthird.inset.filled"
         case .expandedPanel: "text.alignleft"
@@ -128,7 +133,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
         case .notifications: Color(red: 1, green: 0.3, blue: 0.29)
         case .remote: Color(red: 0.16, green: 0.5, blue: 1)
         case .support: Color(red: 0.96, green: 0.36, blue: 0.42)
-        case .overview, .history, .general, .about: Color(white: 0.52)
+        case .overview, .history, .general, .about, .modules: Color(white: 0.52)
         default: harness?.brand ?? .gray
         }
     }
@@ -187,7 +192,11 @@ struct SidebarMaterial: NSViewRepresentable {
 struct MainWindowSidebar: View {
     @Environment(\.pacerAccent) private var accent
     @Binding var selection: SettingsPane
-    let localProviders: [AgentProvider]
+    /// The services listed under Services; search finds every module.
+    let services: [AgentProvider]
+    let searchable: [AgentProvider]
+    /// Modules the library keeps out of the sidebar.
+    var hiddenModules = 0
     let isDisabled: (SettingsPane) -> Bool
     let needsAttention: (SettingsPane) -> Bool
     /// A found version replaces the installed one under Help & Updates.
@@ -197,10 +206,10 @@ struct MainWindowSidebar: View {
     static let width: CGFloat = 220
 
     private var trimmedQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var groups: [[SettingsPane]] { SettingsPane.groups(localProviders: localProviders) }
+    private var groups: [[SettingsPane]] { SettingsPane.groups(services: services) }
     private var matches: [SettingsPane] {
         let needle = trimmedQuery.lowercased()
-        return SettingsPane.pages(localProviders: localProviders).filter { ($0.title + " " + $0.searchTerms).lowercased().contains(needle) }
+        return SettingsPane.pages(services: searchable).filter { ($0.title + " " + $0.searchTerms).lowercased().contains(needle) }
     }
 
     var body: some View {
@@ -272,7 +281,9 @@ struct MainWindowSidebar: View {
                 icon(pane)
                 Text(pane.title).font(.system(size: 13)).lineLimit(1)
                 Spacer(minLength: 4)
-                if isDisabled(pane) {
+                if pane == .modules, hiddenModules > 0 {
+                    Text(L10n.text("modules.sidebar_more", hiddenModules)).font(.system(size: 11)).foregroundStyle(.secondary)
+                } else if isDisabled(pane) {
                     Text(L10n.text("settings.module_off")).font(.system(size: 11)).foregroundStyle(.secondary)
                 } else if needsAttention(pane) {
                     Circle().fill(PacerPalette.attention).frame(width: 7, height: 7)

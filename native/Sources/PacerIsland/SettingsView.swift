@@ -77,8 +77,12 @@ struct SettingsView: View {
         return result
     }()
     @State private var pane = SettingsPane.load()
-    @State private var enabledHarnessProgress = Set(UserDefaults.standard.stringArray(forKey: IslandModel.enabledHarnessProgressKey) ?? [])
-    private var localProviders: [AgentProvider] { model.localHarnessDescriptors.map(\.id) }
+    /// Shared with Windows; each switch applies at once, like Codex's ring.
+    @State private var disabledHarnessProgress = Set(UserDefaults.standard.stringArray(forKey: IslandModel.disabledHarnessProgressKey) ?? [])
+    @State private var hiddenTurnCredits = Set(UserDefaults.standard.stringArray(forKey: IslandModel.hiddenTurnCreditsKey) ?? [])
+    @State private var harnessHomes = UserDefaults.standard.dictionary(forKey: IslandModel.harnessHomesKey) as? [String: String] ?? [:]
+    /// Modules as the switches stand now, before they are applied.
+    private var library: ModuleLibrary { model.moduleLibrary(modules) }
     /// A row a link elsewhere asked for, scrolled into view when its pane opens.
     @State private var scrollTarget: String?
     private static let gaugeAnchor = SettingsCollapsedBarPane.inspectorAnchor
@@ -93,7 +97,9 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            MainWindowSidebar(selection: $pane, localProviders: localProviders, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
+            let library = library
+            MainWindowSidebar(selection: $pane, services: library.prominent.map(\.provider), searchable: library.entries.map(\.provider),
+                hiddenModules: library.collapsed.count, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
                 needsAttention: needsAttention, updateVersion: updater.flow.available?.version)
                 .background(SidebarMaterial())
             Rectangle().fill(Color.black.opacity(0.25)).frame(width: 1)
@@ -106,7 +112,7 @@ struct SettingsView: View {
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
             launchAtLogin.refresh()
-            if let provider = pane.provider, !HarnessRegistry.legacyIDs.contains(provider), !localProviders.contains(provider) { pane = .overview }
+            if let provider = pane.provider, !model.supportedModules.contains(provider) { pane = .overview }
             refreshProgressConnection()
         }
         .task(id: "\(cliScanRevision):\(executable)") {
@@ -319,6 +325,9 @@ struct SettingsView: View {
                 onShowWelcome: onShowWelcome, openPane: { pane = $0 })
         case .support:
             SettingsSupportPane()
+        case .modules:
+            SettingsModuleLibraryPane(library: library, open: { pane = SettingsPane(provider: $0) },
+                toggle: { provider in modules.setMode(moduleEnabled(provider) ? .disabled : .enabled, for: provider) })
         case .overview, .history:
             EmptyView()
         default:
@@ -333,12 +342,18 @@ struct SettingsView: View {
             MainCard { CardRow(title: L10n.text("main.module_off_hint")) }
         } else if let descriptor = model.localHarnessDescriptors.first(where: { $0.id == provider }) {
             SettingsHarnessSections(model: model, descriptor: descriptor,
-                showsProgress: Binding(get: { enabledHarnessProgress.contains(provider.rawValue) }, set: { visible in
-                    if visible { enabledHarnessProgress.insert(provider.rawValue) }
-                    else { enabledHarnessProgress.remove(provider.rawValue) }
-                    UserDefaults.standard.set(enabledHarnessProgress.sorted(), forKey: IslandModel.enabledHarnessProgressKey)
+                showsProgress: Binding(get: { !disabledHarnessProgress.contains(provider.rawValue) }, set: { visible in
+                    if visible { disabledHarnessProgress.remove(provider.rawValue) } else { disabledHarnessProgress.insert(provider.rawValue) }
+                    UserDefaults.standard.set(disabledHarnessProgress.sorted(), forKey: IslandModel.disabledHarnessProgressKey)
                     model.refreshProgressPresentation()
-                }))
+                }),
+                showsTurnCredits: Binding(get: { !hiddenTurnCredits.contains(provider.rawValue) }, set: { visible in
+                    if visible { hiddenTurnCredits.remove(provider.rawValue) } else { hiddenTurnCredits.insert(provider.rawValue) }
+                    UserDefaults.standard.set(hiddenTurnCredits.sorted(), forKey: IslandModel.hiddenTurnCreditsKey)
+                    model.refreshProgressPresentation()
+                }),
+                dataFolder: Binding(get: { harnessHomes[provider.rawValue] ?? "" }, set: { harnessHomes[provider.rawValue] = $0 }),
+                commitDataFolder: { commitHarnessHome(provider) })
         } else if provider == .deepseek {
             SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
                 // Like Codex, the switch applies at once, so turning it off and quitting still removes the entry.
@@ -494,6 +509,17 @@ struct SettingsView: View {
     /// component is shown sit in its row, under its title.
     private func warning(_ text: String) -> some View {
         Text(text).font(.system(size: 12)).foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A data folder applies once committed; an empty field returns to the default.
+    private func commitHarnessHome(_ provider: AgentProvider) {
+        let trimmed = (harnessHomes[provider.rawValue] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        harnessHomes[provider.rawValue] = trimmed.isEmpty ? nil : trimmed
+        var stored = UserDefaults.standard.dictionary(forKey: IslandModel.harnessHomesKey) as? [String: String] ?? [:]
+        guard stored[provider.rawValue] != harnessHomes[provider.rawValue] else { return }
+        stored[provider.rawValue] = harnessHomes[provider.rawValue]
+        UserDefaults.standard.set(stored, forKey: IslandModel.harnessHomesKey)
+        model.applySettings(sourceChanged: true)
     }
 
     private func moduleMode(_ provider: AgentProvider) -> ProviderModuleMode { modules.mode(for: provider) }

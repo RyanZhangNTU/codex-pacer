@@ -1,43 +1,64 @@
 import AppKit
+import CryptoKit
 import PacerCore
 import SwiftUI
 import WebKit
 
+/// One module's account credits, read from its bill through Pacer's own web
+/// profile for the chosen site. The registry describes the sites, the sign-in
+/// page and the summary script; nothing here names a service.
 @MainActor final class HarnessAccountConnection: ObservableObject {
+    let provider: AgentProvider
+    /// The last bill read, kept through a failed refresh so the bar dims it.
+    @Published private(set) var credits: HarnessAccountCredits?
     @Published private(set) var reading: HarnessAccountCredits.Reading?
     @Published private(set) var state: HarnessAccountCredits.State = .signIn
     @Published private(set) var busy = false
+    /// Called on the main actor after every change to the credits or state.
+    var onChange: (() -> Void)?
 
+    private let definition: HarnessAccountCreditsDefinition
     private var enabled = false
-    private var origin = WorkBuddyAccountWeb.international
+    private var site: HarnessAccountCreditsDefinition.Site
     private var operation: Task<Void, Never>?
     private var scheduled: Task<Void, Never>?
     private var login: HarnessAccountLogin?
     private var revision = 0
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults) { self.defaults = defaults }
-
-    private var key: String { "workbuddyAccountConnected." + (origin == WorkBuddyAccountWeb.china ? "china" : "international") }
-    private var dataStore: WKWebsiteDataStore {
-        WKWebsiteDataStore(forIdentifier: UUID(uuidString: origin == WorkBuddyAccountWeb.china
-            ? "D6FC4CB6-9EF3-4F99-823E-E877E534641B" : "7200B491-3A3C-4328-BEDD-8F7BD1F93B0D")!)
+    init(provider: AgentProvider, definition: HarnessAccountCreditsDefinition, defaults: UserDefaults) {
+        self.provider = provider; self.definition = definition; self.defaults = defaults
+        site = definition.site("automatic", chinese: false)
     }
-    var canDisconnect: Bool { defaults.bool(forKey: key) || reading != nil }
 
-    func configure(enabled: Bool, china: Bool) {
-        let site = china ? WorkBuddyAccountWeb.china : WorkBuddyAccountWeb.international
-        guard self.enabled != enabled || origin != site else { return }
+    /// The site in use, as its preference value.
+    var siteID: String { site.id }
+    var siteHost: String { site.url.host ?? "" }
+    private var key: String { provider.rawValue + "AccountConnected." + site.id }
+    /// One profile per module and site, so signing out of one leaves the others.
+    private var dataStore: WKWebsiteDataStore {
+        let digest = Array(SHA256.hash(data: Data(("pacer-account|" + provider.rawValue + "|" + site.id).utf8)))
+        let uuid = UUID(uuid: (digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6] & 0x0f | 0x40, digest[7],
+                               digest[8] & 0x3f | 0x80, digest[9], digest[10], digest[11], digest[12], digest[13], digest[14], digest[15]))
+        return WKWebsiteDataStore(forIdentifier: uuid)
+    }
+    var signedIn: Bool { defaults.bool(forKey: key) || reading != nil }
+    var canDisconnect: Bool { signedIn }
+
+    func configure(enabled: Bool, site preference: String, chinese: Bool) {
+        let next = definition.site(preference, chinese: chinese)
+        guard self.enabled != enabled || site != next else { return }
         stop()
-        origin = site; self.enabled = enabled
+        site = next; self.enabled = enabled
         if enabled, defaults.bool(forKey: key) { refresh() }
     }
 
     func refresh() {
         guard enabled, !busy, defaults.bool(forKey: key) else { return }
+        let origin = site.url, script = definition.summaryScript, store = dataStore
         begin { [weak self] current in
             guard let self else { return }
-            let result = await HarnessAccountBrowserRead().read(origin: origin, store: dataStore)
+            let result = await HarnessAccountBrowserRead().read(origin: origin, script: script, store: store)
             guard revision == current, !Task.isCancelled else { return }
             apply(result)
         }
@@ -49,9 +70,10 @@ import WebKit
         guard enabled, !busy else { return }
         scheduled?.cancel(); scheduled = nil
         defaults.removeObject(forKey: key)
-        reading = nil; state = .signIn
+        update(nil, .signIn)
         let store = dataStore
-        let panel = HarnessAccountLogin(provider: .workbuddy, origin: origin, store: store)
+        let panel = HarnessAccountLogin(provider: provider, origin: site.url, loginPath: definition.loginPath,
+                                        script: definition.summaryScript, store: store)
         login = panel
         begin { [weak self] current in
             guard let self else { return }
@@ -73,10 +95,10 @@ import WebKit
         guard enabled, !busy else { return }
         scheduled?.cancel(); scheduled = nil
         defaults.removeObject(forKey: key)
-        reading = nil; state = .signIn
-        begin { [weak self] _ in
-            guard let self else { return }
-            await dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+        update(nil, .signIn)
+        let store = dataStore
+        begin { _ in
+            await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         }
     }
 
@@ -85,7 +107,13 @@ import WebKit
         operation?.cancel(); operation = nil
         scheduled?.cancel(); scheduled = nil
         login?.close(); login = nil
-        busy = false; reading = nil; state = .signIn
+        busy = false; update(nil, .signIn)
+    }
+
+    /// Demo credits, with no account behind them.
+    func showDemo(_ demo: HarnessAccountCredits?) {
+        stop()
+        update(demo?.reading() == nil ? nil : demo, demo?.reading() == nil ? .signIn : .ready)
     }
 
     private func begin(_ body: @escaping @MainActor (Int) async -> Void) {
@@ -100,14 +128,19 @@ import WebKit
     }
 
     private func apply(_ result: HarnessAccountCredits?) {
-        if let current = result?.reading() {
-            reading = current; state = .ready
-        } else if result?.state == .signIn {
-            reading = nil; state = .signIn
-        } else {
-            state = .unavailable
-        }
+        if result?.reading() != nil { update(result, .ready) }
+        else if result?.state == .signIn { update(nil, .signIn) }
+        // A failed read keeps the last bill, dimmed.
+        else { update(credits, .unavailable) }
         schedule()
+    }
+
+    /// Publishes and reports a change only when the bill or state differs,
+    /// so starting, stopping or a repeated read stays quiet.
+    private func update(_ value: HarnessAccountCredits?, _ next: HarnessAccountCredits.State) {
+        guard value != credits || next != state else { return }
+        credits = value; reading = value?.reading(); state = next
+        onChange?()
     }
 
     private func schedule() {
@@ -125,12 +158,13 @@ import WebKit
 /// cookie set by the login window; native code gets just the credit reading.
 @MainActor private final class HarnessAccountBrowserRead: NSObject, WKNavigationDelegate {
     private var view: WKWebView?
-    private var origin = WorkBuddyAccountWeb.international
+    private var origin = URL(fileURLWithPath: "/")
+    private var script = ""
     private var reply: CheckedContinuation<HarnessAccountCredits?, Never>?
     private var deadline: Task<Void, Never>?
 
-    func read(origin: URL, store: WKWebsiteDataStore) async -> HarnessAccountCredits? {
-        self.origin = origin
+    func read(origin: URL, script: String, store: WKWebsiteDataStore) async -> HarnessAccountCredits? {
+        self.origin = origin; self.script = script
         let config = WKWebViewConfiguration(); config.websiteDataStore = store
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         let browser = WKWebView(frame: .zero, configuration: config)
@@ -152,7 +186,7 @@ import WebKit
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        webView.callAsyncJavaScript(WorkBuddyAccountWeb.summaryScript, in: nil, in: .defaultClient) { [weak self] result in
+        webView.callAsyncJavaScript(script, in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
                 guard let value = try? result.get(), JSONSerialization.isValidJSONObject(value),
                       let data = try? JSONSerialization.data(withJSONObject: value),
@@ -185,6 +219,8 @@ import WebKit
     private static let checkInterval: Duration = .seconds(3)
     private let provider: AgentProvider
     private let origin: URL
+    private let loginPath: String
+    private let script: String
     private let store: WKWebsiteDataStore
     private let banner = WebLoginBannerState()
     private var window: NSWindow?
@@ -195,11 +231,11 @@ import WebKit
     private var autoClose: Task<Void, Never>?
     private var signedIn: HarnessAccountCredits?
 
-    init(provider: AgentProvider, origin: URL, store: WKWebsiteDataStore) {
-        self.provider = provider; self.origin = origin; self.store = store
+    init(provider: AgentProvider, origin: URL, loginPath: String, script: String, store: WKWebsiteDataStore) {
+        self.provider = provider; self.origin = origin; self.loginPath = loginPath; self.script = script; self.store = store
     }
 
-    private var loginURL: URL { origin.appendingPathComponent(WorkBuddyAccountWeb.loginPath) }
+    private var loginURL: URL { origin.appendingPathComponent(loginPath) }
 
     func signIn() async -> HarnessAccountCredits? {
         await withCheckedContinuation { continuation in
@@ -207,8 +243,9 @@ import WebKit
             let config = WKWebViewConfiguration(); config.websiteDataStore = store
             let page = WKWebView(frame: .zero, configuration: config)
             page.navigationDelegate = self; page.uiDelegate = self; browser = page
-            let copy = WebLoginBanner.Copy(prompt: L10n.text("workbuddy.login.prompt"), promptDetail: L10n.text("workbuddy.login.prompt_detail"),
-                signedIn: L10n.text("workbuddy.login.signed_in"), signedInDetail: L10n.text("workbuddy.login.signed_in_detail"))
+            let family = provider.rawValue + ".login."
+            let copy = WebLoginBanner.Copy(prompt: L10n.text(family + "prompt"), promptDetail: L10n.text(family + "prompt_detail"),
+                signedIn: L10n.text(family + "signed_in"), signedInDetail: L10n.text(family + "signed_in_detail"))
             let strip = NSHostingView(rootView: WebLoginBanner(provider: provider, copy: copy, state: banner,
                 onReload: { [weak self] in self?.reloadPage() },
                 onLater: { [weak self] in self?.window?.performClose(nil) },
@@ -233,12 +270,12 @@ import WebKit
         let available = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1024, height: 900)
         let frame = CGRect(x: 0, y: 0, width: min(760, max(420, available.width - 80)), height: min(720, max(400, available.height - 100)))
         let panel = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        panel.title = Self.title(host: origin.host)
+        panel.title = title(host: origin.host)
         panel.minSize = CGSize(width: 420, height: 400)
         panel.isReleasedWhenClosed = false; panel.delegate = self
         return panel
     }
-    private static func title(host: String?) -> String { L10n.text("workbuddy.login.title") + " · " + (host ?? "") }
+    private func title(host: String?) -> String { L10n.text(provider.rawValue + ".login.title") + " · " + (host ?? "") }
 
     private func reloadPage() {
         guard let browser else { return }
@@ -251,7 +288,7 @@ import WebKit
     /// credits shows the confirmation, then closes the window shortly after.
     private func check() async {
         guard window != nil, signedIn == nil else { return }
-        let credits = await HarnessAccountBrowserRead().read(origin: origin, store: store)
+        let credits = await HarnessAccountBrowserRead().read(origin: origin, script: script, store: store)
         guard window != nil, signedIn == nil, let credits, credits.reading() != nil else { return }
         signedIn = credits
         banner.phase = .signedIn
@@ -289,7 +326,7 @@ import WebKit
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard webView === browser else { return }
-        window?.title = Self.title(host: webView.url?.host ?? origin.host)
+        window?.title = title(host: webView.url?.host ?? origin.host)
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
         guard webView === browser, banner.phase == .prompt, (error as NSError).code != NSURLErrorCancelled else { return }
