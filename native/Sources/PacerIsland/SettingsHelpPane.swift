@@ -50,7 +50,11 @@ struct SettingsHelpPane: View {
     @ViewBuilder private var collapsedRows: some View {
         // Under one accent the services are its shades, as the tiles draw them.
         row("help.services", detail: PacerAccent.current == .multicolor ? nil : "help.services.shades") {
-            ForEach(HelpTopic.modules, id: \.self) { ProviderTile(provider: $0) }
+            // More than three modules tighten so every tile fits the swatch.
+            let modules = HelpTopic.modules, tight = modules.count > 3
+            HStack(spacing: tight ? 2 : 6) {
+                ForEach(modules, id: \.self) { ProviderAppIcon(provider: $0, size: tight ? 17 : 18) }
+            }
         }
         row("help.tasks") {
             ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [.codex: 1]))

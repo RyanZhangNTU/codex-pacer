@@ -55,7 +55,8 @@ struct SettingsHarnessSections: View {
         }
         return CardStatusRow(title: L10n.text("harness.data"), state: L10n.text(key), tint: tint,
                              help: model.localHarnessHome(provider)?.path, detail: detail.map { L10n.text($0) }) {
-            if status != .ready {
+            // Searching needs no button; a folder not found or not readable does.
+            if status != .ready, status != nil || !model.providerDetected(provider) {
                 Button(L10n.text("settings.rescan")) { model.refreshLocalHarness(provider) }.buttonStyle(.main)
             }
         }

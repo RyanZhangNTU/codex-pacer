@@ -28,39 +28,40 @@ struct ModuleTile: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let offersSite = content.getURL != nil && !content.detected
         HStack(alignment: .center, spacing: 0) {
-            Button(action: open) {
-                HStack(alignment: .top, spacing: 11) {
-                    ProviderAppIcon(provider: content.provider, size: 28)
-                        .opacity(content.detected || content.on ? 1 : 0.55)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(content.name).font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(content.on ? LibraryPalette.placedInk : LibraryPalette.freeInk)
-                            Text(content.state).font(.system(size: 11))
-                                .foregroundStyle(content.on ? accent : LibraryPalette.freeIcon)
+            VStack(alignment: .leading, spacing: 4) {
+                Button(action: open) {
+                    HStack(alignment: .top, spacing: 11) {
+                        ProviderAppIcon(provider: content.provider, size: 28)
+                            .opacity(content.detected || content.on ? 1 : 0.55)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(content.name).font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(content.on ? LibraryPalette.placedInk : LibraryPalette.freeInk)
+                                Text(content.state).font(.system(size: 11))
+                                    .foregroundStyle(content.on ? accent : LibraryPalette.freeIcon)
+                            }
+                            Text(content.summary).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        Text(content.summary).font(.system(size: 11.5)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
                     }
-                    Spacer(minLength: 4)
+                    .contentShape(Rectangle())
                 }
-                .padding(.leading, 12).padding(.vertical, 11).contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityLabel(content.name + ", " + content.state)
+                .accessibilityHint(content.summary)
+                // The site link sits under the summary, outside the tile's own button.
+                if offersSite, let url = content.getURL {
+                    Link(L10n.text("modules.get", content.name), destination: url)
+                        .font(.system(size: 11.5)).padding(.leading, 39)
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(content.name + ", " + content.state)
-            .accessibilityHint(content.summary)
+            .padding(.leading, 12).padding(.vertical, 11)
             LibraryRoundButton(placed: content.on, addLabel: L10n.text("modules.turn_on", content.name),
                                removeLabel: L10n.text("modules.turn_off", content.name), toggle: toggle)
         }
-        // The site link sits under the summary, outside the tile's own button.
-        .overlay(alignment: .bottomLeading) {
-            if let url = content.getURL, !content.detected {
-                Link(L10n.text("modules.get", content.name), destination: url)
-                    .font(.system(size: 11.5)).padding(.leading, 51).padding(.bottom, 9)
-            }
-        }
-        .padding(.bottom, content.getURL != nil && !content.detected ? 18 : 0)
         .background(content.on ? LibraryPalette.placedFill : LibraryPalette.freeFill, in: shape)
         .overlay(shape.strokeBorder(LibraryPalette.border, lineWidth: 1))
     }
