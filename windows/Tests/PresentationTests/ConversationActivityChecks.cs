@@ -49,6 +49,7 @@ internal static class ConversationActivityChecks
             var heading = Descendants(window).OfType<Grid>().Single(g => AutomationProperties.GetAutomationId(g) == "island.group.header.first");
             var name = Descendants(heading).OfType<Button>().Last();
             ((IInvokeProvider)new ButtonAutomationPeer(name).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Pump(); // UI Automation dispatches the click asynchronously.
             var edit = Descendants(window).OfType<TextBox>().Single(); edit.Text = "Still editing";
             window.ReceiveSnapshot(Snapshot(8, "b2")); await Pump();
             Check(Descendants(window).Contains(edit) && edit.Text == "Still editing" && RowIDs().First() == "a1", "Activity does not discard an inline rename");
