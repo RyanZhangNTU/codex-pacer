@@ -891,8 +891,8 @@
 "deepseek.reset_day" = "0:00 重置";
 "deepseek.reset_week" = "周一 0:00 重置";
 "help.services.title" = "模块颜色";
-"help.services.detail" = "青绿是 Codex，橙色是 Claude，蓝色是 DeepSeek。";
-"help.services.shades" = "选了单色强调色时，Codex、Claude、DeepSeek 是这个颜色由深到浅的三种色调。";
+"help.services.detail" = "每个服务都有自己的颜色，和它的图标一致。";
+"help.services.shades" = "选了单色强调色时，各服务是这个颜色的不同深浅。";
 "help.customize.title" = "自定义";
 "help.customize.detail" = "在“设置 → 折叠栏”中选显示哪些内容、怎么排列、圆环对应哪个模块；在“设置 → 提醒”中选显示哪些警告。";
 "help.open.title" = "打开会话";

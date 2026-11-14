@@ -891,8 +891,8 @@
 "deepseek.reset_day" = "Resets 0:00";
 "deepseek.reset_week" = "Resets Mon 0:00";
 "help.services.title" = "Module colors";
-"help.services.detail" = "Teal is Codex, orange is Claude and blue is DeepSeek.";
-"help.services.shades" = "With one accent color, Codex, Claude and DeepSeek are its three shades, strongest first.";
+"help.services.detail" = "Each service has its own color, the same as its icon.";
+"help.services.shades" = "With one accent color, each service is a different shade of it.";
 "help.customize.title" = "Customize";
 "help.customize.detail" = "Choose what shows, in what order and which module each ring shows in Settings → Collapsed Bar; choose the warnings in Settings → Reminders.";
 "help.open.title" = "Open a conversation";

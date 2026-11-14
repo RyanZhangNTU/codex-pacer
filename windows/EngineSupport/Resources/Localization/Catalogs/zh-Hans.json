@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "a2f1400587a9147e37cd87550dc030365c47219f9b03d57cf61951ff361f1a4d",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "2cea67af6d0b82286f7ecd8b45c007bab259ea8a8b0c4237dc4b6a41bc0b6d6c",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "cd35971431f9edb42927f6792686ac29bb4ac5e5ba804d2709ff095e491869e2"
   },
   "strings": {
@@ -665,8 +665,8 @@
     "help.section.modules": "\u6a21\u5757\u8bf4\u660e",
     "help.section.more": "\u66f4\u591a",
     "help.section.services": "\u6a21\u5757",
-    "help.services.detail": "\u9752\u7eff\u662f Codex\uff0c\u6a59\u8272\u662f Claude\uff0c\u84dd\u8272\u662f DeepSeek\u3002",
-    "help.services.shades": "\u9009\u4e86\u5355\u8272\u5f3a\u8c03\u8272\u65f6\uff0cCodex\u3001Claude\u3001DeepSeek \u662f\u8fd9\u4e2a\u989c\u8272\u7531\u6df1\u5230\u6d45\u7684\u4e09\u79cd\u8272\u8c03\u3002",
+    "help.services.detail": "\u6bcf\u4e2a\u670d\u52a1\u90fd\u6709\u81ea\u5df1\u7684\u989c\u8272\uff0c\u548c\u5b83\u7684\u56fe\u6807\u4e00\u81f4\u3002",
+    "help.services.shades": "\u9009\u4e86\u5355\u8272\u5f3a\u8c03\u8272\u65f6\uff0c\u5404\u670d\u52a1\u662f\u8fd9\u4e2a\u989c\u8272\u7684\u4e0d\u540c\u6df1\u6d45\u3002",
     "help.services.title": "\u6a21\u5757\u989c\u8272",
     "help.show_welcome": "\u91cd\u65b0\u67e5\u770b\u5165\u95e8\u5f15\u5bfc",
     "help.tasks.detail": "\u6570\u5b57\u662f\u8fdb\u884c\u4e2d\u7684\u4efb\u52a1\u6570\u3002",
