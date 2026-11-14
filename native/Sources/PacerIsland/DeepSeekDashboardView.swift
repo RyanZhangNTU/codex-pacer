@@ -314,16 +314,22 @@ struct DeepSeekBalanceStatusView: View {
                     .foregroundStyle(presentation.tone == .secondary ? PacerPalette.secondary : PacerPalette.attention)
                     .fixedSize(horizontal: false, vertical: true)
                 if !presentation.actions.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(presentation.actions, id: \.kind) { action in
-                            QuotaLinkButton(title: action.title) {
-                                if action.kind == .retry { model.refreshDeepSeekBalance(force: true) }
-                                else { model.openSettings(for: .deepseek) }
-                            }.disabled(!action.enabled)
-                        }
+                    // A narrow dial column stacks the capsules instead of truncating them.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) { actionButtons(presentation) }
+                        VStack(spacing: 6) { actionButtons(presentation) }
                     }
                 }
             }.multilineTextAlignment(.center)
+        }
+    }
+
+    private func actionButtons(_ presentation: DeepSeekBalanceStatusPresentation) -> some View {
+        ForEach(presentation.actions, id: \.kind) { action in
+            QuotaLinkButton(title: action.title) {
+                if action.kind == .retry { model.refreshDeepSeekBalance(force: true) }
+                else { model.openSettings(for: .deepseek) }
+            }.disabled(!action.enabled)
         }
     }
 }

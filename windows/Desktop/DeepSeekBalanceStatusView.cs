@@ -18,7 +18,7 @@ internal sealed class DeepSeekBalanceStatusView : StackPanel
         AutomationProperties.SetAutomationId(message, "deepseek.balance.status.message");
         AutomationProperties.SetName(message, status.Message); Children.Add(message);
         if (status.Actions.Count == 0) return;
-        var row = new DeepSeekActionRow { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) };
+        var row = new QuotaActionRow { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) };
         foreach (var action in status.Actions)
         {
             bool supported = action.Kind == "retry" ? retry != null : action.Kind == "settings" && settings != null;
@@ -39,34 +39,40 @@ internal sealed class DeepSeekBalanceStatusView : StackPanel
     }
 }
 
-/// Keep natural capsule widths when possible. In narrow provider columns,
-/// divide remaining space between flexible labels instead of overlapping them.
-internal sealed class DeepSeekActionRow : Panel
+/// Recovery capsules for quota and balance, as on the Mac: side by side when the
+/// column holds their natural widths, otherwise one per line and centered. Only
+/// a capsule wider than the column itself trims its label.
+internal sealed class QuotaActionRow : Panel
 {
-    private double[] natural = [];
+    private const double Gap = 6;
+    private bool stacked;
     protected override Size MeasureOverride(Size available)
     {
-        natural = new double[InternalChildren.Count]; double total = Math.Max(0, InternalChildren.Count - 1) * 6;
-        for (int i = 0; i < InternalChildren.Count; i++)
-        { InternalChildren[i].Measure(new Size(double.PositiveInfinity, available.Height)); natural[i] = InternalChildren[i].DesiredSize.Width; total += natural[i]; }
-        double width = Math.Min(total, available.Width), height = 0;
-        var sizes = Widths(width);
-        for (int i = 0; i < InternalChildren.Count; i++)
-        { InternalChildren[i].Measure(new Size(sizes[i], available.Height)); height = Math.Max(height, InternalChildren[i].DesiredSize.Height); }
-        return new Size(width, height);
-    }
-    private double[] Widths(double width)
-    {
-        var result = (double[])natural.Clone(); double remaining = Math.Max(0, width - Math.Max(0, result.Length - 1) * 6);
-        var order = new int[result.Length]; for (int i = 0; i < order.Length; i++) order[i] = i;
-        Array.Sort(order, (a,b) => natural[a].CompareTo(natural[b]));
-        for (int i = 0; i < order.Length; i++) { int index = order[i]; result[index] = Math.Min(natural[index], remaining / (order.Length - i)); remaining -= result[index]; }
-        return result;
+        double total = Math.Max(0, InternalChildren.Count - 1) * Gap, height = 0, widest = 0;
+        foreach (UIElement child in InternalChildren) { child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); total += child.DesiredSize.Width; }
+        stacked = total > available.Width;
+        if (!stacked)
+        {
+            foreach (UIElement child in InternalChildren) height = Math.Max(height, child.DesiredSize.Height);
+            return new Size(total, height);
+        }
+        foreach (UIElement child in InternalChildren)
+        {
+            child.Measure(new Size(available.Width, double.PositiveInfinity));
+            widest = Math.Max(widest, child.DesiredSize.Width); height += child.DesiredSize.Height;
+        }
+        return new Size(Math.Min(widest, available.Width), height + Math.Max(0, InternalChildren.Count - 1) * Gap);
     }
     protected override Size ArrangeOverride(Size finalSize)
     {
-        double x = 0; var sizes = Widths(finalSize.Width);
-        for (int i = 0; i < InternalChildren.Count; i++) { InternalChildren[i].Arrange(new Rect(x, 0, sizes[i], finalSize.Height)); x += sizes[i] + 6; }
+        double x = 0, y = 0;
+        foreach (UIElement child in InternalChildren)
+        {
+            var size = child.DesiredSize;
+            if (!stacked) { child.Arrange(new Rect(x, 0, size.Width, finalSize.Height)); x += size.Width + Gap; continue; }
+            double width = Math.Min(size.Width, finalSize.Width);
+            child.Arrange(new Rect((finalSize.Width - width) / 2, y, width, size.Height)); y += size.Height + Gap;
+        }
         return finalSize;
     }
 }
