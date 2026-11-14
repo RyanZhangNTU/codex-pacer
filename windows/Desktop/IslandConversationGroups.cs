@@ -14,6 +14,8 @@ public partial class IslandWindow
 {
     private const string ConversationDragFormat = "PacerConversationGroup";
     private sealed record ConversationDrag(string Profile, string[] Members);
+    private ConversationDrag? activeConversationDrag;
+    private string? conversationDragToken;
     private bool groupSavePending, conversationDragging;
     private string conversationStructure = "";
     private string ConversationStructure => string.Join("|", ConversationSections().Select(s => (s.Group?.Id ?? "") + ":" + s.Group?.Name + ":" + s.Group?.Collapsed + ":" + string.Join(",", s.Rows.Select(r => r.Id))));
@@ -61,8 +63,10 @@ public partial class IslandWindow
             var position = e.GetPosition(control);
             if (Math.Abs(position.X-origin.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(position.Y-origin.Y) < SystemParameters.MinimumVerticalDragDistance) return;
             start = null; conversationDragging = true; collapse.Stop();
-            try { DragDrop.DoDragDrop(control, new DataObject(ConversationDragFormat, new ConversationDrag(ConversationProfile, members())), DragDropEffects.Move); }
-            finally { conversationDragging = false; InvalidatePanel(true); }
+            activeConversationDrag = new ConversationDrag(ConversationProfile, members());
+            conversationDragToken = Guid.NewGuid().ToString("N");
+            try { DragDrop.DoDragDrop(control, new DataObject(ConversationDragFormat, conversationDragToken), DragDropEffects.Move); }
+            finally { activeConversationDrag = null; conversationDragToken = null; conversationDragging = false; InvalidatePanel(true); }
             e.Handled = true;
         };
         control.PreviewMouseLeftButtonUp += (_, _) => start = null;
@@ -72,7 +76,8 @@ public partial class IslandWindow
         control.AllowDrop = true;
         control.DragEnter += (_, e) => { if (e.Data.GetDataPresent(ConversationDragFormat)) control.Opacity = 0.65; };
         control.DragLeave += (_, _) => control.Opacity = 1;
-        ConversationDrag? Payload(DragEventArgs e) => e.Data.GetData(ConversationDragFormat) is ConversationDrag value && value.Profile == ConversationProfile && !groupSavePending ? value : null;
+        ConversationDrag? Payload(DragEventArgs e) => activeConversationDrag is { } value && value.Profile == ConversationProfile &&
+            e.Data.GetData(ConversationDragFormat) is string token && token == conversationDragToken && !groupSavePending ? value : null;
         control.DragOver += (_, e) => { e.Effects = Payload(e) != null ? DragDropEffects.Move : DragDropEffects.None; e.Handled = true;
             if (conversationScroll != null) { var y = e.GetPosition(conversationScroll).Y; if (y < 24) conversationScroll.ScrollToVerticalOffset(conversationScroll.VerticalOffset-12); else if (y > conversationScroll.ActualHeight-24) conversationScroll.ScrollToVerticalOffset(conversationScroll.VerticalOffset+12); } };
         control.Drop += async (_, e) => {
