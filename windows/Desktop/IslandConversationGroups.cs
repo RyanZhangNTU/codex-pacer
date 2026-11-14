@@ -23,7 +23,6 @@ public partial class IslandWindow
     private bool UsesConversationGroups => (!demo || PreviewConversationGroups) && compactPreferences.CodexPinnedOnly;
     private string ConversationProfile => compactPreferences.CodexHome.Trim().TrimEnd('\\', '/').ToUpperInvariant();
     private ConversationGroup[] SavedGroups => ConversationGroups.Read(compactPreferences.ConversationGroups).For(ConversationProfile);
-    private string GroupText(string zh, string en) => chinese ? zh : en;
     private double ConversationHeight => Math.Min(360, Math.Max(44, ConversationSections().Sum(s => 32 + (s.Group?.Collapsed == true ? 0 : s.Rows.Length * (RowHeight + 2)))));
     private (ConversationGroup? Group, EngineTaskRow[] Rows)[] ConversationSections()
     {
@@ -84,7 +83,7 @@ public partial class IslandWindow
                 var destination = group;
                 var members = value.Members;
                 if (row != null && destination == null) { destination = Guid.NewGuid().ToString("N"); members = members.Append(row).ToArray(); }
-                return ConversationGroups.Move(groups, members, destination, GroupText("新分组", "New group"));
+                return ConversationGroups.Move(groups, members, destination, ui.Text("windows.conversation_groups.new"));
             });
         };
     }
@@ -115,8 +114,8 @@ public partial class IslandWindow
             if (group != null) toggle.Click += async (_, _) => await SaveGroups(groups => groups.Select(g => g.Id == group.Id ? g with { Collapsed = !g.Collapsed } : g).ToArray());
             AutomationProperties.SetAutomationId(toggle, "island.group.toggle." + (group?.Id ?? "ungrouped"));
             heading.Children.Add(toggle);
-            var name = new Button { Content = (group?.Name ?? GroupText("未分组", "Ungrouped")) + "  " + section.Rows.Length, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0), Padding = new Thickness(5,0,5,0) };
-            AutomationProperties.SetName(name, group == null ? GroupText("未分组", "Ungrouped") : GroupText("重命名分组 ", "Rename group ") + group.Name);
+            var name = new Button { Content = (group?.Name ?? ui.Text("windows.conversation_groups.ungrouped")) + "  " + section.Rows.Length, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0), Padding = new Thickness(5,0,5,0) };
+            AutomationProperties.SetName(name, group == null ? ui.Text("windows.conversation_groups.ungrouped") : ui.Text("windows.conversation_groups.rename", group.Name));
             heading.Children.Add(name); list.Children.Add(heading);
             ConversationDropTarget(heading, group?.Id);
             if (group != null)
@@ -141,9 +140,9 @@ public partial class IslandWindow
                 measuredRowsWidth = Math.Max(measuredRowsWidth, control.IdealWidth()+20);
                 ConversationDragSource(control, () => [value.Id]); ConversationDropTarget(control, group?.Id, value.Id);
                 var menu = new ContextMenu();
-                foreach (var destination in SavedGroups.Select(g => (Id: (string?)g.Id, Name: g.Name)).Prepend((null, GroupText("未分组", "Ungrouped"))))
+                foreach (var destination in SavedGroups.Select(g => (Id: (string?)g.Id, Name: g.Name)).Prepend((null, ui.Text("windows.conversation_groups.ungrouped"))))
                 {
-                    var item = new MenuItem { Header = GroupText("移到 ", "Move to ") + destination.Name };
+                    var item = new MenuItem { Header = ui.Text("windows.conversation_groups.move", destination.Name) };
                     item.Click += async (_, _) => await SaveGroups(groups => ConversationGroups.Move(groups, [value.Id], destination.Id)); menu.Items.Add(item);
                 }
                 control.ContextMenu = menu;

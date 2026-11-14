@@ -4,7 +4,7 @@
 
 <h1 align="center">Codex Pacer</h1>
 
-This fork's Windows app follows conversations pinned in Codex's sidebar. Pinning includes a conversation; unpinning hides its tasks and reminders. Child agents remain grouped under their conversation. It keeps the existing island and fixes discovery of resumed conversations. See [pinned conversations](docs/guide.md#pinned-conversations-windows-fork).
+This fork's Windows app keeps all conversations pinned in Codex's sidebar visible, including idle chats. Drag to create, merge or move between local groups; names and collapsed state persist only in Pacer. Unpinning hides the conversation and its reminders. Child agents remain under their conversation, and resumed conversation discovery is preserved. See [pinned conversations](docs/guide.md#pinned-conversations-windows-fork).
 
 <p align="center">
   A Dynamic Island for <b>Codex</b>, <b>Claude Code</b> and <b>DeepSeek Harness</b>, on Mac and Windows.<br>

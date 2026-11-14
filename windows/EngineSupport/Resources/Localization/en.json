@@ -1,4 +1,9 @@
 {
+  "windows.conversation_groups.ungrouped": "Ungrouped",
+  "windows.conversation_groups.new": "New group",
+  "windows.conversation_groups.rename": "Rename group {0}",
+  "windows.conversation_groups.move": "Move to {0}",
+  "windows.conversation_groups.title": "Pinned chats",
   "windows.updates.unconfigured": "The Windows update feed and trust key have not been configured.",
   "windows.updates.failed": "The update could not finish. Try again; if it timed out, restart Pacer first.",
   "windows.updates.available": "An update is available. Use the update window to install it.",

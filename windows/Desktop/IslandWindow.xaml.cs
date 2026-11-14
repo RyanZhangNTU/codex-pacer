@@ -859,6 +859,7 @@ public partial class IslandWindow : Window
     }
     private void BuildPage(bool animate, int direction, bool settled = false)
     {
+        TasksTitle.Text = ui.Text(UsesConversationGroups ? "windows.conversation_groups.title" : "layout.group.tasks");
         PanelBuilds++;
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         RevealHost? outgoing = currentPage;
@@ -869,7 +870,7 @@ public partial class IslandWindow : Window
         TaskPages.Height = RowsHeight(rows.Count);
         measuredRowsWidth = 0;
         int index = 0;
-        if (UsesConversationGroups) BuildConversationGroups(content, settled);
+        if (UsesConversationGroups && rows.Count > 0) BuildConversationGroups(content, settled);
         foreach (var value in UsesConversationGroups ? Array.Empty<EngineTaskRow>() : rows.Skip(page * PageSize).Take(PageSize))
         {
             var row = new TaskRow(value, panelOptions, settled) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };

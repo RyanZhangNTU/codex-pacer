@@ -1,4 +1,9 @@
 {
+  "windows.conversation_groups.ungrouped": "未分组",
+  "windows.conversation_groups.new": "新分组",
+  "windows.conversation_groups.rename": "重命名分组 {0}",
+  "windows.conversation_groups.move": "移到 {0}",
+  "windows.conversation_groups.title": "置顶会话",
   "windows.updates.unconfigured": "Windows 更新源和信任密钥尚未配置。",
   "windows.updates.failed": "更新未能完成，请重试；如果请求超时，请先重启 Pacer。",
   "windows.updates.available": "有可用的更新，请在更新窗口中安装。",

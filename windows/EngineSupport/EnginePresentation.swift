@@ -7,7 +7,7 @@ struct EnginePresentation: Codable, Equatable {
     var rows: [EngineTaskRow]
     var taskCountText: String
     let pageSize: Int
-    let rowCapacity: Int
+    var rowCapacity: Int
     var pageCount: Int
     let header: EngineHeader
 
@@ -18,6 +18,7 @@ struct EnginePresentation: Codable, Equatable {
             if !shown.contains(id) { rows.append(EngineTaskRow(pinnedID: id, title: titles[thread]!)) }
         }
         taskCountText = String(rows.count)
+        rowCapacity = min(pageSize, rows.count)
         pageCount = max(1, (rows.count + pageSize - 1) / pageSize)
     }
     init(activities: [SessionActivity], requests: [PendingAttentionRequest], inbox: CompletionInbox,

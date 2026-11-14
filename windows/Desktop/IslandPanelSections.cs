@@ -49,7 +49,7 @@ public partial class IslandWindow
     /// Rows on one task page and their height, from the panel's choices.
     private int PageSize => Math.Clamp(panelOptions.PageSize, 3, 6);
     private double RowHeight => TaskRow.RowHeight(panelOptions);
-    private double RowsHeight(int count) => UsesConversationGroups ? ConversationHeight : count == 0 ? 44 : Math.Min(count, PageSize) * RowHeight + (Math.Min(count, PageSize) - 1) * 2;
+    private double RowsHeight(int count) => count == 0 ? 44 : UsesConversationGroups ? ConversationHeight : Math.Min(count, PageSize) * RowHeight + (Math.Min(count, PageSize) - 1) * 2;
     private int PageCount => UsesConversationGroups ? 1 : Math.Max(1, (rows.Count + PageSize - 1) / PageSize);
 
     /// Takes the snapshot's choices; true when rows must be rebuilt.
