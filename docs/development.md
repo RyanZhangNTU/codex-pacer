@@ -113,7 +113,7 @@ Available banked resets are deduplicated, grouped by exact expiry and sorted ear
 
 On Mac and Windows, Pacer watches today's and yesterday's rollout directories for new files and watches selected session files for appends. It also watches tomorrow's directory so the first rollout after midnight triggers discovery. If a date directory is missing, Pacer watches its closest existing parent until the directory appears.
 
-Windows groups file notifications for 100 ms before reading Codex logs. It publishes task state changes and attention requests as soon as it reads them. Routine metrics still use the panel's update interval. On both platforms, if a bounded log read skips the start of a turn, an explicit ending in the same rollout can recover its status. A recovered ending can notify when Pacer already observed the start of that turn.
+Windows groups file notifications for 100 ms before reading Codex logs. It publishes task state changes and attention requests as soon as it reads them. Routine metrics still use the panel's update interval. A Claude or DeepSeek update, or a clock tick, that arrives during that read is published at once; it does not wait for the Codex metrics. On both platforms, if a bounded log read skips the start of a turn, an explicit ending in the same rollout can recover its status. A recovered ending can notify when Pacer already observed the start of that turn.
 
 SSH discovery reads the current Codex Desktop account's auto-connect settings and Codex home hints from the global state. It reads the legacy top-level fields only if Desktop has no account owner marker. A disabled or missing auto-connect setting does not start a helper. If an enabled host has no home hint for that account, Pacer uses `~/.codex` on that host.
 

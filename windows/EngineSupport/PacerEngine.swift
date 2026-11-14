@@ -429,6 +429,7 @@ actor EngineRuntime {
     private var discoveryRequested = false
     private var refreshActivityMonitorsRequested = false
     private var immediateRefreshRequested = false
+    private var collectHandoff = EngineCollectHandoff()
     private var forceBalanceRequested = false
     private var codexMetricsPending = false
     private let codexMetricsWork = ApplicationWorkRegistry.Key(.presentation, provider: .codex, identifier: "log-metrics")
@@ -1313,6 +1314,7 @@ actor EngineRuntime {
             requests: attention.filter { allowsRemoteSource($0.sourceHostID, provider: .claude) },
             available: status?.connected == true && status?.sourceAvailable != false)
         if projectionReady, refreshTask == nil { projectLocal(.claude, snapshot: claudeLocal) }
+        else { handOffToCollect(localSnapshot: true) }
     }
     private func receiveDeepSeekLocal(_ rows: [SessionActivity], statuses: [String: RuntimeStreamStatus],
         attention: [PendingAttentionRequest], performance: [SessionPerformanceUpdate], usage: DeepSeekLocalUsage, context: UInt64) async {
@@ -1330,7 +1332,12 @@ actor EngineRuntime {
             guard active, lifecycle.version(.deepseek) == context else { return }
             let ended = rows.contains { [.completed, .interrupted].contains($0.phase) && previous.contains($0.id + "|" + ($0.turnID ?? "")) }
             _ = await balanceMonitor?.refreshIfDue(active: expanded || rows.contains { $0.phase == .running }, turnEnded: ended)
-        }
+        } else { handOffToCollect(localSnapshot: true) }
+    }
+    /// A projection skipped because a collect is running still has to reach the host.
+    private func handOffToCollect(localSnapshot: Bool) {
+        guard refreshTask != nil, collectHandoff.skippedProjection(localSnapshot: localSnapshot) else { return }
+        refreshRequested = true; immediateRefreshRequested = true
     }
     private func projectLocal(_ provider: AgentProvider, snapshot: LocalActivitySnapshot) {
         loggedActivities.removeAll { $0.provider == provider }; loggedActivities += snapshot.activities
@@ -1528,12 +1535,11 @@ actor EngineRuntime {
     private func tickPresentation() async {
         guard active, !Task.isCancelled else { return }
         await performLifecycle(lifecycle.tick(lifecycleTick))
-        guard projectionReady, refreshTask == nil else { return }
+        guard projectionReady else { return }
         // Only the metadata projection changes on a clock tick. Do not reopen
         // transcript files or rescan source directories while nothing is written.
-        if activities.contains(where: { [.running, .waitingForInput].contains($0.phase) }) || !quota.isEmpty || codexQuota != nil || claudeQuotaState?.snapshot != nil || enabled.contains(.deepseek) && walletSource != nil {
-            publish(notices: [])
-        }
+        guard activities.contains(where: { [.running, .waitingForInput].contains($0.phase) }) || !quota.isEmpty || codexQuota != nil || claudeQuotaState?.snapshot != nil || enabled.contains(.deepseek) && walletSource != nil else { return }
+        if refreshTask == nil { publish(notices: []) } else { handOffToCollect(localSnapshot: false) }
     }
 
     private func receiveBalance(_ state: DeepSeekBalanceState) {
@@ -2055,6 +2061,7 @@ actor EngineRuntime {
         ownedWork.finish(owner)
     }
     private func collect(discover: Bool, refreshMonitors: Bool, batchCodexMetrics: Bool) async {
+        defer { collectHandoff.endCollect() }
         let date = now(), revision = generation
         if discover { lastCodexDiscovery = date }
         let previousDeepSeekTurns = Set(activities.filter {
@@ -2102,6 +2109,7 @@ actor EngineRuntime {
                 if enabled.contains(.deepseek) { await deepseekActivityMonitor.refresh() }
                 guard active, generation == revision else { return }
             }
+            collectHandoff.readLocalSnapshots()
             if enabled.contains(.claude) {
                 current += claudeLocal.activities; pending += claudeLocal.requests
                 status.append(.init(id: "claude:local-logs", provider: "claude", available: claudeLocal.available, transport: "logs", reason: nil))
@@ -2120,12 +2128,14 @@ actor EngineRuntime {
         _ = await balanceMonitor?.refreshIfDue(active: expanded || current.contains { $0.provider == .deepseek && $0.phase == .running },
             force: forceBalance, turnEnded: ended)
         guard active, generation == revision, !Task.isCancelled else { return }
-        let publishNow = !batchCodexMetrics || !projectionReady || status != loggedSources ||
+        let publishNow = collectHandoff.takePublication() || !batchCodexMetrics || !projectionReady || status != loggedSources ||
             codexLifecycleChanged(current, pending: pending)
         let metricsChanged = !publishNow && current != loggedActivities
         loggedActivities = current; loggedRequests = pending; loggedSources = status
         cloudLocalSessions.update(current)
-        if publishNow { projectCollected(at: date) }
+        // A Claude or DeepSeek ending read during this collect can be newer than
+        // its start, so project at the time of publication.
+        if publishNow { projectCollected(at: now()) }
         else if metricsChanged, !codexMetricsPending { scheduleCodexMetrics() }
         let candidates = current.filter { $0.provider == .codex }.sorted {
             let left = [.running, .waitingForInput].contains($0.phase), right = [.running, .waitingForInput].contains($1.phase)
@@ -2512,7 +2522,7 @@ actor EngineRuntime {
         cancelHostTracking(); invalidateNavigation()
         activityDisplayDeadline = nil
         refreshRequested = false; discoveryRequested = false; refreshActivityMonitorsRequested = false
-        immediateRefreshRequested = false
+        immediateRefreshRequested = false; collectHandoff = EngineCollectHandoff()
         clearCodexMetricsBatch()
         forceBalanceRequested = false
         #if os(Windows)
