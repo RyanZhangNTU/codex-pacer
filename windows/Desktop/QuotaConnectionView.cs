@@ -21,13 +21,14 @@ internal sealed class QuotaConnectionView : StackPanel
                 FontFamily = PacerFonts.Interface, FontSize = 11, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center };
             AutomationProperties.SetName(message, status.Message); Children.Add(message);
         }
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center,
+        // A classic ring column can be narrower than both capsules; they then stack.
+        var actions = new QuotaActionRow { HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, Children.Count > 0 && status.Actions.Count > 0 ? 6 : 0, 0, 0) };
         foreach (var action in status.Actions)
         {
             bool supported = action.Kind == "retry" ? retry != null : action.Kind == "settings" && settings != null;
             var button = new Button { Style = (Style)FindResource("QuotaLinkButton"), Content = action.Title,
-                IsEnabled = action.Enabled && supported, Margin = new Thickness(actions.Children.Count > 0 ? 6 : 0, 0, 0, 0) };
+                ContentTemplate = (DataTemplate)FindResource("QuotaActionTitle"), IsEnabled = action.Enabled && supported };
             AutomationProperties.SetName(button, action.Title); AutomationProperties.SetAutomationId(button, "quota." + provider + "." + action.Kind);
             if (!supported) AutomationProperties.SetHelpText(button, ui.Text(action.Kind == "settings" ? "windows.settings.pane_pending" : "windows.quota.retry_pending"));
             if (action.Kind == "settings") button.Click += (_, _) => settings?.Invoke();

@@ -447,17 +447,24 @@ struct QuotaProviderStatusView: View {
         }.multilineTextAlignment(.center)
     }
 
+    /// A classic ring column can be narrower than the capsules side by side;
+    /// they then stack, one per line, instead of truncating their labels.
     private var connectionActions: some View {
-        HStack(spacing: 6) {
-            if provider == .claude, model.claudeConnectionNeeded {
-                QuotaLinkButton(title: L10n.text(model.claudeConnectionActionTitleKey), prominent: true) { model.connectClaudeQuota() }
-                    .accessibilityHint(L10n.text(model.claudeConnectionActionHelpKey)).disabled(model.providerRefreshing(provider))
-            }
-            QuotaLinkButton(title: L10n.text(model.providerRefreshing(provider) ? "common.retrying" : "common.retry")) {
-                model.retryQuotaConnection(for: provider)
-            }.disabled(model.providerRefreshing(provider))
-            QuotaLinkButton(title: L10n.text("common.settings")) { model.openSettings(for: provider) }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { connectionButtons }
+            VStack(spacing: 6) { connectionButtons }
         }
+    }
+
+    @ViewBuilder private var connectionButtons: some View {
+        if provider == .claude, model.claudeConnectionNeeded {
+            QuotaLinkButton(title: L10n.text(model.claudeConnectionActionTitleKey), prominent: true) { model.connectClaudeQuota() }
+                .accessibilityHint(L10n.text(model.claudeConnectionActionHelpKey)).disabled(model.providerRefreshing(provider))
+        }
+        QuotaLinkButton(title: L10n.text(model.providerRefreshing(provider) ? "common.retrying" : "common.retry")) {
+            model.retryQuotaConnection(for: provider)
+        }.disabled(model.providerRefreshing(provider))
+        QuotaLinkButton(title: L10n.text("common.settings")) { model.openSettings(for: provider) }
     }
 }
 
