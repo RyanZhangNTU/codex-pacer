@@ -1406,7 +1406,7 @@ actor EngineRuntime {
             module.balance = registered.balance?.rawValue
         }
         module.prominent = moduleLibrary.entries.first { $0.provider == provider }?.prominent
-        if let daily = harnessActivities[provider]?.usage?.daily {
+        if let daily = demo && provider == .workbuddy ? DemoScenario.workbuddyDaily(at: now()) : harnessActivities[provider]?.usage?.daily {
             module.week = HarnessWeekPresentation.week(provider: provider, daily: daily, now: now())
         }
         if let definition, let scheme = definition.conversationScheme, let publisher = definition.macSigningOrganization {

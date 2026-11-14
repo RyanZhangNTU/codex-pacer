@@ -32,5 +32,7 @@ final class HarnessWeekPresentationTests: XCTestCase {
         XCTAssertTrue(week.days.allSatisfy { $0.overFraction == 0 && $0.withinFraction <= 1 })
         XCTAssertNotNil(week.lineFraction, "The line marks the average of the days with credits")
         XCTAssertEqual(week.lineText, L10n.text("harness.daily_average", "20"))
+        XCTAssertNotNil(HarnessWeekPresentation.week(provider: .workbuddy, daily: DemoScenario.workbuddyDaily(at: now, calendar: calendar),
+                                                     now: now, calendar: calendar), "The demo week draws its chart")
     }
 }

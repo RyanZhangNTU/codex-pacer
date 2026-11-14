@@ -165,6 +165,15 @@ public enum DemoScenario {
         return task
     }
 
+    /// A week of WorkBuddy credits, oldest first with today last; one quiet day.
+    public static func workbuddyDaily(at now: Date, calendar: Calendar = .current) -> [HarnessDailyAmount] {
+        let today = calendar.startOfDay(for: now)
+        return [42.0, 0, 118, 76, 23, 154, 37].enumerated().compactMap { index, amount in
+            guard amount > 0, let day = calendar.date(byAdding: .day, value: index - 6, to: today) else { return nil }
+            return HarnessDailyAmount(day: day, amount: amount)
+        }
+    }
+
     /// Plan credits partway through the month, with a pack that expires sooner.
     public static func workbuddyCredits(at now: Date) -> HarnessAccountCredits {
         HarnessAccountCredits(state: .ready, remaining: 3_260, total: 5_000, reserved: 12, plan: "Pro",
