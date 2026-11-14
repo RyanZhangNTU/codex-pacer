@@ -407,6 +407,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
     private var lastSuccess: Date?
     private var catchUpUntil: Date?
     private var failureCount = 0
+    private var accountRetries = 0
 
     init(io: LocalHarnessIO) { self.io = io }
 
@@ -436,7 +437,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         cancelRetry()
         let oldWatcher = watcher
         oldWatcher?.stop(); watcher = nil; watchURLs = []
-        lastObservation = nil; lastSuccess = nil; failureCount = 0
+        lastObservation = nil; lastSuccess = nil; failureCount = 0; accountRetries = 0
         catchUpUntil = nil
         owner = nil; transcripts.removeAll(); witnessed.removeAll(); witnessedRuns.removeAll(); started = nil
         return oldWatcher
@@ -462,6 +463,14 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         let now = io.now()
         var observation = HarnessActivity(status: .missing)
         let selectedOwner = verifiedOwner(in: home, account: account)
+        // WorkBuddy rewrites its account file in place. While the file is still
+        // there, an unreadable copy is a write in progress, not a sign-out.
+        if selectedOwner == nil, owner != nil, accountRetries < 4, io.files.metadata(account)?.isRegularFile == true {
+            accountRetries += 1
+            scheduleRetry(after: 1)
+            return
+        }
+        accountRetries = 0
         if owner != selectedOwner {
             owner = selectedOwner
             transcripts.removeAll()

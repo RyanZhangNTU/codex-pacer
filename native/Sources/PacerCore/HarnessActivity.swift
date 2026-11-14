@@ -150,6 +150,10 @@ package struct HarnessActivityFeed: Sendable {
     }
 
     package mutating func publish(_ value: HarnessActivity, replay: Bool = false) -> HarnessActivityBatch {
+        // An observation without an account is not a switch to another account.
+        // Keep the last known scope so retained completions and alerts survive.
+        var value = value
+        if value.scope == nil, let known = previous?.scope { value.scope = known }
         sequence &+= 1
         let source = HarnessSourceKey(provider: provider, stream: "local", scope: value.scope ?? homeScope)
         let change: HarnessActivityBatch.Change
