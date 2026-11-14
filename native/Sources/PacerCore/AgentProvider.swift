@@ -29,6 +29,15 @@ public enum AgentProvider: String, CaseIterable, Codable, Sendable, Identifiable
         if self != .codex {
             return validatedSessionID(String(identity.split(separator: ":").last ?? ""))
         }
+        // Desktop resumes use rollout-...-THREAD_RESUME.jsonl. The final
+        // UUID identifies the rollout, while the preceding UUID owns history.
+        if identity.hasPrefix("rollout-"), (identity as NSString).pathExtension == "jsonl" {
+            let parts = (identity as NSString).deletingPathExtension.split(separator: "_")
+            if parts.count == 2, UUID(uuidString: String(parts[1])) != nil,
+               let thread = UUID(uuidString: String(parts[0].suffix(36))) {
+                return thread.uuidString.lowercased()
+            }
+        }
         // Dotted SSH aliases must not be interpreted as a rollout extension.
         return (UUID(uuidString: String(identity.suffix(36))) ??
             UUID(uuidString: String((identity as NSString).deletingPathExtension.suffix(36))))?.uuidString.lowercased()

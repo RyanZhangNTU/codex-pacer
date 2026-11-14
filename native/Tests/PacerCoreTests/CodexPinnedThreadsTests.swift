@@ -57,6 +57,7 @@ final class CodexPinnedThreadsTests: XCTestCase {
     func testResumedRolloutUsesIndexedPathAndVerifiedHeader() throws {
         let home = try home(); try schema(home)
         let old = try rollout(home, thread: id(1)), resumed = try rollout(home, thread: id(1), suffix: "_" + id(2))
+        XCTAssertEqual(SessionActivity(id: resumed.lastPathComponent).threadID, id(1))
         try sql(home, "INSERT INTO threads (id,rollout_path) VALUES ('\(id(1))','\(resumed.path.replacingOccurrences(of: "'", with: "''"))')")
         // Even if an old rollout's mtime is newer, the current indexed path wins.
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: old.path)

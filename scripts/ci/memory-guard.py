@@ -1,5 +1,4 @@
 """Run one CI step with measured memory headroom; never restart failed work."""
-import json
 import os
 import re
 import signal
@@ -10,13 +9,68 @@ import time
 RESERVE = 1536 * 1024 * 1024
 
 
+def windows_snapshot():
+    # Native calls avoid starting a PowerShell/CIM provider every five seconds,
+    # which can itself stall during ARM64 runner initialization.
+    import ctypes as c
+    from ctypes import wintypes as w
+    kernel = c.WinDLL('kernel32', use_last_error=True)
+    class Memory(c.Structure):
+        _fields_ = [('length', w.DWORD), ('load', w.DWORD)] + [(key, c.c_ulonglong) for key in
+            ('total', 'available', 'totalPage', 'availablePage', 'totalVirtual', 'availableVirtual', 'extended')]
+    class Process(c.Structure):
+        _fields_ = [('size', w.DWORD), ('usage', w.DWORD), ('pid', w.DWORD), ('heap', c.c_size_t),
+                    ('module', w.DWORD), ('threads', w.DWORD), ('parent', w.DWORD), ('priority', w.LONG),
+                    ('flags', w.DWORD), ('exe', w.WCHAR * 260)]
+    class Counters(c.Structure):
+        _fields_ = [('size', w.DWORD), ('faults', w.DWORD)] + [(key, c.c_size_t) for key in
+            ('peakWorking', 'working', 'peakPaged', 'paged', 'peakNonPaged', 'nonPaged', 'pagefile', 'peakPagefile')]
+    kernel.GlobalMemoryStatusEx.argtypes = [c.POINTER(Memory)]
+    kernel.CreateToolhelp32Snapshot.argtypes = [w.DWORD, w.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = w.HANDLE
+    kernel.Process32FirstW.argtypes = kernel.Process32NextW.argtypes = [w.HANDLE, c.POINTER(Process)]
+    kernel.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+    kernel.OpenProcess.restype = w.HANDLE
+    kernel.K32GetProcessMemoryInfo.argtypes = [w.HANDLE, c.POINTER(Counters), w.DWORD]
+    kernel.GetExitCodeProcess.argtypes = [w.HANDLE, c.POINTER(w.DWORD)]
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    memory = Memory(); memory.length = c.sizeof(memory)
+    if not kernel.GlobalMemoryStatusEx(c.byref(memory)):
+        raise c.WinError(c.get_last_error())
+    handle = kernel.CreateToolhelp32Snapshot(2, 0)
+    if handle == w.HANDLE(-1).value:
+        raise c.WinError(c.get_last_error())
+    rows = []
+    try:
+        entry = Process(); entry.size = c.sizeof(entry)
+        present = kernel.Process32FirstW(handle, c.byref(entry))
+        while present:
+            process = kernel.OpenProcess(0x1000 | 0x10, False, entry.pid)
+            rss = None
+            exited = not process and c.get_last_error() == 87
+            if process:
+                try:
+                    counters = Counters(); counters.size = c.sizeof(counters)
+                    if kernel.K32GetProcessMemoryInfo(process, c.byref(counters), counters.size):
+                        rss = counters.working
+                    else:
+                        status = w.DWORD()
+                        exited = bool(kernel.GetExitCodeProcess(process, c.byref(status))) and status.value != 259
+                finally:
+                    kernel.CloseHandle(process)
+            if not exited:
+                rows.append((entry.pid, entry.parent, rss))
+            present = kernel.Process32NextW(handle, c.byref(entry))
+        if c.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+            raise c.WinError(c.get_last_error())
+    finally:
+        kernel.CloseHandle(handle)
+    return memory.available, rows
+
+
 def snapshot():
     if os.name == 'nt':
-        code = "$ErrorActionPreference='Stop'; $m=Get-CimInstance Win32_OperatingSystem; $p=Get-CimInstance Win32_Process; @{available=[long]$m.FreePhysicalMemory*1024; processes=@($p|Select-Object ProcessId,ParentProcessId,WorkingSetSize)}|ConvertTo-Json -Compress"
-        raw = subprocess.check_output(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', code],
-                                      creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
-        data = json.loads(raw)
-        return data['available'], [(p['ProcessId'], p['ParentProcessId'], int(p['WorkingSetSize'])) for p in data['processes']]
+        return windows_snapshot()
     data = subprocess.check_output(['vm_stat'], text=True, timeout=10)
     page = int(re.search(r'page size of (\d+) bytes', data)[1])
     counters = dict((k, int(v)) for k, v in re.findall(r'^([^:]+):\s+(\d+)\.', data, re.M))
@@ -32,7 +86,10 @@ def footprint(root, rows):
         if found.issubset(owned):
             break
         owned.update(found)
-    return sum(rss for pid, _, rss in rows if pid in owned)
+    memory = [rss for pid, _, rss in rows if pid in owned]
+    if any(rss is None for rss in memory):
+        raise RuntimeError('Could not read an owned process memory footprint')
+    return sum(memory)
 
 
 def main():
