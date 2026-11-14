@@ -93,11 +93,13 @@ internal static class PreferencesChecks
                 Check(config.RootElement.GetProperty("showEmbeddedCodexSessions").GetBoolean() && !config.RootElement.GetProperty("showEmbeddedClaudeSessions").GetBoolean(),
                     "The acknowledged engine configuration carries both Mac preference keys independently");
             // Every main-window page reopens where it was; older names are kept for the window to map.
-            foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
+            foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "modules", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
                 Check(store.Save(original with { LastSettingsPane = pane }) && store.Load().Value.LastSettingsPane == pane, "The settings page survives a save: " + pane);
             Check(store.Save(original with { LastSettingsPane = "future-page" }) && store.Load().Value.LastSettingsPane == "overview", "An unknown page opens Overview, as on the Mac");
-            Check(store.Save(original with { LastSettingsPane = "harness.workbuddy", EnabledHarnessProgress = ["workbuddy"] })
-                && store.Load().Value is { LastSettingsPane: "harness.workbuddy", EnabledHarnessProgress: ["workbuddy"] },
+            Check(store.Save(original with { LastSettingsPane = "harness.workbuddy", DisabledHarnessProgress = ["workbuddy"],
+                    HiddenTurnCredits = ["workbuddy"], HarnessHomes = new() { ["workbuddy"] = @"D:\WorkBuddyData" } })
+                && store.Load().Value is { LastSettingsPane: "harness.workbuddy", DisabledHarnessProgress: ["workbuddy"], HiddenTurnCredits: ["workbuddy"] } loaded
+                && loaded.HarnessHomes.GetValueOrDefault("workbuddy") == @"D:\WorkBuddyData",
                 "Local Harness page and progress settings survive a restart");
             Check(store.Save(original with { AppTheme = "dark", AccentColor = "graphite" }) && store.Load().Value is { AppTheme: "dark", AccentColor: "graphite" }
                 && File.ReadAllText(file).Contains("\"appTheme\": \"dark\"") && File.ReadAllText(file).Contains("\"accentColor\": \"graphite\""),
@@ -111,7 +113,7 @@ internal static class PreferencesChecks
             Check(!store.Save(original with { RetentionMinutes = -1 }), "Invalid retention cannot replace saved settings");
             Check(!store.Save(original with { DisplayMode = "unknown" }), "An invalid display mode cannot replace saved settings");
             Check(!store.Save(original with { ExpandedQuotaStyle = "unknown" }), "An invalid quota style cannot replace saved settings");
-            Check(!store.Save(original with { CompactLayout = new string('x', 8193) }) && !store.Save(original with { QuotaRingOuter = "foreign" })
+            Check(!store.Save(original with { CompactLayout = new string('x', 8193) }) && !store.Save(original with { QuotaRingOuter = "Foreign Ring!" })
                 && !store.Save(original with { CompactSingleTask = "foreign" }) && !store.Save(original with { CompactMetric = "foreign" })
                 && !store.Save(original with { CodexQuotaWindow = "bad\nvalue" }), "Invalid compact choices cannot replace saved settings");
             Check(!store.Save(original with { DeepSeekPanelStyle = "unknown" }) && !store.Save(original with { DeepSeekMode = "unknown" })

@@ -106,10 +106,11 @@ public partial class App : Application
         if (providersIndex >= 0)
         {
             if (!demo || providersIndex + 1 >= e.Args.Length) throw new ArgumentException("Provider fixtures require demo mode.");
+            string[] known = ["codex", "claude", "deepseek", "workbuddy"];
             string[] providers = e.Args[providersIndex + 1] == "all" ? ["codex", "claude", "deepseek"] : e.Args[providersIndex + 1].Split(',');
-            if (providers.Length is < 1 or > 3 || providers.Distinct().Count() != providers.Length || providers.Any(value => value is not ("codex" or "claude" or "deepseek")))
+            if (providers.Length is < 1 or > 4 || providers.Distinct().Count() != providers.Length || providers.Any(value => !known.Contains(value)))
                 throw new ArgumentException("Unknown demo providers.");
-            preferences = preferences with { ProviderModes = preferences.ProviderModes.ToDictionary(pair => pair.Key, pair => providers.Contains(pair.Key) ? "enabled" : "disabled") };
+            preferences = preferences with { ProviderModes = known.ToDictionary(provider => provider, provider => providers.Contains(provider) ? "enabled" : "disabled") };
         }
         string[] positions = ["center", "topLeft", "bottomLeft", "topRight", "bottomRight"];
         int position = 0, positionIndex = Array.IndexOf(e.Args, "--position");
@@ -127,7 +128,7 @@ public partial class App : Application
         int paneIndex = Array.IndexOf(e.Args, "--settings-pane");
         if (paneIndex >= 0)
         {
-            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "notifications" or "reminders" or "remote" or "about" or "support"))
+            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "modules" or "harness.workbuddy" or "notifications" or "reminders" or "remote" or "about" or "support"))
                 throw new ArgumentException("Settings pane fixtures require a supported demo preview.");
             preferences = preferences with { LastSettingsPane = e.Args[paneIndex + 1] };
         }
@@ -200,13 +201,21 @@ public partial class App : Application
         claudeConnection = new ClaudeConnectionCoordinator(engine, demo ? new OfflineClaudeWebSession() : new ClaudeWebSession(ui),
             Dispatcher, bridgeEnabled: !demo, newSession: async () => settingsSession != null &&
                 await settingsSession.ChangeAsync(value => value with { ClaudeOrganization = "" }) == PreferencesApplyResult.Applied);
-        if (!demo)
-        {
-            workBuddyAccount = new(new WorkBuddyAccountSession(ui, false), new WorkBuddyAccountSession(ui, true),
+        workBuddyAccount = demo
+            ? new(new DemoHarnessAccountSession(), new DemoHarnessAccountSession(), false, Dispatcher)
+            : new(new WorkBuddyAccountSession(ui, false), new WorkBuddyAccountSession(ui, true),
                 preferences.UsesWorkBuddyChina(language == "zh-Hans"), Dispatcher);
-            engine.Snapshot += snapshot => workBuddyAccount.SetEnabled(snapshot.Modules?.Any(module =>
+        engine.Snapshot += snapshot =>
+        {
+            // Colors come with the registry entry; the island redraws on its next snapshot.
+            PacerPalette.RegisterModules(snapshot.Modules);
+            WindowsConversationApplication.Register(snapshot.Modules);
+            workBuddyAccount.SetEnabled(snapshot.Modules?.Any(module =>
                 module.Provider == "workbuddy" && module is { Enabled: true, ReportsAccountCredits: true }) == true);
-        }
+        };
+        // The engine draws the collapsed bar and sends reminders, so it gets
+        // every change of the reading the host's sign-in produced.
+        if (!demo) workBuddyAccount.Changed += () => _ = PushAccountCreditsAsync();
         Activated += async (_, _) =>
         {
             if (quitting || !engineReady.Task.IsCompletedSuccessfully) return;
@@ -329,6 +338,7 @@ public partial class App : Application
             if (capture < 0) engine.Status += RestartAfterEngineExit;
             await webConnection.StartAsync();
             await claudeConnection.StartAsync();
+            if (!demo) { pushedAccountCredits = null; await PushAccountCreditsAsync(); }
             await island.SynchronizeExpansionAsync();
             if (preferencesUnavailable) island.SetStatus(ui.Text("windows.settings.read_failed"));
             if (demo && stage != 0) await engine.SendAsync("demoStage", new { demoStage = stage });
@@ -381,9 +391,21 @@ public partial class App : Application
         settings.Show(); settings.Activate();
     }
 
+    private string? pushedAccountCredits;
+    private async Task PushAccountCreditsAsync()
+    {
+        if (quitting || workBuddyAccount is not { } account || engine is not { } client || !engineReady.Task.IsCompletedSuccessfully || account.Busy) return;
+        var payload = new { provider = "workbuddy", accountCredits = account.EngineCredits(), stale = account.State == "unavailable" };
+        string encoded = System.Text.Json.JsonSerializer.Serialize(payload);
+        if (encoded == pushedAccountCredits) return;
+        pushedAccountCredits = encoded;
+        try { await client.SendAsync("setAccountCredits", payload); }
+        catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException) { pushedAccountCredits = null; }
+    }
+
     private async void OpenProviderSettings(string provider)
     {
-        if (provider is not ("codex" or "claude" or "deepseek" or "workbuddy")) return;
+        if (!DesktopPreferences.ValidProviderId(provider)) return;
         OpenSettings();
         if (settings != null) await settings.NavigateAsync(provider);
     }

@@ -69,6 +69,8 @@ internal static class HarnessAccountCard
             var open = new Button { Content = ui.Text("harness.account.connect"), HorizontalAlignment = compact ? HorizontalAlignment.Center : HorizontalAlignment.Left,
                 Margin = new Thickness(0, 3, 0, 0), FontSize = 11 };
             open.SetResourceReference(FrameworkElement.StyleProperty, "QuotaLinkButton");
+            // The same title template as DeepSeek's actions, so the text follows the island's light or dark ink.
+            open.SetResourceReference(ContentControl.ContentTemplateProperty, "QuotaActionTitle");
             AutomationProperties.SetAutomationId(open, id + ".settings");
             AutomationProperties.SetHelpText(open, stateText);
             open.Click += (_, _) => { if (open.IsVisible) openSettings(); };
@@ -109,10 +111,10 @@ internal static class HarnessAccountCard
         return cell;
     }
 
-    private static CultureInfo Culture(UiText ui) => CultureInfo.GetCultureInfo(ui.Language == "zh-Hans" ? "zh-CN" : "en-US");
+    internal static CultureInfo Culture(UiText ui) => CultureInfo.GetCultureInfo(ui.Language == "zh-Hans" ? "zh-CN" : "en-US");
     internal static string Amount(UiText ui, double value) => value > 0 && value < 0.01 ? "<0.01" : value.ToString("#,0.##", Culture(ui));
     internal static string AvailableText(UiText ui, double amount) => Fields(ui, "harness.account.remaining", Amount(ui, amount));
-    private static string Fields(UiText ui, string key, params string[] values)
+    internal static string Fields(UiText ui, string key, params string[] values)
     {
         var pieces = ui.Text(key).Split("%@", StringSplitOptions.None);
         return pieces.Length == values.Length + 1 ? string.Concat(System.Linq.Enumerable.Select(pieces, (piece, i) => piece + (i < values.Length ? values[i] : ""))) : ui.Text(key);

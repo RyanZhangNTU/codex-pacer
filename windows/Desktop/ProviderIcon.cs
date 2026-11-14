@@ -10,16 +10,23 @@ namespace CodexPacer.Windows;
 
 internal static class ProviderIcon
 {
-    private static readonly Dictionary<(string Provider, bool Outline), ImageSource> Sources = new();
+    private static readonly Dictionary<(string Provider, bool Outline), ImageSource?> Sources = new();
 
     internal static ImageSource? Source(string provider, bool outline = false)
     {
         var key = (provider, outline);
         if (Sources.TryGetValue(key, out var source)) return source;
-        if (provider is not ("codex" or "claude" or "deepseek" or "workbuddy")) return null;
+        if (!DesktopPreferences.ValidProviderId(provider)) return null;
+        // Any module with packaged artwork shows it; one without falls back to its glyph.
         string name = "provider-" + provider + (outline ? "-outline" : "");
-        var bitmap = new BitmapImage(new Uri("pack://application:,,,/CodexPacer;component/Assets/Providers/" + name + ".png"));
-        bitmap.Freeze();
+        var uri = new Uri("pack://application:,,,/CodexPacer;component/Assets/Providers/" + name + ".png");
+        BitmapImage? bitmap = null;
+        try
+        {
+            using (Application.GetResourceStream(uri)?.Stream) { }
+            bitmap = new BitmapImage(uri); bitmap.Freeze();
+        }
+        catch (Exception error) when (error is System.IO.IOException or NotSupportedException or InvalidOperationException) { bitmap = null; }
         Sources.Add(key, bitmap);
         return bitmap;
     }

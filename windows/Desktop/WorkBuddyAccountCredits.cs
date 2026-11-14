@@ -55,6 +55,23 @@ internal interface IHarnessAccountSession : IAsyncDisposable
     Task ClearAsync(CancellationToken cancellation);
 }
 
+/// The demo's signed-in account, with the same sample bill as the engine's
+/// demo, so every credits view can be checked without a sign-in.
+internal sealed class DemoHarnessAccountSession : IHarnessAccountSession
+{
+    public bool Available => true;
+    public bool IsConnected => true;
+    public Task<HarnessAccountReply> ReadCreditsAsync(CancellationToken cancellation)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return Task.FromResult(new HarnessAccountReply("ready", new(3_260, 5_000, 12, "Pro",
+            new(4_000, 2_660, 1_340, now.AddDays(12)), new(600, now.AddDays(9)))));
+    }
+    public Task<bool> SignInAsync(CancellationToken cancellation) => Task.FromResult(true);
+    public Task ClearAsync(CancellationToken cancellation) => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
 internal sealed class WorkBuddyAccountSession : ProviderWebSession, IHarnessAccountSession
 {
     private static readonly Lazy<string> Script = new(() =>
@@ -132,6 +149,15 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
     internal bool Busy => operation != null;
     internal bool Available => !disposed && session.Available;
     internal bool CanDisconnect => session.IsConnected;
+    internal bool UsesChina => ReferenceEquals(session, china);
+
+    /// The reading in Core's account credits shape, for the engine.
+    internal object? EngineCredits() => Reading is not { } reading ? null : new
+    {
+        state = "ready", remaining = reading.Remaining, total = reading.Total, reserved = reading.Reserved, plan = reading.Plan,
+        cycle = reading.Cycle is not { } cycle ? null : new { total = cycle.Total, remaining = cycle.Remaining, used = cycle.Used, reset = cycle.ResetsAt?.ToUnixTimeSeconds() },
+        expiration = reading.Expiration is not { } expiring ? null : new { credits = expiring.Credits, at = expiring.At.ToUnixTimeSeconds() }
+    };
 
     internal HarnessAccountConnection(IHarnessAccountSession international, IHarnessAccountSession china, bool useChina, Dispatcher dispatcher)
     {

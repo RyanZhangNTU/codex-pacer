@@ -52,12 +52,17 @@ internal static class AccentPalette
     /// scaled to a set luminance instead, as on the Mac.
     internal static Color? ProviderShade(string? accent, string provider, bool light = false) => Fixed(accent) is { } color
         ? light ? LightShade(color, provider)
-            : provider switch { "claude" => Lighten(color, .42), "deepseek" => Lighten(color, .66), _ => color }
+            : provider switch { "claude" => Lighten(color, .42), "deepseek" => Lighten(color, .66), "codex" => color,
+                _ => PacerPalette.Brand(provider) is { } brand ? Lighten(color, brand.AccentLift) : color }
         : null;
 
     /// Relative luminance of each service's shade on light glass: Codex 0.07,
     /// Claude 0.12 and DeepSeek 0.20, about 7.4, 5.2 and 3.6:1 against #ECECF0.
-    internal static double LightLuminance(string provider) => provider switch { "claude" => .12, "deepseek" => .2, _ => .07 };
+    internal static double LightLuminance(string provider) => provider switch
+    {
+        "claude" => .12, "deepseek" => .2, "codex" => .07,
+        _ => PacerPalette.Brand(provider)?.AccentLuminance ?? .07
+    };
 
     /// The color's linear light scaled evenly to the service's luminance, which
     /// keeps its hue and saturation; even yellow stays readable on light glass.

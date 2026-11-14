@@ -113,7 +113,9 @@ internal sealed class NativeCompactBar
     internal static string[] Providers(DesktopPreferences preferences, EngineSnapshot? snapshot)
     {
         var model = snapshot ?? ShellProjection.Client?.LatestSnapshot;
-        if (model?.Modules is { } modules) return modules.Where(value => value.Enabled && DesktopPreferences.IsLegacyProvider(value.Provider)).Select(value => value.Provider).ToArray();
+        // Every enabled module that shows a balance: quota, a wallet or account credits.
+        if (model?.Modules is { } modules) return modules.Where(value => value.Enabled && (DesktopPreferences.IsLegacyProvider(value.Provider) || value.Balance != null))
+            .Select(value => value.Provider).ToArray();
         return model?.QuotaDashboard?.Providers.Select(value => value.Provider).ToArray()
             ?? model?.Sources.Select(value => value.Provider).Distinct().ToArray() ?? [];
     }

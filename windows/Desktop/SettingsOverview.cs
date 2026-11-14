@@ -303,10 +303,10 @@ internal sealed partial class SettingsWindow
                 content.Children.Add(HarnessAccountCard.Build(ui, harnessAccount, true, "settings.overview." + provider + ".account",
                     classic: session.Current.ExpandedQuotaStyle == "classic", details: choices.QuotaDetails,
                     openSettings: () => _ = NavigateAsync(provider)));
+            // Like the other services, the card shows its balance; local task state appears only when it needs a look.
             var (status, _, _) = HarnessStatus(module);
-            var (context, credits) = HarnessUsageValues(module);
-            foreach (string line in new[] { status, context, credits }.Where(line => line.Length > 0))
-                content.Children.Add(new TextBlock { Text = line, FontSize = 12, Foreground = PacerPalette.Secondary, TextWrapping = TextWrapping.Wrap });
+            if (module.ReportsAccountCredits != true || module.Status != "ready")
+                content.Children.Add(new TextBlock { Text = status, FontSize = 12, Foreground = PacerPalette.Secondary, TextWrapping = TextWrapping.Wrap });
         }
         else if (provider == "deepseek") content.Children.Add(DeepSeekOverview(snapshot.Wallet, connectUnavailable, panel?.BudgetDial ?? true));
         else if (snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider) is { } reading)
@@ -396,7 +396,10 @@ internal sealed partial class SettingsWindow
         string? provider = historyProvider != null && quota.Contains(historyProvider) ? historyProvider : quota.FirstOrDefault();
         var history = provider == null ? null : snapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider)?.History;
         var week = enabled.Contains("deepseek") ? snapshot?.Wallet?.Solo?.Week : null;
-        string key = JsonSerializer.Serialize(new { provider, quota, history?.Title, week?.AccessibilityLabel, deepseek = enabled.Contains("deepseek"), closed, busy, session.RequiresRestart });
+        // Modules with account credits show their week the same way.
+        var credits = closed ? [] : (snapshot?.Modules ?? []).Where(value => value.Enabled && value.ReportsAccountCredits == true).ToArray();
+        string key = JsonSerializer.Serialize(new { provider, quota, history?.Title, week?.AccessibilityLabel, deepseek = enabled.Contains("deepseek"),
+            credits = credits.Select(value => value.Provider + ":" + value.Week?.AccessibilityLabel).ToArray(), closed, busy, session.RequiresRestart });
         if (key != historyKey)
         {
             historyKey = key;
@@ -412,7 +415,18 @@ internal sealed partial class SettingsWindow
                 var card = IslandCard(content, new Thickness(18, 16, 18, 16)); Identify(card, "settings.history.deepseek", ui.Text("main.history.deepseek_week"));
                 historyBody.Children.Add(card);
             }
-            if (enabled.Length == 0)
+            foreach (var module in credits)
+            {
+                string titleKey = "main.history." + module.Provider + "_week", emptyKey = "main.history." + module.Provider + "_empty";
+                string title = ui.Has(titleKey) ? ui.Text(titleKey) : PaneTitle(module.Provider);
+                var content = new StackPanel();
+                content.Children.Add(new TextBlock { Text = title, FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, Margin = new Thickness(0, 0, 0, 12) });
+                if (module.Week is { Days.Count: >= 2 } credited) content.Children.Add(new DeepSeekWeekView(credited));
+                else content.Children.Add(new TextBlock { Text = ui.Has(emptyKey) ? ui.Text(emptyKey) : "", FontSize = 12, Foreground = PacerPalette.Secondary });
+                var card = IslandCard(content, new Thickness(18, 16, 18, 16)); Identify(card, "settings.history." + module.Provider, title);
+                historyBody.Children.Add(card);
+            }
+            if (enabled.Length == 0 && credits.Length == 0)
             {
                 var none = Label(closed ? ui.Text("windows.connection.closed") : ui.Text("provider.none_enabled")); none.TextWrapping = TextWrapping.Wrap; none.Margin = new Thickness(0, 12, 0, 12);
                 historyBody.Children.Add(Card(Row(none, new Border())));

@@ -448,7 +448,7 @@ internal sealed partial class SettingsWindow
             foreach (int index in new[] { 0, 1 })
             {
                 var combo = compactChoices["ring." + index]; combo.Items.Clear();
-                foreach (string provider in providers) combo.Items.Add(new ComboBoxItem { Tag = provider, Content = provider switch { "codex" => "Codex", "claude" => "Claude", _ => "DeepSeek" } });
+                foreach (string provider in providers) combo.Items.Add(new ComboBoxItem { Tag = provider, Content = PaneTitle(provider) });
                 combo.Items.Add(new ComboBoxItem { Tag = "none", Content = ui.Text("layout.ring_none") });
             }
         }

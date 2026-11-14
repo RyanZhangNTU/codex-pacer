@@ -1,5 +1,5 @@
 using System;
-using System.Globalization;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -9,30 +9,30 @@ using System.Windows.Shapes;
 
 namespace CodexPacer.Windows;
 
+/// A module read by the shared local adapter, laid out like the built-in
+/// pages: the header switch, Status (local tasks, account, credits), Display
+/// (progress ring, turn credits) and the folded data folder.
 internal sealed partial class SettingsWindow
 {
     private StackPanel? harnessSections;
     private Border? harnessOff;
-    private CheckBox? harnessEnabled, harnessProgress;
+    private CheckBox? harnessEnabled, harnessProgress, harnessTurnCredits;
     private Button? harnessAutomatic, harnessRefresh, harnessProgressRetry, harnessProgressConnectors;
-    private Ellipse? harnessStatusDot;
-    private TextBlock? harnessDetection, harnessState, harnessHint, harnessContext, harnessCredits, harnessNoUsage;
-    private TextBlock? harnessProgressState;
-    private Border? harnessAccountBody;
-    private Button? harnessAccountConnect, harnessAccountRefresh, harnessAccountDisconnect;
-    private ComboBox? harnessAccountSite;
+    private Ellipse? harnessStatusDot, harnessAccountDot;
+    private TextBlock? harnessDetection, harnessState, harnessHint, harnessProgressState;
+    private TextBlock? harnessAccountState, harnessAccountHelp, harnessCredits, harnessCreditsDetail;
+    private Button? harnessAccountSignIn, harnessAccountOptions, harnessUsageGuide;
     private bool refreshingHarness;
 
     private void ClearHarnessPage()
     {
         harnessSections = null; harnessOff = null;
-        harnessEnabled = harnessProgress = null;
+        harnessEnabled = harnessProgress = harnessTurnCredits = null;
         harnessAutomatic = harnessRefresh = harnessProgressRetry = harnessProgressConnectors = null;
-        harnessStatusDot = null;
-        harnessDetection = harnessState = harnessHint = harnessContext = harnessCredits = harnessNoUsage = null;
-        harnessProgressState = null;
-        harnessAccountBody = null; harnessAccountConnect = harnessAccountRefresh = harnessAccountDisconnect = null;
-        harnessAccountSite = null;
+        harnessStatusDot = harnessAccountDot = null;
+        harnessDetection = harnessState = harnessHint = harnessProgressState = null;
+        harnessAccountState = harnessAccountHelp = harnessCredits = harnessCreditsDetail = null;
+        harnessAccountSignIn = harnessAccountOptions = harnessUsageGuide = null;
         refreshingHarness = false;
     }
 
@@ -49,130 +49,181 @@ internal sealed partial class SettingsWindow
         harnessOff = ModuleOffCard(); form.Children.Add(harnessOff);
         harnessSections = new StackPanel(); form.Children.Add(harnessSections);
 
-        var refresh = new Button { Content = ui.Text("common.refresh") }; harnessRefresh = refresh;
-        Identify(refresh, id + ".refresh", ui.Text("common.refresh")); editors.Add(refresh);
-        refresh.Click += async (_, _) =>
+        // Local tasks: one state, with Rescan only while nothing is found, as Codex's CLI row.
+        var rescan = new Button { Content = ui.Text("settings.rescan"), Visibility = Visibility.Collapsed }; harnessRefresh = rescan;
+        Identify(rescan, id + ".refresh", ui.Text("settings.rescan")); editors.Add(rescan);
+        rescan.Click += async (_, _) =>
         {
-            refreshingHarness = true; refresh.IsEnabled = false;
+            refreshingHarness = true; rescan.IsEnabled = false;
             try { await client.SendAsync("refreshLocalHarness", new { provider }); }
             catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException)
-            { if (harnessRefresh == refresh) ShowIssue("windows.connection.refresh_failed"); }
-            finally { if (harnessRefresh == refresh) { refreshingHarness = false; RefreshHarnessPage(); } }
+            { if (harnessRefresh == rescan) ShowIssue("windows.connection.refresh_failed"); }
+            finally { if (harnessRefresh == rescan) { refreshingHarness = false; RefreshHarnessPage(); } }
         };
         harnessHint = Detail("");
-        var status = StatusRow(ui.Text("harness.local_tasks"), out var dot, out var state, refresh, harnessHint);
+        var status = StatusRow(ui.Text("harness.local_tasks"), out var dot, out var state, rescan, harnessHint);
         harnessStatusDot = dot; harnessState = state;
         Identify(state, id + ".status", "");
-        harnessSections.Children.Add(SectionTitle(ui.Text("main.section.status")));
-        harnessSections.Children.Add(Card(status));
-
+        var rows = new List<UIElement> { status };
         if (descriptor.ReportsAccountCredits == true)
         {
-            harnessSections.Children.Add(SectionTitle(ui.Text("harness.account.title")));
-            var account = new StackPanel();
-            harnessAccountBody = new Border { Padding = new Thickness(14, 10, 14, 8) };
-            account.Children.Add(harnessAccountBody);
-            var actions = new StackPanel { Orientation = Orientation.Horizontal };
-            Button AccountButton(string key, string suffix, Func<Task> action)
+            rows.Add(BuildHarnessAccountRow(provider, id));
+            rows.Add(BuildHarnessCreditsRow(provider, id, descriptor));
+        }
+        harnessSections.Children.Add(SectionTitle(ui.Text("main.section.status")));
+        harnessSections.Children.Add(Card(rows.ToArray()));
+
+        var display = new List<UIElement>();
+        if (descriptor.HasTaskProgress == true) display.Add(BuildHarnessProgressRow(client, provider, id, descriptor));
+        if (descriptor.ReportsAccountCredits == true || descriptor.ReportsSessionUsage == true)
+        {
+            var credits = Toggle("harness.turn_credits", "main.info.harness_turn_credits", id + ".turn_credits", out var creditsSwitch);
+            harnessTurnCredits = creditsSwitch; editors.Add(creditsSwitch);
+            BindToggle(creditsSwitch, (p, value) => p with
             {
-                var button = new Button { Content = ui.Text(key), Margin = new Thickness(6, 0, 0, 0) };
-                Identify(button, id + ".account." + suffix, ui.Text(key)); actions.Children.Add(button);
-                button.Click += async (_, _) => await action(); return button;
+                HiddenTurnCredits = value ? p.HiddenTurnCredits.Where(item => item != provider).ToArray()
+                    : p.HiddenTurnCredits.Append(provider).Distinct(StringComparer.Ordinal).ToArray()
+            });
+            display.Add(credits);
+        }
+        if (display.Count > 0)
+        {
+            harnessSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
+            harnessSections.Children.Add(Card(display.ToArray()));
+        }
+        if (descriptor.Local == true) harnessSections.Children.Add(Card(ProviderHomeEditor(provider)));
+    }
+
+    private Grid BuildHarnessProgressRow(EngineClient client, string provider, string id, EngineModule descriptor)
+    {
+        string title = ui.Text("main.claude.ring");
+        var progress = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };
+        Identify(progress, id + ".progress", title);
+        harnessProgress = progress; editors.Add(progress);
+        BindToggle(progress, (p, value) => p with
+        {
+            DisabledHarnessProgress = value ? p.DisabledHarnessProgress.Where(item => item != provider).ToArray()
+                : p.DisabledHarnessProgress.Append(provider).Distinct(StringComparer.Ordinal).ToArray()
+        });
+        var controls = new StackPanel { Orientation = Orientation.Horizontal };
+        if (descriptor.ProgressConnector == true)
+        {
+            harnessProgressState = Detail("");
+            Identify(harnessProgressState, id + ".progress_state", "");
+            var retry = new Button { Content = ui.Text("connections.retry"), Margin = new Thickness(0, 0, 8, 0) };
+            harnessProgressRetry = retry; editors.Add(retry);
+            Identify(retry, id + ".progress_retry", ui.Text("connections.retry"));
+            retry.Click += async (_, _) =>
+            {
+                try { await client.SendAsync("retryHarnessProgressSetup", new { provider }); }
+                catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException)
+                { if (harnessProgressRetry == retry) ShowIssue("harness.progress_state.failed"); }
+            };
+            controls.Children.Add(retry);
+            if (WindowsConversationApplication.CanOpenConnectors(provider))
+            {
+                var connectors = new Button { Content = ui.Text("harness.progress_state.open_connectors"), Margin = new Thickness(0, 0, 8, 0) };
+                harnessProgressConnectors = connectors;
+                Identify(connectors, id + ".progress_connectors", ui.Text("harness.progress_state.open_connectors"));
+                connectors.Click += async (_, _) =>
+                {
+                    if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider) && harnessProgressConnectors == connectors)
+                        ShowIssue("harness.progress_state.open_failed");
+                };
+                controls.Children.Add(connectors);
             }
-            harnessAccountConnect = AccountButton("harness.account.connect", "connect", () => harnessAccount?.ConnectAsync() ?? Task.CompletedTask);
-            harnessAccountRefresh = AccountButton("common.refresh", "refresh", () => harnessAccount?.RefreshAsync() ?? Task.CompletedTask);
-            harnessAccountDisconnect = AccountButton("harness.account.disconnect", "disconnect", () => harnessAccount?.DisconnectAsync() ?? Task.CompletedTask);
-            account.Children.Add(InfoRow(ui.Text("harness.account.connection"), actions));
-            var site = new ComboBox { ItemsSource = new[] { ui.Text("provider.automatic"), "workbuddy.cn", "workbuddy.ai" }, MinWidth = 124 };
-            harnessAccountSite = site; Identify(site, id + ".account.site", ui.Text("harness.account.site"));
-            site.SelectedIndex = session.Current.WorkBuddyAccountSite == "china" ? 1 : session.Current.WorkBuddyAccountSite == "international" ? 2 : 0;
-            site.SelectionChanged += async (_, _) =>
+        }
+        controls.Children.Add(progress);
+        string help = ui.Has(provider + ".progress_ring_help") ? ui.Text(provider + ".progress_ring_help") : ui.Text("harness.show_progress_help");
+        return InfoRow(title, controls, help, harnessProgressState, id + ".progress");
+    }
+
+    /// As Claude's account row: a dot and state, then Sign In, or the account menu once signed in.
+    private Grid BuildHarnessAccountRow(string provider, string id)
+    {
+        var trailing = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        harnessAccountDot = new Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
+        trailing.Children.Add(harnessAccountDot);
+        harnessAccountState = Label("", 12.5); harnessAccountState.Margin = new Thickness(0, 0, 8, 0); harnessAccountState.VerticalAlignment = VerticalAlignment.Center;
+        Identify(harnessAccountState, id + ".account_state", ""); trailing.Children.Add(harnessAccountState);
+        var signIn = new Button { Content = ui.Text("welcome.module.sign_in"), Style = (Style)FindResource("SettingsProminentButton") };
+        harnessAccountSignIn = signIn; Identify(signIn, id + ".sign_in", ui.Text("welcome.module.sign_in")); editors.Add(signIn); trailing.Children.Add(signIn);
+        signIn.Click += async (_, _) => await RunHarnessAccountAsync(() => harnessAccount?.ConnectAsync() ?? Task.CompletedTask);
+        var more = new IconGlyph { Symbol = "ellipsis.circle", Width = 16, Height = 16 }; more.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        var options = new Button { Content = more, ContentTemplate = null, Style = (Style)FindResource("SettingsSidebarButton"), Width = 22, Height = 22,
+            Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
+        harnessAccountOptions = options; Identify(options, id + ".account_options", ui.Text("claude.account.options")); editors.Add(options); trailing.Children.Add(options);
+        options.Click += (_, _) => OpenHarnessAccountMenu(provider, id);
+        harnessAccountHelp = Detail("");
+        return InfoRow(ui.Text("harness.account_row"), trailing, detail: harnessAccountHelp, id: id + ".account");
+    }
+
+    private void OpenHarnessAccountMenu(string provider, string id)
+    {
+        if (harnessAccount is not { } account || harnessAccountOptions is not { } anchor) return;
+        var menu = new ContextMenu { PlacementTarget = anchor, FontFamily = PacerFonts.Interface };
+        MenuItem Item(string key, string suffix, Action action, bool enabled = true)
+        {
+            var item = new MenuItem { Header = ui.Text(key), IsEnabled = enabled }; Identify(item, id + "." + suffix, ui.Text(key));
+            item.Click += (_, _) => action(); return item;
+        }
+        menu.Items.Add(Item("common.refresh", "refresh", () => _ = RunHarnessAccountAsync(account.RefreshAsync)));
+        // The bill lives on the site the account belongs to; Automatic follows the app's language.
+        var site = new MenuItem { Header = ui.Text("harness.account.site") }; Identify(site, id + ".site", ui.Text("harness.account.site"));
+        foreach (var (value, label) in new[] { ("automatic", ui.Text("harness.site.automatic")),
+            ("china", ui.Text("harness.site.china").Replace("%@", "workbuddy.cn", StringComparison.Ordinal)),
+            ("international", ui.Text("harness.site.international").Replace("%@", "workbuddy.ai", StringComparison.Ordinal)) })
+        {
+            var choice = new MenuItem { Header = label, IsCheckable = true, IsChecked = session.Current.WorkBuddyAccountSite == value };
+            Identify(choice, id + ".site." + value, label);
+            choice.Click += async (_, _) =>
             {
-                if (site != harnessAccountSite || site.SelectedIndex is < 0 or > 2) return;
-                string value = site.SelectedIndex == 1 ? "china" : site.SelectedIndex == 2 ? "international" : "automatic";
                 if (value == session.Current.WorkBuddyAccountSite) return;
                 await Change(p => p with { WorkBuddyAccountSite = value });
                 harnessAccount?.SelectSite(session.Current.UsesWorkBuddyChina(ui.Language == "zh-Hans"));
-                if (site == harnessAccountSite)
-                    site.SelectedIndex = session.Current.WorkBuddyAccountSite == "china" ? 1 : session.Current.WorkBuddyAccountSite == "international" ? 2 : 0;
             };
-            account.Children.Add(InfoRow(ui.Text("harness.account.site"), site));
-            harnessSections.Children.Add(Card(account));
+            site.Items.Add(choice);
         }
-        var usageGuide = SettingsPagePolicy.HarnessUsageGuide(provider, descriptor.UsageGuideUrl);
-        if (descriptor.ReportsSessionUsage == true || descriptor.Usage != null || usageGuide != null)
-        {
-            harnessContext = Detail(""); harnessCredits = Detail(""); harnessNoUsage = Detail(ui.Text("harness.no_usage"));
-            var readings = new StackPanel { Margin = new Thickness(14, 10, 14, 10) };
-            readings.Children.Add(harnessContext); readings.Children.Add(harnessCredits); readings.Children.Add(harnessNoUsage);
-            Identify(harnessContext, id + ".context", ""); Identify(harnessCredits, id + ".credits", "");
-            harnessSections.Children.Add(SectionTitle(ui.Text("harness.usage")));
-            var usageCard = new StackPanel(); usageCard.Children.Add(readings);
-            if (usageGuide != null)
-            {
-                var help = new Button { Content = ui.Text("main.overview.open"), Style = (Style)FindResource("SettingsLink") };
-                Identify(help, id + ".accountUsage", ui.Text("harness.account_usage_help"));
-                help.Click += (_, _) => { if (!SettingsPagePolicy.OpenHarnessUsage(usageGuide, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
-                usageCard.Children.Add(InfoRow(ui.Text("harness.account_usage_help"), help));
-            }
-            harnessSections.Children.Add(Card(usageCard));
-        }
+        menu.Items.Add(site);
+        menu.Items.Add(Item("harness.account.switch", "switch_account", () => _ = RunHarnessAccountAsync(account.ConnectAsync)));
+        menu.Items.Add(Item("harness.account.sign_out", "sign_out", () => _ = RunHarnessAccountAsync(account.DisconnectAsync), account.CanDisconnect));
+        anchor.ContextMenu = menu; menu.IsOpen = true;
+    }
 
-        var display = new StackPanel();
-        if (descriptor.HasTaskProgress == true)
+    private async Task RunHarnessAccountAsync(Func<Task> action)
+    {
+        if (sourceClosed || busy || harnessAccount is not { Busy: false }) return;
+        ClearIssue();
+        try { await action(); }
+        catch (Exception error) when (ProviderLoginWindow.Recoverable(error)) { if (!sourceClosed) ShowIssue("harness.account.unavailable"); }
+        finally { if (!sourceClosed) RefreshAccountCards(); }
+    }
+
+    /// What is left, and when the plan resets or a pack expires; the trend lives on History.
+    private Grid BuildHarnessCreditsRow(string provider, string id, EngineModule descriptor)
+    {
+        var trailing = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        harnessCredits = Label("", 12.5); harnessCredits.VerticalAlignment = VerticalAlignment.Center;
+        harnessCredits.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        Identify(harnessCredits, id + ".credits", ""); trailing.Children.Add(harnessCredits);
+        if (SettingsPagePolicy.HarnessUsageGuide(provider, descriptor.UsageGuideUrl) is { } guide)
         {
-            string title = ui.Text("main.claude.ring");
-            var progress = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };
-            Identify(progress, id + ".progress", title);
-            harnessProgress = progress; editors.Add(progress);
-            BindToggle(progress, (p, value) => p with
-            {
-                EnabledHarnessProgress = value ? p.EnabledHarnessProgress.Append(provider).Distinct(StringComparer.Ordinal).ToArray()
-                    : p.EnabledHarnessProgress.Where(item => item != provider).ToArray()
-            });
-            var controls = new StackPanel { Orientation = Orientation.Horizontal };
-            if (descriptor.ProgressConnector == true)
-            {
-                harnessProgressState = Detail("");
-                Identify(harnessProgressState, id + ".progress_state", "");
-                var retry = new Button { Content = ui.Text("connections.retry"), Margin = new Thickness(0, 0, 8, 0) };
-                harnessProgressRetry = retry; editors.Add(retry);
-                Identify(retry, id + ".progress_retry", ui.Text("connections.retry"));
-                retry.Click += async (_, _) =>
-                {
-                    try { await client.SendAsync("retryHarnessProgressSetup", new { provider }); }
-                    catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException)
-                    { if (harnessProgressRetry == retry) ShowIssue("harness.progress_state.failed"); }
-                };
-                controls.Children.Add(retry);
-                if (provider == "workbuddy")
-                {
-                    var connectors = new Button { Content = ui.Text("harness.progress_state.open_connectors"), Margin = new Thickness(0, 0, 8, 0) };
-                    harnessProgressConnectors = connectors;
-                    Identify(connectors, id + ".progress_connectors", ui.Text("harness.progress_state.open_connectors"));
-                    connectors.Click += async (_, _) =>
-                    {
-                        if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider) && harnessProgressConnectors == connectors)
-                            ShowIssue("harness.progress_state.open_failed");
-                    };
-                    controls.Children.Add(connectors);
-                }
-            }
-            controls.Children.Add(progress);
-            display.Children.Add(InfoRow(title, controls, ui.Text("harness.show_progress_help"), harnessProgressState, id + ".progress"));
+            var link = new Button { Content = ui.Text("harness.account_usage_help"), Style = (Style)FindResource("SettingsLink"), Margin = new Thickness(10, 0, 0, 0) };
+            harnessUsageGuide = link; Identify(link, id + ".accountUsage", ui.Text("harness.account_usage_help"));
+            link.Click += (_, _) => { if (!SettingsPagePolicy.OpenHarnessUsage(guide, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
+            trailing.Children.Add(link);
         }
-        if (display.Children.Count > 0)
-        {
-            harnessSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
-            harnessSections.Children.Add(Card(display));
-        }
+        harnessCreditsDetail = Detail(""); Identify(harnessCreditsDetail, id + ".credits_detail", "");
+        string name = descriptor.DisplayName ?? PaneTitle(provider);
+        return InfoRow(ui.Text("harness.credits"), trailing, ui.Text("main.info.harness_credits").Replace("%@", name, StringComparison.Ordinal),
+            harnessCreditsDetail, id + ".credits_row");
     }
 
     private async Task RefreshHarnessProgressConnectionAsync()
     {
         if (demo || !IsActive || engine is not { IsConnectionClosed: false } client ||
             HarnessModule(activePane) is not { Enabled: true, ProgressSetup: "configured", ProgressConnection: not null } module ||
-            !session.Current.EnabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
+            session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
         try { await client.SendAsync("refreshHarnessProgressConnection", new { provider = module.Provider }); }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { }
     }
@@ -190,13 +241,19 @@ internal sealed partial class SettingsWindow
         harnessAutomatic.IsEnabled = editable;
         harnessOff!.Visibility = !closed && !module.Enabled ? Visibility.Visible : Visibility.Collapsed;
         harnessSections!.Visibility = closed || module.Enabled ? Visibility.Visible : Visibility.Collapsed;
-        harnessRefresh!.IsEnabled = editable && !refreshingHarness;
-        RefreshAccountCard(editable && module.Enabled);
-        bool progressOn = session.Current.EnabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal);
+        harnessRefresh!.Visibility = closed || module.Status == "ready" ? Visibility.Collapsed : Visibility.Visible;
+        harnessRefresh.IsEnabled = editable && !refreshingHarness;
+        RefreshHarnessAccount(editable && module.Enabled);
+        bool progressOn = !session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal);
         if (harnessProgress != null)
         {
             harnessProgress.IsChecked = progressOn;
             harnessProgress.IsEnabled = editable;
+        }
+        if (harnessTurnCredits != null)
+        {
+            harnessTurnCredits.IsChecked = !session.Current.HiddenTurnCredits.Contains(module.Provider, StringComparer.Ordinal);
+            harnessTurnCredits.IsEnabled = editable;
         }
         string? setup = closed ? null : module.ProgressSetup;
         string? connection = setup == "configured" && progressOn ? module.ProgressConnection : null;
@@ -227,43 +284,58 @@ internal sealed partial class SettingsWindow
         }
         if (harnessProgressConnectors != null)
         {
-            harnessProgressConnectors.Visibility = connection != null && connection != "missing" ? Visibility.Visible : Visibility.Collapsed;
+            // Trusting the tool is the one step left to the user.
+            harnessProgressConnectors.Visibility = connection is "needsTrust" or "disabled" or "toolDisabled" or "unknown" ? Visibility.Visible : Visibility.Collapsed;
             harnessProgressConnectors.IsEnabled = editable && !demo;
         }
         var (status, hint, tone) = closed ? (ui.Text("windows.connection.closed"), "", "neutral") : HarnessStatus(module);
         SetStatus(harnessStatusDot, harnessState, status, tone);
         SetHarnessText(harnessHint, hint);
-        var (context, credits) = closed ? ("", "") : HarnessUsageValues(module);
-        SetHarnessText(harnessContext, context);
-        SetHarnessText(harnessCredits, credits);
-        if (harnessNoUsage != null) harnessNoUsage.Visibility = context.Length == 0 && credits.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        RefreshProviderHome();
     }
 
     private void RefreshAccountCards()
     {
         if (sourceClosed) return;
-        if (harnessAccountBody != null)
-            RefreshAccountCard(!busy && !providerConnectionClosed && HarnessModule(activePane)?.Enabled == true);
+        if (harnessAccountState != null)
+            RefreshHarnessAccount(!busy && !providerConnectionClosed && HarnessModule(activePane)?.Enabled == true);
         RefreshOverview();
     }
 
-    private void RefreshAccountCard(bool editable)
+    private void RefreshHarnessAccount(bool editable)
     {
-        if (harnessAccountBody == null) return;
-        var key = (harnessAccount?.Reading, harnessAccount?.State, harnessAccount?.Busy);
-        if (harnessAccountBody.Child == null || !Equals(key, harnessAccountBody.Tag))
+        if (harnessAccountState == null) return;
+        var account = harnessAccount;
+        bool busyReading = account?.Busy == true, signedIn = account?.Reading != null;
+        string state = busyReading ? "harness.account.reading" : signedIn ? "harness.account.signed_in" : "harness.account.signed_out";
+        string text = ui.Text(state) + (signedIn && account!.Reading!.Plan is string plan && !busyReading ? " · " + plan : "");
+        SetStatus(harnessAccountDot, harnessAccountState, text, signedIn ? "positive" : "neutral");
+        bool idle = editable && account is { Busy: false, Available: true };
+        harnessAccountSignIn!.Visibility = signedIn ? Visibility.Collapsed : Visibility.Visible;
+        harnessAccountOptions!.Visibility = signedIn ? Visibility.Visible : Visibility.Collapsed;
+        harnessAccountSignIn.IsEnabled = harnessAccountOptions.IsEnabled = idle;
+        string help = account is { Available: false } ? ui.Text("harness.account.runtime")
+            : account?.State == "unavailable" ? ui.Text("harness.account.unavailable") : "";
+        SetHarnessText(harnessAccountHelp, help);
+        if (harnessCredits == null) return;
+        if (account?.Reading is { } reading)
         {
-            harnessAccountBody.Tag = key;
-            harnessAccountBody.Child = HarnessAccountCard.Build(ui, harnessAccount, false, "settings." + activePane + ".account");
+            string left = HarnessAccountCard.Fields(ui, "harness.credits.left", HarnessAccountCard.Amount(ui, reading.Remaining));
+            harnessCredits.Text = left; AutomationProperties.SetName(harnessCredits, left);
+            var details = new List<string>();
+            var culture = HarnessAccountCard.Culture(ui);
+            string Date(DateTimeOffset value) => value.ToLocalTime().ToString(ui.Language == "zh-Hans" ? "M月d日" : "MMM d", culture);
+            if (reading.Cycle is { ResetsAt: { } reset } && reset > DateTimeOffset.UtcNow)
+                details.Add(HarnessAccountCard.Fields(ui, "harness.account.cycle_reset", Date(reset)));
+            if (reading.Expiration is { } expiring && expiring.At > DateTimeOffset.UtcNow)
+                details.Add(HarnessAccountCard.Fields(ui, "harness.account.expiring", HarnessAccountCard.Amount(ui, expiring.Credits), Date(expiring.At)));
+            SetHarnessText(harnessCreditsDetail, string.Join(" · ", details));
         }
-        bool idle = editable && harnessAccount is { Busy: false, Available: true };
-        bool connected = harnessAccount?.Reading != null;
-        harnessAccountConnect!.IsEnabled = idle;
-        harnessAccountConnect.Content = ui.Text(connected ? "harness.account.switch" : "harness.account.connect");
-        AutomationProperties.SetName(harnessAccountConnect, (string)harnessAccountConnect.Content);
-        harnessAccountRefresh!.IsEnabled = idle;
-        harnessAccountDisconnect!.IsEnabled = idle && harnessAccount?.CanDisconnect == true;
-        harnessAccountSite!.IsEnabled = editable && harnessAccount?.Busy != true;
+        else
+        {
+            harnessCredits.Text = "—"; AutomationProperties.SetName(harnessCredits, ui.Text("harness.account.sign_in"));
+            SetHarnessText(harnessCreditsDetail, signedIn || busyReading ? "" : ui.Text("harness.account.sign_in"));
+        }
     }
 
     private static void SetHarnessText(TextBlock? label, string text)
@@ -283,16 +355,4 @@ internal sealed partial class SettingsWindow
         _ when module.Installed == false => (ui.Text("harness.not_installed"), "", "attention"),
         _ => (ui.Text("provider.state.searching"), "", "neutral")
     };
-
-    private (string Context, string Credits) HarnessUsageValues(EngineModule module)
-    {
-        if (module is not { Status: "ready", Usage: { } usage }) return ("", "");
-        var culture = CultureInfo.GetCultureInfo(ui.Language == "zh-Hans" ? "zh-CN" : "en-US");
-        string context = usage.ContextUsed is int used && usage.ContextCapacity is int capacity && used >= 0 && capacity > 0
-            ? ui.Text("harness.context").Replace("%1$@", used.ToString("N0", culture), StringComparison.Ordinal)
-                .Replace("%2$@", capacity.ToString("N0", culture), StringComparison.Ordinal) : "";
-        string credits = usage.SessionCredits is double spent && double.IsFinite(spent) && spent >= 0
-            ? ui.Text("harness.session_credits").Replace("%@", spent.ToString("0.##", culture), StringComparison.Ordinal) : "";
-        return (context, credits);
-    }
 }

@@ -13,10 +13,13 @@ namespace CodexPacer.Windows;
 internal static class GuideArt
 {
     internal static readonly Color CodexTile = Color.FromRgb(125, 214, 196), ClaudeTile = Color.FromRgb(242, 156, 107), DeepSeekTile = Color.FromRgb(123, 147, 255);
-    internal static readonly Color LocalHarnessTile = Color.FromRgb(195, 171, 241);
+    /// Other modules use their registry color, which the engine sends with each snapshot.
     internal static Color ProviderTile(string provider) => provider switch
     {
-        "codex" => CodexTile, "claude" => ClaudeTile, "deepseek" => DeepSeekTile, _ => LocalHarnessTile
+        "codex" => CodexTile, "claude" => ClaudeTile, "deepseek" => DeepSeekTile,
+        _ => PacerPalette.Brand(provider) is { } brand && brand.Dark is { Length: 7 } hex
+            && uint.TryParse(hex.AsSpan(1), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out uint rgb)
+            ? Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb) : Color.FromRgb(161, 161, 166)
     };
     internal static string ProviderSymbol(string provider) => provider switch
     {

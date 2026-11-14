@@ -66,7 +66,8 @@ internal sealed record DesktopPreferences
     // Progress rings are on until the user turns one off, as on the Mac; a saved choice is kept.
     public bool DeepSeekProgressRing { get; init; } = true;
     public bool SystemNotifications { get; init; }
-    public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget"];
+    public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits"];
+    internal static readonly string[] WarningChoices = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits"];
     public double? DeepSeekLowBalanceLine { get; init; }
     public double? DeepSeekSpikeLimit { get; init; }
     public bool? PositionChosen { get; init; }
@@ -90,7 +91,12 @@ internal sealed record DesktopPreferences
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; } = true;
     public bool CodexProgressRing { get; init; } = true;
-    public string[] EnabledHarnessProgress { get; init; } = [];
+    // A module's progress ring is on unless listed here, like the built-in rings.
+    public string[] DisabledHarnessProgress { get; init; } = [];
+    // Modules whose task rows leave out the credits each turn used.
+    public string[] HiddenTurnCredits { get; init; } = [];
+    // Data folders chosen for local modules, by module ID.
+    public Dictionary<string, string> HarnessHomes { get; init; } = new();
     public string WorkBuddyAccountSite { get; init; } = "automatic";
     internal bool UsesWorkBuddyChina(bool chinese) => WorkBuddyAccountSite == "china" || WorkBuddyAccountSite == "automatic" && chinese;
     public bool MonitorSSH { get; init; } = true;
@@ -129,8 +135,8 @@ internal sealed record DesktopPreferences
         && DeepSeekRingPeriod is "day" or "week" && DeepSeekSpeedSource is "local" or "account"
         && ValidAmount(DeepSeekDailyBudget) && ValidAmount(DeepSeekWeeklyBudget)
         && ValidAmount(DeepSeekLowBalanceLine) && ValidAmount(DeepSeekSpikeLimit)
-        && WarningKinds is { Length: <= 6 } && WarningKinds.Distinct().Count() == WarningKinds.Length
-        && WarningKinds.All(value => value is "fiveHour" or "ssh" or "quotaDelay" or "lowBalance" or "spendSpike" or "budget")
+        && WarningKinds is { Length: <= 7 } && WarningKinds.Distinct().Count() == WarningKinds.Length
+        && WarningKinds.All(WarningChoices.Contains)
         && LastSettingsPane is { Length: > 0 and <= 64 } && !LastSettingsPane.Any(char.IsControl)
         && AppTheme is "auto" or "light" or "dark" && ValidAccent(AccentColor)
         && RetentionMinutes is >= 0 and <= 10080
@@ -139,7 +145,11 @@ internal sealed record DesktopPreferences
         && ProviderModes is { Count: >= 3 and <= 128 }
         && LegacyProviders.All(ProviderModes.ContainsKey)
         && ProviderModes.All(pair => ValidProviderId(pair.Key) && ValidProviderMode(pair.Value))
-        && EnabledHarnessProgress is { Length: <= 128 } && EnabledHarnessProgress.All(id => id != null && ValidProviderId(id) && !IsLegacyProvider(id));
+        && ValidModuleList(DisabledHarnessProgress, legacy: false) && ValidModuleList(HiddenTurnCredits, legacy: true)
+        && HarnessHomes is { Count: <= 128 } && HarnessHomes.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && ValidPath(pair.Value));
+
+    private static bool ValidModuleList(string[]? ids, bool legacy) => ids is { Length: <= 128 }
+        && ids.Distinct(StringComparer.Ordinal).Count() == ids.Length && ids.All(id => id != null && ValidProviderId(id) && (legacy || !IsLegacyProvider(id)));
 
     internal static IReadOnlyList<string> LegacyProviders { get; } = ["codex", "claude", "deepseek"];
     internal static bool IsLegacyProvider(string id) => LegacyProviders.Contains(id);
@@ -153,7 +163,8 @@ internal sealed record DesktopPreferences
     private static bool ValidPath(string? value) => value != null && Encoding.UTF8.GetByteCount(value) <= 32768
         && !value.Any(char.IsControl) && (value.Length == 0 || Path.IsPathFullyQualified(value));
     private static bool ValidAmount(double? value) => value == null || double.IsFinite(value.Value) && value.Value > 0;
-    private static bool ValidRing(string? value) => value is "" or "none" or "codex" or "claude" or "deepseek";
+    // Any module can fill a ring; the engine ignores one it can't draw.
+    private static bool ValidRing(string? value) => value is "" or "none" || value != null && ValidProviderId(value);
     private static bool ValidWindow(string? value) => value != null && Encoding.UTF8.GetByteCount(value) <= 1024 && !value.Any(char.IsControl);
     // Older profiles stored a corner without the explicit-choice marker.
     internal bool HasChosenPosition => PositionChosen ?? Position != "center";
@@ -173,7 +184,9 @@ internal sealed record DesktopPreferences
             claudeProgressRing = ClaudeProgressRing,
             codexProgressRing = CodexProgressRing,
             deepseekProgressRing = DeepSeekProgressRing,
-            enabledHarnessProgress = EnabledHarnessProgress,
+            disabledHarnessProgress = DisabledHarnessProgress,
+            hiddenTurnCredits = HiddenTurnCredits,
+            harnessHomes = HarnessHomes,
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },

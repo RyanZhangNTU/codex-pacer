@@ -16,7 +16,16 @@ internal sealed record EngineSnapshot(
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
     IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
     string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
-    string? WslAvailability = null, RemoteControlDirectory? RemoteControlDirectory = null);
+    string? WslAvailability = null, RemoteControlDirectory? RemoteControlDirectory = null,
+    IReadOnlyList<EngineAccountCredits>? AccountCredits = null);
+/// A module's account credits as the engine knows them, with what the bill
+/// service reported; drawn the same way in Settings, Overview and the island.
+internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale);
+/// Core's account credits as JSON: amounts, the plan cycle and the next expiry, times in seconds since 1970.
+internal sealed record HarnessAccountCredits(string State, double? Remaining, double? Total, double? Reserved, string? Plan,
+    HarnessAccountCycle? Cycle = null, HarnessAccountExpiration? Expiration = null);
+internal sealed record HarnessAccountCycle(double Total, double Remaining, double? Used, double? Reset);
+internal sealed record HarnessAccountExpiration(double Credits, double At);
 internal sealed record RemoteControlDirectory(bool Refreshing, double? RefreshedAt, bool Failed);
 internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
     bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
@@ -60,7 +69,16 @@ internal sealed record ConnectionFailure(string Kind, string? Method, int? Code)
 internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled,
     string? DisplayName = null, string? Symbol = null, string? Status = null, HarnessUsage? Usage = null,
     string? UsageGuideUrl = null, bool? ProgressConnector = null, bool? HasTaskProgress = null, bool? ReportsSessionUsage = null,
-    string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null);
+    string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null,
+    EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
+    bool? Local = null, string? Home = null, string? DefaultHome = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null)
+{
+    /// Found on this computer or turned on explicitly. Older engines send
+    /// nothing, so their modules stay listed.
+    internal bool IsProminent => Prominent ?? true;
+}
+internal sealed record EngineModuleBrand(string Dark, string Light, double AccentLift, double AccentLuminance);
+internal sealed record EngineModuleLaunch(string Scheme, string Publisher, IReadOnlyList<string> Executables, string? ConnectorsPath);
 internal sealed record HarnessUsage(int? ContextUsed, int? ContextCapacity, double? SessionCredits, double MeasuredAt);
 internal sealed record CodexSourceCandidate(string Path, string Source, string Label);
 internal sealed record CodexSourceReport(string Executable, string? SelectedExecutable, string? ExecutableIssue,

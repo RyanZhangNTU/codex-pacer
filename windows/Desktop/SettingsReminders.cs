@@ -14,7 +14,8 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private readonly Dictionary<string, CheckBox> reminderKinds = new(), reminderFollows = new();
-    private StackPanel? reminderQuotaRows, reminderWalletRows;
+    private StackPanel? reminderQuotaRows, reminderWalletRows, reminderCreditRows;
+    private readonly System.Collections.Generic.Dictionary<string, TextBlock> reminderCreditTitles = new();
     private FrameworkElement? reminderFooter;
     private TextBox? reminderLow, reminderSpike;
     private TextBlock? reminderAmountIssue, notificationIssue;
@@ -25,7 +26,8 @@ internal sealed partial class SettingsWindow
 
     private void ClearReminders()
     {
-        reminderKinds.Clear(); reminderFollows.Clear(); reminderQuotaRows = reminderWalletRows = null; reminderFooter = null;
+        reminderKinds.Clear(); reminderFollows.Clear(); reminderQuotaRows = reminderWalletRows = reminderCreditRows = null; reminderFooter = null;
+        reminderCreditTitles.Clear();
         reminderLow = reminderSpike = null; reminderAmountIssue = notificationIssue = null; notificationSwitch = null; reminderRetention = null;
         reminderLowValue = reminderSpikeValue = null; Array.Clear(reminderPendingAmount);
     }
@@ -135,6 +137,19 @@ internal sealed partial class SettingsWindow
         var footer = CardFooter(ui.Text("main.notify.deepseek_one")); reminderFooter = footer; reminderWalletRows.Children.Add(footer);
         form.Children.Add(reminderWalletRows);
 
+        // Account credits, under each module that reports them, as DeepSeek's balance.
+        reminderCreditRows = new StackPanel();
+        var creditModules = (engine?.LatestSnapshot?.Modules ?? []).Where(module => module.ReportsAccountCredits == true).ToArray();
+        foreach (var module in creditModules)
+        {
+            var title = SectionTitle(PaneTitle(module.Provider)); reminderCreditRows.Children.Add(title);
+            reminderCreditTitles[module.Provider] = title;
+        }
+        if (creditModules.Length > 0)
+            reminderCreditRows.Children.Add(Card(MatrixRow(ui.Text("main.notify.low_credits"), BarCell("lowCredits", ui.Text("main.notify.low_credits")),
+                FollowsCell("lowCredits", ui.Text("main.notify.low_credits")), ui.Text("main.notify.low_credits_note"))));
+        form.Children.Add(reminderCreditRows);
+
         // How long ended tasks stay is the task list's choice now; this row leads there, as on the Mac.
         reminderRetention = LinkRow(ui.Text("main.notifications.retention_moved"), ui.Text("main.panel.open"), "settings.reminders.retention",
             async () => { if (activePane == "notifications") await NavigateToPanelBlockAsync("tasks"); });
@@ -190,9 +205,12 @@ internal sealed partial class SettingsWindow
         foreach (var pair in reminderKinds) { pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && warnings != null; }
         reminderQuotaRows!.Visibility = Module("codex") || Module("claude") ? Visibility.Visible : Visibility.Collapsed;
         reminderWalletRows!.Visibility = Module("deepseek") ? Visibility.Visible : Visibility.Collapsed;
+        bool credits = false;
+        foreach (var pair in reminderCreditTitles) { bool on = Module(pair.Key); pair.Value.Visibility = on ? Visibility.Visible : Visibility.Collapsed; credits |= on; }
+        if (reminderCreditRows != null) reminderCreditRows.Visibility = credits ? Visibility.Visible : Visibility.Collapsed;
         bool system = notifications?.DesiredEnabled ?? preferences.SystemNotifications;
         foreach (var pair in reminderFollows)
-            pair.Value.IsChecked = system && (pair.Key is not ("lowBalance" or "spendSpike" or "budget") || reminderKinds.TryGetValue(pair.Key, out var bar) && bar.IsChecked == true);
+            pair.Value.IsChecked = system && (pair.Key is not ("lowBalance" or "spendSpike" or "budget" or "lowCredits") || reminderKinds.TryGetValue(pair.Key, out var bar) && bar.IsChecked == true);
         if (reminderLowValue != preferences.DeepSeekLowBalanceLine) { reminderLowValue = preferences.DeepSeekLowBalanceLine; reminderLow!.Text = DeepSeekBudgetText(reminderLowValue); }
         if (reminderSpikeValue != preferences.DeepSeekSpikeLimit) { reminderSpikeValue = preferences.DeepSeekSpikeLimit; reminderSpike!.Text = DeepSeekBudgetText(reminderSpikeValue); }
         reminderLow!.Tag = snapshot?.Wallet?.Reminders?.LowPlaceholder ?? ""; reminderSpike!.Tag = snapshot?.Wallet?.Reminders?.SpikePlaceholder ?? "";

@@ -17,8 +17,9 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     /// Every page in the Mac's order; search lists matches in this order.
-    internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "remote", "appearance", "collapsed", "expandedPanel", "notifications", "general", "about", "support"];
-    private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "remote"], ["appearance", "collapsed", "expandedPanel", "notifications", "general"]];
+    internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "modules", "remote", "appearance", "collapsed", "expandedPanel", "notifications", "general", "about", "support"];
+    private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "modules", "remote"], ["appearance", "collapsed", "expandedPanel", "notifications", "general"]];
+    private TextBlock? modulesMoreCount;
     private readonly Dictionary<string, TextBlock> moduleOff = new();
     private readonly Dictionary<string, Ellipse> attentionDots = new();
     private readonly StackPanel paneGroups = new(), searchResults = new() { Visibility = Visibility.Collapsed };
@@ -40,7 +41,7 @@ internal sealed partial class SettingsWindow
     };
     /// Nothing waits for a later step any more; kept so a page can be held back again.
     private static bool PendingPane(string pane) => false;
-    private static bool EnginePane(string pane) => pane is "overview" or "history" or "codex" or "claude" or "deepseek" or "notifications" or "remote";
+    private static bool EnginePane(string pane) => pane is "overview" or "history" or "codex" or "claude" or "deepseek" or "modules" or "notifications" or "remote";
     private bool PaneAvailable(string pane) => !PendingPane(pane) && ResolvePane(pane) == pane;
     /// The Mac's raw value, which names the shared search words.
     private static string MacPane(string pane) => pane == "collapsed" ? "collapsedBar" : pane;
@@ -73,7 +74,7 @@ internal sealed partial class SettingsWindow
         "codex" => "Codex",
         "claude" => "Claude",
         "deepseek" => "DeepSeek",
-        "overview" or "history" or "remote" or "notifications" or "about" or "support" => ui.Text("main.pane." + pane),
+        "overview" or "history" or "remote" or "notifications" or "about" or "support" or "modules" => ui.Text("main.pane." + pane),
         "expandedPanel" => ui.Text("settings.pane.expanded_panel"),
         _ => harnessPages.FirstOrDefault(page => page.Provider == pane).Title ?? ui.Text("settings.pane." + pane)
     };
@@ -83,6 +84,7 @@ internal sealed partial class SettingsWindow
         "history" => "chart.xyaxis.line",
         "codex" or "claude" or "deepseek" => GuideArt.ProviderSymbol(pane),
         "remote" => "server.rack",
+        "modules" => "square.on.square",
         "appearance" => "circle.lefthalf.filled",
         "collapsed" => "rectangle.topthird.inset.filled",
         "expandedPanel" => "text.alignleft",
@@ -109,7 +111,7 @@ internal sealed partial class SettingsWindow
             }
             foreach (string pane in PaneGroups[index])
             {
-                if (pane == "remote") paneGroups.Children.Add(harnessRows);
+                if (pane == "modules") paneGroups.Children.Add(harnessRows);
                 paneGroups.Children.Add(SidebarRow(pane));
             }
         }
@@ -155,10 +157,10 @@ internal sealed partial class SettingsWindow
     {
         string needle = search?.Text.Trim().ToLower(CultureInfo.CurrentCulture) ?? "";
         if (needle.Length == 0) return [];
-        return Panes.TakeWhile(pane => pane != "remote").Concat(harnessPages.Select(page => page.Provider))
-            .Concat(Panes.SkipWhile(pane => pane != "remote"))
+        return Panes.TakeWhile(pane => pane != "modules").Concat(harnessPages.Select(page => page.Provider))
+            .Concat(Panes.SkipWhile(pane => pane != "modules"))
             .Where(pane => PaneAvailable(pane)
-                && (PaneTitle(pane) + " " + ui.Text(HarnessPane(pane) ? "main.search.local_harness" : "main.search." + MacPane(pane)))
+                && (PaneTitle(pane) + " " + ui.Text(HarnessPane(pane) && !ui.Has("main.search." + pane) ? "main.search.local_harness" : "main.search." + MacPane(pane)))
                     .ToLower(CultureInfo.CurrentCulture).Contains(needle, StringComparison.Ordinal)).ToArray();
     }
 
@@ -216,6 +218,12 @@ internal sealed partial class SettingsWindow
         {
             var off = Label(ui.Text("settings.module_off"), 11); off.Visibility = Visibility.Collapsed;
             off.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); moduleOff[pane] = off; end.Children.Add(off);
+        }
+        if (pane == "modules")
+        {
+            // How many services wait in the library, as the Mac's row.
+            modulesMoreCount = Label("", 11); modulesMoreCount.Visibility = Visibility.Collapsed;
+            modulesMoreCount.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); end.Children.Add(modulesMoreCount);
         }
         if (pane is "claude" or "codex" or "remote")
         {
@@ -302,6 +310,7 @@ internal sealed partial class SettingsWindow
             if (ResolvePane(stored) != activePane || HarnessPane(activePane)) RebuildPane(stored);
         }
         RefreshHarnessPage();
+        RefreshModules();
         RefreshSidebar();
         if (changed) ApplySearch();
     }
@@ -320,9 +329,19 @@ internal sealed partial class SettingsWindow
         var modules = engine?.LatestSnapshot?.Modules;
         foreach (var item in moduleOff)
         {
-            bool off = engine != null && (modules?.FirstOrDefault(value => value.Provider == item.Key) is { } module
+            var module = modules?.FirstOrDefault(value => value.Provider == item.Key);
+            bool off = engine != null && (module != null
                 ? !module.Enabled : session.Current.ProviderModes.TryGetValue(item.Key, out string? mode) && mode == "disabled");
             item.Value.Visibility = off ? Visibility.Visible : Visibility.Collapsed;
+            // A service not found here, and not turned on, waits in the module library.
+            if (navigation.TryGetValue(item.Key, out var row))
+                row.Visibility = module?.IsProminent == false && item.Key != activePane ? Visibility.Collapsed : Visibility.Visible;
+        }
+        int waiting = modules?.Count(value => !value.IsProminent) ?? 0;
+        if (modulesMoreCount != null)
+        {
+            modulesMoreCount.Text = waiting > 0 ? ui.Text("modules.sidebar_more").Replace("%ld", waiting.ToString(CultureInfo.CurrentCulture), StringComparison.Ordinal) : "";
+            modulesMoreCount.Visibility = waiting > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         if (aboutDetail == null) return;
         string? found = updater?.CurrentOffer?.Version;

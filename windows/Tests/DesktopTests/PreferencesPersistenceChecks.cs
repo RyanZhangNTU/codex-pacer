@@ -108,7 +108,8 @@ internal static class PreferencesPersistenceChecks
         var store = new PreferencesStore(file); var value = store.Load();
         Check(!value.Unavailable && value.Value.Language == "system" && value.Value.CompactSingleTask == "stage" && value.Value.CompactMetric == "remaining", "Unknown preference strings use the Mac defaults");
         Check(value.Value.DisplayMode == "floating", "An unknown display mode retains the Mac legacy floatingIsland fallback");
-        Check(value.Value.QuotaRingOuter == "none" && value.Value.QuotaRingInner == "none", "Present empty or unknown rings mean no ring");
+        Check(value.Value.QuotaRingOuter == "none" && value.Value.QuotaRingInner == "future",
+            "A present empty ring means no ring; another module's ring is kept and draws nothing until that module exists");
         Check(!value.Value.HasChosenPosition && value.Value.QuotaRingInner != new DesktopPreferences().QuotaRingInner, "Missing choices remain distinct from explicit empty ring choices");
         Check(store.Save(value.Value with { LastSettingsPane = "collapsed", RetentionMinutes = 60, Language = "en" }), "Canonical choices save");
         var saved = JsonNode.Parse(File.ReadAllBytes(file))!.AsObject();

@@ -11,7 +11,7 @@ internal sealed record ProviderWebDefinition(string ID, Uri Origin, string Login
     internal static ProviderWebDefinition WorkBuddy(bool china) => new("workbuddy",
         new(china ? "https://www.workbuddy.cn/" : "https://www.workbuddy.ai/"), "profile/plans-usage",
         "CodexPacer.WorkBuddy", ["/billing/meter/get-user-resource-summary", "/billing/meter/get-user-resource-paid-packages",
-            "/billing/meter/get-user-resource-free-packages"], "POST", WatchSignIn: false);
+            "/billing/meter/get-user-resource-free-packages"], "POST");
     internal bool IsOrigin(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         uri.Scheme == Uri.UriSchemeHttps && uri.IdnHost == Origin.IdnHost && uri.IsDefaultPort && uri.UserInfo.Length == 0;
     internal bool IsReaderRequest(string value, string method) => ReaderPaths != null && method == ReaderMethod && IsOrigin(value) &&

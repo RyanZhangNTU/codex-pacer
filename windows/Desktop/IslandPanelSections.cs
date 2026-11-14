@@ -132,7 +132,7 @@ public partial class IslandWindow
     private static void SetDetail(TextBlock detail, string? text, string? provider)
     {
         detail.Text = text ?? ""; detail.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
-        if (provider is "codex" or "claude" or "deepseek" or "workbuddy") detail.Foreground = PacerPalette.Provider(provider);
+        if (provider != null && DesktopPreferences.ValidProviderId(provider)) detail.Foreground = PacerPalette.Provider(provider);
         else detail.SetResourceReference(TextBlock.ForegroundProperty, "Island.Tertiary");
     }
 

@@ -89,7 +89,7 @@ internal static class WorkBuddyAccountChecks
             { ShowActivated = false, IsHitTestVisible = false };
         const string readout = "island.workbuddy.account.remaining";
         const string balance = "520.5 credits available";
-        const string prefix = "settings.workbuddy.account";
+        const string prefix = "settings.workbuddy";
         try
         {
             settings.Show(); island.Show();
@@ -99,9 +99,12 @@ internal static class WorkBuddyAccountChecks
                 "A WorkBuddy-only engine must advertise its separate account capability");
             account.SetEnabled(true);
             await settings.NavigateAsync("workbuddy");
-            await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".state")?.Text == ui.Text("harness.account.sign_in"),
+            await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".account_state")?.Text == ui.Text("harness.account.signed_out")
+                && Find<TextBlock>(settings, prefix + ".credits")?.Text == "—",
                 "Settings should distinguish a disconnected account from zero credits");
-            Invoke(Require<Button>(settings, prefix + ".connect"));
+            Check(Require<Button>(settings, prefix + ".sign_in").IsVisible && Find<Button>(settings, prefix + ".account_options")?.IsVisible != true,
+                "Signing in is the one action while signed out, as on Claude's page");
+            Invoke(Require<Button>(settings, prefix + ".sign_in"));
             await PresentationWait.UntilAsync(() => login != null, "The visible WorkBuddy login must use the selected site");
             var window = Application.Current.Windows.OfType<ProviderLoginWindow>().Single();
             await PresentationWait.UntilAsync(() => Require<Button>(window, "workbuddy.login.continue").IsEnabled, "The login must allow the user to verify it");
@@ -109,17 +112,17 @@ internal static class WorkBuddyAccountChecks
             Invoke(Require<Button>(window, "workbuddy.login.continue"));
             await PresentationWait.UntilAsync(() => account.Reading is { Remaining: 520.5, Total: 600, Reserved: 12.25 } && !account.Busy,
                 "The isolated web reader should return only credit package totals from a successful request");
-            await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".remaining")?.Text == balance,
+            await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".credits")?.Text == "520.5 left",
                 "The native settings page must display available credits without opening the browser");
-            Check(Require<TextBlock>(settings, prefix + ".total").Text == "Credits across packs: 600", "The grants across active packs should be visible");
-            Check(Require<TextBlock>(settings, prefix + ".reserved").Text == "Reserved: 12.25", "The reserved amount should remain separate");
+            Check(Require<TextBlock>(settings, prefix + ".account_state").Text.StartsWith(ui.Text("harness.account.signed_in"), StringComparison.Ordinal)
+                && Require<Button>(settings, prefix + ".account_options").IsVisible && Find<Button>(settings, prefix + ".sign_in")?.IsVisible != true,
+                "Once signed in, the account row offers its menu instead of Sign In");
+            string detail = Require<TextBlock>(settings, prefix + ".credits_detail").Text;
             Check(account.Reading!.Cycle is { Remaining: 420.5, Total: 500, Used: 67.25 } cycle &&
-                cycle.ResetsAt?.ToUnixTimeSeconds() == reset.ToUnixTimeSeconds() + 1 &&
-                Require<TextBlock>(settings, prefix + ".reset").IsVisible &&
-                Require<TextBlock>(settings, prefix + ".cycle").Text == "Plan credits left: 420.5 / 500",
+                cycle.ResetsAt?.ToUnixTimeSeconds() == reset.ToUnixTimeSeconds() + 1 && detail.Contains("Plan resets", StringComparison.Ordinal),
                 "The plan window must use the subscription's own credits and reset");
             Check(account.Reading.Expiration is { Credits: 100 } exp && exp.At.ToUnixTimeSeconds() == expiration.ToUnixTimeSeconds() &&
-                Require<TextBlock>(settings, prefix + ".expiring").IsVisible, "A top-up's deduction deadline is separate from the plan reset");
+                detail.Contains("100 credits expire", StringComparison.Ordinal), "A top-up's deduction deadline is separate from the plan reset");
             Check(reads > 0 && cycles > 0 && writes == 0, "The browser must only make the read-only billing requests");
 
             await settings.NavigateAsync("overview");

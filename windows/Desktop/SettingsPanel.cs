@@ -472,9 +472,9 @@ internal sealed partial class SettingsWindow
         foreach (string action in new[] { "markRead", "pin", "settings" }) Flip("action." + action, options.InHeader(action));
     }
 
-    private static string BlockProviderName(string block) => block switch
+    private string BlockProviderName(string block) => block switch
     {
-        "codex" => "Codex", "claude" => "Claude", "workbuddy" => "WorkBuddy", _ => "DeepSeek"
+        "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek", _ => PaneTitle(block)
     };
 
     /// A section's title in the outline, as the panel's own headers read.

@@ -79,7 +79,9 @@ These apply to every provider, transport and diagnostic:
 
 ## Providers and modules
 
-`HarnessRegistry` gives each module a stable ID, display name, default mode and capabilities. `ProviderModules` stores automatic, enabled or disabled per module. Automatic checks for installed apps without launching them or opening credentials. Codex, Claude and DeepSeek default to automatic. WorkBuddy starts disabled.
+`HarnessRegistry` gives each module a stable ID, display name, brand colors, website, balance kind (quota windows, wallet or account credits) and capabilities; code asks for a capability with `HarnessRegistry.ids(where:)` instead of listing IDs. `ProviderModules` stores automatic, enabled or disabled per module, and every module defaults to automatic. Automatic checks for installed apps without launching them or opening credentials; a local module also counts as installed when its data file exists in the default or a chosen folder.
+
+`ModuleLibrary` marks a module prominent when it is found or turned on explicitly. Both hosts list prominent modules in the settings sidebar, followed by the **Module Library** page, which shows every module with the rest folded; onboarding folds them the same way. See the [Harness design](harness-framework-design.md) for the descriptor, string families and the checklist for adding a module.
 
 Both hosts register activity adapters for Codex, Claude, DeepSeek and WorkBuddy. The same adapter table handles startup, discovery, refresh, source changes, sleep and shutdown. Each adapter keeps its own data collection and reports the tasks and pending requests it can verify. `ActivityApplicationState` handles visibility, retention and notices. Codex combines rollout and stream data in `CodexActivityInput`. The host and monitor check source versions before publishing.
 
@@ -97,9 +99,9 @@ Rows show the executing turn's model and reasoning effort. Codex reads them from
 
 WorkBuddy's task records supply the model name. Pacer shows Automatic when the records give no model beyond automatic routing. It reads the thinking level from the matching session setting and keeps it for that turn. The rate uses a single response's output token count and the time from the turn start or the last required tool result. A number appears once the response has enough data to measure.
 
-WorkBuddy stores credits by request ID in the session's usage record. Pacer matches the request in the transcript to that record and shows the credits in the task row's cost field. A later usage write can update a completed row. The session total remains available in Settings and Overview.
+WorkBuddy stores credits by request ID in the session's usage record. Pacer matches the request in the transcript to that record and shows the credits in the task row's cost field, unless **Credits per Turn** is off (`hiddenTurnCredits`). A later usage write can update a completed row. The request IDs are UUIDv7, so History groups the week's charges by the time in each ID, falling back to the session's last update; the adapter rereads the week at most every five minutes or when a new charge lands.
 
-Account credits come from the site's billing summary after a separate sign-in. Windows and Mac use the same reader with separate browser profiles for the domestic and international sites. The ring shows remaining credits across the active packs against their total grants. When billing identifies the subscription pack, Pacer shows that pack's remaining credits, reported usage and reset. Add-on and bonus packs can have separate expiry dates. Pacer shows the earliest confirmed expiry and the credits at that date. A failed package lookup leaves its dates blank. A billing outage marks the last reading as stale, and signing out clears it. [WorkBuddy credit rules](https://www.codebuddy.cn/docs/workbuddy/Credits)
+Account credits come from the site's billing summary after a separate sign-in. Windows and Mac use the same reader, described by the descriptor's `accountCredits`, with separate browser profiles for the domestic and international sites; the sign-in window closes once a reading arrives. The Windows host sends every reading to the engine (`setAccountCredits`), which draws the collapsed-bar value and ring, the low-credits warning and notifications at 10% of the plan's credits (`HarnessCreditsNoticePolicy`). The ring shows remaining credits across the active packs against their total grants. When billing identifies the subscription pack, Pacer shows that pack's remaining credits, reported usage and reset. Add-on and bonus packs can have separate expiry dates. Pacer shows the earliest confirmed expiry and the credits at that date. A failed package lookup leaves its dates blank. A billing outage marks the last reading as stale, and signing out clears it. [WorkBuddy credit rules](https://www.codebuddy.cn/docs/workbuddy/Credits)
 
 ## Codex
 
@@ -362,7 +364,7 @@ Every task row draws one 28-pt status icon: a glyph for what the task is doing, 
 
 ### Reporting
 
-Codex, Claude and DeepSeek rings are on by default. Turn on the ring in WorkBuddy settings to add Pacer’s tool there. Each provider reports through a tool that accepts one integer from 0 to 100. Pacer reads the successful call from the provider’s own records and keeps only the estimate, bounded identifiers and timestamps.
+Every ring is on by default (WorkBuddy's unless listed in `disabledHarnessProgress`); WorkBuddy's adds Pacer’s tool there. Each provider reports through a tool that accepts one integer from 0 to 100. Pacer reads the successful call from the provider’s own records and keeps only the estimate, bounded identifiers and timestamps.
 
 | Provider | Reporting tool | Setup Pacer owns |
 | --- | --- | --- |

@@ -438,6 +438,7 @@ internal sealed partial class SettingsWindow : Window
             ClearProviderHome();
             ClearDeepSeek();
             ClearHarnessPage();
+            ClearModules();
             ClearReminders();
             ClearCollapsed();
             ClearExpandedPanel();
@@ -459,6 +460,7 @@ internal sealed partial class SettingsWindow : Window
                 case "collapsed": BuildCollapsed(); break;
                 case "expandedPanel": BuildExpandedPanel(); break;
                 case "remote": BuildConnections(); break;
+                case "modules": BuildModules(); break;
                 default:
                     if (HarnessPane(activePane))
                     {

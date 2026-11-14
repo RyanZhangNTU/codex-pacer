@@ -159,7 +159,7 @@ internal sealed class EngineClient : IAsyncDisposable
                 foreach (string provider in new List<string>(System.Linq.Enumerable.Select(modes, pair => pair.Key)))
                     if (!DesktopPreferences.IsLegacyProvider(provider) && !harnessModules.Contains(provider)) modes.Remove(provider);
             }
-            if (config?["enabledHarnessProgress"] is System.Text.Json.Nodes.JsonArray progress)
+            if (config?["disabledHarnessProgress"] is System.Text.Json.Nodes.JsonArray progress)
                 for (int index = progress.Count - 1; index >= 0; index--)
                     if (progress[index] is System.Text.Json.Nodes.JsonValue value && value.TryGetValue<string>(out var provider) && !harnessModules.Contains(provider))
                         progress.RemoveAt(index);

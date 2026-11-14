@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -21,18 +22,34 @@ internal sealed class WindowsConversationApplication
     private readonly Func<Uri, Task<bool>> web;
     private readonly Func<uint, ulong, bool> host;
     private readonly Func<string, Uri, bool> signedHandler;
-    private sealed record SignedHandler(string Scheme, string Publisher, string[] ProgramFiles, string[] UserPrograms);
-    private static readonly Dictionary<string, SignedHandler> SignedHandlers = new(StringComparer.Ordinal)
+    private sealed record SignedHandler(string Scheme, string Publisher, string[] ProgramFiles, string[] UserPrograms, string? ConnectorsPath);
+    // Modules that open through their own URL scheme come from the engine's
+    // registry; the handler must still carry the declared signer.
+    private static volatile IReadOnlyDictionary<string, SignedHandler> SignedHandlers = new Dictionary<string, SignedHandler>(StringComparer.Ordinal);
+    internal static void Register(IEnumerable<EngineModule>? modules)
     {
-        ["workbuddy"] = new("workbuddy-ai", "Tencent Technology (Shenzhen) Company Limited",
-            [@"WorkBuddyAI\WorkBuddyAI.exe"], [@"WorkBuddyAI\WorkBuddyAI.exe", @"Programs\WorkBuddyAI\WorkBuddyAI.exe"])
-    };
+        var next = new Dictionary<string, SignedHandler>(StringComparer.Ordinal);
+        foreach (var module in modules ?? [])
+        {
+            if (module.Launch is not { } launch || !DesktopPreferences.ValidProviderId(module.Provider)
+                || !Regex.IsMatch(launch.Scheme, "^[a-z][a-z0-9+.-]{0,31}$") || launch.Publisher.Length is 0 or > 256) continue;
+            string[] paths = launch.Executables.Where(path => path.Length is > 0 and <= 260 && !Path.IsPathRooted(path) && !path.Contains(".."))
+                .Select(path => path.Replace('/', '\\')).ToArray();
+            if (paths.Length == 0) continue;
+            string? connectors = launch.ConnectorsPath is { } value && Regex.IsMatch(value, "^[a-z][a-z0-9/-]{0,63}$") ? value : null;
+            next[module.Provider] = new(launch.Scheme, launch.Publisher, paths, paths, connectors);
+        }
+        if (!next.Keys.Order().SequenceEqual(SignedHandlers.Keys.Order()) || next.Any(pair => !SignedHandlers.TryGetValue(pair.Key, out var known)
+            || known.Scheme != pair.Value.Scheme || known.Publisher != pair.Value.Publisher || known.ConnectorsPath != pair.Value.ConnectorsPath
+            || !known.ProgramFiles.SequenceEqual(pair.Value.ProgramFiles))) SignedHandlers = next;
+    }
     internal static bool CanOpenApplication(string provider) => SignedHandlers.ContainsKey(provider);
+    internal static bool CanOpenConnectors(string provider) => SignedHandlers.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null;
 
     internal static Task<bool> OpenApplicationAsync(string provider) => OpenProviderAsync(provider, null);
 
-    internal static Task<bool> OpenProgressConnectorsAsync(string provider) => provider == "workbuddy"
-        ? OpenProviderAsync(provider, new Uri("workbuddy-ai://connectors")) : Task.FromResult(false);
+    internal static Task<bool> OpenProgressConnectorsAsync(string provider) => SignedHandlers.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null
+        ? OpenProviderAsync(provider, new Uri(handler.Scheme + "://" + handler.ConnectorsPath)) : Task.FromResult(false);
 
     private static async Task<bool> OpenProviderAsync(string provider, Uri? destination)
     {

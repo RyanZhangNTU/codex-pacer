@@ -40,7 +40,7 @@ internal static class ProviderHomeSettingsChecks
             var row = Find<RadioButton>(window, "settings.pane.workbuddy");
             Check(AutomationProperties.GetName(row) == "WorkBuddy" && row.IsEnabled &&
                 Descendants(row).OfType<Image>().Any(icon => icon.Source != null && ReferenceEquals(icon.Source, ProviderIcon.Source("workbuddy"))),
-                "WorkBuddy appears with its official icon in the Services sidebar while disabled");
+                "WorkBuddy has its official icon in the Services sidebar, where it shows once found on this computer");
             Find<TextBox>(window, "settings.search").Text = "workbuddy";
             await Pump();
             Check(window.SearchMatches().SequenceEqual(["workbuddy"]), "Searching for WorkBuddy finds the service page");
@@ -61,10 +61,10 @@ internal static class ProviderHomeSettingsChecks
             string detection = ui.Text(detected switch { true => "windows.provider.detected", false => "windows.provider.not_detected", _ => "provider.state.searching" });
             Check(Descendants(window).OfType<TextBlock>().Any(value => value.Text == detection), "The header describes detection on a Windows PC");
             var progress = Find<CheckBox>(window, id + ".progress");
-            Check(progress.IsEnabled && progress.IsChecked == false, "The external reporting tool is opt-in");
+            Check(progress.IsEnabled && progress.IsChecked == true, "The progress ring is on by default, like the built-in services' rings");
             Toggle(progress);
-            await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == true
-                && session.Current.EnabledHarnessProgress.SequenceEqual(["workbuddy"]), "The progress switch saves independently of the module mode");
+            await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false
+                && session.Current.DisabledHarnessProgress.SequenceEqual(["workbuddy"]), "The progress switch saves independently of the module mode");
             await window.NavigateAsync("overview");
             Check(engine.LatestSnapshot?.QuotaDashboard?.Providers.Count == 0
                 && !Descendants(window).OfType<TextBlock>().Any(value => value.Text == ui.Text("provider.none_enabled")),
@@ -72,10 +72,10 @@ internal static class ProviderHomeSettingsChecks
             Invoke(Find<Button>(window, "settings.overview.details.workbuddy"));
             await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: true }, "The Overview detail link opens WorkBuddy settings");
             progress = Find<CheckBox>(window, id + ".progress");
-            Check(progress.IsChecked == true, "The progress choice survives navigation");
+            Check(progress.IsChecked == false, "The progress choice survives navigation");
             Toggle(progress);
-            await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false && session.Current.EnabledHarnessProgress.Length == 0,
-                "Turning off progress removes its provider choice");
+            await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == true && session.Current.DisabledHarnessProgress.Length == 0,
+                "Turning progress back on removes its module from the off list");
             Invoke(Find<Button>(window, id + ".automatic"));
             await PresentationWait.UntilAsync(() => session.Current.ProviderModes["workbuddy"] == "automatic"
                 && engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "workbuddy" && module.Mode == "automatic") == true,

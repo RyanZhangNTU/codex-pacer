@@ -54,6 +54,12 @@ internal static class ConversationApplicationChecks
         Check(!await apps.OpenConversationAsync(new(context, "codex", "host", null, null, 12, 34, "e30="), ActivatePrepared) && capabilities.Count == 1,
             "A prepared host must reject a mixed terminal payload before asking the engine");
 
+        // Signed handlers come from the engine's registry entry, not a list in the host.
+        Check(!WindowsConversationApplication.CanOpenApplication("workbuddy"), "No module opens through a signed handler before the engine describes it");
+        WindowsConversationApplication.Register([new EngineModule("workbuddy", "automatic", true, true,
+            Launch: new("workbuddy-ai", "Tencent Technology (Shenzhen) Company Limited", ["WorkBuddyAI/WorkBuddyAI.exe", "../escape.exe"], "connectors"))]);
+        Check(WindowsConversationApplication.CanOpenApplication("workbuddy") && WindowsConversationApplication.CanOpenConnectors("workbuddy"),
+            "A registered module opens its own app and connectors");
         var workBuddyCalls = new List<Uri>();
         var workBuddy = new WindowsConversationApplication(_ => false, signedHandler: (provider, uri) =>
         {

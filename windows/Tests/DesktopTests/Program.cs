@@ -116,7 +116,7 @@ internal static class Program
                 $"The original Mac synthetic clock, task families and wallet reach the renderer (clock={initial.CapturedAt}, rows={initial.Presentation?.Rows.Count}, balance={initial.Wallet?.Balance})");
             try
             {
-                await client.SendAsync("configure", new { hideProjects = true, enabledProviders = new[] { "invalid" } });
+                await client.SendAsync("configure", new { hideProjects = true, enabledProviders = new[] { "Not A Module!" } });
                 throw new InvalidOperationException("Invalid configuration was acknowledged.");
             }
             catch (EngineCommandException error) { Check(error.Code == "invalidConfiguration", "Typed rejection"); }
@@ -211,11 +211,14 @@ internal static class Program
             EngineSnapshot? latest = null;
             client.Snapshot += value => latest = value;
             await client.StartAsync(engine, true, saved!.Language, saved.EngineConfiguration(), referenceFixture: true);
-            Check(latest?.Modules?.Count == 3 && latest.Modules.Single(value => value.Provider == "codex") is { Mode: "disabled", Enabled: false }
+            Check(latest?.Modules?.Count == 4 && latest.Modules.Single(value => value.Provider == "codex") is { Mode: "disabled", Enabled: false }
                 && latest.Modules.Single(value => value.Provider == "claude") is { Mode: "automatic", Enabled: true }, "Saved modes must control the real projection");
-            Check(latest!.Tasks.Count > 0 && latest.Tasks.All(value => value.Provider == "claude" && value.Title == "本地任务")
+            // Codex and DeepSeek are off in the saved fixture; Claude and the automatic WorkBuddy stay.
+            Check(latest!.Tasks.Count > 0 && latest.Tasks.All(value => value.Provider is "claude" or "workbuddy" && value.Title == "本地任务")
                 && latest.Wallet == null, "Saved privacy and module choices must apply before the first snapshot");
-            Check(latest.QuotaDashboard?.Classic.Slots.Select(value => value.Id).SequenceEqual(new[] { "claude:5h", "claude:7d" }) == true,
+            // WorkBuddy's credits dial joins Claude's periods; Claude keeps both of its own.
+            Check(latest.QuotaDashboard?.Classic.Slots.Select(value => value.Id).Where(value => value.StartsWith("claude:", StringComparison.Ordinal))
+                    .SequenceEqual(new[] { "claude:5h", "claude:7d" }) == true,
                 "A single-provider dashboard must keep both native Classic periods in the managed DTO");
             await client.SendAsync("configure", new { providerModes = new { codex = "enabled", claude = "disabled", deepseek = "disabled" } });
             Check(latest!.QuotaDashboard is { Classic.Kind: "legacyCodex", Split.Kind: "splitSingle", LegacyCodex.Fresh: true }
