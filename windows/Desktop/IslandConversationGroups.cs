@@ -115,7 +115,7 @@ public partial class IslandWindow
             AutomationProperties.SetAutomationId(toggle, "island.group.toggle." + (group?.Id ?? "ungrouped"));
             heading.Children.Add(toggle);
             var name = new Button { Content = (group?.Name ?? ui.Text("windows.conversation_groups.ungrouped")) + "  " + section.Rows.Length, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0), Padding = new Thickness(5,0,5,0) };
-            AutomationProperties.SetName(name, group == null ? ui.Text("windows.conversation_groups.ungrouped") : ui.Text("windows.conversation_groups.rename", group.Name));
+            AutomationProperties.SetName(name, group == null ? ui.Text("windows.conversation_groups.ungrouped") : string.Format(ui.Text("windows.conversation_groups.rename"), group.Name));
             heading.Children.Add(name); list.Children.Add(heading);
             ConversationDropTarget(heading, group?.Id);
             if (group != null)
@@ -142,7 +142,7 @@ public partial class IslandWindow
                 var menu = new ContextMenu();
                 foreach (var destination in SavedGroups.Select(g => (Id: (string?)g.Id, Name: g.Name)).Prepend((null, ui.Text("windows.conversation_groups.ungrouped"))))
                 {
-                    var item = new MenuItem { Header = ui.Text("windows.conversation_groups.move", destination.Name) };
+                    var item = new MenuItem { Header = string.Format(ui.Text("windows.conversation_groups.move"), destination.Name) };
                     item.Click += async (_, _) => await SaveGroups(groups => ConversationGroups.Move(groups, [value.Id], destination.Id)); menu.Items.Add(item);
                 }
                 control.ContextMenu = menu;
