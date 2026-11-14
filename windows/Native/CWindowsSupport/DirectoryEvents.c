@@ -40,6 +40,34 @@ static int pacer_directory_read(PacerDirectoryWatch *watch) {
     return 1;
 }
 
+int pacer_directory_parse(const void *buffer, uint32_t count, const uint16_t *name, int *flags) {
+    const BYTE *bytes = buffer;
+    const WCHAR *filename = (const WCHAR *)name;
+    int changed = 0;
+    DWORD offset = 0, header = (DWORD)FIELD_OFFSET(FILE_NOTIFY_INFORMATION, FileName);
+    while (offset < count) {
+        // NextEntryOffset counts bytes, whatever the buffer's element type.
+        const FILE_NOTIFY_INFORMATION *entry = (const FILE_NOTIFY_INFORMATION *)(bytes + offset);
+        if (count - offset < header || entry->FileNameLength > count - offset - header || entry->FileNameLength % sizeof(WCHAR)) {
+            *flags |= 2; return 1;
+        }
+        size_t length = entry->FileNameLength / sizeof(WCHAR);
+        int matches = filename == NULL ||
+            (wcslen(filename) == length && _wcsnicmp(filename, entry->FileName, length) == 0);
+        if (matches) {
+            changed = 1;
+            if (entry->Action != FILE_ACTION_MODIFIED) {
+                *flags |= 2;
+                if (filename != NULL && (entry->Action == FILE_ACTION_REMOVED || entry->Action == FILE_ACTION_RENAMED_OLD_NAME)) *flags |= 1;
+            }
+        }
+        if (entry->NextEntryOffset == 0) break;
+        if (entry->NextEntryOffset < header || entry->NextEntryOffset > count - offset) { *flags |= 2; return 1; }
+        offset += entry->NextEntryOffset;
+    }
+    return changed;
+}
+
 static void CALLBACK pacer_directory_changed(PTP_CALLBACK_INSTANCE instance, void *context, PTP_WAIT wait, TP_WAIT_RESULT result) {
     (void)instance; (void)wait; (void)result;
     PacerDirectoryWatch *watch = context;
@@ -53,27 +81,7 @@ static void CALLBACK pacer_directory_changed(PTP_CALLBACK_INSTANCE instance, voi
         // Overflow requests discovery; it never becomes a polling loop.
         changed = 1; flags = 2;
     } else {
-        DWORD offset = 0;
-        while (offset < count) {
-            FILE_NOTIFY_INFORMATION *entry = (FILE_NOTIFY_INFORMATION *)(watch->buffer + offset);
-            DWORD header = (DWORD)FIELD_OFFSET(FILE_NOTIFY_INFORMATION, FileName);
-            if (count - offset < header || entry->FileNameLength > count - offset - header || entry->FileNameLength % sizeof(WCHAR)) {
-                changed = 1; flags |= 2; break;
-            }
-            size_t length = entry->FileNameLength / sizeof(WCHAR);
-            int matches = watch->filename == NULL ||
-                (wcslen(watch->filename) == length && _wcsnicmp(watch->filename, entry->FileName, length) == 0);
-            if (matches) {
-                changed = 1;
-                if (entry->Action != FILE_ACTION_MODIFIED) {
-                    flags |= 2;
-                    if (watch->filename != NULL && (entry->Action == FILE_ACTION_REMOVED || entry->Action == FILE_ACTION_RENAMED_OLD_NAME)) flags |= 1;
-                }
-            }
-            if (entry->NextEntryOffset == 0) break;
-            if (entry->NextEntryOffset < header || entry->NextEntryOffset > count - offset) { changed = 1; flags |= 2; break; }
-            offset += entry->NextEntryOffset;
-        }
+        changed = pacer_directory_parse(watch->buffer, count, (const uint16_t *)watch->filename, &flags);
     }
     if (!(flags & 1) && !pacer_directory_read(watch)) { changed = 1; flags |= 3; }
     ReleaseSRWLockExclusive(&watch->lock);
