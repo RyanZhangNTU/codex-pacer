@@ -518,6 +518,8 @@ class CodexRemoteProgressTests(unittest.TestCase):
     def test_setup_owns_one_marked_table_and_leaves_other_entries_alone(self):
         import os, subprocess, sys
         with tempfile.TemporaryDirectory() as folder:
+            # Setup refuses linked ancestors; macOS keeps temporary folders under the /var link.
+            folder = os.path.realpath(folder)
             home = Path(folder) / ".codex"
             self.assertEqual(self.run_setup(home, True), {"error": "missingHome"}, "Setup never creates a Codex home")
             self.assertEqual(self.run_setup(home, False), {"configured": False, "conflict": False})
