@@ -7,3 +7,4 @@ export SWIFTPM_MODULECACHE_OVERRIDE="$task_cache/module-cache"
 task_swift_flags=(--package-path "$task_build/native" --scratch-path "$task_build/.build"
     --cache-path "$task_cache/dependencies" --config-path "$task_build/config"
     --security-path "$task_build/security" --force-resolved-versions)
+if [[ "${PACER_BUILD_JOBS:-}" == 1 ]]; then task_swift_flags+=(--jobs 1); fi

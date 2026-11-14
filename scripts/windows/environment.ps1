@@ -61,6 +61,7 @@ if (Test-Path -LiteralPath $taskSdk) {
     }
 }
 # Match the pinned SDK's ownership of Clang builtin typedefs (not SwiftShims).
+if ($env:PACER_BUILD_JOBS -eq '1') { $taskSwiftFlags += @('--jobs', '1') }
 $taskSwiftFlags += @('-Xswiftc','-Xcc','-Xswiftc','-fno-builtin-headers-in-system-modules',
     '-Xbuild-tools-swiftc','-Xcc','-Xbuild-tools-swiftc','-fno-builtin-headers-in-system-modules')
 $taskDotnet = if ($env:PACER_DOTNET_ROOT) { $env:PACER_DOTNET_ROOT } else { Join-Path $taskRoot 'output/toolchains/dotnet' }

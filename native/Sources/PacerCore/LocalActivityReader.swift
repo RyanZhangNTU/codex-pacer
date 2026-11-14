@@ -31,6 +31,7 @@ public actor LocalActivityReader {
 
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
                      excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false,
+                     preferredThreads: Set<String> = [],
                      subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL], excludedIDs: Set<String>, requests: [PendingAttentionRequest]) {
         func retainingCompletion(_ cursor: Cursor) -> Cursor {
             var value = cursor
@@ -73,7 +74,19 @@ public actor LocalActivityReader {
         } else {
             files = cursors.keys.map { ($0, cursors[$0]?.activity.lastObserved ?? .distantPast) }
         }
-        let indexed = metricsOnly ? [] : SessionIndex.entries(home: home)
+        let indexed = metricsOnly ? [] : SessionIndex.entries(home: home, limit: 1024, threadIDs: preferredThreads)
+            + SessionIndex.entries(home: home)
+        let indexedPaths = Dictionary(indexed.compactMap { entry in entry.threadID.map { ($0, entry.url) } }, uniquingKeysWith: { first, _ in first })
+        func superseded(_ file: URL) -> Bool {
+            guard let thread = metadata[file]?.activity.threadID ?? cursors[file]?.activity.threadID,
+                  let path = indexedPaths[thread] else { return false }
+            return path != file
+        }
+        func preferred(_ file: URL) -> Bool {
+            if let id = metadata[file]?.activity.threadID ?? cursors[file]?.activity.threadID { return preferredThreads.contains(id) }
+            return preferredThreads.contains { file.lastPathComponent.lowercased().contains($0) }
+        }
+        let fileLimit = min(1024, max(maxFiles, preferredThreads.count))
         for entry in indexed {
             let file = entry.url
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
@@ -100,7 +113,10 @@ public actor LocalActivityReader {
         var selected = metricsOnly ? Array(cursors.keys) : cursors.filter {
             [.running, .waitingForInput].contains(projected($0.value).phase) && !covered($0.key)
         }.map(\.key)
-        let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
+        let candidates = Array(files.sorted {
+            if preferred($0.0) != preferred($1.0) { return preferred($0.0) }
+            return $0.1 > $1.1
+        }.prefix(max(256, fileLimit)).map(\.0))
         metadata = metadata.filter { candidates.contains($0.key) }
         if !metricsOnly { for file in candidates {
             let facts = signature(file)
@@ -131,10 +147,14 @@ public actor LocalActivityReader {
             let inherited = Dictionary(CodexSessionOrigin.inheriting(candidates.compactMap { metadata[$0]?.activity })
                 .map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
             ignoredIDs = Set(inherited.values.filter(\.isIgnoredCodexSession).map { $0.canonicalized().id })
-            selected.removeAll { file in metadata[file].flatMap { inherited[$0.activity.id] }?.isIgnoredCodexSession == true }
+            selected.removeAll { file in superseded(file) || metadata[file].flatMap { inherited[$0.activity.id] }?.isIgnoredCodexSession == true }
+            // A newly pinned older task must not lose its slot to an unpinned
+            // running cursor. Rebuild priority before applying the bound.
+            selected = Array((candidates.filter { preferred($0) && !superseded($0) && metadata[$0]?.activity.isInternalReview == false && metadata[$0]?.activity.isIgnoredCodexSession == false } + selected)
+                .reduce(into: [URL]()) { if !$0.contains($1) { $0.append($1) } }.prefix(fileLimit))
             for file in candidates {
-                guard selected.count < maxFiles else { break }
-                guard !covered(file), let value = metadata[file]?.activity, !value.isInternalReview,
+                guard selected.count < fileLimit else { break }
+                guard !superseded(file), !covered(file), let value = metadata[file]?.activity, !value.isInternalReview,
                       inherited[value.id]?.isIgnoredCodexSession != true, !selected.contains(file) else { continue }
                 selected.append(file)
             }

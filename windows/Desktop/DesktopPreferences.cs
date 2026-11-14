@@ -90,6 +90,8 @@ internal sealed record DesktopPreferences
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; } = true;
     public bool CodexProgressRing { get; init; } = true;
+    // This fork follows Codex's pinned sidebar; no separate selection to maintain.
+    public bool CodexPinnedOnly { get; init; } = true;
     public bool MonitorSSH { get; init; } = true;
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
@@ -157,6 +159,7 @@ internal sealed record DesktopPreferences
             showClaudeCloudProjects = ShowClaudeCloudProjects,
             claudeProgressRing = ClaudeProgressRing,
             codexProgressRing = CodexProgressRing,
+            codexPinnedOnly = CodexPinnedOnly,
             deepseekProgressRing = DeepSeekProgressRing,
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,

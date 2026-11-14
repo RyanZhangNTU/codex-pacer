@@ -89,6 +89,20 @@ Rows show the executing turn's model and reasoning effort. Codex reads them from
 
 ## Codex
 
+### Windows fork: pinned conversation scope
+
+`codexPinnedOnly` is a Windows preference, defaulting to true in this fork. The optional engine field defaults to false for existing callers and demo ignores it. Core owns the selection reader and visibility policy; Windows wires it into collection and watches the selected profile's database, WAL and legacy global-state file. The normal coalesced refresh rereads membership, with a full discovery when it changes.
+
+`CodexPinnedThreads` opens the newest `state_N.sqlite` read-only. `threads.thread_section_id` matching Codex Desktop's reserved pinned section (`01984de2-8f74-7c91-a3b2-5c5e937cf318`) is authoritative; older schemas use `is_pinned`, then an unmigrated `pinned-thread-ids` list. Migration receipts never substitute for current membership. Archived threads are excluded. Failed, malformed or over-limit reads remain distinct from an empty list; the host retains the last verified selection only for the same profile and exposes an unavailable source. The 256-thread bound matches desktop discovery.
+
+Pinned IDs receive discovery and reader priority beyond the default 16 cursor slots. Visibility includes same-host descendants and filters tasks, attention and notifications without acknowledging hidden endings. Source authentication and writer proofs remain unchanged. The local list can select the same conversation on an already-authorized remote source; it never authorizes a new host or reads a remote pinned catalog.
+
+Rollout lookup uses the index's `id` and `rollout_path`, then verifies `session_meta.id`. A filename suffix is not identity: resumed rollouts can contain an additional UUID. Without an indexed path, bounded recent candidates are checked by metadata. An indexed path with a mismatched header fails closed, and superseded reader cursors are dropped without inventing an ending.
+
+`CodexPinnedThreadsTests` covers schema migration, pin/unpin/archive, failures, renewed rollout paths, foreign metadata, more than 16 pins, descendant scope and hidden attention. The installed app's preference can be set to `codexPinnedOnly: false` for upstream visibility behavior; no extra selection UI is added.
+
+Fork CI runs one compiler worker per build step. `scripts/ci/memory-guard.py` checks available memory before launch and every five seconds, reports the launched process tree's RSS, and stops only that step if a memory read fails or available memory drops below 1.5 GiB. It never restarts the step. .NET uses one reported processor and a 2 GiB GC heap limit. These limits apply on the hosted build machines, not to the running desktop app.
+
 ### Quota
 
 Quota comes from a dedicated read-only app-server child (`-s read-only -a never app-server`) using `account/read` and `account/rateLimits/read`. Multiple service buckets take precedence over a legacy single bucket; credits and resets come from the service, never from API-price conversion. Missing data stays unavailable.

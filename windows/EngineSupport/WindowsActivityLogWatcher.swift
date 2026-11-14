@@ -38,8 +38,9 @@ struct WindowsActivityLogWatcher: ActivityFileEvents {
 
 extension ActivityLogWatcher {
     convenience init(interval: TimeInterval = 5, maximumDirectoryWatches: Int = 4,
+                     fileExtensions: Set<String> = ["jsonl", "zstd"],
                      changed: @escaping @Sendable (Bool) -> Void) {
         self.init(files: WindowsFileSystem(), events: WindowsActivityLogWatcher(), interval: interval,
-            maximumDirectoryWatches: maximumDirectoryWatches, changed: changed)
+            maximumDirectoryWatches: maximumDirectoryWatches, fileExtensions: fileExtensions, changed: changed)
     }
 }

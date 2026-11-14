@@ -4,6 +4,8 @@
 
 <h1 align="center">Codex Pacer</h1>
 
+此 fork 的 Windows 版本自动跟随 Codex 侧边栏中置顶的对话。置顶后开始关注，取消置顶后隐藏对应任务及提醒；子代理仍归在所属对话下。沿用原来的灵动岛和任务列表，并修复续接对话后漏掉任务的问题。使用说明见[置顶对话监听](docs/guide.zh-CN.md#置顶对话监听windows-fork)。
+
 <p align="center">
   为 <b>Codex</b>、<b>Claude Code</b> 和 <b>DeepSeek Harness</b> 打造的灵动岛，支持 Mac 和 Windows。<br>
   正在运行的任务、进度和额度，抬眼就能看到，不用打断手头的事。

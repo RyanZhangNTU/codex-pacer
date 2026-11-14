@@ -12,6 +12,9 @@ internal static class PreferencesChecks
         try
         {
             var missing = store.Load();
+            Check(missing.Value.CodexPinnedOnly, "This fork defaults to Codex's pinned conversations");
+            var allConversations = missing.Value with { CodexPinnedOnly = false };
+            Check(!PreferencesCodec.Decode(PreferencesCodec.Encode(allConversations)).CodexPinnedOnly, "An explicit all-conversations preference survives encoding");
             Check(!missing.Unavailable && missing.Value.IsValid && !Directory.Exists(root), "Missing settings must use defaults without creating files");
             Check(missing.Value.IslandAppearance == "liquidGlass", "The appearance default matches the Mac preference");
             Check(missing.Value.ShowEmbeddedCodexSessions && missing.Value.ShowEmbeddedClaudeSessions, "Both independent embedding preferences default to visible");

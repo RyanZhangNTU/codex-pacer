@@ -15,6 +15,14 @@
 
 ## Getting started
 
+### Pinned conversations (Windows fork)
+
+Pin conversations in Codex's sidebar to follow them in Pacer. Pin and unpin changes update the existing task list and reminders automatically, including child agents. Idle conversations are not presented as running tasks. Other providers keep their normal behavior.
+
+For a custom Codex data directory, select the same directory in **Codex → Custom locations → Codex home**. Pacer rereads the pinned list after restart and recognizes resumed conversations by their original thread identity.
+
+This follows the selected local Codex profile's pinned section, up to 256 conversations; independent pinned lists on other devices are not merged. A failed read retains the last verified selection and reports it unavailable, without falling back to all tasks. Disable automatic update checks when installing a custom build of this fork so upstream updates do not overwrite it.
+
 The first time you open Codex Pacer, a short guide walks you through it:
 
 1. What each part of the collapsed bar means.

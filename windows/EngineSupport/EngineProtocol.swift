@@ -43,6 +43,7 @@ struct EngineCommand: Decodable {
         var expandedPanel: EngineExpandedPanelSettings?
         var claudeProgressRing: Bool?
         var codexProgressRing: Bool?
+        var codexPinnedOnly: Bool?
         var deepseekProgressRing: Bool?
         var retentionMinutes: Int?
         var enabledProviders: [String]?

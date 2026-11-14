@@ -3,8 +3,11 @@ import Foundation
 public struct ActivityVisibilityOptions: Equatable, Sendable {
     public var embeddedProviders: Set<AgentProvider>
     public var showsClaudeCloudProjects: Bool
-    public init(embeddedProviders: Set<AgentProvider> = Set(AgentProvider.allCases), showsClaudeCloudProjects: Bool = true) {
+    public var pinnedCodexThreadIDs: Set<String>?
+    public init(embeddedProviders: Set<AgentProvider> = Set(AgentProvider.allCases), showsClaudeCloudProjects: Bool = true,
+                pinnedCodexThreadIDs: Set<String>? = nil) {
         self.embeddedProviders = embeddedProviders; self.showsClaudeCloudProjects = showsClaudeCloudProjects
+        self.pinnedCodexThreadIDs = pinnedCodexThreadIDs
     }
 }
 
@@ -68,6 +71,11 @@ public struct ActivityApplicationState: Sendable {
     }
     public func hiddenActivityIDs(_ visibility: ActivityVisibilityOptions) -> Set<String> {
         var hidden = ignoredCodexActivityIDs
+        if let pinned = visibility.pinnedCodexThreadIDs {
+            let known = knownActivities(for: .codex) + codexReceivedRequests.map(\.activity) + codexLogRequests.map(\.activity)
+            let visible = CodexPinnedThreads.visibleActivityIDs(pinned: pinned, activities: known)
+            hidden.formUnion(known.map { $0.canonicalized().id }.filter { !visible.contains($0) })
+        }
         if !visibility.showsClaudeCloudProjects {
             hidden.formUnion(knownActivities(for: .claude).filter { $0.claudeCloud != nil }.map(\.id))
             hidden.formUnion(claudeReceivedRequests.filter { $0.claudeCloud != nil }.map { $0.activity.id })

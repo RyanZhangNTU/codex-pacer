@@ -7,9 +7,10 @@ public enum SessionIndex {
         public let url: URL
         public let title: String?
         public let parentThreadID: String?
+        public let threadID: String?
     }
     public static func files(home: URL, limit: Int = 256) -> [URL] { entries(home: home, limit: limit).map(\.url) }
-    public static func entries(home: URL, limit: Int = 256) -> [Entry] {
+    public static func entries(home: URL, limit: Int = 256, threadIDs: Set<String>? = nil) -> [Entry] {
         let manager = FileManager.default
         let databases = ((try? manager.contentsOfDirectory(at: home, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.lastPathComponent.range(of: #"^state_[0-9]+\.sqlite$"#, options: .regularExpression) != nil }
@@ -29,6 +30,11 @@ public enum SessionIndex {
             guard columns.contains("rollout_path") else { continue }
             let order = ["recency_at_ms", "updated_at_ms", "updated_at", "created_at"].first { columns.contains($0) } ?? "rowid"
             var predicates = ["rollout_path IS NOT NULL"]
+            if let threadIDs {
+                let ids = threadIDs.compactMap { UUID(uuidString: $0)?.uuidString.lowercased() }.sorted()
+                guard columns.contains("id"), !ids.isEmpty, ids.count <= 1024 else { return [] }
+                predicates.append("id IN (" + ids.map { "'" + $0 + "'" }.joined(separator: ",") + ")")
+            }
             if columns.contains("archived") { predicates.append("archived=0") }
             if columns.contains("thread_source") { predicates.append("COALESCE(thread_source,'') NOT IN ('guardian_review','auto_review','autoreview')") }
             if columns.contains("model") { predicates.append("COALESCE(model,'') NOT LIKE 'codex-auto-review%'") }
@@ -36,7 +42,8 @@ public enum SessionIndex {
             if columns.contains("name"), columns.contains("title") { title = "COALESCE(NULLIF(TRIM(name),''),title)" }
             else { title = columns.contains("name") ? "name" : columns.contains("title") ? "title" : "NULL" }
             let source = columns.contains("source") ? "source" : "NULL"
-            let query = "SELECT rollout_path, \(title), \(source) FROM threads WHERE \(predicates.joined(separator: " AND ")) ORDER BY \(order) DESC LIMIT \(min(1024, max(1, limit)))"
+            let id = columns.contains("id") ? "id" : "NULL"
+            let query = "SELECT rollout_path, \(title), \(source), \(id) FROM threads WHERE \(predicates.joined(separator: " AND ")) ORDER BY \(order) DESC LIMIT \(min(1024, max(1, limit)))"
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else { continue }
             defer { sqlite3_finalize(statement) }
@@ -50,7 +57,8 @@ public enum SessionIndex {
                     let raw = sqlite3_column_text(statement, 2).map { String(cString: $0) }
                     let source = raw.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONSerialization.jsonObject(with: $0) }
                     let parent = source.flatMap { SessionActivity.parentID(in: ["source": $0]) }
-                    result.append(Entry(url: url, title: name, parentThreadID: parent))
+                    let threadID = sqlite3_column_text(statement, 3).flatMap { UUID(uuidString: String(cString: $0)) }?.uuidString.lowercased()
+                    result.append(Entry(url: url, title: name, parentThreadID: parent, threadID: threadID))
                 }
             }
             return result

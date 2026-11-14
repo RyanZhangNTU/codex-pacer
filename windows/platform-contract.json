@@ -12,7 +12,7 @@
     "scripts/native/ci-test.py": "f56700cbad4006fb2d06fbc2ec8cd032cbe4705c853864163423b97abbebfa6a",
     "scripts/native/embed-sparkle.py": "3a64fc650f814236f383e22b77c0bb0aa51606eb0072293d2b6a14dc445afe26",
     "scripts/native/render-app-icon.swift": "003e374674b47ffc60e1db39199f5eee8d362b759f2425a516c6f7857b54b068",
-    "scripts/native/swiftpm-environment.sh": "14f817c154e77c6f729aef3f73880abb04b37c867354364017c74185b2499d0f",
+    "scripts/native/swiftpm-environment.sh": "ef8352dc2ec52330804f71aac2bdb26b762d160313fda1e68a600cc5de72b690",
     "scripts/native/test-island.sh": "5dbb994707786c95c5101607c0b320d419548aaf9f2991cf50747550e0a19d11",
     "scripts/release/build-macos-release.sh": "d2f275135ec9d649748f648f61c5f646450c29324f50cec319a9d15843eaa3a5",
     "scripts/release/dmg-background.swift": "55c3d7639804cecb9fdbcb45f4ee8f11c1bfa1d0ed603a2130b311d099cc364e",

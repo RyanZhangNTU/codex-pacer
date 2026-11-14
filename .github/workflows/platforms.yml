@@ -60,6 +60,9 @@ jobs:
     if: needs.changes.outputs.mac == 'true'
     runs-on: macos-26
     timeout-minutes: 40
+    defaults:
+      run:
+        shell: python3 scripts/ci/memory-guard.py bash --noprofile --norc -eo pipefail {0}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Verify architecture and compiler
@@ -97,7 +100,7 @@ jobs:
     timeout-minutes: 40
     defaults:
       run:
-        shell: pwsh
+        shell: python scripts/ci/memory-guard.py pwsh -NoProfile -NonInteractive -File scripts/ci/run-step.ps1 -Step {0}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Claude shell contract before compilation
@@ -137,7 +140,7 @@ jobs:
     timeout-minutes: 40
     defaults:
       run:
-        shell: pwsh
+        shell: python scripts/ci/memory-guard.py pwsh -NoProfile -NonInteractive -File scripts/ci/run-step.ps1 -Step {0}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -206,7 +209,7 @@ jobs:
             groups: web,quota,harness,conversation,idle,display,host,responsive,pages,updates,collapsed,recovery
     defaults:
       run:
-        shell: pwsh
+        shell: python scripts/ci/memory-guard.py pwsh -NoProfile -NonInteractive -File scripts/ci/run-step.ps1 -Step {0}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -261,7 +264,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
-        shell: pwsh
+        shell: python scripts/ci/memory-guard.py pwsh -NoProfile -NonInteractive -File scripts/ci/run-step.ps1 -Step {0}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -305,7 +308,7 @@ jobs:
       PACER_ARCHITECTURE: arm64
     defaults:
       run:
-        shell: pwsh
+        shell: python scripts/ci/memory-guard.py pwsh -NoProfile -NonInteractive -File scripts/ci/run-step.ps1 -Step {0}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
