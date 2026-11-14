@@ -614,47 +614,59 @@ struct DeepSeekWeekChart: View {
     var line = true
     /// The block's header names it, with the line's label, when it opens the panel.
     var showsTitle = true
-    private static let height: CGFloat = 44
     static func hasHistory(_ wallet: DeepSeekWallet) -> Bool { DeepSeekSoloPresentation.week(wallet) != nil }
     var body: some View {
         if let value = DeepSeekSoloPresentation.week(wallet, line: line) {
-            VStack(alignment: .leading, spacing: 6) {
-                if showsTitle {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(value.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
-                        Spacer(minLength: 8)
-                        if let text = value.lineText {
-                            Text(text).font(.system(size: 9)).foregroundStyle(PacerPalette.tertiary).monospacedDigit()
-                        }
-                    }
-                }
-                ZStack(alignment: .topLeading) {
-                    HStack(alignment: .bottom, spacing: 0) {
-                        ForEach(Array(value.days.enumerated()), id: \.offset) { _, day in bar(day) }
-                    }
-                    if let fraction = value.lineFraction {
-                        GeometryReader { proxy in
-                            let y = Self.height - CGFloat(fraction) * Self.height
-                            Path { path in path.move(to: CGPoint(x: 0, y: y)); path.addLine(to: CGPoint(x: proxy.size.width, y: y)) }
-                                .stroke(PacerPalette.secondary.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                        }.frame(height: Self.height).allowsHitTesting(false)
-                    }
-                }
-                HStack(spacing: 0) {
-                    ForEach(Array(value.days.enumerated()), id: \.offset) { _, day in
-                        Text(day.label).font(.system(size: 9, weight: day.today ? .semibold : .regular))
-                            .foregroundStyle(day.today ? PacerPalette.primary : PacerPalette.tertiary).frame(maxWidth: .infinity)
-                    }
-                }
-            }.accessibilityElement(children: .ignore).accessibilityLabel(value.accessibilityLabel)
+            WeekBarsChart(value: value, tint: AgentProvider.deepseek.tint, showsTitle: showsTitle)
         }
+    }
+}
+
+/// A week of daily amounts as bars in a module's color, with the dashed
+/// budget or average and the part over it in red. DeepSeek's spend and
+/// account credits share it.
+struct WeekBarsChart: View {
+    let value: DeepSeekSoloPresentation.Week
+    let tint: Color
+    var showsTitle = true
+    private static let height: CGFloat = 44
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if showsTitle {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(value.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PacerPalette.tertiary)
+                    Spacer(minLength: 8)
+                    if let text = value.lineText {
+                        Text(text).font(.system(size: 9)).foregroundStyle(PacerPalette.tertiary).monospacedDigit()
+                    }
+                }
+            }
+            ZStack(alignment: .topLeading) {
+                HStack(alignment: .bottom, spacing: 0) {
+                    ForEach(Array(value.days.enumerated()), id: \.offset) { _, day in bar(day) }
+                }
+                if let fraction = value.lineFraction {
+                    GeometryReader { proxy in
+                        let y = Self.height - CGFloat(fraction) * Self.height
+                        Path { path in path.move(to: CGPoint(x: 0, y: y)); path.addLine(to: CGPoint(x: proxy.size.width, y: y)) }
+                            .stroke(PacerPalette.secondary.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    }.frame(height: Self.height).allowsHitTesting(false)
+                }
+            }
+            HStack(spacing: 0) {
+                ForEach(Array(value.days.enumerated()), id: \.offset) { _, day in
+                    Text(day.label).font(.system(size: 9, weight: day.today ? .semibold : .regular))
+                        .foregroundStyle(day.today ? PacerPalette.primary : PacerPalette.tertiary).frame(maxWidth: .infinity)
+                }
+            }
+        }.accessibilityElement(children: .ignore).accessibilityLabel(value.accessibilityLabel)
     }
     private func bar(_ day: DeepSeekSoloPresentation.Day) -> some View {
         let within = CGFloat(day.withinFraction) * Self.height, over = CGFloat(day.overFraction) * Self.height
         return VStack(spacing: 0) {
             Spacer(minLength: 0)
             if over >= 0.5 { RoundedRectangle(cornerRadius: 2).fill(PacerPalette.danger.opacity(day.today ? 0.95 : 0.6)).frame(height: over) }
-            if within >= 0.5 { RoundedRectangle(cornerRadius: 2).fill(AgentProvider.deepseek.tint.opacity(day.today ? 1 : 0.5)).frame(height: within) }
+            if within >= 0.5 { RoundedRectangle(cornerRadius: 2).fill(tint.opacity(day.today ? 1 : 0.5)).frame(height: within) }
         }.frame(width: 22, height: Self.height).frame(maxWidth: .infinity).contentShape(Rectangle()).accessibilityHint(day.help)
     }
 }

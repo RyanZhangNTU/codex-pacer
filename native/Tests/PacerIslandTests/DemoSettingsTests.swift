@@ -121,6 +121,8 @@ final class DemoWorkBuddyTests: XCTestCase {
         model.setDemoStage(.thinking)
         XCTAssertTrue(model.activities.contains { $0.provider == .workbuddy }, "Its demo task joins the others")
         XCTAssertNotNil(model.harnessAccount(.workbuddy)?.reading, "Its credits dial shows the demo bill")
+        XCTAssertNotNil(model.harnessWeek(.workbuddy), "History shows its demo week")
+        XCTAssertNil(plain.harnessWeek(.workbuddy))
         XCTAssertNil(defaults.string(forKey: "providerModule.workbuddy"), "The flag saves no module choice")
     }
 }

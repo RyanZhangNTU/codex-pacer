@@ -254,6 +254,14 @@ final class IslandModel: ObservableObject {
         enabledProviders.filter { HarnessRegistry.descriptor(for: $0)?.hasQuotaDisplay == true }
     }
     func localHarnessStatus(_ provider: AgentProvider) -> HarnessSourceStatus? { localHarnessActivities[provider]?.status }
+    /// A module's last week of credits from its local usage, nil until two
+    /// finished days have some.
+    func harnessWeek(_ provider: AgentProvider) -> DeepSeekSoloPresentation.Week? {
+        // The demo has no local data, so a WorkBuddy turned on shows the shared demo week.
+        let daily = demo ? (provider == .workbuddy && isModuleEnabled(provider) ? DemoScenario.workbuddyDaily(at: now) : [])
+            : localHarnessUsage(provider)?.daily ?? []
+        return HarnessWeekPresentation.week(provider: provider, daily: daily, now: now)
+    }
     func localHarnessUsage(_ provider: AgentProvider) -> HarnessUsage? {
         guard let reading = localHarnessActivities[provider], reading.status == .ready else { return nil }
         return reading.usage

@@ -199,7 +199,9 @@ struct HistoryPane: View {
     @State private var chosen: AgentProvider?
     @State private var showsDetails = false
     @State private var showsResetExpiryDetails = false
-    private var quotaProviders: [AgentProvider] { [AgentProvider.codex, .claude].filter { model.enabledProviders.contains($0) } }
+    private var quotaProviders: [AgentProvider] { HarnessRegistry.ids(where: \.hasQuotaWindows).filter { model.enabledProviders.contains($0) } }
+    /// Modules whose bill is account credits, each with its own week.
+    private var creditProviders: [AgentProvider] { HarnessRegistry.ids(where: \.reportsAccountCredits).filter { model.enabledProviders.contains($0) } }
 
     var body: some View {
         MainPage(maxWidth: 900) {
@@ -208,7 +210,9 @@ struct HistoryPane: View {
                 quotaCard(provider)
             }
             if model.enabledProviders.contains(.deepseek) { deepseekCard }
-            if model.quotaProviders.isEmpty {
+            ForEach(creditProviders, id: \.self) { creditsCard($0) }
+            // Only a page with no module that keeps a balance asks for one.
+            if !model.enabledProviders.contains(where: { HarnessRegistry.descriptor(for: $0)?.balance != nil }) {
                 MainCard { CardRow(title: L10n.text("provider.none_enabled")) }
             }
         }
@@ -291,6 +295,22 @@ struct HistoryPane: View {
         .padding(.horizontal, 18).padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .mainCardSurface(radius: 14)
+    }
+
+    /// A module's week of credits, drawn like DeepSeek's week.
+    private func creditsCard(_ provider: AgentProvider) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L10n.text("main.history." + provider.rawValue + "_week")).font(.system(size: 13.5, weight: .semibold))
+                .foregroundStyle(PacerPalette.primary)
+            if let week = model.harnessWeek(provider) {
+                WeekBarsChart(value: week, tint: provider.tint)
+            } else {
+                Text(L10n.text("main.history." + provider.rawValue + "_empty")).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .islandSurface()
     }
 
     /// The island's week chart on its dark card.
