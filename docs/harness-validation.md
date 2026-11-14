@@ -1,5 +1,19 @@
 # Harness validation
 
+## Native WorkBuddy and the module library (November 2026)
+
+| Check | Result |
+| --- | --- |
+| Windows engine and Core suite | 1,250 tests, 2 opt-in tests skipped, no failures. Includes the multi-record directory-change parser test, which fails on the earlier pointer arithmetic. |
+| Windows desktop integration | 38 checks passed: preferences round trips with the new module keys, tolerant module IDs and rings, engine acknowledgement, signed app handlers from module data. |
+| Windows presentation | The Harness, settings, pages, collapsed bar, panel, quota and DeepSeek groups passed, except the hover-animation check, which needs an unlocked display: Pacer stops animations while the screen is locked. |
+| macOS | `make test` (1,280 tests) and `make build` passed with no warnings. Offscreen renders of the module library, WorkBuddy page and Help in English and Chinese showed no clipping. |
+| Live WorkBuddy 5.9.4 on Windows, read-only engine | Detected, on automatically, ready, listed as found, with its brand, website and launch data; one day of credits in the last week. |
+
+Not yet checked live: a WorkBuddy task from start to finish on the new build (it spends account credits), a real WorkBuddy sign-in, and the Mac UI on screen (the Mac stayed locked; WorkBuddy is not installed there).
+
+## Earlier Windows runs
+
 The shared framework was tested with four registered modules on Windows. Mac and Windows use the same Core code; Mac desktop behavior needs a Mac run.
 
 | Source | Windows evidence |
