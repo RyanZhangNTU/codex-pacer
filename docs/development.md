@@ -507,3 +507,5 @@ python3 scripts/performance/benchmark-events.py \
 Use the intended baseline ref instead of `HEAD` for committed changes. Results measure component CPU cost, not whole-app speed, memory, energy or SSH IO. Keep raw results under ignored `output/`, and profile the packaged app for UI measurements.
 
 Live UI measurements need a verified candidate PID, an unlocked screen and fresh main-panel checks at the interval boundaries; a window with unknown lock timing or possibly stale frames is UI-unconfirmed and excluded. Record task and source changes during the run, since an active run is not idle. Per-process CPU and energy counters cover only the captured processes, not WindowServer, the GPU, remote helpers or whole-system power.
+
+Pinned conversation cards remain in the Windows expanded panel while idle. The engine adds catalog-only rows after lifecycle projection; they do not enter notification, rate, completion or active counters. Manual groups are Windows-only, profile-scoped, persisted by the existing preference transaction in `conversationGroups`, and never write Codex sidebar state.

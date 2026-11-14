@@ -59,6 +59,38 @@ public enum CodexPinnedThreads {
         }
         return step == SQLITE_DONE ? ids : nil
     }
+    /// Titles do not require a rollout: newly created and cold pinned chats remain visible.
+    public static func titles(home: URL, ids: Set<String>) -> [String: String]? {
+        guard let file = database(home: home) else { return [:] }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK else {
+            if let db { sqlite3_close(db) }; return nil
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 50)
+        var info: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(threads)", -1, &info, nil) == SQLITE_OK else { return nil }
+        var columns: Set<String> = []
+        while sqlite3_step(info) == SQLITE_ROW { if let raw = sqlite3_column_text(info, 1) { columns.insert(String(cString: raw)) } }
+        sqlite3_finalize(info)
+        let title = columns.contains("name") && columns.contains("title") ? "COALESCE(NULLIF(TRIM(name),''),title)" : columns.contains("title") ? "title" : columns.contains("name") ? "name" : "NULL"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT id, \(title) FROM threads WHERE id=?", -1, &statement, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(statement) }
+        var result: [String: String] = [:]
+        for id in ids.sorted() {
+            sqlite3_reset(statement)
+            let code = id.withCString { raw -> Int32 in
+                sqlite3_bind_text(statement, 1, raw, -1, nil)
+                return sqlite3_step(statement)
+            }
+            if code == SQLITE_ROW, let text = sqlite3_column_text(statement, 1) {
+                let value = String(cString: text).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty { result[id] = String(value.prefix(240)) }
+            } else if code != SQLITE_DONE && code != SQLITE_ROW { return nil }
+        }
+        return result
+    }
     private static func legacy(home: URL) -> Set<String>? {
         guard let data = try? Data(contentsOf: home.appendingPathComponent(".codex-global-state.json")), data.count <= 8 * 1024 * 1024,
               let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }

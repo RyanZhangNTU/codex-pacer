@@ -34,6 +34,13 @@ final class CodexPinnedThreadsTests: XCTestCase {
         try data.write(to: file)
         return file
     }
+    func testPinnedTitlesDoNotRequireRolloutAndPreferRenamedTitle() throws {
+        let home = try home(); try schema(home)
+        try sql(home, "ALTER TABLE threads ADD COLUMN name TEXT; INSERT INTO threads (id,title,name,thread_section_id) VALUES ('\(id(1))','Old title','Renamed','\(CodexPinnedThreads.sectionID)')")
+        XCTAssertEqual(CodexPinnedThreads.titles(home: home, ids: [id(1)]), [id(1): "Renamed"])
+        try sql(home, "UPDATE threads SET name='  '")
+        XCTAssertEqual(CodexPinnedThreads.titles(home: home, ids: [id(1)]), [id(1): "Old title"])
+    }
     func testSectionIsAuthoritativeAndTracksPinUnpinArchive() throws {
         let home = try home(); try schema(home)
         try sql(home, "INSERT INTO threads (id, thread_section_id) VALUES ('\(id(1))','\(CodexPinnedThreads.sectionID)'); INSERT INTO threads (id,is_pinned) VALUES ('\(id(2))',1)")

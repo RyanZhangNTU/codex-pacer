@@ -272,7 +272,7 @@ struct EngineSnapshot: Codable, Equatable {
     let waitingCount: Int
     let totalTokensPerSecond: Double?
     let rateIsFresh: Bool
-    let presentation: EnginePresentation
+    var presentation: EnginePresentation
     let wallet: EngineWallet?
     let modules: [EngineModule]?
     let quotaDashboard: EngineQuotaDashboard?

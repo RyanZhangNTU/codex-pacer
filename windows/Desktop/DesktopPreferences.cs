@@ -47,6 +47,7 @@ internal sealed record DesktopPreferences
     // automatic layout and every default.
     public string? ExpandedPanelLayout { get; init; }
     public string? ExpandedPanelOptions { get; init; }
+    public string? ConversationGroups { get; init; }
     internal static readonly string[] BarSizes = ["small", "standard", "large", "extraLarge"];
     internal static readonly string[] Appearances = ["classic", "liquidGlass", "liquidGlassLight", "graphite"];
     public string CompactSingleTask { get; init; } = "stage";

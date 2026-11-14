@@ -5,6 +5,16 @@ internal static class PreferencesChecks
 {
     internal static DesktopPreferences Run()
     {
+        var groups = new[] { new ConversationGroup("a", "Development", ["one", "two"]), new ConversationGroup("b", "Notes", ["three"]) };
+        var merged = ConversationGroups.Move(groups, ["one", "two"], "b");
+        Check(merged.Length == 1 && merged[0].Members.Length == 3, "Merging preserves every chat exactly once");
+        var moved = ConversationGroups.Move(merged, ["two"], null);
+        Check(moved[0].Members.SequenceEqual(new[] { "three", "one" }), "Moving out retains other members");
+        var savedGroups = ConversationGroups.Read(null).Update("profile", moved.Select(g => g with { Name = "Renamed", Collapsed = true }).ToArray());
+        var encodedGroups = PreferencesCodec.Decode(PreferencesCodec.Encode(new DesktopPreferences { ConversationGroups = savedGroups }));
+        var restoredGroups = ConversationGroups.Read(encodedGroups.ConversationGroups);
+        Check(restoredGroups.For("profile")[0].Name == "Renamed" && restoredGroups.For("profile")[0].Collapsed && restoredGroups.For("other").Length == 0, "Groups round trip and stay scoped to a profile");
+        Check(ConversationGroups.Read("broken").For("profile").Length == 0, "Invalid group storage is bounded and safe");
         string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "pacer-prefs-" + Guid.NewGuid().ToString("N")));
         string file = Path.Combine(root, "preferences.json");
         // Maintenance's inspection mode must remain read-only, including on damage.

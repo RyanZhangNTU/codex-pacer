@@ -226,6 +226,7 @@ actor EngineRuntime {
     private var showEmbeddedCodexSessions = true
     private var codexPinnedOnly = false
     private var pinnedCodexThreads: Set<String> = []
+    private var pinnedCodexTitles: [String: String] = [:]
     private var pinnedCodexHome: URL?
     private var pinnedCodexAvailable = true
     private var monitorRemoteControl = false
@@ -2090,11 +2091,18 @@ actor EngineRuntime {
                 var pinsChanged = false
                 if codexPinnedOnly {
                     let home = codexHome
-                    if pinnedCodexHome != home { pinnedCodexThreads = []; pinnedCodexHome = home; pinsChanged = true }
-                    let pins = await Task.detached(priority: .utility) { CodexPinnedThreads.read(home: home) }.value
+                    if pinnedCodexHome != home { pinnedCodexThreads = []; pinnedCodexTitles = [:]; pinnedCodexHome = home; pinsChanged = true }
+                    let catalog = await Task.detached(priority: .utility) {
+                        let ids = CodexPinnedThreads.read(home: home)
+                        return (ids, ids.flatMap { CodexPinnedThreads.titles(home: home, ids: $0) })
+                    }.value
+                    let pins = catalog.0
                     guard active, generation == revision else { return }
                     pinnedCodexAvailable = pins != nil
-                    if let pins { pinsChanged = pinsChanged || pins != pinnedCodexThreads; pinnedCodexThreads = pins }
+                    if let pins {
+                        pinsChanged = pinsChanged || pins != pinnedCodexThreads; pinnedCodexThreads = pins
+                        pinnedCodexTitles = Dictionary(uniqueKeysWithValues: pins.map { ($0, catalog.1?[$0] ?? pinnedCodexTitles[$0] ?? String($0.prefix(8))) })
+                    }
                 }
                 let result = await codexReader.read(home: codexHome, now: date, phaseAwareRate: true,
                     metricsOnly: !discover && !pinsChanged, preferredThreads: codexPinnedOnly ? pinnedCodexThreads : [])
@@ -2355,7 +2363,9 @@ actor EngineRuntime {
             #if os(Windows)
             let codexDefaultProfile = demo || WindowsActivityNavigation.isDefaultProfile(codexHome, provider: .codex)
             #endif
-            navigation.update(activities: visibleActivities, requests: visibleRequests, inbox: inbox,
+            navigation.update(activities: visibleActivities + ((!demo && codexPinnedOnly && enabled.contains(.codex)) ? pinnedCodexThreads.sorted().filter { id in
+                !visibleActivities.contains { $0.threadID == id && $0.sourceHostID == nil }
+            }.map { SessionActivity(id: AgentProvider.codex.activityID(sessionID: $0, sourceHostID: nil), sessionID: $0) } : []), requests: visibleRequests, inbox: inbox,
                 cloudContext: cloudNavigationContext) { activity in
                 guard !activity.isInternalReview, !activity.isIgnoredCodexSession else { return false }
                 if activity.provider == .deepseek { return true }
@@ -2408,6 +2418,7 @@ actor EngineRuntime {
             },
             claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation(), codexProgressSetup: codexProgressSetup,
             deepseekProgressSetup: deepseekProgressSetup)
+        if !demo && codexPinnedOnly && enabled.contains(.codex) { snapshot.presentation.includePinned(pinnedCodexTitles) }
         snapshot.expandedPanel = EngineExpandedPanel(settings: panelSettings, enabled: enabled, snapshots: snapshots,
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability

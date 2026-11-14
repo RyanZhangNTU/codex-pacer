@@ -4,13 +4,22 @@ import PacerCore
 /// Bounded display metadata. The host never reconstructs provider lifecycle,
 /// task families or rate estimates from strings or from raw event payloads.
 struct EnginePresentation: Codable, Equatable {
-    let rows: [EngineTaskRow]
-    let taskCountText: String
+    var rows: [EngineTaskRow]
+    var taskCountText: String
     let pageSize: Int
     let rowCapacity: Int
-    let pageCount: Int
+    var pageCount: Int
     let header: EngineHeader
 
+    mutating func includePinned(_ titles: [String: String]) {
+        let shown = Set(rows.map(\.id))
+        for thread in titles.keys.sorted() {
+            let id = AgentProvider.codex.activityID(sessionID: thread, sourceHostID: nil)
+            if !shown.contains(id) { rows.append(EngineTaskRow(pinnedID: id, title: titles[thread]!)) }
+        }
+        taskCountText = String(rows.count)
+        pageCount = max(1, (rows.count + pageSize - 1) / pageSize)
+    }
     init(activities: [SessionActivity], requests: [PendingAttentionRequest], inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = []) {
         self.init(ActivityTaskPresentation(activities: activities, requests: requests, inbox: inbox,
@@ -59,6 +68,15 @@ struct EngineTaskRow: Codable, Equatable {
     let progressStale: Bool?
     let progressText: String?
 
+    init(pinnedID: String, title: String) {
+        id = pinnedID; provider = "codex"; self.title = title
+        status = L10n.text("activity.idle"); phase = "idle"; symbol = "moon"
+        source = nil; sourceLabel = nil; sourceKind = nil; attention = nil
+        model = ""; effort = nil; tokensPerSecond = nil; rateText = nil
+        subagentText = ""; rateIsFresh = false; ratePlaceholder = nil; turnTime = nil
+        subagents = 0; unread = false; failed = false; dimmed = false; cost = nil; peakCost = false
+        progressState = nil; progressMode = nil; progressFraction = nil; progressStale = nil; progressText = nil
+    }
     init(group: ActivityTaskGroup, attention: PendingAttentionRequest.Kind?, inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
         self.init(ActivityTaskRowPresentation(activity: group.primary, group: group, attention: attention,
