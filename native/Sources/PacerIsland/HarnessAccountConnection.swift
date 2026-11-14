@@ -16,6 +16,9 @@ import WebKit
     @Published private(set) var busy = false
     /// Called on the main actor after every change to the credits or state.
     var onChange: (() -> Void)?
+    /// Called when the user signs out or switches accounts: the next reading
+    /// may belong to someone else, so earlier notices no longer apply.
+    var onAccountReset: (() -> Void)?
 
     private let definition: HarnessAccountCreditsDefinition
     private var enabled = false
@@ -71,6 +74,7 @@ import WebKit
         scheduled?.cancel(); scheduled = nil
         defaults.removeObject(forKey: key)
         update(nil, .signIn)
+        if switching { onAccountReset?() }
         let store = dataStore
         let panel = HarnessAccountLogin(provider: provider, origin: site.url, loginPath: definition.loginPath,
                                         script: definition.summaryScript, store: store)
@@ -96,6 +100,7 @@ import WebKit
         scheduled?.cancel(); scheduled = nil
         defaults.removeObject(forKey: key)
         update(nil, .signIn)
+        onAccountReset?()
         let store = dataStore
         begin { _ in
             await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
@@ -129,7 +134,8 @@ import WebKit
 
     private func apply(_ result: HarnessAccountCredits?) {
         if result?.reading() != nil { update(result, .ready) }
-        else if result?.state == .signIn { update(nil, .signIn) }
+        // An expired session needs signing in again, so the button returns.
+        else if result?.state == .signIn { defaults.removeObject(forKey: key); update(nil, .signIn) }
         // A failed read keeps the last bill, dimmed.
         else { update(credits, .unavailable) }
         schedule()

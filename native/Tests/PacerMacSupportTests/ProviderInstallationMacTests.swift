@@ -36,6 +36,22 @@ final class ProviderInstallationMacTests: XCTestCase {
         XCTAssertFalse(managed.deepseekInstalled)
         XCTAssertTrue(ProviderInstallationDetection.detect(userHome: home, environment: ["DSH_HOME": custom.path],
             applicationURLs: [.codex: [], .claude: [], .deepseek: []], systemBinDirectories: []).deepseekInstalled)
+        // A local module without its app is found by its data file, in its
+        // default folder or a folder chosen in Settings.
+        let workbuddy = try XCTUnwrap(HarnessRegistry.localHarnesses.first { $0.descriptor.id == .workbuddy })
+        let noApps: [AgentProvider: [URL]] = [.codex: [], .claude: [], .deepseek: [], .workbuddy: []]
+        XCTAssertFalse(ProviderInstallationDetection.detect(userHome: home, environment: [:], applicationURLs: noApps,
+            systemBinDirectories: []).isInstalled(.workbuddy))
+        let chosen = home.appendingPathComponent("wb-data")
+        try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: true)
+        try Data().write(to: chosen.appendingPathComponent(workbuddy.dataFile))
+        XCTAssertTrue(ProviderInstallationDetection.detect(userHome: home, environment: [:], applicationURLs: noApps,
+            systemBinDirectories: [], harnessHomes: ["workbuddy": chosen.path]).isInstalled(.workbuddy))
+        let standard = workbuddy.defaultHome(userHome: home)
+        try FileManager.default.createDirectory(at: standard, withIntermediateDirectories: true)
+        try Data().write(to: standard.appendingPathComponent(workbuddy.dataFile))
+        XCTAssertTrue(ProviderInstallationDetection.detect(userHome: home, environment: [:], applicationURLs: noApps,
+            systemBinDirectories: []).isInstalled(.workbuddy))
         let modules = ProviderModules()
         XCTAssertEqual(modules.enabledProviders(detection: .init(codexInstalled: true, claudeInstalled: false, deepseekInstalled: true)),
             [.codex, .deepseek], "Each detected module turns on by itself")

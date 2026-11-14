@@ -26,7 +26,7 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         XCTAssertEqual(library.prominent.map(\.provider), [.claude, .workbuddy], "Found or turned on, in registry order")
         XCTAssertEqual(library.collapsed.map(\.provider), [.codex, .deepseek])
         let services = SettingsPane.groups(services: library.prominent.map(\.provider))[1]
-        XCTAssertEqual(services, [.claude, SettingsPane(provider: .workbuddy), .remote, .modules], "The library closes the Services group")
+        XCTAssertEqual(services, [.claude, SettingsPane(provider: .workbuddy), .modules, .remote], "The library follows the services, then Remote")
         XCTAssertEqual(SettingsPane(stored: "codex"), .codex, "A hidden built-in page still opens from saved state")
         XCTAssertEqual(SettingsPane(stored: "harness.workbuddy")?.provider, .workbuddy)
         XCTAssertEqual(SettingsPane(stored: "modules"), .modules)
@@ -41,6 +41,22 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         defaults.set(["workbuddy", "unknown-module"], forKey: IslandModel.hiddenTurnCreditsKey)
         XCTAssertEqual(model.hiddenTurnCredits, [.workbuddy], "IDs this version does not know are ignored")
         XCTAssertEqual(model.taskPresentationOptions(for: []).hiddenTurnCredits, [.workbuddy])
+    }
+
+    func testCreditNoticesStayQuietThroughAStopAndForgetOnlyOnAnAccountChange() throws {
+        let (model, _) = try model()
+        let low = try JSONDecoder().decode(HarnessAccountCredits.self,
+            from: Data(#"{"state":"ready","remaining":5,"total":100,"reserved":0}"#.utf8))
+        let credits: [AgentProvider: HarnessAccountCredits] = [.workbuddy: low]
+        XCTAssertEqual(model.harnessCreditsAttention.notices(credits, low: true, now: Date()).count, 1)
+        // Stopping for sleep publishes an empty account; that must not re-arm the notice.
+        model.harnessAccount(.workbuddy)?.stop()
+        model.receiveHarnessCredits(.workbuddy)
+        XCTAssertTrue(model.harnessCreditsAttention.notices(credits, low: true, now: Date()).isEmpty,
+                      "Waking with the same low reading stays quiet")
+        model.setHarnessAccountSite(.workbuddy, "automatic")
+        XCTAssertEqual(model.harnessCreditsAttention.notices(credits, low: true, now: Date()).count, 1,
+                       "Another site may be another account, so it can notify again")
     }
 
     func testAccountSiteFallsBackToAutomaticAndDataFolderWinsOverTheDefault() throws {

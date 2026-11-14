@@ -60,6 +60,7 @@ final class IslandModel: ObservableObject {
             descriptor.accountCredits.map { definition in
                 let connection = HarnessAccountConnection(provider: descriptor.id, definition: definition, defaults: defaults)
                 connection.onChange = { [weak self] in self?.receiveHarnessCredits(descriptor.id) }
+                connection.onAccountReset = { [weak self] in self?.harnessCreditsAttention.reset(descriptor.id) }
                 return (descriptor.id, connection)
             }
         })
@@ -1377,7 +1378,8 @@ final class IslandModel: ObservableObject {
         self.claudeQuotaReads = claudeQuotaReads ?? ClaudeQuotaReadDependencies()
         self.installationOverride = installation
         self.installation = installation ?? (demo && demoArguments != nil
-            ? Self.demoInstallation(demoArguments) : .detect())
+            ? Self.demoInstallation(demoArguments)
+            : .detect(harnessHomes: defaults.dictionary(forKey: Self.harnessHomesKey) as? [String: String] ?? [:]))
         self.modules = .load(from: defaults)
         self.appliedClaudeProgressRing = Self.progressRingEnabled(Self.claudeProgressRingKey, in: defaults)
         self.demo = demo
@@ -2110,11 +2112,12 @@ final class IslandModel: ObservableObject {
     }
 
     /// A module's credits changed: redraw what shows them and notify once
-    /// when they fall low or run out. Signing out forgets earlier notices.
+    /// when they fall low or run out. Only signing out, switching accounts or
+    /// sites and turning the module off forget earlier notices; stopping for
+    /// sleep does not, so waking with the same low reading stays quiet.
     func receiveHarnessCredits(_ provider: AgentProvider) {
         objectWillChange.send()
-        if harnessAccounts[provider]?.credits == nil { harnessCreditsAttention.reset(provider) }
-        if !demo {
+        if !demo, !sleeping, !stopped {
             present(harnessCreditsAttention.notices(harnessCredits, low: compactLayout.warnings.contains(.lowCredits), now: Date()))
         }
         onLayoutChange?(); onStatusChange?()
@@ -2130,6 +2133,7 @@ final class IslandModel: ObservableObject {
         var sites = defaults.dictionary(forKey: Self.harnessAccountSitesKey) as? [String: String] ?? [:]
         sites[provider.rawValue] = value == "automatic" ? nil : value
         defaults.set(sites, forKey: Self.harnessAccountSitesKey)
+        harnessCreditsAttention.reset(provider)
         configureHarnessAccounts()
     }
     private func configureHarnessAccounts() {
@@ -2183,7 +2187,8 @@ final class IslandModel: ObservableObject {
     }
     func applySettings(sourceChanged: Bool) {
         installation = installationOverride ?? (demo && demoArguments != nil
-            ? Self.demoInstallation(demoArguments) : .detect())
+            ? Self.demoInstallation(demoArguments)
+            : .detect(harnessHomes: defaults.dictionary(forKey: Self.harnessHomesKey) as? [String: String] ?? [:]))
         modules = .load(from: defaults)
         PacerAccent.current = PacerAccent(defaults: defaults)
         // Light Liquid Glass turns the whole island light before it redraws.
@@ -2396,7 +2401,12 @@ final class IslandModel: ObservableObject {
         if !sleeping, !stopped, !demo { onStatusChange?() }
     }
     private func performLifecycle(_ plan: ApplicationLifecycleCoordinator.Plan) {
-        if plan.changedProviders.contains(where: { harnessAccounts[$0] != nil }) { configureHarnessAccounts() }
+        if plan.changedProviders.contains(where: { harnessAccounts[$0] != nil }) {
+            for provider in plan.changedProviders where harnessAccounts[provider] != nil && !isModuleEnabled(provider) {
+                harnessCreditsAttention.reset(provider)
+            }
+            configureHarnessAccounts()
+        }
         for action in plan.actions {
             switch action {
             case .quota(let provider, let force, let active):

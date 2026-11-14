@@ -23,7 +23,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
     /// Services lists the modules found here or turned on, in registry order;
     /// the module library holds the rest.
     static func groups(services: [AgentProvider]) -> [[Self]] {
-        [[.overview, .history], services.map(Self.init(provider:)) + [.remote, .modules],
+        [[.overview, .history], services.map(Self.init(provider:)) + [.modules, .remote],
          [.appearance, .collapsedBar, .expandedPanel, .notifications, .general]]
     }
     static func pages(services: [AgentProvider]) -> [Self] { groups(services: services).flatMap { $0 } + [.about, .support] }
