@@ -45,7 +45,9 @@ def windows_snapshot():
         entry = Process(); entry.size = c.sizeof(entry)
         present = kernel.Process32FirstW(handle, c.byref(entry))
         while present:
-            process = kernel.OpenProcess(0x1000 | 0x10, False, entry.pid)
+            # Memory counters need only QUERY_LIMITED_INFORMATION. VM_READ
+            # unnecessarily denies sandboxed WebView2 children.
+            process = kernel.OpenProcess(0x1000, False, entry.pid)
             rss = None
             exited = not process and c.get_last_error() == 87
             if process:
