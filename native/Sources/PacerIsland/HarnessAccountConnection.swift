@@ -43,15 +43,22 @@ import WebKit
         }
     }
 
-    func connect() {
+    /// The window closes by itself once credits can be read. Switching
+    /// accounts signs the current one out first, or it would read at once.
+    func connect(switching: Bool = false) {
         guard enabled, !busy else { return }
         scheduled?.cancel(); scheduled = nil
         defaults.removeObject(forKey: key)
         reading = nil; state = .signIn
-        let panel = HarnessAccountLogin(origin: origin, store: dataStore)
+        let store = dataStore
+        let panel = HarnessAccountLogin(provider: .workbuddy, origin: origin, store: store)
         login = panel
         begin { [weak self] current in
             guard let self else { return }
+            if switching {
+                await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+                guard revision == current, !Task.isCancelled else { return }
+            }
             let result = await panel.signIn()
             guard revision == current, !Task.isCancelled else { return }
             login = nil
@@ -170,18 +177,29 @@ import WebKit
     }
 }
 
+/// The sign-in window, like Claude's and DeepSeek's: the shared banner above
+/// the site's page. Credits are read through the window's own profile every
+/// few seconds, wherever the page has gone (a QR or third-party step included),
+/// and the first reading confirms the sign-in and closes the window.
 @MainActor private final class HarnessAccountLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
+    private static let checkInterval: Duration = .seconds(3)
+    private let provider: AgentProvider
     private let origin: URL
     private let store: WKWebsiteDataStore
-    private let label = NSTextField(wrappingLabelWithString: "")
-    private let done = NSButton(title: L10n.text("login.done"), target: nil, action: nil)
+    private let banner = WebLoginBannerState()
     private var window: NSWindow?
     private var browser: WKWebView?
     private var popups: [NSWindow] = []
     private var result: CheckedContinuation<HarnessAccountCredits?, Never>?
-    private var verification: Task<Void, Never>?
+    private var polling: Task<Void, Never>?
+    private var autoClose: Task<Void, Never>?
+    private var signedIn: HarnessAccountCredits?
 
-    init(origin: URL, store: WKWebsiteDataStore) { self.origin = origin; self.store = store }
+    init(provider: AgentProvider, origin: URL, store: WKWebsiteDataStore) {
+        self.provider = provider; self.origin = origin; self.store = store
+    }
+
+    private var loginURL: URL { origin.appendingPathComponent(WorkBuddyAccountWeb.loginPath) }
 
     func signIn() async -> HarnessAccountCredits? {
         await withCheckedContinuation { continuation in
@@ -189,43 +207,75 @@ import WebKit
             let config = WKWebViewConfiguration(); config.websiteDataStore = store
             let page = WKWebView(frame: .zero, configuration: config)
             page.navigationDelegate = self; page.uiDelegate = self; browser = page
-            done.target = self; done.action = #selector(verify); done.bezelStyle = .rounded
-            label.stringValue = L10n.text("windows.workbuddy.login.instructions")
-            label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let strip = NSStackView(views: [label, done]); strip.orientation = .horizontal
-            strip.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+            let copy = WebLoginBanner.Copy(prompt: L10n.text("workbuddy.login.prompt"), promptDetail: L10n.text("workbuddy.login.prompt_detail"),
+                signedIn: L10n.text("workbuddy.login.signed_in"), signedInDetail: L10n.text("workbuddy.login.signed_in_detail"))
+            let strip = NSHostingView(rootView: WebLoginBanner(provider: provider, copy: copy, state: banner,
+                onReload: { [weak self] in self?.reloadPage() },
+                onLater: { [weak self] in self?.window?.performClose(nil) },
+                onDone: { [weak self] in self?.finish() }))
             let panel = makeWindow()
             panel.contentView = NSView.webLoginContainer(banner: strip, page: page)
             window = panel
-            page.load(URLRequest(url: origin.appendingPathComponent(WorkBuddyAccountWeb.loginPath)))
-            panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+            polling = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: Self.checkInterval)
+                    guard let self, !Task.isCancelled else { return }
+                    await self.check()
+                }
+            }
+            page.load(URLRequest(url: loginURL))
+            panel.center(); panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         }
     }
     func close() { window?.close() }
+
     private func makeWindow() -> NSWindow {
-        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 680), styleMask: [.titled, .closable, .resizable],
-                             backing: .buffered, defer: false)
-        panel.title = L10n.text("workbuddy.login.title") + " · " + (origin.host ?? "")
-        panel.isReleasedWhenClosed = false; panel.delegate = self; panel.center()
+        let available = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1024, height: 900)
+        let frame = CGRect(x: 0, y: 0, width: min(760, max(420, available.width - 80)), height: min(720, max(400, available.height - 100)))
+        let panel = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        panel.title = Self.title(host: origin.host)
+        panel.minSize = CGSize(width: 420, height: 400)
+        panel.isReleasedWhenClosed = false; panel.delegate = self
         return panel
     }
-    @objc private func verify() {
-        guard verification == nil else { return }
-        done.isEnabled = false; label.stringValue = L10n.text("harness.account.reading")
-        verification = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let credits = await HarnessAccountBrowserRead().read(origin: origin, store: store)
-            guard !Task.isCancelled, window != nil else { return }
-            verification = nil; done.isEnabled = true
-            if let credits, credits.reading() != nil {
-                result?.resume(returning: credits); result = nil; close()
-            } else { label.stringValue = L10n.text("harness.account.sign_in_again") }
+    private static func title(host: String?) -> String { L10n.text("workbuddy.login.title") + " · " + (host ?? "") }
+
+    private func reloadPage() {
+        guard let browser else { return }
+        if banner.phase == .loadFailed { banner.phase = .prompt }
+        // A failed first load leaves nothing to reload.
+        if browser.url == nil { browser.load(URLRequest(url: loginURL)) } else { browser.reload() }
+    }
+
+    /// One reading through the window's profile; the first one that has
+    /// credits shows the confirmation, then closes the window shortly after.
+    private func check() async {
+        guard window != nil, signedIn == nil else { return }
+        let credits = await HarnessAccountBrowserRead().read(origin: origin, store: store)
+        guard window != nil, signedIn == nil, let credits, credits.reading() != nil else { return }
+        signedIn = credits
+        banner.phase = .signedIn
+        polling?.cancel(); polling = nil
+        autoClose = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: WebLoginBanner.autoCloseDelay)
+            guard !Task.isCancelled else { return }
+            self?.finish()
         }
     }
+
+    /// Done and the automatic close return the confirmed reading; closing
+    /// the window before one returns nothing.
+    private func finish() {
+        guard let credits = signedIn else { return }
+        result?.resume(returning: credits); result = nil
+        close()
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow else { return }
         if closing !== window { popups.removeAll { $0 === closing }; return }
-        verification?.cancel(); verification = nil
+        polling?.cancel(); polling = nil
+        autoClose?.cancel(); autoClose = nil
         for popup in popups { popup.delegate = nil; popup.close() }
         popups.removeAll()
         browser?.stopLoading(); browser?.navigationDelegate = nil; browser?.uiDelegate = nil; browser = nil
@@ -238,8 +288,12 @@ import WebKit
         decisionHandler(scheme == "https" || scheme == "about" ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let panel = webView.window
-        panel?.title = L10n.text("workbuddy.login.title") + " · " + (webView.url?.host ?? origin.host ?? "")
+        guard webView === browser else { return }
+        window?.title = Self.title(host: webView.url?.host ?? origin.host)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        guard webView === browser, banner.phase == .prompt, (error as NSError).code != NSURLErrorCancelled else { return }
+        banner.phase = .loadFailed
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {

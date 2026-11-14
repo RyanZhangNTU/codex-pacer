@@ -37,9 +37,7 @@ struct SettingsHelpPane: View {
                 switch topic {
                 case .collapsed: collapsedRows
                 case .expanded: expandedRows
-                case .module(.codex): codexRows
-                case .module(.claude): claudeRows
-                case .module(.deepseek): deepseekRows
+                case .module(let provider): moduleRows(provider)
                 }
             }
         }
@@ -52,7 +50,7 @@ struct SettingsHelpPane: View {
     @ViewBuilder private var collapsedRows: some View {
         // Under one accent the services are its shades, as the tiles draw them.
         row("help.services", detail: PacerAccent.current == .multicolor ? nil : "help.services.shades") {
-            ForEach(HarnessRegistry.legacyIDs, id: \.self) { ProviderTile(provider: $0) }
+            ForEach(HelpTopic.modules, id: \.self) { ProviderTile(provider: $0) }
         }
         row("help.tasks") {
             ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [.codex: 1]))
@@ -85,7 +83,7 @@ struct SettingsHelpPane: View {
         row("help.hover", symbol: "cursorarrow.rays")
         row("help.open", symbol: "arrow.up.forward.app")
         row("help.app_buttons") {
-            ForEach(HarnessRegistry.legacyIDs, id: \.self) { provider in
+            ForEach(HelpTopic.modules, id: \.self) { provider in
                 ProviderAppIcon(provider: provider, size: 14, outline: true)
                     .foregroundStyle(PacerPalette.secondary)
             }
@@ -94,6 +92,35 @@ struct SettingsHelpPane: View {
         row("help.pace") {
             PaceTickSample()
             QuotaVerdictChip(verdict: .spare)
+        }
+    }
+
+    /// A module's own marks. One without its own topic gets the rows every
+    /// module shares, so adding a Harness never breaks Help.
+    @ViewBuilder private func moduleRows(_ provider: AgentProvider) -> some View {
+        switch provider {
+        case .codex: codexRows
+        case .claude: claudeRows
+        case .deepseek: deepseekRows
+        case .workbuddy: workbuddyRows
+        default:
+            row(title: L10n.text("help.harness.tasks.title", provider.displayName),
+                detail: L10n.text("help.harness.tasks.detail", provider.displayName)) { ProviderTile(provider: provider) }
+        }
+    }
+
+    @ViewBuilder private var workbuddyRows: some View {
+        let tint = AgentProvider.workbuddy.tint
+        row("help.workbuddy.credits") {
+            QuotaRingsGlyph(rings: [.init(tint: tint, remaining: 64, stale: false)])
+            Text("1,280").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(tint)
+        }
+        row("help.workbuddy.cost") {
+            Text("12").font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(tint)
+        }
+        row("help.workbuddy.progress") { ProgressRingSample(fraction: 0.62, tint: tint) }
+        row("help.workbuddy.apps") {
+            ProviderAppIcon(provider: .workbuddy, size: 14, outline: true).foregroundStyle(tint)
         }
     }
 
@@ -164,11 +191,15 @@ struct SettingsHelpPane: View {
 
     /// `detail` replaces the entry's own explanation when one applies.
     private func row<Sample: View>(_ key: String, detail: String? = nil, @ViewBuilder sample: () -> Sample) -> some View {
+        row(title: L10n.text(key + ".title"), detail: L10n.text(detail ?? key + ".detail"), sample: sample)
+    }
+
+    private func row<Sample: View>(title: String, detail: String, @ViewBuilder sample: () -> Sample) -> some View {
         HStack(spacing: 14) {
             IslandSampleSwatch(content: sample)
             VStack(alignment: .leading, spacing: 2) {
-                Text(L10n.text(key + ".title")).font(.system(size: 13))
-                Text(L10n.text(detail ?? key + ".detail")).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                Text(title).font(.system(size: 13))
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -176,11 +207,31 @@ struct SettingsHelpPane: View {
     }
 }
 
+/// A reported estimate as task rows draw it: an arc over a faint track.
+private struct ProgressRingSample: View {
+    let fraction: Double
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(tint.opacity(0.22), lineWidth: 2.2)
+            Circle().trim(from: 0, to: fraction).stroke(tint, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 14, height: 14)
+    }
+}
+
 /// What the legend shows: the bar, the panel or one module's own marks.
 private enum HelpTopic: Hashable {
     case collapsed, expanded, module(AgentProvider)
 
-    static var all: [HelpTopic] { [.collapsed, .expanded] + HarnessRegistry.legacyIDs.map(HelpTopic.module) }
+    /// Every module this Mac can run, in the registry's order.
+    static var modules: [AgentProvider] {
+        HarnessRegistry.legacyIDs + HarnessRegistry.localHarnesses.filter { $0.platforms.contains(.macOS) }.map(\.descriptor.id)
+    }
+
+    static var all: [HelpTopic] { [.collapsed, .expanded] + modules.map(HelpTopic.module) }
     var isModule: Bool { if case .module = self { true } else { false } }
     var title: String {
         switch self {

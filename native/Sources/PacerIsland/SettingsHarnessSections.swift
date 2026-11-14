@@ -10,7 +10,7 @@ import SwiftUI
 
     init(model: IslandModel, provider: AgentProvider) {
         let keys: (String, String?, Color) = switch model.localHarnessStatus(provider) {
-        case .ready: ("harness.ready", nil, .green)
+        case .ready: ("harness.ready", nil, MainPalette.positive)
         case .missing where model.providerDetected(provider): ("harness.waiting_for_tasks", "harness.missing", .secondary)
         case .missing: ("harness.not_installed", nil, MainPalette.attention)
         case .incompatible: ("harness.unsupported_format", "harness.incompatible", MainPalette.attention)
