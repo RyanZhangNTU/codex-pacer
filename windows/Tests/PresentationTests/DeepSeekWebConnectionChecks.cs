@@ -179,7 +179,9 @@ internal static class DeepSeekWebConnectionChecks
                 var statusView = SelfAndDescendants(island).OfType<DeepSeekBalanceStatusView>().Single();
                 var retryBounds = retry.TransformToAncestor(statusView).TransformBounds(new Rect(retry.RenderSize));
                 var settingsBounds = settings.TransformToAncestor(statusView).TransformBounds(new Rect(settings.RenderSize));
-                Check(retryBounds.Left >= -.1 && settingsBounds.Right <= statusView.ActualWidth + .1 && retryBounds.Right + 5.9 <= settingsBounds.Left,
+                // Side by side when the column holds both, otherwise stacked (#226).
+                bool inside = new[] { retryBounds, settingsBounds }.All(bounds => bounds.Left >= -.1 && bounds.Right <= statusView.ActualWidth + .1);
+                Check(inside && (retryBounds.Right + 5.9 <= settingsBounds.Left || retryBounds.Bottom + 5.9 <= settingsBounds.Top),
                     "Recovery capsules must fit the real provider column without overlap in " + layout);
                 island.CapturePreview(Path.Combine(output, "deepseek-recovery-" + name + "-" + layout + ".png"));
                 site.Hold = true; Invoke(retry); await Until(() => site.Deferred != null);
