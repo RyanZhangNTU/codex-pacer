@@ -102,8 +102,10 @@ def main():
     if available < RESERVE:
         raise RuntimeError('Insufficient free memory to start this step')
     print(f'Memory before step: {available // 1048576} MiB available', flush=True)
-    env = dict(os.environ, DOTNET_PROCESSOR_COUNT='1', DOTNET_GCHeapHardLimit='80000000', PACER_BUILD_JOBS='1')
-    child = subprocess.Popen(sys.argv[1:], env=env, stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
+    # Inherit the native environment block. Rebuilding it from os.environ
+    # uppercases Windows keys, breaking case-sensitive Foundation lookups.
+    os.environ.update(DOTNET_PROCESSOR_COUNT='1', DOTNET_GCHeapHardLimit='80000000', PACER_BUILD_JOBS='1')
+    child = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
                              **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}))
     last_report = time.monotonic()
     try:
