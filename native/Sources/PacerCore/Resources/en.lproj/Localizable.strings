@@ -1520,4 +1520,3 @@
 "progress_guide.chip.steps_left" = "%ld steps left";
 "progress_guide.summary.steps_left" = "Progress ring: %ld steps left";
 "progress_guide.waiting.reopen" = "Waiting for %@ to start again";
-"progress_guide.trust_card.refresh" = "Refresh";

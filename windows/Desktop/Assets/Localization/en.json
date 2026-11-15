@@ -1189,7 +1189,6 @@
     "progress_guide.trust_card.caption": "Third-party service",
     "progress_guide.trust_card.detail": "Trust this MCP service before it first connects.",
     "progress_guide.trust_card.path": "Connectors › Custom connectors",
-    "progress_guide.trust_card.refresh": "Refresh",
     "progress_guide.waiting": "Waiting for you",
     "progress_guide.waiting.reopen": "Waiting for %@ to start again",
     "provider.automatic": "Automatic",

@@ -1189,7 +1189,6 @@
     "progress_guide.trust_card.caption": "第三方服务",
     "progress_guide.trust_card.detail": "首次连接此 MCP 服务需要您的信任确认。",
     "progress_guide.trust_card.path": "连接器 › 自定义连接器",
-    "progress_guide.trust_card.refresh": "刷新",
     "progress_guide.waiting": "等你点完",
     "progress_guide.waiting.reopen": "等 %@ 重新启动",
     "provider.automatic": "自动",

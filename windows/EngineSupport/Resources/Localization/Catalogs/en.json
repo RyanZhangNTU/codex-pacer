@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "45c0174a497b73e6fe69331f6ad72d80f7f5c8e05fcfabc30da14023381d7a7d",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "cdd91a307f14f187bfb0c29c4976872d9fdf4efe0b3166746bf63d9ed4df678b",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -1193,7 +1193,6 @@
     "progress_guide.trust_card.caption": "Third-party service",
     "progress_guide.trust_card.detail": "Trust this MCP service before it first connects.",
     "progress_guide.trust_card.path": "Connectors \u203a Custom connectors",
-    "progress_guide.trust_card.refresh": "Refresh",
     "progress_guide.waiting": "Waiting for you",
     "progress_guide.waiting.reopen": "Waiting for %@ to start again",
     "provider.automatic": "Automatic",

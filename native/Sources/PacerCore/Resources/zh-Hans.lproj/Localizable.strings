@@ -1520,4 +1520,3 @@
 "progress_guide.chip.steps_left" = "还差 %ld 步";
 "progress_guide.summary.steps_left" = "进度圆环还差 %ld 步";
 "progress_guide.waiting.reopen" = "等 %@ 重新启动";
-"progress_guide.trust_card.refresh" = "刷新";
