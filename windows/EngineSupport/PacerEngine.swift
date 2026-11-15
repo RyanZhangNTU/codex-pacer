@@ -2540,7 +2540,8 @@ actor EngineRuntime {
         guard before.keys == next.keys else { return true }
         return next.contains { id, value in
             guard let previous = before[id] else { return true }
-            return value.phase != previous.phase || value.turnID != previous.turnID || value.stage != previous.stage ||
+            // A conversation's new name shows at once, not with the next counter batch.
+            return value.phase != previous.phase || value.turnID != previous.turnID || value.stage != previous.stage || value.title != previous.title ||
                 value.turnFailed != previous.turnFailed || value.firstTokenReportedAt != previous.firstTokenReportedAt ||
                 value.waitingForApproval != previous.waitingForApproval || value.codexGoalPause != previous.codexGoalPause
         }

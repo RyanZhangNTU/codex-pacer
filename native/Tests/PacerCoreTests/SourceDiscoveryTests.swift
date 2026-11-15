@@ -108,6 +108,29 @@ final class SourceDiscoveryTests: XCTestCase {
         let result = await LocalActivityReader().read(home: home, now: now)
         XCTAssertEqual(result.activities.first?.title, "Assigned conversation")
     }
+    func testANameCodexAssignsWhileTheTaskRunsShowsWithinFiveSeconds() async throws {
+        // Codex Desktop starts a chat in a folder named from its first words
+        // ("zhi-zuo") and names it 11 s later; the reads in between are metrics-only.
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let now = Date(), formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + formatter.string(from: now))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("rollout-" + UUID().uuidString.lowercased() + ".jsonl")
+        try record("event_msg", payload: ["type": "task_started", "turn_id": "named-later"], at: now).write(to: file)
+        try database(home: home, rollout: file)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(home.appendingPathComponent("state_5.sqlite").path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "ALTER TABLE threads ADD COLUMN name TEXT; UPDATE threads SET title=NULL", nil, nil, nil), SQLITE_OK)
+        let reader = LocalActivityReader()
+        let started = await reader.read(home: home, now: now)
+        XCTAssertNil(started.activities.first?.title)
+        XCTAssertEqual(sqlite3_exec(db, "UPDATE threads SET name='Random number generator'", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+        let soon = await reader.read(home: home, now: now.addingTimeInterval(1), metricsOnly: true)
+        XCTAssertNil(soon.activities.first?.title, "Metrics-only reads reread names at most every five seconds")
+        let named = await reader.read(home: home, now: now.addingTimeInterval(6), metricsOnly: true)
+        XCTAssertEqual(named.activities.first?.title, "Random number generator")
+    }
     func testIndexCannotReadPathsOutsideSelectedCodexHome() throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
         let outside = home.appendingPathComponent("private.jsonl")

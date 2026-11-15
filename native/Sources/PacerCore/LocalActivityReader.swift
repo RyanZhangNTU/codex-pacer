@@ -14,6 +14,11 @@ public actor LocalActivityReader {
     }
     private var cursors: [URL: Cursor] = [:]
     private var metadata: [URL: (identity: String, activity: SessionActivity)] = [:]
+    /// Codex names a conversation seconds after it starts (11 s, seen 11/15)
+    /// and reads while it runs are metrics-only, so names are reread from its
+    /// index at most this often then too; discovery reads always reread them.
+    static let titleRefreshInterval: TimeInterval = 5
+    private var titlesReadAt: Date?
     private var originSizes: [URL: UInt64] = [:]
     private var ignoredIDs: Set<String> = []
     private let maxFiles = 16
@@ -81,6 +86,9 @@ public actor LocalActivityReader {
             }
         }
         let indexed = metricsOnly ? [] : SessionIndex.entries(home: home)
+        let titlesDue = !metricsOnly || titlesReadAt.map { now.timeIntervalSince($0) >= Self.titleRefreshInterval || $0 > now } ?? true
+        let named = metricsOnly && titlesDue && !cursors.isEmpty ? SessionIndex.entries(home: home) : indexed
+        if titlesDue { titlesReadAt = now }
         for entry in indexed {
             let file = entry.url
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
@@ -167,7 +175,7 @@ public actor LocalActivityReader {
             }
             let identity = facts.identity, size = facts.size
             if var existing = cursors[file], existing.identity == identity, existing.offset == size {
-                if let entry = indexed.first(where: { $0.url == file }) { existing.activity.updateTitle(entry.title); existing.activity.updateParent(entry.parentThreadID); cursors[file] = existing }
+                if let entry = named.first(where: { $0.url == file }) { existing.activity.updateTitle(entry.title); existing.activity.updateParent(entry.parentThreadID); cursors[file] = existing }
                 continue
             }
             guard let handle = try? FileHandle(forReadingFrom: file) else { continue }
@@ -214,7 +222,7 @@ public actor LocalActivityReader {
                     current.fragment.removeSubrange(...end)
                 }
                 if current.fragment.count > maxBytes { current.fragment.removeAll(); current.attention.reset() }
-                if let entry = indexed.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title); current.activity.updateParent(entry.parentThreadID) }
+                if let entry = named.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title); current.activity.updateParent(entry.parentThreadID) }
                 if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
                    now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
                 if current.activity.isInternalReview || current.activity.isIgnoredCodexSession {
