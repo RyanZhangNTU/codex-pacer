@@ -37,10 +37,13 @@ internal static class ProviderHomeSettingsChecks
         try
         {
             window.Show();
+            // Whether WorkBuddy is installed depends on the machine, so the sidebar is checked against the engine's own answer.
+            await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.Modules?.Any(value => value.Provider == "workbuddy") == true, "The engine lists WorkBuddy");
+            await Pump();
+            bool found = engine.LatestSnapshot!.Modules!.First(value => value.Provider == "workbuddy").IsProminent;
             var row = Find<RadioButton>(window, "settings.pane.workbuddy");
-            Check(AutomationProperties.GetName(row) == "WorkBuddy" && row.IsEnabled &&
-                Descendants(row).OfType<Image>().Any(icon => icon.Source != null && ReferenceEquals(icon.Source, ProviderIcon.Source("workbuddy"))),
-                "WorkBuddy has its official icon in the Services sidebar, where it shows once found on this computer");
+            Check(AutomationProperties.GetName(row) == "WorkBuddy" && row.IsEnabled && row.IsVisible == found,
+                "A turned-off WorkBuddy shows in the Services sidebar once found on this computer, and otherwise only in the Module Library");
             Find<TextBox>(window, "settings.search").Text = "workbuddy";
             await Pump();
             Check(window.SearchMatches().SequenceEqual(["workbuddy"]), "Searching for WorkBuddy finds the service page");
@@ -55,6 +58,9 @@ internal static class ProviderHomeSettingsChecks
                 && session.Current.ProviderModes["workbuddy"] == "enabled"
                 && engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "workbuddy" && module.Enabled) == true,
                 "The service page can enable a task module and keeps unknown choices out of the engine handshake");
+            await PresentationWait.UntilAsync(() => row.IsVisible, "A module turned on shows in the Services sidebar even when it isn't found");
+            Check(Descendants(row).OfType<Image>().Any(icon => icon.Source != null && ReferenceEquals(icon.Source, ProviderIcon.Source("workbuddy"))),
+                "WorkBuddy has its official icon in the Services sidebar");
             Check(Find<TextBlock>(window, id + ".status").IsVisible && Find<Button>(window, id + ".accountUsage").IsVisible,
                 "The enabled service has local task status and an account usage link");
             var detected = engine.LatestSnapshot?.Modules?.First(value => value.Provider == "workbuddy").Installed;
