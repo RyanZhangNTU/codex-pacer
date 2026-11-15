@@ -631,11 +631,15 @@ final class IslandModel: ObservableObject {
     var hiddenTurnCredits: Set<AgentProvider> {
         Set((defaults.stringArray(forKey: Self.hiddenTurnCreditsKey) ?? []).compactMap(AgentProvider.init(rawValue:)))
     }
-    @Published private(set) var localHarnessProgressStatuses: [AgentProvider: LocalHarnessProgressSetup.State] = [:]
+    @Published private(set) var localHarnessProgressStatuses: [AgentProvider: LocalHarnessProgressSetup.State] = [:] {
+        didSet { progressGuideHintDismissals = progressGuideHintDismissals.filter { progressGuide($0.key)?.stage == $0.value } }
+    }
     private var localHarnessProgressQueues: [AgentProvider: ProgressSetupQueue<LocalHarnessProgressSetup.Target>] = [:]
     private var localHarnessProgressTasks: [AgentProvider: Task<Void, Never>] = [:]
 
-    func syncLocalHarnessProgress(force provider: AgentProvider? = nil, inspectOnly: Bool = false) {
+    /// - Parameter keepsState: keep showing the current state until the
+    ///   result arrives, for checks the user did not ask for.
+    func syncLocalHarnessProgress(force provider: AgentProvider? = nil, inspectOnly: Bool = false, keepsState: Bool = false) {
         guard !demo, !stopped, installationOverride == nil, let executable = Bundle.main.executableURL else { return }
         for definition in localHarnesses.definitions {
             let id = definition.descriptor.id
@@ -648,19 +652,97 @@ final class IslandModel: ObservableObject {
             let target = LocalHarnessProgressSetup.Target(home: localHarnessHome(definition), configFile: configFile,
                                                           reporter: executable.path, enabled: enabled, ruleDirectory: definition.progressRuleDirectory)
             guard let ticket = localHarnessProgressQueues[id, default: .init()].request(target, force: provider == id) else { continue }
-            if !inspectOnly { localHarnessProgressStatuses[id] = enabled ? .init(.settingUp) : nil }
+            if !inspectOnly && !keepsState { localHarnessProgressStatuses[id] = enabled ? .init(.settingUp) : nil }
             let task = Task { [weak self] in
                 let status = await Task.detached(priority: .utility) {
                     await LocalHarnessProgressSetup.sync(ticket, storage: MacClaudeHookStorage(),
                         connection: definition.progressConnection, inspectOnly: inspectOnly)
                 }.value
                 guard let self, self.localHarnessProgressQueues[id]?.finish(ticket) == true else { return }
-                self.localHarnessProgressStatuses[id] = status
+                var state = status
+                // A report recorded a moment ago may not be on disk yet.
+                if state?.setup == .configured, self.localHarnessProgressStatuses[id]?.reported == true { state?.reported = true }
+                self.localHarnessProgressStatuses[id] = state
                 self.localHarnessProgressTasks[id] = nil
             }
             localHarnessProgressQueues[id]?.track(task)
             localHarnessProgressTasks[id] = task
         }
+    }
+
+    /// Checks the app's trust again; once the app has made its folder, the
+    /// setup it was waiting for continues by itself.
+    func recheckLocalHarnessProgress(_ provider: AgentProvider) {
+        if localHarnessProgressStatuses[provider]?.setup == .missingHome {
+            guard localHarnessProgressTasks[provider] == nil else { return }
+            syncLocalHarnessProgress(force: provider, keepsState: true)
+        } else {
+            syncLocalHarnessProgress(force: provider, inspectOnly: true)
+        }
+    }
+
+    /// The first reported estimate confirms the whole chain, so the card
+    /// collapses for good; an app that has just made its folder lets setup continue.
+    private func noteLocalHarnessProgress(_ provider: AgentProvider, snapshot: HarnessActivity) {
+        guard let definition = localHarnesses.definition(for: provider), let state = localHarnessProgressStatuses[provider] else { return }
+        switch Self.localProgressFollowUp(state, reports: snapshot.activities.contains { $0.selfReportedProgress != nil }) {
+        case .continueSetup?: recheckLocalHarnessProgress(provider)
+        case .markReported?:
+            localHarnessProgressStatuses[provider]?.reported = true
+            let home = localHarnessHome(definition)
+            Task.detached(priority: .utility) { LocalHarnessProgressSetup.markReported(home, storage: MacClaudeHookStorage()) }
+        case nil: break
+        }
+    }
+
+    enum LocalProgressFollowUp: Equatable { case continueSetup, markReported }
+    static func localProgressFollowUp(_ state: LocalHarnessProgressSetup.State, reports: Bool) -> LocalProgressFollowUp? {
+        if state.setup == .missingHome { return .continueSetup }
+        return state.setup == .configured && !state.reported && reports ? .markReported : nil
+    }
+
+    /// The progress ring card Core words for a module whose app must trust
+    /// Pacer's tool; nil for other modules and while the ring is off.
+    func progressGuide(_ provider: AgentProvider) -> HarnessProgressGuide? {
+        guard let descriptor = HarnessRegistry.descriptor(for: provider), descriptor.progressConnector else { return nil }
+        let state = localHarnessProgressStatuses[provider]
+        return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
+                                    ringOn: isModuleEnabled(provider) && showsHarnessProgress(provider), name: descriptor.name)
+    }
+
+    /// The ⓘ text, also while the ring is off and there is no card to word it.
+    func progressGuideInfo(_ provider: AgentProvider) -> String {
+        guard let descriptor = HarnessRegistry.descriptor(for: provider) else { return "" }
+        return HarnessProgressGuide(setup: .settingUp, connection: nil, reported: false, ringOn: true, name: descriptor.name)?.info ?? ""
+    }
+
+    /// The modules the onboarding note names: their ring is on and their app
+    /// still needs a step, or setup has not reported back yet.
+    var progressOnboardingModules: [AgentProvider] {
+        HarnessRegistry.localHarnesses.map(\.descriptor).filter { descriptor in
+            guard descriptor.progressConnector, isModuleEnabled(descriptor.id), showsHarnessProgress(descriptor.id) else { return false }
+            return progressGuide(descriptor.id).map(\.attention) ?? true
+        }.map(\.id)
+    }
+
+    /// The panel hints the user closed, by module, until that module's stage
+    /// changes; kept in memory only, as on Windows.
+    private var progressGuideHintDismissals: [AgentProvider: HarnessProgressGuide.Stage] = [:]
+    /// A module's task is running without a ring because its app still needs
+    /// a step: the panel says so in one line until closed for that stage.
+    var progressGuideHints: [(provider: AgentProvider, summary: String)] {
+        let running = Set(visibleActivities.filter { $0.phase == .running }.map(\.provider))
+        return HarnessRegistry.localHarnesses.map(\.descriptor.id).compactMap { provider in
+            guard running.contains(provider), let guide = progressGuide(provider), guide.attention, let summary = guide.summary,
+                  progressGuideHintDismissals[provider] != guide.stage else { return nil }
+            return (provider, provider.displayName + " · " + summary)
+        }
+    }
+    func dismissProgressGuideHint(_ provider: AgentProvider) {
+        guard let stage = progressGuide(provider)?.stage else { return }
+        progressGuideHintDismissals[provider] = stage
+        objectWillChange.send()
+        onLayoutChange?()
     }
 
     func refreshProgressPresentation() {
@@ -2167,6 +2249,7 @@ final class IslandModel: ObservableObject {
         now = Date()
         combineActivities()
         localHarnessRevision &+= 1
+        noteLocalHarnessProgress(provider, snapshot: snapshot)
     }
     private func resetLocalHarness(_ provider: AgentProvider) {
         localHarnessActivities.remove(provider)

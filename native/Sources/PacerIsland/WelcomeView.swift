@@ -192,9 +192,12 @@ struct WelcomeView: View {
         VStack(spacing: 24) {
             header(L10n.text("main.welcome.finish_title"), L10n.text("main.welcome.finish_subtitle"))
             MainCard {
-                WelcomeChoiceRow(symbol: "circle.dashed", tint: Color(red: 0.19, green: 0.69, blue: 0.78),
-                                 title: L10n.text("main.claude.ring"), info: L10n.text("main.welcome.ring_info")) {
-                    Toggle(L10n.text("main.claude.ring"), isOn: ringsBinding).labelsHidden().toggleStyle(.switch)
+                VStack(alignment: .leading, spacing: 10) {
+                    WelcomeChoiceRow(symbol: "circle.dashed", tint: Color(red: 0.19, green: 0.69, blue: 0.78),
+                                     title: L10n.text("main.claude.ring"), info: L10n.text("main.welcome.ring_info")) {
+                        Toggle(L10n.text("main.claude.ring"), isOn: ringsBinding).labelsHidden().toggleStyle(.switch)
+                    }
+                    if ringsBinding.wrappedValue { progressNote }
                 }
                 WelcomeChoiceRow(symbol: SettingsPane.notifications.tileSymbol, tint: SettingsPane.notifications.tint,
                                  title: L10n.text("settings.system_notifications"), info: L10n.text("main.welcome.notifications_info"),
@@ -215,6 +218,23 @@ struct WelcomeView: View {
             }
         }
         .padding(.horizontal, 56).padding(.top, 44)
+    }
+
+    /// The apps that still need the user to trust Pacer's tool, and the way to their page.
+    @ViewBuilder private var progressNote: some View {
+        let modules = model.progressOnboardingModules
+        if let first = modules.first, let note = HarnessProgressGuide.onboardingNote(names: modules.map(\.displayName)) {
+            HStack(spacing: 10) {
+                ProviderAppIcon(provider: first, size: 18)
+                Text(note).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button(L10n.text("progress_guide.onboarding.action")) { onOpenSettings(SettingsPane(provider: first)) }
+                    .buttonStyle(MainButtonStyle(height: 26))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(MainPalette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.leading, 40)
+        }
     }
 
     /// One switch for every service's ring; Settings keeps one per service.

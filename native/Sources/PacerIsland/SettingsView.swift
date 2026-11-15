@@ -100,7 +100,8 @@ struct SettingsView: View {
             let library = library
             MainWindowSidebar(selection: $pane, services: library.prominent.map(\.provider), searchable: library.entries.map(\.provider),
                 hiddenModules: library.collapsed.count, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
-                needsAttention: needsAttention, updateVersion: updater.flow.available?.version)
+                needsAttention: needsAttention, attentionHelp: { $0.provider.flatMap(progressAttention) },
+                updateVersion: updater.flow.available?.version)
                 .background(SidebarMaterial())
             Rectangle().fill(Color.black.opacity(0.25)).frame(width: 1)
             detail.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -155,7 +156,7 @@ struct SettingsView: View {
 
     private func refreshProgressConnection() {
         if let provider = pane.provider, !HarnessRegistry.legacyIDs.contains(provider) {
-            model.syncLocalHarnessProgress(force: provider, inspectOnly: true)
+            model.recheckLocalHarnessProgress(provider)
         }
     }
 
@@ -173,7 +174,8 @@ struct SettingsView: View {
                         paneContent
                     }
                     .task {
-                        guard let target = scrollTarget else { return }
+                        // A module's ring card that needs the user comes into view when its page opens.
+                        guard let target = scrollTarget ?? pane.provider.flatMap(progressAttention).map({ _ in ProgressGuideRows.anchor }) else { return }
                         scrollTarget = nil
                         try? await Task.sleep(nanoseconds: 150_000_000)
                         withAnimation { proxy.scrollTo(target, anchor: .center) }
@@ -238,8 +240,15 @@ struct SettingsView: View {
         case .claude: claudeAttentionKey != nil
         case .codex: moduleEnabled(.codex) && cliReport.map { $0.selected == nil } == true
         case .remote: SettingsConnectionsPane.problemCount(model) > 0
-        default: false
+        default: pane.provider.flatMap(progressAttention) != nil
         }
+    }
+
+    /// What a module's progress ring still needs from the user, while its ring is on.
+    private func progressAttention(_ provider: AgentProvider) -> String? {
+        guard moduleEnabled(provider), !disabledHarnessProgress.contains(provider.rawValue),
+              let guide = model.progressGuide(provider), guide.attention else { return nil }
+        return guide.summary
     }
 
     private var attentionItems: [OverviewAttention] {
@@ -252,6 +261,13 @@ struct SettingsView: View {
             }
             items.append(.init(id: "claude", title: AgentProvider.claude.displayName + " · " + L10n.text(key),
                 detail: L10n.text("main.attention.quota_waits"), action: action, perform: perform))
+        }
+        // A ring whose app still needs a step: what it needs, and its current step.
+        for provider in library.prominent.map(\.provider) {
+            guard let summary = progressAttention(provider), let guide = model.progressGuide(provider) else { continue }
+            items.append(.init(id: "progress." + provider.rawValue, title: provider.displayName + " · " + summary,
+                detail: guide.steps.first { $0.state == .current }?.title ?? guide.line ?? "",
+                action: L10n.text("main.overview.open"), perform: { pane = SettingsPane(provider: provider) }))
         }
         if needsAttention(.codex) {
             items.append(.init(id: "codex", title: "Codex CLI · " + L10n.text("provider.state.not_found"),

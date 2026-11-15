@@ -19,15 +19,27 @@ import Security
         return await Task.detached(priority: .utility) { locations.first { Self.isTrusted($0, definition: definition) } }.value
     }
 
+    /// Opens the app on its connectors, where the user trusts Pacer's tool.
     package static func openProgressConnectors(provider: AgentProvider) async -> Bool {
-        guard provider.rawValue == "workbuddy", let application = await find(provider: provider),
-              let destination = URL(string: "workbuddy-ai://connectors") else { return false }
+        guard let definition = HarnessRegistry.localHarnesses.first(where: { $0.descriptor.id == provider }),
+              let scheme = definition.conversationScheme, let path = definition.connectorsPath,
+              let destination = URL(string: scheme + "://" + path), let application = await find(provider: provider) else { return false }
+        return await open([destination], with: application)
+    }
+
+    /// Opens the app itself, so it makes its settings folder.
+    package static func openApplication(provider: AgentProvider) async -> Bool {
+        guard let application = await find(provider: provider) else { return false }
+        return await open([], with: application)
+    }
+
+    private static func open(_ urls: [URL], with application: URL) async -> Bool {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         return await withCheckedContinuation { continuation in
-            NSWorkspace.shared.open([destination], withApplicationAt: application, configuration: configuration) { _, error in
-                continuation.resume(returning: error == nil)
-            }
+            let done: @Sendable (NSRunningApplication?, (any Error)?) -> Void = { _, error in continuation.resume(returning: error == nil) }
+            if urls.isEmpty { NSWorkspace.shared.openApplication(at: application, configuration: configuration, completionHandler: done) }
+            else { NSWorkspace.shared.open(urls, withApplicationAt: application, configuration: configuration, completionHandler: done) }
         }
     }
 

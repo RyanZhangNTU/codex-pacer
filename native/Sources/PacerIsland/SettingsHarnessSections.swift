@@ -14,7 +14,6 @@ struct SettingsHarnessSections: View {
     @Binding var dataFolder: String
     let commitDataFolder: () -> Void
     @State private var locationsExpanded = false
-    @State private var connectorOpenFailed = false
 
     private var provider: AgentProvider { descriptor.id }
 
@@ -28,11 +27,19 @@ struct SettingsHarnessSections: View {
         if let connection = model.harnessAccount(provider) {
             HarnessCreditsCard(connection: connection, settings: model.creditSettings(provider), usageGuide: descriptor.usageGuide, now: model.now)
         }
+        // While the ring needs steps or has a problem, its card stands alone;
+        // ready or off, it is one row like any other service's ring.
+        let guideOpen = descriptor.progressConnector && ProgressGuideRows.opens(ProgressGuideRows.guide(model, provider, isOn: showsProgress))
         MainCard(title: L10n.text("main.section.display")) {
-            if descriptor.hasTaskProgress { progressRow }
-            if descriptor.reportsAccountCredits {
-                CardToggle(title: L10n.text("harness.turn_credits"), info: L10n.text("main.info.harness_turn_credits"), isOn: $showsTurnCredits)
+            if descriptor.progressConnector {
+                ProgressGuideRows(model: model, provider: provider, isOn: $showsProgress)
+            } else if descriptor.hasTaskProgress {
+                CardToggle(title: L10n.text("main.claude.ring"), isOn: $showsProgress)
             }
+            if !guideOpen, descriptor.reportsAccountCredits { turnCredits }
+        }
+        if guideOpen, descriptor.reportsAccountCredits {
+            MainCard { turnCredits }
         }
         MainCard {
             CardDisclosure(title: L10n.text("provider.custom_locations"),
@@ -65,17 +72,8 @@ struct SettingsHarnessSections: View {
         }
     }
 
-    private var progressRow: some View {
-        let state = model.localHarnessProgressStatuses[provider]
-        let needsTrust = showsProgress && descriptor.progressConnector && state?.connection == .needsTrust
-        return Group {
-            ProgressRingToggle(info: L10n.text(provider.rawValue + ".progress_ring_help"), isOn: $showsProgress,
-                status: progressState(state), canRetry: [.missingHome, .conflict, .failed].contains(state?.setup) || state?.connection == .missing,
-                retry: { model.syncLocalHarnessProgress(force: provider) },
-                secondaryTitle: needsTrust ? L10n.text("harness.progress_state.open_connectors") : nil,
-                secondaryAction: { Task { connectorOpenFailed = !(await MacLocalHarnessApplication.openProgressConnectors(provider: provider)) } })
-            if connectorOpenFailed, needsTrust { CardRow(title: L10n.text("harness.progress_state.open_failed")) }
-        }
+    private var turnCredits: some View {
+        CardToggle(title: L10n.text("harness.turn_credits"), info: L10n.text("main.info.harness_turn_credits"), isOn: $showsTurnCredits)
     }
 
     private var defaultFolder: String {
@@ -88,30 +86,6 @@ struct SettingsHarnessSections: View {
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true
         if panel.runModal() == .OK, let url = panel.url { dataFolder = url.path; commitDataFolder() }
-    }
-
-    private func progressState(_ state: LocalHarnessProgressSetup.State?) -> String? {
-        let key: String? = switch state?.setup {
-        case .settingUp: "setting_up"
-        case .configured: showsProgress ? connectionKey(state?.connection) : nil
-        case .missingHome: "missing_home"
-        case .conflict: "conflict"
-        case .failed: showsProgress ? "failed" : "cleanup_failed"
-        case nil: nil
-        }
-        return key.map { L10n.text("harness.progress_state." + $0) }
-    }
-
-    private func connectionKey(_ connection: LocalHarnessProgressConnection?) -> String {
-        switch connection {
-        case .needsTrust: "needs_trust"
-        case .trusted: "trusted"
-        case .disabled: "disabled"
-        case .toolDisabled: "tool_disabled"
-        case .missing: "missing"
-        case .unknown: "unknown"
-        case nil: "configured"
-        }
     }
 }
 

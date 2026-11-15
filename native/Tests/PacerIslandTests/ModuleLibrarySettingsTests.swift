@@ -81,6 +81,33 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         XCTAssertEqual(AgentProvider.workbuddy.settingsTitle, AgentProvider.workbuddy.displayName)
     }
 
+    func testTheFirstReportConfirmsTheRingAndAMissingFolderRetriesByItself() {
+        typealias State = LocalHarnessProgressSetup.State
+        XCTAssertEqual(IslandModel.localProgressFollowUp(State(.missingHome), reports: false), .continueSetup,
+                       "Once the app has made its folder, setup continues without a retry")
+        XCTAssertEqual(IslandModel.localProgressFollowUp(State(.configured, connection: .trusted), reports: true), .markReported)
+        XCTAssertNil(IslandModel.localProgressFollowUp(State(.configured, connection: .trusted), reports: false))
+        XCTAssertNil(IslandModel.localProgressFollowUp(State(.configured, connection: .trusted, reported: true), reports: true),
+                     "Recorded once")
+        XCTAssertNil(IslandModel.localProgressFollowUp(State(.settingUp), reports: true), "Only a finished setup is confirmed")
+    }
+
+    func testTheRingCardOnboardingNoteAndPanelHintFollowTheModulesThatTrustATool() throws {
+        let (model, defaults) = try model()
+        var modules = ProviderModules()
+        modules.setMode(.enabled, for: .workbuddy); modules.setMode(.enabled, for: .workbuddyAI)
+        modules.save(to: defaults)
+        model.applySettings(sourceChanged: false)
+        XCTAssertNil(model.progressGuide(.claude), "Only a module whose app trusts Pacer's tool has the card")
+        XCTAssertNil(model.progressGuide(.workbuddy), "No card before setup reports back")
+        XCTAssertFalse(model.progressGuideInfo(.workbuddyAI).isEmpty, "ⓘ still explains the ring while it is off")
+        XCTAssertEqual(model.progressOnboardingModules, [.workbuddy, .workbuddyAI],
+                       "Before setup reports back, onboarding names every app that will need a step")
+        defaults.set(["workbuddy-ai"], forKey: IslandModel.disabledHarnessProgressKey)
+        XCTAssertEqual(model.progressOnboardingModules, [.workbuddy], "A ring turned off needs nothing")
+        XCTAssertTrue(model.progressGuideHints.isEmpty, "The panel hint waits for a running task")
+    }
+
     func testDataFolderWinsOverTheDefault() throws {
         let (model, defaults) = try model()
         let folder = "/private/tmp/pacer-workbuddy-data-" + UUID().uuidString

@@ -199,6 +199,8 @@ struct MainWindowSidebar: View {
     var hiddenModules = 0
     let isDisabled: (SettingsPane) -> Bool
     let needsAttention: (SettingsPane) -> Bool
+    /// What the dot is for, when the page says it in one line.
+    var attentionHelp: (SettingsPane) -> String? = { _ in nil }
     /// A found version replaces the installed one under Help & Updates.
     var updateVersion: String?
     @State private var query = ""
@@ -287,7 +289,7 @@ struct MainWindowSidebar: View {
                     Text(L10n.text("settings.module_off")).font(.system(size: 11)).foregroundStyle(.secondary)
                 } else if needsAttention(pane) {
                     Circle().fill(PacerPalette.attention).frame(width: 7, height: 7)
-                        .accessibilityLabel(L10n.text("main.needs_attention"))
+                        .accessibilityLabel(attentionHelp(pane) ?? L10n.text("main.needs_attention"))
                 }
             }
             .padding(.horizontal, 8).frame(height: 30)
@@ -295,6 +297,7 @@ struct MainWindowSidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(!isDisabled(pane) && needsAttention(pane) ? attentionHelp(pane) ?? "" : "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
