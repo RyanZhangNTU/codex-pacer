@@ -12,6 +12,19 @@ internal static class PresentationWait
     // limit. A check that bounds how long something may take keeps its own.
     internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30);
 
+    // Whether a saved panel layout places the block. The saved text also lists
+    // every block it knows, so searching the text for a name says nothing.
+    internal static bool Places(string? layout, string block)
+    {
+        if (layout == null) return false;
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(layout)?["blocks"] is System.Text.Json.Nodes.JsonArray blocks
+                && System.Linq.Enumerable.Any(blocks, value => value?.GetValue<string>() == block);
+        }
+        catch (System.Text.Json.JsonException) { return false; }
+    }
+
     // A WebView2 browser keeps its profile open until its processes exit. Wait for
     // the fixture profile to go, so the next browser check never starts while the
     // last one's browser is still shutting down. This runs in finally blocks, so it

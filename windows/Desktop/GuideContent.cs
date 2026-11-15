@@ -623,7 +623,10 @@ internal sealed class GuideContent : StackPanel
     /// "Settings ›" at the end of a highlight whose setting lives on a page.
     private Button? PaneLink(GuideItem item)
     {
-        string? pane = item.Control switch { "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", _ => null };
+        string? pane = item.Control switch
+        {
+            "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", "openModules" => "modules", _ => null
+        };
         if (pane == null) return null;
         var content = new StackPanel { Orientation = Orientation.Horizontal };
         var text = Text(ui.Text("whats_new.open_settings"), 12.5); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsLinkText"); content.Children.Add(text);
