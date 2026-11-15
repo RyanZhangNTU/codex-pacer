@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -195,6 +196,7 @@ public partial class App : Application
         await CreateWindowsUpdaterAsync(e.Args, activationQa, referenceFixture);
         engine = new EngineClient();
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
         ShellProjection.Client = engine;
         webConnection = new DeepSeekConnectionCoordinator(engine, demo ? new OfflineDeepSeekWebSession() : new DeepSeekWebSession(ui),
             Dispatcher, bridgeEnabled: !demo);
@@ -225,6 +227,7 @@ public partial class App : Application
         island = new IslandWindow(engine, demo, language == "zh-Hans", position, desktopApplications: applications,
             displayMode: positionIndex >= 0 ? 2 : Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode),
             canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts);
+        island.Presence.Changed += OnPresenceChanged;
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
             {
@@ -461,6 +464,8 @@ public partial class App : Application
         if (quitting) return;
         quitting = true;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
+        if (island != null) island.Presence.Changed -= OnPresenceChanged;
         instanceActivation?.Dispose();
         notificationLifetime.Cancel();
         guideWindow?.Close();
@@ -495,4 +500,19 @@ public partial class App : Application
             { if (!quitting && ui != null) island?.SetStatus(ui.Text("windows.connection.refresh_failed")); }
         }));
     }
+
+    // A VPN or Wi-Fi coming back (Modern Standby may send no resume) or the
+    // user's return (unlock, reconnect, display on) retries unreachable SSH
+    // hosts instead of waiting out their backoff. The engine coalesces bursts
+    // and ignores this while asleep.
+    private void OnNetworkAddressChanged(object? sender, EventArgs change) => RequestSSHReconnect();
+
+    private void OnPresenceChanged() { if (island?.Presence.Present == true) RequestSSHReconnect(); }
+
+    private void RequestSSHReconnect() => Dispatcher.BeginInvoke(new Action(async () =>
+    {
+        if (quitting || !engineReady.Task.IsCompletedSuccessfully || engine == null) return;
+        try { await engine.SendAsync("reconnectSSH"); }
+        catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException) { }
+    }));
 }

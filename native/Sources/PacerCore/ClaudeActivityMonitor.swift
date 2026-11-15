@@ -109,6 +109,18 @@ public actor ClaudeActivityMonitor {
         }
         await publish()
     }
+    /// After a network change, reconnects SSH hosts that are waiting out a
+    /// backoff. Hosts without a Claude home stay parked; WSL keeps its schedule.
+    public func reconnectUnreachableSSH() async {
+        guard home != nil else { return }
+        let due = wanted.keys.filter { id in
+            connections[id] == nil && retry[id] != nil && !id.hasPrefix(ConnectionSource.wslPrefix) &&
+                disconnected[id]?.status.sourceAvailable != false
+        }
+        guard !due.isEmpty else { return }
+        for id in due { retry.removeValue(forKey: id); failureCounts[id] = nil }
+        await connectWanted(); await publish()
+    }
     public func activities() -> [SessionActivity] { local.activities + connections.values.flatMap { $0.state.activities } + disconnected.values.flatMap { $0.activities } + cloud.activities }
     public func updateCloud(activities: [SessionActivity], status: RuntimeStreamStatus?, attention: [PendingAttentionRequest]) async {
         cloud = (activities, status, attention)

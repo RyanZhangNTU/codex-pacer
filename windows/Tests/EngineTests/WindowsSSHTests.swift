@@ -259,4 +259,33 @@ final class WindowsSSHTests: XCTestCase {
         try await wait { capture.snapshot()?.sources.contains { $0.transport == "ssh" && $0.available } == true }
         await runtime.stop()
     }
+    /// A host behind a VPN that dropped during sleep backs off for 30 seconds
+    /// and more. The network coming back reconnects it within the wait limit.
+    func testNetworkChangeReconnectsAnUnreachableHostWithoutWaitingOutItsBackoff() async throws {
+        let (root, ssh, environment) = try fixture(), codex = root.appendingPathComponent("codex"), capture = SSHEngineCapture()
+        let id = target().id
+        try write(["codex-managed-remote-connections": [["hostId": id, "alias": "alias-a", "source": "discovered"]],
+            "remote-connection-auto-connect-by-host-id": [id: true]], to: codex.appendingPathComponent(".codex-global-state.json"))
+        try (JSONSerialization.data(withJSONObject: ["kind": "status", "connected": true]) + Data([10])).write(to: root.appendingPathComponent("frames.jsonl"))
+        let disconnect = root.appendingPathComponent("disconnect")
+        try Data().write(to: disconnect)
+        let services = WindowsSSHServices(ssh: ssh, userHome: root, desktopFile: root.appendingPathComponent("desktop.json"), environment: environment,
+            resolve: { _, port in .init(hostname: "same.example", user: "fixture", port: port ?? 22) })
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil,
+            desktopServices: .init { _, _, _, _ in SSHUnusedDesktop() }, sshServices: services, output: { capture.append($0) })
+        func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
+        }
+        func attempts() -> Int {
+            ((try? String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)) ?? "")
+                .split(separator: "\n").filter { !$0.contains("\"lookup\":true") }.count
+        }
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": WindowsCodexExecutableDiscovery.path(codex)]))
+        try await wait { attempts() >= 1 }
+        try FileManager.default.removeItem(at: disconnect)
+        _ = await runtime.receive(try command("reconnectSSH"))
+        try await wait { capture.snapshot()?.sources.contains { $0.transport == "ssh" && $0.available } == true }
+        XCTAssertGreaterThanOrEqual(attempts(), 2)
+        await runtime.stop()
+    }
 }

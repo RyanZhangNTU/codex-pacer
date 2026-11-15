@@ -270,6 +270,7 @@ actor EngineRuntime {
     private var showEmbeddedClaudeSessions = true
     private var showClaudeCloudProjects = true
     private var monitorSSH = true
+    private var sshReconnect = SSHReconnectPolicy()
     private let sshServices: WindowsSSHServices?
     private let claudeRemoteServices: EngineClaudeRemoteServices?
     private lazy var claudeRemoteSetup = claudeRemoteServices.map { WindowsClaudeRemoteCoordinator(services: $0, now: now, maximumTargets: 16) }
@@ -982,6 +983,9 @@ actor EngineRuntime {
         case "refreshTaskSources":
             guard active else { failure(id: command.id, code: "unavailable"); return true }
             scheduleConnectionRetry()
+        case "reconnectSSH":
+            // A network change or the user's return; ignored while asleep or off.
+            scheduleSSHReconnect()
         case "readConnectionQuota":
             guard let source = command.params?.sourceID, let name = command.params?.provider,
                   let provider = AgentProvider(rawValue: name), enabled.contains(provider), monitorWSL,
@@ -2348,6 +2352,27 @@ actor EngineRuntime {
             await self.retryConnections(owner)
         }
         ownedWork.attach(task, to: owner)
+    }
+    /// A burst of network changes joins one pending retry of SSH hosts that
+    /// are waiting out their backoff; sleep cancels it.
+    private func scheduleSSHReconnect() {
+        let key = ApplicationWorkRegistry.Key(.discovery, identifier: "ssh-reconnect")
+        guard active, !demo, monitorSSH, ownedWork.task(key) == nil else { return }
+        let delay = sshReconnect.delay(at: now()), owner = ownedWork.begin(key, version: generation)
+        let task = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.reconnectSSH(owner)
+        }
+        ownedWork.attach(task, to: owner)
+    }
+    private func reconnectSSH(_ owner: ApplicationWorkRegistry.Ticket) async {
+        defer { ownedWork.finish(owner) }
+        guard active, ownedWork.owns(owner), owner.version == generation else { return }
+        sshReconnect.ran(at: now())
+        if enabled.contains(.codex) { await desktopMonitor?.reconnectUnreachableSSH() }
+        guard active, ownedWork.owns(owner), owner.version == generation else { return }
+        if enabled.contains(.claude) { await claudeActivityMonitor.reconnectUnreachableSSH() }
     }
     private func retryConnections(_ owner: ApplicationWorkRegistry.Ticket) async {
         defer { ownedWork.finish(owner) }
