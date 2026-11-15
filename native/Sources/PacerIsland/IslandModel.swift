@@ -702,6 +702,11 @@ final class IslandModel: ObservableObject {
     /// When the card opened a module's connectors; kept in memory until the
     /// app quits. The app's own log counts its custom connectors after this.
     @Published private(set) var harnessOpenedConnectors: [AgentProvider: Date] = [:]
+    /// When the user clicked to open them: the app can show its connectors
+    /// before the system says it has opened, so its log counts from the click.
+    private var harnessOpenRequests: [AgentProvider: Date] = [:]
+    /// A restart Pacer started is still under way.
+    func harnessRestartInFlight(_ provider: AgentProvider) -> Bool { harnessRestarting.contains(provider) }
     /// A restart the card asked for: waiting for the user to confirm over a
     /// running task, under way, or refused by the app.
     enum HarnessRestart: Equatable { case confirm, restarting, failed }
@@ -712,23 +717,37 @@ final class IslandModel: ObservableObject {
     /// The small floating guide the card's actions open beside the app.
     private(set) lazy var harnessGuideFloat = HarnessGuideFloat(model: self)
 
-    func noteOpenedConnectors(_ provider: AgentProvider, at date: Date = Date()) { harnessOpenedConnectors[provider] = date }
+    func noteOpenedConnectors(_ provider: AgentProvider, at date: Date = Date(), requested: Date? = nil) {
+        harnessOpenedConnectors[provider] = date
+        harnessOpenRequests[provider] = requested ?? date
+    }
     func reportHarnessView(_ provider: AgentProvider, _ view: HarnessProgressGuide.AppView) {
         if harnessAppViews[provider] != view { harnessAppViews[provider] = view }
     }
     func forgetHarnessPage(_ provider: AgentProvider) {
         harnessOpenedConnectors[provider] = nil
+        harnessOpenRequests[provider] = nil
         harnessAppViews[provider] = nil
         if harnessRestarts[provider] == .confirm { harnessRestarts[provider] = nil }
     }
 
     /// Opens the app on its connectors from the card, with the floating
     /// guide beside it on `screen`, the one Settings is on.
-    func openHarnessConnectors(_ provider: AgentProvider, screen: NSScreen? = nil) async -> Bool {
-        guard await MacLocalHarnessApplication.openProgressConnectors(provider: provider) else { return false }
-        noteOpenedConnectors(provider)
-        harnessGuideFloat.show(provider, on: screen)
+    func openHarnessConnectors(_ provider: AgentProvider, screen: NSScreen? = nil, requested: Date = Date()) async -> Bool {
+        showHarnessFloat(provider, on: screen)
+        guard await MacLocalHarnessApplication.openProgressConnectors(provider: provider) else {
+            harnessGuideFloat.close()
+            return false
+        }
+        noteOpenedConnectors(provider, requested: requested)
         return true
+    }
+
+    /// The float comes up with the click, saying to wait while the app
+    /// restarts or opens, and follows the app's steps from there.
+    private func showHarnessFloat(_ provider: AgentProvider, on screen: NSScreen?) {
+        guard let stage = progressGuide(provider)?.stage, let name = HarnessRegistry.descriptor(for: provider)?.name else { return }
+        harnessGuideFloat.show(provider, on: screen, pending: HarnessProgressGuide.pendingFloat(stage: stage, name: name))
     }
 
     /// Quits the app the way its own Quit does, waits for it to close, then
@@ -741,6 +760,8 @@ final class IslandModel: ObservableObject {
         if busy, harnessRestarts[provider] != .confirm { harnessRestarts[provider] = .confirm; return }
         // A demo never quits a real app.
         guard !demo else { return }
+        showHarnessFloat(provider, on: screen)
+        let requested = Date()
         harnessRestarts[provider] = .restarting
         harnessRestarting.insert(provider)
         defer { harnessRestarting.remove(provider) }
@@ -761,24 +782,27 @@ final class IslandModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
         refreshLocalHarnessApps()
-        _ = await openHarnessConnectors(provider, screen: screen)
+        _ = await openHarnessConnectors(provider, screen: screen, requested: requested)
     }
 
-    /// The app writes to its own log the moment it lists its custom
-    /// connectors, so the card moves on without reading the app's window.
-    /// Only a listing after the card opened the connectors counts, and not
-    /// the one the app makes as it starts (Core ignores that first one).
+    /// The app's own log tells which page it shows since the card opened its
+    /// connectors: its market, then its custom connectors once it lists its
+    /// servers, apart from the listing it makes as it starts. The card moves
+    /// on without reading the app's window.
     private func checkHarnessLog(_ provider: AgentProvider) {
-        guard let opened = harnessOpenedConnectors[provider], harnessAppViews[provider] != .customConnectors,
+        guard let opened = harnessOpenRequests[provider] ?? harnessOpenedConnectors[provider], harnessAppViews[provider] != .customConnectors,
               let definition = localHarnesses.definition(for: provider), let logFile = definition.appLogFile,
               case .running(let since)? = localHarnessApps[provider],
-              [.openConnectors, .customConnector].contains(progressGuide(provider)?.stage) else { return }
+              [.opening, .openConnectors, .customConnector].contains(progressGuide(provider)?.stage) else { return }
         let log = localHarnessHome(definition).appendingPathComponent(logFile)
         Task { [weak self] in
-            let listed = await Task.detached(priority: .utility) {
-                HarnessAppLog.read(log).map { HarnessAppLog.listedConnectors(in: $0, after: opened, appStarted: since) } ?? false
+            // Back to the earlier of the click and the app's start, so its own listing stays in view.
+            let view = await Task.detached(priority: .utility) {
+                HarnessAppLog.view(in: HarnessAppLog.read(log, since: min(opened, since)), opened: opened, appStarted: since, now: Date())
             }.value
-            if listed { self?.reportHarnessView(provider, .customConnectors) }
+            // The page only moves forward: custom connectors after the market.
+            guard let self, let view, self.harnessAppViews[provider] != .customConnectors else { return }
+            self.reportHarnessView(provider, view)
         }
     }
 
