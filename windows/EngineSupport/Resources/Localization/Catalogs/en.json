@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "d5a1e66305ed03eace5d188e79ef3e0dd65adc33bcac8b9d0920fe0e8414151b",
-    "windows/EngineSupport/Resources/Localization/en.json": "9a139e87781dfb20793fbb19dc18638ab57ed1d95ac386ffe4beeac0e1bb84ae"
+    "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -1421,7 +1421,6 @@
     "windows.claude.disconnect_failed": "Couldn\u2019t clear Claude\u2019s sign-in data. Quota updates are paused. Try signing out again.",
     "windows.claude.local_help": "Tracks local Claude activity, tool events and requests for input.",
     "windows.claude.local_logs": "Local task logs",
-    "windows.claude.login.instructions": "Sign in to show Claude quota. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
     "windows.claude.retry_setup": "Retry setup",
     "windows.claude.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
     "windows.claude.setup_disabled": "Claude activity is off.",
@@ -1450,7 +1449,6 @@
     "windows.deepseek.demo_web_help": "Web sign-in is unavailable in the offline demo.",
     "windows.deepseek.invalid_budget": "Enter an amount. Leave it blank or enter 0 to turn this budget off.",
     "windows.deepseek.key_help": "Saved in Windows Credential Manager and used only to read your balance.",
-    "windows.deepseek.login.instructions": "Sign in to show your DeepSeek balance. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
     "windows.deepseek.pricing_note": "Costs are estimated on this PC from token counts and DeepSeek's published prices. Peak rates are double on Beijing weekdays from 09:00 to 12:00 and 14:00 to 18:00; weekends and 2026 public holidays are off-peak. Make-up working days count as weekends, so this is an estimate. Web search costs \u00a55 per 1,000 calls from 1 Nov 2026. Only DeepSeek's own channels are estimated; your platform bill is authoritative.",
     "windows.deepseek.runtime_download": "Download",
     "windows.deepseek.runtime_required": "Web sign-in needs Microsoft Edge WebView2 Runtime.",
@@ -1534,7 +1532,6 @@
     "windows.updates.verifying": "Verifying the update\u2026",
     "windows.updates.view_notes": "View release notes",
     "windows.updates.window_title": "Software Update",
-    "windows.workbuddy.login.instructions": "Sign in to show your WorkBuddy credits. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
     "workbuddy.login.prompt": "Sign in to show your WorkBuddy credits",
     "workbuddy.login.prompt_detail": "This window closes by itself once you\u2019re signed in. Pacer reads only your credits.",
     "workbuddy.login.signed_in": "Signed in to WorkBuddy",

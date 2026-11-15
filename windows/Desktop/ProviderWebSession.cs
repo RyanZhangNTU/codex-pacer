@@ -171,7 +171,8 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         {
             using var registration = cancellation.Register(() => window.Dispatcher.BeginInvoke(new Action(window.Abort)));
             cancellation.ThrowIfCancellationRequested();
-            string? baseline = provider.WatchSignIn ? await ReadFingerprintAsync(lifetime.Token) : null;
+            // A window that confirms by reading needs no baseline, so it opens without waiting for one.
+            string? baseline = provider.ConfirmByReading ? null : await ReadFingerprintAsync(lifetime.Token);
             if (!window.Completion.IsCompleted) { window.Show(); await window.StartAsync(baseline, ReadFingerprintAsync); }
             bool result = await window.Completion; SignInWasNew = result && window.NewSession; return result;
         }

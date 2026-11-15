@@ -65,6 +65,12 @@ internal static class PacerPalette
     }
     private static readonly System.Collections.Generic.Dictionary<string, ModuleInk> modules = new(StringComparer.Ordinal);
     internal static EngineModuleBrand? Brand(string provider) => modules.TryGetValue(provider, out var module) ? module.Brand : null;
+    /// A service's own brand color, whatever the accent choice, as the Mac's provider tint.
+    internal static Color BrandColor(string provider) => (provider switch
+    {
+        "codex" => BrandCodex, "claude" => BrandClaude, "deepseek" => BrandDeepSeek,
+        _ => modules.TryGetValue(provider, out var module) ? module.Dark : null
+    }) is SolidColorBrush brand ? brand.Color : Color.FromRgb(157, 157, 162);
     /// Returns whether a module's colors changed, so drawn views can repaint.
     internal static bool RegisterModules(System.Collections.Generic.IEnumerable<EngineModule>? values)
     {

@@ -81,8 +81,6 @@
   "windows.claude.sign_out": "Sign Out",
   "windows.claude.connection_failed": "Couldn’t connect Claude. Try again.",
   "windows.claude.disconnect_failed": "Couldn’t clear Claude’s sign-in data. Quota updates are paused. Try signing out again.",
-  "windows.claude.login.instructions": "Sign in to show Claude quota. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
-  "windows.deepseek.login.instructions": "Sign in to show your DeepSeek balance. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter.",
   "windows.settings.startup_settings": "Open Startup apps",
   "windows.settings.startup_settings_failed": "Windows Settings couldn't open. Go to Settings > Apps > Startup.",
   "windows.settings.startup_disabled": "Windows has disabled this entry. Allow it in Startup apps.",
@@ -132,6 +130,5 @@
   "windows.updates.try_again": "Try Again",
   "windows.updates.notes_empty": "This version has no release notes.",
   "windows.main.pane_later": "Arrives with the next step of the redesign.",
-  "windows.appearance.position_per_display_info": "Each display keeps its own Island or Free Move place. A display used for the first time starts where the island is now.",
-  "windows.workbuddy.login.instructions": "Sign in to show your WorkBuddy credits. This window closes after a new sign-in. You can also choose Continue or press Ctrl+Enter."
+  "windows.appearance.position_per_display_info": "Each display keeps its own Island or Free Move place. A display used for the first time starts where the island is now."
 }

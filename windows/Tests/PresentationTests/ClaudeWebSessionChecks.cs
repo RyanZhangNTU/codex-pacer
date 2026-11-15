@@ -36,12 +36,18 @@ internal static class ClaudeWebSessionChecks
             var window = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); window.IsHitTestVisible = false;
             Check(Math.Abs(window.ClientContent.ActualWidth - Math.Min(760, Math.Max(420, SystemParameters.WorkArea.Width - 80))) < 1,
                 "Claude must retain the original login content width");
-            Check(Find<TextBlock>(window, "claude.login.host").Text == "claude.ai", "The login label must identify Claude's own origin");
+            var english = UiText.For(false);
+            Check(window.Title == english.Text("claude.login.title") + " · claude.ai" && Find<TextBlock>(window, "claude.login.heading").Text == english.Text("claude.login.prompt")
+                && Find<Button>(window, "claude.login.later").Visibility == Visibility.Visible && Find<Button>(window, "claude.login.done").Visibility != Visibility.Visible,
+                "The banner must say what signing in shows, with Claude's own origin in the title and nothing to confirm");
             await site.Core!.ExecuteScriptAsync("Object.defineProperty(document, 'cookie', {get: () => 'sessionKey=forged'}); localStorage.setItem('sessionKey', 'forged');");
-            Invoke(Find<Button>(window, "claude.login.continue")); await Pump(); await window.CheckCompletion;
-            Check(!signingIn.IsCompleted && window.IsVisible, "Page-world overrides cannot forge the private HttpOnly cookie store");
-            SignIn(site.Core); Invoke(Find<Button>(window, "claude.login.continue")); await Pump(); await window.CheckCompletion;
-            Check(await signingIn, "Continue must accept the owned profile's valid session");
+            await window.FinishNow(); await Pump();
+            Check(!signingIn.IsCompleted && window.IsVisible && Find<TextBlock>(window, "claude.login.heading").Text == english.Text("claude.login.prompt"),
+                "Page-world overrides cannot forge the private HttpOnly cookie store");
+            SignIn(site.Core);
+            await Until(() => Find<TextBlock>(window, "claude.login.heading").Text == english.Text("claude.login.signed_in"));
+            await Until(() => !window.IsVisible); await window.CheckCompletion;
+            Check(await signingIn, "A new session must confirm the sign-in and close the window by itself");
             Check(session.SignInWasNew, "A first private session is a new sign-in");
             var known = await session.ReadAsync(CancellationToken.None);
             Check(known != null && known.OrganizationID == Organization && known.SessionHash == Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Key))),

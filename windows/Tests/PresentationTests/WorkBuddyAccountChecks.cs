@@ -107,9 +107,18 @@ internal static class WorkBuddyAccountChecks
             Invoke(Require<Button>(settings, prefix + ".sign_in"));
             await PresentationWait.UntilAsync(() => login != null, "The visible WorkBuddy login must use the selected site");
             var window = Application.Current.Windows.OfType<ProviderLoginWindow>().Single();
-            await PresentationWait.UntilAsync(() => Require<Button>(window, "workbuddy.login.continue").IsEnabled, "The login must allow the user to verify it");
+            Check(Require<TextBlock>(window, "workbuddy.login.heading").Text == ui.Text("workbuddy.login.prompt")
+                && window.Title == ui.Text("workbuddy.login.title") + " · www.workbuddy.cn"
+                && Require<Button>(window, "workbuddy.login.later").IsVisible && !Require<Button>(window, "workbuddy.login.done").IsVisible,
+                "The WorkBuddy sign-in uses the shared banner, with nothing to confirm while signed out");
+            int signedOutReads = reads;
+            await PresentationWait.UntilAsync(() => reads > signedOutReads, "The window must check the account through its own profile while it is open");
+            Check(window.IsVisible && Require<TextBlock>(window, "workbuddy.login.heading").Text == ui.Text("workbuddy.login.prompt"),
+                "A signed-out reading keeps the window open");
             authenticated = true;
-            Invoke(Require<Button>(window, "workbuddy.login.continue"));
+            await PresentationWait.UntilAsync(() => Find<TextBlock>(window, "workbuddy.login.heading")?.Text == ui.Text("workbuddy.login.signed_in"),
+                "The first reading with credits must confirm the sign-in, wherever the page is");
+            await PresentationWait.UntilAsync(() => !window.IsVisible, "The window must close by itself after confirming");
             await PresentationWait.UntilAsync(() => account.Reading is { Remaining: 520.5, Total: 600, Reserved: 12.25 } && !account.Busy,
                 "The isolated web reader should return only credit package totals from a successful request");
             await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".credits")?.Text == "520.5 left",

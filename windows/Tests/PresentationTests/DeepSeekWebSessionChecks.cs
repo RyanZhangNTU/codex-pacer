@@ -37,16 +37,18 @@ internal static class DeepSeekWebSessionChecks
             var window = Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
             Check(Math.Abs(window.ClientContent.ActualWidth - Math.Min(760, Math.Max(420, SystemParameters.WorkArea.Width - 80))) < 1,
                 "The login body must retain the original 760-point initial width");
-            Check(Find<TextBlock>(window, "deepseek.login.host").Text == "platform.deepseek.com", "Only the current host belongs in the address label");
-            Invoke(Find<Button>(window, "deepseek.login.continue")); await Pump(); await window.CheckCompletion;
+            Check(window.Title.EndsWith(" · platform.deepseek.com", StringComparison.Ordinal)
+                && Find<TextBlock>(window, "deepseek.login.heading").Text == UiText.For(false).Text("deepseek.login.prompt"),
+                "The banner must say what signing in shows, and only the current host belongs in the title");
+            await window.FinishNow(); await Pump();
             Check(!login.IsCompleted && window.IsVisible, "An untrusted main-world storage override cannot satisfy the isolated sign-in check");
             await fixture.Main!.ExecuteScriptAsync("document.getElementById('popup').click()");
             await Until(() => Application.Current.Windows.OfType<Window>().Count(value => value != window) > 0);
             var popup = Application.Current.Windows.OfType<Window>().Single(value => value != window);
             popup.Close(); await Pump();
             await fixture.Main.ExecuteScriptAsync("document.getElementById('signin').click()");
-            Invoke(Find<Button>(window, "deepseek.login.continue")); await Pump(); await window.CheckCompletion;
-            Check(await login, "A real stored synthetic token must complete the original Continue action");
+            await Until(() => !window.IsVisible); await window.CheckCompletion;
+            Check(await login, "A real stored synthetic token must confirm the sign-in and close the window by itself");
             Check(session.SignInWasNew, "The first owned token is a new sign-in");
             var known = await session.ReadAsync(CancellationToken.None);
             Check(known is { State: "ok", AlertEnabled: true, AlertBound: "20", Estimation: "21600000" } &&

@@ -18,7 +18,7 @@ public sealed class IconGlyph : FrameworkElement
 
     private static readonly IReadOnlyDictionary<string, Geometry> Paths = CreatePaths();
     public IconGlyph() { IsHitTestVisible = false; Focusable = false; }
-    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble" or "xmark.circle.fill";
+    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble" or "xmark.circle.fill" or "checkmark.circle.fill";
     protected override void OnRender(DrawingContext drawing)
     {
         base.OnRender(drawing);
@@ -37,6 +37,13 @@ public sealed class IconGlyph : FrameworkElement
             var disc = new EllipseGeometry(new Point(12, 12), 10, 10);
             var cross = Geometry.Parse("M8.4,8.4 L15.6,15.6 M15.6,8.4 L8.4,15.6").GetWidenedPathGeometry(new Pen(Brushes.Black, 2.2) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
             drawing.DrawGeometry(ink, null, new CombinedGeometry(GeometryCombineMode.Exclude, disc, cross));
+        }
+        // A filled circle with a check cut out, as the Mac's sign-in confirmation.
+        if (symbol == "checkmark.circle.fill")
+        {
+            var disc = new EllipseGeometry(new Point(12, 12), 10, 10);
+            var check = Geometry.Parse("M7.5,12.2 L10.6,15.3 L16.6,9.1").GetWidenedPathGeometry(new Pen(Brushes.Black, 2.2) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round });
+            drawing.DrawGeometry(ink, null, new CombinedGeometry(GeometryCombineMode.Exclude, disc, check));
         }
         if (symbol is "ellipsis" or "ellipsis.bubble")
             foreach (double x in new[] { 7.5, 12.0, 16.5 }) drawing.DrawEllipse(ink, null, new Point(x, symbol == "ellipsis" ? 12 : 10.8), 1, 1);
