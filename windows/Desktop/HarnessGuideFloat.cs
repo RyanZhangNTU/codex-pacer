@@ -18,9 +18,59 @@ namespace CodexPacer.Windows;
 /// connectors (Core's `floatTitle`): the click to make now, the card's picture
 /// of it, and the click after. It sits in the bottom-right corner of the screen
 /// Settings is on, stays above other windows without taking focus, and never
-/// reads the app's window.
+/// reads the app's window. It outlives Settings, which people often close
+/// once they're in the app, and checks the app itself while it is open.
 internal sealed class HarnessGuideFloat : Window
 {
+    private static HarnessGuideFloat? current;
+    private static EngineClient? engine;
+    private static PreferencesSession? session;
+    private static System.Windows.Threading.DispatcherTimer? poll;
+    internal static HarnessGuideFloat? Current => current;
+
+    /// Opens the guide for the app the card just opened; it replaces any other.
+    /// It shows once the card reaches a click in the app.
+    internal static void Open(string provider, EngineClient client, PreferencesSession preferences, UiText ui, ResourceDictionary resources,
+        Func<string, UIElement> picture, System.Drawing.Rectangle area)
+    {
+        current?.Close();
+        var shown = new HarnessGuideFloat(provider, ui, resources, picture, area);
+        var timer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
+        timer.Tick += async (_, _) =>
+        {
+            if (current != shown) { timer.Stop(); return; }
+            await SettingsWindow.CheckHarnessAppAsync(client, preferences, provider, polling: true);
+            Follow();
+        };
+        shown.Closed += (_, _) =>
+        {
+            timer.Stop();
+            if (current == shown) { current = null; poll = null; engine = null; session = null; }
+        };
+        current = shown; engine = client; session = preferences; poll = timer;
+        timer.Start();
+        Follow();
+    }
+
+    /// Shows the guide's current click, or closes the float once nothing is
+    /// left to do in the app. Until it first shows, the app may still be
+    /// starting or reloading.
+    internal static void Follow()
+    {
+        if (current is not { } shown || engine is not { } client || session is not { } preferences) return;
+        var guide = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == shown.Provider) is { Enabled: true } module
+            && !preferences.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal) ? module.ProgressGuide : null;
+        if (client.IsConnectionClosed) { shown.Close(); return; }
+        if (guide is { FloatTitle: not null }) { shown.emptySince = null; shown.Present(guide); return; }
+        if (!shown.Presented && guide?.Stage is ("reopen" or "launch" or "openConnectors")
+            && DateTime.UtcNow - shown.OpenedAt <= TimeSpan.FromMinutes(2)) return;
+        // A check can read the app while it writes its approvals; the guide
+        // closes only once nothing is left to do for two checks in a row.
+        shown.emptySince ??= DateTime.UtcNow;
+        if (DateTime.UtcNow - shown.emptySince.Value >= TimeSpan.FromSeconds(2.5)) shown.Close();
+    }
+    private DateTime? emptySince;
+
     private readonly Func<string, UIElement> picture;
     private readonly System.Drawing.Rectangle area;
     private readonly TextBlock header, title, next;

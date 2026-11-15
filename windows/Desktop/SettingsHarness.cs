@@ -386,52 +386,18 @@ internal sealed partial class SettingsWindow
         return true;
     }
 
-    // The floating guide the card's action opened, and its check on the app
-    // while it shows, whichever page Settings is on.
-    private HarnessGuideFloat? guideFloat;
-    private DispatcherTimer? guideFloatPoll;
-
     /// Opens the floating guide for the app the card just opened, and brings
-    /// the app forward if it didn't come forward itself. The guide shows once
-    /// the card reaches a click in the app.
+    /// the app forward if it didn't come forward itself. The guide outlives
+    /// Settings: people often close it once they're in the app.
     private void OpenGuideFloat(string provider)
     {
-        CloseGuideFloat();
-        if (demo || HarnessModule(provider) is not { } module) return;
+        if (demo || engine is not { } client || HarnessModule(provider) is not { } module) return;
         var area = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
-        var shown = new HarnessGuideFloat(provider, ui, Resources, kind => kind == "trust" ? TrustPicture(provider) : CustomConnectorPicture(), area);
-        var poll = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
-        poll.Tick += async (_, _) =>
-        {
-            if (guideFloat != shown) { poll.Stop(); return; }
-            await RefreshHarnessProgressConnectionAsync(polling: true, provider);
-            FollowGuideFloat();
-        };
-        shown.Closed += (_, _) =>
-        {
-            poll.Stop();
-            if (guideFloat == shown) { guideFloat = null; guideFloatPoll = null; }
-        };
-        guideFloat = shown; guideFloatPoll = poll;
-        poll.Start();
+        HarnessGuideFloat.Open(provider, client, session, ui, Resources, kind => kind == "trust" ? TrustPicture(provider) : CustomConnectorPicture(), area);
         _ = AppWindows.BringForwardAsync(module.Launch?.Executables);
-        FollowGuideFloat();
     }
 
-    /// Shows the guide's current click, or closes the float once nothing is
-    /// left to do in the app. Until it first shows, the app may still be
-    /// starting or reloading.
-    private void FollowGuideFloat()
-    {
-        if (guideFloat is not { } shown) return;
-        var guide = HarnessModule(shown.Provider) is { Enabled: true } module
-            && !session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal) ? module.ProgressGuide : null;
-        if (guide is { FloatTitle: not null }) shown.Present(guide);
-        else if (shown.Presented || guide?.Stage is not ("reopen" or "launch" or "openConnectors")
-                 || DateTime.UtcNow - shown.OpenedAt > TimeSpan.FromMinutes(2)) shown.Close();
-    }
-
-    private void CloseGuideFloat() => guideFloat?.Close();
+    private static void FollowGuideFloat() => HarnessGuideFloat.Follow();
 
     private async Task<bool> RetryHarnessProgressAsync(string provider)
     {
@@ -600,8 +566,18 @@ internal sealed partial class SettingsWindow
     /// <param name="provider">The module to check; the page's own by default.</param>
     private async Task RefreshHarnessProgressConnectionAsync(bool polling = false, string? provider = null)
     {
-        if (demo || (!polling && !IsActive) || engine is not { IsConnectionClosed: false } client ||
-            HarnessModule(provider ?? activePane) is not { Enabled: true, ProgressConnector: true, ProgressSetup: "configured" or "missingHome" } module ||
+        if (demo || (!polling && !IsActive) || engine is not { } client) return;
+        await CheckHarnessAppAsync(client, session, provider ?? activePane, polling);
+    }
+
+    /// Tells the engine whether the module's app runs, since when, and when the
+    /// user opened its connectors from the card. Shared with the floating
+    /// guide, which keeps checking after Settings closes.
+    /// <param name="polling">Only while the card waits on the app.</param>
+    internal static async Task CheckHarnessAppAsync(EngineClient client, PreferencesSession session, string provider, bool polling)
+    {
+        if (client.IsConnectionClosed || client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == provider)
+                is not { Enabled: true, ProgressConnector: true, ProgressSetup: "configured" or "missingHome" } module ||
             (polling && module.ProgressGuide is not { Waiting: true }) ||
             session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
         // The app reads its MCP file when it starts, so the card needs to know
