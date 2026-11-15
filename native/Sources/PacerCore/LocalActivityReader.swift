@@ -81,7 +81,10 @@ public actor LocalActivityReader {
                     includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])) ?? []
                 for file in entries where file.pathExtension == "jsonl" {
                     let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                    files.append((file, date))
+                    // The same form as SessionIndex's URLs: on macOS a listing
+                    // keeps /private where standardizing drops it, and one rollout
+                    // then had two cursors, only one of them named.
+                    files.append((file.standardizedFileURL, date))
                 }
             }
         }
