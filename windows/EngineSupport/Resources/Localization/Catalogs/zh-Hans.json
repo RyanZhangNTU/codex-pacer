@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "cffc46d9138fcaf559778d4434648310fb5856bb8d5d581e758a5569dc463f63",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "5a6c54b7fffd671986877f042bc537ad700ea712fe8533ef3c530b846deb0719",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1505,6 +1505,8 @@
     "whats_new.main_window_detail": "\u8bbe\u7f6e\u53d8\u6210\u4e86 Pacer \u7684\u4e3b\u7a97\u53e3\uff1a\u4e00\u9875\u603b\u89c8\u5404\u670d\u52a1\uff0c\u67e5\u770b\u989d\u5ea6\u5386\u53f2\uff0c\u66f4\u65b0\u4e5f\u5728\u7a97\u53e3\u91cc\u76f4\u63a5\u5b8c\u6210\u3002\u5916\u89c2\u91cc\u65b0\u589e\u4e86\u4e3b\u9898\u548c\u5f3a\u8c03\u8272\u3002",
     "whats_new.mark_all_read": "\u5168\u90e8\u6807\u4e3a\u5df2\u8bfb",
     "whats_new.mark_all_read_detail": "\u70b9\u51fb\u56fa\u5b9a\u6309\u94ae\u65c1\u7684\u65b0\u6309\u94ae\uff0c\u5373\u53ef\u4e00\u6b21\u6e05\u9664\u6240\u6709\u9875\u9762\u4e2d\u5df2\u7ed3\u675f\u7684\u4efb\u52a1\u3002\u8fd0\u884c\u4e2d\u4ee5\u53ca\u7b49\u4f60\u56de\u590d\u6216\u5ba1\u6279\u7684\u4efb\u52a1\u4e0d\u53d7\u5f71\u54cd\u3002",
+    "whats_new.module_library": "\u6a21\u5757\u5e93",
+    "whats_new.module_library_detail": "\u8bbe\u7f6e\u4fa7\u680f\u53ea\u5217\u51fa\u8fd9\u53f0\u7535\u8111\u4e0a\u7684\u670d\u52a1\uff0c\u5176\u4ed6\u670d\u52a1\u53ef\u4ee5\u5728\u6a21\u5757\u5e93\u91cc\u5f00\u542f\u6216\u83b7\u53d6\u3002",
     "whats_new.open_at_login": "\u968f Mac \u4e00\u8d77\u542f\u52a8 Pacer\uff0c\u4e4b\u540e\u53ef\u968f\u65f6\u5728\u201c\u8bbe\u7f6e > \u901a\u7528\u201d\u4e2d\u66f4\u6539\u3002",
     "whats_new.open_settings": "\u53bb\u8bbe\u7f6e",
     "whats_new.open_settings_label": "\u5728\u8bbe\u7f6e\u4e2d\u6253\u5f00%@",
@@ -1513,6 +1515,8 @@
     "whats_new.release_notes": "\u53d1\u5e03\u8bf4\u660e",
     "whats_new.remote_control": "Remote Control \u8fde\u63a5\u66f4\u6e05\u6670",
     "whats_new.remote_control_detail": "\u901a\u8fc7\u8bbe\u5907\u540d\u79f0\u8bc6\u522b\u8fdc\u7a0b\u4efb\u52a1\uff0c\u6e05\u695a\u533a\u5206\u5728\u7ebf\u3001\u79bb\u7ebf\u548c\u7b49\u5f85\u4f1a\u8bdd\u7684\u72b6\u6001\u3002",
+    "whats_new.remote_progress": "SSH \u4e3b\u673a\u4e0a\u7684 Codex \u8fdb\u5ea6",
+    "whats_new.remote_progress_detail": "SSH \u4e3b\u673a\uff08Windows \u4e0a\u8fd8\u6709 WSL\uff09\u91cc\u7684 Codex \u4efb\u52a1\u4e5f\u4f1a\u663e\u793a\u8fdb\u5ea6\u5706\u73af\u3002\u7f51\u7edc\u6062\u590d\u540e\uff0cSSH \u4efb\u52a1\u4f1a\u7acb\u5373\u91cd\u65b0\u51fa\u73b0\u3002",
     "whats_new.screen_position": "\u5c9b\u53ef\u4ee5\u653e\u5728\u4efb\u610f\u4f4d\u7f6e",
     "whats_new.screen_position_detail": "\u5728\u201c\u8bbe\u7f6e > \u5916\u89c2\u201d\u4e2d\u9009\u62e9\u201c\u81ea\u5b9a\u4e49\u201d\uff0c\u53ef\u4ee5\u653e\u5728\u83dc\u5355\u680f\u4e0b\u65b9\uff0c\u6216\u4f5c\u4e3a\u7ec6\u7ad6\u6761\u505c\u9760\u5728\u5c4f\u5e55\u4efb\u4e00\u89d2\u843d\uff0c\u9002\u5408\u6ca1\u6709\u5218\u6d77\u7684 Mac\u3002",
     "whats_new.split_quota": "\u4e00\u4e2a\u5706\u73af\uff0c\u540c\u65f6\u67e5\u770b\u4e24\u6bb5\u989d\u5ea6",
@@ -1530,6 +1534,8 @@
     "whats_new.title": "Codex Pacer \u66f4\u65b0\u5185\u5bb9",
     "whats_new.version": "\u7248\u672c %@",
     "whats_new.window_title": "\u66f4\u65b0\u5185\u5bb9",
+    "whats_new.workbuddy": "\u652f\u6301 WorkBuddy \u548c WorkBuddy AI",
+    "whats_new.workbuddy_detail": "\u8ddf\u8e2a\u4efb\u52a1\u548c\u8fdb\u5ea6\u5706\u73af\uff0c\u67e5\u770b\u8d26\u53f7\u79ef\u5206\u548c\u5230\u671f\u65f6\u95f4\u3002\u5f00\u542f\u8fdb\u5ea6\u5706\u73af\u65f6\uff0cPacer \u4f1a\u4e00\u6b65\u6b65\u63d0\u793a\u4f60\u3002",
     "windows.accessibility.scroll.pageDown": "\u5411\u4e0b\u7ffb\u9875",
     "windows.accessibility.scroll.pageUp": "\u5411\u4e0a\u7ffb\u9875",
     "windows.accessibility.scroll.position": "\u6eda\u52a8\u4f4d\u7f6e",

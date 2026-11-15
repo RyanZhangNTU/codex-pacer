@@ -643,6 +643,12 @@
 "whats_new.fresh_look_detail" = "新增多种材质，动画细节也升级了。";
 "whats_new.dot_tasks" = "识别 Codex Dot 管理的任务";
 "whats_new.dot_tasks_detail" = "首次使用需要重启 Codex。Dot 任务在云端运行，目前只显示进度，暂时无法识别速度。";
+"whats_new.workbuddy" = "支持 WorkBuddy 和 WorkBuddy AI";
+"whats_new.workbuddy_detail" = "跟踪任务和进度圆环，查看账号积分和到期时间。开启进度圆环时，Pacer 会一步步提示你。";
+"whats_new.module_library" = "模块库";
+"whats_new.module_library_detail" = "设置侧栏只列出这台电脑上的服务，其他服务可以在模块库里开启或获取。";
+"whats_new.remote_progress" = "SSH 主机上的 Codex 进度";
+"whats_new.remote_progress_detail" = "SSH 主机（Windows 上还有 WSL）里的 Codex 任务也会显示进度圆环。网络恢复后，SSH 任务会立即重新出现。";
 "whats_new.open_settings" = "去设置";
 "whats_new.open_settings_label" = "在设置中打开%@";
 "whats_new.mark_all_read" = "全部标为已读";

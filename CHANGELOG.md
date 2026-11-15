@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.5.0
+
+- Add WorkBuddy and its international edition, WorkBuddy AI, on Mac and Windows. Each is its own module with its own page, account, sign-in and data folder, and turns on once Pacer finds the app. Pacer follows their tasks and titles, shows what a task is doing and when it waits for you, and draws the progress ring, which is on by default. A small floating guide shows each click in WorkBuddy to turn the ring on, and asks to restart WorkBuddy when it needs to.
+- Show WorkBuddy account credits by how they behave. The plan's monthly credits refresh each cycle; rewards and top-ups lapse batch by batch at their own dates. The dial, its lines and the breakdown in Settings show the month, extra credits, the total and each refresh or expiry date. Credits also appear in the collapsed bar, the expanded panel, Overview and History, and each module can warn when credits run low or are about to expire.
+- Add the Module Library. The Settings sidebar lists only the services found on this computer or turned on; the **Module Library** page lists every service, with a **Get** link for the ones not found here. Onboarding folds them away the same way.
+- Codex tasks on SSH hosts, and in WSL on Windows, show their progress percentage. Pacer adds its progress tool to each host's Codex settings, never touches entries it did not write, and removes only its own when the ring is turned off. Tasks already running start reporting once Codex reconnects ([#231](https://github.com/RyanZhangNTU/codex-pacer/issues/231)).
+- SSH tasks come back as soon as the network does. After sleep, a display wake, an unlock or a VPN reconnect, Pacer retries the SSH hosts it could not reach instead of waiting out their backoff of up to 15 minutes.
+- The progress ring asks every agent in the same words to report whenever it makes progress, so rings move more steadily. Claude's progress switch has one mode; older settings are updated, on remote hosts too.
+- A Codex chat started outside a project shows the name Codex gives it while it runs, instead of its folder name. A model from another family keeps its brand in its short name, such as DeepSeek V4 Pro in a Codex task.
+- Windows: sign-in windows for Claude, DeepSeek and WorkBuddy use the Mac's banner and close by themselves once the account is confirmed. File changes that arrive together are read correctly; records after the first could be read from the wrong place.
+
 ## 4.4.4
 
 - On Windows, Codex tasks run outside the Codex app, such as in a terminal, update right away again instead of up to two minutes late. Task states and requests for your attention appear as soon as Codex writes them; speeds and token counts keep the panel's usual refresh.

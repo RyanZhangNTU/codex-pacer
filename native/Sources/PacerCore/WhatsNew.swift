@@ -10,7 +10,7 @@ public enum WhatsNew {
         /// A switch for the setting the item introduces, or a link to the page that holds it.
         public enum Control: Equatable, Sendable {
             case openAtLogin, showEmbeddedSessions, showAppButtons
-            case openExpandedPanel, openCollapsedBar, openAppearance
+            case openExpandedPanel, openCollapsedBar, openAppearance, openModules
         }
         public let symbol: String
         public let titleKey: String
@@ -29,6 +29,11 @@ public enum WhatsNew {
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "4.5.0", items: [
+            Item(symbol: "briefcase", titleKey: "whats_new.workbuddy", detailKey: "whats_new.workbuddy_detail"),
+            Item(symbol: "square.grid.2x2", titleKey: "whats_new.module_library", detailKey: "whats_new.module_library_detail", control: .openModules),
+            Item(symbol: "server.rack", titleKey: "whats_new.remote_progress", detailKey: "whats_new.remote_progress_detail")
+        ]),
         Release(version: "4.4.0", items: [
             Item(symbol: "slider.horizontal.3", titleKey: "whats_new.arrange_items", detailKey: "whats_new.arrange_items_detail", control: .openExpandedPanel),
             Item(symbol: "rectangle.topthird.inset.filled", titleKey: "whats_new.bar_upgrade", detailKey: "whats_new.bar_upgrade_detail", control: .openCollapsedBar),
