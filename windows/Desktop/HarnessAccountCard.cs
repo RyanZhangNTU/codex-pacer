@@ -78,10 +78,11 @@ internal static class HarnessAccountCard
             var row = new Grid();
             row.ColumnDefinitions.Add(new() { Width = new GridLength(size) });
             row.ColumnDefinitions.Add(new() { Width = new GridLength(20) });
-            row.ColumnDefinitions.Add(new());
+            // The lines reach the panel's right edge like Codex's single view; on
+            // a wide Overview card they stop at 340 so values stay near their labels.
+            row.ColumnDefinitions.Add(new() { MaxWidth = 340 });
             row.Children.Add(dial);
-            // On a wide card the values stay near their labels.
-            body.VerticalAlignment = VerticalAlignment.Center; body.MaxWidth = 340; body.HorizontalAlignment = HorizontalAlignment.Left;
+            body.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(body, 2); row.Children.Add(body);
             return row;
         }

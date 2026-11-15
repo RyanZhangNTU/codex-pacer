@@ -164,6 +164,9 @@ internal static class WorkBuddyAccountChecks
                 var parts = Descendants(line).OfType<TextBlock>().ToArray();
                 var label = parts.FirstOrDefault(text => text.Text == "Monthly");
                 var value = parts.FirstOrDefault(text => text.Text == "420.5 / 500");
+                // The values end at the section's right edge, as Codex's single view does (11/15 they stopped short).
+                double right = value?.TranslatePoint(new Point(value.ActualWidth, 0), alone).X ?? 0;
+                Check(Math.Abs(right - alone.ActualWidth) < 12, "WorkBuddy's credit values must reach the section's right edge: " + right + " of " + alone.ActualWidth);
                 Check(label != null && value != null && parts.Any(text => text.Text.StartsWith("Refreshes", StringComparison.Ordinal)) &&
                     value.TranslatePoint(new Point(), line).X > label.TranslatePoint(new Point(), line).X + label.ActualWidth &&
                     AutomationProperties.GetName(line).Contains("420.5 / 500", StringComparison.Ordinal) && Math.Abs(inset - splitInset.Value) < 1,
