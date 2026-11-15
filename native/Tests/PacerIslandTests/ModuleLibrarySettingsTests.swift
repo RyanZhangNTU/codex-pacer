@@ -108,6 +108,20 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         XCTAssertTrue(model.progressGuideHints.isEmpty, "The panel hint waits for a running task")
     }
 
+    func testTheCardRemembersTheConnectorsItOpenedUntilTheAppQuits() throws {
+        let (model, _) = try model()
+        model.noteOpenedConnectors(.workbuddy)
+        model.reportHarnessView(.workbuddy, .customConnectors)
+        XCTAssertEqual(model.harnessOpenedConnectors, [.workbuddy])
+        XCTAssertEqual(model.harnessAppViews[.workbuddy], .customConnectors)
+        XCTAssertNil(model.harnessAppViews[.workbuddyAI], "Each edition keeps its own page")
+        model.setHarnessPointerMissing(.workbuddy, true)
+        XCTAssertEqual(model.harnessPointerMissing, [.workbuddy])
+        model.forgetHarnessPage(.workbuddy)
+        XCTAssertTrue(model.harnessOpenedConnectors.isEmpty, "A quit app starts again on its own page")
+        XCTAssertNil(model.harnessAppViews[.workbuddy])
+    }
+
     func testDataFolderWinsOverTheDefault() throws {
         let (model, defaults) = try model()
         let folder = "/private/tmp/pacer-workbuddy-data-" + UUID().uuidString

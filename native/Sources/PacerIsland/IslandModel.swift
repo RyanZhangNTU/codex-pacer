@@ -688,7 +688,51 @@ final class IslandModel: ObservableObject {
         for definition in localHarnesses.definitions where definition.descriptor.progressConnector {
             apps[definition.descriptor.id] = MacLocalHarnessApplication.presence(provider: definition.descriptor.id)
         }
+        // A quit app forgets which page it showed and that the card opened it.
+        for (provider, presence) in localHarnessApps where presence != .notRunning && apps[provider] == .notRunning {
+            forgetHarnessPage(provider)
+        }
         if apps != localHarnessApps { localHarnessApps = apps }
+    }
+
+    /// The card opened a module's connectors; kept in memory until the app quits.
+    @Published private(set) var harnessOpenedConnectors: Set<AgentProvider> = []
+    /// The page each module's app shows, as the pointer last read it.
+    @Published private(set) var harnessAppViews: [AgentProvider: HarnessProgressGuide.AppView] = [:]
+    /// The pointer could not find the button it was asked to show.
+    @Published private(set) var harnessPointerMissing: Set<AgentProvider> = []
+    private(set) lazy var harnessPointer = HarnessPointer(model: self)
+
+    func noteOpenedConnectors(_ provider: AgentProvider) { harnessOpenedConnectors.insert(provider) }
+    func reportHarnessView(_ provider: AgentProvider, _ view: HarnessProgressGuide.AppView) {
+        if harnessAppViews[provider] != view { harnessAppViews[provider] = view }
+    }
+    func setHarnessPointerMissing(_ provider: AgentProvider, _ missing: Bool) {
+        if harnessPointerMissing.contains(provider) != missing {
+            if missing { harnessPointerMissing.insert(provider) } else { harnessPointerMissing.remove(provider) }
+        }
+    }
+    func forgetHarnessPage(_ provider: AgentProvider) {
+        harnessOpenedConnectors.remove(provider)
+        harnessAppViews[provider] = nil
+        if harnessPointer.provider == provider { harnessPointer.stop() }
+    }
+
+    /// Shows where to click in the app. The custom connectors step first
+    /// opens the connectors, which brings the app forward on the right page;
+    /// the trust step only brings it forward, since the link would leave
+    /// the custom connectors. Pacer needs Accessibility to read the buttons'
+    /// places, and the system asks for it the first time.
+    func pointInHarness(_ provider: AgentProvider) async {
+        guard let guide = progressGuide(provider), let picture = guide.picture else { return }
+        setHarnessPointerMissing(provider, false)
+        if picture == .customConnector {
+            if await MacLocalHarnessApplication.openProgressConnectors(provider: provider) { noteOpenedConnectors(provider) }
+        } else {
+            MacLocalHarnessApplication.running(provider: provider)?.activate()
+        }
+        guard MacHarnessPointerScan.trusted(prompt: true) else { return }
+        harnessPointer.start(provider)
     }
 
     /// Checks the app's trust again; once the app has made its folder, the
@@ -730,7 +774,8 @@ final class IslandModel: ObservableObject {
         let state = localHarnessProgressStatuses[provider]
         return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
                                     ringOn: isModuleEnabled(provider) && showsHarnessProgress(provider), name: descriptor.name,
-                                    addedAt: state?.addedAt, app: localHarnessApps[provider])
+                                    addedAt: state?.addedAt, app: localHarnessApps[provider],
+                                    view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors.contains(provider))
     }
 
     /// The ⓘ text, also while the ring is off and there is no card to word it.

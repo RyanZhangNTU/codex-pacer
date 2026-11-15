@@ -30,7 +30,8 @@ struct ProgressGuideRows: View {
                 .frame(minHeight: 28)
             if let guide, Self.opens(guide) {
                 Rectangle().fill(MainPalette.separator).frame(height: 1).padding(.top, 8)
-                ProgressGuideBody(guide: guide, provider: provider, perform: perform).padding(.top, 4)
+                ProgressGuideBody(guide: guide, provider: provider, pointerMissing: model.harnessPointerMissing.contains(provider),
+                                  perform: perform).padding(.top, 4)
                 if openFailed, guide.action == .openConnectors {
                     Text(L10n.text("harness.progress_state.open_failed")).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
                         .fixedSize(horizontal: false, vertical: true).padding(.bottom, 8)
@@ -38,7 +39,7 @@ struct ProgressGuideRows: View {
             }
         }
         .id(Self.anchor)
-        .onChange(of: guide?.stage) { _, _ in openFailed = false }
+        .onChange(of: guide?.stage) { _, _ in openFailed = false; model.setHarnessPointerMissing(provider, false) }
         // While the card waits on the app, check again until the user is done there.
         .task(id: guide?.waiting == true) {
             guard guide?.waiting == true else { return }
@@ -59,7 +60,9 @@ struct ProgressGuideRows: View {
             Task {
                 openFailed = !(await MacLocalHarnessApplication.openProgressConnectors(provider: provider))
                 if openFailed { _ = await MacLocalHarnessApplication.openApplication(provider: provider) }
+                else { model.noteOpenedConnectors(provider) }
             }
+        case .point: Task { await model.pointInHarness(provider) }
         }
     }
 }
@@ -123,10 +126,13 @@ struct ProgressGuideChip: View {
     }
 }
 
-/// The steps, or a problem's line and action, under the header.
+/// The steps, or a problem's line and action, under the header. Each step
+/// is one line; the current one carries its picture, its action and what
+/// the card waits for.
 private struct ProgressGuideBody: View {
     let guide: HarnessProgressGuide
     let provider: AgentProvider
+    var pointerMissing = false
     let perform: (HarnessProgressGuide.Action) -> Void
 
     static func shows(_ guide: HarnessProgressGuide) -> Bool { !guide.steps.isEmpty || guide.line != nil || guide.action != nil }
@@ -141,41 +147,52 @@ private struct ProgressGuideBody: View {
             }
             .padding(.vertical, 4)
         } else {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(guide.steps.enumerated()), id: \.offset) { index, step in
-                    if index > 0 { DashedRule() }
                     stepRow(index + 1, step)
                 }
             }
+            .padding(.vertical, 4)
         }
     }
 
     @ViewBuilder private func stepRow(_ number: Int, _ step: HarnessProgressGuide.Step) -> some View {
         let current = step.state == .current
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             StepDot(number: number, state: step.state)
             VStack(alignment: .leading, spacing: 10) {
                 Text(step.title)
                     .font(.system(size: current ? 13.5 : 13, weight: current ? .semibold : .regular))
                     .foregroundStyle(step.state == .done ? AnyShapeStyle(.secondary) : step.state == .pending ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     .fixedSize(horizontal: false, vertical: true)
-                if current, guide.action != nil || guide.waitingText != nil {
-                    // The button keeps its whole title; the waiting line moves under it when they don't fit side by side.
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) { actionButton; waitingLabel }
-                        VStack(alignment: .leading, spacing: 8) { actionButton; waitingLabel }
+                    .frame(minHeight: 20)
+                if current {
+                    switch guide.picture {
+                    case .customConnector?: CustomConnectorPicture()
+                    case .trust?: TrustPicture(provider: provider)
+                    case nil: EmptyView()
+                    }
+                    if guide.action != nil || guide.waitingText != nil {
+                        // The button keeps its whole title; the waiting line moves under it when they don't fit side by side.
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) { actionButton; waitingLabel }
+                            VStack(alignment: .leading, spacing: 8) { actionButton; waitingLabel }
+                        }
+                    }
+                    if pointerMissing, guide.action == .point {
+                        Text(L10n.text("progress_guide.pointer.not_found", provider.displayName)).font(.system(size: 12))
+                            .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if current, guide.showsTrustCard { TrustCardSample(provider: provider) }
         }
-        .padding(.vertical, current ? 12 : 10)
+        .padding(.vertical, current ? 8 : 4)
         .accessibilityElement(children: .contain)
         .accessibilityValue(L10n.text("progress_guide.state." + step.state.rawValue))
     }
 
-    /// Opening the app is prominent, like signing in; Retry is an ordinary button.
+    /// Opening the app and pointing in it are prominent, like signing in; Retry is an ordinary button.
     @ViewBuilder private var actionButton: some View {
         if let action = guide.action, let title = guide.actionTitle {
             Button(title) { perform(action) }.buttonStyle(MainButtonStyle(prominent: action != .retry, height: 28)).fixedSize()
@@ -199,89 +216,92 @@ private struct StepDot: View {
             switch state {
             case .done:
                 Circle().fill(ProgressGuideChip.ink(.success))
-                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                Image(systemName: "checkmark").font(.system(size: 9.5, weight: .bold)).foregroundStyle(.white)
             case .current:
                 Circle().fill(accent)
-                Text("\(number)").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
+                Text("\(number)").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
             case .pending:
                 Circle().strokeBorder(Color.primary.opacity(0.22), lineWidth: 1.5)
-                Text("\(number)").font(.system(size: 12)).foregroundStyle(.tertiary)
+                Text("\(number)").font(.system(size: 11)).foregroundStyle(.tertiary)
             }
         }
-        .frame(width: 22, height: 22)
+        .frame(width: 20, height: 20)
         .accessibilityHidden(true)
     }
 }
 
-private struct DashedRule: View {
+/// The app's black Custom Connector button, drawn as it looks there.
+private struct CustomConnectorButton: View {
     var body: some View {
-        Line().stroke(MainPalette.cardBorder, style: StrokeStyle(lineWidth: 1, dash: [3, 3])).frame(height: 1)
-    }
-    private struct Line: Shape {
-        func path(in rect: CGRect) -> Path {
-            Path { $0.move(to: CGPoint(x: 0, y: rect.midY)); $0.addLine(to: CGPoint(x: rect.maxX, y: rect.midY)) }
-        }
+        Label(L10n.text("progress_guide.trust_card.custom"), systemImage: "square.and.pencil")
+            .font(.system(size: 11.5, weight: .semibold)).lineLimit(1).foregroundStyle(.white)
+            .padding(.horizontal, 10).frame(height: 26)
+            .background(Color(red: 0x1D / 255, green: 0x1D / 255, blue: 0x1F / 255), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .fixedSize()
     }
 }
 
-/// A small drawing of the app's connectors page, so the user knows what
-/// to click there: ① Custom Connector at the top right, then ② Trust on
-/// Pacer's entry.
-private struct TrustCardSample: View {
+/// A drawing of the top of the app's connectors page: its tabs on the
+/// left, Custom Connector on the right with a ring around it.
+struct CustomConnectorPicture: View {
+    var body: some View {
+        HStack(spacing: 16) {
+            ForEach(["progress_guide.trust_card.experts", "progress_guide.trust_card.skills"], id: \.self) { key in
+                Text(L10n.text(key)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+            }
+            VStack(spacing: 4) {
+                Text(L10n.text("progress_guide.trust_card.tab")).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Capsule().fill(Color.primary.opacity(0.8)).frame(height: 2)
+            }
+            .fixedSize()
+            Spacer(minLength: 16)
+            CustomConnectorButton()
+                .padding(4)
+                .overlay { PulsingRing(cornerRadius: 10) }
+        }
+        .padding(.horizontal, 14).frame(height: 50)
+        .frame(maxWidth: 520)
+        .background(MainPalette.infoFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(MainPalette.cardBorder))
+        // A picture of the app's page; the step already says what to do.
+        .accessibilityHidden(true)
+    }
+}
+
+/// A drawing of Pacer's entry under the app's custom connectors, with a
+/// ring around its Trust button.
+struct TrustPicture: View {
     let provider: AgentProvider
     /// The connector's name as the app lists it.
     private static let server = "pacer_progress"
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.pacerAccent) private var accent
 
     var body: some View {
         let light = colorScheme == .light
-        let brand = provider.shade(light: light)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 5) {
-                Text(L10n.text("progress_guide.trust_card.tab")).font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1).minimumScaleFactor(0.8)
-                Spacer(minLength: 4)
-                number(1)
-                // The app's own black button, drawn as it looks there.
-                Label(L10n.text("progress_guide.trust_card.custom"), systemImage: "square.and.pencil")
-                    .font(.system(size: 10.5, weight: .semibold)).lineLimit(1).foregroundStyle(.white)
-                    .padding(.horizontal, 8).frame(height: 22)
-                    .background(Color(red: 0x1D / 255, green: 0x1D / 255, blue: 0x1F / 255), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.white.opacity(light ? 0 : 0.18)))
-                    .fixedSize()
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color(red: 0.19, green: 0.69, blue: 0.78)).frame(width: 16, height: 16)
+                Text(Self.server).font(.system(size: 12, weight: .semibold))
             }
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color(red: 0.19, green: 0.69, blue: 0.78)).frame(width: 16, height: 16)
-                    Text(Self.server).font(.system(size: 12, weight: .semibold))
-                }
-                Text(L10n.text("progress_guide.trust_card.caption")).font(.system(size: 10.5)).foregroundStyle(.tertiary)
-                Text(L10n.text("progress_guide.trust_card.detail")).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 5) {
-                    Spacer(minLength: 0)
-                    number(2)
-                    Text(L10n.text("progress_guide.trust_card.button")).font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(light ? .white : Color.black.opacity(0.8))
-                        .padding(.horizontal, 12).frame(height: 24)
-                        .background(brand, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-            }
-            .padding(.horizontal, 10).padding(.vertical, 9)
-            .background(MainPalette.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(MainPalette.cardBorder))
+            Text(L10n.text("progress_guide.trust_card.caption")).font(.system(size: 10.5)).foregroundStyle(.tertiary)
+            Text(L10n.text("progress_guide.trust_card.detail")).font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(L10n.text("progress_guide.trust_card.button")).font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(light ? .white : Color.black.opacity(0.8))
+                .padding(.horizontal, 14).frame(height: 26)
+                .background(provider.shade(light: light), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .padding(4)
+                .overlay { PulsingRing(cornerRadius: 9) }
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(10)
-        .frame(width: 268)
-        .background(MainPalette.fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        // A picture of the app's page; the step above already says what to do.
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: 320)
+        .background(MainPalette.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(MainPalette.cardBorder))
+        .padding(12)
+        .frame(maxWidth: 520, alignment: .leading)
+        .background(MainPalette.infoFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(MainPalette.cardBorder))
         .accessibilityHidden(true)
-    }
-
-    /// Which click comes first, in Pacer's accent.
-    private func number(_ value: Int) -> some View {
-        Text("\(value)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-            .frame(width: 16, height: 16).background(accent, in: Circle())
     }
 }

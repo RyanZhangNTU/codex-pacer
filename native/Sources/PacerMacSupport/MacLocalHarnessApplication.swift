@@ -39,6 +39,15 @@ import Security
         return running.compactMap(\.launchDate).min().map { .running(since: $0) }
     }
 
+    /// The module's running app, the frontmost copy first.
+    package static func running(provider: AgentProvider) -> NSRunningApplication? {
+        guard let definition = HarnessRegistry.localHarnesses.first(where: { $0.descriptor.id == provider }) else { return nil }
+        let apps = NSWorkspace.shared.runningApplications.filter {
+            $0.bundleIdentifier.map(definition.macBundleIdentifiers.contains) == true && !$0.isTerminated
+        }
+        return apps.first(where: \.isActive) ?? apps.first
+    }
+
     /// Opens the app itself, so it makes its settings folder.
     package static func openApplication(provider: AgentProvider) async -> Bool {
         guard let application = await find(provider: provider) else { return false }
