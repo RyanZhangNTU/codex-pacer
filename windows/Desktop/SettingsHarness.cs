@@ -356,8 +356,8 @@ internal sealed partial class SettingsWindow
         return true;
     }
 
-    /// One click for the reopen step: Pacer asks the app to quit and opens it
-    /// at its connectors, then rings Custom Connector. A running task asks first.
+    /// One click for the reopen step: Pacer closes the app and opens it at its
+    /// connectors, then rings Custom Connector. A running task asks first.
     private async Task<bool> RestartHarnessAppAsync(string provider, bool confirmed)
     {
         if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables } module) return false;

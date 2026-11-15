@@ -60,8 +60,12 @@ internal sealed class WindowsConversationApplication
 
     internal enum RestartResult { Restarted, StillRunning, Failed }
 
-    /// Asks the app to quit, as Windows does before an update, then starts it
-    /// at its connectors. Never ends it by force: an app that declines stays.
+    /// Closes the app and starts it at its connectors.
+    ///
+    /// WorkBuddy quits only from its tray menu: closing its window or the end-of-
+    /// session messages (the Restart Manager's request, which waits 30 seconds
+    /// and fails) only hide it in the tray. So Pacer ends its processes, which
+    /// its crash recovery is built for. The card asks first while a task runs.
     internal static async Task<RestartResult> RestartForGuideAsync(string provider, IReadOnlyList<string> executables)
     {
         if (!SignedHandlers.ContainsKey(provider)) return RestartResult.Failed;
@@ -74,13 +78,14 @@ internal sealed class WindowsConversationApplication
                 var processes = names.SelectMany(Process.GetProcessesByName).ToArray();
                 try
                 {
-                    // The earliest process is the app itself; its helpers follow it out.
+                    // The earliest process is the app itself; its helpers go with it.
                     var main = processes.Select(process => { try { return (process, started: process.StartTime); } catch (Exception error) when (Recoverable(error)) { return (process, started: DateTime.MaxValue); } })
                         .OrderBy(entry => entry.started).Select(entry => entry.process).FirstOrDefault();
-                    if (main != null) RestartManager.AskToQuit(main);
+                    try { main?.Kill(entireProcessTree: true); }
+                    catch (Exception error) when (Recoverable(error) || error is NotSupportedException) { }
                 }
                 finally { foreach (var process in processes) process.Dispose(); }
-                for (int wait = 0; wait < 60; wait++)
+                for (int wait = 0; wait < 40; wait++)
                 {
                     if (!names.Any(name => { var left = Process.GetProcessesByName(name); bool any = left.Length > 0; foreach (var p in left) p.Dispose(); return any; })) return true;
                     await Task.Delay(250);
