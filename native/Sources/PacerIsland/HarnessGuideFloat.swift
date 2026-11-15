@@ -7,7 +7,7 @@ import SwiftUI
 /// and Restart open it at once, asking the user to wait while the app
 /// restarts or opens (up to two minutes); it then follows the app's steps,
 /// says it's done for eight seconds once trusted, and closes itself once
-/// there is nothing left to click or on Close. It outlives Settings,
+/// there is nothing left to click, on Close or after ten minutes. It outlives Settings,
 /// checking the module itself, never takes focus and never reads the app's window.
 @MainActor final class HarnessGuideFloat: ObservableObject {
     private weak var model: IslandModel?
@@ -27,6 +27,9 @@ import SwiftUI
     static let check: TimeInterval = 1.5
     static let wait: TimeInterval = 120
     static let doneShown: TimeInterval = 8
+    /// It never stays longer than this, whatever the app does.
+    static let lifetime: TimeInterval = 600
+    private var started = Date()
 
     init(model: IslandModel) { self.model = model }
 
@@ -45,7 +48,7 @@ import SwiftUI
         self.provider = provider
         self.screen = screen ?? NSScreen.main
         self.pending = pending
-        opened = Date(); followsApp = false; emptyChecks = 0; doneSince = nil
+        opened = Date(); started = opened; followsApp = false; emptyChecks = 0; doneSince = nil
         let host = NSHostingController(rootView: AnyView(GuideFloatContent(model: model, float: self, provider: provider)
             .pacerAccent(PacerAccent.current)))
         host.sizingOptions = []
@@ -75,7 +78,7 @@ import SwiftUI
     }
 
     private func update() {
-        guard let provider, let model else { return close() }
+        guard let provider, let model, Date().timeIntervalSince(started) < Self.lifetime else { return close() }
         let guide = model.progressGuide(provider)
         // While Pacer restarts the app, the app's own steps (even "done") wait for it to return.
         if model.harnessRestartInFlight(provider), !followsApp {

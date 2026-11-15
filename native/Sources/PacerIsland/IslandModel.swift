@@ -705,6 +705,7 @@ final class IslandModel: ObservableObject {
     /// When the user clicked to open them: the app can show its connectors
     /// before the system says it has opened, so its log counts from the click.
     private var harnessOpenRequests: [AgentProvider: Date] = [:]
+    private var harnessLogReads: Set<AgentProvider> = []
     /// A restart Pacer started is still under way.
     func harnessRestartInFlight(_ provider: AgentProvider) -> Bool { harnessRestarting.contains(provider) }
     /// A restart the card asked for: waiting for the user to confirm over a
@@ -796,8 +797,11 @@ final class IslandModel: ObservableObject {
               let definition = localHarnesses.definition(for: provider), let logFile = definition.appLogFile,
               case .running(let since)? = localHarnessApps[provider],
               [.opening, .openConnectors, .customConnector].contains(progressGuide(provider)?.stage) else { return }
+        // One read at a time per module, whether the card or the float asked.
+        guard harnessLogReads.insert(provider).inserted else { return }
         let log = localHarnessHome(definition).appendingPathComponent(logFile)
         Task { [weak self] in
+            defer { self?.harnessLogReads.remove(provider) }
             // Back to the earlier of the click and the app's start, so its own listing stays in view.
             let view = await Task.detached(priority: .utility) {
                 HarnessAppLog.view(in: HarnessAppLog.read(log, since: min(opened, since)), opened: opened, appStarted: since, now: Date())
@@ -848,7 +852,7 @@ final class IslandModel: ObservableObject {
         let state = localHarnessProgressStatuses[provider]
         return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
                                     ringOn: isModuleEnabled(provider) && showsHarnessProgress(provider), name: descriptor.name,
-                                    addedAt: state?.addedAt, app: localHarnessApps[provider],
+                                    addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider],
                                     view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors[provider] != nil)
     }
 
@@ -2602,6 +2606,23 @@ final class IslandModel: ObservableObject {
         scheduleRateExpiry()
         if oldHeight != panelContentHeight { onLayoutChange?() }
     }
+    private var harnessMaintenanceAt = Date.distantPast
+    /// At most once a minute: credit reminders follow the calendar, so a quiet
+    /// account is still reminded before its credits lapse, and a progress guide
+    /// that waits on the app checks again, so trusting it outside Pacer's
+    /// checks still clears the sidebar dot and the Overview line.
+    private func harnessMaintenance() {
+        guard !demo, !sleeping, !stopped, now.timeIntervalSince(harnessMaintenanceAt) >= 60 else { return }
+        harnessMaintenanceAt = now
+        if !harnessCredits.isEmpty {
+            present(harnessCreditsAttention.notices(harnessCredits, settings: creditSettings,
+                                                    low: compactLayout.warnings.contains(.lowCredits), now: Date()))
+        }
+        for definition in localHarnesses.definitions where progressGuide(definition.descriptor.id)?.waiting == true {
+            recheckLocalHarnessProgress(definition.descriptor.id)
+        }
+    }
+
     private func scheduleClock() {
         clock?.invalidate()
         let interval: TimeInterval = !visiblyExpanded ? 30 : 2
@@ -2630,6 +2651,7 @@ final class IslandModel: ObservableObject {
     }
     private func tick() {
         redrawClock()
+        harnessMaintenance()
         performLifecycle(lifecycle.tick(.init(now: now, expanded: visiblyExpanded, codexConnected: streamStatuses["local"]?.connected == true,
             lastCodexDiscovery: lastDiscovery, lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
             deepseekRunning: running.contains { $0.provider == .deepseek })))

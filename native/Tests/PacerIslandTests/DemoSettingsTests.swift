@@ -147,6 +147,18 @@ final class DemoWorkBuddyTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testTheBarMarksCreditsLowAtTheModulesOwnLine() async throws {
+        let domain = testDefaultsName("demo-workbuddy-low")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let model = IslandModel(demo: true, demoArguments: ["--demo", "--demo-workbuddy"], defaults: defaults)
+        defer { removeTestDefaults(domain) }
+        XCTAssertEqual(model.compactCredits.first { $0.provider == .workbuddy }?.low, false, "The demo bill is well above the default line")
+        model.setCreditSettings(.workbuddy, HarnessCreditsSettings(center: .available, bar: .available, lowCredits: 1_000_000,
+                                                                  expiryReminder: true, expiryDays: 3))
+        XCTAssertEqual(model.compactCredits.first { $0.provider == .workbuddy }?.low, true, "The user's own low line colors the bar")
+        await model.shutdown()
+    }
+
     func testRestartingOverARunningTaskAsksFirstAndADemoNeverQuitsTheApp() async throws {
         let domain = testDefaultsName("demo-workbuddy-restart")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))

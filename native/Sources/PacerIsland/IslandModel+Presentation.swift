@@ -63,7 +63,8 @@ extension IslandModel {
     var compactCredits: [CompactBarContext.Credits] {
         HarnessRegistry.ids(where: \.reportsAccountCredits).filter(isModuleEnabled).compactMap { provider in
             harnessAccounts[provider].map {
-                .init(provider: provider, credits: $0.credits, stale: $0.state == .unavailable, now: now, figure: creditSettings(provider).bar)
+                .init(provider: provider, credits: $0.credits, stale: $0.state == .unavailable, now: now, figure: creditSettings(provider).bar,
+                      settings: creditSettings(provider))
             }
         }
     }
