@@ -178,6 +178,7 @@ internal static class WorkBuddyAccountChecks
             island.ApplyPreferences(choices); await island.WaitForPresentationAsync();
 
             await CheckTaskReading();
+            await CheckSwitchAndSleep();
 
             await settings.NavigateAsync("expandedPanel");
             await PresentationWait.UntilAsync(() => Find<Button>(settings, "panel.block.workbuddy.toggle")?.Tag as string == "added",
@@ -264,6 +265,42 @@ internal static class WorkBuddyAccountChecks
     }
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
+
+    /// A switch clears the browser profile before the sign-in (Windows kept the old
+    /// session and the window closed itself), and sleep keeps the last reading so a
+    /// failed first read after waking marks it stale instead of emptying it.
+    private static async Task CheckSwitchAndSleep()
+    {
+        var fake = new RecordingSession();
+        await using var connection = new HarnessAccountConnection("workbuddy", fake, Application.Current.Dispatcher);
+        connection.SetEnabled(true);
+        await PresentationWait.UntilAsync(() => connection.Reading != null && !connection.Busy, "The recording account reads at once");
+        fake.Calls.Clear();
+        await connection.SwitchAsync();
+        Check(fake.Calls.SequenceEqual(["clear", "signIn", "read"]), "Switching accounts must clear the browser profile first: " + string.Join(",", fake.Calls));
+        connection.SetSleeping(true);
+        Check(connection.Reading != null, "Sleep keeps the last reading");
+        fake.FailReads = true;
+        connection.SetSleeping(false);
+        await PresentationWait.UntilAsync(() => !connection.Busy && connection.State == "unavailable", "A failed read after waking marks the account unavailable");
+        Check(connection.Reading != null && connection.EngineCredits() != null, "A failed first read after waking keeps the last reading for the engine");
+    }
+
+    private sealed class RecordingSession : IHarnessAccountSession
+    {
+        internal readonly System.Collections.Generic.List<string> Calls = [];
+        internal bool FailReads;
+        public bool Available => true;
+        public bool IsConnected => true;
+        public Task<HarnessAccountReply> ReadCreditsAsync(System.Threading.CancellationToken cancellation)
+        {
+            Calls.Add("read");
+            return FailReads ? Task.FromException<HarnessAccountReply>(new IOException("offline")) : new DemoHarnessAccountSession().ReadCreditsAsync(cancellation);
+        }
+        public Task<bool> SignInAsync(System.Threading.CancellationToken cancellation) { Calls.Add("signIn"); return Task.FromResult(true); }
+        public Task ClearAsync(System.Threading.CancellationToken cancellation) { Calls.Add("clear"); return Task.CompletedTask; }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 
     private static async Task CheckTaskReading()
     {

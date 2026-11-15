@@ -467,7 +467,7 @@ internal sealed partial class SettingsWindow
             menu.Items.Add(Item(ui.Text("harness.account_usage_help"), "usage",
                 () => { if (!SettingsPagePolicy.OpenHarnessUsage(guide, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); }));
         menu.Items.Add(new Separator());
-        menu.Items.Add(Item(ui.Text("harness.account.switch"), "switch_account", () => _ = RunHarnessAccountAsync(account.ConnectAsync)));
+        menu.Items.Add(Item(ui.Text("harness.account.switch"), "switch_account", () => _ = RunHarnessAccountAsync(account.SwitchAsync)));
         menu.Items.Add(Item(ui.Text("harness.account.sign_out"), "sign_out", () => _ = RunHarnessAccountAsync(account.DisconnectAsync), account.CanDisconnect));
         anchor.ContextMenu = menu; menu.IsOpen = true;
     }

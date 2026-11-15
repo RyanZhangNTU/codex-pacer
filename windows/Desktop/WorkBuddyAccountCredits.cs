@@ -194,11 +194,14 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
     {
         if (disposed || sleeping == value) return;
         sleeping = value;
+        // Sleep keeps the last reading and its alert state: a failed first read
+        // after waking marks it stale, where an emptied reading showed "Sign in"
+        // for five minutes and re-sent the low and expiring alerts (11/16 review).
         if (value)
         {
             StopTimer();
             operation?.Cancel(); operation = null;
-            Reading = null; State = "signIn"; Changed?.Invoke();
+            Changed?.Invoke();
         }
         else if (enabled && session.IsConnected) _ = RefreshAsync();
     }
@@ -215,6 +218,22 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
         // A cancelled switch could leave the browser on a different account.
         // Hide the old reading before the login window opens.
         Apply(new("signIn")); Changed?.Invoke();
+        if (await session.SignInAsync(token))
+        {
+            var result = await session.ReadCreditsAsync(token);
+            token.ThrowIfCancellationRequested();
+            Apply(result);
+        }
+    });
+
+    /// Another account: the browser profile is cleared first, as the Mac clears
+    /// the site's data. Otherwise the sign-in window read the old session, took
+    /// it for a sign-in and closed itself.
+    internal Task SwitchAsync() => RunAsync(async token =>
+    {
+        Apply(new("signIn")); Changed?.Invoke();
+        await session.ClearAsync(token);
+        token.ThrowIfCancellationRequested();
         if (await session.SignInAsync(token))
         {
             var result = await session.ReadCreditsAsync(token);

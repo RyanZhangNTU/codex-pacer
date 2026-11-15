@@ -68,9 +68,12 @@ internal sealed class WindowsConversationApplication
     /// its crash recovery is built for. The card asks first while a task runs.
     internal static async Task<RestartResult> RestartForGuideAsync(string provider, IReadOnlyList<string> executables)
     {
-        if (!SignedHandlers.ContainsKey(provider)) return RestartResult.Failed;
+        if (!SignedHandlers.TryGetValue(provider, out var application)) return RestartResult.Failed;
         try
         {
+            // Nothing is ended unless Pacer can start the app again: an app in a
+            // folder of its own choosing, or with an edited handler, stays running.
+            if (await Task.Run(() => ResolveSignedHandler(application)) == null) return RestartResult.Failed;
             bool quit = await Task.Run(async () =>
             {
                 string[] names = executables.Select(path => Path.GetFileNameWithoutExtension(path.Replace('/', '\\'))).Where(name => name.Length > 0)
@@ -81,8 +84,10 @@ internal sealed class WindowsConversationApplication
                     // The earliest process is the app itself; its helpers go with it.
                     var main = processes.Select(process => { try { return (process, started: process.StartTime); } catch (Exception error) when (Recoverable(error)) { return (process, started: DateTime.MaxValue); } })
                         .OrderBy(entry => entry.started).Select(entry => entry.process).FirstOrDefault();
+                    // A child that can't be ended raises an AggregateException; the
+                    // wait below then reports the app as still running.
                     try { main?.Kill(entireProcessTree: true); }
-                    catch (Exception error) when (Recoverable(error) || error is NotSupportedException) { }
+                    catch (Exception error) when (Recoverable(error) || error is NotSupportedException or AggregateException) { }
                 }
                 finally { foreach (var process in processes) process.Dispose(); }
                 for (int wait = 0; wait < 40; wait++)
@@ -198,10 +203,20 @@ internal sealed class WindowsConversationApplication
 
     private static bool OpenSignedHandler(SignedHandler application, Uri? uri)
     {
+        if (ResolveSignedHandler(application) is not string path) return false;
+        var start = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(path)! };
+        if (uri != null) start.ArgumentList.Add(uri.AbsoluteUri);
+        using var process = Process.Start(start);
+        return process != null;
+    }
+    /// The app Pacer may start: the registered handler, exactly `"path" "%1"`,
+    /// in its standard install folder and signed by its publisher.
+    private static string? ResolveSignedHandler(SignedHandler application)
+    {
         using var key = Registry.ClassesRoot.OpenSubKey(application.Scheme + @"\shell\open\command");
-        if (key?.GetValue(null) is not string registeredCommand) return false;
+        if (key?.GetValue(null) is not string registeredCommand) return null;
         var handler = Regex.Match(registeredCommand, "\\A\"([^\"\\r\\n]+)\" \"%1\"\\z", RegexOptions.CultureInvariant);
-        if (!handler.Success) return false;
+        if (!handler.Success) return null;
         string path = Path.GetFullPath(handler.Groups[1].Value);
         bool Matches(Environment.SpecialFolder folder, string[] names)
         {
@@ -214,11 +229,8 @@ internal sealed class WindowsConversationApplication
         {
             using var signer = X509CertificateLoader.LoadCertificate(encoded);
             return signer.GetNameInfo(X509NameType.SimpleName, false) == application.Publisher;
-        })) return false;
-        var start = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(path)! };
-        if (uri != null) start.ArgumentList.Add(uri.AbsoluteUri);
-        using var process = Process.Start(start);
-        return process != null;
+        })) return null;
+        return path;
     }
     private static bool Recoverable(Exception error) => error is COMException or Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException or CryptographicException;
 }
