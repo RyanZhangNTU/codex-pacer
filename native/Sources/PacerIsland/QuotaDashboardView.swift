@@ -290,7 +290,7 @@ struct QuotaDashboardRingView: View {
     }
 }
 
-private struct QuotaRingArc: Shape {
+struct QuotaRingArc: Shape {
     let geometry: QuotaRingGeometry
     func path(in rect: CGRect) -> Path {
         Path { path in

@@ -163,14 +163,16 @@ private struct HarnessCreditsCard: View {
     let usageGuide: URL?
     let now: Date
     @State private var showsInfo = false
+    @Environment(\.colorScheme) private var colorScheme
+    /// The darker shade on a light page, so the ring and plan keep their contrast.
+    private var tint: Color { connection.provider.shade(light: colorScheme == .light) }
 
     var body: some View {
         if let presentation = HarnessCreditsPresentation(credits: connection.credits, settings: settings, now: now) {
             MainCard(title: L10n.text("harness.credits")) {
                 HStack(alignment: .center, spacing: 20) {
-                    CreditsDial(dial: presentation.dial, tint: connection.provider.tint, size: 104,
-                                stale: connection.state == .unavailable, island: false)
-                    CreditsLines(presentation: presentation, tint: connection.provider.tint, island: false)
+                    CreditsDial(dial: presentation.dial, tint: tint, size: 104, stale: connection.state == .unavailable, island: false)
+                    CreditsLines(presentation: presentation, tint: tint, island: false)
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, 12)

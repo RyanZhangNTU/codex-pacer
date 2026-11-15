@@ -21,6 +21,8 @@ struct CreditsDial: View {
 
     var body: some View {
         ZStack {
+            // The island's track vanishes on a light page; Settings draws its own.
+            if !island { QuotaRingArc(geometry: geometry).stroke(Color.primary.opacity(0.1), style: StrokeStyle(lineWidth: 6, lineCap: .round)) }
             QuotaRingGauge(fraction: dial.fraction, tint: tint, stale: stale, geometry: geometry)
             VStack(spacing: size * 0.02) {
                 if let top = dial.top {
