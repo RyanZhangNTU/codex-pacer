@@ -688,9 +688,13 @@ final class IslandModel: ObservableObject {
         for definition in localHarnesses.definitions where definition.descriptor.progressConnector {
             apps[definition.descriptor.id] = MacLocalHarnessApplication.presence(provider: definition.descriptor.id)
         }
-        // A quit app forgets which page it showed and that the card opened it.
+        // A quit app forgets which page it showed and that the card opened it,
+        // and so does one that started again after the card opened it.
         for (provider, presence) in localHarnessApps where presence != .notRunning && apps[provider] == .notRunning {
             forgetHarnessPage(provider)
+        }
+        for (provider, opened) in harnessOpenedConnectors {
+            if case .running(let since)? = apps[provider], since > opened { forgetHarnessPage(provider) }
         }
         if apps != localHarnessApps { localHarnessApps = apps }
     }

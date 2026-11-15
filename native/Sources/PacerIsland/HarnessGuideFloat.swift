@@ -15,6 +15,8 @@ import SwiftUI
     private var timer: Timer?
     private var opened = Date()
     private var shown = false
+    /// Checks in a row with nothing to click; one alone can be a file caught mid-write.
+    private var emptyChecks = 0
     private var screen: NSScreen?
     private var host: NSHostingController<AnyView>?
     static let check: TimeInterval = 1.5
@@ -29,7 +31,7 @@ import SwiftUI
         close()
         self.provider = provider
         self.screen = screen ?? NSScreen.main
-        opened = Date(); shown = false
+        opened = Date(); shown = false; emptyChecks = 0
         let host = NSHostingController(rootView: AnyView(GuideFloatContent(model: model, provider: provider, close: { [weak self] in self?.close() })
             .pacerAccent(PacerAccent.current)))
         host.sizingOptions = []
@@ -59,10 +61,13 @@ import SwiftUI
     private func update() {
         guard let provider, let model else { return close() }
         guard model.progressGuide(provider)?.floatTitle != nil else {
-            // Nothing to click yet while the app restarts or opens; nothing left once it was shown.
-            if shown || Date().timeIntervalSince(opened) > Self.wait { close() }
+            // Nothing to click yet while the app restarts or opens; nothing left
+            // once it was shown, read twice in a row.
+            emptyChecks += 1
+            if (shown && emptyChecks >= 2) || Date().timeIntervalSince(opened) > Self.wait { close() }
             return
         }
+        emptyChecks = 0
         guard let host else { return }
         // The content's own height at the panel's width, measured before the panel takes its size.
         let size = host.sizeThatFits(in: CGSize(width: GuideFloatContent.width, height: 4000))
