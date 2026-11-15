@@ -205,7 +205,7 @@ internal sealed partial class SettingsWindow
                 var waiting = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
                 var glyph = new IconGlyph { Symbol = "clock", Width = 13, Height = 13, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
                 glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
-                var text = Label(ui.Text("progress_guide.waiting"), 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+                var text = Label(guide.WaitingText ?? ui.Text("progress_guide.waiting"), 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
                 text.VerticalAlignment = VerticalAlignment.Center;
                 waiting.Children.Add(glyph); waiting.Children.Add(text);
                 Identify(waiting, id + ".progress_waiting", text.Text);
@@ -260,14 +260,8 @@ internal sealed partial class SettingsWindow
     private DecorativeBorder TrustCard(string provider)
     {
         var stack = new StackPanel();
-        var path = new DockPanel { Margin = new Thickness(0, 0, 0, 7) };
-        var refresh = new Border { CornerRadius = new CornerRadius(5), BorderThickness = new Thickness(1), Padding = new Thickness(6, 0, 6, 1) };
-        refresh.SetResourceReference(Border.BorderBrushProperty, "SettingsPickerStroke");
-        var refreshText = Label(ui.Text("progress_guide.trust_card.refresh"), 10.5); refresh.Child = refreshText;
-        DockPanel.SetDock(refresh, Dock.Right); path.Children.Add(refresh);
         var trail = Label(ui.Text("progress_guide.trust_card.path"), 10.5); trail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-        trail.VerticalAlignment = VerticalAlignment.Center; path.Children.Add(trail);
-        stack.Children.Add(path);
+        trail.Margin = new Thickness(0, 0, 0, 7); stack.Children.Add(trail);
         var item = new Border { CornerRadius = new CornerRadius(7), BorderThickness = new Thickness(1), Padding = new Thickness(9, 7, 9, 8) };
         item.SetResourceReference(Border.BorderBrushProperty, "SettingsSeparator"); item.SetResourceReference(Border.BackgroundProperty, "SettingsCard");
         var lines = new StackPanel();
@@ -459,8 +453,36 @@ internal sealed partial class SettingsWindow
             HarnessModule(activePane) is not { Enabled: true, ProgressConnector: true, ProgressSetup: "configured" or "missingHome" } module ||
             (polling && module.ProgressGuide is not { Waiting: true }) ||
             session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
-        try { await client.SendAsync("refreshHarnessProgressConnection", new { provider = module.Provider }); }
+        // The app reads its MCP file when it starts, so the card needs to know
+        // whether it runs and since when.
+        var (running, started) = await Task.Run(() => AppPresence(module.Launch?.Executables));
+        try { await client.SendAsync("refreshHarnessProgressConnection", new { provider = module.Provider, appRunning = running, appStartedAt = started }); }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { }
+    }
+
+    /// Whether any of the app's executables runs, and when its earliest process
+    /// started (seconds since 1970). Reads only process names and start times.
+    internal static (bool Running, double? StartedAt) AppPresence(IReadOnlyList<string>? executables)
+    {
+        if (executables is not { Count: > 0 }) return (false, null);
+        bool running = false; DateTime? earliest = null;
+        foreach (string name in executables.Select(path => System.IO.Path.GetFileNameWithoutExtension(path.Replace('/', '\\')))
+                     .Where(name => name.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            System.Diagnostics.Process[] processes;
+            try { processes = System.Diagnostics.Process.GetProcessesByName(name); }
+            catch (InvalidOperationException) { continue; }
+            foreach (var process in processes)
+            {
+                using (process)
+                {
+                    running = true;
+                    try { var start = process.StartTime.ToUniversalTime(); if (earliest == null || start < earliest) earliest = start; }
+                    catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
+                }
+            }
+        }
+        return (running, earliest.HasValue ? (earliest.Value - DateTime.UnixEpoch).TotalSeconds : null);
     }
 
     private void RefreshHarnessPage()

@@ -17,9 +17,12 @@ package enum LocalHarnessProgressSetup {
         package let connection: LocalHarnessProgressConnection?
         /// The app has reported progress through the tool at least once.
         package var reported: Bool
+        /// When Pacer last wrote its entry. The app reads its MCP file when it
+        /// starts, so an app running since before then can't list the tool yet.
+        package var addedAt: Date?
 
-        package init(_ setup: LocalHarnessProgressStatus, connection: LocalHarnessProgressConnection? = nil, reported: Bool = false) {
-            self.setup = setup; self.connection = connection; self.reported = reported
+        package init(_ setup: LocalHarnessProgressStatus, connection: LocalHarnessProgressConnection? = nil, reported: Bool = false, addedAt: Date? = nil) {
+            self.setup = setup; self.connection = connection; self.reported = reported; self.addedAt = addedAt
         }
     }
 
@@ -60,6 +63,15 @@ package enum LocalHarnessProgressSetup {
     /// stays collapsed across restarts and after the ring is turned back on.
     package static func reportedMarker(_ home: URL) -> URL { directory(home).appendingPathComponent("reported") }
 
+    package static func addedMarker(_ home: URL) -> URL { directory(home).appendingPathComponent("added") }
+
+    package static func addedAt(_ home: URL, storage: any ClaudeHookStorage) -> Date? {
+        let marker = addedMarker(home)
+        guard (try? storage.validate(marker)) != nil, storage.exists(marker), let data = try? storage.read(marker), data.count <= 32,
+              let seconds = Int(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(seconds))
+    }
+
     package static func reported(_ home: URL, storage: any ClaudeHookStorage) -> Bool {
         let marker = reportedMarker(home)
         guard (try? storage.validate(marker)) != nil, storage.exists(marker) else { return false }
@@ -86,7 +98,9 @@ package enum LocalHarnessProgressSetup {
         let setup: LocalHarnessProgressStatus? = inspectOnly ? .configured : await configure(ticket, storage: storage, prepare: prepare, owns: owns)
         guard let setup else { return nil }
         let status = setup == .configured ? connection.map { inspect(ticket.target, storage: storage, connection: $0, owns: owns) } : nil
-        return State(setup, connection: status, reported: setup == .configured && reported(ticket.target.home, storage: storage))
+        let home = ticket.target.home
+        return State(setup, connection: status, reported: setup == .configured && reported(home, storage: storage),
+                     addedAt: setup == .configured ? addedAt(home, storage: storage) : nil)
     }
 
     private static func configure(_ ticket: ProgressSetupQueue<Target>.Ticket, storage: any ClaudeHookStorage,
@@ -168,15 +182,21 @@ package enum LocalHarnessProgressSetup {
             if !target.enabled && !checkOnly && matchNativeReporter && storage.exists(flag) { try storage.remove(flag) }
             // Uninstalling leaves nothing of Pacer's in the app's folder.
             if !target.enabled && !checkOnly && matchNativeReporter {
-                let marker = reportedMarker(target.home)
-                try storage.validate(marker)
-                if storage.exists(marker) { try storage.remove(marker) }
+                for marker in [reportedMarker(target.home), addedMarker(target.home)] {
+                    try storage.validate(marker)
+                    if storage.exists(marker) { try storage.remove(marker) }
+                }
             }
             if matchNativeReporter, try !editRule() { return .conflict }
             if !target.enabled && previous == nil { return nil }
             if checkOnly { return target.enabled ? .configured : nil }
             if target.enabled, !storage.isDirectory(directory) { try storage.createDirectory(directory, permissions: 0o700) }
             let current = previous as? [String: Any]
+            func stampAdded() throws {
+                let added = addedMarker(target.home)
+                try storage.validate(added)
+                try storage.replace(added, with: Data((String(Int(Date().timeIntervalSince1970)) + "\n").utf8), permissions: 0o600)
+            }
             if !target.enabled || current?["command"] as? String != command || current?["args"] as? [String] != arguments {
                 if target.enabled {
                     var updated = entry
@@ -187,7 +207,11 @@ package enum LocalHarnessProgressSetup {
                 let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) + Data([10])
                 guard data.count <= limit, try readConfig() == original else { return .conflict }
                 try storage.replace(config, with: data, permissions: 0o600)
+                if target.enabled { try stampAdded() }
             }
+            // An entry from a Pacer that kept no time counts as added now, so an
+            // app that may not list it yet is asked to reopen rather than missed.
+            if target.enabled, !storage.exists(addedMarker(target.home)) { try stampAdded() }
             if target.enabled, !storage.exists(flag) { try storage.replace(flag, with: on, permissions: 0o600) }
             if target.enabled, try !editRule() { return .conflict }
             return target.enabled ? .configured : nil

@@ -300,6 +300,8 @@ actor EngineRuntime {
     private var localProgressQueues: [AgentProvider: ProgressSetupQueue<LocalHarnessProgressSetup.Target>] = [:]
     private var localProgressTasks: [AgentProvider: Task<Void, Never>] = [:]
     private var localProgressStatuses: [AgentProvider: LocalHarnessProgressSetup.State] = [:]
+    /// The module's app as the host last saw it, for the reopen step.
+    private var localHarnessApps: [AgentProvider: HarnessProgressGuide.AppPresence] = [:]
     private let managesDeepSeekProgress: Bool
     private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
     /// The latest DeepSeek setup, which shutdown lets finish.
@@ -829,8 +831,17 @@ actor EngineRuntime {
             guard active, let name = command.params?.provider,
                   let definition = localHarnesses.definitions.first(where: { $0.descriptor.id.rawValue == name }),
                   definition.progressConnection != nil else { failure(id: command.id, code: "unavailable"); return true }
+            let provider = definition.descriptor.id
+            if let running = command.params?.appRunning {
+                let started = command.params?.appStartedAt.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
+                let presence: HarnessProgressGuide.AppPresence? = running ? started.map { .running(since: $0) } : .notRunning
+                if localHarnessApps[provider] != presence {
+                    localHarnessApps[provider] = presence
+                    if projectionReady { publish(notices: []) }
+                }
+            }
             // Once the app has made its folder, setup continues without a retry.
-            if localProgressStatuses[definition.descriptor.id]?.setup == .missingHome { scheduleLocalHarnessProgress(definition, force: true) }
+            if localProgressStatuses[provider]?.setup == .missingHome { scheduleLocalHarnessProgress(definition, force: true) }
             else { scheduleLocalHarnessProgress(definition, inspectOnly: true) }
         case "inspectProviderHome":
             guard let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
@@ -1423,7 +1434,8 @@ actor EngineRuntime {
         if let descriptor, descriptor.progressConnector {
             let state = localProgressStatuses[provider]
             module.progressGuide = HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
-                ringOn: enabled.contains(provider) && !disabledHarnessProgress.contains(provider), name: descriptor.name)
+                ringOn: enabled.contains(provider) && !disabledHarnessProgress.contains(provider), name: descriptor.name,
+                addedAt: state?.addedAt, app: localHarnessApps[provider])
         }
         if let daily = demo && provider == .workbuddy ? DemoScenario.workbuddyDaily(at: now()) : harnessActivities[provider]?.usage?.daily {
             module.week = HarnessWeekPresentation.week(provider: provider, daily: daily, now: now())

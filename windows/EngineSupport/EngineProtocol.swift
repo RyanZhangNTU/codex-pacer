@@ -61,6 +61,10 @@ struct EngineCommand: Decodable {
         var hiddenTurnCredits: [String]?
         /// Each credits module's dial, bar value and reminder choices.
         var harnessCredits: [String: HarnessCreditsSettings]?
+        /// With `refreshHarnessProgressConnection`: whether the module's app
+        /// runs, and since when (seconds since 1970), as the host sees it.
+        var appRunning: Bool?
+        var appStartedAt: Double?
         var activityID: String?
         var snapshotSequence: UInt64?
         var deepseekKey: String?

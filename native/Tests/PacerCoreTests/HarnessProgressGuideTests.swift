@@ -2,33 +2,59 @@ import XCTest
 @testable import PacerCore
 
 final class HarnessProgressGuideTests: XCTestCase {
+    private let added = Date(timeIntervalSince1970: 1_800_000_000)
     private func guide(_ setup: LocalHarnessProgressStatus?, _ connection: LocalHarnessProgressConnection? = nil,
-                       reported: Bool = false, ringOn: Bool = true) -> HarnessProgressGuide? {
-        HarnessProgressGuide(setup: setup, connection: connection, reported: reported, ringOn: ringOn, name: "WorkBuddy AI", language: .english)
+                       reported: Bool = false, ringOn: Bool = true, app: HarnessProgressGuide.AppPresence? = nil) -> HarnessProgressGuide? {
+        HarnessProgressGuide(setup: setup, connection: connection, reported: reported, ringOn: ringOn, name: "WorkBuddy AI",
+                             addedAt: added, app: app, language: .english)
     }
 
-    func testTrustingInTheAppIsTheOneStepLeft() throws {
-        let trust = try XCTUnwrap(guide(.configured, .needsTrust))
-        XCTAssertEqual(trust.stage, .trust)
+    func testAnAppRunningSinceBeforeTheToolMustBeReopenedFirst() throws {
+        // The app reads its MCP file only at start, so it can't list a tool added after.
+        let reopen = try XCTUnwrap(guide(.configured, .needsTrust, app: .running(since: added.addingTimeInterval(-600))))
+        XCTAssertEqual(reopen.stage, .reopen)
+        XCTAssertEqual(reopen.steps.map(\.state), [.done, .current, .pending, .pending])
+        XCTAssertEqual(reopen.steps[1].title, "Quit WorkBuddy AI completely, then reopen it")
+        XCTAssertEqual(reopen.chip, "2 steps left")
+        XCTAssertNil(reopen.action, "Only the user quits the app; Pacer sees it start again")
+        XCTAssertTrue(reopen.waiting && reopen.attention)
+        XCTAssertEqual(reopen.waitingText, "Waiting for WorkBuddy AI to start again")
+        XCTAssertFalse(reopen.showsTrustCard, "The trust card would show a tool the app can't list yet")
+
+        let closed = try XCTUnwrap(guide(.configured, .needsTrust, app: .notRunning))
+        XCTAssertEqual(closed.stage, .launch)
+        XCTAssertEqual(closed.steps[1].title, "Open WorkBuddy AI")
+        XCTAssertEqual(closed.action, .openConnectors, "Opening the connectors starts the app, which then lists the tool")
+
+        let reopened = try XCTUnwrap(guide(.configured, .needsTrust, app: .running(since: added.addingTimeInterval(5))))
+        XCTAssertEqual(reopened.stage, .trust)
+        XCTAssertEqual(reopened.steps.map(\.state), [.done, .done, .current, .pending])
+        XCTAssertEqual(reopened.steps[1].title, "WorkBuddy AI has loaded the tool")
+        XCTAssertEqual(guide(.configured, .needsTrust)?.stage, .trust, "A host that can't tell keeps the trust step")
+    }
+
+    func testTrustingInTheAppIsTheLastStepLeft() throws {
+        let trust = try XCTUnwrap(guide(.configured, .needsTrust, app: .running(since: added.addingTimeInterval(60))))
         XCTAssertEqual(trust.chip, "1 step left")
-        XCTAssertEqual(trust.steps.map(\.state), [.done, .current, .pending])
-        XCTAssertEqual(trust.steps[1].title, "Trust pacer_progress in WorkBuddy AI", "Each module names its own app")
+        XCTAssertEqual(trust.steps[2].title, "Trust pacer_progress in WorkBuddy AI", "Each module names its own app")
         XCTAssertEqual(trust.action, .openConnectors)
         XCTAssertEqual(trust.actionTitle, "Open WorkBuddy AI Connectors")
         XCTAssertTrue(trust.attention && trust.waiting && trust.showsTrustCard)
         XCTAssertNil(trust.line, "Steps carry the state; the explanation stays behind ⓘ")
-        XCTAssertTrue(trust.info.contains("Refresh"))
+        XCTAssertTrue(trust.info.contains("reopened") && !trust.info.contains("Refresh"))
 
         let again = try XCTUnwrap(guide(.configured, .retrust))
         XCTAssertEqual(again.chip, "Trust again")
-        XCTAssertEqual(again.steps[1].title, "Trust pacer_progress in WorkBuddy AI again")
+        XCTAssertEqual(again.steps[2].title, "Trust pacer_progress in WorkBuddy AI again")
         XCTAssertEqual(again.summary, "Progress ring: trust again")
+        XCTAssertEqual(guide(.configured, .retrust, app: .running(since: added.addingTimeInterval(-60)))?.chip, "Trust again",
+                       "After an update, the app may need reopening too, but the chip says why")
     }
 
     func testTheFirstReportCollapsesTheCard() throws {
         let trusted = try XCTUnwrap(guide(.configured, .trusted))
         XCTAssertEqual(trusted.stage, .firstTask)
-        XCTAssertEqual(trusted.steps.map(\.state), [.done, .done, .current])
+        XCTAssertEqual(trusted.steps.map(\.state), [.done, .done, .done, .current])
         XCTAssertFalse(trusted.attention, "Starting a task is not a chore to flag")
         let ready = try XCTUnwrap(guide(.configured, .trusted, reported: true))
         XCTAssertEqual(ready.stage, .ready)
@@ -53,7 +79,7 @@ final class HarnessProgressGuideTests: XCTestCase {
             XCTAssertEqual(failed.action, .retry)
             XCTAssertTrue(failed.attention)
         }
-        XCTAssertEqual(guide(.settingUp)?.steps.map(\.state), [.current, .pending, .pending])
+        XCTAssertEqual(guide(.settingUp)?.steps.map(\.state), [.current, .pending, .pending, .pending])
     }
 
     func testARingThatIsOffShowsNothingUnlessCleanupFailed() {
@@ -66,8 +92,8 @@ final class HarnessProgressGuideTests: XCTestCase {
     func testOnboardingNamesEveryAppThatStillNeedsAStep() {
         XCTAssertNil(HarnessProgressGuide.onboardingNote(names: [], language: .english))
         XCTAssertEqual(HarnessProgressGuide.onboardingNote(names: ["WorkBuddy"], language: .english),
-                       "WorkBuddy also needs one Trust in its connectors.")
+                       "WorkBuddy needs a few steps before its ring shows.")
         XCTAssertEqual(HarnessProgressGuide.onboardingNote(names: ["WorkBuddy", "WorkBuddy AI"], language: .simplifiedChinese),
-                       "WorkBuddy 和 WorkBuddy AI 还要各自在连接器里点一次「信任」。")
+                       "WorkBuddy 和 WorkBuddy AI 还要各自完成几步，圆环才会出现。")
     }
 }

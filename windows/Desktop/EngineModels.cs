@@ -90,7 +90,8 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
 }
 /// The progress ring card for a module whose app must trust Pacer's tool, worded by Core.
 internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
-    string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, bool ShowsTrustCard, string Info);
+    string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, bool ShowsTrustCard, string Info,
+    string? WaitingText = null);
 internal sealed record HarnessProgressStep(string Title, string State);
 internal sealed record EngineModuleBrand(string Dark, string Light, double AccentLift, double AccentLuminance);
 internal sealed record EngineModuleLaunch(string Scheme, string Publisher, IReadOnlyList<string> Executables, string? ConnectorsPath);

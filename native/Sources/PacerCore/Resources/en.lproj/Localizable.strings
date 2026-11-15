@@ -1470,7 +1470,7 @@
 "credits.reminder.expiry_title" = "Remind before credits expire";
 "credits.reminder.expiry_info" = "Rewards and top-ups lapse at their own dates. The dial also turns orange this many days before.";
 "credits.reminder.days_within" = "days ahead";
-"progress_guide.info" = "%1$@ reports how much of a task is done, and Pacer draws it around the task icon. %2$@ connects only tools you trust, so trust pacer_progress once in its connectors. If it isn’t listed, click Refresh there. Tasks that are already open won’t show a ring. When a Pacer update changes the tool, %3$@ asks you to trust it again.";
+"progress_guide.info" = "%1$@ reports how much of a task is done, and Pacer draws it around the task icon. %2$@ reads new tools only when it starts, so the first time it needs to be quit completely and reopened; closing its window isn’t enough. It connects only tools you trust, so trust pacer_progress once in its connectors. Tasks that are already open won’t show a ring. When a Pacer update changes the tool, %3$@ asks you to trust it again.";
 "progress_guide.step.added" = "Progress tool added";
 "progress_guide.step.trust" = "Trust pacer_progress in %@";
 "progress_guide.step.retrust" = "Trust pacer_progress in %@ again";
@@ -1500,8 +1500,8 @@
 "progress_guide.summary.turned_off" = "Progress ring is off in %@";
 "progress_guide.summary.open_app" = "Progress ring: open %@ once";
 "progress_guide.summary.failed" = "Progress ring couldn’t be added";
-"progress_guide.onboarding.one" = "%@ also needs one Trust in its connectors.";
-"progress_guide.onboarding.many" = "%@ each need one Trust in their connectors.";
+"progress_guide.onboarding.one" = "%@ needs a few steps before its ring shows.";
+"progress_guide.onboarding.many" = "%@ each need a few steps before their rings show.";
 "progress_guide.onboarding.separator" = " and ";
 "progress_guide.onboarding.action" = "Set Up";
 "progress_guide.trust_card.caption" = "Third-party service";
@@ -1509,9 +1509,15 @@
 "progress_guide.trust_card.button" = "Trust";
 "progress_guide.trust_card.path" = "Connectors › Custom connectors";
 "progress_guide.waiting" = "Waiting for you";
-"progress_guide.trust_card.refresh" = "Refresh";
 "progress_guide.state.done" = "Done";
 "progress_guide.state.current" = "Current step";
 "progress_guide.state.pending" = "Not yet";
 "progress_guide.hint.open" = "Settings";
 "progress_guide.hint.close" = "Hide";
+"progress_guide.step.reopen" = "Quit %@ completely, then reopen it";
+"progress_guide.step.launch" = "Open %@";
+"progress_guide.step.loaded" = "%@ has loaded the tool";
+"progress_guide.chip.steps_left" = "%ld steps left";
+"progress_guide.summary.steps_left" = "Progress ring: %ld steps left";
+"progress_guide.waiting.reopen" = "Waiting for %@ to start again";
+"progress_guide.trust_card.refresh" = "Refresh";

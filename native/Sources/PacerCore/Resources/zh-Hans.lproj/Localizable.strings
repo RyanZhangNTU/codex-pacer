@@ -1470,7 +1470,7 @@
 "credits.reminder.expiry_title" = "积分快到期时提醒";
 "credits.reminder.expiry_info" = "平台奖励和加油包积分各有到期时间。圆环也会提前这么多天变成橙色。";
 "credits.reminder.days_within" = "天内";
-"progress_guide.info" = "%1$@ 会报告任务完成了多少，Pacer 把它画成任务图标外的圆环。%2$@ 只连接你信任过的工具，所以要在它的连接器里信任一次 pacer_progress；列表里没有时，点那里的「刷新」。已经开着的任务不会出现圆环。Pacer 更新了进度工具后，%3$@ 会要求再信任一次。";
+"progress_guide.info" = "%1$@ 会报告任务完成了多少，Pacer 把它画成任务图标外的圆环。%2$@ 只在启动时读取新加的工具，所以第一次要把它完全退出再打开，只关窗口不算。它只连接你信任过的工具，所以要在它的连接器里信任一次 pacer_progress。已经开着的任务不会出现圆环。Pacer 更新了进度工具后，%3$@ 会要求再信任一次。";
 "progress_guide.step.added" = "已加入进度工具";
 "progress_guide.step.trust" = "在 %@ 里信任 pacer_progress";
 "progress_guide.step.retrust" = "在 %@ 里再信任一次 pacer_progress";
@@ -1500,8 +1500,8 @@
 "progress_guide.summary.turned_off" = "进度圆环已在 %@ 里关闭";
 "progress_guide.summary.open_app" = "进度圆环：先打开一次 %@";
 "progress_guide.summary.failed" = "进度圆环没能添加";
-"progress_guide.onboarding.one" = "还要在 %@ 的连接器里点一次「信任」。";
-"progress_guide.onboarding.many" = "%@ 还要各自在连接器里点一次「信任」。";
+"progress_guide.onboarding.one" = "%@ 还要完成几步，圆环才会出现。";
+"progress_guide.onboarding.many" = "%@ 还要各自完成几步，圆环才会出现。";
 "progress_guide.onboarding.separator" = " 和 ";
 "progress_guide.onboarding.action" = "现在设置";
 "progress_guide.trust_card.caption" = "第三方服务";
@@ -1509,9 +1509,15 @@
 "progress_guide.trust_card.button" = "信任";
 "progress_guide.trust_card.path" = "连接器 › 自定义连接器";
 "progress_guide.waiting" = "等你点完";
-"progress_guide.trust_card.refresh" = "刷新";
 "progress_guide.state.done" = "已完成";
 "progress_guide.state.current" = "当前步骤";
 "progress_guide.state.pending" = "未开始";
 "progress_guide.hint.open" = "设置";
 "progress_guide.hint.close" = "隐藏";
+"progress_guide.step.reopen" = "完全退出 %@，再重新打开";
+"progress_guide.step.launch" = "打开 %@";
+"progress_guide.step.loaded" = "%@ 已载入进度工具";
+"progress_guide.chip.steps_left" = "还差 %ld 步";
+"progress_guide.summary.steps_left" = "进度圆环还差 %ld 步";
+"progress_guide.waiting.reopen" = "等 %@ 重新启动";
+"progress_guide.trust_card.refresh" = "刷新";

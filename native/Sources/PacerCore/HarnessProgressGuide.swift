@@ -4,13 +4,22 @@ import Foundation
 /// (WorkBuddy and WorkBuddy AI), worded once so the Mac and Windows draw the
 /// same steps. Only the user can trust the tool, in the app itself; the card
 /// takes them there and confirms the result on its own.
+///
+/// The app reads its MCP file only when it starts, so an app running since
+/// before Pacer added the tool must be reopened before it lists the tool.
 public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     public enum Stage: String, Codable, Sendable {
-        case adding, trust, retrust, firstTask, ready, turnedOff, toolOff, openApp, conflict, failed, missing, unknown, cleanupFailed
+        case adding, reopen, launch, trust, retrust, firstTask, ready, turnedOff, toolOff, openApp, conflict, failed, missing, unknown, cleanupFailed
     }
     public enum Tone: String, Codable, Sendable { case neutral, attention, info, success, error }
     public enum StepState: String, Codable, Sendable { case done, current, pending }
     public enum Action: String, Codable, Sendable { case openConnectors, openApp, retry }
+
+    /// Whether the app runs, and since when, as the host sees it.
+    public enum AppPresence: Equatable, Sendable {
+        case notRunning
+        case running(since: Date)
+    }
 
     public struct Step: Codable, Equatable, Sendable {
         public let title: String
@@ -20,7 +29,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     public let stage: Stage
     public let chip: String
     public let tone: Tone
-    /// The three steps while setting up; empty once ready or for a problem.
+    /// The four steps while setting up; empty once ready or for a problem.
     public let steps: [Step]
     /// One short line for a problem.
     public let line: String?
@@ -32,6 +41,8 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     public let summary: String?
     /// The card is waiting on the app: hosts check again while it's on screen.
     public let waiting: Bool
+    /// What the card says while it waits.
+    public let waitingText: String?
     /// Draw the app's trust card beside the current step.
     public let showsTrustCard: Bool
     /// The ⓘ text.
@@ -40,8 +51,10 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     /// - Parameters:
     ///   - ringOn: the module and its ring are both on.
     ///   - name: the app's own name, such as "WorkBuddy AI".
+    ///   - addedAt: when Pacer last wrote its entry; nil when unknown.
+    ///   - app: whether the app runs and since when; nil when the host can't tell.
     package init?(setup: LocalHarnessProgressStatus?, connection: LocalHarnessProgressConnection?, reported: Bool,
-                 ringOn: Bool, name: String, language: AppLanguage? = nil) {
+                  ringOn: Bool, name: String, addedAt: Date? = nil, app: AppPresence? = nil, language: AppLanguage? = nil) {
         func text(_ key: String, _ arguments: CVarArg...) -> String { L10n.text("progress_guide." + key, arguments: arguments, language: language) }
         info = text("info", name, name, name)
         let stage: Stage
@@ -57,8 +70,12 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
             case .failed: stage = .failed
             case .configured:
                 switch connection {
-                case .needsTrust: stage = .trust
-                case .retrust: stage = .retrust
+                case .needsTrust, .retrust:
+                    switch app {
+                    case .notRunning?: stage = .launch
+                    case .running(let since)? where addedAt.map({ since < $0 }) ?? false: stage = .reopen
+                    default: stage = connection == .retrust ? .retrust : .trust
+                    }
                 case .trusted: stage = reported ? .ready : .firstTask
                 case .disabled: stage = .turnedOff
                 case .toolDisabled: stage = .toolOff
@@ -68,22 +85,28 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
             }
         }
         self.stage = stage
+        let again = connection == .retrust
         let added = Step(title: text("step.added"), state: stage == .adding ? .current : .done)
-        let trustTitle = text(stage == .retrust ? "step.retrust" : "step.trust", name)
-        let firstTask = Step(title: text("step.first_task"), state: stage == .firstTask ? .current : .pending)
-        switch stage {
-        case .adding:
-            steps = [added, .init(title: trustTitle, state: .pending), firstTask]
-        case .trust, .retrust:
-            steps = [added, .init(title: trustTitle, state: .current), firstTask]
-        case .firstTask:
-            steps = [added, .init(title: text("step.trusted", name), state: .done), firstTask]
-        default:
-            steps = []
+        let load: Step = switch stage {
+        case .reopen: .init(title: text("step.reopen", name), state: .current)
+        case .launch: .init(title: text("step.launch", name), state: .current)
+        case .adding: .init(title: text("step.launch", name), state: .pending)
+        default: .init(title: text("step.loaded", name), state: .done)
         }
+        let trustTitle = text(again ? "step.retrust" : "step.trust", name)
+        let trust: Step = switch stage {
+        case .trust, .retrust: .init(title: trustTitle, state: .current)
+        case .firstTask: .init(title: text("step.trusted", name), state: .done)
+        default: .init(title: trustTitle, state: .pending)
+        }
+        let firstTask = Step(title: text("step.first_task"), state: stage == .firstTask ? .current : .pending)
+        steps = [.adding, .reopen, .launch, .trust, .retrust, .firstTask].contains(stage) ? [added, load, trust, firstTask] : []
+        // The steps the user still has to take, not counting the new task.
+        let left = steps.dropLast().filter { $0.state != .done }.count
         switch stage {
         case .adding: chip = text("chip.adding"); tone = .neutral
-        case .trust: chip = text("chip.trust"); tone = .attention
+        case .reopen, .launch, .trust:
+            chip = again ? text("chip.retrust") : left == 1 ? text("chip.trust") : text("chip.steps_left", left); tone = .attention
         case .retrust: chip = text("chip.retrust"); tone = .attention
         case .firstTask: chip = text("chip.first_task"); tone = .info
         case .ready: chip = text("chip.ready"); tone = .success
@@ -103,21 +126,23 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         default: line = nil
         }
         switch stage {
-        case .trust, .retrust, .turnedOff, .toolOff, .unknown: action = .openConnectors; actionTitle = text("action.open_connectors", name)
+        case .launch, .trust, .retrust, .turnedOff, .toolOff, .unknown: action = .openConnectors; actionTitle = text("action.open_connectors", name)
         case .openApp: action = .openApp; actionTitle = text("action.open_app", name)
         case .conflict, .failed, .missing, .cleanupFailed: action = .retry; actionTitle = text("action.retry")
+        // Only the user can quit the app; Pacer then sees it start again.
         default: action = nil; actionTitle = nil
         }
-        attention = [.trust, .retrust, .turnedOff, .toolOff, .openApp, .conflict, .failed, .missing].contains(stage)
+        attention = [.reopen, .launch, .trust, .retrust, .turnedOff, .toolOff, .openApp, .conflict, .failed, .missing].contains(stage)
         switch stage {
-        case .trust: summary = text("summary.trust")
+        case .reopen, .launch, .trust: summary = again ? text("summary.retrust") : left == 1 ? text("summary.trust") : text("summary.steps_left", left)
         case .retrust: summary = text("summary.retrust")
         case .turnedOff, .toolOff: summary = text("summary.turned_off", name)
         case .openApp: summary = text("summary.open_app", name)
         case .conflict, .failed, .missing: summary = text("summary.failed")
         default: summary = nil
         }
-        waiting = [.trust, .retrust, .turnedOff, .toolOff, .openApp, .unknown].contains(stage)
+        waiting = [.reopen, .launch, .trust, .retrust, .turnedOff, .toolOff, .openApp, .unknown].contains(stage)
+        waitingText = stage == .reopen ? text("waiting.reopen", name) : waiting ? text("waiting") : nil
         showsTrustCard = stage == .trust || stage == .retrust
     }
 

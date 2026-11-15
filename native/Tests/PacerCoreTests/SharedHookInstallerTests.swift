@@ -104,6 +104,7 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertEqual(status(), .toolDisabled)
         storage.files[config] = try connector(disabled: true)
         XCTAssertEqual(status(), .disabled)
+        storage.files[LocalHarnessProgressSetup.addedMarker(home)] = Data("1770000000".utf8)
         let original = storage.files
         XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
         XCTAssertEqual(storage.files, original)
@@ -118,7 +119,13 @@ final class SharedHookInstallerTests: XCTestCase {
         let target = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: true)
         let off = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: false)
         XCTAssertFalse(LocalHarnessProgressSetup.markReported(home, storage: storage), "Pacer writes only inside a folder it made")
+        let before = Date().addingTimeInterval(-2)
         XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        let added = try XCTUnwrap(LocalHarnessProgressSetup.addedAt(home, storage: storage), "Pacer keeps when it added the tool, which the app reads only at start")
+        XCTAssertGreaterThanOrEqual(added, before)
+        storage.files[LocalHarnessProgressSetup.addedMarker(home)] = nil
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        XCTAssertNotNil(LocalHarnessProgressSetup.addedAt(home, storage: storage), "An entry with no time counts as added now")
         XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage))
         XCTAssertTrue(LocalHarnessProgressSetup.markReported(home, storage: storage))
         XCTAssertTrue(LocalHarnessProgressSetup.reported(home, storage: storage))
@@ -126,6 +133,7 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertTrue(LocalHarnessProgressSetup.reported(home, storage: storage), "Turning the ring off and on keeps the card collapsed")
         XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage, matchNativeReporter: true))
         XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage), "Uninstalling leaves nothing of Pacer's behind")
+        XCTAssertNil(LocalHarnessProgressSetup.addedAt(home, storage: storage))
     }
     func testInjectedPythonCommandsAtomicPermissionsAndIdempotence() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
