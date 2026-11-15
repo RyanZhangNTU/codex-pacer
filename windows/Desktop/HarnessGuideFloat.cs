@@ -33,6 +33,8 @@ internal sealed class HarnessGuideFloat : Window
     internal static void Open(string provider, EngineClient client, PreferencesSession preferences, UiText ui, ResourceDictionary resources,
         Func<string, UIElement> picture, System.Drawing.Rectangle area)
     {
+        // A second click for the same app, such as the restart finishing, keeps the guide.
+        if (current is { } open && open.Provider == provider && engine == client) { Follow(); return; }
         current?.Close();
         var shown = new HarnessGuideFloat(provider, ui, resources, picture, area);
         var timer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };

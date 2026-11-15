@@ -30,6 +30,8 @@ struct WorkBuddyTranscript {
         var ending: Ending?
         var ended: Date?
         var question: Question?
+        /// The newest tool call still without a result.
+        var latestCall: Question?
         var model: Model?
         var effort: String?
         var calls: Set<String> = []
@@ -37,6 +39,15 @@ struct WorkBuddyTranscript {
         var progress: Estimate?
         var response: Response?
         var rate: ResponsePerformance?
+
+        /// What a turn waits on while WorkBuddy marks its session pending: the
+        /// user's answer to a question, or their go-ahead for a tool call, such
+        /// as an image that costs credits.
+        var awaiting: (kind: PendingAttentionRequest.Kind, call: Question)? {
+            guard ending == nil else { return nil }
+            if let question { return (.input, question) }
+            return latestCall.map { (.approval, $0) }
+        }
 
         mutating func observeResponse(_ metadata: [String: JSONFieldView], at time: Date) {
             guard let step = metadata["stepSeq"]?.integer(), step > 0,
@@ -159,6 +170,7 @@ struct WorkBuddyTranscript {
             current.ending = .cancelled
             current.ended = time
             current.question = nil
+            current.latestCall = nil
             turn = current
             return true
         }
@@ -178,6 +190,7 @@ struct WorkBuddyTranscript {
         case "function_call":
             guard let call = Self.identifier(values["callId"]), current.calls.count < 64 else { return false }
             current.calls.insert(call)
+            current.latestCall = Question(call: call, time: time)
             current.ending = nil
             current.ended = nil
             if values["name"]?.matchesStringLiteral("AskUserQuestion") == true {
@@ -190,6 +203,7 @@ struct WorkBuddyTranscript {
             guard let call = Self.identifier(values["callId"]), current.calls.remove(call) != nil else { return false }
             if let boundary = current.response?.boundary { current.response?.boundary = max(boundary, time) }
             if current.question?.call == call { current.question = nil }
+            if current.latestCall?.call == call { current.latestCall = nil }
             // WorkBuddy can stamp a response a few milliseconds before it
             // persists the matching call. The call ID and parent still agree.
             if let estimate = current.pendingProgress.removeValue(forKey: call), time >= estimate.at.addingTimeInterval(-1),

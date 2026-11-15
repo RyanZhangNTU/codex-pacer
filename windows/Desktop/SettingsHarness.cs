@@ -365,11 +365,14 @@ internal sealed partial class SettingsWindow
         if (busy && !confirmed) { ShowGuidePrompt(provider, "tasks"); return true; }
         harnessGuidePrompt = null;
         restartingHarnessApps.Add(provider);
+        // The guide says Pacer is restarting the app right away; it takes seconds.
+        OpenGuideFloat(provider, bringForward: false);
         try
         {
             var result = await WindowsConversationApplication.RestartForGuideAsync(provider, executables);
             if (result == WindowsConversationApplication.RestartResult.StillRunning)
             {
+                CloseGuideFloat(provider);
                 issue.Text = ui.Text("progress_guide.restart.failed").Replace("%@", module.DisplayName ?? provider, StringComparison.Ordinal);
                 issue.Visibility = Visibility.Visible;
                 // Once the user quits it, Pacer opens it again, as the hint says.
@@ -377,7 +380,7 @@ internal sealed partial class SettingsWindow
                     || !await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return true;
                 issue.Visibility = Visibility.Collapsed;
             }
-            else if (result != WindowsConversationApplication.RestartResult.Restarted) return false;
+            else if (result != WindowsConversationApplication.RestartResult.Restarted) { CloseGuideFloat(provider); return false; }
             openedHarnessConnectors[provider] = DateTime.UtcNow;
         }
         finally { restartingHarnessApps.Remove(provider); }
@@ -386,15 +389,21 @@ internal sealed partial class SettingsWindow
         return true;
     }
 
-    /// Opens the floating guide for the app the card just opened, and brings
-    /// the app forward if it didn't come forward itself. The guide outlives
-    /// Settings: people often close it once they're in the app.
-    private void OpenGuideFloat(string provider)
+    /// Opens the floating guide for the app the card just opened, or keeps the
+    /// one already open for it, and brings the app forward if it didn't come
+    /// forward itself. The guide outlives Settings: people often close it once
+    /// they're in the app.
+    private void OpenGuideFloat(string provider, bool bringForward = true)
     {
         if (demo || engine is not { } client || HarnessModule(provider) is not { } module) return;
         var area = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
         HarnessGuideFloat.Open(provider, client, session, ui, Resources, kind => kind == "trust" ? TrustPicture(provider) : CustomConnectorPicture(), area);
-        _ = AppWindows.BringForwardAsync(module.Launch?.Executables);
+        if (bringForward) _ = AppWindows.BringForwardAsync(module.Launch?.Executables);
+    }
+
+    private static void CloseGuideFloat(string provider)
+    {
+        if (HarnessGuideFloat.Current is { } shown && shown.Provider == provider) shown.Close();
     }
 
     private static void FollowGuideFloat() => HarnessGuideFloat.Follow();

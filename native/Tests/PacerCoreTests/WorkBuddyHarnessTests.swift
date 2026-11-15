@@ -247,6 +247,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
         consume(prompt)
         consume(call)
         XCTAssertEqual(transcript.turn?.question?.call, "ask1")
+        XCTAssertEqual(transcript.turn?.awaiting?.kind, .input, "A question waits on the user's answer, not a go-ahead")
         consume(final)
         XCTAssertNil(transcript.turn?.ending, "An unreturned tool cannot prove completion")
         consume(result)
@@ -289,6 +290,53 @@ final class WorkBuddyHarnessTests: XCTestCase {
         try write(["type": "function_call_result", "status": "failed", "id": "bad-result", "parentId": "bad",
                    "callId": "report-bad", "output": ["type": "text", "text": "pacer-progress:accepted"]])
         XCTAssertEqual(transcript.turn?.progress?.percent, 37)
+    }
+
+    func testAToolWaitingForTheUsersGoAheadKeepsTheTask() async throws {
+        // Seen 11/15: WorkBuddy asks before an image that costs credits. The
+        // session turns pending with the tool call open and no question.
+        let fixture = try Fixture(), monitor = try monitor(), updates = Updates()
+        let session = Fixture.session
+        try fixture.createSessions()
+        try fixture.exec("""
+            ALTER TABLE sessions ADD COLUMN cwd TEXT;
+            INSERT INTO sessions VALUES ('\(session)','account','working',\(updated - 2000),NULL,'local',NULL,1,0,'Fixture task','C:/fixture');
+            """)
+        let workspace = fixture.home.appendingPathComponent("projects/C-fixture", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let file = workspace.appendingPathComponent(session + ".jsonl")
+        func event(_ type: String, _ id: String, _ parent: String?, _ milliseconds: Int64, _ fields: [String: Any] = [:],
+                   metadata: [String: Any] = [:]) throws -> Data {
+            var row = fields
+            row["type"] = type; row["id"] = id; row["parentId"] = parent
+            row["timestamp"] = updated + milliseconds; row["sessionId"] = session
+            row["providerData"] = ["conversationRequestId": "r1"].merging(metadata) { _, new in new }
+            return try JSONSerialization.data(withJSONObject: row) + Data([10])
+        }
+        let start = try event("message", "user", nil, -9000, ["role": "user"], metadata: ["startsNewUserRequest": true])
+        let call = try event("function_call", "call", "user", -3000, ["callId": "image", "name": "DeferExecuteTool"])
+        try (start + call).write(to: file)
+        await monitor.start(home: fixture.home, policy: .expanded) { await updates.append($0) }
+        let first = await updates.history.last?.activities.first
+        let working = try XCTUnwrap(first)
+        XCTAssertEqual(working.phase, .running)
+
+        try fixture.exec("UPDATE sessions SET status='pending',updated_at=\(updated - 1000) WHERE id='\(session)'")
+        await monitor.refresh()
+        let waiting = await updates.history.last
+        XCTAssertEqual(waiting?.activities.map(\.id), [working.id], "The task stays while WorkBuddy waits on the user")
+        XCTAssertEqual(waiting?.activities.first?.phase, .waitingForInput)
+        XCTAssertEqual(waiting?.requests.map(\.kind), [.approval])
+        XCTAssertEqual(waiting?.requests.first?.threadID, working.threadID)
+
+        let result = try event("function_call_result", "result", "call", -500, ["callId": "image", "status": "completed"])
+        try (start + call + result).write(to: file)
+        try fixture.exec("UPDATE sessions SET status='working',updated_at=\(updated) WHERE id='\(session)'")
+        await monitor.refresh()
+        let resumed = await updates.history.last
+        XCTAssertEqual(resumed?.activities.first?.phase, .running, "Once the user goes ahead, the task works again")
+        XCTAssertTrue(resumed?.requests.isEmpty == true)
+        await monitor.stop()
     }
 
     func testProjectsTurnModelThoughtLevelAndThroughputFromLocalRecords() async throws {

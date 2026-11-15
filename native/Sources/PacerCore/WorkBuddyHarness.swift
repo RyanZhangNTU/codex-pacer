@@ -677,11 +677,12 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
                     state = .working(turn.calls.isEmpty ? stage : .tool)
                     changedAt = row.updated
                 } else if row.status == "pending", age < WorkBuddySessionStore.activityLifetime,
-                          let question = turn.question, turn.ending == nil, question.time <= row.updated.addingTimeInterval(1) {
+                          let awaiting = turn.awaiting, awaiting.call.time <= row.updated.addingTimeInterval(1) {
+                    // A question, or a tool waiting on the user's go-ahead.
                     witnessed[row.id] = turn.id
-                    state = .waiting(.input)
-                    changedAt = question.time
-                    observation.requests.append(request(question, session: session, turn: turnID))
+                    state = .waiting(awaiting.kind)
+                    changedAt = awaiting.call.time
+                    observation.requests.append(request(awaiting, session: session, turn: turnID))
                 } else if let ending = turn.ending, let ended = turn.ended,
                           [row.updated, row.lastActivity].compactMap({ $0 }).contains(where: { abs($0.timeIntervalSince(ended)) <= 3 }),
                           let terminal = terminalState(status: row.status, ending: ending) {
@@ -720,10 +721,9 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
                 state = .working(.starting); changedAt = run.updated
             case .running:
                 witnessedRuns.insert(run.id)
-                if linked?.status == "pending", let turn, let question = turn.question, turn.ending == nil,
-                   question.time <= observedAt.addingTimeInterval(1) {
-                    state = .waiting(.input); changedAt = question.time
-                    observation.requests.append(request(question, session: session, turn: turnID))
+                if linked?.status == "pending", let awaiting = turn?.awaiting, awaiting.call.time <= observedAt.addingTimeInterval(1) {
+                    state = .waiting(awaiting.kind); changedAt = awaiting.call.time
+                    observation.requests.append(request(awaiting, session: session, turn: turnID))
                 } else {
                     state = .working(turn?.calls.isEmpty != false ? .working : .tool)
                     changedAt = observedAt
@@ -762,9 +762,10 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         return turns
     }
 
-    private nonisolated func request(_ question: WorkBuddyTranscript.Question, session: String, turn: String) -> PendingAttentionRequest {
-        .init(id: CompletionDismissalStore.digest(["workbuddy-question", turn, question.call]), threadID: session,
-              sourceHostID: nil, sourceName: id.displayName, kind: .input, detectedAt: question.time, provider: id)
+    private nonisolated func request(_ awaiting: (kind: PendingAttentionRequest.Kind, call: WorkBuddyTranscript.Question),
+                                     session: String, turn: String) -> PendingAttentionRequest {
+        .init(id: CompletionDismissalStore.digest([awaiting.kind == .input ? "workbuddy-question" : "workbuddy-approval", turn, awaiting.call.call]),
+              threadID: session, sourceHostID: nil, sourceName: id.displayName, kind: awaiting.kind, detectedAt: awaiting.call.time, provider: id)
     }
 
     private nonisolated func conversationURL(_ id: String) -> URL? {
