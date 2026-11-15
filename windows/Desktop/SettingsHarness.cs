@@ -328,9 +328,11 @@ internal sealed partial class SettingsWindow
         return frame;
     }
 
-    // Which modules' connectors the user opened from the card, for the guide's
-    // open and custom steps.
-    private static readonly HashSet<string> openedHarnessConnectors = new(StringComparer.Ordinal);
+    // Which modules' connectors the user opened from the card, and when, for
+    // the guide's open and custom steps.
+    private static readonly Dictionary<string, DateTime> openedHarnessConnectors = new(StringComparer.Ordinal);
+    // Modules whose app Pacer is restarting: a check in between sees it closed.
+    private static readonly HashSet<string> restartingHarnessApps = new(StringComparer.Ordinal);
 
     // A confirmation the card shows in place of its action.
     private sealed record HarnessGuidePrompt(string Provider, string Stage, string Kind);
@@ -348,7 +350,7 @@ internal sealed partial class SettingsWindow
     private async Task<bool> OpenHarnessConnectorsAsync(string provider, bool launch = false)
     {
         if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return false;
-        openedHarnessConnectors.Add(provider);
+        openedHarnessConnectors[provider] = DateTime.UtcNow;
         OpenGuideFloat(provider);
         await RefreshHarnessProgressConnectionAsync(polling: true, provider);
         return true;
@@ -362,18 +364,23 @@ internal sealed partial class SettingsWindow
         bool busy = engine?.LatestSnapshot?.Tasks.Any(task => task.Provider == provider && task.Phase is not ("completed" or "interrupted")) == true;
         if (busy && !confirmed) { ShowGuidePrompt(provider, "tasks"); return true; }
         harnessGuidePrompt = null;
-        var result = await WindowsConversationApplication.RestartForGuideAsync(provider, executables);
-        if (result == WindowsConversationApplication.RestartResult.StillRunning)
+        restartingHarnessApps.Add(provider);
+        try
         {
-            issue.Text = ui.Text("progress_guide.restart.failed").Replace("%@", module.DisplayName ?? provider, StringComparison.Ordinal);
-            issue.Visibility = Visibility.Visible;
-            // Once the user quits it, Pacer opens it again, as the hint says.
-            if (!await WindowsConversationApplication.WaitForExitAsync(executables, TimeSpan.FromMinutes(3))
-                || !await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return true;
-            issue.Visibility = Visibility.Collapsed;
+            var result = await WindowsConversationApplication.RestartForGuideAsync(provider, executables);
+            if (result == WindowsConversationApplication.RestartResult.StillRunning)
+            {
+                issue.Text = ui.Text("progress_guide.restart.failed").Replace("%@", module.DisplayName ?? provider, StringComparison.Ordinal);
+                issue.Visibility = Visibility.Visible;
+                // Once the user quits it, Pacer opens it again, as the hint says.
+                if (!await WindowsConversationApplication.WaitForExitAsync(executables, TimeSpan.FromMinutes(3))
+                    || !await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return true;
+                issue.Visibility = Visibility.Collapsed;
+            }
+            else if (result != WindowsConversationApplication.RestartResult.Restarted) return false;
+            openedHarnessConnectors[provider] = DateTime.UtcNow;
         }
-        else if (result != WindowsConversationApplication.RestartResult.Restarted) return false;
-        openedHarnessConnectors.Add(provider);
+        finally { restartingHarnessApps.Remove(provider); }
         OpenGuideFloat(provider);
         await RefreshHarnessProgressConnectionAsync(polling: true, provider);
         return true;
@@ -601,12 +608,18 @@ internal sealed partial class SettingsWindow
         // whether it runs and since when. The engine reads which page it shows
         // from the app's log.
         string checkedProvider = module.Provider;
+        if (restartingHarnessApps.Contains(checkedProvider)) return;
+        var checkedAt = DateTime.UtcNow;
         var (running, started) = await Task.Run(() => AppPresence(module.Launch?.Executables));
+        // A check that ran while Pacer restarted the app, or that saw it closed
+        // while Pacer opened it, is stale: it would send the card back a step.
+        if (restartingHarnessApps.Contains(checkedProvider)
+            || !running && openedHarnessConnectors.TryGetValue(checkedProvider, out var openedAt) && openedAt >= checkedAt) return;
         if (!running) openedHarnessConnectors.Remove(checkedProvider);
         try
         {
             await client.SendAsync("refreshHarnessProgressConnection", new { provider = checkedProvider, appRunning = running, appStartedAt = started,
-                openedConnectors = openedHarnessConnectors.Contains(checkedProvider) });
+                openedConnectors = openedHarnessConnectors.ContainsKey(checkedProvider) });
         }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { }
     }
