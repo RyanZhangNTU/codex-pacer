@@ -5,7 +5,9 @@ package enum LocalHarnessProgressStatus: String, Codable, Sendable {
 }
 
 package enum LocalHarnessProgressConnection: String, Codable, Sendable {
-    case needsTrust, trusted, disabled, toolDisabled, missing, unknown
+    /// `retrust`: the app trusted an earlier copy of the tool, and a Pacer
+    /// update changed its command, so the app asks again.
+    case needsTrust, retrust, trusted, disabled, toolDisabled, missing, unknown
 }
 
 /// Installs one owned stdio server in a local Harness's user MCP file.
@@ -13,9 +15,11 @@ package enum LocalHarnessProgressSetup {
     package struct State: Sendable {
         package let setup: LocalHarnessProgressStatus
         package let connection: LocalHarnessProgressConnection?
+        /// The app has reported progress through the tool at least once.
+        package var reported: Bool
 
-        package init(_ setup: LocalHarnessProgressStatus, connection: LocalHarnessProgressConnection? = nil) {
-            self.setup = setup; self.connection = connection
+        package init(_ setup: LocalHarnessProgressStatus, connection: LocalHarnessProgressConnection? = nil, reported: Bool = false) {
+            self.setup = setup; self.connection = connection; self.reported = reported
         }
     }
 
@@ -52,6 +56,27 @@ package enum LocalHarnessProgressSetup {
 
     private static func directory(_ home: URL) -> URL { home.appendingPathComponent("pacer-progress", isDirectory: true) }
     package static func flag(_ home: URL) -> URL { directory(home).appendingPathComponent("enabled") }
+    /// Kept in Pacer's own folder once the app reports progress, so the card
+    /// stays collapsed across restarts and after the ring is turned back on.
+    package static func reportedMarker(_ home: URL) -> URL { directory(home).appendingPathComponent("reported") }
+
+    package static func reported(_ home: URL, storage: any ClaudeHookStorage) -> Bool {
+        let marker = reportedMarker(home)
+        guard (try? storage.validate(marker)) != nil, storage.exists(marker) else { return false }
+        return (try? storage.read(marker)) == on
+    }
+
+    /// Records the first report. Only writes inside a folder Pacer already made.
+    @discardableResult package static func markReported(_ home: URL, storage: any ClaudeHookStorage) -> Bool {
+        let folder = directory(home), marker = reportedMarker(home)
+        do {
+            try storage.validate(folder); try storage.validate(marker)
+            guard storage.isDirectory(folder) else { return false }
+            if try storage.exists(marker) && storage.read(marker) == on { return true }
+            try storage.replace(marker, with: on, permissions: 0o600)
+            return true
+        } catch { return false }
+    }
 
     package static func sync(_ ticket: ProgressSetupQueue<Target>.Ticket, storage: any ClaudeHookStorage,
                              connection: ConnectionReader? = nil, inspectOnly: Bool = false,
@@ -61,7 +86,7 @@ package enum LocalHarnessProgressSetup {
         let setup: LocalHarnessProgressStatus? = inspectOnly ? .configured : await configure(ticket, storage: storage, prepare: prepare, owns: owns)
         guard let setup else { return nil }
         let status = setup == .configured ? connection.map { inspect(ticket.target, storage: storage, connection: $0, owns: owns) } : nil
-        return State(setup, connection: status)
+        return State(setup, connection: status, reported: setup == .configured && reported(ticket.target.home, storage: storage))
     }
 
     private static func configure(_ ticket: ProgressSetupQueue<Target>.Ticket, storage: any ClaudeHookStorage,
@@ -141,6 +166,12 @@ package enum LocalHarnessProgressSetup {
                 }
             }
             if !target.enabled && !checkOnly && matchNativeReporter && storage.exists(flag) { try storage.remove(flag) }
+            // Uninstalling leaves nothing of Pacer's in the app's folder.
+            if !target.enabled && !checkOnly && matchNativeReporter {
+                let marker = reportedMarker(target.home)
+                try storage.validate(marker)
+                if storage.exists(marker) { try storage.remove(marker) }
+            }
             if matchNativeReporter, try !editRule() { return .conflict }
             if !target.enabled && previous == nil { return nil }
             if checkOnly { return target.enabled ? .configured : nil }

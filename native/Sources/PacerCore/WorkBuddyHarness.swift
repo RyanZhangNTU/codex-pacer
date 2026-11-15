@@ -71,7 +71,15 @@ enum WorkBuddyHarness {
             // Pacer's entry has no environment overrides or working directory.
             let material = [command, arguments.sorted { $0.utf16.lexicographicallyPrecedes($1.utf16) }.joined(separator: ","), ""].joined(separator: "|")
             let key = CompletionDismissalStore.hex(SHA256.hash(data: Data(material.utf8))) + "::" + CodexProgressEvidence.server
-            guard let approval = try approvals.fields([key])[key] else { return .needsTrust }
+            guard let approval = try approvals.fields([key])[key] else {
+                // An approval for an earlier command of the same server means
+                // WorkBuddy trusted Pacer's tool before a Pacer update changed it.
+                var earlier = false
+                try approvals.forEachField(maximumCount: 4096) { name, _ in
+                    if name != key, name.hasSuffix("::" + CodexProgressEvidence.server) { earlier = true }
+                }
+                return earlier ? .retrust : .needsTrust
+            }
             guard approval.number() != nil else { return .unknown }
             if let policy = try readObject("mcp-tool-policy.json") {
                 let fields = try policy.fields(["version", "disabledTools"])

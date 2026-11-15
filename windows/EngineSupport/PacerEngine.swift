@@ -829,7 +829,9 @@ actor EngineRuntime {
             guard active, let name = command.params?.provider,
                   let definition = localHarnesses.definitions.first(where: { $0.descriptor.id.rawValue == name }),
                   definition.progressConnection != nil else { failure(id: command.id, code: "unavailable"); return true }
-            scheduleLocalHarnessProgress(definition, inspectOnly: true)
+            // Once the app has made its folder, setup continues without a retry.
+            if localProgressStatuses[definition.descriptor.id]?.setup == .missingHome { scheduleLocalHarnessProgress(definition, force: true) }
+            else { scheduleLocalHarnessProgress(definition, inspectOnly: true) }
         case "inspectProviderHome":
             guard let name = command.params?.provider, let provider = AgentProvider(rawValue: name),
                   provider == .claude || provider == .deepseek || localHarnesses.definition(for: provider) != nil else {
@@ -1396,6 +1398,7 @@ actor EngineRuntime {
         if update.needsSourceBinding {
             inbox.bindSourceHomes(provider: provider, localHome: navigationHome(for: provider), localAccountScope: update.activity.scope)
         }
+        noteLocalHarnessProgress(provider, snapshot: snapshot)
         if projectionReady, refreshTask == nil { projectCollected(at: now()) }
         else { handOffToCollect(localSnapshot: true) }
     }
@@ -1417,6 +1420,11 @@ actor EngineRuntime {
             module.balance = registered.balance?.rawValue
         }
         module.prominent = moduleLibrary.entries.first { $0.provider == provider }?.prominent
+        if let descriptor, descriptor.progressConnector {
+            let state = localProgressStatuses[provider]
+            module.progressGuide = HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
+                ringOn: enabled.contains(provider) && !disabledHarnessProgress.contains(provider), name: descriptor.name)
+        }
         if let daily = demo && provider == .workbuddy ? DemoScenario.workbuddyDaily(at: now()) : harnessActivities[provider]?.usage?.daily {
             module.week = HarnessWeekPresentation.week(provider: provider, daily: daily, now: now())
         }
@@ -1481,6 +1489,19 @@ actor EngineRuntime {
                 arguments: ["--prepare-codex-progress", paths.root.path, home.path], timeout: 8, limit: 8192),
               let command = try? JSONDecoder().decode(CodexProgressCommand.self, from: data), paths.owns(command, home: home) else { return nil }
         return command
+    }
+
+    /// The first reported estimate confirms the whole chain, so the card
+    /// collapses; an app that has just made its folder lets setup continue.
+    private func noteLocalHarnessProgress(_ provider: AgentProvider, snapshot: HarnessActivity) {
+        guard let definition = localHarnesses.definition(for: provider), let state = localProgressStatuses[provider] else { return }
+        if state.setup == .missingHome, localProgressTasks[provider] == nil {
+            scheduleLocalHarnessProgress(definition, force: true)
+        } else if state.setup == .configured, !state.reported, snapshot.activities.contains(where: { $0.selfReportedProgress != nil }) {
+            localProgressStatuses[provider]?.reported = true
+            let home = localHarnessHome(definition)
+            Task.detached(priority: .utility) { LocalHarnessProgressSetup.markReported(home, storage: WindowsLocalProfileStorage()) }
+        }
     }
 
     private func receiveLocalHarnessProgress(_ status: LocalHarnessProgressSetup.State?, provider: AgentProvider,

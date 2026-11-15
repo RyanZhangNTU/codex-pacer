@@ -94,8 +94,10 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertEqual(status(), .needsTrust)
         let material = "\(reporter)|\(arguments.sorted().joined(separator: ","))|"
         let expected = CompletionDismissalStore.hex(SHA256.hash(data: Data(material.utf8)))
-        storage.files[approvals] = Data("{\"\(expected)::some_other_tool\":1,\"old::pacer_progress\":2}".utf8)
+        storage.files[approvals] = Data("{\"\(expected)::some_other_tool\":1}".utf8)
         XCTAssertEqual(status(), .needsTrust)
+        storage.files[approvals] = Data("{\"\(expected)::some_other_tool\":1,\"old::pacer_progress\":2}".utf8)
+        XCTAssertEqual(status(), .retrust, "An approval of an earlier command means a Pacer update changed the tool")
         storage.files[approvals] = Data("{\"\(expected)::pacer_progress\":1770000000000}".utf8)
         XCTAssertEqual(status(), .trusted)
         storage.files[policy] = Data(#"{"version":1,"disabledTools":{"pacer_progress":["report_progress"]}}"#.utf8)
@@ -109,6 +111,21 @@ final class SharedHookInstallerTests: XCTestCase {
         storage.unsafe.insert(approvals)
         XCTAssertEqual(status(), .unknown)
         XCTAssertEqual(storage.replacements, 0)
+    }
+    func testFirstReportIsKeptInPacersFolderUntilUninstall() throws {
+        let (home, storage, _) = fixture()
+        let reporter = home.appendingPathComponent("Pacer Engine.exe").path
+        let target = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: true)
+        let off = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: false)
+        XCTAssertFalse(LocalHarnessProgressSetup.markReported(home, storage: storage), "Pacer writes only inside a folder it made")
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage))
+        XCTAssertTrue(LocalHarnessProgressSetup.markReported(home, storage: storage))
+        XCTAssertTrue(LocalHarnessProgressSetup.reported(home, storage: storage))
+        XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage))
+        XCTAssertTrue(LocalHarnessProgressSetup.reported(home, storage: storage), "Turning the ring off and on keeps the card collapsed")
+        XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage, matchNativeReporter: true))
+        XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage), "Uninstalling leaves nothing of Pacer's behind")
     }
     func testInjectedPythonCommandsAtomicPermissionsAndIdempotence() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")

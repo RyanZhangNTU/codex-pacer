@@ -208,6 +208,8 @@ struct EngineModule: Codable, Equatable {
     var reportsAccountCredits: Bool? = nil
     var progressSetup: LocalHarnessProgressStatus? = nil
     var progressConnection: LocalHarnessProgressConnection? = nil
+    /// The progress ring card, worded by Core, for a module whose app must trust Pacer's tool.
+    var progressGuide: HarnessProgressGuide? = nil
     /// Registry facts, so the host draws every module from one description.
     var brand: EngineModuleBrand? = nil
     var website: URL? = nil
