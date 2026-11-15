@@ -483,6 +483,13 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
     private var retry: Task<Void, Never>?
     private var retryDeadline: TimeInterval?
     private var retryRevision: UInt64 = 0
+    // WorkBuddy appends to a running task's transcript through a stream it
+    // keeps open, and Windows reports no change for such writes until the file
+    // closes (seen 11/15: none within 8 s; 0.06 s for open, append, close). While
+    // a task runs, the monitor compares its files' sizes and times every second
+    // instead, which costs a few metadata reads, and reads them when they change.
+    private var probe: Task<Void, Never>?
+    private var probedFiles: [String] = []
     private var publish: (@Sendable (HarnessActivity) async -> Void)?
     private var lastObservation: HarnessActivity?
     private var owner: String?
@@ -528,6 +535,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
     private func reset() -> ActivityLogWatcher? {
         generation &+= 1; home = nil; publish = nil
         cancelRetry()
+        probe?.cancel(); probe = nil; probedFiles = []
         let oldWatcher = watcher
         oldWatcher?.stop(); watcher = nil; watchURLs = []
         lastObservation = nil; lastSuccess = nil; failureCount = 0; accountRetries = 0
@@ -602,6 +610,10 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
             }
         }
         watcher.update(watchURLs, interval: policy.interval)
+        probedFiles = fileStamps()
+        if observation.status == .ready, observation.activities.contains(where: { $0.phase == .running || $0.phase == .waitingForInput }) {
+            startProbe()
+        } else { probe?.cancel(); probe = nil }
         if observation.status == .ready { failureCount = 0 }
         else { failureCount = min(4, failureCount + 1) }
         if observation.status == .ready {
@@ -806,6 +818,34 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         let parent = projects.appendingPathComponent(workspace, isDirectory: true)
         guard io.files.metadata(projects)?.isDirectory == true, io.files.metadata(parent)?.isDirectory == true else { return nil }
         return parent.appendingPathComponent(row.id + ".jsonl")
+    }
+
+    /// The size and time of each watched file, in order.
+    private func fileStamps() -> [String] {
+        watchURLs.compactMap { url in
+            guard let metadata = io.files.metadata(url), metadata.isRegularFile else { return nil }
+            return "\(metadata.size):\(metadata.modified.timeIntervalSince1970)"
+        }
+    }
+
+    private func startProbe() {
+        guard probe == nil else { return }
+        let current = generation
+        probe = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+                guard let self, await self.probeChanged(current) else { continue }
+                await self.refresh(ifCurrent: current)
+            }
+        }
+    }
+
+    private func probeChanged(_ current: UInt64) -> Bool {
+        guard current == generation, probe != nil else { return false }
+        let stamps = fileStamps()
+        guard stamps != probedFiles else { return false }
+        probedFiles = stamps
+        return true
     }
 
     private func scheduleRetry(after seconds: UInt64) {

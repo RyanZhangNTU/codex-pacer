@@ -292,6 +292,49 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertEqual(transcript.turn?.progress?.percent, 37)
     }
 
+    func testARunningTasksReportShowsWithoutAFileEvent() async throws {
+        // WorkBuddy appends through a stream it keeps open, and Windows reports
+        // no change for that until the file closes. The monitor notices anyway.
+        let fixture = try Fixture(), monitor = try monitor(), updates = Updates()
+        let session = Fixture.session
+        try fixture.createSessions()
+        try fixture.exec("""
+            ALTER TABLE sessions ADD COLUMN cwd TEXT;
+            INSERT INTO sessions VALUES ('\(session)','account','working',\(updated - 2000),NULL,'local',NULL,1,0,'Fixture task','C:/fixture');
+            """)
+        let workspace = fixture.home.appendingPathComponent("projects/C-fixture", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let file = workspace.appendingPathComponent(session + ".jsonl")
+        func event(_ type: String, _ id: String, _ parent: String?, _ milliseconds: Int64, _ fields: [String: Any] = [:],
+                   metadata: [String: Any] = [:]) throws -> Data {
+            var row = fields
+            row["type"] = type; row["id"] = id; row["parentId"] = parent
+            row["timestamp"] = updated + milliseconds; row["sessionId"] = session
+            row["providerData"] = ["conversationRequestId": "r1"].merging(metadata) { _, new in new }
+            return try JSONSerialization.data(withJSONObject: row) + Data([10])
+        }
+        let start = try event("message", "user", nil, -9000, ["role": "user"], metadata: ["startsNewUserRequest": true])
+        try start.write(to: file)
+        await monitor.start(home: fixture.home, policy: .collapsed) { await updates.append($0) }
+        let before = await updates.history.last?.activities.first
+        XCTAssertEqual(before?.phase, .running)
+        XCTAssertNil(before?.currentProgress)
+
+        let report = try event("function_call", "call", "user", -2000, ["callId": "p1", "name": "DeferExecuteTool",
+            "arguments": ["toolName": "mcp__pacer_progress__report_progress", "params": ["percent": 40]]])
+        let result = try event("function_call_result", "result", "call", -1900, ["callId": "p1", "status": "completed",
+            "output": ["type": "text", "text": "pacer-progress:accepted"]])
+        let handle = try FileHandle(forWritingTo: file)
+        _ = try handle.seekToEnd(); try handle.write(contentsOf: report + result); try handle.close()
+        var shown: Int?
+        for _ in 0..<40 where shown == nil {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            shown = await updates.history.last?.activities.first?.currentProgress?.percent
+        }
+        XCTAssertEqual(shown, 40, "The report shows within seconds, not at the next 15-second check")
+        await monitor.stop()
+    }
+
     func testAToolWaitingForTheUsersGoAheadKeepsTheTask() async throws {
         // Seen 11/15: WorkBuddy asks before an image that costs credits. The
         // session turns pending with the tool call open and no question.
