@@ -202,7 +202,9 @@ internal sealed partial class SettingsWindow
                 };
                 if (harnessProgressBody == null) return;
                 button.IsEnabled = editable && !demo;
-                if (!done) ShowIssue(action == "retry" ? "harness.progress_state.failed" : "harness.progress_state.open_failed");
+                if (!done && action == "retry") ShowIssue("harness.progress_state.failed");
+                else if (!done) ShowIssueText(HarnessAccountCard.Fields(ui, "harness.progress_state.open_failed",
+                    HarnessModule(provider)?.DisplayName is { Length: > 0 and <= 64 } app ? app : PaneTitle(provider)));
             };
             return button;
         }

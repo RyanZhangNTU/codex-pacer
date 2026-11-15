@@ -536,7 +536,8 @@ internal sealed partial class SettingsWindow : Window
         finally { synchronizing = false; }
     }
     internal void RefreshSystemState() { RefreshTheme(); RefreshValues(); }
-    private void ShowIssue(string key) { issue.Text = ui.Text(key); AutomationProperties.SetName(issue, issue.Text); issue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); issue.Visibility = Visibility.Visible; AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive); }
+    private void ShowIssue(string key) => ShowIssueText(ui.Text(key));
+    private void ShowIssueText(string text) { issue.Text = text; AutomationProperties.SetName(issue, issue.Text); issue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); issue.Visibility = Visibility.Visible; AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive); }
     private void ClearIssue() { issue.Text = ""; issue.Visibility = Visibility.Collapsed; }
     private void OnAppearanceChanged() => Dispatcher.InvokeAsync(() => { if (!sourceClosed) RefreshTheme(); });
     private void RefreshTheme()

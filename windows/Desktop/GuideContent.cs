@@ -473,7 +473,12 @@ internal sealed class GuideContent : StackPanel
             string text = catalog.ModuleOff.TryGetValue(provider, out var off) ? off : name;
             if (enabled)
             {
-                if (module?.Installed == false) { text = ui.Text("welcome.module." + provider + "_missing"); titleKey = "welcome.module.settings"; }
+                // A key built from a module's ID must never throw: an unknown module shows its name.
+                if (module?.Installed == false)
+                {
+                    string missing = "welcome.module." + provider + "_missing";
+                    text = ui.Has(missing) ? ui.Text(missing) : name; titleKey = "welcome.module.settings";
+                }
                 else if (module == null || module.Installed == null) text = ui.Text("claude.account.checking");
                 else if (provider == "claude" && latest?.ClaudeConnection?.State == "checking" || provider == "deepseek" && latest?.DeepseekConnection?.Refreshing == true && latest.Wallet?.Balance == null)
                     text = ui.Text("claude.account.checking");
