@@ -79,7 +79,9 @@ struct CreditsLines: View {
     let presentation: HarnessCreditsPresentation
     let tint: Color
     var island = true
-    static let maxWidth: CGFloat = 340
+    /// The widest the lines run on a wide card, such as Overview's or the
+    /// Settings page's; in the panel they reach its edge, like Codex's single view.
+    @Environment(\.creditLinesCap) private var cap
 
     private var secondary: Color { island ? PacerPalette.secondary : Color(nsColor: .secondaryLabelColor) }
     private var tertiary: Color { island ? PacerPalette.tertiary : Color(nsColor: .tertiaryLabelColor) }
@@ -112,7 +114,17 @@ struct CreditsLines: View {
                 .accessibilityLabel(line.label + " " + line.value + (line.detail.map { ", " + $0 } ?? ""))
             }
         }
-        .frame(maxWidth: Self.maxWidth, alignment: .leading)
+        .frame(maxWidth: cap ?? .infinity, alignment: .leading)
+    }
+}
+
+private struct CreditLinesCapKey: EnvironmentKey { static let defaultValue: CGFloat? = nil }
+
+extension EnvironmentValues {
+    /// A cap on the credit lines' width for wide cards; nil fills the width.
+    var creditLinesCap: CGFloat? {
+        get { self[CreditLinesCapKey.self] }
+        set { self[CreditLinesCapKey.self] = newValue }
     }
 }
 

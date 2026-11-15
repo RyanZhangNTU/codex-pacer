@@ -146,7 +146,7 @@ private struct HarnessCreditsCard: View {
             MainCard(title: L10n.text("harness.credits")) {
                 HStack(alignment: .center, spacing: 20) {
                     CreditsDial(dial: presentation.dial, tint: tint, size: 104, stale: connection.state == .unavailable, island: false)
-                    CreditsLines(presentation: presentation, tint: tint, island: false)
+                    CreditsLines(presentation: presentation, tint: tint, island: false).environment(\.creditLinesCap, 340)
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, 12)

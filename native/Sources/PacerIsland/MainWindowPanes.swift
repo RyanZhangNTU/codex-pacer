@@ -123,6 +123,8 @@ struct OverviewPane: View {
         .padding(.horizontal, 16).padding(.vertical, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .islandSurface()
+        // A card alone in its row is wide; credit values stay near their labels.
+        .environment(\.creditLinesCap, 340)
     }
 
     private func localTaskProblem(_ provider: AgentProvider) -> String? {
