@@ -1049,6 +1049,8 @@ final class IslandModel: ObservableObject {
     private var lastDiscovery = Date.distantPast
     private var sourceGeneration: Int { Int(lifecycle.version(.codex)) }
     private var observations: [NSObjectProtocol] = []
+    private var networkChanges: MacNetworkChanges?
+    private var sshReconnect = SSHReconnectPolicy()
     let demo: Bool
     private let demoClock: () -> Date
     /// Source tests pass nil to keep demo's I/O isolation while supplying their own events.
@@ -1078,7 +1080,9 @@ final class IslandModel: ObservableObject {
     var visiblyExpanded: Bool { expanded && visibilityBlockers.isEmpty }
     func setVisibilityBlocked(_ blocker: VisibilityBlocker, _ blocked: Bool) {
         let wasLive = visiblyExpanded
-        if blocked { visibilityBlockers.insert(blocker) } else { visibilityBlockers.remove(blocker) }
+        if blocked { visibilityBlockers.insert(blocker) }
+        // The user is back: an SSH host that came back meanwhile need not wait out its backoff.
+        else if visibilityBlockers.remove(blocker) != nil, blocker != .occluded { requestSSHReconnect() }
         guard visiblyExpanded != wasLive else { return }
         applyRefreshCadence()
         guard visiblyExpanded else { return }
@@ -1286,6 +1290,10 @@ final class IslandModel: ObservableObject {
             observations.append(distributed.addObserver(forName: .init(name), object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.setVisibilityBlocked(.screenLock, blocked) }
             })
+        }
+        // A VPN tunnel or Wi-Fi coming back, also after sleep, retries unreachable SSH hosts.
+        networkChanges = MacNetworkChanges { [weak self] in
+            Task { @MainActor in self?.requestSSHReconnect() }
         }
     }
     func prepareForSleep() async {
@@ -1765,6 +1773,20 @@ final class IslandModel: ObservableObject {
         }
         discoverClaudeRemoteTargets(refresh: true)
     }
+    /// A burst of network changes joins one pending retry; sleep cancels it.
+    func requestSSHReconnect(at now: Date = Date()) {
+        let key = ApplicationWorkRegistry.Key(.discovery, identifier: "ssh-reconnect")
+        guard monitorsSSH, !demo, !sleeping, !stopped, ownedWork.task(key) == nil else { return }
+        let delay = sshReconnect.delay(at: now)
+        launchOwnedWork(key) { [weak self] ticket in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, !Task.isCancelled, self.lifecycle.owns(ticket) else { return }
+            self.sshReconnect.ran(at: Date())
+            if self.isModuleEnabled(.codex) { await self.realtimeMonitor.reconnectUnreachableSSH() }
+            guard self.lifecycle.owns(ticket) else { return }
+            if self.isModuleEnabled(.claude) { await self.claudeMonitor.reconnectUnreachableSSH() }
+        }
+    }
     func refreshRemoteControlDevices() {
         guard monitorsRemoteControl, isModuleEnabled(.codex), !sleeping, !stopped, !demo else { return }
         Task { await realtimeMonitor.refreshRemoteControlCatalog() }
@@ -2052,6 +2074,7 @@ final class IslandModel: ObservableObject {
         desktopApplicationScan?.cancel()
         clock?.invalidate(); closeWork?.cancel()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0); DistributedNotificationCenter.default().removeObserver($0) }
+        networkChanges = nil
         performLifecycle(plan)
         navigation.cancel(); clearNavigationError()
         invalidateWork(invalidateSource: false)
