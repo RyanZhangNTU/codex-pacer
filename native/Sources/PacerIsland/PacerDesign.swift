@@ -61,6 +61,13 @@ extension AgentProvider {
     var brand: Color { Color(palette.dark) }
     /// DeepSeek's blue (#7B93FF) reads at the same weight as the other two on black.
     var color: Color { Color(red: 0x7B / 255, green: 0x93 / 255, blue: 0xFF / 255) }
+    /// The name Settings, onboarding and the module library use: a module's own
+    /// title when it has one, such as the international edition's; the island
+    /// and collapsed bar keep the short name.
+    var settingsTitle: String {
+        let key = "module." + rawValue + ".title", title = L10n.text(key)
+        return title == key ? displayName : title
+    }
     /// Generic glyph for settings navigation and app buttons; never a vendor logo.
     var glyph: String { taskSymbol }
 }

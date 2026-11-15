@@ -130,6 +130,7 @@ struct SettingsCollapsedBarPane: View {
             CardPicker(title: L10n.text("layout.option.quota_multiple"), selection: $options.quotaMultiple,
                        options: CompactComponentOptions.QuotaMultiple.allCases.map { ($0, L10n.text("layout.option.quota_multiple." + $0.rawValue)) })
             windowPickers
+            creditFigurePickers
         case .quotaGauge:
             CardPicker(title: L10n.text("layout.option.ring_layout"), selection: $options.ringLayout,
                        options: CompactComponentOptions.RingLayout.allCases.map { ($0, L10n.text("layout.option.ring_layout." + $0.rawValue)) })
@@ -162,6 +163,19 @@ struct SettingsCollapsedBarPane: View {
                            options: [(2, L10n.text("layout.option.warning_limit.two")), (0, L10n.text("layout.option.warning_limit.all"))])
         default:
             EmptyView()
+        }
+    }
+
+    /// Which figure each credits module's value shows: the month's percent, the
+    /// month's credits or everything available.
+    @ViewBuilder private var creditFigurePickers: some View {
+        ForEach(providers.filter { HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true }, id: \.self) { provider in
+            CardPicker(title: provider.settingsTitle + " · " + L10n.text("credits.option.bar"),
+                       selection: Binding(get: { model.creditSettings(provider).bar }, set: { value in
+                           var settings = model.creditSettings(provider); settings.bar = value
+                           model.setCreditSettings(provider, settings)
+                       }),
+                       options: HarnessCreditsFigure.allCases.map { ($0, L10n.text("credits.figure." + $0.rawValue)) })
         }
     }
 

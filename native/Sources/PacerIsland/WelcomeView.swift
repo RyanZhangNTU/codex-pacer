@@ -256,7 +256,7 @@ struct WelcomeView: View {
                 Toggle(provider.displayName, isOn: Binding(get: { enabled }, set: { setModule(provider, enabled: $0) }))
                     .labelsHidden().toggleStyle(.switch)
             }
-            Text(provider.displayName).font(.system(size: 15, weight: .semibold))
+            Text(provider.settingsTitle).font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(enabled ? .primary : .secondary).padding(.top, 12)
             statusLabel(status).padding(.top, 4)
             Spacer(minLength: 12)

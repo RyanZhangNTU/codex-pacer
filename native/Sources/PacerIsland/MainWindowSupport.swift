@@ -86,7 +86,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
         case .general: L10n.text("settings.pane.general")
         case .about: L10n.text("main.pane.about")
         case .support: L10n.text("main.pane.support")
-        default: harness?.displayName ?? rawValue
+        default: harness?.settingsTitle ?? rawValue
         }
     }
 

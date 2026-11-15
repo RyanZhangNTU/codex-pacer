@@ -208,7 +208,7 @@ struct SettingsView: View {
         HStack(spacing: 14) {
             ProviderAppIcon(provider: provider, size: 40)
             VStack(alignment: .leading, spacing: 3) {
-                Text(provider.displayName).font(.system(size: 22, weight: .bold)).accessibilityAddTraits(.isHeader)
+                Text(provider.settingsTitle).font(.system(size: 22, weight: .bold)).accessibilityAddTraits(.isHeader)
                 HStack(spacing: 6) {
                     Text(L10n.text(model.providerDetected(provider) ? "provider.detected" : "provider.not_detected") +
                         (moduleMode(provider) == .automatic ? " · " + L10n.text("provider.automatic") : ""))
@@ -309,12 +309,12 @@ struct SettingsView: View {
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) },
                 deepseekDetailed: DeepSeekPanelStyle.load() == .detailed,
                 openGeneral: { pane = .general }, openDeepSeek: { pane = .deepseek },
-                openWorkBuddy: { pane = SettingsPane(provider: .workbuddy) })
+                openModule: { pane = SettingsPane(provider: $0) }, credits: creditBinding)
         case .notifications:
             SettingsNotificationsPane(model: model, notificationPreference: notificationPreference, layout: $compactLayout,
                 lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek },
-                openTaskList: { panelSelection = .block(.tasks); pane = .expandedPanel })
+                credits: creditBinding, openTaskList: { panelSelection = .block(.tasks); pane = .expandedPanel })
         case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
         case .remote:
@@ -511,6 +511,10 @@ struct SettingsView: View {
         Text(text).font(.system(size: 12)).foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
     }
 
+    /// A credits module's display and reminder choices, saved as they change.
+    private func creditBinding(_ provider: AgentProvider) -> Binding<HarnessCreditsSettings> {
+        Binding(get: { model.creditSettings(provider) }, set: { model.setCreditSettings(provider, $0) })
+    }
     /// A data folder applies once committed; an empty field returns to the default.
     private func commitHarnessHome(_ provider: AgentProvider) {
         let trimmed = (harnessHomes[provider.rawValue] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

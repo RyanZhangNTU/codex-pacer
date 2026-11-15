@@ -24,7 +24,7 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         modules.setMode(.enabled, for: .workbuddy)
         let library = model.moduleLibrary(modules)
         XCTAssertEqual(library.prominent.map(\.provider), [.claude, .workbuddy], "Found or turned on, in registry order")
-        XCTAssertEqual(library.collapsed.map(\.provider), [.codex, .deepseek])
+        XCTAssertEqual(library.collapsed.map(\.provider), [.codex, .deepseek, .workbuddyAI])
         let services = SettingsPane.groups(services: library.prominent.map(\.provider))[1]
         XCTAssertEqual(services, [.claude, SettingsPane(provider: .workbuddy), .modules, .remote], "The library follows the services, then Remote")
         XCTAssertEqual(SettingsPane(stored: "codex"), .codex, "A hidden built-in page still opens from saved state")
@@ -54,20 +54,35 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         model.receiveHarnessCredits(.workbuddy)
         XCTAssertTrue(model.harnessCreditsAttention.notices(credits, low: true, now: Date()).isEmpty,
                       "Waking with the same low reading stays quiet")
-        model.setHarnessAccountSite(.workbuddy, "automatic")
+        model.harnessAccount(.workbuddy)?.onAccountReset?()
         XCTAssertEqual(model.harnessCreditsAttention.notices(credits, low: true, now: Date()).count, 1,
-                       "Another site may be another account, so it can notify again")
+                       "Signing out or switching may bring another account, so it can notify again")
     }
 
-    func testAccountSiteFallsBackToAutomaticAndDataFolderWinsOverTheDefault() throws {
+    func testCreditSettingsSaveOnlyChoicesAndKeepModulesThisVersionDoesNotKnow() throws {
         let (model, defaults) = try model()
-        XCTAssertEqual(model.harnessAccountSite(.workbuddy), "automatic")
-        let site = try XCTUnwrap(HarnessRegistry.descriptor(for: .workbuddy)?.accountCredits?.sites.first?.id)
-        model.setHarnessAccountSite(.workbuddy, site)
-        XCTAssertEqual(model.harnessAccountSite(.workbuddy), site)
-        defaults.set([AgentProvider.workbuddy.rawValue: "removed-site"], forKey: IslandModel.harnessAccountSitesKey)
-        XCTAssertEqual(model.harnessAccountSite(.workbuddy), "automatic", "A site the registry no longer lists reads as automatic")
+        XCTAssertEqual(model.creditSettings(.workbuddyAI), .default)
+        let unknown = try JSONEncoder().encode(["future-module": HarnessCreditsSettings(center: .available)])
+        defaults.set(unknown, forKey: IslandModel.harnessCreditsKey)
+        model.setCreditSettings(.workbuddyAI, HarnessCreditsSettings(center: .monthlyRemaining, bar: .monthlyPercent, lowCredits: 250,
+                                                                    expiryReminder: false, expiryDays: 7))
+        XCTAssertEqual(model.creditSettings(.workbuddyAI).bar, .monthlyPercent)
+        XCTAssertEqual(model.creditSettings(.workbuddy), .default, "Each module keeps its own choices")
+        let stored = try JSONDecoder().decode([String: HarnessCreditsSettings].self,
+                                              from: XCTUnwrap(defaults.data(forKey: IslandModel.harnessCreditsKey)))
+        XCTAssertEqual(Set(stored.keys), ["future-module", "workbuddy-ai"], "Another host's module survives a save")
+        model.setCreditSettings(.workbuddyAI, .default)
+        XCTAssertNil(try JSONDecoder().decode([String: HarnessCreditsSettings].self,
+                                              from: XCTUnwrap(defaults.data(forKey: IslandModel.harnessCreditsKey)))["workbuddy-ai"],
+                     "Default choices are not stored")
+        XCTAssertEqual(IslandModel.loadCreditSettings(defaults)[.workbuddyAI], nil)
+        XCTAssertEqual(AgentProvider.workbuddyAI.settingsTitle, L10n.text("module.workbuddy-ai.title"),
+                       "Settings names the international edition with its own title")
+        XCTAssertEqual(AgentProvider.workbuddy.settingsTitle, AgentProvider.workbuddy.displayName)
+    }
 
+    func testDataFolderWinsOverTheDefault() throws {
+        let (model, defaults) = try model()
         let folder = "/private/tmp/pacer-workbuddy-data-" + UUID().uuidString
         defaults.set([AgentProvider.workbuddy.rawValue: folder], forKey: IslandModel.harnessHomesKey)
         XCTAssertEqual(model.localHarnessHome(.workbuddy)?.path, folder)

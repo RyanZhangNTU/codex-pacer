@@ -55,13 +55,16 @@ extension IslandModel {
         let alert = wallet.flatMap { DeepSeekAlertPresentation(wallet: $0,
             lowBalance: warnings.contains(.lowBalance), spike: warnings.contains(.spendSpike), budget: warnings.contains(.budget)) }
         return CompactWarningPresentation.items(enabled: enabled, warnings: warnings, snapshots: snapshots,
-            failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, wallet: alert, credits: harnessCredits, now: now)
+            failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, wallet: alert, credits: harnessCredits,
+            creditSettings: creditSettings, now: now)
     }
 
     /// Each enabled module's account credits, dimmed while a refresh fails.
     var compactCredits: [CompactBarContext.Credits] {
         HarnessRegistry.ids(where: \.reportsAccountCredits).filter(isModuleEnabled).compactMap { provider in
-            harnessAccounts[provider].map { .init(provider: provider, credits: $0.credits, stale: $0.state == .unavailable, now: now) }
+            harnessAccounts[provider].map {
+                .init(provider: provider, credits: $0.credits, stale: $0.state == .unavailable, now: now, figure: creditSettings(provider).bar)
+            }
         }
     }
 

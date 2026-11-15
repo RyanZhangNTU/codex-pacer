@@ -40,7 +40,7 @@ struct ClassicQuotaDashboardView: View {
                 } else {
                     let details = slots.count == 1 && model.panelOptions.quotaDetails
                     if let connection = model.harnessAccount(slot.provider) {
-                        HarnessAccountCard(connection: connection, style: .classic, size: 88, showsDetails: details, showsName: !details,
+                        HarnessAccountCard(connection: connection, settings: model.creditSettings(slot.provider), style: .classic, size: 88, showsDetails: details, showsName: !details,
                             openSettings: { model.openSettings(for: slot.provider) })
                             .padding(.horizontal, details ? IslandMetrics.rowInset : 0)
                     }

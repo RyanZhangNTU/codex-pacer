@@ -42,13 +42,16 @@ import Security
     }
 
     private nonisolated static func isTrusted(_ url: URL, definition: LocalHarnessDefinition) -> Bool {
+        // An edition whose bundle ID is not known yet is trusted by its name,
+        // its own URL scheme and its publisher's signature alone.
+        let pinned = !definition.macBundleIdentifiers.isEmpty
         guard let organization = definition.macSigningOrganization, let scheme = definition.conversationScheme,
               let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier,
-              definition.macBundleIdentifiers.contains(identifier),
+              !pinned || definition.macBundleIdentifiers.contains(identifier),
               let types = bundle.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]],
               types.contains(where: { ($0["CFBundleURLSchemes"] as? [String])?.contains(scheme) == true }) else { return false }
         var code: SecStaticCode?, requirement: SecRequirement?
-        let expression = "identifier \"" + identifier + "\" and anchor apple generic and certificate leaf[subject.O] = \"" + organization + "\""
+        let expression = (pinned ? "identifier \"" + identifier + "\" and " : "") + "anchor apple generic and certificate leaf[subject.O] = \"" + organization + "\""
         guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
               SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement else { return false }
         return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSBasicValidateOnly), requirement) == errSecSuccess

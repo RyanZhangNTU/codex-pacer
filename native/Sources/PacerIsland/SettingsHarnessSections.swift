@@ -21,9 +21,12 @@ struct SettingsHarnessSections: View {
     var body: some View {
         MainCard(title: L10n.text("main.section.status")) {
             dataRow
-            if let connection = model.harnessAccount(provider), let definition = descriptor.accountCredits {
-                HarnessAccountRows(model: model, connection: connection, definition: definition, usageGuide: descriptor.usageGuide)
+            if let connection = model.harnessAccount(provider) {
+                HarnessAccountRow(connection: connection, usageGuide: descriptor.usageGuide)
             }
+        }
+        if let connection = model.harnessAccount(provider) {
+            HarnessCreditsCard(connection: connection, settings: model.creditSettings(provider), usageGuide: descriptor.usageGuide, now: model.now)
         }
         MainCard(title: L10n.text("main.section.display")) {
             if descriptor.hasTaskProgress { progressRow }
@@ -112,21 +115,14 @@ struct SettingsHarnessSections: View {
     }
 }
 
-/// The account and its credits as two rows: sign-in reads as a status, with a
-/// button only when signing in is needed; switching and signing out wait in
-/// the row's menu, as on Claude's page.
-private struct HarnessAccountRows: View {
-    @ObservedObject var model: IslandModel
+/// Sign-in reads as a status with the plan; a button appears only when
+/// signing in is needed. Refresh, the usage page, switching and signing
+/// out wait in the row's menu, as on Claude's page.
+private struct HarnessAccountRow: View {
     @ObservedObject var connection: HarnessAccountConnection
-    let definition: HarnessAccountCreditsDefinition
     let usageGuide: URL?
 
     var body: some View {
-        accountRow
-        creditsRow
-    }
-
-    private var accountRow: some View {
         let reading = connection.reading
         let (tint, key): (Color, String) =
             connection.busy && reading == nil ? (.secondary, "harness.account.reading") :
@@ -141,7 +137,9 @@ private struct HarnessAccountRows: View {
                 } else {
                     Menu {
                         Button(L10n.text("common.refresh")) { connection.refresh() }
-                        siteMenu
+                        if let usageGuide {
+                            Button(L10n.text("harness.account_usage_help")) { NSWorkspace.shared.open(usageGuide) }
+                        }
                         Divider()
                         Button(L10n.text("harness.account.switch")) { connection.connect(switching: true) }
                         Button(L10n.text("harness.account.sign_out")) { connection.disconnect() }
@@ -155,53 +153,52 @@ private struct HarnessAccountRows: View {
             .disabled(connection.busy)
         }
     }
+}
 
-    /// Automatic follows the app's language; the others name their domain.
-    private var siteMenu: some View {
-        let current = model.harnessAccountSite(connection.provider)
-        return Menu(L10n.text("harness.account.site")) {
-            ForEach(["automatic"] + definition.sites.map(\.id), id: \.self) { id in
-                Button {
-                    model.setHarnessAccountSite(connection.provider, id)
-                } label: {
-                    if current == id { Label(siteTitle(id), systemImage: "checkmark") } else { Text(siteTitle(id)) }
+/// The credits block: the 104 pt dial beside its lines, the breakdown by
+/// how each group behaves behind ⓘ, then where the service shows usage.
+private struct HarnessCreditsCard: View {
+    @ObservedObject var connection: HarnessAccountConnection
+    let settings: HarnessCreditsSettings
+    let usageGuide: URL?
+    let now: Date
+    @State private var showsInfo = false
+
+    var body: some View {
+        if let presentation = HarnessCreditsPresentation(credits: connection.credits, settings: settings, now: now) {
+            MainCard(title: L10n.text("harness.credits")) {
+                HStack(alignment: .center, spacing: 20) {
+                    CreditsDial(dial: presentation.dial, tint: connection.provider.tint, size: 104,
+                                stale: connection.state == .unavailable, island: false)
+                    CreditsLines(presentation: presentation, tint: connection.provider.tint, island: false)
+                    Spacer(minLength: 0)
                 }
-            }
-        }
-    }
-
-    private func siteTitle(_ id: String) -> String {
-        guard id != "automatic" else { return L10n.text("harness.site.automatic") }
-        let host = definition.sites.first { $0.id == id }?.url.host ?? id
-        return L10n.text("harness.site." + id, host)
-    }
-
-    /// What is left, and when the plan resets or credits expire.
-    private var creditsRow: some View {
-        let reading = connection.reading
-        return CardRow(title: L10n.text("harness.credits"), detail: reading.flatMap(timing),
-                       info: L10n.text("main.info.harness_credits", connection.provider.displayName)) {
-            HStack(spacing: 10) {
-                Text(reading.map { L10n.text("harness.credits.left", HarnessAccountCredits.compactAmount($0.remaining)) } ?? "—")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).monospacedDigit()
-                if let usageGuide {
-                    Link(L10n.text("harness.account_usage_help"), destination: usageGuide).font(.system(size: 12.5))
+                .padding(.vertical, 12)
+                if !presentation.sections.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 4) {
+                            Text(L10n.text("credits.details")).font(.system(size: 13))
+                            InfoButton(title: L10n.text("credits.details"), isOn: $showsInfo)
+                        }
+                        if showsInfo {
+                            Text(L10n.text("credits.details_info")).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        CreditsSections(sections: presentation.sections)
+                    }
+                    .padding(.vertical, 12)
                 }
+                if let usageGuide { usageRow(usageGuide) }
             }
+        } else if let usageGuide {
+            // Signed out, where to check usage still shows.
+            MainCard(title: L10n.text("harness.credits")) { usageRow(usageGuide) }
         }
     }
 
-    private func timing(_ reading: HarnessAccountCredits.Reading) -> String? {
-        if let reset = reading.cycle?.resetsAt, reset > Date() {
-            return L10n.text("harness.account.cycle_reset", date(reset))
+    private func usageRow(_ url: URL) -> some View {
+        CardRow(title: L10n.text("harness.account_usage_help")) {
+            Link(L10n.text("main.overview.open"), destination: url).font(.system(size: 12.5))
         }
-        if let expiring = reading.expiring, expiring.date > Date() {
-            return L10n.text("harness.account.expiring", HarnessAccountCredits.compactAmount(expiring.credits), date(expiring.date))
-        }
-        return nil
-    }
-
-    private func date(_ value: Date) -> String {
-        value.formatted(.dateTime.month(.abbreviated).day().hour().minute().locale(L10n.locale))
     }
 }

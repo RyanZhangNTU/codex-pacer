@@ -28,7 +28,10 @@ struct SettingsExpandedPanelPane: View {
     let deepseekDetailed: Bool
     let openGeneral: () -> Void
     let openDeepSeek: () -> Void
-    var openWorkBuddy: () -> Void = {}
+    /// A credits module's page, for its account.
+    var openModule: (AgentProvider) -> Void = { _ in }
+    /// Each credits module's choices; the center figure is edited here.
+    var credits: (AgentProvider) -> Binding<HarnessCreditsSettings> = { _ in .constant(.default) }
     /// Where a dragged block would land; SwiftUI reports no cancelled drag,
     /// so nothing else about the drag is kept.
     @State private var dropTarget: DropTarget?
@@ -92,7 +95,8 @@ struct SettingsExpandedPanelPane: View {
     }
 
     /// The short line under a block's name in the outline.
-    static func summary(_ block: ExpandedPanelLayout.Block, options: ExpandedPanelOptions) -> String {
+    static func summary(_ block: ExpandedPanelLayout.Block, options: ExpandedPanelOptions,
+                        center: (ExpandedPanelLayout.Block) -> HarnessCreditsFigure = { _ in .monthlyPercent }) -> String {
         switch block {
         case .tasks:
             "\(L10n.text("main.panel.page_size")) \(options.pageSize) · "
@@ -105,9 +109,14 @@ struct SettingsExpandedPanelPane: View {
             L10n.text("main.panel.spend_tasks") + " · " + L10n.text("main.panel.spend_count", options.spendTasks)
         case .deepseekWeek:
             L10n.text("main.panel.week_line") + " · " + L10n.text(options.weekLine ? "main.panel.show" : "main.panel.hide")
-        case .workbuddy:
-            L10n.text("harness.account.title")
+        case .workbuddy, .workbuddyAI:
+            L10n.text("credits.option.center") + " · " + L10n.text("credits.figure." + center(block).rawValue)
         }
+    }
+
+    private func creditCenter(_ provider: AgentProvider) -> Binding<HarnessCreditsFigure> {
+        let binding = credits(provider)
+        return Binding(get: { binding.wrappedValue.center }, set: { binding.wrappedValue.center = $0 })
     }
 
     private static func periodsLabel(_ periods: ExpandedPanelOptions.Periods) -> String {
@@ -176,7 +185,7 @@ struct SettingsExpandedPanelPane: View {
         switch first {
         case .tasks:
             return ExpandedPanelPresentation.header(.init(kind: .tasks), budgetDial: false).title
-        case .codex, .claude, .deepseek, .workbuddy:
+        case .codex, .claude, .deepseek, .workbuddy, .workbuddyAI:
             return ExpandedPanelPresentation.header(.init(kind: .quota, providers: row.compactMap(\.provider)), budgetDial: false).title
         case .deepseekSpend, .deepseekWeek:
             return first.label
@@ -187,7 +196,7 @@ struct SettingsExpandedPanelPane: View {
     private func outlineBlock(_ block: ExpandedPanelLayout.Block, paired: Bool) -> some View {
         let isSelected = selected == .block(block)
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        let summary = Self.summary(block, options: options)
+        let summary = Self.summary(block, options: options, center: { credits($0.provider ?? .workbuddy).wrappedValue.center })
         let grip = Image(systemName: "circle.grid.2x3.fill").font(.system(size: 7)).foregroundStyle(Outline.grip)
         let marker = Group {
             if block.isQuota, let provider = block.provider {
@@ -407,9 +416,13 @@ struct SettingsExpandedPanelPane: View {
             switchRow(L10n.text("main.panel.elsewhere"), help: L10n.text("main.panel.elsewhere_help"), isOn: $options.spendElsewhere)
         case .block(.deepseekWeek):
             switchRow(L10n.text("main.panel.week_line"), help: L10n.text("main.panel.week_line_help"), isOn: $options.weekLine)
-        case .block(.workbuddy):
-            quotaLayout(detailsHelp: L10n.text("harness.account.details_help"))
-            link(L10n.text("harness.account.connection"), to: L10n.text("harness.account.open_settings"), action: openWorkBuddy)
+        case .block(.workbuddy), .block(.workbuddyAI):
+            if case .block(let block) = item, let provider = block.provider {
+                segments(L10n.text("credits.option.center"), stacked: true, selection: creditCenter(provider),
+                         options: HarnessCreditsFigure.allCases.map { ($0, L10n.text("credits.figure." + $0.rawValue)) })
+                quotaLayout(detailsHelp: L10n.text("harness.account.details_help"))
+                link(L10n.text("harness.account.connection"), to: L10n.text("harness.account.open_settings"), action: { openModule(provider) })
+            }
         case .actions:
             switchRow(L10n.text("panel.action.apps"), isOn: $showsAppButtons)
             switchRow(L10n.text("panel.action.markRead"), isOn: action(.markRead))
@@ -477,6 +490,7 @@ extension ExpandedPanelLayout.Block {
         case .claude: .claude
         case .deepseek: .deepseek
         case .workbuddy: .workbuddy
+        case .workbuddyAI: .workbuddyAI
         default: nil
         }
     }

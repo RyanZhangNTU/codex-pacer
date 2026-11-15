@@ -11,7 +11,7 @@ struct ModuleTileContent: Identifiable, Equatable {
     /// The service's site, offered when it is not on this computer.
     let getURL: URL?
     var id: String { provider.rawValue }
-    var name: String { provider.displayName }
+    var name: String { provider.settingsTitle }
     var summary: String { L10n.text("module." + provider.rawValue + ".summary") }
     var state: String { L10n.text(on ? "modules.state.on" : detected ? "modules.state.off" : "modules.state.not_found") }
 }

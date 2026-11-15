@@ -373,6 +373,8 @@ struct SettingsNotificationsPane: View {
     @Binding var spikeLimit: Double?
     let providers: [AgentProvider]
     let openDeepSeek: () -> Void
+    /// Each credits module's reminder choices.
+    var credits: (AgentProvider) -> Binding<HarnessCreditsSettings> = { _ in .constant(.default) }
     /// Keep Ended Tasks moved to the task list's settings.
     let openTaskList: () -> Void
     private static let column: CGFloat = 76
@@ -422,11 +424,16 @@ struct SettingsNotificationsPane: View {
                     bar: choice(.budget), system: follows(.budget))
             }
         }
-        // One card per module that reads account credits, like DeepSeek's wallet.
+        // One card per module that reads account credits, like DeepSeek's wallet:
+        // the shared low-credits row, then this module's line and expiry reminder.
         ForEach(providers.filter { HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true }, id: \.self) { provider in
-            MainCard(title: provider.displayName) {
+            MainCard(title: provider.settingsTitle) {
                 row(L10n.text("main.notify.low_credits"), note: L10n.text("main.notify.low_credits_note"),
                     bar: choice(.lowCredits), system: follows(.lowCredits))
+                CardRow(title: L10n.text("credits.reminder.low"), info: L10n.text("credits.reminder.low_info")) { creditsLowField(provider) }
+                CardRow(title: L10n.text("credits.reminder.expiry_title"), info: L10n.text("credits.reminder.expiry_info")) {
+                    creditsExpiryField(provider)
+                }
             }
         }
         MainCard {
@@ -501,6 +508,37 @@ struct SettingsNotificationsPane: View {
     }
 
     /// An empty field follows the rules; its placeholder shows the amount they give now.
+    /// Empty follows a tenth of the month's credits, shown as the prompt once read.
+    private func creditsLowField(_ provider: AgentProvider) -> some View {
+        let settings = credits(provider)
+        let automatic = model.harnessAccount(provider)?.reading?.lowLine(HarnessCreditsSettings(lowCredits: nil))
+        return HStack(spacing: 4) {
+            TextField(L10n.text("credits.reminder.low"), value: Binding(get: { settings.wrappedValue.lowCredits }, set: { value in
+                settings.wrappedValue.lowCredits = value.flatMap { $0.isFinite && (0...HarnessCreditsSettings.lowCreditsLimit).contains($0) ? $0 : nil }
+            }), format: .number.precision(.fractionLength(0...1)),
+                prompt: Text(automatic.map { L10n.text("reminders.amount_auto", HarnessAccountCredits.compactAmount($0)) } ?? ""))
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 84).labelsHidden()
+            Text(L10n.text("credits.reminder.low_unit")).foregroundStyle(.secondary)
+        }
+        .font(.system(size: 12))
+    }
+
+    /// Days ahead, 1 to 30, and the switch; the dial turns orange that early too.
+    private func creditsExpiryField(_ provider: AgentProvider) -> some View {
+        let settings = credits(provider)
+        let range = HarnessCreditsSettings.expiryDayRange
+        return HStack(spacing: 6) {
+            TextField(L10n.text("credits.reminder.expiry_title"), value: Binding(get: { settings.wrappedValue.expiryDays }, set: { value in
+                settings.wrappedValue.expiryDays = min(range.upperBound, max(range.lowerBound, value))
+            }), format: .number)
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 44).labelsHidden()
+            Text(L10n.text("credits.reminder.days_within")).foregroundStyle(.secondary)
+            Toggle(L10n.text("credits.reminder.expiry_title"), isOn: Binding(get: { settings.wrappedValue.expiryReminder },
+                set: { settings.wrappedValue.expiryReminder = $0 })).labelsHidden().toggleStyle(.switch)
+        }
+        .font(.system(size: 12))
+    }
+
     private func amountField(_ value: Binding<Double?>, label: String, automatic: Double) -> some View {
         let shown = automatic.rounded() == automatic || automatic >= 100 ? String(Int(automatic.rounded())) : String(format: "%.1f", automatic)
         return HStack(spacing: 3) {

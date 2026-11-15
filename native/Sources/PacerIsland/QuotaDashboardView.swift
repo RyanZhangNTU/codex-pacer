@@ -113,7 +113,7 @@ struct QuotaDashboardView: View {
 
     @ViewBuilder private func accountCredits(_ slot: QuotaDashboardPresentation.Slot, size: CGFloat, details: Bool = false) -> some View {
         if let connection = model.harnessAccount(slot.provider) {
-            HarnessAccountCard(connection: connection, style: .split, size: size, showsDetails: details, showsName: !details,
+            HarnessAccountCard(connection: connection, settings: model.creditSettings(slot.provider), style: .split, size: size, showsDetails: details, showsName: !details,
                 openSettings: { model.openSettings(for: slot.provider) })
                 .padding(.horizontal, details ? IslandMetrics.rowInset : 0)
         }

@@ -604,6 +604,27 @@ final class IslandModel: ObservableObject {
     static let hiddenTurnCreditsKey = "hiddenTurnCredits"
     /// Shared with Windows: local modules' data folders chosen in Settings, by ID.
     static let harnessHomesKey = "harnessHomes"
+    /// Shared with Windows: each credits module's display and reminder choices, by ID.
+    static let harnessCreditsKey = "harnessCredits"
+    /// Decoded once per change: the bar and notices read these often.
+    private(set) lazy var creditSettings: [AgentProvider: HarnessCreditsSettings] = Self.loadCreditSettings(defaults)
+    func creditSettings(_ provider: AgentProvider) -> HarnessCreditsSettings { creditSettings[provider] ?? .default }
+    static func loadCreditSettings(_ defaults: UserDefaults) -> [AgentProvider: HarnessCreditsSettings] {
+        guard let data = defaults.data(forKey: harnessCreditsKey),
+              let stored = try? JSONDecoder().decode([String: HarnessCreditsSettings].self, from: data) else { return [:] }
+        // IDs this version does not know are kept on disk and ignored here.
+        return Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in AgentProvider(rawValue: key).map { ($0, value) } })
+    }
+    /// Saves one module's choices, keeping entries for modules this version does not know.
+    func setCreditSettings(_ provider: AgentProvider, _ value: HarnessCreditsSettings) {
+        var stored = (defaults.data(forKey: Self.harnessCreditsKey)).flatMap {
+            try? JSONDecoder().decode([String: HarnessCreditsSettings].self, from: $0)
+        } ?? [:]
+        stored[provider.rawValue] = value == .default ? nil : value
+        if let data = try? JSONEncoder().encode(stored) { defaults.set(data, forKey: Self.harnessCreditsKey) }
+        creditSettings = Self.loadCreditSettings(defaults)
+        receiveHarnessCredits(provider)
+    }
     func showsHarnessProgress(_ provider: AgentProvider) -> Bool {
         !(defaults.stringArray(forKey: Self.disabledHarnessProgressKey) ?? []).contains(provider.rawValue)
     }
@@ -2118,23 +2139,10 @@ final class IslandModel: ObservableObject {
     func receiveHarnessCredits(_ provider: AgentProvider) {
         objectWillChange.send()
         if !demo, !sleeping, !stopped {
-            present(harnessCreditsAttention.notices(harnessCredits, low: compactLayout.warnings.contains(.lowCredits), now: Date()))
+            present(harnessCreditsAttention.notices(harnessCredits, settings: creditSettings,
+                                                    low: compactLayout.warnings.contains(.lowCredits), now: Date()))
         }
         onLayoutChange?(); onStatusChange?()
-    }
-    static let harnessAccountSitesKey = "harnessAccountSites"
-    /// The sign-in site a module's credits use: a site ID, or `automatic`.
-    func harnessAccountSite(_ provider: AgentProvider) -> String {
-        let stored = (defaults.dictionary(forKey: Self.harnessAccountSitesKey) as? [String: String])?[provider.rawValue]
-        let sites = HarnessRegistry.descriptor(for: provider)?.accountCredits?.sites.map(\.id) ?? []
-        return stored.flatMap { sites.contains($0) ? $0 : nil } ?? "automatic"
-    }
-    func setHarnessAccountSite(_ provider: AgentProvider, _ value: String) {
-        var sites = defaults.dictionary(forKey: Self.harnessAccountSitesKey) as? [String: String] ?? [:]
-        sites[provider.rawValue] = value == "automatic" ? nil : value
-        defaults.set(sites, forKey: Self.harnessAccountSitesKey)
-        harnessCreditsAttention.reset(provider)
-        configureHarnessAccounts()
     }
     private func configureHarnessAccounts() {
         for (provider, connection) in harnessAccounts {
@@ -2142,8 +2150,7 @@ final class IslandModel: ObservableObject {
                 connection.showDemo(isModuleEnabled(provider) && provider == .workbuddy ? DemoScenario.workbuddyCredits(at: now) : nil)
                 continue
             }
-            connection.configure(enabled: !sleeping && !stopped && isModuleEnabled(provider), site: harnessAccountSite(provider),
-                                 chinese: L10n.language == .simplifiedChinese)
+            connection.configure(enabled: !sleeping && !stopped && isModuleEnabled(provider))
         }
     }
     private func receiveLocalHarness(_ provider: AgentProvider, snapshot: HarnessActivity, home: URL, version: UInt64) {
@@ -2190,6 +2197,7 @@ final class IslandModel: ObservableObject {
             ? Self.demoInstallation(demoArguments)
             : .detect(harnessHomes: defaults.dictionary(forKey: Self.harnessHomesKey) as? [String: String] ?? [:]))
         modules = .load(from: defaults)
+        creditSettings = Self.loadCreditSettings(defaults)
         PacerAccent.current = PacerAccent(defaults: defaults)
         // Light Liquid Glass turns the whole island light before it redraws.
         syncTone()

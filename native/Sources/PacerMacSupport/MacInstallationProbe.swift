@@ -41,13 +41,25 @@ extension ProviderInstallationDetection {
             return ([definition.defaultHome(userHome: userHome)] + chosen.map { URL(fileURLWithPath: $0, isDirectory: true) })
                 .contains(where: definition.hasLocalData)
         }
+        // Without a known bundle ID, an app of that name that declares the
+        // edition's own URL scheme counts.
+        func namedApp(_ definition: LocalHarnessDefinition) -> Bool {
+            guard definition.macBundleIdentifiers.isEmpty, let scheme = definition.conversationScheme else { return false }
+            let urls = applicationURLs?[definition.descriptor.id] ?? definition.macApplicationNames.flatMap {
+                [URL(fileURLWithPath: "/Applications/\($0).app"), userHome.appendingPathComponent("Applications/\($0).app")]
+            }
+            return urls.prefix(12).contains { url in
+                let types = Bundle(url: url)?.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] ?? []
+                return types.contains { ($0["CFBundleURLSchemes"] as? [String])?.contains(scheme) == true }
+            }
+        }
         let additional = HarnessRegistry.localHarnesses.filter { definition in
             guard definition.platforms.contains(.macOS) else { return false }
             return definition.macBundleIdentifiers.contains { identifier in
                 definition.macApplicationNames.contains {
                     appInstalled(definition.descriptor.id, bundleID: identifier, name: $0)
                 }
-            } || localData(definition)
+            } || namedApp(definition) || localData(definition)
         }.map(\.descriptor.id)
         return Self(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek, additional: Set(additional))
     }

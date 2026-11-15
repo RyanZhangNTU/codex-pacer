@@ -22,20 +22,19 @@ import WebKit
 
     private let definition: HarnessAccountCreditsDefinition
     private var enabled = false
-    private var site: HarnessAccountCreditsDefinition.Site
+    private let site: HarnessAccountCreditsDefinition.Site
     private var operation: Task<Void, Never>?
     private var scheduled: Task<Void, Never>?
     private var login: HarnessAccountLogin?
     private var revision = 0
     private let defaults: UserDefaults
 
+    /// Each credits module signs in on its own single site.
     init(provider: AgentProvider, definition: HarnessAccountCreditsDefinition, defaults: UserDefaults) {
         self.provider = provider; self.definition = definition; self.defaults = defaults
-        site = definition.site("automatic", chinese: false)
+        site = definition.sites[0]
     }
 
-    /// The site in use, as its preference value.
-    var siteID: String { site.id }
     var siteHost: String { site.url.host ?? "" }
     private var key: String { provider.rawValue + "AccountConnected." + site.id }
     /// One profile per module and site, so signing out of one leaves the others.
@@ -48,11 +47,10 @@ import WebKit
     var signedIn: Bool { defaults.bool(forKey: key) || reading != nil }
     var canDisconnect: Bool { signedIn }
 
-    func configure(enabled: Bool, site preference: String, chinese: Bool) {
-        let next = definition.site(preference, chinese: chinese)
-        guard self.enabled != enabled || site != next else { return }
+    func configure(enabled: Bool) {
+        guard self.enabled != enabled else { return }
         stop()
-        site = next; self.enabled = enabled
+        self.enabled = enabled
         if enabled, defaults.bool(forKey: key) { refresh() }
     }
 

@@ -106,15 +106,15 @@ struct SettingsHelpPane: View {
         case .codex: codexRows
         case .claude: claudeRows
         case .deepseek: deepseekRows
-        case .workbuddy: workbuddyRows
+        case .workbuddy, .workbuddyAI: workbuddyRows(provider)
         default:
             row(title: L10n.text("help.harness.tasks.title", provider.displayName),
                 detail: L10n.text("help.harness.tasks.detail", provider.displayName)) { ProviderTile(provider: provider) }
         }
     }
 
-    @ViewBuilder private var workbuddyRows: some View {
-        let tint = AgentProvider.workbuddy.tint
+    @ViewBuilder private func workbuddyRows(_ provider: AgentProvider) -> some View {
+        let tint = provider.tint
         row("help.workbuddy.credits") {
             QuotaRingsGlyph(rings: [.init(tint: tint, remaining: 64, stale: false)])
             Text("1,280").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(tint)
@@ -124,7 +124,7 @@ struct SettingsHelpPane: View {
         }
         row("help.workbuddy.progress") { ProgressRingSample(fraction: 0.62, tint: tint) }
         row("help.workbuddy.apps") {
-            ProviderAppIcon(provider: .workbuddy, size: 14, outline: true).foregroundStyle(tint)
+            ProviderAppIcon(provider: provider, size: 14, outline: true).foregroundStyle(tint)
         }
     }
 
