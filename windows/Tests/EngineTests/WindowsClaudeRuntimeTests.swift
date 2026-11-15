@@ -85,6 +85,39 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: script), bytes)
     }
 
+    /// WorkBuddy trusts a command by its path and arguments, so its reporter
+    /// keeps one path across updates and is replaced in place (11/15: each
+    /// reporter change otherwise asked the user to trust the tool again).
+    func testLocalHarnessReporterKeepsOnePathAcrossUpdates() throws {
+        let fixture = try fixture()
+        let root = fixture.root.deletingLastPathComponent().appendingPathComponent("CodexProgressRuntime")
+        let home = fixture.homes[0], package = try self.package
+        let paths = WindowsCodexProgressPaths(root: root)
+        let runtime = WindowsCodexProgressRuntime(root: root)
+        let stable = try runtime.prepare(home: home, package: package, stablePath: true)
+        let script = URL(fileURLWithPath: stable.arguments[2])
+        let current = try Data(contentsOf: script)
+        XCTAssertEqual(script.deletingLastPathComponent().lastPathComponent, try WindowsPythonPin.load().identifier)
+        XCTAssertTrue(paths.ownsLocalHarness(stable.executable, arguments: paths.localHarnessCommand(stable, home: home).arguments, home: home))
+
+        // An older reporter in the same place, as a previous Pacer left it.
+        let marker = script.deletingLastPathComponent().appendingPathComponent(".pacer-owned.json")
+        let older = Data("# Previous reporter\n".utf8)
+        try older.write(to: script)
+        var record = try read(marker)
+        record["files"] = try XCTUnwrap(record["files"] as? [[String: Any]]).map { file in
+            file["name"] as? String == script.lastPathComponent
+                ? ["name": script.lastPathComponent, "bytes": older.count, "sha256": WindowsClaudeRuntimeStore.digest(older)] : file
+        }
+        try write(record, marker)
+        XCTAssertEqual(try runtime.prepare(home: home, package: package, stablePath: true), stable, "An update keeps the command")
+        XCTAssertEqual(try Data(contentsOf: script), current, "and replaces the reporter in place")
+
+        let codex = try runtime.prepare(home: home, package: package)
+        XCTAssertNotEqual(codex.executable, stable.executable, "Codex keeps a path per reporter")
+        XCTAssertTrue(paths.owns(codex, home: home) && paths.owns(stable, home: home))
+    }
+
     func testMultipleHomesShareRuntimeAndUninstallRestoresBoth() throws {
         let fixture = try fixture(), runtime = WindowsClaudeHookRuntime(root: fixture.root)
         for home in fixture.homes {

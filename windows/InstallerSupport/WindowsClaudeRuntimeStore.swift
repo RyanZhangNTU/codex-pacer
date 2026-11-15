@@ -110,7 +110,9 @@ public struct WindowsClaudeRuntimeStore {
     public func ensure(package source: URL, home: URL) throws -> URL {
         try ensure(package: source, home: home, progressReporter: nil)
     }
-    func ensure(package source: URL, home: URL, progressReporter: Data?) throws -> URL {
+    /// - Parameter stablePath: keep the reporter in the Python-only folder and
+    ///   replace it there, for harnesses that key their trust to the command.
+    func ensure(package source: URL, home: URL, progressReporter: Data?, stablePath: Bool = false) throws -> URL {
         try storage.validate(home)
         guard storage.isDirectory(home) else { throw Failure.unsafeRuntime }
         let pin = try WindowsPythonPin.load()
@@ -138,7 +140,10 @@ public struct WindowsClaudeRuntimeStore {
             bytes.append((file, progressReporter))
             // Store Codex can prefer a private AppData copy at the previous path.
             // A reporter change needs a new path even when Python stays pinned.
-            identifier += "-" + file.sha256.prefix(12)
+            // WorkBuddy instead trusts a command by its path and arguments, so its
+            // reporter keeps one path and is replaced in place. Python reads the
+            // script and closes it before running, so a running reporter allows it.
+            if !stablePath { identifier += "-" + file.sha256.prefix(12) }
         }
         try createDirectory(root)
         let marker = root.appendingPathComponent(Self.marker)

@@ -1498,7 +1498,8 @@ actor EngineRuntime {
             let result = await Task.detached(priority: .utility) {
                 await LocalHarnessProgressSetup.sync(ticket, storage: WindowsLocalProfileStorage(),
                     connection: definition.progressConnection, inspectOnly: inspectOnly, prepare: { home in
-                    guard let command = await Self.prepareProgressReporter(home: home, paths: paths) else { return nil }
+                    // WorkBuddy trusts a command by its path, so its reporter keeps one.
+                    guard let command = await Self.prepareProgressReporter(home: home, paths: paths, stablePath: true) else { return nil }
                     return paths.localHarnessCommand(command, home: home)
                 }, owns: { paths.ownsLocalHarness($0, arguments: $1, home: $2) })
             }.value
@@ -1508,14 +1509,14 @@ actor EngineRuntime {
         localProgressTasks[provider] = task
     }
 
-    private static func prepareProgressReporter(home: URL, paths: WindowsCodexProgressPaths) async -> CodexProgressCommand? {
+    private static func prepareProgressReporter(home: URL, paths: WindowsCodexProgressPaths, stablePath: Bool = false) async -> CodexProgressCommand? {
         let engine = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
         let install = engine.deletingLastPathComponent().deletingLastPathComponent().path.lowercased()
         let root = paths.root.path.lowercased()
         guard root != install, !root.hasPrefix(install + "/") else { return nil }
         let helper = engine.deletingLastPathComponent().appendingPathComponent("PacerInstallerHooks.exe")
         guard let data = await WindowsSubprocess.capture(executable: helper,
-                arguments: ["--prepare-codex-progress", paths.root.path, home.path], timeout: 8, limit: 8192),
+                arguments: [stablePath ? "--prepare-local-harness-progress" : "--prepare-codex-progress", paths.root.path, home.path], timeout: 8, limit: 8192),
               let command = try? JSONDecoder().decode(CodexProgressCommand.self, from: data), paths.owns(command, home: home) else { return nil }
         return command
     }
