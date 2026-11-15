@@ -14,7 +14,7 @@ LIMIT = 1024 * 1024
 SERVER = "pacer_progress"
 TOOL = "report_progress"
 # PacerCore's ProgressPrompt.toolDescription, shared by every module.
-GUIDANCE = "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: with your first tool calls, again whenever the estimate changes and at least every 5 tool calls while you work, and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
+GUIDANCE = "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: first, before or with your first other tool call, even if the estimate is still low; again whenever the estimate changes and at least every 5 tool calls while you work; and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
 DEFINITION = {
     "name": TOOL, "description": GUIDANCE,
     "inputSchema": {"type": "object", "properties": {"percent": {"type": "integer", "minimum": 0, "maximum": 100}},

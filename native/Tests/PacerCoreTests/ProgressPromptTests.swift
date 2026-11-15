@@ -32,9 +32,11 @@ final class ProgressPromptTests: XCTestCase {
 
     func testTheWordsAskOnlyForTheNumberInAConcreteRhythm() {
         let line = ProgressPrompt.ask(tool: "mcp__plugin_pacer_pacer__report_progress")
-        XCTAssertTrue(line.contains("done with mcp__plugin_pacer_pacer__report_progress: with your first tool calls, again whenever the estimate changes and at least every 5 tool calls while you work, and before you stop to wait"))
+        // The first report comes before or with the first other call, so the ring shows at once.
+        XCTAssertTrue(line.contains("done with mcp__plugin_pacer_pacer__report_progress: first, before or with your first other tool call, even if the estimate is still low; again whenever the estimate changes and at least every 5 tool calls while you work; and before you stop to wait"))
         XCTAssertTrue(line.hasSuffix(" If mcp__plugin_pacer_pacer__report_progress is deferred, find it with tool search first."))
-        XCTAssertTrue(ProgressPrompt.toolDescription.contains("with this tool: with your first tool calls"))
+        XCTAssertTrue(ProgressPrompt.toolDescription.contains("with this tool: first, before or with your first other tool call"))
+        XCTAssertTrue(ProgressPrompt.ask(tool: "x", when: ProgressPrompt.pointsStep(15)).contains("low; again after it moves 15 points or more; and before"))
         XCTAssertFalse(ProgressPrompt.toolDescription.contains("deferred"), "A tool reading its own description is loaded")
         XCTAssertFalse(line.contains("{"))
         // "At milestones" got one report at the start and one at the end (11/15).

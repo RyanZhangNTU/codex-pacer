@@ -393,7 +393,12 @@ Every module asks in the same words, `ProgressPrompt` in Core. The same text app
 - WorkBuddy's rule;
 - Claude's step and marker modes, in the same sentences.
 
-It asks only for the number, in a concrete rhythm: with the first tool calls, whenever the estimate changes and at least every 5 tool calls, and before stopping to wait, all in the same batch as the other calls. Wording such as "at milestones" got WorkBuddy one report at the start and one at the end. The Python and JavaScript copies are checked word for word by `ProgressPromptTests`, and the Windows reporter stays byte for byte the shared one. Each update reaches users silently: Claude's line from the next message, the tool descriptions in new sessions.
+It asks only for the number, in a concrete rhythm:
+- first, before or with the first other tool call, even while the estimate is low, so the ring shows at once;
+- again whenever the estimate changes, and at least every 5 tool calls;
+- before stopping to wait.
+
+Each report goes in the same batch as the other calls. Wording such as "at milestones" got WorkBuddy one report at the start and one at the end, and "with your first tool calls" let the first report come late. The Python and JavaScript copies are checked word for word by `ProgressPromptTests`, and the Windows reporter stays byte for byte the shared one. Each update reaches users silently: Claude's line from the next message, the tool descriptions in new sessions.
 
 | Provider | Reporting tool | Setup Pacer owns |
 | --- | --- | --- |

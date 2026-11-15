@@ -7,12 +7,14 @@ import Foundation
 /// this text, checked word for word by `ProgressPromptTests`; change it here
 /// and in every copy together.
 ///
-/// It asks only for the number, with a concrete rhythm: the first tool
-/// calls, every change and at least every five tool calls, and before
-/// stopping to wait, in the same batch as the other calls. Wording such as
-/// "at milestones" got one report at the start and one at the end.
+/// It asks only for the number, with a concrete rhythm: first, before or with
+/// the first other tool call even while the estimate is low, so the ring
+/// shows at once; then at every change and at least every five tool calls;
+/// and before stopping to wait, in the same batch as the other calls.
+/// Wording such as "at milestones" got one report at the start and one at the
+/// end, and "with your first tool calls" let the first report come late.
 package enum ProgressPrompt {
-    package static let template = "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with {tool}: with your first tool calls, again {when}, and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
+    package static let template = "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with {tool}: first, before or with your first other tool call, even if the estimate is still low; again {when}; and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
     /// Where the tool may load only on demand: Claude's line and WorkBuddy's rule.
     package static let deferredTemplate = " If {tool} is deferred, find it with tool search first."
     package static let everyStep = "whenever the estimate changes and at least every 5 tool calls while you work"

@@ -57,6 +57,7 @@ package enum LocalHarnessProgressSetup {
     package static let rule = progressRule(ProgressPrompt.ask(tool: "`mcp__pacer_progress__report_progress`"))
     /// Earlier rules Pacer wrote, replaced by the current one.
     private static let previousRules = [
+        progressRule("The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with `mcp__pacer_progress__report_progress`: with your first tool calls, again whenever the estimate changes and at least every 5 tool calls while you work, and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools. If `mcp__pacer_progress__report_progress` is deferred, find it with tool search first."),
         progressRule("For a multi-step task that uses tools, use ToolSearch to find `mcp__pacer_progress__report_progress` and report your current estimate before starting the work. Report again at milestones and before long waits. Pass an integer from 0 to 100. Skip short replies that need no tools. If the tool is unavailable, continue the task."),
         progressRule("For multi-step tasks, call `mcp__pacer_progress__report_progress` with a percentage from 0 to 100 at the first tool batch, at milestones, and before long waits. Search for `pacer_progress` if it is deferred. Skip short replies and continue if the tool is unavailable.")
     ]

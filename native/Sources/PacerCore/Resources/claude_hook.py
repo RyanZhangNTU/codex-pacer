@@ -51,7 +51,7 @@ def read_object(path):
 OPEN,CLOSE=chr(0x27e6),chr(0x27e7);TOOL='mcp__plugin_pacer_pacer__report_progress'
 TOOLS=(TOOL,'mcp__pacer__report_progress')
 # The wording is PacerCore's ProgressPrompt, shared by every module; keep these copies identical.
-ASK_TEMPLATE="The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with {tool}: with your first tool calls, again {when}, and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
+ASK_TEMPLATE="The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with {tool}: first, before or with your first other tool call, even if the estimate is still low; again {when}; and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
 DEFERRED_TEMPLATE=" If {tool} is deferred, find it with tool search first."
 EVERY_STEP="whenever the estimate changes and at least every 5 tool calls while you work"
 MARKER_TEMPLATE="The user turned on Pacer's progress ring and asks that every message you write start with {marker}, your best estimate of how much of their current request is done. Always give a whole number from 0 to 100, and lower it if the work turns out larger."
