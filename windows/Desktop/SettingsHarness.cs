@@ -177,7 +177,8 @@ internal sealed partial class SettingsWindow
         harnessProgressKey = key;
         foreach (UIElement child in harnessProgressBody.Children) PageAccessibility.Retire(child);
         harnessProgressBody.Children.Clear();
-        bool shown = guide != null && (guide.Steps.Count > 0 || guide.Line != null);
+        // A stage with only an action, such as opening an app never opened, still shows its button, as on the Mac.
+        bool shown = guide != null && (guide.Steps.Count > 0 || guide.Line != null || guide.Action != null);
         harnessProgressBody.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         if (!shown) return;
 
@@ -608,6 +609,14 @@ internal sealed partial class SettingsWindow
         // from the app's log.
         string checkedProvider = module.Provider;
         if (restartingHarnessApps.Contains(checkedProvider)) return;
+        // The card and the floating guide both poll; one check runs at a time.
+        if (!checkingHarnessApps.Add(checkedProvider)) return;
+        try { await CheckHarnessAppOnceAsync(client, checkedProvider, module); }
+        finally { checkingHarnessApps.Remove(checkedProvider); }
+    }
+    private static readonly HashSet<string> checkingHarnessApps = new(StringComparer.Ordinal);
+    private static async Task CheckHarnessAppOnceAsync(EngineClient client, string checkedProvider, EngineModule module)
+    {
         var checkedAt = DateTime.UtcNow;
         var (running, started) = await Task.Run(() => AppPresence(module.Launch?.Executables));
         // A check that ran while Pacer restarted the app, or that saw it closed

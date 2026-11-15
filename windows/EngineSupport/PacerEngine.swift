@@ -846,9 +846,10 @@ actor EngineRuntime {
                 // and when its custom connectors list its servers.
                 var view: HarnessProgressGuide.AppView?
                 if let openedAt = opened[provider], case .running(let since)? = presence {
-                    let data = definition.appLogFile.flatMap {
-                        HarnessAppLog.read(localHarnessHome(definition).appendingPathComponent($0), since: min(openedAt, since))
-                    }
+                    // The log can be read back several megabytes; off the engine's actor.
+                    let log = definition.appLogFile.map { localHarnessHome(definition).appendingPathComponent($0) }
+                    let data = await Task.detached(priority: .utility) { log.flatMap { HarnessAppLog.read($0, since: min(openedAt, since)) } }.value
+                    guard active else { return true }
                     view = HarnessAppLog.view(in: data, opened: openedAt, appStarted: since, now: now())
                 }
                 if localHarnessApps[provider] != presence || localHarnessViews[provider] != view || opened != openedHarnessConnectors {
@@ -1451,7 +1452,7 @@ actor EngineRuntime {
             let state = localProgressStatuses[provider]
             module.progressGuide = HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
                 ringOn: enabled.contains(provider) && !disabledHarnessProgress.contains(provider), name: descriptor.name,
-                addedAt: state?.addedAt, app: localHarnessApps[provider], view: localHarnessViews[provider],
+                addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider], view: localHarnessViews[provider],
                 openedConnectors: openedHarnessConnectors[provider] != nil)
         }
         if let daily = demo && provider == .workbuddy ? DemoScenario.workbuddyDaily(at: now()) : harnessActivities[provider]?.usage?.daily {
@@ -1538,8 +1539,10 @@ actor EngineRuntime {
                                              ticket: ProgressSetupQueue<LocalHarnessProgressSetup.Target>.Ticket) {
         guard localProgressQueues[provider]?.finish(ticket) == true else { return }
         localProgressTasks[provider] = nil
+        // Inspections repeat while the guide waits; only a change is published.
+        let changed = localProgressStatuses[provider] != status
         localProgressStatuses[provider] = status
-        if projectionReady { publish(notices: []) }
+        if projectionReady && changed { publish(notices: []) }
     }
     private func scheduleClaudeHooks(force: Bool = false) {
         guard let services = claudeHookServices else { return }
@@ -1735,6 +1738,15 @@ actor EngineRuntime {
 
     func maintenanceRefresh() async {
         guard active else { return }
+        // Trusting the tool in the app, or its first report, can happen while
+        // nothing polls; a waiting guide is checked each minute so its steps,
+        // the Overview line and the sidebar dot clear (11/16 review).
+        for definition in localHarnesses.definitions where definition.progressConnection != nil {
+            if let state = localProgressStatuses[definition.descriptor.id], state.setup == .configured,
+               state.connection != .trusted || !state.reported {
+                scheduleLocalHarnessProgress(definition, inspectOnly: true)
+            }
+        }
         // Automatic modules notice a new or removed app within ten minutes;
         // Settings and source changes detect at once through configure.
         if !demo, moduleConfigurationActive, supportedProviders.contains(where: { moduleSettings.mode(for: $0) == .automatic }),

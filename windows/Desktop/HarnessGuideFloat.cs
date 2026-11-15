@@ -38,9 +38,13 @@ internal sealed class HarnessGuideFloat : Window
         current?.Close();
         var shown = new HarnessGuideFloat(provider, ui, resources, picture, area);
         var timer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
+        var openedAt = DateTime.UtcNow;
         timer.Tick += async (_, _) =>
         {
             if (current != shown) { timer.Stop(); return; }
+            // A guide left waiting on a click stops checking after ten minutes;
+            // the card in Settings still shows the step.
+            if (DateTime.UtcNow - openedAt > TimeSpan.FromMinutes(10)) { shown.Close(); return; }
             await SettingsWindow.CheckHarnessAppAsync(client, preferences, provider, polling: true);
             Follow();
         };

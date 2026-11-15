@@ -52,6 +52,17 @@ final class HarnessProgressGuideTests: XCTestCase {
                        "Once restarted, the app shows the new command to trust")
         XCTAssertEqual(guide(.configured, .trusted, app: loaded)?.stage, .firstTask)
         XCTAssertEqual(guide(.configured, .trusted, app: .notRunning)?.stage, .firstTask)
+        // 11/16 review: a reported tool once worked, but an app started while the
+        // ring had the entry out, or one asked to trust a tool it can't list, lacks it.
+        let removed = added.addingTimeInterval(-1_200)
+        func after(_ removedAt: Date?, _ connection: LocalHarnessProgressConnection, app: HarnessProgressGuide.AppPresence) -> HarnessProgressGuide.Stage? {
+            HarnessProgressGuide(setup: .configured, connection: connection, reported: true, ringOn: true, name: "WorkBuddy AI",
+                                 addedAt: added, removedAt: removedAt, app: app, language: .english)?.stage
+        }
+        XCTAssertEqual(after(removed, .trusted, app: before), .reopen, "Started while the entry was out")
+        XCTAssertEqual(after(removed, .trusted, app: .running(since: removed.addingTimeInterval(-60))), .ready,
+                       "Kept running from before the ring went off: it still has the tool")
+        XCTAssertEqual(after(nil, .needsTrust, app: before), .reopen, "Removed in the app, then the ring off and on")
     }
 
     func testEachClickInTheAppIsItsOwnStep() throws {

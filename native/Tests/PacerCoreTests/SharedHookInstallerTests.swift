@@ -131,9 +131,11 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertTrue(LocalHarnessProgressSetup.reported(home, storage: storage))
         XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage))
         XCTAssertTrue(LocalHarnessProgressSetup.reported(home, storage: storage), "Turning the ring off and on keeps the card collapsed")
+        XCTAssertNotNil(LocalHarnessProgressSetup.removedAt(home, storage: storage), "Pacer notes when the entry left, for an app started meanwhile")
         XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage, matchNativeReporter: true))
         XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage), "Uninstalling leaves nothing of Pacer's behind")
         XCTAssertNil(LocalHarnessProgressSetup.addedAt(home, storage: storage))
+        XCTAssertNil(LocalHarnessProgressSetup.removedAt(home, storage: storage))
     }
     func testInjectedPythonCommandsAtomicPermissionsAndIdempotence() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")

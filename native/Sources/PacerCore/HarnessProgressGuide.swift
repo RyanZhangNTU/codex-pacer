@@ -72,7 +72,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     ///   - view: the page the app shows; nil when the host can't tell.
     ///   - openedConnectors: the user opened the connectors from the card.
     package init?(setup: LocalHarnessProgressStatus?, connection: LocalHarnessProgressConnection?, reported: Bool,
-                  ringOn: Bool, name: String, addedAt: Date? = nil, app: AppPresence? = nil,
+                  ringOn: Bool, name: String, addedAt: Date? = nil, removedAt: Date? = nil, app: AppPresence? = nil,
                   view: AppView? = nil, openedConnectors: Bool = false, language: AppLanguage? = nil) {
         func text(_ key: String, _ arguments: CVarArg...) -> String { L10n.text("progress_guide." + key, arguments: arguments, language: language) }
         info = text("info", name, name, name)
@@ -94,7 +94,10 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
                 // on. After a Pacer update changed the command, the running app
                 // still uses the one the user trusted, and shows nothing to trust
                 // until it starts again.
-                if case .running(let since)? = app, let addedAt, since < addedAt, !reported || connection == .retrust {
+                // Nor does an app started while the ring had the entry out, or one
+                // still asked to trust a tool it can't list (11/16 review).
+                if case .running(let since)? = app, let addedAt, since < addedAt,
+                   !reported || connection == .retrust || connection == .needsTrust || removedAt.map({ since > $0 }) == true {
                     stage = .reopen; break
                 }
                 switch connection {
