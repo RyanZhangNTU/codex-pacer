@@ -152,7 +152,7 @@ internal sealed partial class SettingsWindow : Window
         Closing += (_, e) => { if (busy && !AllowClose) e.Cancel = true; };
         Closed += (_, _) =>
         {
-            sourceClosed = true; inlineDownload?.Cancel(); IsEnabled = false; sourceInspectionRevision++; ClearProviderHome();
+            sourceClosed = true; inlineDownload?.Cancel(); IsEnabled = false; sourceInspectionRevision++; ClearProviderHome(); CloseGuideFloat();
             appearance.Changed -= OnAppearanceChanged; semanticPaint.Dispose(); if (ownsAppearance) appearance.Dispose(); session.Changed -= OnPreferencesChanged;
             if (notifications != null) notifications.Changed -= OnNotificationsChanged;
             if (surfaceWindow != null) surfaceWindow.SurfaceChanged -= RefreshSurfaceStatus;

@@ -841,10 +841,10 @@ actor EngineRuntime {
                 // A closed app starts over at its connectors.
                 var opened = openedHarnessConnectors
                 if !running { opened[provider] = nil } else if command.params?.openedConnectors == true, opened[provider] == nil { opened[provider] = now() }
-                var view = running ? command.params?.appView.flatMap(HarnessProgressGuide.AppView.init(rawValue:)) : nil
                 // WorkBuddy notes in its log when its custom connectors list its
                 // servers. It also lists them once as it starts, which doesn't count.
-                if view == nil, let openedAt = opened[provider], let log = definition.appLogFile, case .running(let since)? = presence,
+                var view: HarnessProgressGuide.AppView?
+                if let openedAt = opened[provider], let log = definition.appLogFile, case .running(let since)? = presence,
                    let data = HarnessAppLog.read(localHarnessHome(definition).appendingPathComponent(log)),
                    HarnessAppLog.listedConnectors(in: data, after: openedAt, appStarted: since) {
                     view = .customConnectors

@@ -92,7 +92,7 @@ import SwiftUI
             return
         }
         misses = 0
-        show(around: Self.cocoaRect(target), text: guide.pointerText ?? "")
+        show(around: Self.cocoaRect(target), text: guide.floatTitle ?? "")
     }
 
     /// Accessibility counts from the top left of the main display; windows from its bottom left.

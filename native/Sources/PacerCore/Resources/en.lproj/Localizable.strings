@@ -1470,7 +1470,7 @@
 "credits.reminder.expiry_title" = "Remind before credits expire";
 "credits.reminder.expiry_info" = "Rewards and top-ups lapse at their own dates. The dial also turns orange this many days before.";
 "credits.reminder.days_within" = "days ahead";
-"progress_guide.info" = "%1$@ reports how much of a task is done, and Pacer draws it around the task icon. %2$@ reads new tools only when it starts, so the first time it needs to be quit completely and reopened; closing its window isn’t enough. It connects only tools you trust, so trust pacer_progress once under Custom Connector in its connectors. Show Me points at each button right in %3$@. Tasks that are already open won’t show a ring.";
+"progress_guide.info" = "%1$@ reports how much of a task is done, and Pacer draws it around the task icon. %2$@ reads new tools only when it starts, so the first time it needs to be quit completely and reopened; closing its window isn’t enough. It connects only tools you trust, so trust pacer_progress once under Custom Connector in its connectors. After you click Open, Pacer switches to %3$@ and a small floating guide shows what to click next. Tasks that are already open won’t show a ring.";
 "progress_guide.step.added" = "Progress tool added";
 "progress_guide.step.trust" = "Click Trust on pacer_progress";
 "progress_guide.step.retrust" = "Click Trust on pacer_progress again";
@@ -1524,11 +1524,12 @@
 "progress_guide.step.open_connectors" = "Open %@’s connectors";
 "progress_guide.step.custom_connector" = "Click Custom Connector at the top right";
 "progress_guide.action.open" = "Open";
-"progress_guide.action.point" = "Show Me in %@";
-"progress_guide.pointer.custom_connector" = "Click here for Custom Connector";
-"progress_guide.pointer.trust" = "Click here to trust pacer_progress";
-"progress_guide.pointer.not_found" = "Couldn’t find this button in %@. Open its window and try again.";
-"progress_guide.pointer.stop" = "Stop";
+"progress_guide.float.custom_connector" = "Click Custom Connector at the top right of %@";
+"progress_guide.float.next_trust" = "Next: click Trust on pacer_progress";
+"progress_guide.float.next_retrust" = "Next: click Trust on pacer_progress again";
+"progress_guide.float.next_task" = "Next: start a new task";
+"progress_guide.float.first_task" = "Trusted. Start a new task in %@, and Pacer shows its progress ring.";
+"progress_guide.float.close" = "Close";
 "progress_guide.trust_card.experts" = "Experts";
 "progress_guide.trust_card.skills" = "Skills";
 "progress_guide.action.restart" = "Restart %@";

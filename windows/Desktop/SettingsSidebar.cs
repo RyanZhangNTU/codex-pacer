@@ -316,6 +316,7 @@ internal sealed partial class SettingsWindow
             if (ResolvePane(stored) != activePane || HarnessPane(activePane)) RebuildPane(stored);
         }
         RefreshHarnessPage();
+        FollowGuideFloat();
         RefreshModules();
         RefreshSidebar();
         if (changed) ApplySearch();

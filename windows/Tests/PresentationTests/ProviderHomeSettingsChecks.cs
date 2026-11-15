@@ -71,7 +71,7 @@ internal static class ProviderHomeSettingsChecks
             var progress = Find<CheckBox>(window, id + ".progress");
             Check(progress.IsEnabled && progress.IsChecked == true, "The progress ring is on by default, like the built-in services' rings");
             CheckProgressGuide(window, id);
-            await CheckAppAutomation();
+            await CheckGuideFloat(window, ui);
             Toggle(progress);
             await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false
                 && session.Current.DisabledHarnessProgress.SequenceEqual(["workbuddy"]), "The progress switch saves independently of the module mode");
@@ -234,39 +234,56 @@ internal static class ProviderHomeSettingsChecks
             "Cloud Projects remains connected and the implemented embedding control is enabled");
     }
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
-    /// The pointer finds an app's buttons by their names through UI Automation:
-    /// a window of this process stands in for WorkBuddy's custom connectors.
-    private static async Task CheckAppAutomation()
+    /// The floating guide beside the app: the click to make, its picture and
+    /// the next click, in the corner of Settings' screen, without taking focus.
+    private static async Task CheckGuideFloat(SettingsWindow settings, UiText ui)
     {
-        var custom = new Button { Content = "自定义连接器", Width = 160, Height = 36, HorizontalAlignment = HorizontalAlignment.Right };
-        var trust = new Button { Content = "信任", Width = 80, Height = 32, HorizontalAlignment = HorizontalAlignment.Right };
-        var other = new Button { Content = "信任", Width = 80, Height = 32, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 160, 0, 0) };
-        var panel = new StackPanel { Margin = new Thickness(20) };
-        panel.Children.Add(custom);
-        var row = new DockPanel { Margin = new Thickness(0, 30, 0, 0) }; DockPanel.SetDock(trust, Dock.Right); row.Children.Add(trust); row.Children.Add(new TextBlock { Text = "pacer_progress" });
-        panel.Children.Add(row); panel.Children.Add(other);
-        var window = new Window { Width = 1400, Height = 1000, Left = 0, Top = 0, ShowActivated = false, ShowInTaskbar = false, Content = panel, Title = "Connector fixture" };
+        static HarnessProgressGuide Guide(string stage, string? title, string? next, string? picture) =>
+            new(stage, stage + " chip", "attention", [], null, null, null, true, "summary", true, "Why and how", Picture: picture, FloatTitle: title, FloatNext: next);
+        var drawn = new List<string>();
+        var area = new System.Drawing.Rectangle(100, 80, 1600, 1000);
+        var shown = new HarnessGuideFloat("workbuddy", ui, settings.Resources, kind => { drawn.Add(kind); return new DecorativeBorder { Width = 300, Height = 40 }; }, area);
+        TextBlock Text(string id) => Descendants(shown).OfType<TextBlock>().First(value => AutomationProperties.GetAutomationId(value) == id);
+        bool closed = false; shown.Closed += (_, _) => closed = true;
         try
         {
-            window.Show(); await Pump();
-            int[] self = [Environment.ProcessId];
-            var (view, customRect, trustRect) = await Task.Run(() =>
-            {
-                var found = AppAutomation.MainWindow(self);
-                return found == null ? (null, null, null) : (AppAutomation.View(found), AppAutomation.Target(found, "customConnector"), AppAutomation.Target(found, "trust"));
-            });
-            Point Screen(FrameworkElement element) => element.PointToScreen(new Point(element.ActualWidth / 2, element.ActualHeight / 2));
-            bool Over(Rect? rect, FrameworkElement element) => rect is { } value && value.Contains(Screen(element));
-            Check(view == "customConnectors", "Pacer's tool on the page means the custom connectors show");
-            Check(Over(customRect, custom), "The pointer finds Custom Connector by its name");
-            Check(Over(trustRect, trust) && !Over(trustRect, other), "The pointer picks the Trust button beside Pacer's tool");
-            // Measured on WorkBuddy 5.9.3 at 150%: a 2172-wide window at 1326,114 had the button at 3247,183, 204 by 48.
-            var estimate = AppAutomation.FromFrame(new Rect(1326, 114, 2172, 1356), 1.5);
-            Check(Math.Abs(estimate.X - 3247) < 2 && Math.Abs(estimate.Y - 183) < 2 && Math.Abs(estimate.Width - 204) < 1 && Math.Abs(estimate.Height - 48) < 1,
-                "Without the window's contents, the ring goes where WorkBuddy draws Custom Connector");
+            shown.Present(Guide("customConnector", "Click Custom Connector", "Next: click Trust", "customConnector"));
+            await Pump();
+            var handle = new System.Windows.Interop.WindowInteropHelper(shown).Handle;
+            long style = NativeStyle(handle);
+            Check(shown.IsVisible && shown.Topmost && !shown.IsActive && (style & 0x08000000) != 0,
+                "The guide floats above the app without taking focus");
+            Check(Text("guide_float.title").Text == "Click Custom Connector" && Text("guide_float.next").Text == "Next: click Trust"
+                && drawn.SequenceEqual(["customConnector"]), "It shows the click to make, its picture and the next click");
+            Check(Descendants(shown).OfType<TextBlock>().Any(value => value.Text == "Pacer · customConnector chip"), "Its header names Pacer and the steps left");
+            var bounds = NativeBounds(handle);
+            Check(Math.Abs(bounds.Right - area.Right) <= 12 && Math.Abs(bounds.Bottom - area.Bottom) <= 12 && bounds.Left >= area.Left,
+                "It sits in the bottom-right corner of Settings' screen");
+            shown.Present(Guide("trust", "Click Trust", "Next: start a new task", "trust"));
+            await Pump();
+            bounds = NativeBounds(handle);
+            Check(Text("guide_float.title").Text == "Click Trust" && drawn.SequenceEqual(["customConnector", "trust"])
+                && Math.Abs(bounds.Bottom - area.Bottom) <= 12, "The next step replaces it in place, still in the corner");
+            shown.Present(Guide("firstTask", "Trusted. Start a new task.", null, null));
+            await Pump();
+            Check(Text("guide_float.next").Visibility == Visibility.Collapsed && !Descendants(shown).OfType<DecorativeBorder>().Any(),
+                "The last step has no picture and no next click");
+            Invoke(Descendants(shown).OfType<Button>().First(value => AutomationProperties.GetAutomationId(value) == "guide_float.close"));
+            await Pump();
+            Check(closed && !shown.IsVisible, "Close dismisses the guide");
         }
-        finally { window.Close(); }
+        finally { if (!closed) shown.Close(); }
+        Check(AppWindows.MainWindow([]) == null, "Without the app's processes there is no window to bring forward");
     }
+    private static long NativeStyle(IntPtr handle) => GetWindowLongPtr(handle, -20).ToInt64();
+    private static System.Drawing.Rectangle NativeBounds(IntPtr handle)
+    {
+        GetWindowRect(handle, out var rect);
+        return System.Drawing.Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+    }
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
 
     /// Core words each stage; the page draws the steps with one picture and one
     /// action for the current click, one line for a problem, and only the chip once ready.
@@ -279,16 +296,16 @@ internal static class ProviderHomeSettingsChecks
         var body = Find<StackPanel>(window, id + ".progress_guide");
         HarnessProgressStep[] Steps(int current) => Enumerable.Range(0, 6).Select(index => new HarnessProgressStep("Step " + index,
             index < current ? "done" : index == current ? "current" : "pending")).ToArray();
-        window.RefreshHarnessProgressGuide("workbuddy", Guide("customConnector", "attention", Steps(3), null, "point", true, "customConnector"), true);
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("customConnector", "attention", Steps(3), null, null, true, "customConnector"), true);
         Check(body.Visibility == Visibility.Visible && Find<Border>(window, id + ".progress_chip").Visibility == Visibility.Visible
             && AutomationProperties.GetName(Find<Border>(window, id + ".progress_chip")) == "customConnector chip"
-            && Shown("progress_step0") && Shown("progress_step5") && Find<Button>(window, id + ".progress_action").Content as string == "customConnector action"
+            && Shown("progress_step0") && Shown("progress_step5") && !Shown("progress_action")
             && Shown("progress_waiting") && Descendants(body).OfType<DecorativeBorder>().Count() == 1,
-            "Each click in the app is its own step, with one picture and one action under it");
+            "Each click in the app is its own step with one picture; the click is in the app, so there's no button");
         Check(Descendants(Find<Grid>(window, id + ".progress_step3")).OfType<DecorativeBorder>().Count() == 1,
             "The picture belongs to the current step only");
         Check(!Descendants(body).OfType<TextBlock>().Any(text => text.Text == "Why and how"), "The explanation stays behind the ⓘ");
-        window.RefreshHarnessProgressGuide("workbuddy", Guide("trust", "attention", Steps(4), null, "point", true, "trust"), true);
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("trust", "attention", Steps(4), null, null, true, "trust"), true);
         Check(Descendants(Find<Grid>(window, id + ".progress_step4")).OfType<DecorativeBorder>().Count() == 1
             && Descendants(body).OfType<DecorativeBorder>().Count() == 1, "The trust step swaps in its own picture");
         window.RefreshHarnessProgressGuide("workbuddy", Guide("turnedOff", "attention", [], "Turn it back on.", "openConnectors", true, null), true);

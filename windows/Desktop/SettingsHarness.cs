@@ -196,7 +196,6 @@ internal sealed partial class SettingsWindow
                 {
                     "openConnectors" => await OpenHarnessConnectorsAsync(provider, guide.Stage == "launch"),
                     "openApp" => await WindowsConversationApplication.OpenApplicationAsync(provider),
-                    "point" => await PointInAppAsync(provider, guide.Stage),
                     "restartApp" => await RestartHarnessAppAsync(provider, confirmed: false),
                     "restartConfirmed" => await RestartHarnessAppAsync(provider, confirmed: true),
                     _ => await RetryHarnessProgressAsync(provider)
@@ -329,10 +328,9 @@ internal sealed partial class SettingsWindow
         return frame;
     }
 
-    // Which modules' connectors the user opened from the card, and the page
-    // each app was last seen on, for the guide's open and custom steps.
+    // Which modules' connectors the user opened from the card, for the guide's
+    // open and custom steps.
     private static readonly HashSet<string> openedHarnessConnectors = new(StringComparer.Ordinal);
-    private static readonly Dictionary<string, string?> harnessAppViews = new(StringComparer.Ordinal);
 
     // A confirmation the card shows in place of its action.
     private sealed record HarnessGuidePrompt(string Provider, string Stage, string Kind);
@@ -345,19 +343,19 @@ internal sealed partial class SettingsWindow
         RefreshHarnessProgressGuide(provider, guide, true);
     }
 
-    /// Opens the connectors. A closed app starts there, and the pointer then
-    /// rings the next button straight away.
+    /// Opens the connectors. A closed app starts there, and the floating guide
+    /// then shows the next click beside it.
     private async Task<bool> OpenHarnessConnectorsAsync(string provider, bool launch = false)
     {
         if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return false;
         openedHarnessConnectors.Add(provider);
-        await RefreshHarnessProgressConnectionAsync(polling: true);
-        if (launch) StartPointer(provider, "customConnector", startup: true);
+        OpenGuideFloat(provider);
+        await RefreshHarnessProgressConnectionAsync(polling: true, provider);
         return true;
     }
 
     /// One click for the reopen step: Pacer closes the app and opens it at its
-    /// connectors, then rings Custom Connector. A running task asks first.
+    /// connectors, then floats the next click beside it. A running task asks first.
     private async Task<bool> RestartHarnessAppAsync(string provider, bool confirmed)
     {
         if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables } module) return false;
@@ -376,44 +374,57 @@ internal sealed partial class SettingsWindow
         }
         else if (result != WindowsConversationApplication.RestartResult.Restarted) return false;
         openedHarnessConnectors.Add(provider);
-        harnessAppViews.Remove(provider);
-        await RefreshHarnessProgressConnectionAsync(polling: true);
-        StartPointer(provider, "customConnector", startup: true);
+        OpenGuideFloat(provider);
+        await RefreshHarnessProgressConnectionAsync(polling: true, provider);
         return true;
     }
 
-    /// Rings the button to click right in the app. The custom step reopens its
-    /// connectors; the trust step only brings the app forward, since a link
-    /// would leave them.
-    private async Task<bool> PointInAppAsync(string provider, string stage)
+    // The floating guide the card's action opened, and its check on the app
+    // while it shows, whichever page Settings is on.
+    private HarnessGuideFloat? guideFloat;
+    private DispatcherTimer? guideFloatPoll;
+
+    /// Opens the floating guide for the app the card just opened, and brings
+    /// the app forward if it didn't come forward itself. The guide shows once
+    /// the card reaches a click in the app.
+    private void OpenGuideFloat(string provider)
     {
-        if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables }) return false;
-        string target = stage == "trust" ? "trust" : "customConnector";
-        if (target == "customConnector")
+        CloseGuideFloat();
+        if (demo || HarnessModule(provider) is not { } module) return;
+        var area = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
+        var shown = new HarnessGuideFloat(provider, ui, Resources, kind => kind == "trust" ? TrustPicture(provider) : CustomConnectorPicture(), area);
+        var poll = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
+        poll.Tick += async (_, _) =>
         {
-            if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return false;
-            openedHarnessConnectors.Add(provider);
-        }
-        else await Task.Run(() => { if (AppAutomation.MainWindow(AppAutomation.ProcessIds(executables)) is { } window) AppAutomation.Raise(window); });
-        StartPointer(provider, target, startup: false);
-        return true;
+            if (guideFloat != shown) { poll.Stop(); return; }
+            await RefreshHarnessProgressConnectionAsync(polling: true, provider);
+            FollowGuideFloat();
+        };
+        shown.Closed += (_, _) =>
+        {
+            poll.Stop();
+            if (guideFloat == shown) { guideFloat = null; guideFloatPoll = null; }
+        };
+        guideFloat = shown; guideFloatPoll = poll;
+        poll.Start();
+        _ = AppWindows.BringForwardAsync(module.Launch?.Executables);
+        FollowGuideFloat();
     }
 
-    private void StartPointer(string provider, string target, bool startup)
+    /// Shows the guide's current click, or closes the float once nothing is
+    /// left to do in the app. Until it first shows, the app may still be
+    /// starting or reloading.
+    private void FollowGuideFloat()
     {
-        if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables } module) return;
-        string name = module.DisplayName ?? provider;
-        AppPointer.Show(provider, executables, target, ui.Text("progress_guide.pointer.stop"),
-            kind => ui.Text(kind == "trust" ? "progress_guide.pointer.trust" : "progress_guide.pointer.custom_connector"),
-            view =>
-            {
-                if (harnessAppViews.TryGetValue(provider, out var seen) && seen == view) return;
-                harnessAppViews[provider] = view;
-                _ = RefreshHarnessProgressConnectionAsync(polling: true);
-            },
-            () => { issue.Text = ui.Text("progress_guide.pointer.not_found").Replace("%@", name, StringComparison.Ordinal); issue.Visibility = Visibility.Visible; },
-            startup ? TimeSpan.FromSeconds(25) : TimeSpan.Zero);
+        if (guideFloat is not { } shown) return;
+        var guide = HarnessModule(shown.Provider) is { Enabled: true } module
+            && !session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal) ? module.ProgressGuide : null;
+        if (guide is { FloatTitle: not null }) shown.Present(guide);
+        else if (shown.Presented || guide?.Stage is not ("reopen" or "launch" or "openConnectors")
+                 || DateTime.UtcNow - shown.OpenedAt > TimeSpan.FromMinutes(2)) shown.Close();
     }
+
+    private void CloseGuideFloat() => guideFloat?.Close();
 
     private async Task<bool> RetryHarnessProgressAsync(string provider)
     {
@@ -578,31 +589,24 @@ internal sealed partial class SettingsWindow
     }
 
     /// Checks the app's trust again: when Settings comes forward, and every few
-    /// seconds while the step card waits on the app.
-    private async Task RefreshHarnessProgressConnectionAsync(bool polling = false)
+    /// seconds while the step card or the floating guide waits on the app.
+    /// <param name="provider">The module to check; the page's own by default.</param>
+    private async Task RefreshHarnessProgressConnectionAsync(bool polling = false, string? provider = null)
     {
         if (demo || (!polling && !IsActive) || engine is not { IsConnectionClosed: false } client ||
-            HarnessModule(activePane) is not { Enabled: true, ProgressConnector: true, ProgressSetup: "configured" or "missingHome" } module ||
+            HarnessModule(provider ?? activePane) is not { Enabled: true, ProgressConnector: true, ProgressSetup: "configured" or "missingHome" } module ||
             (polling && module.ProgressGuide is not { Waiting: true }) ||
             session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
         // The app reads its MCP file when it starts, so the card needs to know
-        // whether it runs and since when, and, on its connector steps, which page
-        // it shows. A pointer already reading the app reports the page itself.
-        string provider = module.Provider;
-        bool reading = module.ProgressGuide?.Stage is "openConnectors" or "customConnector" or "trust" && AppPointer.Current?.Provider != provider;
-        var (running, started, view) = await Task.Run(() =>
-        {
-            var (running, started) = AppPresence(module.Launch?.Executables);
-            string? view = running && reading && AppAutomation.MainWindow(AppAutomation.ProcessIds(module.Launch?.Executables)) is { } window ? AppAutomation.View(window) : null;
-            return (running, started, view);
-        });
-        if (reading) harnessAppViews[provider] = view;
-        if (!running) { openedHarnessConnectors.Remove(provider); harnessAppViews.Remove(provider); }
-        harnessAppViews.TryGetValue(provider, out var page);
+        // whether it runs and since when. The engine reads which page it shows
+        // from the app's log.
+        string checkedProvider = module.Provider;
+        var (running, started) = await Task.Run(() => AppPresence(module.Launch?.Executables));
+        if (!running) openedHarnessConnectors.Remove(checkedProvider);
         try
         {
-            await client.SendAsync("refreshHarnessProgressConnection", new { provider, appRunning = running, appStartedAt = started,
-                appView = page, openedConnectors = openedHarnessConnectors.Contains(provider) });
+            await client.SendAsync("refreshHarnessProgressConnection", new { provider = checkedProvider, appRunning = running, appStartedAt = started,
+                openedConnectors = openedHarnessConnectors.Contains(checkedProvider) });
         }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { }
     }
@@ -661,7 +665,6 @@ internal sealed partial class SettingsWindow
         }
         var guide = closed || !module.Enabled ? null : module.ProgressGuide;
         RefreshHarnessProgressGuide(module.Provider, guide, editable);
-        AppPointer.Follow(module.Provider, guide?.Stage);
         if (harnessProgressPoll != null)
         {
             bool poll = guide is { Waiting: true } && progressOn && !demo;

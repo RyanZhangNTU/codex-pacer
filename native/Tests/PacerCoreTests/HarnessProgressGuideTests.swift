@@ -42,10 +42,11 @@ final class HarnessProgressGuideTests: XCTestCase {
         XCTAssertEqual(custom.stage, .customConnector)
         XCTAssertEqual(custom.steps[3].title, "Click Custom Connector at the top right")
         XCTAssertEqual(custom.steps.map(\.state), [.done, .done, .done, .current, .pending, .pending])
-        XCTAssertEqual(custom.action, .point)
-        XCTAssertEqual(custom.actionTitle, "Show Me in WorkBuddy AI")
+        XCTAssertNil(custom.action, "The click is in the app; there is nothing to click in Pacer")
         XCTAssertEqual(custom.picture, .customConnector)
-        XCTAssertEqual(custom.pointerText, "Click here for Custom Connector")
+        XCTAssertEqual(custom.floatTitle, "Click Custom Connector at the top right of WorkBuddy AI")
+        XCTAssertEqual(custom.floatNext, "Next: click Trust on pacer_progress", "The floating guide names this click and the next")
+        XCTAssertNil(open.floatTitle, "Until the card opens the app, there is no guide over it")
         XCTAssertEqual(guide(.configured, .needsTrust, app: loaded, view: .connectors)?.stage, .customConnector,
                        "A host that sees the connectors page skips the open step")
 
@@ -54,7 +55,9 @@ final class HarnessProgressGuideTests: XCTestCase {
         XCTAssertEqual(trust.steps[4].title, "Click Trust on pacer_progress")
         XCTAssertEqual(trust.chip, "1 step left")
         XCTAssertEqual(trust.picture, .trust)
-        XCTAssertEqual(trust.action, .point)
+        XCTAssertNil(trust.action)
+        XCTAssertEqual(trust.floatTitle, "Click Trust on pacer_progress")
+        XCTAssertEqual(trust.floatNext, "Next: start a new task")
         XCTAssertTrue(trust.attention && trust.waiting)
         XCTAssertNil(trust.line, "Steps carry the state; the explanation stays behind ⓘ")
         XCTAssertTrue(trust.info.contains("Custom Connector") && !trust.info.contains("Refresh"))
@@ -63,6 +66,8 @@ final class HarnessProgressGuideTests: XCTestCase {
         XCTAssertEqual(again.chip, "Trust again")
         XCTAssertEqual(again.steps[4].title, "Click Trust on pacer_progress again")
         XCTAssertEqual(again.summary, "Progress ring: trust again")
+        XCTAssertEqual(again.floatTitle, "Click Trust on pacer_progress again")
+        XCTAssertEqual(guide(.configured, .retrust, app: loaded, opened: true)?.floatNext, "Next: click Trust on pacer_progress again")
     }
 
     func testTheFirstReportCollapsesTheCard() throws {
@@ -71,11 +76,15 @@ final class HarnessProgressGuideTests: XCTestCase {
         XCTAssertEqual(trusted.steps.map(\.state), [.done, .done, .done, .done, .done, .current])
         XCTAssertEqual(trusted.steps[4].title, "WorkBuddy AI trusts pacer_progress")
         XCTAssertFalse(trusted.attention, "Starting a task is not a chore to flag")
+        XCTAssertEqual(trusted.floatTitle, "Trusted. Start a new task in WorkBuddy AI, and Pacer shows its progress ring.")
+        XCTAssertNil(trusted.floatNext)
+        XCTAssertNil(trusted.picture)
         let ready = try XCTUnwrap(guide(.configured, .trusted, reported: true))
         XCTAssertEqual(ready.stage, .ready)
         XCTAssertEqual(ready.chip, "Ready")
         XCTAssertTrue(ready.steps.isEmpty)
         XCTAssertNil(ready.action)
+        XCTAssertNil(ready.floatTitle, "The first report closes the floating guide")
         XCTAssertEqual(guide(.configured, .unknown, reported: true)?.stage, .ready, "Reports prove the tool works even when its status can't be read")
     }
 
@@ -84,6 +93,7 @@ final class HarnessProgressGuideTests: XCTestCase {
         XCTAssertEqual(off.chip, "Off in WorkBuddy AI")
         XCTAssertEqual(off.line, "Turn pacer_progress back on in WorkBuddy AI.")
         XCTAssertEqual(off.action, .openConnectors)
+        XCTAssertNil(off.floatTitle, "A problem closes the floating guide; the card says what to do")
         XCTAssertEqual(guide(.configured, .toolDisabled)?.line, "Turn the report_progress tool back on in WorkBuddy AI.")
         let open = try XCTUnwrap(guide(.missingHome))
         XCTAssertEqual(open.action, .openApp)

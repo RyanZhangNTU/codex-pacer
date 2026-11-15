@@ -1470,7 +1470,7 @@
 "credits.reminder.expiry_title" = "积分快到期时提醒";
 "credits.reminder.expiry_info" = "平台奖励和加油包积分各有到期时间。圆环也会提前这么多天变成橙色。";
 "credits.reminder.days_within" = "天内";
-"progress_guide.info" = "%1$@ 会报告任务完成了多少，Pacer 把它画成任务图标外的圆环。%2$@ 只在启动时读取新加的工具，所以第一次要把它完全退出再打开，只关窗口不算。它只连接你信任过的工具，所以要在连接器的「自定义连接器」里信任一次 pacer_progress。「指给我」会直接在 %3$@ 的窗口上圈出要点的按钮。已经开着的任务不会出现圆环。";
+"progress_guide.info" = "%1$@ 会报告任务完成了多少，Pacer 把它画成任务图标外的圆环。%2$@ 只在启动时读取新加的工具，所以第一次要把它完全退出再打开，只关窗口不算。它只连接你信任过的工具，所以要在连接器的「自定义连接器」里信任一次 pacer_progress。点「打开」后，Pacer 会切到 %3$@，并用一个小浮窗说明接下来点哪里。已经开着的任务不会出现圆环。";
 "progress_guide.step.added" = "已加入进度工具";
 "progress_guide.step.trust" = "在 pacer_progress 上点「信任」";
 "progress_guide.step.retrust" = "在 pacer_progress 上再点一次「信任」";
@@ -1524,11 +1524,12 @@
 "progress_guide.step.open_connectors" = "打开 %@ 的连接器";
 "progress_guide.step.custom_connector" = "点右上角的「自定义连接器」";
 "progress_guide.action.open" = "打开";
-"progress_guide.action.point" = "在 %@ 里指给我";
-"progress_guide.pointer.custom_connector" = "点这里打开「自定义连接器」";
-"progress_guide.pointer.trust" = "点这里信任 pacer_progress";
-"progress_guide.pointer.not_found" = "没在 %@ 里找到这个按钮。请先打开它的窗口再试。";
-"progress_guide.pointer.stop" = "不用了";
+"progress_guide.float.custom_connector" = "点 %@ 右上角的「自定义连接器」";
+"progress_guide.float.next_trust" = "下一步：在 pacer_progress 上点「信任」";
+"progress_guide.float.next_retrust" = "下一步：在 pacer_progress 上再点一次「信任」";
+"progress_guide.float.next_task" = "下一步：开一个新任务";
+"progress_guide.float.first_task" = "已信任。在 %@ 开一个新任务，Pacer 就会显示它的进度圆环。";
+"progress_guide.float.close" = "关闭";
 "progress_guide.trust_card.experts" = "专家";
 "progress_guide.trust_card.skills" = "技能";
 "progress_guide.action.restart" = "重启 %@";

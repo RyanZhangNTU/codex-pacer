@@ -65,9 +65,7 @@ struct EngineCommand: Decodable {
         /// runs, and since when (seconds since 1970), as the host sees it.
         var appRunning: Bool?
         var appStartedAt: Double?
-        /// The page the app shows, when the host can tell, and whether the
-        /// user opened the connectors from the card.
-        var appView: String?
+        /// And whether the user opened the connectors from the card.
         var openedConnectors: Bool?
         var activityID: String?
         var snapshotSequence: UInt64?

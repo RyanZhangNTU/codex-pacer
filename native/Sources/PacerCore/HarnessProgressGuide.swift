@@ -9,7 +9,9 @@ import Foundation
 ///   before Pacer added the tool must be reopened before it lists the tool.
 /// - Pacer can open the app's connector market, but no link reaches its
 ///   custom connectors, so that click and the trust click are steps of their
-///   own, each with a picture and a pointer the host can draw over the app.
+///   own, each with a picture. After the card opens the app, the host floats
+///   its own small guide with the step and its picture beside the app; it
+///   never reads the app's window and needs no permission.
 public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     public enum Stage: String, Codable, Sendable {
         case adding, reopen, launch, openConnectors, customConnector, trust, firstTask, ready
@@ -17,8 +19,8 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     }
     public enum Tone: String, Codable, Sendable { case neutral, attention, info, success, error }
     public enum StepState: String, Codable, Sendable { case done, current, pending }
-    /// `point`: the host shows where to click in the app.
-    public enum Action: String, Codable, Sendable { case openConnectors, openApp, retry, point, restartApp }
+    /// No stage asks for `point` any more; it stays until the Mac drops its pointer.
+    public enum Action: String, Codable, Sendable { case openConnectors, openApp, retry, restartApp, point }
     /// What the current step's picture shows.
     public enum Picture: String, Codable, Sendable { case customConnector, trust }
 
@@ -53,8 +55,11 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     /// What the card says while it waits on the user in the app.
     public let waitingText: String?
     public let picture: Picture?
-    /// The pointer's bubble over the app, for the current step.
-    public let pointerText: String?
+    /// The floating guide over the app, opened from the card's action: this
+    /// click, shown with `picture`, and the one after it. Nil once there is
+    /// nothing left to do in the app, which closes the guide.
+    public let floatTitle: String?
+    public let floatNext: String?
     /// The ⓘ text.
     public let info: String
 
@@ -145,7 +150,6 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         switch stage {
         case .launch: action = .openConnectors; actionTitle = text("action.open_app", name)
         case .openConnectors: action = .openConnectors; actionTitle = text("action.open")
-        case .customConnector, .trust: action = .point; actionTitle = text("action.point", name)
         case .turnedOff, .toolOff, .unknown: action = .openConnectors; actionTitle = text("action.open_connectors", name)
         case .openApp: action = .openApp; actionTitle = text("action.open_app", name)
         case .conflict, .failed, .missing, .cleanupFailed: action = .retry; actionTitle = text("action.retry")
@@ -169,7 +173,12 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         default: nil
         }
         picture = stage == .customConnector ? .customConnector : stage == .trust ? .trust : nil
-        pointerText = stage == .customConnector ? text("pointer.custom_connector") : stage == .trust ? text("pointer.trust") : nil
+        switch stage {
+        case .customConnector: floatTitle = text("float.custom_connector", name); floatNext = text(again ? "float.next_retrust" : "float.next_trust")
+        case .trust: floatTitle = text(again ? "step.retrust" : "step.trust"); floatNext = text("float.next_task")
+        case .firstTask: floatTitle = text("float.first_task", name); floatNext = nil
+        default: floatTitle = nil; floatNext = nil
+        }
     }
 
     /// The note under the onboarding ring switch, for the apps that still
