@@ -36,7 +36,8 @@ final class HarnessProgressGuideTests: XCTestCase {
     func testTrustingInTheAppIsTheLastStepLeft() throws {
         let trust = try XCTUnwrap(guide(.configured, .needsTrust, app: .running(since: added.addingTimeInterval(60))))
         XCTAssertEqual(trust.chip, "1 step left")
-        XCTAssertEqual(trust.steps[2].title, "Trust pacer_progress in WorkBuddy AI", "Each module names its own app")
+        XCTAssertEqual(trust.steps[2].title, "In WorkBuddy AI, click Custom Connector, then Trust next to pacer_progress",
+                       "WorkBuddy has no link to its custom connectors, so the step names that click; each module names its own app")
         XCTAssertEqual(trust.action, .openConnectors)
         XCTAssertEqual(trust.actionTitle, "Open WorkBuddy AI Connectors")
         XCTAssertTrue(trust.attention && trust.waiting && trust.showsTrustCard)
@@ -45,7 +46,7 @@ final class HarnessProgressGuideTests: XCTestCase {
 
         let again = try XCTUnwrap(guide(.configured, .retrust))
         XCTAssertEqual(again.chip, "Trust again")
-        XCTAssertEqual(again.steps[2].title, "Trust pacer_progress in WorkBuddy AI again")
+        XCTAssertEqual(again.steps[2].title, "In WorkBuddy AI, click Custom Connector, then Trust next to pacer_progress again")
         XCTAssertEqual(again.summary, "Progress ring: trust again")
         XCTAssertEqual(guide(.configured, .retrust, app: .running(since: added.addingTimeInterval(-60)))?.chip, "Trust again",
                        "After an update, the app may need reopening too, but the chip says why")

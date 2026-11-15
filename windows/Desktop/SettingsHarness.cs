@@ -256,12 +256,28 @@ internal sealed partial class SettingsWindow
         }
     }
 
-    /// A small picture of the app's own trust card, so people know what to click there.
+    /// A small picture of the app's connectors page, so people know the two
+    /// clicks there: ① Custom Connector at the top, ② Trust on pacer_progress.
     private DecorativeBorder TrustCard(string provider)
     {
+        FrameworkElement Mark(string number)
+        {
+            var badge = new Border { Width = 15, Height = 15, CornerRadius = new CornerRadius(7.5), Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
+            badge.SetResourceReference(Border.BackgroundProperty, "SettingsAccent");
+            var digit = new TextBlock { Text = number, FontSize = 9.5, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            digit.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSelectionText");
+            badge.Child = digit; return badge;
+        }
         var stack = new StackPanel();
-        var trail = Label(ui.Text("progress_guide.trust_card.path"), 10.5); trail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-        trail.Margin = new Thickness(0, 0, 0, 7); stack.Children.Add(trail);
+        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+        var custom = new StackPanel { Orientation = Orientation.Horizontal };
+        custom.Children.Add(Mark("1"));
+        var button = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 3), Background = new SolidColorBrush(Color.FromRgb(29, 29, 31)) };
+        button.Child = new TextBlock { Text = "✎ " + ui.Text("progress_guide.trust_card.custom"), FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
+        custom.Children.Add(button);
+        DockPanel.SetDock(custom, Dock.Right); top.Children.Add(custom);
+        var tab = Label(ui.Text("progress_guide.trust_card.tab"), 11, FontWeights.SemiBold); tab.VerticalAlignment = VerticalAlignment.Center; top.Children.Add(tab);
+        stack.Children.Add(top);
         var item = new Border { CornerRadius = new CornerRadius(7), BorderThickness = new Thickness(1), Padding = new Thickness(9, 7, 9, 8) };
         item.SetResourceReference(Border.BorderBrushProperty, "SettingsSeparator"); item.SetResourceReference(Border.BackgroundProperty, "SettingsCard");
         var lines = new StackPanel();
@@ -271,11 +287,13 @@ internal sealed partial class SettingsWindow
         lines.Children.Add(name);
         var caption = Label(ui.Text("progress_guide.trust_card.caption"), 10.5); caption.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); lines.Children.Add(caption);
         var detail = Label(ui.Text("progress_guide.trust_card.detail"), 11); detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 2, 0, 6); lines.Children.Add(detail);
-        var trust = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(12, 3, 12, 4), HorizontalAlignment = HorizontalAlignment.Right, BorderThickness = new Thickness(2) };
+        var trust = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(12, 3, 12, 4), BorderThickness = new Thickness(2) };
         trust.Background = new SolidColorBrush(PacerPalette.BrandColor(provider));
         trust.SetResourceReference(Border.BorderBrushProperty, "SettingsChipOnStroke");
         trust.Child = new TextBlock { Text = ui.Text("progress_guide.trust_card.button"), FontSize = 11.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
-        lines.Children.Add(trust);
+        var trustRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        trustRow.Children.Add(Mark("2")); trustRow.Children.Add(trust);
+        lines.Children.Add(trustRow);
         item.Child = lines; stack.Children.Add(item);
         var frame = new DecorativeBorder { Width = 236, Margin = new Thickness(14, 0, 0, 0), CornerRadius = new CornerRadius(9), Padding = new Thickness(9), Child = stack, VerticalAlignment = VerticalAlignment.Top };
         frame.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");

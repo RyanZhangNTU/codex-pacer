@@ -1472,8 +1472,8 @@
 "credits.reminder.days_within" = "days ahead";
 "progress_guide.info" = "%1$@ reports how much of a task is done, and Pacer draws it around the task icon. %2$@ reads new tools only when it starts, so the first time it needs to be quit completely and reopened; closing its window isn’t enough. It connects only tools you trust, so trust pacer_progress once in its connectors. Tasks that are already open won’t show a ring. When a Pacer update changes the tool, %3$@ asks you to trust it again.";
 "progress_guide.step.added" = "Progress tool added";
-"progress_guide.step.trust" = "Trust pacer_progress in %@";
-"progress_guide.step.retrust" = "Trust pacer_progress in %@ again";
+"progress_guide.step.trust" = "In %@, click Custom Connector, then Trust next to pacer_progress";
+"progress_guide.step.retrust" = "In %@, click Custom Connector, then Trust next to pacer_progress again";
 "progress_guide.step.trusted" = "%@ trusts pacer_progress";
 "progress_guide.step.first_task" = "Start a new task";
 "progress_guide.chip.adding" = "Adding…";
@@ -1507,7 +1507,6 @@
 "progress_guide.trust_card.caption" = "Third-party service";
 "progress_guide.trust_card.detail" = "Trust this MCP service before it first connects.";
 "progress_guide.trust_card.button" = "Trust";
-"progress_guide.trust_card.path" = "Connectors › Custom connectors";
 "progress_guide.waiting" = "Waiting for you";
 "progress_guide.state.done" = "Done";
 "progress_guide.state.current" = "Current step";
@@ -1520,3 +1519,6 @@
 "progress_guide.chip.steps_left" = "%ld steps left";
 "progress_guide.summary.steps_left" = "Progress ring: %ld steps left";
 "progress_guide.waiting.reopen" = "Waiting for %@ to start again";
+"progress_guide.trust_card.tab" = "Connectors";
+"progress_guide.trust_card.custom" = "Custom Connector";
+"progress_guide.trust_card.path" = "Connectors › Custom connectors";

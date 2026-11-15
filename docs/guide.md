@@ -113,7 +113,7 @@ The progress ring is on by default. The first time, the WorkBuddy page shows the
 
 1. Pacer adds its tool to WorkBuddy.
 2. WorkBuddy reads new tools only when it starts. If it was already open, quit it completely (closing its window isn't enough) and open it again.
-3. Click **Open WorkBuddy Connectors** and click **Trust** next to `pacer_progress`.
+3. Click **Open WorkBuddy Connectors**, then **Custom Connector** at the top right of WorkBuddy's page, and click **Trust** next to `pacer_progress`.
 4. Start a new task. Once WorkBuddy reports progress, the steps fold away. If a Pacer update changes the tool, WorkBuddy asks you to trust it again, and the sidebar, Overview and the expanded panel say so. Turning the ring off removes the tool. If WorkBuddy keeps its data elsewhere, choose the folder under **Custom Locations**.
 
 **SSH hosts.** Pacer follows the hosts you already use in Codex and Claude. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.

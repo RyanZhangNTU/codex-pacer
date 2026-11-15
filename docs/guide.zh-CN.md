@@ -113,7 +113,7 @@ SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也
 
 1. Pacer 把进度工具加进 WorkBuddy。
 2. WorkBuddy 只在启动时读取新加的工具。如果它已经开着，要完全退出（只关窗口不算）再重新打开。
-3. 点“打开 WorkBuddy 连接器”，在 `pacer_progress` 旁点“信任”。
+3. 点“打开 WorkBuddy 连接器”，再点 WorkBuddy 页面右上角的“自定义连接器”，在 `pacer_progress` 旁点“信任”。
 4. 开一个新任务。WorkBuddy 报告进度后，这些步骤会收起。如果 Pacer 更新换了进度工具，WorkBuddy 会要求再信任一次，侧边栏、概览和展开面板都会提示。关闭圆环会移除这个工具。如果 WorkBuddy 的数据放在别处，可以在“自定义位置”里选择文件夹。
 
 **SSH 主机。** Pacer 会跟随你在 Codex 和 Claude 里已经在用的 SSH 主机。主机需要能免密码连接，并装有 Python 3。主机断开时，在“远程”页点“重试”。

@@ -1472,8 +1472,8 @@
 "credits.reminder.days_within" = "天内";
 "progress_guide.info" = "%1$@ 会报告任务完成了多少，Pacer 把它画成任务图标外的圆环。%2$@ 只在启动时读取新加的工具，所以第一次要把它完全退出再打开，只关窗口不算。它只连接你信任过的工具，所以要在它的连接器里信任一次 pacer_progress。已经开着的任务不会出现圆环。Pacer 更新了进度工具后，%3$@ 会要求再信任一次。";
 "progress_guide.step.added" = "已加入进度工具";
-"progress_guide.step.trust" = "在 %@ 里信任 pacer_progress";
-"progress_guide.step.retrust" = "在 %@ 里再信任一次 pacer_progress";
+"progress_guide.step.trust" = "在 %@ 里点「自定义连接器」，再点 pacer_progress 的「信任」";
+"progress_guide.step.retrust" = "在 %@ 里点「自定义连接器」，再信任一次 pacer_progress";
 "progress_guide.step.trusted" = "%@ 已信任 pacer_progress";
 "progress_guide.step.first_task" = "开一个新任务";
 "progress_guide.chip.adding" = "正在添加…";
@@ -1507,7 +1507,6 @@
 "progress_guide.trust_card.caption" = "第三方服务";
 "progress_guide.trust_card.detail" = "首次连接此 MCP 服务需要您的信任确认。";
 "progress_guide.trust_card.button" = "信任";
-"progress_guide.trust_card.path" = "连接器 › 自定义连接器";
 "progress_guide.waiting" = "等你点完";
 "progress_guide.state.done" = "已完成";
 "progress_guide.state.current" = "当前步骤";
@@ -1520,3 +1519,6 @@
 "progress_guide.chip.steps_left" = "还差 %ld 步";
 "progress_guide.summary.steps_left" = "进度圆环还差 %ld 步";
 "progress_guide.waiting.reopen" = "等 %@ 重新启动";
+"progress_guide.trust_card.tab" = "连接器";
+"progress_guide.trust_card.custom" = "自定义连接器";
+"progress_guide.trust_card.path" = "连接器 › 自定义连接器";
