@@ -490,6 +490,8 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
     // instead, which costs a few metadata reads, and reads them when they change.
     private var probe: Task<Void, Never>?
     private var probedFiles: [String] = []
+    // What each task does now, from WorkBuddy's agent logs; see WorkBuddyRunLog.
+    private var runLog = WorkBuddyRunLog()
     private var publish: (@Sendable (HarnessActivity) async -> Void)?
     private var lastObservation: HarnessActivity?
     private var owner: String?
@@ -542,6 +544,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         dailyCredits = nil; dailyCharged = nil; dailyReadAt = nil
         catchUpUntil = nil
         owner = nil; transcripts.removeAll(); witnessed.removeAll(); witnessedRuns.removeAll(); started = nil
+        runLog = WorkBuddyRunLog()
         return oldWatcher
     }
 
@@ -591,6 +594,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
             // Require WorkBuddy's sidecars; don't open a live WAL as immutable.
             let sidecarsExist = io.files.metadata(wal)?.isRegularFile == true && io.files.metadata(shm)?.isRegularFile == true
             if sidecarsExist, let owner, let store = WorkBuddySessionStore(url: db) {
+                runLog.read(home: home, files: io.files, now: now, within: WorkBuddySessionStore.activityLifetime)
                 switch store.read(owner: owner, now: now, known: Set(witnessed.keys)) {
                 case .snapshot(let sessions, let runs):
                     if verifiedOwner(in: home, account: account) == owner {
@@ -675,18 +679,20 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         for row in rows {
             let age = now.timeIntervalSince(row.updated)
             let running = row.isRunning && age < WorkBuddySessionStore.activityLifetime
-            let stage: ActivityStage = row.status == "planning" ? .starting : .working
+            let current = turns[row.id].flatMap { $0.started <= row.updated.addingTimeInterval(1) ? $0 : nil }
+            let stage = liveStage(row.id, turn: current, since: current?.started ?? now.addingTimeInterval(-WorkBuddySessionStore.activityLifetime),
+                                  planning: row.status == "planning")
             let session = CompletionDismissalStore.digest(["workbuddy-session", owner, row.id])
             var task = SessionActivity.observedSession(provider: id, session: session, stage: stage, at: row.updated)
             task.applyObservedTitle(row.title, project: row.directory.map { URL(fileURLWithPath: $0).lastPathComponent })
-            if let turn = turns[row.id], turn.started <= row.updated.addingTimeInterval(1) {
+            if let turn = current {
                 let turnID = CompletionDismissalStore.digest(["workbuddy-turn", session, turn.id])
                 let live = turn.started >= (started ?? now) || witnessed[row.id] == turn.id
                 let state: SessionActivity.ObservedTurnState
                 let changedAt: Date
                 if running {
                     witnessed[row.id] = turn.id
-                    state = .working(turn.calls.isEmpty ? stage : .tool)
+                    state = .working(stage)
                     changedAt = row.updated
                 } else if row.status == "pending", age < WorkBuddySessionStore.activityLifetime,
                           let awaiting = turn.awaiting, awaiting.call.time <= row.updated.addingTimeInterval(1) {
@@ -737,7 +743,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
                     state = .waiting(awaiting.kind); changedAt = awaiting.call.time
                     observation.requests.append(request(awaiting, session: session, turn: turnID))
                 } else {
-                    state = .working(turn?.calls.isEmpty != false ? .working : .tool)
+                    state = .working(liveStage(linked?.id, turn: turn, since: run.started, planning: false))
                     changedAt = observedAt
                 }
             case .completed:
@@ -783,6 +789,25 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
     private nonisolated func conversationURL(_ id: String) -> URL? {
         guard let uuid = Foundation.UUID(uuidString: id), let scheme = definition.conversationScheme else { return nil }
         return URL(string: scheme + "://chat/" + uuid.uuidString.lowercased())
+    }
+
+    /// What a running task does now, like other modules' tasks: starting,
+    /// thinking or running a tool. WorkBuddy's agent log says so as it
+    /// happens. Without it, an open tool call in the transcript means a tool,
+    /// and otherwise the request is with the model, which may think for
+    /// minutes before its first step. A local task is never shown as a cloud
+    /// poll's "working".
+    private func liveStage(_ session: String?, turn: WorkBuddyTranscript.Turn?, since: Date, planning: Bool) -> ActivityStage {
+        if let session, let live = runLog.sessions[session.lowercased()], live.at >= since.addingTimeInterval(-2) {
+            switch live.stage {
+            case .starting: return .starting
+            case .model: return .thinking
+            case .tool, .permission: return .tool
+            case .ended: break
+            }
+        }
+        if turn?.calls.isEmpty == false { return .tool }
+        return planning && turn?.response == nil ? .starting : .thinking
     }
 
     private func terminalState(status: String, ending: WorkBuddyTranscript.Turn.Ending) -> SessionActivity.ObservedTurnState? {
@@ -842,8 +867,10 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
 
     private func probeChanged(_ current: UInt64) -> Bool {
         guard current == generation, probe != nil else { return false }
+        // The agent logs grow all the time; only a new stage asks for a read.
+        let staged = home.map { runLog.read(home: $0, files: io.files, now: io.now(), within: WorkBuddySessionStore.activityLifetime) } ?? false
         let stamps = fileStamps()
-        guard stamps != probedFiles else { return false }
+        guard stamps != probedFiles else { return staged }
         probedFiles = stamps
         return true
     }

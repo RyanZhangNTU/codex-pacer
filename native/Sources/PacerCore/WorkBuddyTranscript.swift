@@ -99,7 +99,16 @@ struct WorkBuddyTranscript {
     private var identity: String?
     private var offset: UInt64 = 0
     private var droppingLine = false
+    /// Without a request in reach, how much of the end to read.
     private static let readLimit = 256 * 1024
+    /// A tool call that writes a file holds the whole file, and WorkBuddy can
+    /// append several in a second: 342 KB in three seconds for a web page, seen
+    /// 11/15. The reader catches up on anything up to this size, and a line may
+    /// be as long, so a burst never loses the request that opened the turn.
+    private static let catchUpLimit = 32 * 1024 * 1024
+    private static let lineLimit = 8 * 1024 * 1024
+    private static let searchChunk = 1024 * 1024
+    private static let requestMark = Data(#""startsNewUserRequest":true"#.utf8)
     private static let eventFields: Set<String> = ["type", "role", "status", "sessionId", "id", "parentId",
         "timestamp", "providerData", "name", "callId", "content", "arguments", "output", "isError", "is_error"]
     private static let metadataFields: Set<String> = ["conversationRequestId", "startsNewUserRequest", "isPartialAborted",
@@ -116,19 +125,25 @@ struct WorkBuddyTranscript {
         turn = current
     }
 
-    /// Only advance past complete lines. A file replacement or a tail beyond
-    /// the read budget requires a fresh turn anchor before reporting an end.
+    /// Only advance past complete lines. A new file, or more new lines than
+    /// `catchUpLimit`, starts again at the latest request, which a long turn's
+    /// transcript holds a megabyte or more back. Without one in reach, it reads
+    /// the last `readLimit` and waits for the next request before reporting.
     mutating func read(_ file: URL, session: String, files: any PlatformFileSystem, now: Date) throws {
         guard let metadata = files.metadata(file), metadata.isRegularFile else {
             self = Self()
             return
         }
-        if identity != metadata.identity || offset > metadata.size || metadata.size - offset > UInt64(Self.readLimit) {
+        if identity != metadata.identity || offset > metadata.size || metadata.size - offset > UInt64(Self.catchUpLimit) {
             self = Self()
             identity = metadata.identity
             if metadata.size > UInt64(Self.readLimit) {
-                offset = metadata.size - UInt64(Self.readLimit)
-                droppingLine = true
+                if let start = try Self.latestRequest(in: file, size: metadata.size, files: files) {
+                    offset = start
+                } else {
+                    offset = metadata.size - UInt64(Self.readLimit)
+                    droppingLine = true
+                }
             }
         }
         guard metadata.size > offset else { return }
@@ -145,8 +160,39 @@ struct WorkBuddyTranscript {
         offset += UInt64(start - data.startIndex)
     }
 
+    /// Where the last line that opens a request starts, searched back from the
+    /// end through `catchUpLimit` by its raw bytes; JSON escapes a quote inside
+    /// a string, so text that mentions the field never matches.
+    static func latestRequest(in file: URL, size: UInt64, files: any PlatformFileSystem) throws -> UInt64? {
+        let floor = size > UInt64(catchUpLimit) ? size - UInt64(catchUpLimit) : 0
+        var end = size
+        while end > floor {
+            let start = max(floor, end > UInt64(searchChunk) ? end - UInt64(searchChunk) : 0)
+            // Overlap the next chunk so a mark across the boundary is found.
+            let stop = min(size, end + UInt64(requestMark.count - 1))
+            let data = try files.read(file, offset: start, maximumBytes: Int(stop - start))
+            if let mark = data.range(of: requestMark, options: .backwards) {
+                return try lineStart(before: start + UInt64(mark.lowerBound - data.startIndex), in: file, files: files)
+            }
+            end = start
+        }
+        return nil
+    }
+
+    private static func lineStart(before position: UInt64, in file: URL, files: any PlatformFileSystem) throws -> UInt64? {
+        var end = position
+        let floor = position > UInt64(lineLimit) ? position - UInt64(lineLimit) : 0
+        while end > floor {
+            let start = max(floor, end > UInt64(searchChunk) ? end - UInt64(searchChunk) : 0)
+            let data = try files.read(file, offset: start, maximumBytes: Int(end - start))
+            if let newline = data.lastIndex(of: 10) { return start + UInt64(newline - data.startIndex) + 1 }
+            end = start
+        }
+        return floor == 0 ? 0 : nil
+    }
+
     @discardableResult mutating func consume(_ bytes: Data, session: String, now: Date) -> Bool {
-        guard let root = try? JSONFieldView.document(bytes, maximumBytes: Self.readLimit),
+        guard let root = try? JSONFieldView.document(bytes, maximumBytes: Self.lineLimit),
               let values = try? root.fields(Self.eventFields) else { return false }
         guard let type = values["type"]?.string(), ["message", "reasoning", "function_call", "function_call_result"].contains(type),
               values["sessionId"]?.string() == session,

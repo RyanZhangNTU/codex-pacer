@@ -89,7 +89,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertEqual(initial.count, 1, "An unchanged refresh should not publish twice")
         let start = try XCTUnwrap(initial.first)
         XCTAssertEqual(start.status, .ready)
-        XCTAssertEqual(start.activities.map(\.stage), [.working, .starting, .working])
+        XCTAssertEqual(start.activities.map(\.stage), [.thinking, .starting, .thinking], "A local task is never shown as a cloud poll")
         let active = try XCTUnwrap(start.activities.first)
         XCTAssertFalse(active.id.contains("test-active"))
         XCTAssertEqual(active.project, "WorkBuddy AI", "The international build keeps its own name on the bar and panel")
@@ -332,6 +332,50 @@ final class WorkBuddyHarnessTests: XCTestCase {
             shown = await updates.history.last?.activities.first?.currentProgress?.percent
         }
         XCTAssertEqual(shown, 40, "The report shows within seconds, not at the next 15-second check")
+        await monitor.stop()
+    }
+
+    func testARunningTaskShowsWhatWorkBuddysAgentLogSays() async throws {
+        // An HY model thinks for minutes before its first step, and WorkBuddy
+        // writes that response to the transcript only once it ends (11/15).
+        let fixture = try Fixture(), monitor = try monitor(), updates = Updates()
+        let session = Fixture.session
+        try fixture.createSessions()
+        try fixture.exec("""
+            ALTER TABLE sessions ADD COLUMN cwd TEXT;
+            INSERT INTO sessions VALUES ('\(session)','account','working',\(updated - 2000),NULL,'local',NULL,1,0,'Fixture task','C:/fixture');
+            """)
+        let workspace = fixture.home.appendingPathComponent("projects/C-fixture", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let opening = "{\"type\":\"message\",\"role\":\"user\",\"sessionId\":\"\(session)\",\"id\":\"u1\",\"timestamp\":\(updated - 9000),\"providerData\":{\"conversationRequestId\":\"r1\",\"startsNewUserRequest\":true}}\n"
+        try Data(opening.utf8).write(to: workspace.appendingPathComponent(session + ".jsonl"))
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = WorkBuddyRunLog.localZone; formatter.dateFormat = "yyyy-MM-dd"
+        let logs = fixture.home.appendingPathComponent("logs/" + formatter.string(from: at), isDirectory: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let log = logs.appendingPathComponent("2027-01-15-08-00-00__" + String(repeating: "a", count: 32) + ".log")
+        // The log's last word is from the session's previous request.
+        var lines = WorkBuddyRunLogTests.transition(session, "TOOL_STARTED", to: "tool_executing", at: at.addingTimeInterval(-60))
+        func stage(after line: String?) async throws -> ActivityStage? {
+            if let line { lines += line }
+            try Data(lines.utf8).write(to: log)
+            try FileManager.default.setAttributes([.modificationDate: at], ofItemAtPath: log.path)
+            await monitor.refresh()
+            return await updates.history.last?.activities.first?.stage
+        }
+        let before = try await stage(after: nil)
+        await monitor.start(home: fixture.home, policy: .expanded) { await updates.append($0) }
+        XCTAssertNil(before)
+        var shown = try await stage(after: nil)
+        XCTAssertEqual(shown, .thinking, "An earlier request's state doesn't describe this one, which is with the model")
+        shown = try await stage(after: WorkBuddyRunLogTests.transition(session, "AGENT_STARTED", to: "agent_running", at: at.addingTimeInterval(-8)))
+        XCTAssertEqual(shown, .starting, "Before its first model request the task is starting")
+        shown = try await stage(after: WorkBuddyRunLogTests.transition(session, "MODEL_STREAM_STARTED", to: "model_streaming", at: at.addingTimeInterval(-7)))
+        XCTAssertEqual(shown, .thinking, "The model thinks while the transcript holds only the request")
+        shown = try await stage(after: WorkBuddyRunLogTests.transition(session, "MODEL_STREAM_STARTED", to: "model_streaming", at: at.addingTimeInterval(-5),
+                                                                        extra: " | streamingToolName=Write"))
+        XCTAssertEqual(shown, .tool)
+        shown = try await stage(after: WorkBuddyRunLogTests.transition(session, "TOOL_ENDED", to: "agent_running", at: at.addingTimeInterval(-4)))
+        XCTAssertEqual(shown, .thinking)
         await monitor.stop()
     }
 
