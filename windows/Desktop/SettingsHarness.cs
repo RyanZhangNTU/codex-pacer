@@ -616,10 +616,16 @@ internal sealed partial class SettingsWindow
         if (restartingHarnessApps.Contains(checkedProvider)
             || !running && openedHarnessConnectors.TryGetValue(checkedProvider, out var openedAt) && openedAt >= checkedAt) return;
         if (!running) openedHarnessConnectors.Remove(checkedProvider);
+        // An app that started again since shows its home page, and its own
+        // listing as it starts must not count as the user's click.
+        else if (started is double since && openedHarnessConnectors.TryGetValue(checkedProvider, out var opened)
+                 && since > (opened - DateTime.UnixEpoch).TotalSeconds) openedHarnessConnectors.Remove(checkedProvider);
+        double? openedConnectorsAt = openedHarnessConnectors.TryGetValue(checkedProvider, out var connectorsShown)
+            ? (connectorsShown - DateTime.UnixEpoch).TotalSeconds : null;
         try
         {
             await client.SendAsync("refreshHarnessProgressConnection", new { provider = checkedProvider, appRunning = running, appStartedAt = started,
-                openedConnectors = openedHarnessConnectors.ContainsKey(checkedProvider) });
+                openedConnectorsAt });
         }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { }
     }

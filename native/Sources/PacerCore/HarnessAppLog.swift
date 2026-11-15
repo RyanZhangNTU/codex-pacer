@@ -6,7 +6,7 @@ import Foundation
 /// as the list shows, without reading WorkBuddy's window.
 ///
 /// Each line is a JSON object with an ISO 8601 `timestamp`, on Windows and
-/// the Mac alike. WorkBuddy also lists its servers once as it starts, two to
+/// the Mac alike; Windows ends lines with CRLF. WorkBuddy also lists its servers once as it starts, two to
 /// thirty-odd seconds in, so the first listing within a minute of its start
 /// doesn't count.
 package enum HarnessAppLog {
@@ -22,7 +22,8 @@ package enum HarnessAppLog {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let floor = appStarted.map { min(date, $0) } ?? date
         var times: [Date] = []
-        for line in String(decoding: data, as: UTF8.self).split(separator: "\n")
+        // Windows lines end in CRLF, which Swift reads as one character, not "\n".
+        for line in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline)
         where line.contains("[MethodCh] begin #") && line.contains(" wb:mcp:list") {
             guard let start = line.range(of: "\"timestamp\":\""),
                   let end = line[start.upperBound...].firstIndex(of: "\""),

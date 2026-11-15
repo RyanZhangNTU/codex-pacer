@@ -838,9 +838,10 @@ actor EngineRuntime {
             if let running = command.params?.appRunning {
                 let started = command.params?.appStartedAt.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
                 let presence: HarnessProgressGuide.AppPresence? = running ? started.map { .running(since: $0) } : .notRunning
-                // A closed app starts over at its connectors.
+                // The host knows when the user opened the connectors from the
+                // card; a closed app starts over at its connectors.
                 var opened = openedHarnessConnectors
-                if !running { opened[provider] = nil } else if command.params?.openedConnectors == true, opened[provider] == nil { opened[provider] = now() }
+                opened[provider] = running ? command.params?.openedConnectorsAt.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0) : nil } : nil
                 // WorkBuddy notes in its log when its custom connectors list its
                 // servers. It also lists them once as it starts, which doesn't count.
                 var view: HarnessProgressGuide.AppView?

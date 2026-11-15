@@ -127,7 +127,26 @@ final class HarnessProgressGuideTests: XCTestCase {
                       "A later listing is the user opening the custom connectors")
         XCTAssertTrue(HarnessAppLog.listedConnectors(in: Data(lines.utf8), after: opened, appStarted: opened.addingTimeInterval(-7200)),
                       "Long after the app started, the next listing counts")
+        // WorkBuddy on Windows ends its lines with CRLF.
+        let windows = opening.replacingOccurrences(of: "\n", with: "\r\n")
+        XCTAssertFalse(HarnessAppLog.listedConnectors(in: Data(lines.replacingOccurrences(of: "\n", with: "\r\n").utf8), after: restarted, appStarted: restarted),
+                       "On Windows too, the app's own listing as it starts doesn't count")
+        XCTAssertTrue(HarnessAppLog.listedConnectors(in: Data(windows.utf8), after: restarted, appStarted: restarted),
+                      "On Windows too, a later listing is the user opening the custom connectors")
         XCTAssertEqual(WorkBuddyHarness.china.appLogFile, "logs/daemon.log")
+    }
+
+    func testTheLogReadsWhileTheAppKeepsItOpenForWriting() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-daemon-\(UUID().uuidString).log")
+        let line = #"{"timestamp":"2026-11-15T07:31:57.487Z","level":"info","message":["[MethodCh] begin #244 wb:mcp:list arg=undefined"]}"#
+        try Data((String(repeating: "x", count: 300 * 1024) + "\r\n" + line + "\r\n").utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let writer = try FileHandle(forWritingTo: file)
+        defer { try? writer.close() }
+        _ = try writer.seekToEnd()
+        let data = try XCTUnwrap(HarnessAppLog.read(file), "WorkBuddy keeps its log open; Pacer still reads it")
+        XCTAssertEqual(data.count, HarnessAppLog.tail, "Only the log's end is read")
+        XCTAssertTrue(HarnessAppLog.listedConnectors(in: data, after: ISO8601DateFormatter().date(from: "2026-11-15T07:30:00Z")!))
     }
 
     func testARingThatIsOffShowsNothingUnlessCleanupFailed() {
