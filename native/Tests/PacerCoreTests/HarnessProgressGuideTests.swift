@@ -42,6 +42,14 @@ final class HarnessProgressGuideTests: XCTestCase {
             XCTAssertEqual(guide(.configured, connection, app: before)?.stage, .reopen, "\(connection)")
         }
         XCTAssertEqual(guide(.configured, .trusted, reported: true, app: before)?.stage, .ready, "A tool that has reported works")
+        // Seen 11/15: a Pacer update changed the command while WorkBuddy ran the
+        // one the user trusted, so it showed nothing to trust until restarted.
+        let updated = try XCTUnwrap(guide(.configured, .retrust, reported: true, app: before))
+        XCTAssertEqual(updated.stage, .reopen, "Restart first; the trust button shows only after")
+        XCTAssertEqual(updated.chip, "Trust again")
+        XCTAssertEqual(updated.action, .restartApp)
+        XCTAssertEqual(guide(.configured, .retrust, reported: true, app: loaded, opened: true)?.stage, .opening,
+                       "Once restarted, the app shows the new command to trust")
         XCTAssertEqual(guide(.configured, .trusted, app: loaded)?.stage, .firstTask)
         XCTAssertEqual(guide(.configured, .trusted, app: .notRunning)?.stage, .firstTask)
     }

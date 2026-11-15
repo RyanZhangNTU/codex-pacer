@@ -90,8 +90,13 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
             case .configured:
                 // An app running since before Pacer last wrote its entry hasn't
                 // read it, whatever its approvals still say: the user may have
-                // turned the tool off or removed it there, then the ring off and on.
-                if !reported, case .running(let since)? = app, let addedAt, since < addedAt { stage = .reopen; break }
+                // turned the tool off or removed it there, then the ring off and
+                // on. After a Pacer update changed the command, the running app
+                // still uses the one the user trusted, and shows nothing to trust
+                // until it starts again.
+                if case .running(let since)? = app, let addedAt, since < addedAt, !reported || connection == .retrust {
+                    stage = .reopen; break
+                }
                 switch connection {
                 case .needsTrust, .retrust:
                     switch app {
