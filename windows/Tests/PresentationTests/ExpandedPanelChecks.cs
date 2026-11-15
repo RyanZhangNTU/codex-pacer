@@ -114,7 +114,7 @@ internal static class ExpandedPanelChecks
                 && Find<CheckBox>(window, "panel.option.weekLine").IsVisible && Find<TextBlock>(window, "panel.inspector.notice").IsVisible,
                 "Clicking a tile selects it without adding it");
             Invoke(Find<Button>(window, "panel.block.deepseekWeek.toggle"));
-            await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekWeek", StringComparison.Ordinal) == true
+            await Until(() => PresentationWait.Places(session.Current.ExpandedPanelLayout, "deepseekWeek")
                 && Equals(Find<Button>(window, "panel.block.deepseekWeek.toggle").Tag, "added"));
             Check(Find<TextBlock>(window, "panel.inspector.title").Text == AutomationProperties.GetName(week) && !Find<TextBlock>(window, "panel.inspector.notice").IsVisible
                 && Present<Button>(window, "panel.editor.deepseekWeek"),

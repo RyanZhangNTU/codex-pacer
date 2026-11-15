@@ -13,8 +13,18 @@ namespace CodexPacer.Windows;
 internal static class GuideArt
 {
     internal static readonly Color CodexTile = Color.FromRgb(125, 214, 196), ClaudeTile = Color.FromRgb(242, 156, 107), DeepSeekTile = Color.FromRgb(123, 147, 255);
-    internal static Color ProviderTile(string provider) => provider == "claude" ? ClaudeTile : provider == "deepseek" ? DeepSeekTile : CodexTile;
-    internal static string ProviderSymbol(string provider) => provider == "claude" ? "asterisk" : provider == "deepseek" ? "water.waves" : "chevron.left.forwardslash.chevron.right";
+    /// Other modules use their registry color, which the engine sends with each snapshot.
+    internal static Color ProviderTile(string provider) => provider switch
+    {
+        "codex" => CodexTile, "claude" => ClaudeTile, "deepseek" => DeepSeekTile,
+        _ => PacerPalette.Brand(provider) is { } brand && brand.Dark is { Length: 7 } hex
+            && uint.TryParse(hex.AsSpan(1), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out uint rgb)
+            ? Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb) : Color.FromRgb(161, 161, 166)
+    };
+    internal static string ProviderSymbol(string provider) => provider switch
+    {
+        "codex" => "chevron.left.forwardslash.chevron.right", "claude" => "asterisk", "deepseek" => "water.waves", _ => "circle.circle"
+    };
 
     /// Release highlights name Mac symbols; the nearest drawn glyph stands in.
     internal static string Symbol(string symbol) => IconGlyph.Has(symbol) ? symbol : symbol switch
@@ -160,6 +170,12 @@ internal sealed class DecorativePeer(FrameworkElement owner) : FrameworkElementA
 }
 
 internal sealed class DecorativeImage : Image
+{
+    protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePeer(this);
+}
+
+/// A drawn picture made of controls, such as another app's card.
+internal sealed class DecorativeBorder : Border
 {
     protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePeer(this);
 }

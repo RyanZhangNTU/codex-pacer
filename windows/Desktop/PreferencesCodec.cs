@@ -55,10 +55,14 @@ internal static class PreferencesCodec
             properties["positionChosen"] = root["islandPosition"] is JsonValue position && position.TryGetValue<string>(out var chosen)
                 && chosen is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight";
             var providers = properties["providerModes"]!.AsObject();
-            foreach (string provider in new[] { "codex", "claude", "deepseek" })
+            const string prefix = "providerModule.";
+            foreach (var entry in root)
             {
-                string? mode = root["providerModule." + provider]?.GetValue<string>();
-                providers[provider] = mode is "enabled" or "disabled" ? mode : "automatic";
+                if (!entry.Key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                string provider = entry.Key[prefix.Length..];
+                if (DesktopPreferences.ValidProviderId(provider) && entry.Value is JsonValue valueNode
+                    && valueNode.TryGetValue<string>(out string? mode) && DesktopPreferences.ValidProviderMode(mode))
+                    providers[provider] = mode;
             }
             foreach (string ring in new[] { "quotaRingOuter", "quotaRingInner" })
             {
@@ -66,7 +70,7 @@ internal static class PreferencesCodec
                 else
                 {
                     string? saved = root[ring]?.GetValue<string>();
-                    properties[ring] = saved is "codex" or "claude" or "deepseek" ? saved : "none";
+                    properties[ring] = saved != null && DesktopPreferences.ValidProviderId(saved) ? saved : "none";
                 }
             }
             if (root["islandDisplayMode"]?.GetValue<string>() is not ("automatic" or "notch" or "floating") && root["floatingIsland"]?.GetValue<bool>() == true) properties["displayMode"] = "floating";
@@ -77,7 +81,13 @@ internal static class PreferencesCodec
                 properties["compactLayout"] = new UTF8Encoding(false, true).GetString(data);
                 var layoutObject = JsonNode.Parse(data) as JsonObject;
                 if (layoutObject?["warnings"] is JsonArray warnings)
-                    properties["warningKinds"] = warnings.DeepClone();
+                {
+                    // Layout schema 10 turns low account credits on, as Core's decoder does.
+                    var kinds = warnings.DeepClone().AsArray();
+                    if (layoutObject["version"] is JsonValue schema && schema.TryGetValue<int>(out int saved) && saved < 10
+                        && !kinds.Any(kind => kind?.GetValue<string>() == "lowCredits")) kinds.Add("lowCredits");
+                    properties["warningKinds"] = kinds;
+                }
             }
             value = Normalize(properties.Deserialize<DesktopPreferences>(Json) ?? throw new JsonException()) with
             {
@@ -156,11 +166,14 @@ internal static class PreferencesCodec
         DeepSeekPanelStyle = value.DeepSeekPanelStyle is "simple" ? "simple" : "detailed",
         DeepSeekMode = value.DeepSeekMode is "budget" ? "budget" : "balance",
         DeepSeekBalanceSource = value.DeepSeekBalanceSource is "apiKey" or "web" ? value.DeepSeekBalanceSource : "automatic",
+        HarnessCredits = (value.HarnessCredits ?? new()).Where(pair => DesktopPreferences.ValidProviderId(pair.Key) && !DesktopPreferences.IsLegacyProvider(pair.Key)
+            && pair.Value is { IsValid: true }).Take(128).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
         DeepSeekSpeedSource = value.DeepSeekSpeedSource is "account" ? "account" : "local",
         DeepSeekRingPeriod = value.DeepSeekRingPeriod is "week" ? "week" : "day",
         CompactSingleTask = value.CompactSingleTask is "count" or "percent" ? value.CompactSingleTask : "stage",
         CompactMetric = value.CompactMetric is "pace" ? "pace" : "remaining",
-        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "notifications" or "codex" or "claude" or "deepseek" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew" ? value.LastSettingsPane : "overview"
+        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "notifications" or "codex" or "claude" or "deepseek" or "modules" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew"
+            || DesktopPreferences.IsStoredHarnessPane(value.LastSettingsPane) ? value.LastSettingsPane : "overview"
     };
     internal static byte[] Encode(DesktopPreferences value, ReadOnlySpan<byte> original = default)
     {

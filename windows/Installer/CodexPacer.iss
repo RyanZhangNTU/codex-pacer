@@ -103,6 +103,8 @@ english.PacerCleanupCodex=Codex progress reporting could not be removed. In the 
 chinesesimplified.PacerCleanupCodex=未能移除 Codex 进度上报。请在受影响的 Codex 配置中，只移除启动 Pacer 的 CodexProgressRuntime 的 pacer_progress MCP 条目。
 english.PacerCleanupDeepSeek=DeepSeek Harness progress reporting could not be removed. In cordis.patch.yml in the Harness data folder (%USERPROFILE%\.dsh, DSH_HOME or the folder chosen in Pacer), remove only the lines from "# BEGIN Codex Pacer DeepSeek progress" to "# END Codex Pacer DeepSeek progress", including both marker lines, then delete the pacer\deepseek-progress folder there.
 chinesesimplified.PacerCleanupDeepSeek=未能移除 DeepSeek Harness 进度上报。请在 Harness 数据目录（%USERPROFILE%\.dsh、DSH_HOME 或在 Pacer 中选择的目录）的 cordis.patch.yml 中，只删除从“# BEGIN Codex Pacer DeepSeek progress”到“# END Codex Pacer DeepSeek progress”的几行（包括这两行标记），然后删除该目录下的 pacer\deepseek-progress 文件夹。
+english.PacerCleanupLocalHarness=Could not remove Pacer’s progress tool from WorkBuddy. In WorkBuddy’s custom connectors, remove pacer_progress if its command points to this Pacer installation.
+chinesesimplified.PacerCleanupLocalHarness=未能移除 WorkBuddy 里的 Pacer 进度工具。请在 WorkBuddy 的自定义连接器中检查 pacer_progress。如果它指向当前卸载的 Pacer，请移除该条目。
 english.PacerCleanupContinue=Continuing removes the application but preserves anything that could not be cleaned. Retained Pacer hooks may call a deleted program and cause Claude Code errors until you remove those Pacer entries manually. Preferences and read state are retained.
 chinesesimplified.PacerCleanupContinue=继续卸载会删除应用程序，但保留无法清理的内容。在你手动删除这些 Pacer 条目之前，保留的 Pacer hook 可能会调用已删除的程序，导致 Claude Code 报错。偏好设置和已读状态会保留。
 english.PacerCleanupTitle=Pacer cleanup could not finish
@@ -222,7 +224,7 @@ var
 begin
   Result := '';
   Flags := Code - 20;
-  if (Flags < 1) or (Flags > 15) then Flags := 15;
+  if (Flags < 1) or (Flags > 31) then Flags := 31;
   if (Flags and 1) <> 0 then
     Result := CustomMessage('PacerCleanupClaude') + #13#10#13#10 + CustomMessage('PacerCleanupClaudeManual') + #13#10#13#10 + CustomMessage('PacerCleanupRuntime') + #13#10#13#10;
   if (Flags and 2) <> 0 then
@@ -231,6 +233,8 @@ begin
     Result := Result + CustomMessage('PacerCleanupCodex') + #13#10#13#10;
   if (Flags and 8) <> 0 then
     Result := Result + CustomMessage('PacerCleanupDeepSeek') + #13#10#13#10;
+  if (Flags and 16) <> 0 then
+    Result := Result + CustomMessage('PacerCleanupLocalHarness') + #13#10#13#10;
   Result := Result + CustomMessage('PacerCleanupContinue');
 end;
 

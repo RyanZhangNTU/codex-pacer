@@ -24,7 +24,12 @@ internal sealed partial class SettingsWindow
         homePaneRevision++; homeFieldRevision++; homeProvider = homeSaved = homePending = homeInspectionKey = null;
         providerHomeField = null; providerHomeLocations = null; providerHomeIssue = null; providerHomeChoose = null; homeInspection = Task.CompletedTask;
     }
-    private string SavedHome(string provider) => provider == "claude" ? session.Current.ClaudeHome : session.Current.DeepseekHome;
+    private string SavedHome(string provider) => provider switch
+    {
+        "claude" => session.Current.ClaudeHome,
+        "deepseek" => session.Current.DeepseekHome,
+        _ => session.Current.HarnessHomes.TryGetValue(provider, out var home) ? home : ""
+    };
     private bool CanEditHome(string provider) => !sourceClosed && !providerConnectionClosed && !busy && !session.RequiresRestart &&
         activePane == provider && homeProvider == provider && engine is { IsConnectionClosed: false } && providerHomeField?.IsVisible == true &&
         engine.LatestSnapshot?.Modules?.Any(value => value.Provider == provider && value.Enabled) == true;
@@ -35,9 +40,11 @@ internal sealed partial class SettingsWindow
         body.Children.Add(Hairline(0, 0));
         var locations = Disclosure(ui.Text("provider.custom_locations"), body, SavedHome(provider).Length > 0, "settings." + provider + ".locations");
         providerHomeLocations = locations;
-        string label = ui.Text(provider == "claude" ? "provider.claude_home" : "deepseek.home");
-        // The default folder is the prompt, as the Mac shows ~/.claude.
-        var field = new TextBox { Style = (Style)FindResource("SettingsPathInput"), Tag = provider == "claude" ? @"~\.claude" : label, MaxLength = 32768, VerticalContentAlignment = VerticalAlignment.Center };
+        string label = ui.Text(provider switch { "claude" => "provider.claude_home", "deepseek" => "deepseek.home", _ => "harness.data_folder" });
+        // The default folder is the prompt, as the Mac shows ~/.claude; a
+        // module's default arrives with the folder inspection.
+        string prompt = provider == "claude" ? @"~\.claude" : label;
+        var field = new TextBox { Style = (Style)FindResource("SettingsPathInput"), Tag = prompt, MaxLength = 32768, VerticalContentAlignment = VerticalAlignment.Center };
         providerHomeField = field; Identify(field, "settings." + provider + ".home", label); editors.Add(field);
         field.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await CommitProviderHome(provider, field); } };
         field.LostKeyboardFocus += async (_, _) => { if (!synchronizing && !composing) await CommitProviderHome(provider, field); };
@@ -55,6 +62,12 @@ internal sealed partial class SettingsWindow
         providerHomeIssue = SourceIssue("settings." + provider + ".home.issue"); body.Children.Add(providerHomeIssue);
         return locations;
     }
+    private static System.Collections.Generic.Dictionary<string, string> WithHome(System.Collections.Generic.Dictionary<string, string> homes, string provider, string home)
+    {
+        var updated = new System.Collections.Generic.Dictionary<string, string>(homes);
+        if (home.Length == 0) updated.Remove(provider); else updated[provider] = home;
+        return updated;
+    }
     /// A folder under the user's profile written from ~, as the Mac abbreviates its home folder.
     private static string ShortHome(string path)
     {
@@ -70,7 +83,7 @@ internal sealed partial class SettingsWindow
         providerHomeField.IsEnabled = enabled; if (providerHomeChoose != null) providerHomeChoose.IsEnabled = enabled;
         if (homeSaved != saved) { homeSaved = saved; providerHomeField.Text = saved; SetSourceIssue(providerHomeIssue, null); }
         // DeepSeek's summary reports its state (RefreshDeepSeek sets it); Claude's shows the folder in use, home shortened to ~.
-        if (providerHomeLocations != null && homeProvider == "claude") providerHomeLocations.Tag = saved.Length > 0 ? ui.Text("main.location.custom") : ShortHome(providerHomeField.ToolTip as string ?? "");
+        if (providerHomeLocations != null && homeProvider != "deepseek") providerHomeLocations.Tag = saved.Length > 0 ? ui.Text("main.location.custom") : ShortHome(providerHomeField.ToolTip as string ?? "");
         string key = homeProvider + "\0" + saved;
         if (homeInspectionKey != key) homeInspection = InspectProviderHome(homeProvider, saved, homePaneRevision);
     }
@@ -85,7 +98,8 @@ internal sealed partial class SettingsWindow
             var report = await engine.QueryAsync<ProviderHomeReport>("inspectProviderHome", new { provider, sourceHome = saved });
             if (sourceClosed || pane != homePaneRevision || SavedHome(provider) != saved || providerHomeField == null) return;
             providerHomeField.ToolTip = report.EffectiveHome;
-            if (providerHomeLocations != null && saved.Length == 0 && provider == "claude") providerHomeLocations.Tag = ShortHome(report.EffectiveHome);
+            if (provider is not ("claude" or "deepseek") && report.DefaultHome is { Length: > 0 } fallback) providerHomeField.Tag = ShortHome(fallback);
+            if (providerHomeLocations != null && saved.Length == 0 && provider != "deepseek") providerHomeLocations.Tag = ShortHome(report.EffectiveHome);
             if (providerHomeField.Text == saved && saved.Length > 0 && report.Issue != null) SetSourceIssue(providerHomeIssue, report.Issue);
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or InvalidOperationException)
@@ -106,7 +120,12 @@ internal sealed partial class SettingsWindow
             var report = await engine!.QueryAsync<ProviderHomeReport>("inspectProviderHome", new { provider, sourceHome = value });
             if (!CanEditHome(provider) || pane != homePaneRevision || revision != homeFieldRevision || field.Text != value || SavedHome(provider) != saved) return;
             SetSourceIssue(providerHomeIssue,report.Issue); if (report.Issue != null) return;
-            var result = await Change(p => provider == "claude" ? p with { ClaudeHome = report.Home } : p with { DeepseekHome = report.Home });
+            var result = await Change(p => provider switch
+            {
+                "claude" => p with { ClaudeHome = report.Home },
+                "deepseek" => p with { DeepseekHome = report.Home },
+                _ => p with { HarnessHomes = WithHome(p.HarnessHomes, provider, report.Home) }
+            });
             if (sourceClosed || pane != homePaneRevision) return;
             field.Text = result == PreferencesApplyResult.Applied ? report.Home : saved;
         }

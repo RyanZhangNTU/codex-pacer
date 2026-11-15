@@ -4,10 +4,12 @@ import PacerCore
 
 extension ProviderInstallationDetection {
     /// Detect known app/CLI locations without launching either app or reading authentication.
+    /// `harnessHomes` holds the data folders chosen in Settings, by module ID.
     public static func detect(userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
                               environment: [String: String] = ProcessInfo.processInfo.environment,
                               applicationURLs: [AgentProvider: [URL]]? = nil,
-                              systemBinDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]) -> Self {
+                              systemBinDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"],
+                              harnessHomes: [String: String] = [:]) -> Self {
         func appInstalled(_ provider: AgentProvider, bundleID: String, name: String) -> Bool {
             let urls: [URL]
             if let supplied = applicationURLs?[provider] { urls = supplied }
@@ -31,6 +33,34 @@ extension ProviderInstallationDetection {
         let deepseek = appInstalled(.deepseek, bundleID: "com.deepseek.dsh", name: "DeepSeek Harness") || cliInstalled("dsh") ||
             FileManager.default.fileExists(atPath: DeepSeekHome.resolve(environment: environment, userHome: userHome)
                 .appendingPathComponent("sessions").path)
-        return Self(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek)
+        // A local module's data file counts too, like Harness's sessions: in its
+        // default folder, the folder its environment names or the one chosen in Settings.
+        func localData(_ definition: LocalHarnessDefinition) -> Bool {
+            let chosen = [harnessHomes[definition.descriptor.id.rawValue], environment[definition.homeEnvironmentKey]]
+                .compactMap { $0.map { ($0 as NSString).expandingTildeInPath } }.filter { $0.hasPrefix("/") }
+            return ([definition.defaultHome(userHome: userHome)] + chosen.map { URL(fileURLWithPath: $0, isDirectory: true) })
+                .contains(where: definition.hasLocalData)
+        }
+        // Without a known bundle ID, an app of that name that declares the
+        // edition's own URL scheme counts.
+        func namedApp(_ definition: LocalHarnessDefinition) -> Bool {
+            guard definition.macBundleIdentifiers.isEmpty, let scheme = definition.conversationScheme else { return false }
+            let urls = applicationURLs?[definition.descriptor.id] ?? definition.macApplicationNames.flatMap {
+                [URL(fileURLWithPath: "/Applications/\($0).app"), userHome.appendingPathComponent("Applications/\($0).app")]
+            }
+            return urls.prefix(12).contains { url in
+                let types = Bundle(url: url)?.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] ?? []
+                return types.contains { ($0["CFBundleURLSchemes"] as? [String])?.contains(scheme) == true }
+            }
+        }
+        let additional = HarnessRegistry.localHarnesses.filter { definition in
+            guard definition.platforms.contains(.macOS) else { return false }
+            return definition.macBundleIdentifiers.contains { identifier in
+                definition.macApplicationNames.contains {
+                    appInstalled(definition.descriptor.id, bundleID: identifier, name: $0)
+                }
+            } || namedApp(definition) || localData(definition)
+        }.map(\.descriptor.id)
+        return Self(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek, additional: Set(additional))
     }
 }

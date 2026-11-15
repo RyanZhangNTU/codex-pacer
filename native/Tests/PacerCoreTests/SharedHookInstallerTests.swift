@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import PacerCore
 
@@ -33,6 +34,130 @@ final class SharedHookInstallerTests: XCTestCase {
     private func object(_ url: URL, _ storage: Storage) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: storage.read(url)) as? [String: Any])
     }
+    func testLocalHarnessProgressSetupPreservesOtherConnectorsAndRevokesOnDisable() throws {
+        let (home, storage, _) = fixture(), config = home.appendingPathComponent("mcp.json")
+        let flag = home.appendingPathComponent("pacer-progress/enabled")
+        let rule = home.appendingPathComponent("rules/codex-pacer-progress.mdc")
+        let otherRule = home.appendingPathComponent("rules/user.mdc")
+        let reporter = home.appendingPathComponent("Pacer Engine.exe").path
+        let target = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: true, ruleDirectory: "rules")
+        let off = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: false, ruleDirectory: "rules")
+        storage.files[otherRule] = Data("User rule".utf8)
+        storage.files[config] = Data(#"{"mcpServers":{"other":{"type":"stdio","command":"fixture"}},"extra":[1,2]}"#.utf8)
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        let configured = try object(config, storage)
+        let servers = try XCTUnwrap(configured["mcpServers"] as? [String: [String: Any]])
+        XCTAssertEqual(servers["other"]?["command"] as? String, "fixture")
+        XCTAssertEqual(servers["pacer_progress"]?["command"] as? String, reporter)
+        XCTAssertEqual(servers["pacer_progress"]?["args"] as? [String], ["--task-progress-mcp", "--pacer-progress-flag", flag.path])
+        XCTAssertEqual(configured["extra"] as? [Int], [1, 2])
+        XCTAssertEqual(storage.files[flag], LocalHarnessProgressSetup.on)
+        XCTAssertTrue(String(decoding: try storage.read(rule), as: UTF8.self).contains("alwaysApply: true"))
+        let writes = storage.replacements
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        XCTAssertEqual(storage.replacements, writes)
+        XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage, checkOnly: true))
+        XCTAssertNotNil(storage.files[flag])
+        XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage))
+        XCTAssertNil(storage.files[flag])
+        XCTAssertNil(storage.files[rule]); XCTAssertEqual(storage.files[otherRule], Data("User rule".utf8))
+        XCTAssertEqual((try object(config, storage)["mcpServers"] as? [String: Any])?.keys.sorted(), ["other"])
+        let foreign = Data(#"{"mcpServers":{"pacer_progress":{"command":"someone-else"}}}"#.utf8)
+        storage.files[config] = foreign
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .conflict)
+        XCTAssertEqual(storage.files[config], foreign)
+        XCTAssertNil(storage.files[flag])
+        storage.files[config] = Data("{broken".utf8)
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .conflict)
+        XCTAssertNil(storage.files[flag])
+    }
+
+    func testWorkBuddyReadsOnlyTheCurrentReportersApprovalAndRespectsDisabledTools() throws {
+        let (home, storage, _) = fixture()
+        let config = home.appendingPathComponent("mcp.json")
+        let approvals = home.appendingPathComponent("mcp-approvals.json")
+        let policy = home.appendingPathComponent("mcp-tool-policy.json")
+        let reporter = "C:/Program Files/Codex Pacer/PacerEngine.exe"
+        let target = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: true)
+        let flag = LocalHarnessProgressSetup.flag(home)
+        let arguments = ["--task-progress-mcp", "--pacer-progress-flag", flag.path]
+        let status = { LocalHarnessProgressSetup.inspect(target, storage: storage, connection: WorkBuddyHarness.progressConnection) }
+        func connector(disabled: Bool) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["mcpServers": ["pacer_progress": [
+                "type": "stdio", "command": reporter, "args": arguments, "disabled": disabled
+            ]]])
+        }
+
+        XCTAssertEqual(status(), .missing)
+        storage.files[config] = try connector(disabled: false)
+        storage.files[flag] = LocalHarnessProgressSetup.on
+        XCTAssertEqual(status(), .needsTrust)
+        let material = "\(reporter)|\(arguments.sorted().joined(separator: ","))|"
+        let expected = CompletionDismissalStore.hex(SHA256.hash(data: Data(material.utf8)))
+        storage.files[approvals] = Data("{\"\(expected)::some_other_tool\":1}".utf8)
+        XCTAssertEqual(status(), .needsTrust)
+        storage.files[approvals] = Data("{\"\(expected)::some_other_tool\":1,\"old::pacer_progress\":2}".utf8)
+        XCTAssertEqual(status(), .retrust, "An approval of an earlier command means a Pacer update changed the tool")
+        storage.files[approvals] = Data("{\"\(expected)::pacer_progress\":1770000000000}".utf8)
+        XCTAssertEqual(status(), .trusted)
+        storage.files[policy] = Data(#"{"version":1,"disabledTools":{"pacer_progress":["report_progress"]}}"#.utf8)
+        XCTAssertEqual(status(), .toolDisabled)
+        storage.files[config] = try connector(disabled: true)
+        XCTAssertEqual(status(), .disabled)
+        storage.files[LocalHarnessProgressSetup.addedMarker(home)] = Data("1770000000".utf8)
+        let original = storage.files
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        XCTAssertEqual(storage.files, original)
+        storage.files[config] = try connector(disabled: false)
+        storage.unsafe.insert(approvals)
+        XCTAssertEqual(status(), .unknown)
+        XCTAssertEqual(storage.replacements, 0)
+    }
+    func testFirstReportIsKeptInPacersFolderUntilUninstall() throws {
+        let (home, storage, _) = fixture()
+        let reporter = home.appendingPathComponent("Pacer Engine.exe").path
+        let target = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: true)
+        let off = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: false)
+        XCTAssertFalse(LocalHarnessProgressSetup.markReported(home, storage: storage), "Pacer writes only inside a folder it made")
+        let before = Date().addingTimeInterval(-2)
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        let added = try XCTUnwrap(LocalHarnessProgressSetup.addedAt(home, storage: storage), "Pacer keeps when it added the tool, which the app reads only at start")
+        XCTAssertGreaterThanOrEqual(added, before)
+        storage.files[LocalHarnessProgressSetup.addedMarker(home)] = nil
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(target, storage: storage), .configured)
+        XCTAssertNotNil(LocalHarnessProgressSetup.addedAt(home, storage: storage), "An entry with no time counts as added now")
+        XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage))
+        XCTAssertTrue(LocalHarnessProgressSetup.markReported(home, storage: storage))
+        XCTAssertTrue(LocalHarnessProgressSetup.reported(home, storage: storage))
+        XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage))
+        XCTAssertTrue(LocalHarnessProgressSetup.reported(home, storage: storage), "Turning the ring off and on keeps the card collapsed")
+        XCTAssertNotNil(LocalHarnessProgressSetup.removedAt(home, storage: storage), "Pacer notes when the entry left, for an app started meanwhile")
+        XCTAssertNil(LocalHarnessProgressSetup.apply(off, storage: storage, matchNativeReporter: true))
+        XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage), "Uninstalling leaves nothing of Pacer's behind")
+        XCTAssertNil(LocalHarnessProgressSetup.addedAt(home, storage: storage))
+        XCTAssertNil(LocalHarnessProgressSetup.removedAt(home, storage: storage))
+    }
+    func testUninstallTakesPacersOwnFilesEvenWhenTheAppsConfigIsDamaged() throws {
+        let (home, storage, _) = fixture()
+        let reporter = home.appendingPathComponent("Pacer Engine.exe").path
+        let on = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: true, ruleDirectory: "rules")
+        let off = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: false, ruleDirectory: "rules")
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(on, storage: storage), .configured)
+        XCTAssertTrue(LocalHarnessProgressSetup.markReported(home, storage: storage))
+        let rule = home.appendingPathComponent("rules", isDirectory: true).appendingPathComponent("codex-pacer-progress.mdc")
+        let config = home.appendingPathComponent("mcp.json")
+        XCTAssertNotNil(storage.files[rule])
+        storage.files[config] = Data("{ damaged".utf8)
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(off, storage: storage, checkOnly: true, matchNativeReporter: true), .conflict)
+        XCTAssertNotNil(storage.files[rule], "Checking before uninstall changes nothing")
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(off, storage: storage, matchNativeReporter: true), .conflict,
+            "The entry in a damaged config is still the user's to remove")
+        XCTAssertNil(storage.files[rule], "Pacer's rule goes even so")
+        XCTAssertNil(storage.files[LocalHarnessProgressSetup.flag(home)])
+        XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage))
+        XCTAssertNil(LocalHarnessProgressSetup.addedAt(home, storage: storage))
+        XCTAssertEqual(storage.files[config], Data("{ damaged".utf8), "The app's config stays as it was")
+    }
     func testInjectedPythonCommandsAtomicPermissionsAndIdempotence() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
         XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
@@ -49,21 +174,23 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertEqual(installer.ensureInstalled(home: home), .current); XCTAssertEqual(storage.replacements, writes)
         XCTAssertTrue(installer.details(home: home).telemetryConfigured)
     }
-    func testProgressRingSwitchAddsAndRemovesTheBackgroundDisplayObserver() throws {
+    func testAnOlderRingSwitchAsksForThePluginToolWithoutADisplayObserver() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
         let flag = ClaudeProgressRingSwitch.flagURL(home: home)
         func display() throws -> [[String: Any]]? { (try object(settings, storage)["hooks"] as? [String: [[String: Any]]])?["MessageDisplay"] }
         XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
         XCTAssertNil(try display(), "Pacer telemetry alone keeps the display observer off")
-        storage.files[flag] = Data("on\n".utf8)
-        XCTAssertTrue(installer.details(home: home).updateAvailable)
-        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
-        let entry = try XCTUnwrap((try display()?.first?["hooks"] as? [[String: Any]])?.first)
-        XCTAssertEqual(entry["async"] as? Bool, true, "The observer runs in the background and never holds display")
-        XCTAssertEqual(installer.ensureInstalled(home: home), .current)
-        storage.files.removeValue(forKey: flag)
-        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
-        XCTAssertNil(try display())
+        // `on` once asked for leading markers and `tool 15` for a step size; both now mean the tool.
+        for older in ["on\n", "tool 15\n"] {
+            storage.files[flag] = Data(older.utf8)
+            XCTAssertTrue(installer.details(home: home).updateAvailable)
+            XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+            XCTAssertNil(try display(), older)
+            XCTAssertEqual((try object(settings, storage)["enabledPlugins"] as? [String: Bool])?["pacer@pacer"], true, older)
+            XCTAssertEqual(installer.ensureInstalled(home: home), .current)
+            storage.files.removeValue(forKey: flag)
+            XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        }
     }
     func testToolModeListsEnablesAndApprovesPacersPluginAndRemovesOnlyItsOwnEntries() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")

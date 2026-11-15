@@ -447,8 +447,8 @@ def plugin_files(home, root, server_bytes):
 
 
 def apply_progress_ring(home, directory, wanted, server_bytes):
-    # The switch file holds `tool`; an older `on` is upgraded and a hand-written
-    # mode such as `tool 15` is kept. Off removes it.
+    # The switch file holds `tool`; older contents (`on`, a step size such as
+    # `tool 15`) are rewritten, since there is one mode now. Off removes it.
     flag = directory / 'progress-ring'
     safe(flag)
     current = read_bytes(flag)
@@ -464,7 +464,7 @@ def apply_progress_ring(home, directory, wanted, server_bytes):
     for path, raw in plugin_files(home, root, server_bytes):
         if read_bytes(path) != raw:
             atomic_bytes(path, raw)
-    if current is None or current == b'on\n':
+    if current != b'tool\n':
         atomic_bytes(flag, b'tool\n')
 
 

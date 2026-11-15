@@ -1,0 +1,348 @@
+import Foundation
+
+/// WorkBuddy writes one JSON object per line. Project only the fields used to
+/// match a turn, its tool calls and its final reply.
+struct WorkBuddyTranscript {
+    struct Question: Equatable {
+        let call: String
+        let time: Date
+    }
+
+    struct Turn: Equatable {
+        enum Ending: Equatable { case reply, cancelled, failed }
+        struct Estimate: Equatable { let percent: Int; let at: Date }
+        struct Model: Equatable {
+            let requestedID: String
+            let executedID: String
+            var label: String?
+            var displayName: String { label ?? (executedID == "default-model" ? L10n.text("provider.automatic") : executedID) }
+        }
+        struct Response: Equatable {
+            let step: Int
+            let id: String
+            let start: Date?
+            var boundary: Date
+            var accounted = false
+        }
+        let id: String
+        let started: Date
+        var tail: String
+        var ending: Ending?
+        var ended: Date?
+        var question: Question?
+        /// The newest tool call still without a result.
+        var latestCall: Question?
+        var model: Model?
+        var effort: String?
+        var calls: Set<String> = []
+        var pendingProgress: [String: Estimate] = [:]
+        var progress: Estimate?
+        var response: Response?
+        var rate: ResponsePerformance?
+
+        /// What a turn waits on while WorkBuddy marks its session pending: the
+        /// user's answer to a question, or their go-ahead for a tool call, such
+        /// as an image that costs credits.
+        var awaiting: (kind: PendingAttentionRequest.Kind, call: Question)? {
+            guard ending == nil else { return nil }
+            if let question { return (.input, question) }
+            return latestCall.map { (.approval, $0) }
+        }
+
+        mutating func observeResponse(_ metadata: [String: JSONFieldView], at time: Date) {
+            guard let step = metadata["stepSeq"]?.integer(), step > 0,
+                  let message = WorkBuddyTranscript.identifier(metadata["messageId"]) else { return }
+            if let previous = response, previous.step == step {
+                guard previous.id == message else { response = .init(step: step, id: message, start: nil, boundary: time); return }
+            } else {
+                if let previous = response, previous.step > step { return }
+                let start: Date?
+                if let previous = response {
+                    start = previous.step == step - 1 && calls.isEmpty ? previous.boundary : nil
+                } else {
+                    start = step == 1 && calls.isEmpty ? started : nil
+                }
+                response = .init(step: step, id: message, start: start, boundary: time)
+            }
+            guard var response else { return }
+            response.boundary = max(response.boundary, time)
+            // WorkBuddy attaches the response's usage to its last model item.
+            // Tool results only advance the boundary for the following step.
+            if !response.accounted, let usage = try? metadata["usage"]?.fields(["outputTokens", "requests"]),
+               usage["requests"]?.integer() == 1, let tokens = usage["outputTokens"]?.integer(), (1...100_000_000).contains(tokens) {
+                response.accounted = true
+                if let start = response.start,
+                   let measured = ResponsePerformance(responseID: message, turnID: id, outputTokens: tokens,
+                                                      startedAt: start, completedAt: time, source: .observedRequest) {
+                    rate = measured
+                }
+            }
+            self.response = response
+        }
+
+        func applyMeasurements(to task: inout SessionActivity, turnID: String, credits: Double?, notBefore: Date? = nil) {
+            if let credits, notBefore.map({ started >= $0 }) ?? true { task.setTurnCredits(credits, turnID: turnID) }
+            if let progress, progress.at >= (notBefore ?? started) {
+                task.reportProgress(progress.percent, at: progress.at, turnID: turnID)
+            }
+            if let rate, rate.startedAt >= (notBefore ?? started),
+               let sample = ResponsePerformance(responseID: rate.responseID, turnID: turnID, outputTokens: rate.outputTokens,
+                    startedAt: rate.startedAt, completedAt: rate.completedAt, source: rate.source),
+               let update = SessionPerformanceUpdate(id: task.id, turnID: turnID, response: sample,
+                    firstTokenLatency: nil, firstTokenReportedAt: nil) {
+                update.apply(to: &task)
+            }
+        }
+    }
+
+    private(set) var turn: Turn?
+    private var identity: String?
+    private var offset: UInt64 = 0
+    private var droppingLine = false
+    /// Without a request in reach, how much of the end to read.
+    private static let readLimit = 256 * 1024
+    /// A tool call that writes a file holds the whole file, and WorkBuddy can
+    /// append several in a second: 342 KB in three seconds for a web page, seen
+    /// 11/15. The reader catches up on anything up to this size, and a line may
+    /// be as long, so a burst never loses the request that opened the turn.
+    private static let catchUpLimit = 32 * 1024 * 1024
+    private static let lineLimit = 8 * 1024 * 1024
+    private static let searchChunk = 1024 * 1024
+    private static let requestMark = Data(#""startsNewUserRequest":true"#.utf8)
+    private static let eventFields: Set<String> = ["type", "role", "status", "sessionId", "id", "parentId",
+        "timestamp", "providerData", "name", "callId", "content", "arguments", "output", "isError", "is_error"]
+    private static let metadataFields: Set<String> = ["conversationRequestId", "startsNewUserRequest", "isPartialAborted",
+        "skipRun", "model", "requestModelId", "requestModelName", "responseModelId", "responseModelName", "messageId", "stepSeq", "usage"]
+
+    mutating func observeThoughtLevel(_ effort: String?, selectedModel: String?, updated: Date) {
+        // The database holds the session's current selection. Keep the first
+        // matching setting for this observed turn and ignore later edits.
+        guard var current = turn, let model = current.model, model.requestedID == selectedModel, current.effort == nil,
+              let effort = ModelDisplay.sanitizedEffort(effort),
+              ["disabled", "enabled", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].contains(effort),
+              current.ended.map({ updated <= $0.addingTimeInterval(3) }) ?? true else { return }
+        current.effort = effort
+        turn = current
+    }
+
+    /// Only advance past complete lines. A new file, or more new lines than
+    /// `catchUpLimit`, starts again at the latest request, which a long turn's
+    /// transcript holds a megabyte or more back. Without one in reach, it reads
+    /// the last `readLimit` and waits for the next request before reporting.
+    mutating func read(_ file: URL, session: String, files: any PlatformFileSystem, now: Date) throws {
+        guard let metadata = files.metadata(file), metadata.isRegularFile else {
+            self = Self()
+            return
+        }
+        if identity != metadata.identity || offset > metadata.size || metadata.size - offset > UInt64(Self.catchUpLimit) {
+            self = Self()
+            identity = metadata.identity
+            if metadata.size > UInt64(Self.readLimit) {
+                if let start = try Self.latestRequest(in: file, size: metadata.size, files: files) {
+                    offset = start
+                } else {
+                    offset = metadata.size - UInt64(Self.readLimit)
+                    droppingLine = true
+                }
+            }
+        }
+        guard metadata.size > offset else { return }
+        let data = try files.read(file, offset: offset, maximumBytes: Int(metadata.size - offset))
+        guard files.metadata(file)?.identity == identity else { self = Self(); return }
+        var start = data.startIndex
+        for end in data.indices where data[end] == 10 {
+            if !droppingLine, end > start {
+                if !consume(Data(data[start..<end]), session: session, now: now) { turn = nil }
+                // A line stamped after this read began waits for the next read,
+                // where it once was skipped for good and broke the chain.
+                if deferred { deferred = false; break }
+            }
+            droppingLine = false
+            start = end + 1
+        }
+        offset += UInt64(start - data.startIndex)
+    }
+    private var deferred = false
+
+    /// Where the last line that opens a request starts, searched back from the
+    /// end through `catchUpLimit` by its raw bytes; JSON escapes a quote inside
+    /// a string, so text that mentions the field never matches.
+    static func latestRequest(in file: URL, size: UInt64, files: any PlatformFileSystem) throws -> UInt64? {
+        let floor = size > UInt64(catchUpLimit) ? size - UInt64(catchUpLimit) : 0
+        var end = size
+        while end > floor {
+            let start = max(floor, end > UInt64(searchChunk) ? end - UInt64(searchChunk) : 0)
+            // Overlap the next chunk so a mark across the boundary is found.
+            let stop = min(size, end + UInt64(requestMark.count - 1))
+            let data = try files.read(file, offset: start, maximumBytes: Int(stop - start))
+            if let mark = data.range(of: requestMark, options: .backwards) {
+                return try lineStart(before: start + UInt64(mark.lowerBound - data.startIndex), in: file, files: files)
+            }
+            end = start
+        }
+        return nil
+    }
+
+    private static func lineStart(before position: UInt64, in file: URL, files: any PlatformFileSystem) throws -> UInt64? {
+        var end = position
+        let floor = position > UInt64(lineLimit) ? position - UInt64(lineLimit) : 0
+        while end > floor {
+            let start = max(floor, end > UInt64(searchChunk) ? end - UInt64(searchChunk) : 0)
+            let data = try files.read(file, offset: start, maximumBytes: Int(end - start))
+            if let newline = data.lastIndex(of: 10) { return start + UInt64(newline - data.startIndex) + 1 }
+            end = start
+        }
+        return floor == 0 ? 0 : nil
+    }
+
+    @discardableResult mutating func consume(_ bytes: Data, session: String, now: Date) -> Bool {
+        guard let root = try? JSONFieldView.document(bytes, maximumBytes: Self.lineLimit),
+              let values = try? root.fields(Self.eventFields) else { return false }
+        guard let type = values["type"]?.string(), ["message", "reasoning", "function_call", "function_call_result"].contains(type),
+              values["sessionId"]?.string() == session,
+              let id = Self.identifier(values["id"]),
+              let stamp = values["timestamp"]?.integer(), stamp > 0,
+              let metadata = try? values["providerData"]?.fields(Self.metadataFields),
+              let request = Self.identifier(metadata["conversationRequestId"]) else { return true }
+        let time = Date(timeIntervalSince1970: Double(stamp) / 1000)
+        guard time <= now.addingTimeInterval(1) else {
+            // Written after this read's clock; a stamp far ahead is not waited for.
+            if time <= now.addingTimeInterval(300) { deferred = true }
+            return true
+        }
+        if type == "message", values["role"]?.matchesStringLiteral("user") == true {
+            // A user line inside the request (WorkBuddy AI 5.9.4 wrote one with
+            // isMeta after a TaskOutput result) is a link of its chain; the rest
+            // of the request, final reply included, hangs off it.
+            guard metadata["startsNewUserRequest"]?.boolean() == true else {
+                if var current = turn, current.id == request, time >= current.started, current.ending != .cancelled,
+                   Self.identifier(values["parentId"]) == current.tail {
+                    current.tail = id; turn = current
+                }
+                return true
+            }
+            if let turn, time < turn.started || turn.id == request { return true }
+            turn = Turn(id: request, started: time, tail: id)
+            return true
+        }
+        guard var current = turn, current.id == request, time >= current.started else { return true }
+        let parent = Self.identifier(values["parentId"])
+        let cancelled = metadata["isPartialAborted"]?.boolean() == true ||
+            (metadata["skipRun"]?.boolean() == true && values["status"]?.matchesStringLiteral("incomplete") == true)
+        if cancelled {
+            current.ending = .cancelled
+            current.ended = time
+            current.question = nil
+            current.latestCall = nil
+            turn = current
+            return true
+        }
+        guard parent == current.tail, current.ending != .cancelled else { return true }
+        current.tail = id
+        if type == "reasoning" || type == "function_call" ||
+            (type == "message" && values["role"]?.matchesStringLiteral("assistant") == true && values["status"]?.matchesStringLiteral("completed") == true) {
+            if var model = Self.model(metadata) {
+                if let previous = current.model, previous.requestedID == model.requestedID {
+                    if model.executedID == previous.executedID { model.label = model.label ?? previous.label }
+                } else { current.effort = nil }
+                current.model = model
+            }
+            current.observeResponse(metadata, at: time)
+        }
+        switch type {
+        case "function_call":
+            guard let call = Self.identifier(values["callId"]), current.calls.count < 64 else { return false }
+            current.calls.insert(call)
+            current.latestCall = Question(call: call, time: time)
+            current.ending = nil
+            current.ended = nil
+            if values["name"]?.matchesStringLiteral("AskUserQuestion") == true {
+                current.question = Question(call: call, time: time)
+            }
+            if let percent = Self.progressPercent(name: values["name"], arguments: values["arguments"]) {
+                current.pendingProgress[call] = .init(percent: percent, at: time)
+            }
+        case "function_call_result":
+            guard let call = Self.identifier(values["callId"]), current.calls.remove(call) != nil else { return false }
+            if let boundary = current.response?.boundary { current.response?.boundary = max(boundary, time) }
+            if current.question?.call == call { current.question = nil }
+            if current.latestCall?.call == call { current.latestCall = nil }
+            // WorkBuddy can stamp a response a few milliseconds before it
+            // persists the matching call. The call ID and parent still agree.
+            if let estimate = current.pendingProgress.removeValue(forKey: call), time >= estimate.at.addingTimeInterval(-1),
+               max(time, estimate.at) >= (current.progress?.at ?? .distantPast),
+               values["status"]?.matchesStringLiteral("completed") == true,
+               values["isError"]?.boolean() != true, values["is_error"]?.boolean() != true,
+               CodexProgressEvidence.textReceiptAccepted(values["output"]) {
+                current.progress = .init(percent: estimate.percent, at: max(time, estimate.at))
+            }
+        case "message":
+            guard values["role"]?.matchesStringLiteral("assistant") == true else { return true }
+            if values["status"]?.matchesStringLiteral("completed") == true,
+               current.calls.isEmpty, Self.hasOutputText(values["content"]) {
+                current.ending = .reply
+                current.ended = time
+            }
+            if values["status"]?.matchesStringLiteral("failed") == true {
+                current.ending = .failed
+                current.ended = time
+            }
+        default: break
+        }
+        turn = current
+        return true
+    }
+
+    private static func model(_ metadata: [String: JSONFieldView]) -> Turn.Model? {
+        let requested = modelIdentifier(metadata["requestModelId"])
+        let reported = modelIdentifier(metadata["responseModelId"]) ?? modelIdentifier(metadata["model"])
+        guard let requestedID = requested ?? reported else { return nil }
+        let executed = reported == "default-model" ? requestedID : reported ?? requestedID
+        let responseName = modelIdentifier(metadata["responseModelName"])
+        let name = responseName ??
+            (executed == requestedID && executed != "default-model" ? modelIdentifier(metadata["requestModelName"]) : nil)
+        return .init(requestedID: requestedID, executedID: executed, label: name)
+    }
+
+    private static func modelIdentifier(_ field: JSONFieldView?) -> String? {
+        guard let value = field?.string(limit: 257), !value.isEmpty, value.utf8.count <= 256,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              !value.hasPrefix("<") else { return nil }
+        return value
+    }
+
+    private static func identifier(_ value: JSONFieldView?) -> String? {
+        guard let value = value?.string(limit: 129), (1...128).contains(value.utf8.count),
+              value.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) ||
+                  (97...122).contains($0) || $0 == 45 || $0 == 95 || $0 == 46 }) else { return nil }
+        return value
+    }
+
+    private static func progressPercent(name: JSONFieldView?, arguments: JSONFieldView?) -> Int? {
+        if name?.matchesStringLiteral(CodexProgressEvidence.qualified) == true {
+            return CodexProgressEvidence.percentInToolArguments(arguments)
+        }
+        // WorkBuddy resolves deferred MCP tools through a native wrapper.
+        // Only open the bounded arguments for that wrapper, never arbitrary tools.
+        guard name?.matchesStringLiteral("DeferExecuteTool") == true, let arguments else { return nil }
+        let object: JSONFieldView
+        if arguments.isObject { object = arguments }
+        else {
+            guard let raw = arguments.string(limit: 512),
+                  let decoded = try? JSONFieldView.document(Data(raw.utf8), maximumBytes: 512) else { return nil }
+            object = decoded
+        }
+        guard let wrapper = try? object.fields(["toolName", "params"], maximumCount: 4),
+              wrapper["toolName"]?.matchesStringLiteral(CodexProgressEvidence.qualified) == true else { return nil }
+        return CodexProgressEvidence.percent(wrapper["params"])
+    }
+
+    private static func hasOutputText(_ content: JSONFieldView?) -> Bool {
+        guard let items = try? content?.elements(maximumCount: 64) else { return false }
+        return items.contains {
+            guard let fields = try? $0.fields(["type", "text"]) else { return false }
+            return fields["type"]?.matchesStringLiteral("output_text") == true && fields["text"]?.hasNonemptyString == true
+        }
+    }
+
+}

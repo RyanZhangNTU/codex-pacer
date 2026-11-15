@@ -13,11 +13,10 @@ import time
 LIMIT = 1024 * 1024
 SERVER = "pacer_progress"
 TOOL = "report_progress"
-GUIDANCE = (
-    "Report your best estimate of how much of the user's current request is done. "
-    "Call this tool with your first useful tool batch, after meaningful progress, and before a long wait. "
-    "Use an integer from 0 to 100 and revise it downward when needed. Skip reports for short replies that need no tools."
-)
+# PacerCore's ProgressPrompt.toolDescription, shared by every module.
+GUIDANCE = "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: first, before or with your first other tool call, even if the estimate is still low; again whenever you make progress; and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
+# PacerCore's ProgressPrompt.acknowledgement: the receipt Pacer reads, and a nudge for the next report.
+ACCEPTED = "pacer-progress:accepted. Report again as soon as you make more progress."
 DEFINITION = {
     "name": TOOL, "description": GUIDANCE,
     "inputSchema": {"type": "object", "properties": {"percent": {"type": "integer", "minimum": 0, "maximum": 100}},
@@ -157,7 +156,7 @@ def respond(message, flag, durable=False):
             receipt = durable_receipt(params, percent)
             if receipt:
                 record_receipt(receipt, flag)
-        text = "pacer-progress:accepted" if valid else (
+        text = ACCEPTED if valid else (
             "Expected an integer from 0 to 100." if active else "Pacer task progress is disabled."
         )
         result = {"content": [{"type": "text", "text": text}], "isError": not valid}
@@ -168,8 +167,7 @@ def respond(message, flag, durable=False):
     return reply
 
 
-def serve(home, durable=False):
-    flag = Path(home) / "pacer" / "codex-progress" / "native" / "enabled"
+def serve(flag, durable=False):
     while True:
         line = sys.stdin.buffer.readline(LIMIT + 1)
         if not line or len(line) > LIMIT:
@@ -182,5 +180,10 @@ def serve(home, durable=False):
             print(json.dumps(reply, separators=(",", ":")), flush=True)
 
 
-if __name__ == "__main__" and (len(sys.argv) == 2 or sys.argv[2:] == ["--durable"]):
-    serve(sys.argv[1], len(sys.argv) == 3)
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--pacer-progress-flag":
+        flag = Path(sys.argv[2])
+        if flag.is_absolute():
+            serve(flag)
+    elif len(sys.argv) == 2 or (len(sys.argv) == 3 and sys.argv[2] == "--durable"):
+        serve(Path(sys.argv[1]) / "pacer" / "codex-progress" / "native" / "enabled", len(sys.argv) == 3)

@@ -16,7 +16,26 @@ internal sealed record EngineSnapshot(
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
     IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
     string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
-    string? WslAvailability = null, RemoteControlDirectory? RemoteControlDirectory = null);
+    string? WslAvailability = null, RemoteControlDirectory? RemoteControlDirectory = null,
+    IReadOnlyList<EngineAccountCredits>? AccountCredits = null);
+/// A module's account credits as the engine knows them, with what the bill
+/// service reported; drawn the same way in Settings, Overview and the island.
+internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale,
+    HarnessCreditsPresentation? Presentation = null);
+/// What a credits module draws, worded by Core: the dial, the summary lines and the breakdown.
+internal sealed record HarnessCreditsPresentation(HarnessCreditsDial Dial, string? Plan, IReadOnlyList<HarnessCreditsLine> Lines,
+    IReadOnlyList<HarnessCreditsSection> Sections, string BarText);
+/// The ring is the month's credits; Top is the days left; Badge is the extra credits, or GapLabel when there are none.
+internal sealed record HarnessCreditsDial(double? Fraction, string Center, string? Top, bool TopWarns, string? Badge, string BadgeTone,
+    string? GapLabel, string AccessibilityLabel);
+internal sealed record HarnessCreditsLine(string Label, string Value, string? Detail, bool Warns);
+internal sealed record HarnessCreditsSection(string Title, IReadOnlyList<HarnessCreditsRow> Rows);
+internal sealed record HarnessCreditsRow(string Kind, string Name, string Amount, string? Date, string? Chip);
+/// Core's account credits as JSON: amounts, the plan cycle and the next expiry, times in seconds since 1970.
+internal sealed record HarnessAccountCredits(string State, double? Remaining, double? Total, double? Reserved, string? Plan,
+    HarnessAccountCycle? Cycle = null, HarnessAccountExpiration? Expiration = null);
+internal sealed record HarnessAccountCycle(double Total, double Remaining, double? Used, double? Reset);
+internal sealed record HarnessAccountExpiration(double Credits, double At);
 internal sealed record RemoteControlDirectory(bool Refreshing, double? RefreshedAt, bool Failed);
 internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
     bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
@@ -40,7 +59,7 @@ internal sealed record ClaudeAccountReport(string Context, string SelectedOrgani
 internal sealed record ClaudeOrganization(string ID, string? Name, string? Label = null);
 internal sealed record DeepSeekConnection(string Context, string Source, string? Mode, bool HasKey, bool Refreshing, bool WebAvailable, DeepSeekConnectionReading Reading, DeepSeekBalanceStatus? Status = null);
 internal sealed record DeepSeekBalanceStatus(string Message, string Tone, IReadOnlyList<QuotaConnectionAction> Actions);
-internal sealed record ProviderHomeReport(string Provider, string Home, string EffectiveHome, string? Issue, bool Readable);
+internal sealed record ProviderHomeReport(string Provider, string Home, string EffectiveHome, string? Issue, bool Readable, string? DefaultHome = null);
 internal sealed record DeepSeekConnectionReading(string Title, string Text, string Color, string DetectedText, bool Connected, bool KeyEditor, bool ShowDetection, string? Action, string? ActionLabel);
 internal sealed record EngineHostRequest(string RequestID, string Context, bool Cancelled);
 internal sealed record CompactWarningItem(string Kind, string? Provider, bool Solid, string? Label, string? Symbol, string Help);
@@ -57,7 +76,26 @@ internal sealed record EngineSource(string Id, string Provider, bool Available, 
     string? SourceName = null, string? State = null, string? StateLabel = null, int? Sessions = null,
     IReadOnlyList<QuotaWindow>? QuotaWindows = null, bool QuotaRefreshing = false, string? QuotaError = null);
 internal sealed record ConnectionFailure(string Kind, string? Method, int? Code);
-internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled);
+internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled,
+    string? DisplayName = null, string? Symbol = null, string? Status = null, HarnessUsage? Usage = null,
+    string? UsageGuideUrl = null, bool? ProgressConnector = null, bool? HasTaskProgress = null, bool? ReportsSessionUsage = null,
+    string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null,
+    EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
+    bool? Local = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
+    HarnessProgressGuide? ProgressGuide = null)
+{
+    /// Found on this computer or turned on explicitly. Older engines send
+    /// nothing, so their modules stay listed.
+    internal bool IsProminent => Prominent ?? true;
+}
+/// The progress ring card for a module whose app must trust Pacer's tool, worded by Core.
+internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
+    string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, string Info,
+    string? WaitingText = null, string? Picture = null, string? FloatTitle = null, string? FloatNext = null);
+internal sealed record HarnessProgressStep(string Title, string State);
+internal sealed record EngineModuleBrand(string Dark, string Light, double AccentLift, double AccentLuminance);
+internal sealed record EngineModuleLaunch(string Scheme, string Publisher, IReadOnlyList<string> Executables, string? ConnectorsPath);
+internal sealed record HarnessUsage(int? ContextUsed, int? ContextCapacity, double? SessionCredits, double MeasuredAt);
 internal sealed record CodexSourceCandidate(string Path, string Source, string Label);
 internal sealed record CodexSourceReport(string Executable, string? SelectedExecutable, string? ExecutableIssue,
     IReadOnlyList<CodexSourceCandidate> Candidates, string Home, string EffectiveHome, string? HomeIssue, string HistoryTitle);
@@ -66,8 +104,8 @@ internal sealed record LegacyQuotaDashboard(bool Fresh, string FreshnessText, st
 internal sealed record LegacyQuotaBucket(string Id, string? Title, IReadOnlyList<LegacyQuotaWindow> Windows);
 internal sealed record LegacyQuotaWindow(string Id, string Label, double? RemainingPercent, double? RemainingTimePercent,
     double? PacePercent, string ValueText, string Countdown, string ResetDate, string PaceText, string AccessibilityLabel);
-internal sealed record DashboardLayout(string Kind, IReadOnlyList<DashboardSlot> Slots);
-internal sealed record DashboardSlot(string Provider, string Period, bool IdentifiesProvider, string Id, string Title);
+internal sealed record DashboardLayout(string Kind, IReadOnlyList<DashboardSlot> Slots, int? Columns = null);
+internal sealed record DashboardSlot(string Provider, string? Period, bool IdentifiesProvider, string Id, string Title);
 internal sealed record DashboardProvider(string Provider, DashboardReading FiveHour, DashboardReading Weekly, QuotaConnectionStatus? Status = null, QuotaHistoryPresentation? History = null);
 internal sealed record QuotaHistoryPresentation(string Title, string? SourceText, string FreshnessText, bool NotUpdated, string? ErrorText, string? Placeholder,
     QuotaChartPresentation? Chart, IReadOnlyList<LegacyQuotaBucket> Buckets, QuotaAccountPresentation? Account, string? Warning, string RefreshTitle, bool Refreshing);

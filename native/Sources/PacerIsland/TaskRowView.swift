@@ -16,10 +16,8 @@ struct TaskRowView: View {
     let enabled: Bool
     private var unread: Bool { presentation.unread }
     let accent: Color
-    /// DeepSeek's estimated cost of this turn, when shown.
-    private var cost: Double? { presentation.cost == nil ? nil : activity.turnCost }
-    /// The turn was billed at the doubled peak price, and the task's spend today.
-    var costDetail: (peak: Bool, help: String)? = nil
+    private var cost: String? { presentation.cost }
+    var costHelp: String? = nil
     /// The expanded panel's row style and fields; Overview keeps every reading.
     var options = ExpandedPanelOptions()
     let action: () -> Void
@@ -96,10 +94,7 @@ struct TaskRowView: View {
         .accessibilityHint(accessibilityHint)
     }
 
-    /// What a click does, then DeepSeek's turn cost explained: the peak price,
-    /// the task's spend today and its subagents.
     private var accessibilityHint: String {
-        let costHelp = cost == nil ? nil : costDetail?.help ?? L10n.text("deepseek.turn_cost_row_help")
         return [enabled ? openHelp : L10n.text("activity.no_link"), costHelp].compactMap { $0 }.joined(separator: " ")
     }
 
@@ -109,7 +104,7 @@ struct TaskRowView: View {
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + (activity.claudeCloud == nil || rate != nil ? ", " + performanceText : "")
-            + (cost.map { ", " + L10n.text("deepseek.turn_cost_accessibility", DeepSeekWallet.turnAmount($0)) } ?? "")
+            + (presentation.costAccessibility.map { ", " + $0 } ?? "")
     }
 
     /// Rows of one line are this tall; two-line rows take 54 points.
@@ -234,10 +229,10 @@ struct TaskRowView: View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             if let cost, options.shows(.cost) {
                 HStack(alignment: .center, spacing: 4) {
-                    if costDetail?.peak == true {
+                    if presentation.peakCost {
                         Circle().fill(PacerPalette.attention).frame(width: 5, height: 5).accessibilityHidden(true)
                     }
-                    Text(DeepSeekWallet.turnAmount(cost)).foregroundStyle(PacerPalette.primary.opacity(0.86))
+                    Text(cost).foregroundStyle(PacerPalette.primary.opacity(0.86))
                 }
                 .padding(.trailing, 3)
             }

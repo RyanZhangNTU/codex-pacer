@@ -19,9 +19,10 @@ public enum ModelDisplay {
         return value
     }
 
-    /// `claude-opus-5-5` → Opus 5.5, `gpt-6.1-sol` → GPT-6.1 Sol. Unknown
-    /// identifiers stay as reported, without a bracketed variant such as `[1m]`.
-    public static func name(_ raw: String) -> String {
+    /// Shorten model identifiers. A model from another provider's family keeps
+    /// its brand, as in `DeepSeek V4 Pro` for a Codex task. Drop bracketed
+    /// variants such as `[1m]`.
+    public static func name(_ raw: String, provider: AgentProvider? = nil) -> String {
         let id = raw.replacingOccurrences(of: #"\[[^\]]*\]\z"#, with: "", options: .regularExpression)
         let lower = id.lowercased()
         let parts = lower.split(separator: "-").map(String.init)
@@ -31,7 +32,7 @@ public enum ModelDisplay {
             let numbers = words.filter { $0.allSatisfy(\.isNumber) }
             let families = words.filter { !$0.allSatisfy(\.isNumber) }
             guard families.count == 1, (1...2).contains(numbers.count), numbers.allSatisfy({ $0.count <= 2 }) else { return id }
-            return families[0].capitalized + " " + numbers.joined(separator: ".")
+            return (provider == nil || provider == .claude ? "" : "Claude ") + families[0].capitalized + " " + numbers.joined(separator: ".")
         }
         if parts.first == "gpt", parts.count >= 2, parts[1].first?.isNumber == true {
             let suffix = parts.dropFirst(2).map { ["mini", "nano"].contains($0) || $0.contains(where: \.isNumber) ? $0 : $0.capitalized }
@@ -39,8 +40,9 @@ public enum ModelDisplay {
         }
         if parts.first == "deepseek", parts.count >= 2 {
             // `deepseek-v4-pro` → V4 Pro, `deepseek-flash` → Flash.
-            return parts.dropFirst().map { $0.first == "v" && $0.dropFirst().allSatisfy(\.isNumber) ? $0.uppercased() : $0.capitalized }
+            let name = parts.dropFirst().map { $0.first == "v" && $0.dropFirst().allSatisfy(\.isNumber) ? $0.uppercased() : $0.capitalized }
                 .joined(separator: " ")
+            return provider == nil || provider == .deepseek ? name : "DeepSeek " + name
         }
         return id
     }
@@ -49,7 +51,7 @@ public enum ModelDisplay {
     public static func effortLabel(_ raw: String, language: AppLanguage? = nil) -> String? {
         // DeepSeek Harness writes `off` for a model asked not to reason.
         guard raw != "none", raw != "off" else { return nil }
-        let known = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"]
+        let known = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent", "enabled", "disabled"]
         return known.contains(raw) ? L10n.text("model.effort." + raw, language: language) : raw
     }
 }

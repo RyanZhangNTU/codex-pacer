@@ -39,6 +39,13 @@ internal static class NativeWindowBounds
         const int exStyle = -20;
         SetWindowLongPtr(handle, exStyle, new IntPtr(GetWindowLongPtr(handle, exStyle).ToInt64() | 0x080000A0L));
     }
+    /// A small window people can click without it taking focus from the app below.
+    internal static void MakeNonActivating(Window window)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        const int exStyle = -20;
+        SetWindowLongPtr(handle, exStyle, new IntPtr(GetWindowLongPtr(handle, exStyle).ToInt64() | 0x08000080L));
+    }
     internal static void ApplyPixels(Window window, MotionBounds bounds)
         => ApplyPixels(new WindowInteropHelper(window).Handle, bounds);
     private static void ApplyPixels(IntPtr handle, MotionBounds bounds)

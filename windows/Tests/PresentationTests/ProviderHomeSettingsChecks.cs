@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
@@ -17,6 +18,96 @@ using CodexPacer.Windows;
 
 internal static class ProviderHomeSettingsChecks
 {
+    internal static async Task RunTaskModule(string language, bool dark)
+    {
+        await using var engine = new EngineClient();
+        var ui = UiText.For(language == "zh-Hans");
+        var initial = new DesktopPreferences
+        {
+            LastSettingsPane = "overview", MonitorSSH = false,
+            ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled",
+                ["workbuddy"] = "disabled", ["future-harness"] = "enabled" }
+        };
+        var session = new PreferencesSession(initial, value => engine.SendAsync("configure", value), _ => true);
+        await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), false, language,
+            configuration: initial.EngineConfiguration(), readOnlyDiagnostics: true);
+        var window = new SettingsWindow(ui, session, new Startup(), true, dark, engine) { IsHitTestVisible = false, ShowActivated = false };
+        const string id = "settings.workbuddy";
+        CheckBox? ModuleSwitch() => Descendants(window).OfType<CheckBox>().FirstOrDefault(value => AutomationProperties.GetAutomationId(value) == id + ".enabled");
+        try
+        {
+            window.Show();
+            // Whether WorkBuddy is installed depends on the machine, so the sidebar is checked against the engine's own answer.
+            await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.Modules?.Any(value => value.Provider == "workbuddy") == true, "The engine lists WorkBuddy");
+            await Pump();
+            bool found = engine.LatestSnapshot!.Modules!.First(value => value.Provider == "workbuddy").IsProminent;
+            var row = Find<RadioButton>(window, "settings.pane.workbuddy");
+            Check(AutomationProperties.GetName(row) == "WorkBuddy" && row.IsEnabled && row.IsVisible == found,
+                "A turned-off WorkBuddy shows in the Services sidebar once found on this computer, and otherwise only in the Module Library");
+            Find<TextBox>(window, "settings.search").Text = "workbuddy";
+            await Pump();
+            var matches = window.SearchMatches();
+            Check(matches.FirstOrDefault() == "workbuddy" && matches.Skip(1).All(value => value == "workbuddy-ai"),
+                "Searching for WorkBuddy finds its service page first, and WorkBuddy AI's only after it");
+            Invoke(Find<Button>(window, "settings.search.result.workbuddy"));
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: false },
+                "The search result opens the disabled module’s settings page");
+            Check(session.Current.LastSettingsPane == "harness.workbuddy" && row.IsChecked == true, "The selected service is saved");
+            var toggle = Find<CheckBox>(window, id + ".enabled");
+            Check(AutomationProperties.GetName(toggle) == "WorkBuddy", "The module has an accessible label from its descriptor");
+            Toggle(toggle);
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: true }
+                && session.Current.ProviderModes["workbuddy"] == "enabled"
+                && engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "workbuddy" && module.Enabled) == true,
+                "The service page can enable a task module and keeps unknown choices out of the engine handshake");
+            await PresentationWait.UntilAsync(() => row.IsVisible, "A module turned on shows in the Services sidebar even when it isn't found");
+            Check(Descendants(row).OfType<Image>().Any(icon => icon.Source != null && ReferenceEquals(icon.Source, ProviderIcon.Source("workbuddy"))),
+                "WorkBuddy has its official icon in the Services sidebar");
+            Check(Find<TextBlock>(window, id + ".status").IsVisible && Find<Button>(window, id + ".accountUsage").IsVisible,
+                "The enabled service has local task status and an account usage link");
+            var detected = engine.LatestSnapshot?.Modules?.First(value => value.Provider == "workbuddy").Installed;
+            string detection = ui.Text(detected switch { true => "windows.provider.detected", false => "windows.provider.not_detected", _ => "provider.state.searching" });
+            Check(Descendants(window).OfType<TextBlock>().Any(value => value.Text == detection), "The header describes detection on a Windows PC");
+            var progress = Find<CheckBox>(window, id + ".progress");
+            Check(progress.IsEnabled && progress.IsChecked == true, "The progress ring is on by default, like the built-in services' rings");
+            CheckProgressGuide(window, id);
+            await CheckGuideFloat(window, ui);
+            Toggle(progress);
+            await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false
+                && session.Current.DisabledHarnessProgress.SequenceEqual(["workbuddy"]), "The progress switch saves independently of the module mode");
+            await window.NavigateAsync("overview");
+            Check(engine.LatestSnapshot?.QuotaDashboard?.Providers.Count == 0
+                && !Descendants(window).OfType<TextBlock>().Any(value => value.Text == ui.Text("provider.none_enabled")),
+                "An enabled task module appears in Overview without a quota card");
+            Invoke(Find<Button>(window, "settings.overview.details.workbuddy"));
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: true }, "The Overview detail link opens WorkBuddy settings");
+            progress = Find<CheckBox>(window, id + ".progress");
+            Check(progress.IsChecked == false, "The progress choice survives navigation");
+            Toggle(progress);
+            await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == true && session.Current.DisabledHarnessProgress.Length == 0,
+                "Turning progress back on removes its module from the off list");
+            Invoke(Find<Button>(window, id + ".automatic"));
+            await PresentationWait.UntilAsync(() => session.Current.ProviderModes["workbuddy"] == "automatic"
+                && engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "workbuddy" && module.Mode == "automatic") == true,
+                "Automatic detection can be restored from the service header");
+            if (Find<CheckBox>(window, id + ".enabled").IsChecked != true)
+            {
+                Toggle(Find<CheckBox>(window, id + ".enabled"));
+                await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: true }
+                    && session.Current.ProviderModes["workbuddy"] == "enabled", "The module can be explicitly enabled after automatic detection");
+            }
+            Toggle(Find<CheckBox>(window, id + ".enabled"));
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: false }
+                && session.Current.ProviderModes["workbuddy"] == "disabled"
+                && engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "workbuddy" && !module.Enabled) == true,
+                "The service page can disable the task module again");
+            Check(session.Current.ProviderModes["future-harness"] == "enabled", "Editing WorkBuddy keeps unrecognized module choices");
+            await engine.SendAsync("shutdown");
+            await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: false }, "A disconnected engine disables module controls");
+        }
+        finally { window.Close(); }
+    }
+
     internal static async Task Run(string provider, string language, bool dark, string output)
     {
         var previous = CultureInfo.CurrentUICulture; CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(language);
@@ -143,6 +234,89 @@ internal static class ProviderHomeSettingsChecks
             "Cloud Projects remains connected and the implemented embedding control is enabled");
     }
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
+    /// The floating guide beside the app: the click to make, its picture and
+    /// the next click, in the corner of Settings' screen, without taking focus.
+    private static async Task CheckGuideFloat(SettingsWindow settings, UiText ui)
+    {
+        static HarnessProgressGuide Guide(string stage, string? title, string? next, string? picture) =>
+            new(stage, stage + " chip", "attention", [], null, null, null, true, "summary", true, "Why and how", Picture: picture, FloatTitle: title, FloatNext: next);
+        var drawn = new List<string>();
+        var area = new System.Drawing.Rectangle(100, 80, 1600, 1000);
+        var shown = new HarnessGuideFloat("workbuddy", ui, settings.Resources, kind => { drawn.Add(kind); return new DecorativeBorder { Width = 300, Height = 40 }; }, area);
+        TextBlock Text(string id) => Descendants(shown).OfType<TextBlock>().First(value => AutomationProperties.GetAutomationId(value) == id);
+        bool closed = false; shown.Closed += (_, _) => closed = true;
+        try
+        {
+            shown.Present(Guide("customConnector", "Click Custom Connector", "Next: click Trust", "customConnector"));
+            await Pump();
+            var handle = new System.Windows.Interop.WindowInteropHelper(shown).Handle;
+            long style = NativeStyle(handle);
+            Check(shown.IsVisible && shown.Topmost && !shown.IsActive && (style & 0x08000000) != 0,
+                "The guide floats above the app without taking focus");
+            Check(Text("guide_float.title").Text == "Click Custom Connector" && Text("guide_float.next").Text == "Next: click Trust"
+                && drawn.SequenceEqual(["customConnector"]), "It shows the click to make, its picture and the next click");
+            Check(Descendants(shown).OfType<TextBlock>().Any(value => value.Text == "Pacer · customConnector chip"), "Its header names Pacer and the steps left");
+            var bounds = NativeBounds(handle);
+            Check(Math.Abs(bounds.Right - area.Right) <= 12 && Math.Abs(bounds.Bottom - area.Bottom) <= 12 && bounds.Left >= area.Left,
+                "It sits in the bottom-right corner of Settings' screen");
+            shown.Present(Guide("trust", "Click Trust", "Next: start a new task", "trust"));
+            await Pump();
+            bounds = NativeBounds(handle);
+            Check(Text("guide_float.title").Text == "Click Trust" && drawn.SequenceEqual(["customConnector", "trust"])
+                && Math.Abs(bounds.Bottom - area.Bottom) <= 12, "The next step replaces it in place, still in the corner");
+            shown.Present(Guide("firstTask", "Trusted. Start a new task.", null, null));
+            await Pump();
+            Check(Text("guide_float.next").Visibility == Visibility.Collapsed && !Descendants(shown).OfType<DecorativeBorder>().Any(),
+                "The last step has no picture and no next click");
+            Invoke(Descendants(shown).OfType<Button>().First(value => AutomationProperties.GetAutomationId(value) == "guide_float.close"));
+            await Pump();
+            Check(closed && !shown.IsVisible, "Close dismisses the guide");
+        }
+        finally { if (!closed) shown.Close(); }
+        Check(AppWindows.MainWindow([]) == null, "Without the app's processes there is no window to bring forward");
+    }
+    private static long NativeStyle(IntPtr handle) => GetWindowLongPtr(handle, -20).ToInt64();
+    private static System.Drawing.Rectangle NativeBounds(IntPtr handle)
+    {
+        GetWindowRect(handle, out var rect);
+        return System.Drawing.Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+    }
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
+
+    /// Core words each stage; the page draws the steps with one picture and one
+    /// action for the current click, one line for a problem, and only the chip once ready.
+    private static void CheckProgressGuide(SettingsWindow window, string id)
+    {
+        static HarnessProgressGuide Guide(string stage, string tone, HarnessProgressStep[] steps, string? line, string? action, bool waiting, string? picture) =>
+            new(stage, stage + " chip", tone, steps, line, action, action == null ? null : stage + " action", action != null, action == null ? null : "summary",
+                waiting, "Why and how", Picture: picture);
+        bool Shown(string field) => Descendants(window).OfType<FrameworkElement>().Any(value => AutomationProperties.GetAutomationId(value) == id + "." + field && value.Visibility == Visibility.Visible);
+        var body = Find<StackPanel>(window, id + ".progress_guide");
+        HarnessProgressStep[] Steps(int current) => Enumerable.Range(0, 6).Select(index => new HarnessProgressStep("Step " + index,
+            index < current ? "done" : index == current ? "current" : "pending")).ToArray();
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("customConnector", "attention", Steps(3), null, null, true, "customConnector"), true);
+        Check(body.Visibility == Visibility.Visible && Find<Border>(window, id + ".progress_chip").Visibility == Visibility.Visible
+            && AutomationProperties.GetName(Find<Border>(window, id + ".progress_chip")) == "customConnector chip"
+            && Shown("progress_step0") && Shown("progress_step5") && !Shown("progress_action")
+            && Shown("progress_waiting") && Descendants(body).OfType<DecorativeBorder>().Count() == 1,
+            "Each click in the app is its own step with one picture; the click is in the app, so there's no button");
+        Check(Descendants(Find<Grid>(window, id + ".progress_step3")).OfType<DecorativeBorder>().Count() == 1,
+            "The picture belongs to the current step only");
+        Check(!Descendants(body).OfType<TextBlock>().Any(text => text.Text == "Why and how"), "The explanation stays behind the ⓘ");
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("trust", "attention", Steps(4), null, null, true, "trust"), true);
+        Check(Descendants(Find<Grid>(window, id + ".progress_step4")).OfType<DecorativeBorder>().Count() == 1
+            && Descendants(body).OfType<DecorativeBorder>().Count() == 1, "The trust step swaps in its own picture");
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("turnedOff", "attention", [], "Turn it back on.", "openConnectors", true, null), true);
+        Check(Find<TextBlock>(window, id + ".progress_line").Text == "Turn it back on." && !Shown("progress_step0") && Shown("progress_action")
+            && !Descendants(body).OfType<DecorativeBorder>().Any(), "A problem is one line and its action");
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("ready", "success", [], null, null, false, null), true);
+        Check(body.Visibility == Visibility.Collapsed && AutomationProperties.GetName(Find<Border>(window, id + ".progress_chip")) == "✓ ready chip",
+            "Once ready, the card folds to the row and its chip");
+        window.RefreshHarnessProgressGuide("workbuddy", null, true);
+        Check(Find<Border>(window, id + ".progress_chip").Visibility == Visibility.Collapsed, "Without a guide the row is only the switch");
+    }
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().SingleOrDefault(value => AutomationProperties.GetAutomationId(value) == id)

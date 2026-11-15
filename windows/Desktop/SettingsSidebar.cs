@@ -17,11 +17,14 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     /// Every page in the Mac's order; search lists matches in this order.
-    internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "remote", "appearance", "collapsed", "expandedPanel", "notifications", "general", "about", "support"];
-    private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "remote"], ["appearance", "collapsed", "expandedPanel", "notifications", "general"]];
+    internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "modules", "remote", "appearance", "collapsed", "expandedPanel", "notifications", "general", "about", "support"];
+    private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "modules", "remote"], ["appearance", "collapsed", "expandedPanel", "notifications", "general"]];
+    private TextBlock? modulesMoreCount;
     private readonly Dictionary<string, TextBlock> moduleOff = new();
     private readonly Dictionary<string, Ellipse> attentionDots = new();
     private readonly StackPanel paneGroups = new(), searchResults = new() { Visibility = Visibility.Collapsed };
+    private readonly StackPanel harnessRows = new();
+    private (string Provider, string Title, string Symbol)[] harnessPages = [];
     private TextBox? search;
     private TextBlock? searchPlaceholder, aboutDetail;
     private Button? searchClear;
@@ -38,42 +41,63 @@ internal sealed partial class SettingsWindow
     };
     /// Nothing waits for a later step any more; kept so a page can be held back again.
     private static bool PendingPane(string pane) => false;
-    private static bool EnginePane(string pane) => pane is "overview" or "history" or "codex" or "claude" or "deepseek" or "notifications" or "remote";
+    private static bool EnginePane(string pane) => pane is "overview" or "history" or "codex" or "claude" or "deepseek" or "modules" or "notifications" or "remote";
     private bool PaneAvailable(string pane) => !PendingPane(pane) && ResolvePane(pane) == pane;
     /// The Mac's raw value, which names the shared search words.
     private static string MacPane(string pane) => pane == "collapsed" ? "collapsedBar" : pane;
-    private static bool ProviderPane(string pane) => pane is "codex" or "claude" or "deepseek";
+    private bool ProviderPane(string pane) => DesktopPreferences.IsLegacyProvider(pane) || HarnessPane(pane);
+    private bool HarnessPane(string pane) => Array.Exists(harnessPages, page => page.Provider == pane);
+    private EngineModule? HarnessModule(string provider) => engine?.LatestSnapshot?.Modules?.FirstOrDefault(module => module.Provider == provider);
+
+    private bool SyncHarnessNavigation()
+    {
+        var pages = (engine?.LatestSnapshot?.Modules ?? [])
+            .Where(module => module.DisplayName is { Length: > 0 and <= 64 } && DesktopPreferences.ValidProviderId(module.Provider)
+                && !Panes.Contains(module.Provider) && CanonicalPane(module.Provider) == module.Provider)
+            .Select(module => (module.Provider, ui.Has("module." + module.Provider + ".title") ? ui.Text("module." + module.Provider + ".title") : module.DisplayName!,
+                GuideArt.Symbol(module.Symbol ?? "circle.circle")))
+            .DistinctBy(page => page.Provider).ToArray();
+        if (harnessPages.SequenceEqual(pages)) return false;
+        foreach (var page in harnessPages)
+        {
+            PageAccessibility.Retire(navigation[page.Provider]);
+            navigation.Remove(page.Provider);
+            moduleOff.Remove(page.Provider);
+            attentionDots.Remove(page.Provider);
+        }
+        harnessRows.Children.Clear();
+        harnessPages = pages;
+        foreach (var page in pages) harnessRows.Children.Add(SidebarRow(page.Provider));
+        return true;
+    }
 
     private string PaneTitle(string pane) => pane switch
     {
         "codex" => "Codex",
         "claude" => "Claude",
         "deepseek" => "DeepSeek",
-        "overview" or "history" or "remote" or "notifications" or "about" or "support" => ui.Text("main.pane." + pane),
+        "overview" or "history" or "remote" or "notifications" or "about" or "support" or "modules" => ui.Text("main.pane." + pane),
         "expandedPanel" => ui.Text("settings.pane.expanded_panel"),
-        _ => ui.Text("settings.pane." + pane)
+        _ => harnessPages.FirstOrDefault(page => page.Provider == pane).Title ?? ModuleTitle(pane)
     };
-    private static string PaneSymbol(string pane) => pane switch
+    // A module can be named before the sidebar lists it, or while it is not found.
+    private string ModuleTitle(string provider) => ui.Has("module." + provider + ".title") ? ui.Text("module." + provider + ".title")
+        : HarnessModule(provider)?.DisplayName is { Length: > 0 and <= 64 } name ? name
+        : ui.Has("settings.pane." + provider) ? ui.Text("settings.pane." + provider) : provider;
+    private string PaneSymbol(string pane) => pane switch
     {
         "overview" => "square.grid.2x2",
         "history" => "chart.xyaxis.line",
-        "codex" => "chevron.left.forwardslash.chevron.right",
-        "claude" => "asterisk",
-        "deepseek" => "water.waves",
+        "codex" or "claude" or "deepseek" => GuideArt.ProviderSymbol(pane),
         "remote" => "server.rack",
+        "modules" => "square.on.square",
         "appearance" => "circle.lefthalf.filled",
         "collapsed" => "rectangle.topthird.inset.filled",
         "expandedPanel" => "text.alignleft",
         "notifications" => "bell",
         "general" => "gearshape",
         "support" => "heart",
-        _ => "info.circle"
-    };
-    private static Color ProviderTint(string pane) => pane switch
-    {
-        "codex" => Color.FromRgb(125, 214, 196),
-        "claude" => Color.FromRgb(242, 156, 107),
-        _ => Color.FromRgb(123, 147, 255)
+        _ => harnessPages.FirstOrDefault(page => page.Provider == pane).Symbol ?? "info.circle"
     };
 
     private UIElement BuildSidebar()
@@ -91,8 +115,13 @@ internal sealed partial class SettingsWindow
                 AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level2);
                 paneGroups.Children.Add(title);
             }
-            foreach (string pane in PaneGroups[index]) paneGroups.Children.Add(SidebarRow(pane));
+            foreach (string pane in PaneGroups[index])
+            {
+                if (pane == "modules") paneGroups.Children.Add(harnessRows);
+                paneGroups.Children.Add(SidebarRow(pane));
+            }
         }
+        SyncHarnessNavigation();
         var lists = new StackPanel(); lists.Children.Add(paneGroups); lists.Children.Add(searchResults);
         var scroller = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = lists, Focusable = false };
         Identify(scroller, "settings.sidebar", ui.Text("common.settings"));
@@ -134,8 +163,11 @@ internal sealed partial class SettingsWindow
     {
         string needle = search?.Text.Trim().ToLower(CultureInfo.CurrentCulture) ?? "";
         if (needle.Length == 0) return [];
-        return Panes.Where(pane => PaneAvailable(pane)
-            && (PaneTitle(pane) + " " + ui.Text("main.search." + MacPane(pane))).ToLower(CultureInfo.CurrentCulture).Contains(needle, StringComparison.Ordinal)).ToArray();
+        return Panes.TakeWhile(pane => pane != "modules").Concat(harnessPages.Select(page => page.Provider))
+            .Concat(Panes.SkipWhile(pane => pane != "modules"))
+            .Where(pane => PaneAvailable(pane)
+                && (PaneTitle(pane) + " " + ui.Text(HarnessPane(pane) && !ui.Has("main.search." + pane) ? "main.search.local_harness" : "main.search." + MacPane(pane)))
+                    .ToLower(CultureInfo.CurrentCulture).Contains(needle, StringComparison.Ordinal)).ToArray();
     }
 
     private void ApplySearch()
@@ -193,7 +225,13 @@ internal sealed partial class SettingsWindow
             var off = Label(ui.Text("settings.module_off"), 11); off.Visibility = Visibility.Collapsed;
             off.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); moduleOff[pane] = off; end.Children.Add(off);
         }
-        if (pane is "claude" or "codex" or "remote")
+        if (pane == "modules")
+        {
+            // How many services wait in the library, as the Mac's row.
+            modulesMoreCount = Label("", 11); modulesMoreCount.Visibility = Visibility.Collapsed;
+            modulesMoreCount.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); end.Children.Add(modulesMoreCount);
+        }
+        if (pane is "claude" or "codex" or "remote" || HarnessPane(pane))
         {
             // Amber only says that something needs the user.
             var dot = new Ellipse { Width = 7, Height = 7, Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
@@ -219,10 +257,7 @@ internal sealed partial class SettingsWindow
         if (ProviderPane(pane))
         {
             // Service tiles keep their tinted gradient, so color in the sidebar only says which service a row is.
-            Color color = ProviderTint(pane);
-            Color lighter = Color.FromRgb((byte)Math.Min(255, color.R + 10), (byte)Math.Min(255, color.G + 10), (byte)Math.Min(255, color.B + 10));
-            icon = new Border { Width = 22, Height = 22, CornerRadius = new CornerRadius(5.72), Background = new LinearGradientBrush(lighter, color, 90),
-                Child = new IconGlyph { Symbol = PaneSymbol(pane), Width = 16, Height = 16, Ink = new SolidColorBrush(Color.FromArgb(184, 0, 0, 0)) } };
+            icon = ProviderIcon.Tile(pane, 22, PaneSymbol(pane));
         }
         else
         {
@@ -272,6 +307,21 @@ internal sealed partial class SettingsWindow
         return footer;
     }
 
+    private void RefreshProviderPages()
+    {
+        bool changed = SyncHarnessNavigation();
+        if (changed && !ReadOnlyGuidePane(activePane))
+        {
+            string stored = session.Current.LastSettingsPane;
+            if (ResolvePane(stored) != activePane || HarnessPane(activePane)) RebuildPane(stored);
+        }
+        RefreshHarnessPage();
+        FollowGuideFloat();
+        RefreshModules();
+        RefreshSidebar();
+        if (changed) ApplySearch();
+    }
+
     /// Off services say so, and a found update replaces the installed version.
     private void RefreshSidebar()
     {
@@ -286,9 +336,19 @@ internal sealed partial class SettingsWindow
         var modules = engine?.LatestSnapshot?.Modules;
         foreach (var item in moduleOff)
         {
-            bool off = engine != null && (modules?.FirstOrDefault(value => value.Provider == item.Key) is { } module
+            var module = modules?.FirstOrDefault(value => value.Provider == item.Key);
+            bool off = engine != null && (module != null
                 ? !module.Enabled : session.Current.ProviderModes.TryGetValue(item.Key, out string? mode) && mode == "disabled");
             item.Value.Visibility = off ? Visibility.Visible : Visibility.Collapsed;
+            // A service not found here, and not turned on, waits in the module library.
+            if (navigation.TryGetValue(item.Key, out var row))
+                row.Visibility = module?.IsProminent == false && item.Key != activePane ? Visibility.Collapsed : Visibility.Visible;
+        }
+        int waiting = modules?.Count(value => !value.IsProminent) ?? 0;
+        if (modulesMoreCount != null)
+        {
+            modulesMoreCount.Text = waiting > 0 ? ui.Text("modules.sidebar_more").Replace("%ld", waiting.ToString(CultureInfo.CurrentCulture), StringComparison.Ordinal) : "";
+            modulesMoreCount.Visibility = waiting > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         if (aboutDetail == null) return;
         string? found = updater?.CurrentOffer?.Version;

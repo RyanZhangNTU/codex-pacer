@@ -15,7 +15,7 @@ final class QuotaDashboardModelTests: XCTestCase {
         let clock = now
         let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: nil, defaults: defaults,
             installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false))
-        for provider in AgentProvider.allCases { model.selectProvider(provider); model.quota = nil }
+        for provider in HarnessRegistry.legacyIDs { model.selectProvider(provider); model.quota = nil }
         model.selectProvider(.codex)
         return (model, defaults)
     }

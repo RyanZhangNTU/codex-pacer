@@ -5,19 +5,21 @@ import PacerCore
 public struct MacApplicationCatalog: ApplicationCatalog {
     public init() {}
     public func locations(for provider: AgentProvider, userHome: URL) -> [URL] {
-        let (identifier, name) = Self.identity(provider)
+        guard let (identifier, name) = Self.identity(provider) else { return [] }
         let registered = LSCopyApplicationURLsForBundleIdentifier(identifier as CFString, nil)?.takeRetainedValue() as? [URL] ?? []
         return [URL(fileURLWithPath: "/Applications/" + name + ".app"),
             userHome.appendingPathComponent("Applications/" + name + ".app")] + registered
     }
     public func isApplication(_ url: URL, provider: AgentProvider) -> Bool {
-        url.pathExtension.lowercased() == "app" && Bundle(url: url)?.bundleIdentifier == Self.identity(provider).0
+        guard let (identifier, _) = Self.identity(provider) else { return false }
+        return url.pathExtension.lowercased() == "app" && Bundle(url: url)?.bundleIdentifier == identifier
     }
-    private static func identity(_ provider: AgentProvider) -> (String, String) {
+    private static func identity(_ provider: AgentProvider) -> (String, String)? {
         switch provider {
         case .codex: ("com.openai.codex", "Codex")
         case .claude: ("com.anthropic.claudefordesktop", "Claude")
         case .deepseek: ("com.deepseek.dsh", "DeepSeek Harness")
+        default: nil
         }
     }
 }

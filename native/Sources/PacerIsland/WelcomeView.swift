@@ -22,6 +22,7 @@ struct WelcomeView: View {
     private var step: Step { chosenStep ?? startStep }
     @State private var forward = true
     @State private var modules = ProviderModules.load()
+    @State private var showsMoreModules = false
     @AppStorage(IslandModel.claudeProgressRingKey) private var claudeRing = true
     @AppStorage(IslandModel.codexProgressRingKey) private var codexRing = true
     @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekRing = true
@@ -149,17 +150,40 @@ struct WelcomeView: View {
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
+    /// Services found on this computer, or turned on, as cards; the rest wait
+    /// folded below, as in the module library.
     private var servicesPage: some View {
-        VStack(spacing: 24) {
-            header(L10n.text("main.welcome.services_title"), L10n.text("welcome.modules_note"))
-            HStack(spacing: 12) {
-                moduleCard(.codex)
-                moduleCard(.claude)
-                moduleCard(.deepseek)
+        let library = model.moduleLibrary(modules)
+        return ScrollView {
+            VStack(spacing: 18) {
+                header(L10n.text("main.welcome.services_title"), L10n.text("welcome.modules_note"))
+                moduleCards(library.prominent.map(\.provider))
+                if !library.collapsed.isEmpty {
+                    Button {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { showsMoreModules.toggle() }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(showsMoreModules ? L10n.text("welcome.modules.less") : L10n.text("welcome.modules.more", library.collapsed.count))
+                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                                .rotationEffect(.degrees(showsMoreModules ? 180 : 0))
+                        }
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    if showsMoreModules { moduleCards(library.collapsed.map(\.provider)) }
+                }
             }
-            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 32).padding(.top, 44).padding(.bottom, 16)
         }
-        .padding(.horizontal, 32).padding(.top, 44)
+        .scrollIndicators(.never)
+    }
+
+    /// Up to three side by side; four make two rows of two.
+    private func moduleCards(_ providers: [AgentProvider]) -> some View {
+        let columns = providers.count <= 3 ? max(providers.count, 1) : 2
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: columns), spacing: 12) {
+            ForEach(providers, id: \.self) { moduleCard($0).frame(minHeight: 170) }
+        }
     }
 
     /// Titles only, like the main window: what a row does sits behind ⓘ,
@@ -168,9 +192,12 @@ struct WelcomeView: View {
         VStack(spacing: 24) {
             header(L10n.text("main.welcome.finish_title"), L10n.text("main.welcome.finish_subtitle"))
             MainCard {
-                WelcomeChoiceRow(symbol: "circle.dashed", tint: Color(red: 0.19, green: 0.69, blue: 0.78),
-                                 title: L10n.text("main.claude.ring"), info: L10n.text("main.welcome.ring_info")) {
-                    Toggle(L10n.text("main.claude.ring"), isOn: ringsBinding).labelsHidden().toggleStyle(.switch)
+                VStack(alignment: .leading, spacing: 10) {
+                    WelcomeChoiceRow(symbol: "circle.dashed", tint: Color(red: 0.19, green: 0.69, blue: 0.78),
+                                     title: L10n.text("main.claude.ring"), info: L10n.text("main.welcome.ring_info")) {
+                        Toggle(L10n.text("main.claude.ring"), isOn: ringsBinding).labelsHidden().toggleStyle(.switch)
+                    }
+                    if ringsBinding.wrappedValue { progressNote }
                 }
                 WelcomeChoiceRow(symbol: SettingsPane.notifications.tileSymbol, tint: SettingsPane.notifications.tint,
                                  title: L10n.text("settings.system_notifications"), info: L10n.text("main.welcome.notifications_info"),
@@ -193,11 +220,31 @@ struct WelcomeView: View {
         .padding(.horizontal, 56).padding(.top, 44)
     }
 
+    /// The apps that still need the user to trust Pacer's tool, and the way to their page.
+    @ViewBuilder private var progressNote: some View {
+        let modules = model.progressOnboardingModules
+        if let first = modules.first, let note = HarnessProgressGuide.onboardingNote(names: modules.map(\.displayName)) {
+            HStack(spacing: 10) {
+                ProviderAppIcon(provider: first, size: 18)
+                Text(note).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button(L10n.text("progress_guide.onboarding.action")) { onOpenSettings(SettingsPane(provider: first)) }
+                    .buttonStyle(MainButtonStyle(height: 26))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(MainPalette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.leading, 40)
+        }
+    }
+
     /// One switch for every service's ring; Settings keeps one per service.
     private var ringsBinding: Binding<Bool> {
-        Binding(get: { claudeRing || codexRing || deepseekRing }, set: { value in
+        let local = model.localHarnessDescriptors.filter(\.hasTaskProgress).map(\.id)
+        return Binding(get: { claudeRing || codexRing || deepseekRing || local.contains(where: model.showsHarnessProgress) }, set: { value in
             claudeRing = value; codexRing = value; deepseekRing = value
+            UserDefaults.standard.set(value ? [] : local.map(\.rawValue).sorted(), forKey: IslandModel.disabledHarnessProgressKey)
             model.applySettings(sourceChanged: false)
+            model.refreshProgressPresentation()
         })
     }
 
@@ -223,13 +270,13 @@ struct WelcomeView: View {
         let status = moduleStatus(provider, enabled: enabled)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72), size: 40)
+                ProviderAppIcon(provider: provider, size: 40)
                     .saturation(enabled ? 1 : 0).opacity(enabled ? 1 : 0.5)
                 Spacer()
-                Toggle(provider.displayName, isOn: Binding(get: { enabled }, set: { setModule(provider, enabled: $0) }))
+                Toggle(provider.settingsTitle, isOn: Binding(get: { enabled }, set: { setModule(provider, enabled: $0) }))
                     .labelsHidden().toggleStyle(.switch)
             }
-            Text(provider.displayName).font(.system(size: 15, weight: .semibold))
+            Text(provider.settingsTitle).font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(enabled ? .primary : .secondary).padding(.top, 12)
             statusLabel(status).padding(.top, 4)
             Spacer(minLength: 12)
@@ -276,11 +323,17 @@ struct WelcomeView: View {
         let settings: (title: String, connects: Bool, perform: () -> Void) = (L10n.text("welcome.module.settings"), false,
             { onOpenSettings(SettingsPane(provider: provider)) })
         guard model.providerDetected(provider) else {
-            return ModuleStatus(text: L10n.text("welcome.module.\(provider.rawValue)_missing"), action: settings)
+            return ModuleStatus(text: L10n.moduleText("welcome.module.\(provider.rawValue)_missing", fallback: provider.displayName), action: settings)
         }
         let ready = ModuleStatus(text: L10n.text("welcome.module.ready") +
             (modules.mode(for: provider) == .automatic ? " · " + L10n.text("welcome.module.automatic") : ""), ready: true)
         if provider == .deepseek { return deepseekStatus(ready: ready) }
+        if let connection = model.harnessAccount(provider) {
+            if connection.reading != nil { return ready }
+            if connection.busy { return ModuleStatus(text: L10n.text("claude.account.checking")) }
+            return ModuleStatus(text: L10n.text("welcome.module.credits_sign_in_detail"),
+                                action: (L10n.text("welcome.module.sign_in"), true, { connection.connect() }))
+        }
         guard provider == .claude else { return ready }
         if model.claudeNeedsOrganizationSelection {
             return ModuleStatus(text: L10n.text("claude.account.workspace_needed"),

@@ -211,7 +211,7 @@ internal static class DeepSeekWebConnectionChecks
         return Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
     }
     private static async Task Continue(DeepSeekLoginWindow window)
-    { Invoke(Find<Button>(window, "deepseek.login.continue")); await Pump(); await window.CheckCompletion; await Until(() => !window.IsVisible); }
+    { await window.FinishNow(); await Pump(); await Until(() => !window.IsVisible); }
     private static async Task Source(SettingsWindow window, PreferencesSession settings, string source)
     {
         var button = Find<Button>(window, "settings.deepseek.account_options"); Invoke(button); await Until(() => button.ContextMenu?.IsOpen == true);

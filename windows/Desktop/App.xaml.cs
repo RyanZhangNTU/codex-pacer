@@ -19,6 +19,7 @@ public partial class App : Application
     private EngineClient? engine;
     private DeepSeekConnectionCoordinator? webConnection;
     private ClaudeConnectionCoordinator? claudeConnection;
+    private HarnessAccounts? harnessAccounts;
     private Forms.NotifyIcon? tray;
     private System.Drawing.Icon? trayIcon;
     private IslandWindow? island;
@@ -106,10 +107,11 @@ public partial class App : Application
         if (providersIndex >= 0)
         {
             if (!demo || providersIndex + 1 >= e.Args.Length) throw new ArgumentException("Provider fixtures require demo mode.");
+            string[] known = ["codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"];
             string[] providers = e.Args[providersIndex + 1] == "all" ? ["codex", "claude", "deepseek"] : e.Args[providersIndex + 1].Split(',');
-            if (providers.Length is < 1 or > 3 || providers.Distinct().Count() != providers.Length || providers.Any(value => value is not ("codex" or "claude" or "deepseek")))
+            if (providers.Length is < 1 or > 5 || providers.Distinct().Count() != providers.Length || providers.Any(value => !known.Contains(value)))
                 throw new ArgumentException("Unknown demo providers.");
-            preferences = preferences with { ProviderModes = preferences.ProviderModes.ToDictionary(pair => pair.Key, pair => providers.Contains(pair.Key) ? "enabled" : "disabled") };
+            preferences = preferences with { ProviderModes = known.ToDictionary(provider => provider, provider => providers.Contains(provider) ? "enabled" : "disabled") };
         }
         string[] positions = ["center", "topLeft", "bottomLeft", "topRight", "bottomRight"];
         int position = 0, positionIndex = Array.IndexOf(e.Args, "--position");
@@ -127,7 +129,7 @@ public partial class App : Application
         int paneIndex = Array.IndexOf(e.Args, "--settings-pane");
         if (paneIndex >= 0)
         {
-            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "notifications" or "reminders" or "remote" or "about" or "support"))
+            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "modules" or "harness.workbuddy" or "harness.workbuddy-ai" or "notifications" or "reminders" or "remote" or "about" or "support"))
                 throw new ArgumentException("Settings pane fixtures require a supported demo preview.");
             preferences = preferences with { LastSettingsPane = e.Args[paneIndex + 1] };
         }
@@ -201,6 +203,19 @@ public partial class App : Application
         claudeConnection = new ClaudeConnectionCoordinator(engine, demo ? new OfflineClaudeWebSession() : new ClaudeWebSession(ui),
             Dispatcher, bridgeEnabled: !demo, newSession: async () => settingsSession != null &&
                 await settingsSession.ChangeAsync(value => value with { ClaudeOrganization = "" }) == PreferencesApplyResult.Applied);
+        var accounts = harnessAccounts = HarnessAccounts.ForWorkBuddy(ui, demo, Dispatcher);
+        engine.Snapshot += snapshot =>
+        {
+            // Colors come with the registry entry; the island redraws on its next snapshot.
+            PacerPalette.RegisterModules(snapshot.Modules);
+            WindowsConversationApplication.Register(snapshot.Modules);
+            foreach (var account in accounts.All)
+                account.SetEnabled(snapshot.Modules?.Any(module =>
+                    module.Provider == account.Provider && module is { Enabled: true, ReportsAccountCredits: true }) == true);
+        };
+        // The engine draws the collapsed bar and sends reminders, so it gets
+        // every change of the reading the host's sign-in produced.
+        if (!demo) accounts.Changed += provider => _ = PushAccountCreditsAsync(provider);
         Activated += async (_, _) =>
         {
             if (quitting || !engineReady.Task.IsCompletedSuccessfully) return;
@@ -211,7 +226,7 @@ public partial class App : Application
         var applications = demo ? new WindowsDesktopApplications(_ => true, _ => true) : new WindowsDesktopApplications();
         island = new IslandWindow(engine, demo, language == "zh-Hans", position, desktopApplications: applications,
             displayMode: positionIndex >= 0 ? 2 : Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode),
-            canConnectDeepSeekWeb: () => webConnection.Available);
+            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts);
         island.Presence.Changed += OnPresenceChanged;
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
@@ -324,6 +339,7 @@ public partial class App : Application
             if (capture < 0) engine.Status += RestartAfterEngineExit;
             await webConnection.StartAsync();
             await claudeConnection.StartAsync();
+            if (!demo && harnessAccounts != null) { pushedAccountCredits.Clear(); foreach (var account in harnessAccounts.All) await PushAccountCreditsAsync(account.Provider); }
             await island.SynchronizeExpansionAsync();
             if (preferencesUnavailable) island.SetStatus(ui.Text("windows.settings.read_failed"));
             if (demo && stage != 0) await engine.SendAsync("demoStage", new { demoStage = stage });
@@ -366,7 +382,8 @@ public partial class App : Application
         if (settings == null)
         {
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
-                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore, updater: updates);
+                webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore,
+                updater: updates, harnessAccounts: harnessAccounts);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
             settings.WelcomeRequested += () => _ = ShowGuideAsync(true);
             settings.SignedReleaseNotesRequested += ShowSignedUpdateNotes;
@@ -375,9 +392,24 @@ public partial class App : Application
         settings.Show(); settings.Activate();
     }
 
+    private readonly System.Collections.Generic.Dictionary<string, string> pushedAccountCredits = new(StringComparer.Ordinal);
+    private async Task PushAccountCreditsAsync(string provider)
+    {
+        // Sleep hides the reading without changing the account; the engine keeps
+        // its last credits and alert state until a fresh reading arrives.
+        if (quitting || harnessAccounts?[provider] is not { } account || engine is not { } client || !engineReady.Task.IsCompletedSuccessfully
+            || account.Busy || account.Sleeping) return;
+        var payload = new { provider, accountCredits = account.EngineCredits(), stale = account.State == "unavailable" };
+        string encoded = System.Text.Json.JsonSerializer.Serialize(payload);
+        if (pushedAccountCredits.TryGetValue(provider, out var pushed) && pushed == encoded) return;
+        pushedAccountCredits[provider] = encoded;
+        try { await client.SendAsync("setAccountCredits", payload); }
+        catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException) { pushedAccountCredits.Remove(provider); }
+    }
+
     private async void OpenProviderSettings(string provider)
     {
-        if (provider is not ("codex" or "claude" or "deepseek")) return;
+        if (!DesktopPreferences.ValidProviderId(provider)) return;
         OpenSettings();
         if (settings != null) await settings.NavigateAsync(provider);
     }
@@ -441,6 +473,7 @@ public partial class App : Application
         if (settings != null) { settings.AllowClose = true; settings.Close(); }
         if (webConnection != null) await webConnection.DisposeAsync();
         if (claudeConnection != null) await claudeConnection.DisposeAsync();
+        if (harnessAccounts != null) await harnessAccounts.DisposeAsync();
         if (updates != null) await updates.DisposeAsync();
         island?.StopPresentation();
         if (engine != null && notifications != null) engine.Snapshot -= notifications.Receive;
@@ -461,6 +494,7 @@ public partial class App : Application
         Dispatcher.BeginInvoke(new Action(async () =>
         {
             if (quitting || !engineReady.Task.IsCompletedSuccessfully || engine == null) return;
+            foreach (var account in harnessAccounts?.All ?? []) account.SetSleeping(change.Mode == PowerModes.Suspend);
             try { await engine.SendAsync(method); }
             catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
             { if (!quitting && ui != null) island?.SetStatus(ui.Text("windows.connection.refresh_failed")); }

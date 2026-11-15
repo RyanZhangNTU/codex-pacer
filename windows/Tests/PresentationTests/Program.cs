@@ -88,6 +88,7 @@ internal static class Program
                     await Attempt(nameof(LegacyQuotaChecks), () => LegacyQuotaChecks.Run(output)); await Attempt(nameof(QuotaConnectionChecks), () => QuotaConnectionChecks.Run(output)); await Attempt(nameof(TypographyLocaleChecks), () => TypographyLocaleChecks.Run(output));
                 }
                 if (All("web")) { await Attempt(nameof(ProviderWebStartupChecks), () => ProviderWebStartupChecks.Run()); await Attempt(nameof(ClaudeWebSessionChecks), () => ClaudeWebSessionChecks.Run()); await Attempt(nameof(DeepSeekWebSessionChecks), () => DeepSeekWebSessionChecks.Run()); }
+                if (All("harness")) await Attempt(nameof(WorkBuddyAccountChecks), () => WorkBuddyAccountChecks.Run());
                 if (Has("deepseek")) { await Attempt(nameof(ClaudeConnectionChecks), () => ClaudeConnectionChecks.Run("zh-Hans", true, output)); await Attempt(nameof(DeepSeekWebConnectionChecks), () => DeepSeekWebConnectionChecks.Run("en", false, output)); }
                 if (All("host")) { await Attempt(nameof(NotificationActivationWindowChecks), () => NotificationActivationWindowChecks.Run()); await Attempt(nameof(IslandHostChecks), () => IslandHostChecks.Run()); await Attempt(nameof(BackdropPresentationChecks), () => BackdropPresentationChecks.Run()); }
                 if (All("idle") || Has("quotaIdle")) await Attempt(nameof(IdleSchedulingChecks), () => IdleSchedulingChecks.Run());
@@ -129,6 +130,7 @@ internal static class Program
                             await Attempt(nameof(PersistentSettingsChecks), () => PersistentSettingsChecks.Run(language, dark, output, desktop ?? throw new ArgumentException("Supply the desktop executable for restart checks.")));
                             await Attempt(nameof(SettingsPresentationChecks), () => SettingsPresentationChecks.Run(language, dark, output)); await Attempt(nameof(CodexSettingsChecks), () => CodexSettingsChecks.Run(language, dark, output));
                             foreach (string provider in new[] { "claude", "deepseek" }) await Attempt(nameof(ProviderHomeSettingsChecks), () => ProviderHomeSettingsChecks.Run(provider, language, dark, output));
+                            await Attempt(nameof(ProviderHomeSettingsChecks.RunTaskModule), () => ProviderHomeSettingsChecks.RunTaskModule(language, dark));
                             await Attempt(nameof(DeepSeekSettingsChecks), () => DeepSeekSettingsChecks.Run(language, dark, output)); await Attempt(nameof(ReminderSettingsChecks), () => ReminderSettingsChecks.Run(language, dark, output));
                         }
                         if (Has("ssh")) await Attempt(nameof(SettingsPresentationChecks), () => SettingsPresentationChecks.Run(language, dark, output));

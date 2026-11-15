@@ -131,8 +131,9 @@ final class IslandMaterialTests: XCTestCase {
         for accent in PacerAccent.allCases where accent != .multicolor {
             PacerAccent.current = accent
             PacerPalette.light = true
-            let shades = try AgentProvider.allCases.map { try luminance($0.tint) }
-            for (provider, shade) in zip(AgentProvider.allCases, shades) {
+            let providers = HarnessRegistry.legacyIDs
+            let shades = try providers.map { try luminance($0.tint) }
+            for (provider, shade) in zip(providers, shades) {
                 XCTAssertGreaterThanOrEqual((face + 0.05) / (shade + 0.05), 3.5, "\(accent) \(provider) reads on the light face")
                 XCTAssertEqual(shade, PacerAccent.lightLuminance(for: provider), accuracy: 0.004)
             }

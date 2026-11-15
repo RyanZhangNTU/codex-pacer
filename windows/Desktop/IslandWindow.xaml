@@ -135,6 +135,18 @@
         </StackPanel>
        </StackPanel>
       </Grid>
+      <!-- A running module whose progress ring still needs a step; the close button hides it until that changes. -->
+      <Border x:Name="ProgressHint" Visibility="Collapsed" CornerRadius="9" Margin="9,4,9,0" Padding="9,4,4,4" Background="{DynamicResource Island.Overlay05}" AutomationProperties.AutomationId="island.progress_hint">
+       <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Ellipse Width="7" Height="7" Fill="{DynamicResource Island.Attention}" VerticalAlignment="Center" Margin="0,0,7,0"/>
+        <TextBlock x:Name="ProgressHintText" Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource Island.Primary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+        <Button x:Name="ProgressHintOpen" Grid.Column="2" Style="{StaticResource QuotaLinkButton}" Margin="6,0,2,0" Click="OnProgressHintOpen" AutomationProperties.AutomationId="island.progress_hint.open"/>
+        <Button x:Name="ProgressHintClose" Grid.Column="3" Style="{StaticResource IconButton}" Click="OnProgressHintClose" AutomationProperties.AutomationId="island.progress_hint.close">
+         <local:IconGlyph Symbol="xmark" Width="10" Height="10" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+        </Button>
+       </Grid>
+      </Border>
       <Grid x:Name="TaskPages" Margin="0,4,0,0" ClipToBounds="True" PreviewMouseWheel="OnTaskWheel" PreviewMouseLeftButtonDown="OnTaskPointerDown" PreviewMouseLeftButtonUp="OnTaskPointerUp"/>
       </StackPanel>
       <TextBlock x:Name="StatusLabel" Visibility="Collapsed" Foreground="{DynamicResource Island.Attention}" FontSize="11" TextWrapping="Wrap" Margin="9,6,9,0"/>

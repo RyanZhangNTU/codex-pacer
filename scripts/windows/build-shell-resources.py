@@ -10,6 +10,8 @@ def outputs():
     yield ROOT/"windows/Desktop/Assets/Web/deepseek-scripts.json", {"schemaVersion":1,"origin":"https://platform.deepseek.com/",
         "summaryScript":(resources/"deepseek-summary.js").read_text(encoding="utf8"),
         "signedInScript":(resources/"deepseek-session-fingerprint.js").read_text(encoding="utf8")}
+    yield ROOT/"windows/Desktop/Assets/Web/workbuddy-scripts.json", {"schemaVersion":1,
+        "summaryScript":(resources/"workbuddy-account-credits.js").read_text(encoding="utf8")}
 if __name__=="__main__":
     parser=argparse.ArgumentParser();parser.add_argument("--check",action="store_true");args=parser.parse_args()
     for path,value in outputs():

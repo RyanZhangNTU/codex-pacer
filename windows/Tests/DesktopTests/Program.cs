@@ -40,6 +40,27 @@ internal static class Program
         { await GuideControlChecks.Run(); Console.WriteLine("PASS combined embedded-session flags, schema 2 reopen and save rollback"); return 0; }
         if (args is ["--conversation-only"])
         { await ConversationApplicationChecks.Run(); Console.WriteLine("PASS conversation routing and prepared-host activation boundaries"); return 0; }
+        if (args is ["--open-workbuddy-test-chat", var workBuddyEngine])
+        {
+            // Opt-in: use a local synthetic chat and the real desktop route.
+            await using var client = new EngineClient();
+            await client.StartAsync(Path.GetFullPath(workBuddyEngine), false, "en", configuration: new
+            {
+                providerModes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled",
+                    ["deepseek"] = "disabled", ["workbuddy"] = "enabled" },
+                monitorSSH = false, monitorWSL = false, monitorRemoteControl = false, monitorDurable = false, retentionMinutes = 1440
+            }, readOnlyDiagnostics: true);
+            var snapshot = client.LatestSnapshot;
+            var rows = snapshot?.Tasks.Where(task => task.Provider == "workbuddy").ToArray() ?? [];
+            if (rows.Length != 1 || snapshot?.ActivityLinks?.SingleOrDefault(link => link.ActivityID == rows[0].Id) is not { } target)
+                throw new InvalidOperationException("Expected exactly one visible local WorkBuddy test chat.");
+            var plan = await client.QueryAsync<EngineNavigationPlan>("prepareActivityOpen", new { context = target.Context });
+            var apps = new WindowsConversationApplication(_ => false);
+            if (!await apps.OpenAsync(plan)) throw new InvalidOperationException("The verified WorkBuddy application did not start.");
+            await client.SendAsync("completeActivityOpen", new { context = target.Context });
+            Console.WriteLine("PASS WorkBuddy prepared navigation and verified installed handler");
+            return 0;
+        }
         if (args is ["--platform-only"])
         { WindowsPlatformChecks.Run(); Console.WriteLine("PASS Windows 10 minimum, notification capability failures and glass fallback"); return 0; }
         if (args is ["--pages-only", var pagesEngine])
@@ -95,7 +116,7 @@ internal static class Program
                 $"The original Mac synthetic clock, task families and wallet reach the renderer (clock={initial.CapturedAt}, rows={initial.Presentation?.Rows.Count}, balance={initial.Wallet?.Balance})");
             try
             {
-                await client.SendAsync("configure", new { hideProjects = true, enabledProviders = new[] { "invalid" } });
+                await client.SendAsync("configure", new { hideProjects = true, enabledProviders = new[] { "Not A Module!" } });
                 throw new InvalidOperationException("Invalid configuration was acknowledged.");
             }
             catch (EngineCommandException error) { Check(error.Code == "invalidConfiguration", "Typed rejection"); }
@@ -190,11 +211,14 @@ internal static class Program
             EngineSnapshot? latest = null;
             client.Snapshot += value => latest = value;
             await client.StartAsync(engine, true, saved!.Language, saved.EngineConfiguration(), referenceFixture: true);
-            Check(latest?.Modules?.Count == 3 && latest.Modules.Single(value => value.Provider == "codex") is { Mode: "disabled", Enabled: false }
+            Check(latest?.Modules?.Count == 5 && latest.Modules.Single(value => value.Provider == "codex") is { Mode: "disabled", Enabled: false }
                 && latest.Modules.Single(value => value.Provider == "claude") is { Mode: "automatic", Enabled: true }, "Saved modes must control the real projection");
-            Check(latest!.Tasks.Count > 0 && latest.Tasks.All(value => value.Provider == "claude" && value.Title == "本地任务")
+            // Codex and DeepSeek are off in the saved fixture; Claude and the automatic WorkBuddy modules stay.
+            Check(latest!.Tasks.Count > 0 && latest.Tasks.All(value => value.Provider is "claude" or "workbuddy" or "workbuddy-ai" && value.Title == "本地任务")
                 && latest.Wallet == null, "Saved privacy and module choices must apply before the first snapshot");
-            Check(latest.QuotaDashboard?.Classic.Slots.Select(value => value.Id).SequenceEqual(new[] { "claude:5h", "claude:7d" }) == true,
+            // WorkBuddy's credits dial joins Claude's periods; Claude keeps both of its own.
+            Check(latest.QuotaDashboard?.Classic.Slots.Select(value => value.Id).Where(value => value.StartsWith("claude:", StringComparison.Ordinal))
+                    .SequenceEqual(new[] { "claude:5h", "claude:7d" }) == true,
                 "A single-provider dashboard must keep both native Classic periods in the managed DTO");
             await client.SendAsync("configure", new { providerModes = new { codex = "enabled", claude = "disabled", deepseek = "disabled" } });
             Check(latest!.QuotaDashboard is { Classic.Kind: "legacyCodex", Split.Kind: "splitSingle", LegacyCodex.Fresh: true }

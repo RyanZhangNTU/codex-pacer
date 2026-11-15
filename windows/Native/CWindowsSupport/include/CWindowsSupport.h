@@ -20,6 +20,10 @@ typedef void (*pacer_change_callback)(void *context, int valid);
 void *pacer_watch_directory(const uint16_t *path, int is_directory, void *context,
                            pacer_change_callback callback, void (*closed)(void *));
 void pacer_close_directory_watch(void *watch);
+/* Parses one ReadDirectoryChangesW result for a watch of name, or of a whole
+   directory when name is NULL. Returns 1 when it concerns the watch and adds
+   the callback flags. */
+int pacer_directory_parse(const void *buffer, uint32_t count, const uint16_t *name, int *flags);
 // 1 registered, 0 empty, -1 unknown. A notification only invalidates the list.
 int pacer_wsl_registration_presence(void);
 void *pacer_watch_wsl_registrations(void *context, pacer_change_callback callback, void (*closed)(void *));

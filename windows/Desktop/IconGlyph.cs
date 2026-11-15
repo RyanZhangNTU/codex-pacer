@@ -18,7 +18,7 @@ public sealed class IconGlyph : FrameworkElement
 
     private static readonly IReadOnlyDictionary<string, Geometry> Paths = CreatePaths();
     public IconGlyph() { IsHitTestVisible = false; Focusable = false; }
-    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble" or "xmark.circle.fill";
+    internal static bool Has(string symbol) => Paths.ContainsKey(symbol) || symbol is "ellipsis" or "ellipsis.bubble" or "xmark.circle.fill" or "checkmark.circle.fill";
     protected override void OnRender(DrawingContext drawing)
     {
         base.OnRender(drawing);
@@ -37,6 +37,13 @@ public sealed class IconGlyph : FrameworkElement
             var disc = new EllipseGeometry(new Point(12, 12), 10, 10);
             var cross = Geometry.Parse("M8.4,8.4 L15.6,15.6 M15.6,8.4 L8.4,15.6").GetWidenedPathGeometry(new Pen(Brushes.Black, 2.2) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
             drawing.DrawGeometry(ink, null, new CombinedGeometry(GeometryCombineMode.Exclude, disc, cross));
+        }
+        // A filled circle with a check cut out, as the Mac's sign-in confirmation.
+        if (symbol == "checkmark.circle.fill")
+        {
+            var disc = new EllipseGeometry(new Point(12, 12), 10, 10);
+            var check = Geometry.Parse("M7.5,12.2 L10.6,15.3 L16.6,9.1").GetWidenedPathGeometry(new Pen(Brushes.Black, 2.2) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round });
+            drawing.DrawGeometry(ink, null, new CombinedGeometry(GeometryCombineMode.Exclude, disc, check));
         }
         if (symbol is "ellipsis" or "ellipsis.bubble")
             foreach (double x in new[] { 7.5, 12.0, 16.5 }) drawing.DrawEllipse(ink, null, new Point(x, symbol == "ellipsis" ? 12 : 10.8), 1, 1);
@@ -102,6 +109,7 @@ public sealed class IconGlyph : FrameworkElement
             ["asterisk"] = "M12,2 V22 M3.3,7 L20.7,17 M3.3,17 L20.7,7",
             ["water.waves"] = "M2,6 Q5,2 8,6 T14,6 T20,6 M2,12 Q5,8 8,12 T14,12 T20,12 M2,18 Q5,14 8,18 T14,18 T20,18",
             ["gearshape"] = "M9.7,2 H14.3 L14.9,5 L16.7,6 L19.6,5.1 L21.9,9.1 L19.6,11.2 V13.1 L21.9,15.1 L19.6,19.1 L16.7,18.1 L14.9,19.2 L14.3,22 H9.7 L9.1,19.2 L7.3,18.1 L4.4,19.1 L2.1,15.1 L4.4,13.1 V11.2 L2.1,9.1 L4.4,5.1 L7.3,6 L9.1,5 Z M15.5,12 A3.5,3.5 0 1 1 8.5,12 A3.5,3.5 0 1 1 15.5,12 Z",
+            ["briefcase"] = "M5,7 H19 A2,2 0 0 1 21,9 V18 A2,2 0 0 1 19,20 H5 A2,2 0 0 1 3,18 V9 A2,2 0 0 1 5,7 Z M8,7 V5 A1,1 0 0 1 9,4 H15 A1,1 0 0 1 16,5 V7 M3,12 Q12,16 21,12 M12,12 V15",
             ["power"] = "M12,2 V11 M7,5 A8.5,8.5 0 1 0 17,5",
             ["questionmark"] = "M8,7 C8,2 17,2 17,7 C17,10 12,10 12,14 M12,18 V18.4",
             ["heart"] = "M12,21 C7,17 2,13 2,8 C2,2 9,1 12,6 C15,1 22,2 22,8 C22,13 17,17 12,21 Z",

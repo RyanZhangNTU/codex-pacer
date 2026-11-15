@@ -55,8 +55,8 @@ struct OverviewPane: View {
     /// share rows two at a time above them.
     private var serviceRows: [[AgentProvider]] {
         let options = model.panelOptions
-        let wide = model.enabledProviders.filter { provider in
-            guard provider != .deepseek, options.quotaDetails, options.periods(for: provider) == .both,
+        let wide = model.quotaProviders.filter { provider in
+            guard HarnessRegistry.descriptor(for: provider)?.hasQuotaWindows == true, options.quotaDetails, options.periods(for: provider) == .both,
                   let snapshot = model.providerQuota(provider) else { return false }
             return [QuotaDashboardPresentation.Period.fiveHour, .weekly].allSatisfy {
                 QuotaDashboardPresentation.window(provider: provider, snapshot: snapshot, period: $0) != nil
@@ -101,17 +101,39 @@ struct OverviewPane: View {
     private func serviceCard(_ provider: AgentProvider) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72))
+                ProviderAppIcon(provider: provider)
                 Text(provider.displayName).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(PacerPalette.primary)
                 Spacer(minLength: 8)
                 Button(L10n.text("main.overview.details")) { open(SettingsPane(provider: provider)) }
                     .buttonStyle(.link).font(.system(size: 12))
             }
-            if provider == .deepseek { deepseekContent } else { QuotaDashboardView(model: model, providers: [provider]) }
+            if provider == .deepseek {
+                deepseekContent
+            } else if let descriptor = model.localHarnessDescriptors.first(where: { $0.id == provider }) {
+                // Like the other services: the dial, and a line only when local tasks need attention.
+                if descriptor.reportsAccountCredits { QuotaDashboardView(model: model, providers: [provider]) }
+                if let problem = localTaskProblem(provider) {
+                    Text(problem).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                QuotaDashboardView(model: model, providers: [provider])
+            }
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .islandSurface()
+        // A card alone in its row is wide; credit values stay near their labels.
+        .environment(\.creditLinesCap, 340)
+    }
+
+    private func localTaskProblem(_ provider: AgentProvider) -> String? {
+        switch model.localHarnessStatus(provider) {
+        case .incompatible: L10n.text("harness.incompatible")
+        case .unavailable: L10n.text("harness.unavailable")
+        case .missing where !model.providerDetected(provider): L10n.text("harness.missing")
+        default: nil
+        }
     }
 
     /// The dial as the island draws it, with today or the budgets and the speed beside it.
@@ -159,7 +181,7 @@ struct OverviewPane: View {
                     let activity = row.activity
                     TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
                         enabled: model.canOpen(activity), accent: model.taskAccent,
-                        costDetail: model.deepseekCostDetail(activity)) {
+                        costHelp: model.deepseekCostHelp(activity)) {
                             model.open(activity)
                         }
                         .frame(height: 54)
@@ -179,7 +201,9 @@ struct HistoryPane: View {
     @State private var chosen: AgentProvider?
     @State private var showsDetails = false
     @State private var showsResetExpiryDetails = false
-    private var quotaProviders: [AgentProvider] { [AgentProvider.codex, .claude].filter { model.enabledProviders.contains($0) } }
+    private var quotaProviders: [AgentProvider] { HarnessRegistry.ids(where: \.hasQuotaWindows).filter { model.enabledProviders.contains($0) } }
+    /// Modules whose bill is account credits, each with its own week.
+    private var creditProviders: [AgentProvider] { HarnessRegistry.ids(where: \.reportsAccountCredits).filter { model.enabledProviders.contains($0) } }
 
     var body: some View {
         MainPage(maxWidth: 900) {
@@ -188,7 +212,9 @@ struct HistoryPane: View {
                 quotaCard(provider)
             }
             if model.enabledProviders.contains(.deepseek) { deepseekCard }
-            if model.enabledProviders.isEmpty {
+            ForEach(creditProviders, id: \.self) { creditsCard($0) }
+            // Only a page with no module that keeps a balance asks for one.
+            if !model.enabledProviders.contains(where: { HarnessRegistry.descriptor(for: $0)?.balance != nil }) {
                 MainCard { CardRow(title: L10n.text("provider.none_enabled")) }
             }
         }
@@ -273,6 +299,22 @@ struct HistoryPane: View {
         .mainCardSurface(radius: 14)
     }
 
+    /// A module's week of credits, drawn like DeepSeek's week.
+    private func creditsCard(_ provider: AgentProvider) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L10n.moduleText("main.history." + provider.rawValue + "_week", fallback: provider.displayName)).font(.system(size: 13.5, weight: .semibold))
+                .foregroundStyle(PacerPalette.primary)
+            if let week = model.harnessWeek(provider) {
+                WeekBarsChart(value: week, tint: provider.tint)
+            } else {
+                Text(L10n.moduleText("main.history." + provider.rawValue + "_empty", fallback: provider.displayName)).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .islandSurface()
+    }
+
     /// The island's week chart on its dark card.
     private var deepseekCard: some View {
         let wallet = model.deepseekWallet
@@ -333,6 +375,8 @@ struct SettingsNotificationsPane: View {
     @Binding var spikeLimit: Double?
     let providers: [AgentProvider]
     let openDeepSeek: () -> Void
+    /// Each credits module's reminder choices.
+    var credits: (AgentProvider) -> Binding<HarnessCreditsSettings> = { _ in .constant(.default) }
     /// Keep Ended Tasks moved to the task list's settings.
     let openTaskList: () -> Void
     private static let column: CGFloat = 76
@@ -344,7 +388,7 @@ struct SettingsNotificationsPane: View {
     }
 
     private var system: Bool { notificationPreference.enabled }
-    private var quotaModules: Bool { providers.contains { $0 != .deepseek } }
+    private var quotaModules: Bool { providers.contains { HarnessRegistry.descriptor(for: $0)?.hasQuotaWindows == true } }
 
     var body: some View {
         MainCard {
@@ -380,6 +424,23 @@ struct SettingsNotificationsPane: View {
                 row(L10n.text("main.notify.budget"),
                     field: Button(L10n.text("main.notify.budget_link"), action: openDeepSeek).buttonStyle(.link).font(.system(size: 12.5)),
                     bar: choice(.budget), system: follows(.budget))
+            }
+        }
+        // One card per module that reads account credits, like DeepSeek's wallet: this
+        // module's line and expiry reminder. One low-credits row after them covers them all.
+        let creditModules = providers.filter { HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true }
+        ForEach(creditModules, id: \.self) { provider in
+            MainCard(title: provider.settingsTitle) {
+                CardRow(title: L10n.text("credits.reminder.low"), info: L10n.text("credits.reminder.low_info")) { creditsLowField(provider) }
+                CardRow(title: L10n.text("credits.reminder.expiry_title"), info: L10n.text("credits.reminder.expiry_info")) {
+                    creditsExpiryField(provider)
+                }
+            }
+        }
+        if !creditModules.isEmpty {
+            MainCard {
+                row(L10n.text("main.notify.low_credits"), note: L10n.text("main.notify.low_credits_note"),
+                    bar: choice(.lowCredits), system: follows(.lowCredits))
             }
         }
         MainCard {
@@ -454,6 +515,37 @@ struct SettingsNotificationsPane: View {
     }
 
     /// An empty field follows the rules; its placeholder shows the amount they give now.
+    /// Empty follows a tenth of the month's credits, shown as the prompt once read.
+    private func creditsLowField(_ provider: AgentProvider) -> some View {
+        let settings = credits(provider)
+        let automatic = model.harnessAccount(provider)?.reading?.lowLine(HarnessCreditsSettings(lowCredits: nil))
+        return HStack(spacing: 4) {
+            TextField(L10n.text("credits.reminder.low"), value: Binding(get: { settings.wrappedValue.lowCredits }, set: { value in
+                settings.wrappedValue.lowCredits = value.flatMap { $0.isFinite && (0...HarnessCreditsSettings.lowCreditsLimit).contains($0) ? $0 : nil }
+            }), format: .number.precision(.fractionLength(0...1)),
+                prompt: Text(automatic.map { L10n.text("reminders.amount_auto", HarnessAccountCredits.compactAmount($0)) } ?? ""))
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 84).labelsHidden()
+            Text(L10n.text("credits.reminder.low_unit")).foregroundStyle(.secondary)
+        }
+        .font(.system(size: 12))
+    }
+
+    /// Days ahead, 1 to 30, and the switch; the dial turns orange that early too.
+    private func creditsExpiryField(_ provider: AgentProvider) -> some View {
+        let settings = credits(provider)
+        let range = HarnessCreditsSettings.expiryDayRange
+        return HStack(spacing: 6) {
+            TextField(L10n.text("credits.reminder.expiry_title"), value: Binding(get: { settings.wrappedValue.expiryDays }, set: { value in
+                settings.wrappedValue.expiryDays = min(range.upperBound, max(range.lowerBound, value))
+            }), format: .number)
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 44).labelsHidden()
+            Text(L10n.text("credits.reminder.days_within")).foregroundStyle(.secondary)
+            Toggle(L10n.text("credits.reminder.expiry_title"), isOn: Binding(get: { settings.wrappedValue.expiryReminder },
+                set: { settings.wrappedValue.expiryReminder = $0 })).labelsHidden().toggleStyle(.switch)
+        }
+        .font(.system(size: 12))
+    }
+
     private func amountField(_ value: Binding<Double?>, label: String, automatic: Double) -> some View {
         let shown = automatic.rounded() == automatic || automatic >= 100 ? String(Int(automatic.rounded())) : String(format: "%.1f", automatic)
         return HStack(spacing: 3) {

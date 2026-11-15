@@ -1,9 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 
 namespace CodexPacer.Windows;
 
@@ -15,11 +21,109 @@ internal sealed class WindowsConversationApplication
     private readonly Func<string, Uri, Task<bool>> protocol;
     private readonly Func<Uri, Task<bool>> web;
     private readonly Func<uint, ulong, bool> host;
+    private readonly Func<string, Uri, bool> signedHandler;
+    private sealed record SignedHandler(string Scheme, string Publisher, string[] ProgramFiles, string[] UserPrograms, string? ConnectorsPath);
+    // Modules that open through their own URL scheme come from the engine's
+    // registry; the handler must still carry the declared signer.
+    private static volatile IReadOnlyDictionary<string, SignedHandler> SignedHandlers = new Dictionary<string, SignedHandler>(StringComparer.Ordinal);
+    internal static void Register(IEnumerable<EngineModule>? modules)
+    {
+        var next = new Dictionary<string, SignedHandler>(StringComparer.Ordinal);
+        foreach (var module in modules ?? [])
+        {
+            if (module.Launch is not { } launch || !DesktopPreferences.ValidProviderId(module.Provider)
+                || !Regex.IsMatch(launch.Scheme, "^[a-z][a-z0-9+.-]{0,31}$") || launch.Publisher.Length is 0 or > 256) continue;
+            string[] paths = launch.Executables.Where(path => path.Length is > 0 and <= 260 && !Path.IsPathRooted(path) && !path.Contains(".."))
+                .Select(path => path.Replace('/', '\\')).ToArray();
+            if (paths.Length == 0) continue;
+            string? connectors = launch.ConnectorsPath is { } value && Regex.IsMatch(value, "^[a-z][a-z0-9/-]{0,63}$") ? value : null;
+            next[module.Provider] = new(launch.Scheme, launch.Publisher, paths, paths, connectors);
+        }
+        if (!next.Keys.Order().SequenceEqual(SignedHandlers.Keys.Order()) || next.Any(pair => !SignedHandlers.TryGetValue(pair.Key, out var known)
+            || known.Scheme != pair.Value.Scheme || known.Publisher != pair.Value.Publisher || known.ConnectorsPath != pair.Value.ConnectorsPath
+            || !known.ProgramFiles.SequenceEqual(pair.Value.ProgramFiles))) SignedHandlers = next;
+    }
+    internal static bool CanOpenApplication(string provider) => SignedHandlers.ContainsKey(provider);
+    internal static bool CanOpenConnectors(string provider) => SignedHandlers.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null;
+
+    internal static Task<bool> OpenApplicationAsync(string provider) => OpenProviderAsync(provider, null);
+
+    internal static Task<bool> OpenProgressConnectorsAsync(string provider) => SignedHandlers.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null
+        ? OpenProviderAsync(provider, new Uri(handler.Scheme + "://" + handler.ConnectorsPath)) : Task.FromResult(false);
+
+    private static async Task<bool> OpenProviderAsync(string provider, Uri? destination)
+    {
+        if (!SignedHandlers.TryGetValue(provider, out var application)) return false;
+        try { return await Task.Run(() => OpenSignedHandler(application, destination)); }
+        catch (Exception error) when (Recoverable(error)) { return false; }
+    }
+
+    internal enum RestartResult { Restarted, StillRunning, Failed }
+
+    /// Closes the app and starts it at its connectors.
+    ///
+    /// WorkBuddy quits only from its tray menu: closing its window or the end-of-
+    /// session messages (the Restart Manager's request, which waits 30 seconds
+    /// and fails) only hide it in the tray. So Pacer ends its processes, which
+    /// its crash recovery is built for. The card asks first while a task runs.
+    internal static async Task<RestartResult> RestartForGuideAsync(string provider, IReadOnlyList<string> executables)
+    {
+        if (!SignedHandlers.TryGetValue(provider, out var application)) return RestartResult.Failed;
+        try
+        {
+            // Nothing is ended unless Pacer can start the app again: an app in a
+            // folder of its own choosing, or with an edited handler, stays running.
+            if (await Task.Run(() => ResolveSignedHandler(application)) == null) return RestartResult.Failed;
+            bool quit = await Task.Run(async () =>
+            {
+                string[] names = executables.Select(path => Path.GetFileNameWithoutExtension(path.Replace('/', '\\'))).Where(name => name.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                var processes = names.SelectMany(Process.GetProcessesByName).ToArray();
+                try
+                {
+                    // The earliest process is the app itself; its helpers go with it.
+                    var main = processes.Select(process => { try { return (process, started: process.StartTime); } catch (Exception error) when (Recoverable(error)) { return (process, started: DateTime.MaxValue); } })
+                        .OrderBy(entry => entry.started).Select(entry => entry.process).FirstOrDefault();
+                    // A child that can't be ended raises an AggregateException; the
+                    // wait below then reports the app as still running.
+                    try { main?.Kill(entireProcessTree: true); }
+                    catch (Exception error) when (Recoverable(error) || error is NotSupportedException or AggregateException) { }
+                }
+                finally { foreach (var process in processes) process.Dispose(); }
+                for (int wait = 0; wait < 40; wait++)
+                {
+                    if (!names.Any(name => { var left = Process.GetProcessesByName(name); bool any = left.Length > 0; foreach (var p in left) p.Dispose(); return any; })) return true;
+                    await Task.Delay(250);
+                }
+                return false;
+            });
+            if (!quit) return RestartResult.StillRunning;
+            return await OpenProgressConnectorsAsync(provider) ? RestartResult.Restarted : RestartResult.Failed;
+        }
+        catch (Exception error) when (Recoverable(error)) { return RestartResult.Failed; }
+    }
+
+    /// Waits for the user to quit the app after it declined Pacer's request.
+    internal static async Task<bool> WaitForExitAsync(IReadOnlyList<string> executables, TimeSpan timeout)
+    {
+        string[] names = executables.Select(path => Path.GetFileNameWithoutExtension(path.Replace('/', '\\'))).Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!names.Any(name => { var left = Process.GetProcessesByName(name); bool any = left.Length > 0; foreach (var p in left) p.Dispose(); return any; })) return true;
+            await Task.Delay(500);
+        }
+        return false;
+    }
+
     internal WindowsConversationApplication(Func<string, bool> registered,
-        Func<string, Uri, Task<bool>>? protocol = null, Func<Uri, Task<bool>>? web = null, Func<uint, ulong, bool>? host = null)
+        Func<string, Uri, Task<bool>>? protocol = null, Func<Uri, Task<bool>>? web = null, Func<uint, ulong, bool>? host = null,
+        Func<string, Uri, bool>? signedHandler = null)
     {
         this.registered = registered; this.protocol = protocol ?? WindowsProtocolLauncher.OpenAsync; this.web = web ?? WindowsProtocolLauncher.OpenWebAsync;
         this.host = host ?? ((pid, started) => HostActivate.Value(pid, started) == 1);
+        this.signedHandler = signedHandler ?? ((provider, uri) => SignedHandlers.TryGetValue(provider, out var handler) && OpenSignedHandler(handler, uri));
     }
     private static readonly Lazy<ActivateHost> HostActivate = new(() => NativeMotion.SharedExport<ActivateHost>(
         Path.Combine(AppContext.BaseDirectory, "Engine"), "pacer_host_window_activate"));
@@ -27,9 +131,14 @@ internal sealed class WindowsConversationApplication
 
     internal async Task<bool> OpenAsync(EngineNavigationPlan plan)
     {
-        if (!Guid.TryParse(plan.Context, out _) || plan.Provider is not ("claude" or "codex")) return false;
+        if (!Guid.TryParse(plan.Context, out _)) return false;
         try
         {
+            if (SignedHandlers.ContainsKey(plan.Provider))
+                return plan.Kind == "application" && plan.Pid == null && plan.Started == null && plan.Terminal == null &&
+                    TryDestination(plan.Provider, plan.Url, plan.WebUrl, out var target, out _) &&
+                    await Task.Run(() => signedHandler(plan.Provider, target!));
+            if (plan.Provider is not ("claude" or "codex")) return false;
             if (plan.Kind == "terminal") return await WindowsSshTerminal.OpenAsync(plan);
             if (plan.Kind == "wslTerminal") return await WindowsWslTerminal.OpenAsync(plan);
             if (plan.Terminal != null) return false;
@@ -81,8 +190,47 @@ internal sealed class WindowsConversationApplication
                 }
             }
         }
+        else if (SignedHandlers.TryGetValue(provider, out var application))
+        {
+            if (candidate.Scheme != application.Scheme || candidate.Host != "chat" || candidate.Query.Length != 0 ||
+                fallbackValue != null || candidate.AbsolutePath.Length != 37 ||
+                !Guid.TryParseExact(candidate.AbsolutePath[1..], "D", out var session) ||
+                value != application.Scheme + "://chat/" + session.ToString("D")) return false;
+        }
         else return false;
         uri = candidate; return true;
     }
-    private static bool Recoverable(Exception error) => error is COMException or Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException;
+
+    private static bool OpenSignedHandler(SignedHandler application, Uri? uri)
+    {
+        if (ResolveSignedHandler(application) is not string path) return false;
+        var start = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(path)! };
+        if (uri != null) start.ArgumentList.Add(uri.AbsoluteUri);
+        using var process = Process.Start(start);
+        return process != null;
+    }
+    /// The app Pacer may start: the registered handler, exactly `"path" "%1"`,
+    /// in its standard install folder and signed by its publisher.
+    private static string? ResolveSignedHandler(SignedHandler application)
+    {
+        using var key = Registry.ClassesRoot.OpenSubKey(application.Scheme + @"\shell\open\command");
+        if (key?.GetValue(null) is not string registeredCommand) return null;
+        var handler = Regex.Match(registeredCommand, "\\A\"([^\"\\r\\n]+)\" \"%1\"\\z", RegexOptions.CultureInvariant);
+        if (!handler.Success) return null;
+        string path = Path.GetFullPath(handler.Groups[1].Value);
+        bool Matches(Environment.SpecialFolder folder, string[] names)
+        {
+            string root = Environment.GetFolderPath(folder);
+            return root.Length != 0 && Array.Exists(names, name => StringComparer.OrdinalIgnoreCase.Equals(path, Path.Combine(root, name)));
+        }
+        bool installed = Matches(Environment.SpecialFolder.ProgramFiles, application.ProgramFiles) ||
+            Matches(Environment.SpecialFolder.LocalApplicationData, application.UserPrograms);
+        if (!installed || !File.Exists(path) || !UpdateAuthenticode.VerifySigner(path, encoded =>
+        {
+            using var signer = X509CertificateLoader.LoadCertificate(encoded);
+            return signer.GetNameInfo(X509NameType.SimpleName, false) == application.Publisher;
+        })) return null;
+        return path;
+    }
+    private static bool Recoverable(Exception error) => error is COMException or Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException or CryptographicException;
 }

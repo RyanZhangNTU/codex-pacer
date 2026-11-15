@@ -37,6 +37,28 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
             peakNow = wallet.peakNow; todayTotal = wallet.todayTotal
         }
     }
+    /// A module's account credits, such as WorkBuddy's, read from its bill.
+    public struct Credits: Codable, Equatable, Sendable {
+        public let provider: AgentProvider
+        public let text: String, stripText: String
+        /// What is left of the plan cycle, or of all credits without one, in percent.
+        public let percent: Double?
+        public let dimmed: Bool
+        /// At or below the low line the credit alerts use, whichever figure the
+        /// bar shows: the month's share alone turned a bar of plentiful extra
+        /// credits orange (11/16 review).
+        public let low: Bool?
+        public init(provider: AgentProvider, credits: HarnessAccountCredits?, stale: Bool, now: Date, figure: HarnessCreditsFigure = .available,
+                    settings: HarnessCreditsSettings = .default) {
+            self.provider = provider
+            let reading = credits?.reading(at: now)
+            text = reading.map { $0.compactFigure(figure) } ?? "—"
+            stripText = text
+            percent = reading?.percent
+            dimmed = reading == nil || stale
+            low = reading.map { HarnessCreditsNoticePolicy.level($0, settings: settings) != nil }
+        }
+    }
     private enum Status: Codable, Equatable, Sendable {
         case text(String), count(String, Int), tasks(Int)
         func text(_ language: AppLanguage) -> String {
@@ -52,6 +74,7 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
     public let now: Date
     public let sources: [Source]
     public let wallet: Wallet?
+    public let credits: [Credits]?
     public let firstOutput: Double?
     public let rate: Double?
     public let rateFresh: Bool
@@ -69,10 +92,11 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
     private let latestStage: Status?
 
     public init(activities: [SessionActivity], requests: [PendingAttentionRequest], completions: [SessionActivity],
-                sources: [Source], wallet: Wallet? = nil, firstOutput: Double? = nil,
+                sources: [Source], wallet: Wallet? = nil, credits: [Credits] = [], firstOutput: Double? = nil,
                 warnings: [CompactWarningPresentation.Item] = [], groups suppliedGroups: [ActivityTaskGroup]? = nil,
                 overview suppliedOverview: ActivityOverview? = nil, firstOutputs: [Double] = [], now: Date) {
         version = 1; self.now = now; self.sources = sources; self.wallet = wallet; self.warnings = warnings
+        self.credits = credits.isEmpty ? nil : credits
         self.firstOutput = firstOutput.flatMap { $0.isFinite && (0...3600).contains($0) ? $0 : nil }
         let recent = firstOutputs.filter { $0.isFinite && (0...3600).contains($0) }.suffix(CompactFirstOutputHistory.limit)
         self.firstOutputs = recent.isEmpty ? nil : Array(recent)

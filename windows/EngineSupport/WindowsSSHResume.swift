@@ -22,7 +22,7 @@ struct WindowsSSHResume: Codable, Equatable, Sendable {
             guard let resume = ClaudeRemoteResume.command(sessionID: session) else { return nil }
             command = resume
         case .codex: command = "exec codex resume " + session.lowercased()
-        case .deepseek: return nil
+        default: return nil
         }
         return args + [command]
     }

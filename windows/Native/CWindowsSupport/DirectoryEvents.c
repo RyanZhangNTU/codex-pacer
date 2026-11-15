@@ -19,7 +19,8 @@ typedef struct {
     void *context;
     pacer_change_callback callback;
     void (*closed)(void *);
-    unsigned char buffer[64 * 1024];
+    DWORD buffer_size;
+    DWORD buffer[];
 } PacerDirectoryWatch;
 
 static void CALLBACK pacer_directory_release(PTP_CALLBACK_INSTANCE, void *, PTP_WORK);
@@ -33,10 +34,38 @@ static int pacer_directory_read(PacerDirectoryWatch *watch) {
     // logs further down the tree, belong to the file watches Core keeps.
     DWORD flags = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME;
     if (watch->filename != NULL) flags |= FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
-    if (!ReadDirectoryChangesW(watch->directory, watch->buffer, sizeof(watch->buffer),
+    if (!ReadDirectoryChangesW(watch->directory, watch->buffer, watch->buffer_size,
                                FALSE, flags, NULL, &watch->overlapped, NULL)) return 0;
     SetThreadpoolWait(watch->wait, watch->event, NULL);
     return 1;
+}
+
+int pacer_directory_parse(const void *buffer, uint32_t count, const uint16_t *name, int *flags) {
+    const BYTE *bytes = buffer;
+    const WCHAR *filename = (const WCHAR *)name;
+    int changed = 0;
+    DWORD offset = 0, header = (DWORD)FIELD_OFFSET(FILE_NOTIFY_INFORMATION, FileName);
+    while (offset < count) {
+        // NextEntryOffset counts bytes, whatever the buffer's element type.
+        const FILE_NOTIFY_INFORMATION *entry = (const FILE_NOTIFY_INFORMATION *)(bytes + offset);
+        if (count - offset < header || entry->FileNameLength > count - offset - header || entry->FileNameLength % sizeof(WCHAR)) {
+            *flags |= 2; return 1;
+        }
+        size_t length = entry->FileNameLength / sizeof(WCHAR);
+        int matches = filename == NULL ||
+            (wcslen(filename) == length && _wcsnicmp(filename, entry->FileName, length) == 0);
+        if (matches) {
+            changed = 1;
+            if (entry->Action != FILE_ACTION_MODIFIED) {
+                *flags |= 2;
+                if (filename != NULL && (entry->Action == FILE_ACTION_REMOVED || entry->Action == FILE_ACTION_RENAMED_OLD_NAME)) *flags |= 1;
+            }
+        }
+        if (entry->NextEntryOffset == 0) break;
+        if (entry->NextEntryOffset < header || entry->NextEntryOffset > count - offset) { *flags |= 2; return 1; }
+        offset += entry->NextEntryOffset;
+    }
+    return changed;
 }
 
 static void CALLBACK pacer_directory_changed(PTP_CALLBACK_INSTANCE instance, void *context, PTP_WAIT wait, TP_WAIT_RESULT result) {
@@ -52,27 +81,7 @@ static void CALLBACK pacer_directory_changed(PTP_CALLBACK_INSTANCE instance, voi
         // Overflow requests discovery; it never becomes a polling loop.
         changed = 1; flags = 2;
     } else {
-        DWORD offset = 0;
-        while (offset < count) {
-            FILE_NOTIFY_INFORMATION *entry = (FILE_NOTIFY_INFORMATION *)(watch->buffer + offset);
-            DWORD header = (DWORD)FIELD_OFFSET(FILE_NOTIFY_INFORMATION, FileName);
-            if (count - offset < header || entry->FileNameLength > count - offset - header || entry->FileNameLength % sizeof(WCHAR)) {
-                changed = 1; flags |= 2; break;
-            }
-            size_t length = entry->FileNameLength / sizeof(WCHAR);
-            int matches = watch->filename == NULL ||
-                (wcslen(watch->filename) == length && _wcsnicmp(watch->filename, entry->FileName, length) == 0);
-            if (matches) {
-                changed = 1;
-                if (entry->Action != FILE_ACTION_MODIFIED) {
-                    flags |= 2;
-                    if (watch->filename != NULL && (entry->Action == FILE_ACTION_REMOVED || entry->Action == FILE_ACTION_RENAMED_OLD_NAME)) flags |= 1;
-                }
-            }
-            if (entry->NextEntryOffset == 0) break;
-            if (entry->NextEntryOffset < header || entry->NextEntryOffset > count - offset) { changed = 1; flags |= 2; break; }
-            offset += entry->NextEntryOffset;
-        }
+        changed = pacer_directory_parse(watch->buffer, count, (const uint16_t *)watch->filename, &flags);
     }
     if (!(flags & 1) && !pacer_directory_read(watch)) { changed = 1; flags |= 3; }
     ReleaseSRWLockExclusive(&watch->lock);
@@ -96,10 +105,14 @@ void *pacer_watch_directory(const uint16_t *path, int is_directory, void *contex
                                 NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
     free(directory);
     if (handle == INVALID_HANDLE_VALUE) { free(filename); return NULL; }
-    PacerDirectoryWatch *watch = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*watch));
+    // File watches coalesce into a reread of one path, including on overflow.
+    // Directory watches need space for bursts of distinct names.
+    DWORD buffer_size = filename == NULL ? 64 * 1024 : 8 * 1024;
+    PacerDirectoryWatch *watch = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*watch) + buffer_size);
     if (watch == NULL) { CloseHandle(handle); free(filename); return NULL; }
     InitializeSRWLock(&watch->lock);
     watch->directory = handle; watch->filename = filename; watch->context = context;
+    watch->buffer_size = buffer_size;
     watch->callback = callback; watch->closed = closed;
     watch->event = CreateEventW(NULL, TRUE, FALSE, NULL);
     watch->cleanup = CreateThreadpoolWork(pacer_directory_release, watch, NULL);

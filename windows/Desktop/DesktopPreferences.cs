@@ -66,7 +66,8 @@ internal sealed record DesktopPreferences
     // Progress rings are on until the user turns one off, as on the Mac; a saved choice is kept.
     public bool DeepSeekProgressRing { get; init; } = true;
     public bool SystemNotifications { get; init; }
-    public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget"];
+    public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits"];
+    internal static readonly string[] WarningChoices = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits"];
     public double? DeepSeekLowBalanceLine { get; init; }
     public double? DeepSeekSpikeLimit { get; init; }
     public bool? PositionChosen { get; init; }
@@ -90,6 +91,15 @@ internal sealed record DesktopPreferences
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; } = true;
     public bool CodexProgressRing { get; init; } = true;
+    // A module's progress ring is on unless listed here, like the built-in rings.
+    public string[] DisabledHarnessProgress { get; init; } = [];
+    // Modules whose task rows leave out the credits each turn used.
+    public string[] HiddenTurnCredits { get; init; } = [];
+    // Data folders chosen for local modules, by module ID.
+    public Dictionary<string, string> HarnessHomes { get; init; } = new();
+    // Each credits module's dial center, bar value and reminders, by module ID.
+    public Dictionary<string, HarnessCreditsChoice> HarnessCredits { get; init; } = new();
+    internal HarnessCreditsChoice Credits(string provider) => HarnessCredits.TryGetValue(provider, out var choice) ? choice : HarnessCreditsChoice.Default;
     public bool MonitorSSH { get; init; } = true;
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
@@ -125,20 +135,36 @@ internal sealed record DesktopPreferences
         && DeepSeekRingPeriod is "day" or "week" && DeepSeekSpeedSource is "local" or "account"
         && ValidAmount(DeepSeekDailyBudget) && ValidAmount(DeepSeekWeeklyBudget)
         && ValidAmount(DeepSeekLowBalanceLine) && ValidAmount(DeepSeekSpikeLimit)
-        && WarningKinds is { Length: <= 6 } && WarningKinds.Distinct().Count() == WarningKinds.Length
-        && WarningKinds.All(value => value is "fiveHour" or "ssh" or "quotaDelay" or "lowBalance" or "spendSpike" or "budget")
+        && WarningKinds is { Length: <= 7 } && WarningKinds.Distinct().Count() == WarningKinds.Length
+        && WarningKinds.All(WarningChoices.Contains)
         && LastSettingsPane is { Length: > 0 and <= 64 } && !LastSettingsPane.Any(char.IsControl)
         && AppTheme is "auto" or "light" or "dark" && ValidAccent(AccentColor)
         && RetentionMinutes is >= 0 and <= 10080
         && ValidPath(CodexExecutable) && ValidPath(CodexHome) && ValidPath(ClaudeHome) && ValidPath(DeepseekHome)
         && (ClaudeOrganization == "" || ClaudeOrganization is { Length: 36 } && Guid.TryParseExact(ClaudeOrganization, "D", out _))
-        && ProviderModes is { Count: 3 }
-        && ProviderModes.All(pair => pair.Key is "codex" or "claude" or "deepseek" && pair.Value is "automatic" or "enabled" or "disabled");
+        && ProviderModes is { Count: >= 3 and <= 128 }
+        && LegacyProviders.All(ProviderModes.ContainsKey)
+        && ProviderModes.All(pair => ValidProviderId(pair.Key) && ValidProviderMode(pair.Value))
+        && ValidModuleList(DisabledHarnessProgress, legacy: false) && ValidModuleList(HiddenTurnCredits, legacy: true)
+        && HarnessHomes is { Count: <= 128 } && HarnessHomes.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && ValidPath(pair.Value))
+        && HarnessCredits is { Count: <= 128 } && HarnessCredits.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && pair.Value is { IsValid: true });
+
+    private static bool ValidModuleList(string[]? ids, bool legacy) => ids is { Length: <= 128 }
+        && ids.Distinct(StringComparer.Ordinal).Count() == ids.Length && ids.All(id => id != null && ValidProviderId(id) && (legacy || !IsLegacyProvider(id)));
+
+    internal static IReadOnlyList<string> LegacyProviders => ModuleIds.Legacy;
+    internal static bool IsLegacyProvider(string id) => ModuleIds.IsLegacy(id);
+    internal const string HarnessPanePrefix = "harness.";
+    internal static bool IsStoredHarnessPane(string? value) => value?.StartsWith(HarnessPanePrefix, StringComparison.Ordinal) == true
+        && ValidProviderId(value[HarnessPanePrefix.Length..]);
+    internal static bool ValidProviderId(string id) => ModuleIds.Valid(id);
+    internal static bool ValidProviderMode(string? value) => value is "automatic" or "enabled" or "disabled";
 
     private static bool ValidPath(string? value) => value != null && Encoding.UTF8.GetByteCount(value) <= 32768
         && !value.Any(char.IsControl) && (value.Length == 0 || Path.IsPathFullyQualified(value));
     private static bool ValidAmount(double? value) => value == null || double.IsFinite(value.Value) && value.Value > 0;
-    private static bool ValidRing(string? value) => value is "" or "none" or "codex" or "claude" or "deepseek";
+    // Any module can fill a ring; the engine ignores one it can't draw.
+    private static bool ValidRing(string? value) => value is "" or "none" || value != null && ValidProviderId(value);
     private static bool ValidWindow(string? value) => value != null && Encoding.UTF8.GetByteCount(value) <= 1024 && !value.Any(char.IsControl);
     // Older profiles stored a corner without the explicit-choice marker.
     internal bool HasChosenPosition => PositionChosen ?? Position != "center";
@@ -158,6 +184,14 @@ internal sealed record DesktopPreferences
             claudeProgressRing = ClaudeProgressRing,
             codexProgressRing = CodexProgressRing,
             deepseekProgressRing = DeepSeekProgressRing,
+            disabledHarnessProgress = DisabledHarnessProgress,
+            hiddenTurnCredits = HiddenTurnCredits,
+            harnessHomes = HarnessHomes,
+            harnessCredits = HarnessCredits.ToDictionary(pair => pair.Key, pair => new
+            {
+                center = pair.Value.Center, bar = pair.Value.Bar, lowCredits = pair.Value.LowCredits,
+                expiryReminder = pair.Value.ExpiryReminder, expiryDays = pair.Value.ExpiryDays
+            }),
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
@@ -170,4 +204,21 @@ internal sealed record DesktopPreferences
             deepseekHome = DeepseekHome
         };
     }
+}
+
+/// One credits module's choices, as Core's HarnessCreditsSettings: what the
+/// dial's center and the collapsed bar show, the low line and the expiry reminder.
+public sealed record HarnessCreditsChoice
+{
+    public static readonly HarnessCreditsChoice Default = new();
+    internal static readonly string[] Figures = ["monthlyPercent", "monthlyRemaining", "available"];
+    public string Center { get; init; } = "monthlyPercent";
+    public string Bar { get; init; } = "available";
+    /// Credits that count as low; empty follows a tenth of the month's credits.
+    public double? LowCredits { get; init; }
+    public bool ExpiryReminder { get; init; } = true;
+    /// Days ahead that count as soon, for the reminder and the dial.
+    public int ExpiryDays { get; init; } = 3;
+    internal bool IsValid => Figures.Contains(Center) && Figures.Contains(Bar) && LowCredits is null or (>= 0 and <= 1e9)
+        && ExpiryDays is >= 1 and <= 30;
 }

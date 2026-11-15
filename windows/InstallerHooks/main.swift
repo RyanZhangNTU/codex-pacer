@@ -6,14 +6,15 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 // helper forever. Hosts also impose their own shorter async request deadlines.
 let codexCleanup = ["--check-uninstall-codex-progress", "--uninstall-codex-progress"].contains(arguments.first ?? "")
 let deepseekCleanup = ["--check-uninstall-deepseek-progress", "--uninstall-deepseek-progress"].contains(arguments.first ?? "")
+let harnessCleanup = ["--check-uninstall-local-harness-progress", "--uninstall-local-harness-progress"].contains(arguments.first ?? "")
 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + (codexCleanup ? 20 : 9)) { exit(124) }
 var result: Int32 = 2
 do {
-    if arguments.count == 3, arguments[0] == "--prepare-codex-progress" {
+    if arguments.count == 3, ["--prepare-codex-progress", "--prepare-local-harness-progress"].contains(arguments[0]) {
         let runtime = WindowsCodexProgressRuntime(root: URL(fileURLWithPath: arguments[1], isDirectory: true))
         let home = URL(fileURLWithPath: arguments[2], isDirectory: true).standardizedFileURL
         let package = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("Python", isDirectory: true)
-        let command = try runtime.prepare(home: home, package: package)
+        let command = try runtime.prepare(home: home, package: package, stablePath: arguments[0] == "--prepare-local-harness-progress")
         try FileHandle.standardOutput.write(contentsOf: JSONEncoder().encode(command) + Data([10]))
         result = 0
     } else if codexCleanup, (3...5).contains(arguments.count) {
@@ -24,6 +25,10 @@ do {
     } else if deepseekCleanup, (2...4).contains(arguments.count) {
         try WindowsDeepSeekProgressCleanup.unregister(homes: arguments.dropFirst().map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL },
             checkOnly: arguments[0] == "--check-uninstall-deepseek-progress")
+        result = 0
+    } else if harnessCleanup, arguments.count == 4 {
+        try WindowsLocalHarnessProgressCleanup.unregister(executable: arguments[1], runtimeRoot: arguments[2], fixtureRoot: arguments[3],
+            checkOnly: arguments[0] == "--check-uninstall-local-harness-progress")
         result = 0
     } else if arguments.count == 2, ["--uninstall", "--check-uninstall"].contains(arguments[0]) {
         try WindowsClaudeHookCleanup.uninstall(home: URL(fileURLWithPath: arguments[1], isDirectory: true),
@@ -53,7 +58,8 @@ do {
     }
 } catch {
     // No paths, provider settings, account data or record contents in diagnostics.
-    let provider = deepseekCleanup ? "DeepSeek Harness" : codexCleanup || arguments.first == "--prepare-codex-progress" ? "Codex" : "Claude"
+    let provider = harnessCleanup || arguments.first == "--prepare-local-harness-progress" ? "local Harness" : deepseekCleanup ? "DeepSeek Harness"
+        : codexCleanup || arguments.first == "--prepare-codex-progress" ? "Codex" : "Claude"
     FileHandle.standardError.write(Data("Pacer could not safely update \(provider) configuration or its owned runtime.\n".utf8))
     result = 1
 }

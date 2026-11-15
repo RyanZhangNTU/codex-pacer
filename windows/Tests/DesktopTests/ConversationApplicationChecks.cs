@@ -53,6 +53,27 @@ internal static class ConversationApplicationChecks
             "A prepared host must reject mixed executable or URI payloads before asking the engine");
         Check(!await apps.OpenConversationAsync(new(context, "codex", "host", null, null, 12, 34, "e30="), ActivatePrepared) && capabilities.Count == 1,
             "A prepared host must reject a mixed terminal payload before asking the engine");
+
+        // Signed handlers come from the engine's registry entry, not a list in the host.
+        Check(!WindowsConversationApplication.CanOpenApplication("workbuddy"), "No module opens through a signed handler before the engine describes it");
+        WindowsConversationApplication.Register([new EngineModule("workbuddy", "automatic", true, true,
+            Launch: new("workbuddy-ai", "Tencent Technology (Shenzhen) Company Limited", ["WorkBuddyAI/WorkBuddyAI.exe", "../escape.exe"], "connectors"))]);
+        Check(WindowsConversationApplication.CanOpenApplication("workbuddy") && WindowsConversationApplication.CanOpenConnectors("workbuddy"),
+            "A registered module opens its own app and connectors");
+        var workBuddyCalls = new List<Uri>();
+        var workBuddy = new WindowsConversationApplication(_ => false, signedHandler: (provider, uri) =>
+        {
+            Check(provider == "workbuddy", "The installed app check must stay bound to the requested provider");
+            workBuddyCalls.Add(uri); return true;
+        });
+        string workBuddyURL = "workbuddy-ai://chat/" + session;
+        Check(await workBuddy.OpenAsync(Local(workBuddyURL, provider: "workbuddy")), "A known WorkBuddy chat may open in its own app");
+        foreach (string unsafeURL in new[] { workBuddyURL + "?other=value", workBuddyURL + "#fragment", workBuddyURL + "/",
+            "workbuddy-ai://chat@elsewhere/" + session, "workbuddy-ai://chat/%31" + session[1..], "workbuddy://chat/" + session })
+            Check(!await workBuddy.OpenAsync(Local(unsafeURL, provider: "workbuddy")), "A foreign or altered WorkBuddy route must not reach the OS");
+        Check(!await workBuddy.OpenAsync(Local(workBuddyURL, "https://www.workbuddy.ai/", "workbuddy")) &&
+              !await workBuddy.OpenAsync(new(context, "workbuddy", "host", null, null, 12, 34)) &&
+              workBuddyCalls.Count == 1, "Only the validated conversation reaches the WorkBuddy launcher");
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

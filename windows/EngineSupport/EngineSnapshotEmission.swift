@@ -8,37 +8,61 @@ import Foundation
 /// rather than on every source callback; the frame still carries exact values.
 struct EngineSnapshotEmission {
     private var previous: Data?
-    private static let tenths: Set<String> = ["remainingTimePercent", "pacePercent", "angle"]
-    private static let hundredths: Set<String> = ["averageDaily"]
 
     mutating func accepts(_ bytes: Data, force: Bool = false) throws -> Bool {
-        guard var content = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return true }
+        guard let content = try Self.comparable(bytes) else { return true }
+        let notices = (content["notices"] as? [Any])?.isEmpty == false
+        // A notification is an event, including an identical visible message.
+        if !force, !notices, let previous, let old = try Self.comparable(previous), Self.equal(old, content) {
+            return false
+        }
+        previous = bytes
+        return true
+    }
+
+    private static func comparable(_ bytes: Data) throws -> [String: Any]? {
+        guard var content = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return nil }
         content.removeValue(forKey: "sequence"); content.removeValue(forKey: "capturedAt")
         if var compact = content["compactContext"] as? [String: Any] {
             compact.removeValue(forKey: "now"); content["compactContext"] = compact
         }
-        let notices = (content["notices"] as? [Any])?.isEmpty == false
-        let key = try JSONSerialization.data(withJSONObject: Self.comparable(content), options: [.sortedKeys, .fragmentsAllowed])
-        let changed = key != previous
-        previous = key
-        // A notification is an event, including an identical visible message.
-        return force || changed || notices
+        return content
     }
 
-    private static func comparable(_ value: Any) -> Any {
-        if var object = value as? [String: Any] {
-            // A dashboard reading's reference time is the clock itself.
-            if object["period"] != nil, object["availability"] != nil { object.removeValue(forKey: "date") }
-            for (key, child) in object {
-                if let number = child as? Double, !(child is Bool) {
-                    if tenths.contains(key) { object[key] = (number * 10).rounded() / 10; continue }
-                    if hundredths.contains(key) { object[key] = (number * 100).rounded() / 100; continue }
-                }
-                if child is [String: Any] || child is [Any] { object[key] = comparable(child) }
+    // Compare the parsed values without sorting keys or encoding a second
+    // snapshot. The caller still sends the original, full precision frame.
+    private static func equal(_ lhs: Any, _ rhs: Any, key: String? = nil) -> Bool {
+        if let a = lhs as? NSNumber, let b = rhs as? NSNumber {
+            // Foundation boxes JSON booleans separately from integer 0 and 1.
+            let aBool = isBoolean(a), bBool = isBoolean(b)
+            guard aBool == bBool else { return false }
+            if a == b { return true }
+            guard !aBool else { return false }
+            switch key {
+            case "remainingTimePercent", "pacePercent", "angle":
+                return (a.doubleValue * 10).rounded() == (b.doubleValue * 10).rounded()
+            case "averageDaily": return (a.doubleValue * 100).rounded() == (b.doubleValue * 100).rounded()
+            default: return false
             }
-            return object
         }
-        if let array = value as? [Any] { return array.map(comparable) }
-        return value
+        if let a = lhs as? String, let b = rhs as? String { return a.utf8.elementsEqual(b.utf8) }
+        if let a = lhs as? [Any], let b = rhs as? [Any] {
+            return a.count == b.count && zip(a, b).allSatisfy { equal($0.0, $0.1) }
+        }
+        if let a = lhs as? [String: Any], let b = rhs as? [String: Any] {
+            // A dashboard reading's reference time is the clock itself.
+            let aDate = a["period"] != nil && a["availability"] != nil && a["date"] != nil
+            let bDate = b["period"] != nil && b["availability"] != nil && b["date"] != nil
+            guard a.count - (aDate ? 1 : 0) == b.count - (bDate ? 1 : 0) else { return false }
+            for (key, value) in a where !(key == "date" && aDate) {
+                guard !(key == "date" && bDate), let other = b[key], equal(value, other, key: key) else { return false }
+            }
+            return true
+        }
+        return lhs is NSNull && rhs is NSNull
     }
+
+    private static let trueNumber = NSNumber(value: true)
+    private static let falseNumber = NSNumber(value: false)
+    private static func isBoolean(_ value: NSNumber) -> Bool { value === trueNumber || value === falseNumber }
 }

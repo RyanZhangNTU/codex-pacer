@@ -46,13 +46,15 @@ enum SessionLogProbe {
         return name=='mcp__pacer_progress__report_progress' and namespace in (None,'') or name=='report_progress' and namespace in ('mcp__pacer_progress','pacer_progress')
     def progress_item(item):
         return isinstance(item,dict) and item.get('type') in ('McpToolCall','mcpToolCall','mcp_tool_call') and item.get('server')=='pacer_progress' and item.get('tool')=='report_progress'
+    # The bare receipt, and the current reply that also asks for the next report (ProgressPrompt.acknowledgement).
+    ACKS=('pacer-progress:accepted','pacer-progress:accepted. Report again as soon as you make more progress.')
     def progress_ack(value):
-        if isinstance(value,str):return value=='pacer-progress:accepted'
+        if isinstance(value,str):return value in ACKS
         if not isinstance(value,list) or len(value) not in (1,2) or not isinstance(value[-1],dict):return False
         if len(value)==2:
             first=value[0];prefix=first.get('text') if isinstance(first,dict) and first.get('type')=='input_text' else None
             if not isinstance(prefix,str) or len(prefix)>128 or not prefix.startswith('Wall time: ') or not prefix.endswith('\nOutput:'):return False
-        return value[-1].get('type') in ('input_text','text') and value[-1].get('text')=='pacer-progress:accepted'
+        return value[-1].get('type') in ('input_text','text') and value[-1].get('text') in ACKS
     def progress_item_value(item):
         if not progress_item(item) or item.get('status') not in ('completed','Completed'):return None
         result=item.get('result')

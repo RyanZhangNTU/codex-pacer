@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
@@ -47,10 +48,56 @@ internal static class PacerPalette
     private static readonly Brush LightSurface = Ink(236, 236, 240);
     internal static Brush Provider(string? provider) => provider switch
     {
+        null or "codex" => Codex,
         "claude" => Claude,
         "deepseek" => DeepSeek,
-        _ => Codex
+        _ => provider != null && modules.TryGetValue(provider, out var module) ? module.Shaded : Primary
     };
+
+    /// Modules beyond the built-in three take their colors from the engine's
+    /// registry entry, so a new module needs no change here.
+    private sealed class ModuleInk
+    {
+        internal required EngineModuleBrand Brand { get; init; }
+        internal required Brush Dark { get; init; }
+        internal required Brush LightInk { get; init; }
+        internal Brush Shaded { get; set; } = Brushes.Transparent;
+    }
+    private static readonly System.Collections.Generic.Dictionary<string, ModuleInk> modules = new(StringComparer.Ordinal);
+    internal static EngineModuleBrand? Brand(string provider) => modules.TryGetValue(provider, out var module) ? module.Brand : null;
+    /// A service's own brand color, whatever the accent choice, as the Mac's provider tint.
+    internal static Color BrandColor(string provider) => (provider switch
+    {
+        "codex" => BrandCodex, "claude" => BrandClaude, "deepseek" => BrandDeepSeek,
+        _ => modules.TryGetValue(provider, out var module) ? module.Dark : null
+    }) is SolidColorBrush brand ? brand.Color : Color.FromRgb(157, 157, 162);
+    /// A service's brand for a Settings page in the given tone: the deeper shade
+    /// on a light page, as the Mac's provider.shade(light:), whatever the island's tone.
+    internal static Brush BrandShade(string provider, bool light) => provider switch
+    {
+        "codex" => light ? LightCodex : BrandCodex,
+        "claude" => light ? LightClaude : BrandClaude,
+        "deepseek" => light ? LightDeepSeek : BrandDeepSeek,
+        _ => modules.TryGetValue(provider, out var module) ? light ? module.LightInk : module.Dark : light ? LightPrimary : DarkPrimary
+    };
+    /// Returns whether a module's colors changed, so drawn views can repaint.
+    internal static bool RegisterModules(System.Collections.Generic.IEnumerable<EngineModule>? values)
+    {
+        bool changed = false;
+        foreach (var module in values ?? [])
+        {
+            if (module.Brand is not { } brand || DesktopPreferences.IsLegacyProvider(module.Provider)) continue;
+            if (modules.TryGetValue(module.Provider, out var known) && known.Brand == brand) continue;
+            if (Hex(brand.Dark) is not { } dark || Hex(brand.Light) is not { } light) continue;
+            modules[module.Provider] = new ModuleInk { Brand = brand, Dark = Ink(dark.R, dark.G, dark.B), LightInk = Ink(light.R, light.G, light.B) };
+            changed = true;
+        }
+        if (changed) Shade();
+        return changed;
+    }
+    private static Color? Hex(string value) => value is { Length: 7 } && value[0] == '#' &&
+        uint.TryParse(value.AsSpan(1), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out uint rgb)
+        ? Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb) : null;
     internal static readonly Brush BrandCodex = Ink(125, 214, 196);
     internal static readonly Brush BrandClaude = Ink(242, 156, 107);
     internal static readonly Brush BrandDeepSeek = Ink(123, 147, 255);
@@ -94,6 +141,7 @@ internal static class PacerPalette
     {
         Brush Pick(string provider, Brush brand, Brush light) => AccentPalette.ProviderShade(Accent, provider, Light) is { } color ? Ink(color.R, color.G, color.B) : Light ? light : brand;
         Codex = Pick("codex", BrandCodex, LightCodex); Claude = Pick("claude", BrandClaude, LightClaude); DeepSeek = Pick("deepseek", BrandDeepSeek, LightDeepSeek);
+        foreach (var item in modules) item.Value.Shaded = Pick(item.Key, item.Value.Dark, item.Value.LightInk);
     }
     internal static SolidColorBrush Ink(byte red, byte green, byte blue, byte alpha = 255)
     {

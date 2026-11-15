@@ -3,6 +3,7 @@
 import Foundation
 import WinSDK
 import XCTest
+import CWindowsSupport
 @testable import PacerCore
 
 final class WindowsFileSystemTests: XCTestCase {
@@ -34,6 +35,44 @@ final class WindowsFileSystemTests: XCTestCase {
             XCTAssertEqual(try files.read(file, offset: UInt64(initial.count), maximumBytes: 8), Data("appended".utf8))
         }
     }
+    func testDirectoryChangeBatchesAreParsedRecordByRecord() {
+        // FILE_NOTIFY_INFORMATION: next offset, action, name length in bytes, UTF-16 name.
+        func batch(_ records: [(action: UInt32, name: String)], truncatedBy cut: Int = 0) -> [UInt8] {
+            var bytes: [UInt8] = []
+            for (index, record) in records.enumerated() {
+                let name = Array(record.name.utf16).flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] }
+                let size = (12 + name.count + 3) / 4 * 4
+                let next = index == records.count - 1 ? 0 : UInt32(size)
+                for value in [next, record.action, UInt32(name.count)] {
+                    bytes += [0, 8, 16, 24].map { UInt8((value >> UInt32($0)) & 0xff) }
+                }
+                bytes += name + Array(repeating: 0, count: size - 12 - name.count)
+            }
+            return Array(bytes.dropLast(cut))
+        }
+        func parse(_ bytes: [UInt8], watching name: String?) -> (changed: Int32, flags: Int32) {
+            var flags: Int32 = 0
+            let changed = bytes.withUnsafeBytes { buffer in
+                if let name {
+                    return Array(name.utf16 + [0]).withUnsafeBufferPointer {
+                        pacer_directory_parse(buffer.baseAddress, UInt32(buffer.count), $0.baseAddress, &flags)
+                    }
+                }
+                return pacer_directory_parse(buffer.baseAddress, UInt32(buffer.count), nil, &flags)
+            }
+            return (changed, flags)
+        }
+        let added: UInt32 = 1, removed: UInt32 = 2, modified: UInt32 = 3
+        let siblings = (0..<6).map { (action: added, name: "sibling-\($0).log") }
+        // A change to the watched file after other records in the same batch.
+        XCTAssertTrue(parse(batch(siblings + [(modified, "target.jsonl")]), watching: "target.jsonl") == (1, 0))
+        XCTAssertTrue(parse(batch(siblings + [(removed, "TARGET.JSONL")]), watching: "target.jsonl") == (1, 3))
+        XCTAssertTrue(parse(batch(siblings), watching: "target.jsonl") == (0, 0), "Siblings are not changes to the file")
+        XCTAssertTrue(parse(batch([(modified, "a.jsonl"), (added, "b.jsonl")]), watching: nil) == (1, 2))
+        XCTAssertTrue(parse(batch(siblings + [(modified, "target.jsonl")], truncatedBy: 6), watching: "target.jsonl") == (1, 2),
+                      "A damaged record asks for discovery")
+    }
+
     func testExtendedPathsPreserveUnicodeAndUNCWithoutChangingCanonicalURLs() {
         XCTAssertEqual(WindowsFiles.extendedPath("C:/synthetic/中文/file.jsonl"), "\\\\?\\C:\\synthetic\\中文\\file.jsonl")
         XCTAssertEqual(WindowsFiles.extendedPath("\\\\server\\share\\file"), "\\\\?\\UNC\\server\\share\\file")

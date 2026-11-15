@@ -143,6 +143,51 @@ public enum DemoScenario {
         return state.activities[0]
     }
 
+    static let demoWorkBuddySession = "00000000-0000-4000-8000-000000000006"
+
+    /// A WorkBuddy task with its model, rate, credits and reported progress,
+    /// through the same observed-turn path as the local adapter.
+    public static func workbuddyTask(stage: DemoTaskStage, at now: Date) -> SessionActivity {
+        let turnID = "demo-workbuddy-turn"
+        var task = SessionActivity.observedSession(provider: .workbuddy, session: demoWorkBuddySession, stage: .working,
+                                                    at: now.addingTimeInterval(-6))
+        task.applyObservedTurn(stage == .completed ? .finished : .working(stage == .tool ? .tool : .working), id: turnID,
+            started: now.addingTimeInterval(-64), at: now.addingTimeInterval(stage == .completed ? 0 : -6), live: true,
+            model: "Deepseek-V4.1-Flash", effort: "high")
+        task.applyObservedTitle(L10n.text("demo.workbuddy_task"), project: "launch-plan")
+        if let response = ResponsePerformance(responseID: "demo-workbuddy-response", turnID: turnID, outputTokens: 1_840,
+                                              startedAt: now.addingTimeInterval(-58), completedAt: now.addingTimeInterval(-8), source: .requestUsage),
+           let update = SessionPerformanceUpdate(id: task.id, turnID: turnID, response: response, firstTokenLatency: nil, firstTokenReportedAt: nil) {
+            update.apply(to: &task)
+        }
+        task.setTurnCredits(stage == .completed ? 1.69 : 0.57, turnID: turnID)
+        task.reportProgress(stage == .completed ? 100 : 45, at: now.addingTimeInterval(-10), turnID: turnID)
+        return task
+    }
+
+    /// A week of WorkBuddy credits, oldest first with today last; one quiet day.
+    public static func workbuddyDaily(at now: Date, calendar: Calendar = .current) -> [HarnessDailyAmount] {
+        let today = calendar.startOfDay(for: now)
+        return [42.0, 0, 118, 76, 23, 154, 37].enumerated().compactMap { index, amount in
+            guard amount > 0, let day = calendar.date(byAdding: .day, value: index - 6, to: today) else { return nil }
+            return HarnessDailyAmount(day: day, amount: amount)
+        }
+    }
+
+    /// Plan credits partway through the month, with rewards about to lapse and a top-up.
+    public static func workbuddyCredits(at now: Date) -> HarnessAccountCredits {
+        let refresh = now.addingTimeInterval(14 * 86_400).timeIntervalSince1970
+        let reward = now.addingTimeInterval(2 * 86_400).timeIntervalSince1970
+        let topUp = now.addingTimeInterval(29 * 86_400).timeIntervalSince1970
+        return HarnessAccountCredits(state: .ready, remaining: 4_620, total: 5_500, reserved: 12, plan: "Standard",
+            cycle: .init(total: 2_000, remaining: 1_320, used: 680, reset: refresh),
+            expiration: .init(credits: 300, at: reward),
+            groups: [.init(kind: .planBase, remaining: 1_320, total: 2_000, refresh: refresh),
+                     .init(kind: .planBonus, remaining: 2_000, total: 2_000, refresh: refresh),
+                     .init(kind: .reward, remaining: 300, expiries: [.init(credits: 300, at: reward)]),
+                     .init(kind: .topUp, remaining: 1_000, expiries: [.init(credits: 1_000, at: topUp)])])
+    }
+
     /// A week of uneven spending with peak-hour work on weekdays.
     public static func deepseekUsage(at now: Date, calendar: Calendar = .current) -> DeepSeekLocalUsage {
         var ledger = DeepSeekSpendLedger()

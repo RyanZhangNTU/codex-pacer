@@ -287,7 +287,7 @@ class Fixture:
                 fixture.requests += 1
                 index = fixture.requests
                 if index == 1:
-                    fixture.guidance_seen = "first useful tool batch" in json.dumps(offered_tools(request))
+                    fixture.guidance_seen = "again whenever you make progress" in json.dumps(offered_tools(request))
                 if 2 <= index <= 3:
                     fixture.received[index - 2].set()
                     if not fixture.resume[index - 2].wait(90):

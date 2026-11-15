@@ -132,7 +132,7 @@ public partial class IslandWindow
     private static void SetDetail(TextBlock detail, string? text, string? provider)
     {
         detail.Text = text ?? ""; detail.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
-        if (provider is "codex" or "claude" or "deepseek") detail.Foreground = PacerPalette.Provider(provider);
+        if (provider != null && DesktopPreferences.ValidProviderId(provider)) detail.Foreground = PacerPalette.Provider(provider);
         else detail.SetResourceReference(TextBlock.ForegroundProperty, "Island.Tertiary");
     }
 
@@ -205,7 +205,7 @@ public partial class IslandWindow
         if (placed.Count == 0) placed.Add((new("tasks", [], true, false, false, true, "", null), TasksSection, TaskHeaderTrailing, TaskToolbar));
         tasksShown = placed.Any(item => ReferenceEquals(item.Element, TasksSection));
         // Without any service the panel says so under its blocks and offers Settings, as on the Mac.
-        bool noServices = snapshot.QuotaDashboard is { Providers.Count: 0 };
+        bool noServices = snapshot.QuotaDashboard is { Providers.Count: 0 } && snapshot.Modules?.Any(module => module.Enabled) != true;
         var none = NoServicesRow();
 
         string signature = string.Join("|", placed.Select(item => item.Section.Key + ":" + item.Section.Joined + ":" + item.Element.GetHashCode())) + ":" + noServices;
@@ -269,6 +269,20 @@ public partial class IslandWindow
         PanelContent.InvalidateMeasure();
     }
 
+    private void UpdateHarnessAccount(string provider)
+    {
+        if (presentationStopped || latest == null) return;
+        if (PanelLive) { if (RenderPanel(latest)) Relayout(); }
+        else panelDirty = true;
+    }
+
+    private void OpenModuleSettings(string provider)
+    {
+        if (!presentationStopped && expanded) ProviderSettingsRequested?.Invoke(provider);
+    }
+    private bool ReportsCredits(EngineSnapshot snapshot, string provider) =>
+        snapshot.Modules?.Any(module => module.Provider == provider && module.ReportsAccountCredits == true) == true;
+
     /// One quota section in the chosen style, as Core drew it for its services.
     /// Returns false, keeping the section's views, when nothing it draws changed.
     private bool FillQuota(Grid slots, PanelSection section, EngineSnapshot snapshot)
@@ -279,21 +293,31 @@ public partial class IslandWindow
         DashboardProvider? Reading(string provider) => dashboard?.Providers.FirstOrDefault(value => value.Provider == provider);
         string? Help(string provider) => snapshot.Sources.FirstOrDefault(source => source.Provider == provider && source.Transport == "app-server")?.Reason;
         bool deepseek = section.Providers.Contains("deepseek") || layout?.Slots.Any(slot => slot.Provider == "deepseek") == true;
+        var creditModules = section.Providers.Where(provider => ReportsCredits(snapshot, provider)).ToArray();
+        bool accountCredits = creditModules.Length > 0;
         if (!Redraw(slots, new
         {
             section, layout, style = expandedQuotaStyle, deepseekPanelStyle, options = options.Key, panelBudgetDial,
             readings = section.Providers.Select(Reading), legacy = layout?.Kind == "legacyCodex" ? dashboard?.LegacyCodex : null,
             quota = snapshot.Quota.Where(value => section.Providers.Contains(value.Provider)), help = section.Providers.Select(Help),
             gauges = section.Providers.Select(provider => panel?.Gauge(provider)), wallet = deepseek ? snapshot.Wallet : null,
-            connection = deepseek ? snapshot.DeepseekConnection : null, web = deepseek && canConnectDeepSeekWeb?.Invoke() == true
+            connection = deepseek ? snapshot.DeepseekConnection : null, web = deepseek && canConnectDeepSeekWeb?.Invoke() == true,
+            credits = creditModules.Select(provider => snapshot.AccountCredits?.FirstOrDefault(value => value.Provider == provider)),
+            creditStates = creditModules.Select(provider => harnessAccounts?[provider] is { } account ? account.State + account.Busy : null)
         })) return false;
-        slots.Children.Clear(); slots.ColumnDefinitions.Clear();
+        slots.Children.Clear(); slots.ColumnDefinitions.Clear(); slots.RowDefinitions.Clear();
         string connectUnavailable = ui.Text(demo ? "windows.deepseek.demo_web_help" : "windows.deepseek.runtime_required");
         if (layout?.Kind == "legacyCodex" && dashboard?.LegacyCodex is { } legacy)
             slots.Children.Add(new LegacyQuotaView(legacy, ui, Help("codex"), QuotaStatus(Reading("codex"))));
         else if (layout?.Kind == "classicRings" && dashboard != null)
             slots.Children.Add(new ClassicQuotaView(layout, section.Providers.Select(Reading).OfType<DashboardProvider>().ToArray(), snapshot.Quota, snapshot.Wallet, ui,
-                QuotaStatus, DeepSeekConnectAction(snapshot), connectUnavailable, DeepSeekStatus(snapshot), options, panelBudgetDial));
+                QuotaStatus, DeepSeekConnectAction(snapshot), connectUnavailable, DeepSeekStatus(snapshot), options, panelBudgetDial,
+                (provider, details, showsName) => AccountCell(provider, true, details, showsName)));
+        else if (layout?.Kind == "splitSingle" && accountCredits && section.Providers.Count == 1)
+        {
+            var cell = AccountCell(section.Providers[0], false, true, false);
+            cell.Margin = new Thickness(9, 0, 9, 0); slots.Children.Add(cell);
+        }
         else if (layout?.Kind == "splitSingle" && Reading(section.Providers[0]) is { } single)
             slots.Children.Add(new SingleQuotaView(single, snapshot.Quota.FirstOrDefault(value => value.Provider == single.Provider), ui, Help(single.Provider),
                 QuotaStatus(single), panel?.Gauge(single.Provider), options.PaceTick));
@@ -305,19 +329,24 @@ public partial class IslandWindow
             var providers = layout?.Slots.Select(value => value.Provider).ToArray() ?? section.Providers.ToArray();
             for (int index = 0; index < providers.Length; index++)
             {
-                if (index > 0) slots.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
-                int column = slots.ColumnDefinitions.Count;
-                slots.ColumnDefinitions.Add(new ColumnDefinition());
                 var reading = Reading(providers[index]);
-                FrameworkElement cell = providers[index] == "deepseek"
-                    ? new DeepSeekQuotaCell(snapshot.Wallet, ui, connectAction: DeepSeekConnectAction(snapshot), connectUnavailable: connectUnavailable,
-                        balanceStatus: DeepSeekStatus(snapshot), budgetDial: panelBudgetDial)
-                    : new QuotaCell(providers[index], snapshot.Quota.FirstOrDefault(q => q.Provider == providers[index]), snapshot.Wallet, Help(providers[index]),
-                        reading, QuotaStatus(reading), panel?.Gauge(providers[index]), options.PaceTick);
-                Grid.SetColumn(cell, column); slots.Children.Add(cell);
+                FrameworkElement cell = providers[index] switch
+                {
+                    var credits when ReportsCredits(snapshot, credits) => AccountCell(credits, false, false, true),
+                    "deepseek" => new DeepSeekQuotaCell(snapshot.Wallet, ui, connectAction: DeepSeekConnectAction(snapshot), connectUnavailable: connectUnavailable,
+                        balanceStatus: DeepSeekStatus(snapshot), budgetDial: panelBudgetDial),
+                    var provider => new QuotaCell(provider, snapshot.Quota.FirstOrDefault(q => q.Provider == provider), snapshot.Wallet, Help(provider),
+                        reading, QuotaStatus(reading), panel?.Gauge(provider), options.PaceTick)
+                };
+                QuotaCells.Add(slots, cell, index, layout?.Columns ?? providers.Length);
             }
         }
         return true;
+
+        FrameworkElement AccountCell(string provider, bool classic, bool details, bool showsName) =>
+            HarnessAccountCard.Build(ui, provider, harnessAccounts?[provider], snapshot.AccountCredits?.FirstOrDefault(value => value.Provider == provider),
+                true, "island." + provider + ".account", classic, details, showsName, () => OpenModuleSettings(provider),
+                snapshot.Modules?.FirstOrDefault(module => module.Provider == provider)?.DisplayName);
     }
 
     /// The header shows the chosen buttons; the rest wait in the More menu.
@@ -342,9 +371,10 @@ public partial class IslandWindow
         if (!showAppButtons)
             foreach (string provider in AvailableApplications())
             {
-                var item = new MenuItem { Header = ui.Text("windows.open." + provider) };
+                var item = new MenuItem { Header = OpenApplicationLabel(provider) };
+                item.Icon = ProviderIcon.CreateLaunch(provider, 14, item);
                 AutomationProperties.SetAutomationId(item, "island.menu.open." + provider);
-                item.Click += (_, _) => OpenDesktopApplicationFromMenu(provider);
+                item.Click += async (_, _) => await OpenDesktopApplicationFromMenu(provider);
                 menu.Items.Add(item); hidden++;
             }
         if (!panelOptions.InHeader("markRead"))

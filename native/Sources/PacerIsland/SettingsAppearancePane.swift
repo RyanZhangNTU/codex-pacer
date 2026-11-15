@@ -214,10 +214,10 @@ private struct AccentDot: View {
         .contentShape(Circle())
     }
 
-    /// Multicolor shows the three services' own colors.
+    /// Multicolor shows every service's own color, in registry order.
     private var fill: AnyShapeStyle {
         if let color = accent.color { return AnyShapeStyle(color) }
-        let colors = AgentProvider.allCases.map(\.brand)
+        let colors = HarnessRegistry.descriptors.map(\.id.brand)
         let stops = colors.enumerated().flatMap { index, color in
             [Gradient.Stop(color: color, location: Double(index) / Double(colors.count)),
              Gradient.Stop(color: color, location: Double(index + 1) / Double(colors.count))]

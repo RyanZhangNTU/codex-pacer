@@ -39,7 +39,7 @@ internal sealed partial class SettingsWindow
     private string[] EnabledProviders()
     {
         var snapshot = engine?.LatestSnapshot;
-        if (snapshot?.Modules is { } modules) return new[] { "codex", "claude", "deepseek" }.Where(provider => modules.Any(value => value.Provider == provider && value.Enabled)).ToArray();
+        if (snapshot?.Modules is { } modules) return DesktopPreferences.LegacyProviders.Where(provider => modules.Any(value => value.Provider == provider && value.Enabled)).ToArray();
         return snapshot?.QuotaDashboard?.Providers.Select(value => value.Provider).ToArray() ?? [];
     }
 
@@ -70,6 +70,14 @@ internal sealed partial class SettingsWindow
         }
         if (enabled.Contains("codex") && sidebarCodexReport is { SelectedExecutable: null })
             items.Add(new("codex", "Codex CLI · " + ui.Text("provider.state.not_found"), ui.Text("main.attention.codex_cli"), ui.Text("main.overview.open"), () => NavigateAsync("codex")));
+        // A module whose app must still trust Pacer's progress tool, or that lost it.
+        foreach (var module in snapshot.Modules ?? [])
+        {
+            if (!module.Enabled || !HarnessPane(module.Provider) || module.ProgressGuide is not { Attention: true, Summary: string summary } guide) continue;
+            string detail = guide.Steps.FirstOrDefault(step => step.State == "current")?.Title ?? guide.Line ?? "";
+            string provider = module.Provider;
+            items.Add(new(provider, PaneTitle(provider) + " · " + summary, detail, ui.Text("main.overview.open"), () => NavigateAsync(provider)));
+        }
         int problems = RemoteProblems(snapshot);
         if (problems > 0)
             items.Add(new("remote", ui.Text("main.pane.remote"), ui.Text(problems == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying").Replace("%ld", problems.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal),
@@ -140,6 +148,7 @@ internal sealed partial class SettingsWindow
         var attention = AttentionItems();
         string? update = updater?.CurrentOffer?.Version;
         string key = JsonSerializer.Serialize(new { snapshot?.Presentation, snapshot?.QuotaDashboard, snapshot?.Wallet, snapshot?.Modules, snapshot?.ActivityLinks,
+            credits = snapshot?.AccountCredits, creditsState = harnessAccounts?.All.Select(account => account.Provider + account.State + account.Busy),
             attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed });
         if (key == overviewKey) return;
         overviewKey = key;
@@ -149,12 +158,14 @@ internal sealed partial class SettingsWindow
         if (update != null && (update != (dismissedUpdate ?? updater?.DismissedBanner) || inlineDownload != null)) overviewBody.Children.Add(UpdateBanner(update));
         if (attention.Count > 0) overviewBody.Children.Add(AttentionCard(attention));
         var enabled = closed ? [] : EnabledProviders();
-        if (enabled.Length == 0)
+        var harnesses = closed ? [] : (snapshot?.Modules ?? []).Where(module => module.Enabled && HarnessPane(module.Provider)).Select(module => module.Provider);
+        var services = enabled.Concat(harnesses).ToArray();
+        if (services.Length == 0)
         {
             var none = Label(closed ? ui.Text("windows.connection.closed") : ui.Text("provider.none_enabled")); none.TextWrapping = TextWrapping.Wrap; none.Margin = new Thickness(0, 12, 0, 12);
             overviewBody.Children.Add(Card(Row(none, new Border())));
         }
-        else overviewBody.Children.Add(ServiceCards(snapshot!, enabled));
+        else overviewBody.Children.Add(ServiceCards(snapshot!, services));
         overviewBody.Children.Add(TasksCard(snapshot, rows));
     }
 
@@ -278,7 +289,8 @@ internal sealed partial class SettingsWindow
         var content = new StackPanel();
         var header = new Grid { Margin = new Thickness(0, 0, 0, 12) };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var tile = ProviderTile(provider); tile.Margin = new Thickness(0, 0, 8, 0); header.Children.Add(tile);
+        var tile = ProviderIcon.Tile(provider, 22, PaneSymbol(provider));
+        tile.Margin = new Thickness(0, 0, 8, 0); header.Children.Add(tile);
         var name = new TextBlock { Text = PaneTitle(provider), FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(name, 1); header.Children.Add(name);
         var details = new Button { Content = ui.Text("main.overview.details"), Style = (Style)FindResource("SettingsLink"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
@@ -293,7 +305,19 @@ internal sealed partial class SettingsWindow
         // pace tick and dial, but not its block order or which blocks show.
         var panel = snapshot.ExpandedPanel;
         var choices = panel?.Options ?? PanelOptions.Default;
-        if (provider == "deepseek") content.Children.Add(DeepSeekOverview(snapshot.Wallet, connectUnavailable, panel?.BudgetDial ?? true));
+        if (HarnessPane(provider) && HarnessModule(provider) is { } module)
+        {
+            if (module.ReportsAccountCredits == true)
+                content.Children.Add(HarnessAccountCard.Build(ui, provider, harnessAccounts?[provider],
+                    snapshot.AccountCredits?.FirstOrDefault(value => value.Provider == provider), true, "settings.overview." + provider + ".account",
+                    classic: session.Current.ExpandedQuotaStyle == "classic", details: choices.QuotaDetails,
+                    openSettings: () => _ = NavigateAsync(provider)));
+            // Like the other services, the card shows its balance; local task state appears only when it needs a look.
+            var (status, _, _) = HarnessStatus(module);
+            if (module.ReportsAccountCredits != true || module.Status != "ready")
+                content.Children.Add(new TextBlock { Text = status, FontSize = 12, Foreground = PacerPalette.Secondary, TextWrapping = TextWrapping.Wrap });
+        }
+        else if (provider == "deepseek") content.Children.Add(DeepSeekOverview(snapshot.Wallet, connectUnavailable, panel?.BudgetDial ?? true));
         else if (snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider) is { } reading)
         {
             var raw = snapshot.Quota.FirstOrDefault(value => value.Provider == provider);
@@ -381,7 +405,10 @@ internal sealed partial class SettingsWindow
         string? provider = historyProvider != null && quota.Contains(historyProvider) ? historyProvider : quota.FirstOrDefault();
         var history = provider == null ? null : snapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider)?.History;
         var week = enabled.Contains("deepseek") ? snapshot?.Wallet?.Solo?.Week : null;
-        string key = JsonSerializer.Serialize(new { provider, quota, history?.Title, week?.AccessibilityLabel, deepseek = enabled.Contains("deepseek"), closed, busy, session.RequiresRestart });
+        // Modules with account credits show their week the same way.
+        var credits = closed ? [] : (snapshot?.Modules ?? []).Where(value => value.Enabled && value.ReportsAccountCredits == true).ToArray();
+        string key = JsonSerializer.Serialize(new { provider, quota, history?.Title, week?.AccessibilityLabel, deepseek = enabled.Contains("deepseek"),
+            credits = credits.Select(value => value.Provider + ":" + value.Week?.AccessibilityLabel).ToArray(), closed, busy, session.RequiresRestart });
         if (key != historyKey)
         {
             historyKey = key;
@@ -397,7 +424,18 @@ internal sealed partial class SettingsWindow
                 var card = IslandCard(content, new Thickness(18, 16, 18, 16)); Identify(card, "settings.history.deepseek", ui.Text("main.history.deepseek_week"));
                 historyBody.Children.Add(card);
             }
-            if (enabled.Length == 0)
+            foreach (var module in credits)
+            {
+                string titleKey = "main.history." + module.Provider + "_week", emptyKey = "main.history." + module.Provider + "_empty";
+                string title = ui.Has(titleKey) ? ui.Text(titleKey) : PaneTitle(module.Provider);
+                var content = new StackPanel();
+                content.Children.Add(new TextBlock { Text = title, FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, Margin = new Thickness(0, 0, 0, 12) });
+                if (module.Week is { Days.Count: >= 2 } credited) content.Children.Add(new DeepSeekWeekView(credited));
+                else content.Children.Add(new TextBlock { Text = ui.Has(emptyKey) ? ui.Text(emptyKey) : "", FontSize = 12, Foreground = PacerPalette.Secondary });
+                var card = IslandCard(content, new Thickness(18, 16, 18, 16)); Identify(card, "settings.history." + module.Provider, title);
+                historyBody.Children.Add(card);
+            }
+            if (enabled.Length == 0 && credits.Length == 0)
             {
                 var none = Label(closed ? ui.Text("windows.connection.closed") : ui.Text("provider.none_enabled")); none.TextWrapping = TextWrapping.Wrap; none.Margin = new Thickness(0, 12, 0, 12);
                 historyBody.Children.Add(Card(Row(none, new Border())));

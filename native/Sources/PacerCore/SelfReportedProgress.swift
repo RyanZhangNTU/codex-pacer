@@ -137,14 +137,14 @@ public enum ClaudeProgressRingSwitch {
               attributes[.type] as? FileAttributeType == .typeDirectory else { return false }
         if let existing = try? fileManager.attributesOfItem(atPath: flag.path) {
             guard existing[.type] as? FileAttributeType == .typeRegular else { return false }
-            // A switch from before Pacer's plugin asked for leading markers; it now asks for the tool.
-            if fileManager.contents(atPath: flag.path) == Data("on\n".utf8) {
+            // Older switches asked for leading markers or a step size; there is one mode now.
+            if fileManager.contents(atPath: flag.path) != Data(enabledContents.utf8) {
                 return (try? Data(enabledContents.utf8).write(to: flag, options: .atomic)) != nil
             }
             return true
         }
         return fileManager.createFile(atPath: flag.path, contents: Data(enabledContents.utf8))
     }
-    /// Estimates come through Pacer's plugin tool; other modes are written by hand.
+    /// Estimates come through Pacer's plugin tool.
     static let enabledContents = "tool\n"
 }

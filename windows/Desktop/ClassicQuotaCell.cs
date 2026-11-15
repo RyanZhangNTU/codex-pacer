@@ -18,14 +18,14 @@ internal sealed class ClassicQuotaCell : StackPanel
         var reading = slot.Period == "5h" ? provider.FiveHour : provider.Weekly;
         HorizontalAlignment = HorizontalAlignment.Stretch;
         Ring = new QuotaReadingHost(); Children.Add(Ring);
-        Dial = new QuotaDial(slot.Provider, raw, wallet, classic: true, dashboard: provider, classicPeriod: slot.Period, paceTick: paceTick)
+        Dial = new QuotaDial(slot.Provider, raw, wallet, classic: true, dashboard: provider, classicPeriod: slot.Period ?? "7d", paceTick: paceTick)
             { Width = 88, Height = 88, HorizontalAlignment = HorizontalAlignment.Center };
         Ring.Children.Add(Dial);
         var caption = new StackPanel { Orientation = Orientation.Horizontal, Height = 15, Margin = new Thickness(0, 8, 0, 0), HorizontalAlignment = HorizontalAlignment.Center };
         if (slot.IdentifiesProvider)
-            caption.Children.Add(new System.Windows.Shapes.Ellipse { Width = 6, Height = 6, Fill = PacerPalette.Provider(slot.Provider), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 5, 0) });
+            caption.Children.Add(ProviderIcon.Caption(slot.Provider));
         caption.Children.Add(Label(slot.Title, 11, slot.IdentifiesProvider ? PacerPalette.Primary : PacerPalette.Secondary, FontWeights.SemiBold));
-        if (slot.IdentifiesProvider) caption.Children.Add(Label(slot.Period, 10, PacerPalette.Tertiary, margin: 5));
+        if (slot.IdentifiesProvider && slot.Period is { } period) caption.Children.Add(Label(period, 10, PacerPalette.Tertiary, margin: 5));
         if (reading.VerdictText != null) caption.Children.Add(Verdict(reading));
         if (reading.Availability == "stale")
         {

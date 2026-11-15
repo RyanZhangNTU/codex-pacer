@@ -11,12 +11,15 @@ public struct WindowsCodexProgressRuntime {
         runtime = .init(codexProgressRoot: root)
     }
 
-    public func prepare(home: URL, package: URL) throws -> CodexProgressCommand {
+    /// - Parameter stablePath: one path across reporter updates, for local
+    ///   harnesses such as WorkBuddy that trust a command by its path; Codex
+    ///   gets a new path with each reporter.
+    public func prepare(home: URL, package: URL, stablePath: Bool = false) throws -> CodexProgressCommand {
         guard let resource = Bundle.module.url(forResource: "pacer-codex-progress", withExtension: "py") else {
             throw WindowsClaudeRuntimeStore.Failure.invalidRuntime
         }
         let script = try Data(contentsOf: resource)
-        let python = try runtime.withLock { try runtime.ensure(package: package, home: home, progressReporter: script) }
+        let python = try runtime.withLock { try runtime.ensure(package: package, home: home, progressReporter: script, stablePath: stablePath) }
         return paths.command(python: python, home: home)
     }
 

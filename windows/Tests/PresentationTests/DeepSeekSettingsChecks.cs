@@ -110,9 +110,9 @@ internal static class DeepSeekSettingsChecks
             var week = Find<Button>(window, "panel.block.deepseekWeek.toggle"); var spend = Find<Button>(window, "panel.block.deepseekSpend.toggle");
             Check(Equals(week.Tag, "added") && Equals(spend.Tag, "added") && session.Current.ExpandedPanelLayout == null,
                 "DeepSeek alone starts from the automatic layout with its charts, as the panel was before blocks");
-            Invoke(week); await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekWeek", StringComparison.Ordinal) == false);
+            Invoke(week); await Until(() => session.Current.ExpandedPanelLayout is { } saved && !PresentationWait.Places(saved, "deepseekWeek"));
             Invoke(Find<Button>(window, "panel.block.deepseekSpend.toggle"));
-            await Until(() => session.Current.ExpandedPanelLayout?.Contains("deepseekSpend", StringComparison.Ordinal) == false);
+            await Until(() => session.Current.ExpandedPanelLayout is { } saved && !PresentationWait.Places(saved, "deepseekSpend"));
             await Until(() => !Descendants(island).OfType<DeepSeekWeekView>().Any() && !Descendants(island).OfType<DeepSeekDistributionView>().Any());
             Check(Descendants(island).OfType<DeepSeekSoloView>().Count() == 1, "Removing the charts keeps the dial and what sits beside it");
             Invoke(Find<Button>(window, "panel.restore")); await Until(() => session.Current.ExpandedPanelLayout == null);

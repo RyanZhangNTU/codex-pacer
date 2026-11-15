@@ -11,7 +11,7 @@ using Microsoft.Win32;
 namespace CodexPacer.Windows;
 
 [Flags]
-internal enum UninstallFailure { None = 0, ClaudeConfiguration = 1, Registrations = 2, CodexConfiguration = 4, DeepSeekConfiguration = 8 }
+internal enum UninstallFailure { None = 0, ClaudeConfiguration = 1, Registrations = 2, CodexConfiguration = 4, DeepSeekConfiguration = 8, LocalHarnessConfiguration = 16 }
 internal enum InstallShortcut { StartMenu, Desktop }
 
 internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity identity,
@@ -237,7 +237,7 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
         var failures = UninstallFailure.None;
         string hooks = Path.Combine(identity.Root, "Engine", "PacerInstallerHooks.exe");
         IReadOnlyList<string>? homes = null;
-        string[]? codexCleanup = null, deepseekCleanup = null;
+        string[]? codexCleanup = null, deepseekCleanup = null, harnessCleanup = null;
         string runtime = Path.Combine(identity.DataRoot, "ClaudeRuntime");
         static string[] HookArguments(string operation, string runtime, IReadOnlyList<string> homes) =>
             new[] { operation, runtime }.Concat(homes).ToArray();
@@ -259,6 +259,13 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
             if (deepseekCleanup != null) await RunAsync(hooks, deepseekCleanup, TimeSpan.FromSeconds(10), cancellation);
         }
         catch { failures |= UninstallFailure.DeepSeekConfiguration; }
+        try
+        {
+            harnessCleanup = ["--check-uninstall-local-harness-progress", Path.Combine(identity.Root, "Engine", "PacerEngine.exe"),
+                Path.Combine(identity.DataRoot, "CodexProgressRuntime"), identity.QaScope == null ? "" : identity.DataRoot];
+            await RunAsync(hooks, harnessCleanup, TimeSpan.FromSeconds(10), cancellation);
+        }
+        catch { failures |= UninstallFailure.LocalHarnessConfiguration; }
         if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
         try { await WindowsMaintenanceSignal.StopAsync(identity.Executable, cancellation); }
         catch { return failures | UninstallFailure.Registrations; }
@@ -278,6 +285,12 @@ internal sealed class WindowsInstallationOperations(WindowsInstallationIdentity 
             deepseekCleanup[0] = "--uninstall-deepseek-progress";
             try { await RunAsync(hooks, deepseekCleanup, TimeSpan.FromSeconds(10), cancellation); }
             catch { failures |= UninstallFailure.DeepSeekConfiguration; }
+        }
+        if (harnessCleanup != null)
+        {
+            harnessCleanup[0] = "--uninstall-local-harness-progress";
+            try { await RunAsync(hooks, harnessCleanup, TimeSpan.FromSeconds(10), cancellation); }
+            catch { failures |= UninstallFailure.LocalHarnessConfiguration; }
         }
         if (failures != UninstallFailure.None && !continueAfterFailure) return failures;
         try { await RunAsync(identity.Executable, ["--uninstall-notifications"], TimeSpan.FromSeconds(10), cancellation); }

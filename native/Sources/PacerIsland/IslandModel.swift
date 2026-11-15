@@ -50,6 +50,68 @@ final class IslandModel: ObservableObject {
     @Published private(set) var hostApplications: [AgentProvider: [String: HostApplication]] = [:]
     private var hostTracking = HostApplicationTrackingState<HostApplication>()
     var lifecycle = ApplicationLifecycleCoordinator()
+    private lazy var localHarnesses = LocalHarnessMonitors(platform: .macOS,
+        io: .init(files: MacFileSystem(), events: MacActivityFileEvents(), now: { Date() }))
+    private var localHarnessActivities = HarnessActivitySources()
+    @Published private var localHarnessRevision = 0
+    /// Account credits by module, for each module that reads them from its bill.
+    lazy var harnessAccounts: [AgentProvider: HarnessAccountConnection] = Dictionary(uniqueKeysWithValues:
+        HarnessRegistry.descriptors.compactMap { descriptor in
+            descriptor.accountCredits.map { definition in
+                let connection = HarnessAccountConnection(provider: descriptor.id, definition: definition, defaults: defaults)
+                connection.onChange = { [weak self] in self?.receiveHarnessCredits(descriptor.id) }
+                connection.onAccountReset = { [weak self] in self?.harnessCreditsAttention.reset(descriptor.id) }
+                return (descriptor.id, connection)
+            }
+        })
+    func harnessAccount(_ provider: AgentProvider) -> HarnessAccountConnection? { harnessAccounts[provider] }
+    /// The last bill of each enabled module that reads one.
+    var harnessCredits: [AgentProvider: HarnessAccountCredits] {
+        harnessAccounts.reduce(into: [:]) { result, entry in
+            if isModuleEnabled(entry.key), let credits = entry.value.credits { result[entry.key] = credits }
+        }
+    }
+    private typealias ActivityAdapters = HarnessActivityAdapters<@MainActor @Sendable () -> Void>
+    private lazy var activityAdapters: ActivityAdapters = makeActivityAdapters()
+
+    private func makeActivityAdapters() -> ActivityAdapters {
+        let realtime = realtimeMonitor, claude = claudeMonitor, deepseek = deepseekMonitor
+        return ActivityAdapters([
+            .codex: .init(start: { [weak self] in self?.refreshActivity() },
+                reset: { [weak self] in self?.resetCodexSource() },
+                discoverRoutes: { [weak self] in self?.refreshRemote() },
+                updatePolicy: { policy, flush in await realtime.updateRefreshPolicy(policy, flushPending: flush) },
+                stop: { deadline, reason, _ in await realtime.shutdown(deadline: deadline, retainingRemoteControlCatalog: reason == .sleep) }),
+            .claude: .init(start: { [weak self] in self?.startClaudeActivity() },
+                reset: { [weak self] in self?.resetClaudeSource() },
+                discoverRoutes: { [weak self] in self?.discoverClaudeRemoteTargets() },
+                updatePolicy: { [weak self] policy, flush in
+                    await claude.updateRefreshPolicy(policy, flushPending: flush)
+                    guard !Task.isCancelled else { return }
+                    await self?.claudeCloudCoordinator?.setExpanded(flush)
+                }, stop: { deadline, _, _ in await claude.shutdown(deadline: deadline) }),
+            .deepseek: .init(start: { [weak self] in self?.startDeepSeekActivity() },
+                reset: { [weak self] in self?.resetDeepSeekSource() }, refresh: { await deepseek.refresh() },
+                updatePolicy: { policy, flush in await deepseek.updateRefreshPolicy(policy, flushPending: flush) },
+                stop: { [weak self] _, reason, _ in
+                    if reason == .shutdown { await self?.deepseekProgressTask?.value }
+                    await deepseek.shutdown()
+                })
+        ], local: localHarnesses.definitions) { provider in
+            .local(start: { [weak self] in self?.bindLocalHarness(provider) },
+                   reset: { [weak self] in self?.resetLocalHarness(provider) },
+                   monitor: { [weak self] in await self?.localActivityMonitor(provider) })
+        }
+    }
+
+    private func localActivityMonitor(_ provider: AgentProvider) -> (any LocalHarnessMonitor)? { localHarnesses[provider] }
+
+    func stopActivity(_ provider: AgentProvider, deadline: ShutdownDeadline) -> ApplicationLifecycleCoordinator.Cleanup? {
+        guard let stop = activityAdapters[provider]?.stop else { return nil }
+        return { await stop(deadline, .reset, nil) }
+    }
+
+    func startActivity(_ provider: AgentProvider) { activityAdapters[provider]?.start() }
     var ownedWork: ApplicationWorkRegistry { get { lifecycle.work } set { lifecycle.work = newValue } }
     func launchOwnedWork(_ key: ApplicationWorkRegistry.Key, operation: @escaping @MainActor (ApplicationWorkRegistry.Ticket) async -> Void) {
         let version = key.provider.map { UInt64(sourceGeneration(for: $0)) } ?? lifecycle.revision
@@ -109,6 +171,7 @@ final class IslandModel: ObservableObject {
         set { activityState.deepseekAttention = newValue }
     }
     var deepseekBalanceAttention = DeepSeekBalanceAttention()
+    var harnessCreditsAttention = HarnessCreditsNoticePolicy()
     /// Successive balance readings, for what the account was charged beyond this Mac.
     var deepseekHistory = DeepSeekBalanceHistory()
     /// Spend-spike notices stay quiet until this moment after "Not for an hour".
@@ -145,7 +208,7 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexQuota = newValue
             case .claude: claudeQuota = newValue
-            case .deepseek: return
+            default: return
             }
             onLayoutChange?()
         }
@@ -156,7 +219,7 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexHistory = newValue
             case .claude: claudeHistory = newValue
-            case .deepseek: break
+            default: break
             }
         }
     }
@@ -166,7 +229,7 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexHistoryWarning = newValue
             case .claude: claudeHistoryWarning = newValue
-            case .deepseek: break
+            default: break
             }
         }
     }
@@ -176,17 +239,41 @@ final class IslandModel: ObservableObject {
             switch selectedProvider {
             case .codex: codexErrorMessage = newValue
             case .claude: claudeErrorMessage = newValue
-            case .deepseek: break
+            default: break
             }
         }
     }
     func isModuleEnabled(_ provider: AgentProvider) -> Bool { enabledProviders.contains(provider) }
+    var localHarnessDescriptors: [HarnessDescriptor] { localHarnesses.definitions.map(\.descriptor) }
+    /// Every module this Mac can run, in registry order.
+    var supportedModules: [AgentProvider] { HarnessRegistry.legacyIDs + localHarnessDescriptors.map(\.id) }
+    /// The module library for `modules`, which Settings edits before applying them.
+    func moduleLibrary(_ modules: ProviderModules) -> ModuleLibrary {
+        ModuleLibrary(modules: modules, detection: installation, supported: supportedModules)
+    }
+    var quotaProviders: [AgentProvider] {
+        enabledProviders.filter { HarnessRegistry.descriptor(for: $0)?.hasQuotaDisplay == true }
+    }
+    func localHarnessStatus(_ provider: AgentProvider) -> HarnessSourceStatus? { localHarnessActivities[provider]?.status }
+    /// A module's last week of credits from its local usage, nil until two
+    /// finished days have some.
+    func harnessWeek(_ provider: AgentProvider) -> DeepSeekSoloPresentation.Week? {
+        // The demo has no local data, so a WorkBuddy turned on shows the shared demo week.
+        let daily = demo ? (provider == .workbuddy && isModuleEnabled(provider) ? DemoScenario.workbuddyDaily(at: now) : [])
+            : localHarnessUsage(provider)?.daily ?? []
+        return HarnessWeekPresentation.week(provider: provider, daily: daily, now: now)
+    }
+    func localHarnessUsage(_ provider: AgentProvider) -> HarnessUsage? {
+        guard let reading = localHarnessActivities[provider], reading.status == .ready else { return nil }
+        return reading.usage
+    }
     func providerDetected(_ provider: AgentProvider) -> Bool { installation.isInstalled(provider) }
     func providerRefreshing(_ provider: AgentProvider) -> Bool {
         switch provider {
         case .codex: codexRefreshing
         case .claude: claudeRefreshing
         case .deepseek: deepseekRefreshing
+        default: false
         }
     }
     func providerStreamStatuses(_ provider: AgentProvider) -> [String: RuntimeStreamStatus] {
@@ -194,14 +281,17 @@ final class IslandModel: ObservableObject {
         case .codex: streamStatuses
         case .claude: claudeStreamStatuses
         case .deepseek: deepseekStreamStatuses
+        default: [:]
         }
     }
     func taskPresentationOptions(for values: [SessionActivity]) -> TaskPresentationOptions {
         let hosts = hostTracking.labels(for: values, activities: activities, inbox: completionInbox,
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id))) { .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop) }
-        return .init(hideProjects: hideProjects, hostApplications: hosts,
+        var options = TaskPresentationOptions(hideProjects: hideProjects, hostApplications: hosts,
             sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost,
             progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize)
+        options.hiddenTurnCredits = hiddenTurnCredits
+        return options
     }
     func taskSourceName(_ activity: SessionActivity) -> String? {
         ActivityTaskRowPresentation.sourceName(activity, options: taskPresentationOptions(for: [activity]))
@@ -210,7 +300,7 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: codexQuota
         case .claude: claudeQuota
-        case .deepseek: nil
+        default: nil
         }
     }
     func providerQuotaError(_ provider: AgentProvider) -> String? {
@@ -218,6 +308,7 @@ final class IslandModel: ObservableObject {
         case .codex: codexErrorMessage
         case .claude: claudeErrorMessage
         case .deepseek: deepseekBalanceError?.errorDescription
+        default: nil
         }
     }
     func providerWindow(_ provider: AgentProvider, period: QuotaDashboardPeriod) -> QuotaWindow? {
@@ -231,14 +322,14 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: codexHistory
         case .claude: claudeHistory
-        case .deepseek: QuotaCycleHistory()
+        default: QuotaCycleHistory()
         }
     }
     func providerHistoryWarning(_ provider: AgentProvider) -> String? {
         switch provider {
         case .codex: codexHistoryWarning
         case .claude: claudeHistoryWarning
-        case .deepseek: nil
+        default: nil
         }
     }
     func providerCurrentCycle(_ provider: AgentProvider) -> QuotaCycle? {
@@ -249,6 +340,7 @@ final class IslandModel: ObservableObject {
         case .codex: providerQuota(provider) == nil ? nil : L10n.text("quota.source_codex")
         case .claude: claudeQuotaSource?.label
         case .deepseek: deepseekBalance.map { L10n.text($0.source == .web ? "deepseek.source.web" : "deepseek.source.api") }
+        default: nil
         }
     }
     func providerFreshnessText(_ provider: AgentProvider, period: QuotaDashboardPeriod? = nil) -> String {
@@ -262,7 +354,7 @@ final class IslandModel: ObservableObject {
             sourceText: providerSourceText(provider), now: now)
     }
     func selectProvider(_ provider: AgentProvider) {
-        guard enabledProviders.contains(provider), selectedProvider != provider else { return }
+        guard quotaProviders.contains(provider), selectedProvider != provider else { return }
         selectedProvider = provider
         defaults.set(provider.rawValue, forKey: "selectedQuotaProvider")
         onLayoutChange?(); onStatusChange?()
@@ -505,11 +597,314 @@ final class IslandModel: ObservableObject {
         }
         return status
     }
+    /// Shared with Windows: modules whose progress ring is turned off. Rings
+    /// are on until the user turns them off.
+    static let disabledHarnessProgressKey = "disabledHarnessProgress"
+    /// Shared with Windows: modules whose task rows hide each turn's credits.
+    static let hiddenTurnCreditsKey = "hiddenTurnCredits"
+    /// Shared with Windows: local modules' data folders chosen in Settings, by ID.
+    static let harnessHomesKey = "harnessHomes"
+    /// Shared with Windows: each credits module's display and reminder choices, by ID.
+    static let harnessCreditsKey = "harnessCredits"
+    /// Decoded once per change: the bar and notices read these often.
+    private(set) lazy var creditSettings: [AgentProvider: HarnessCreditsSettings] = Self.loadCreditSettings(defaults)
+    func creditSettings(_ provider: AgentProvider) -> HarnessCreditsSettings { creditSettings[provider] ?? .default }
+    static func loadCreditSettings(_ defaults: UserDefaults) -> [AgentProvider: HarnessCreditsSettings] {
+        guard let data = defaults.data(forKey: harnessCreditsKey),
+              let stored = try? JSONDecoder().decode([String: HarnessCreditsSettings].self, from: data) else { return [:] }
+        // IDs this version does not know are kept on disk and ignored here.
+        return Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in AgentProvider(rawValue: key).map { ($0, value) } })
+    }
+    /// Saves one module's choices, keeping entries for modules this version does not know.
+    func setCreditSettings(_ provider: AgentProvider, _ value: HarnessCreditsSettings) {
+        var stored = (defaults.data(forKey: Self.harnessCreditsKey)).flatMap {
+            try? JSONDecoder().decode([String: HarnessCreditsSettings].self, from: $0)
+        } ?? [:]
+        stored[provider.rawValue] = value == .default ? nil : value
+        if let data = try? JSONEncoder().encode(stored) { defaults.set(data, forKey: Self.harnessCreditsKey) }
+        creditSettings = Self.loadCreditSettings(defaults)
+        receiveHarnessCredits(provider)
+    }
+    func showsHarnessProgress(_ provider: AgentProvider) -> Bool {
+        !(defaults.stringArray(forKey: Self.disabledHarnessProgressKey) ?? []).contains(provider.rawValue)
+    }
+    var hiddenTurnCredits: Set<AgentProvider> {
+        Set((defaults.stringArray(forKey: Self.hiddenTurnCreditsKey) ?? []).compactMap(AgentProvider.init(rawValue:)))
+    }
+    @Published private(set) var localHarnessProgressStatuses: [AgentProvider: LocalHarnessProgressSetup.State] = [:] {
+        didSet { progressGuideHintDismissals = progressGuideHintDismissals.filter { progressGuide($0.key)?.stage == $0.value } }
+    }
+    private var localHarnessProgressQueues: [AgentProvider: ProgressSetupQueue<LocalHarnessProgressSetup.Target>] = [:]
+    private var localHarnessProgressTasks: [AgentProvider: Task<Void, Never>] = [:]
+
+    /// - Parameter keepsState: keep showing the current state until the
+    ///   result arrives, for checks the user did not ask for.
+    func syncLocalHarnessProgress(force provider: AgentProvider? = nil, inspectOnly: Bool = false, keepsState: Bool = false) {
+        guard !demo, !stopped, installationOverride == nil, let executable = Bundle.main.executableURL else { return }
+        if provider == nil { refreshLocalHarnessApps() }
+        for definition in localHarnesses.definitions {
+            let id = definition.descriptor.id
+            guard let configFile = definition.progressConfigFile, provider == nil || provider == id else { continue }
+            let enabled = isModuleEnabled(id) && showsHarnessProgress(id)
+            if inspectOnly {
+                guard enabled, definition.progressConnection != nil, localHarnessProgressStatuses[id]?.setup == .configured,
+                      localHarnessProgressTasks[id] == nil else { continue }
+            }
+            let target = LocalHarnessProgressSetup.Target(home: localHarnessHome(definition), configFile: configFile,
+                                                          reporter: executable.path, enabled: enabled, ruleDirectory: definition.progressRuleDirectory)
+            guard let ticket = localHarnessProgressQueues[id, default: .init()].request(target, force: provider == id) else { continue }
+            if !inspectOnly && !keepsState { localHarnessProgressStatuses[id] = enabled ? .init(.settingUp) : nil }
+            let task = Task { [weak self] in
+                let status = await Task.detached(priority: .utility) {
+                    await LocalHarnessProgressSetup.sync(ticket, storage: MacClaudeHookStorage(),
+                        connection: definition.progressConnection, inspectOnly: inspectOnly)
+                }.value
+                guard let self, self.localHarnessProgressQueues[id]?.finish(ticket) == true else { return }
+                var state = status
+                // A report recorded a moment ago may not be on disk yet.
+                if state?.setup == .configured, self.localHarnessProgressStatuses[id]?.reported == true { state?.reported = true }
+                self.localHarnessProgressStatuses[id] = state
+                self.localHarnessProgressTasks[id] = nil
+            }
+            localHarnessProgressQueues[id]?.track(task)
+            localHarnessProgressTasks[id] = task
+        }
+    }
+
+    /// Whether each module's app runs and since when: it reads Pacer's tool only as it starts.
+    @Published private(set) var localHarnessApps: [AgentProvider: HarnessProgressGuide.AppPresence] = [:]
+    private var localHarnessAppObservers: [NSObjectProtocol] = []
+    func refreshLocalHarnessApps() {
+        guard !demo else { return }
+        if localHarnessAppObservers.isEmpty {
+            let center = NSWorkspace.shared.notificationCenter
+            localHarnessAppObservers = [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification].map {
+                center.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.refreshLocalHarnessApps() }
+                }
+            }
+        }
+        var apps: [AgentProvider: HarnessProgressGuide.AppPresence] = [:]
+        for definition in localHarnesses.definitions where definition.descriptor.progressConnector {
+            apps[definition.descriptor.id] = MacLocalHarnessApplication.presence(provider: definition.descriptor.id)
+        }
+        // A quit app forgets which page it showed and that the card opened it,
+        // and so does one that started again after the card opened it.
+        for (provider, presence) in localHarnessApps where presence != .notRunning && apps[provider] == .notRunning {
+            forgetHarnessPage(provider)
+        }
+        for (provider, opened) in harnessOpenedConnectors {
+            if case .running(let since)? = apps[provider], since > opened { forgetHarnessPage(provider) }
+        }
+        if apps != localHarnessApps { localHarnessApps = apps }
+    }
+
+    /// When the card opened a module's connectors; kept in memory until the
+    /// app quits. The app's own log counts its custom connectors after this.
+    @Published private(set) var harnessOpenedConnectors: [AgentProvider: Date] = [:]
+    /// When the user clicked to open them: the app can show its connectors
+    /// before the system says it has opened, so its log counts from the click.
+    private var harnessOpenRequests: [AgentProvider: Date] = [:]
+    private var harnessLogReads: Set<AgentProvider> = []
+    /// A restart Pacer started is still under way.
+    func harnessRestartInFlight(_ provider: AgentProvider) -> Bool { harnessRestarting.contains(provider) }
+    /// A restart the card asked for: waiting for the user to confirm over a
+    /// running task, under way, or refused by the app.
+    /// `cannotOpen`: Pacer couldn't open the app, before or after quitting it.
+    enum HarnessRestart: Equatable { case confirm, restarting, failed, cannotOpen }
+    @Published private(set) var harnessRestarts: [AgentProvider: HarnessRestart] = [:]
+    private var harnessRestarting: Set<AgentProvider> = []
+    /// The page each module's app shows, as its own log tells.
+    @Published private(set) var harnessAppViews: [AgentProvider: HarnessProgressGuide.AppView] = [:]
+    /// The small floating guide the card's actions open beside the app.
+    private(set) lazy var harnessGuideFloat = HarnessGuideFloat(model: self)
+
+    func noteOpenedConnectors(_ provider: AgentProvider, at date: Date = Date(), requested: Date? = nil) {
+        harnessOpenedConnectors[provider] = date
+        harnessOpenRequests[provider] = requested ?? date
+    }
+    func reportHarnessView(_ provider: AgentProvider, _ view: HarnessProgressGuide.AppView) {
+        if harnessAppViews[provider] != view { harnessAppViews[provider] = view }
+    }
+    func forgetHarnessPage(_ provider: AgentProvider) {
+        harnessOpenedConnectors[provider] = nil
+        harnessOpenRequests[provider] = nil
+        harnessAppViews[provider] = nil
+        if harnessRestarts[provider] == .confirm { harnessRestarts[provider] = nil }
+    }
+
+    /// Opens the app on its connectors from the card, with the floating
+    /// guide beside it on `screen`, the one Settings is on.
+    func openHarnessConnectors(_ provider: AgentProvider, screen: NSScreen? = nil, requested: Date = Date()) async -> Bool {
+        showHarnessFloat(provider, on: screen)
+        guard await MacLocalHarnessApplication.openProgressConnectors(provider: provider) else {
+            harnessGuideFloat.close()
+            return false
+        }
+        noteOpenedConnectors(provider, requested: requested)
+        return true
+    }
+
+    /// The float comes up with the click, saying to wait while the app
+    /// restarts or opens, and follows the app's steps from there.
+    private func showHarnessFloat(_ provider: AgentProvider, on screen: NSScreen?) {
+        guard let stage = progressGuide(provider)?.stage, let name = HarnessRegistry.descriptor(for: provider)?.name else { return }
+        harnessGuideFloat.show(provider, on: screen, pending: HarnessProgressGuide.pendingFloat(stage: stage, name: name))
+    }
+
+    /// Quits the app the way its own Quit does, waits for it to close, then
+    /// opens it on its connectors so it reads Pacer's tool, with the floating
+    /// guide beside it. Over a running task the first click only asks to
+    /// confirm. It never forces the app to quit.
+    func restartHarness(_ provider: AgentProvider, screen: NSScreen? = nil) async {
+        guard !harnessRestarting.contains(provider) else { return }
+        let busy = visibleActivities.contains { $0.provider == provider && [.running, .waitingForInput].contains($0.phase) }
+        if busy, harnessRestarts[provider] != .confirm { harnessRestarts[provider] = .confirm; return }
+        // A demo never quits a real app, and an app Pacer can't open again stays as it is.
+        guard !demo else { return }
+        guard await MacLocalHarnessApplication.find(provider: provider) != nil else { harnessRestarts[provider] = .cannotOpen; return }
+        showHarnessFloat(provider, on: screen)
+        let requested = Date()
+        harnessRestarts[provider] = .restarting
+        harnessRestarting.insert(provider)
+        defer { harnessRestarting.remove(provider) }
+        let running = MacLocalHarnessApplication.runningAll(provider: provider)
+        running.forEach { $0.terminate() }
+        // After 10 seconds the card asks the user to quit it; Pacer keeps
+        // waiting a while longer and opens it once it has quit.
+        let start = Date()
+        while running.contains(where: { !$0.isTerminated }), Date().timeIntervalSince(start) < 180 {
+            if Date().timeIntervalSince(start) > 10, harnessRestarts[provider] == .restarting { harnessRestarts[provider] = .failed }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        guard running.allSatisfy(\.isTerminated) else { return }
+        harnessRestarts[provider] = nil
+        // Let the quit settle before opening, so a late quit notice can't
+        // take back the connectors this restart opens.
+        for _ in 0 ..< 12 where !MacLocalHarnessApplication.runningAll(provider: provider).isEmpty {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        refreshLocalHarnessApps()
+        if !(await openHarnessConnectors(provider, screen: screen, requested: requested)) { harnessRestarts[provider] = .cannotOpen }
+    }
+
+    /// The app's own log tells which page it shows since the card opened its
+    /// connectors: its market, then its custom connectors once it lists its
+    /// servers, apart from the listing it makes as it starts. The card moves
+    /// on without reading the app's window.
+    private func checkHarnessLog(_ provider: AgentProvider) {
+        guard let opened = harnessOpenRequests[provider] ?? harnessOpenedConnectors[provider], harnessAppViews[provider] != .customConnectors,
+              let definition = localHarnesses.definition(for: provider), let logFile = definition.appLogFile,
+              case .running(let since)? = localHarnessApps[provider],
+              [.opening, .openConnectors, .customConnector].contains(progressGuide(provider)?.stage) else { return }
+        // One read at a time per module, whether the card or the float asked.
+        guard harnessLogReads.insert(provider).inserted else { return }
+        let log = localHarnessHome(definition).appendingPathComponent(logFile)
+        Task { [weak self] in
+            defer { self?.harnessLogReads.remove(provider) }
+            // Back to the earlier of the click and the app's start, so its own listing stays in view.
+            let view = await Task.detached(priority: .utility) {
+                HarnessAppLog.view(in: HarnessAppLog.read(log, since: min(opened, since)), opened: opened, appStarted: since, now: Date())
+            }.value
+            // The page only moves forward: custom connectors after the market.
+            guard let self, let view, self.harnessAppViews[provider] != .customConnectors else { return }
+            self.reportHarnessView(provider, view)
+        }
+    }
+
+    /// Checks the app's trust again; once the app has made its folder, the
+    /// setup it was waiting for continues by itself.
+    func recheckLocalHarnessProgress(_ provider: AgentProvider) {
+        refreshLocalHarnessApps()
+        checkHarnessLog(provider)
+        if localHarnessProgressStatuses[provider]?.setup == .missingHome {
+            guard localHarnessProgressTasks[provider] == nil else { return }
+            syncLocalHarnessProgress(force: provider, keepsState: true)
+        } else {
+            syncLocalHarnessProgress(force: provider, inspectOnly: true)
+        }
+    }
+
+    /// The first reported estimate confirms the whole chain, so the card
+    /// collapses for good; an app that has just made its folder lets setup continue.
+    private func noteLocalHarnessProgress(_ provider: AgentProvider, snapshot: HarnessActivity) {
+        guard let definition = localHarnesses.definition(for: provider), let state = localHarnessProgressStatuses[provider] else { return }
+        switch Self.localProgressFollowUp(state, reports: snapshot.activities.contains { $0.selfReportedProgress != nil }) {
+        case .continueSetup?: recheckLocalHarnessProgress(provider)
+        case .markReported?:
+            localHarnessProgressStatuses[provider]?.reported = true
+            let home = localHarnessHome(definition)
+            Task.detached(priority: .utility) { LocalHarnessProgressSetup.markReported(home, storage: MacClaudeHookStorage()) }
+        case nil: break
+        }
+    }
+
+    enum LocalProgressFollowUp: Equatable { case continueSetup, markReported }
+    static func localProgressFollowUp(_ state: LocalHarnessProgressSetup.State, reports: Bool) -> LocalProgressFollowUp? {
+        if state.setup == .missingHome { return .continueSetup }
+        return state.setup == .configured && !state.reported && reports ? .markReported : nil
+    }
+
+    /// The progress ring card Core words for a module whose app must trust
+    /// Pacer's tool; nil for other modules and while the ring is off.
+    func progressGuide(_ provider: AgentProvider) -> HarnessProgressGuide? {
+        guard let descriptor = HarnessRegistry.descriptor(for: provider), descriptor.progressConnector else { return nil }
+        let state = localHarnessProgressStatuses[provider]
+        return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
+                                    ringOn: isModuleEnabled(provider) && showsHarnessProgress(provider), name: descriptor.name,
+                                    addedAt: state?.addedAt, removedAt: state?.removedAt, app: localHarnessApps[provider],
+                                    view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors[provider] != nil)
+    }
+
+    /// The ⓘ text, also while the ring is off and there is no card to word it.
+    func progressGuideInfo(_ provider: AgentProvider) -> String {
+        guard let descriptor = HarnessRegistry.descriptor(for: provider) else { return "" }
+        return HarnessProgressGuide(setup: .settingUp, connection: nil, reported: false, ringOn: true, name: descriptor.name)?.info ?? ""
+    }
+
+    /// The modules the onboarding note names: their ring is on and their app
+    /// still needs a step, or setup has not reported back yet.
+    var progressOnboardingModules: [AgentProvider] {
+        HarnessRegistry.localHarnesses.map(\.descriptor).filter { descriptor in
+            guard descriptor.progressConnector, isModuleEnabled(descriptor.id), showsHarnessProgress(descriptor.id) else { return false }
+            return progressGuide(descriptor.id).map(\.attention) ?? true
+        }.map(\.id)
+    }
+
+    /// The panel hints the user closed, by module, until that module's stage
+    /// changes; kept in memory only, as on Windows.
+    private var progressGuideHintDismissals: [AgentProvider: HarnessProgressGuide.Stage] = [:]
+    /// A module's task is running without a ring because its app still needs
+    /// a step: the panel says so in one line until closed for that stage.
+    var progressGuideHints: [(provider: AgentProvider, summary: String)] {
+        let running = Set(visibleActivities.filter { $0.phase == .running }.map(\.provider))
+        return HarnessRegistry.localHarnesses.map(\.descriptor.id).compactMap { provider in
+            guard running.contains(provider), let guide = progressGuide(provider), guide.attention, let summary = guide.summary,
+                  progressGuideHintDismissals[provider] != guide.stage else { return nil }
+            return (provider, provider.displayName + " · " + summary)
+        }
+    }
+    func dismissProgressGuideHint(_ provider: AgentProvider) {
+        guard let stage = progressGuide(provider)?.stage else { return }
+        progressGuideHintDismissals[provider] = stage
+        objectWillChange.send()
+        onLayoutChange?()
+    }
+
+    func refreshProgressPresentation() {
+        syncLocalHarnessProgress()
+        settingsRevision += 1
+        scheduleRateExpiry()
+        onLayoutChange?(); onStatusChange?()
+    }
     private var progressRingProviders: Set<AgentProvider> {
         var providers: Set<AgentProvider> = []
         if showsClaudeProgressRing { providers.insert(.claude) }
         if showsCodexProgressRing { providers.insert(.codex) }
         if showsDeepSeekProgressRing { providers.insert(.deepseek) }
+        for definition in localHarnesses.definitions where definition.descriptor.hasTaskProgress && showsHarnessProgress(definition.descriptor.id) {
+            providers.insert(definition.descriptor.id)
+        }
         return providers
     }
     /// Claude's self-reported progress ring; on until the user turns it off.
@@ -686,6 +1081,7 @@ final class IslandModel: ObservableObject {
             case .codex: CodexApplicationResolver.find()
             case .claude: ClaudeApplicationResolver.find()
             case .deepseek: DeepSeekApplicationResolver.find()
+            default: await MacLocalHarnessApplication.find(provider: provider)
             }
         }.value
     }
@@ -732,6 +1128,9 @@ final class IslandModel: ObservableObject {
     }
     func canOpen(_ activity: SessionActivity) -> Bool {
         guard !activity.isIgnoredCodexSession, completionInbox.isSourceVisible(activity.sourceHostID) else { return false }
+        if localHarnesses.definition(for: activity.provider) != nil {
+            return providerDetected(activity.provider) && localHarnessActivities[activity.provider]?.conversationURLs[activity.id] != nil
+        }
         // Harness has no conversation link; its app opens on the session list.
         if activity.provider == .deepseek { return demo || DeepSeekApplicationResolver.cachedApplication() != nil }
         if activity.provider == .codex, activity.sourceHostID == nil, activity.launchedByEmbeddingApp {
@@ -791,7 +1190,7 @@ final class IslandModel: ObservableObject {
         let rowHeight: CGFloat = panelOptions.rowStyle == .oneLine ? 58 : 74
         let taskHeight = CGFloat(rows) * rowHeight + CGFloat(rows - 1) * 2 + (count > page ? 26 : 0) + (demo ? 25 : 0)
         let quotaHeight: CGFloat
-        if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: enabledProviders, snapshot: providerQuota(.codex), style: expandedQuotaStyle),
+        if QuotaDashboardLayout.usesLegacyCodexDisplay(providers: quotaProviders, snapshot: providerQuota(.codex), style: expandedQuotaStyle),
            let snapshot = providerQuota(.codex) {
             let headers = snapshot.buckets.count > 1 ? snapshot.buckets.count : 0
             quotaHeight = 256 + CGFloat(snapshot.windows.count) * 92 + CGFloat(headers) * 20
@@ -1064,6 +1463,13 @@ final class IslandModel: ObservableObject {
         set { activityState.demoRequests = newValue }
     }
     var isDemo: Bool { demo }
+    /// The demo computer has the three original services; WorkBuddy reads as
+    /// not found, so reference shots stay the same, unless `--demo-workbuddy`
+    /// puts it there too. A module on in the demo adds its task and dial.
+    private static func demoInstallation(_ arguments: [String]?) -> ProviderInstallationDetection {
+        ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true,
+            additional: arguments?.contains("--demo-workbuddy") == true ? [.workbuddy] : [])
+    }
 
     var home: URL {
         let configured = defaults.string(forKey: "codexHome") ?? ""
@@ -1096,14 +1502,12 @@ final class IslandModel: ObservableObject {
             logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: visiblyExpanded)
             let generation = sourceGeneration
             launchOwnedWork(.init(.presentation, identifier: "activity-policy")) { [weak self] ticket in
-                guard let self, generation == self.sourceGeneration, self.lifecycle.owns(ticket) else { return }
-                await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.claudeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.claudeCloudCoordinator?.setExpanded(self.visiblyExpanded)
-                guard self.lifecycle.owns(ticket) else { return }
-                await self.deepseekMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
+                guard let self else { return }
+                for provider in self.enabledProviders {
+                    guard generation == self.sourceGeneration, self.lifecycle.owns(ticket) else { return }
+                    let policy = self.activityRefreshPolicy
+                    await self.activityAdapters[provider]?.updatePolicy(policy, self.visiblyExpanded)
+                }
             }
         }
         if clock != nil { scheduleClock() }
@@ -1200,7 +1604,8 @@ final class IslandModel: ObservableObject {
     /// Sessions that another app runs through an agent SDK (a Zotero plugin,
     /// for example). Terminal, editor and Desktop sessions always show.
     func showsEmbeddedSessions(for provider: AgentProvider) -> Bool {
-        guard provider != .deepseek else { return true }
+        // Only Codex and Claude run inside other apps' SDKs.
+        guard provider == .codex || provider == .claude else { return true }
         let key = provider == .codex ? Self.showsEmbeddedCodexSessionsKey : Self.showsEmbeddedClaudeSessionsKey
         return defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
     }
@@ -1226,7 +1631,8 @@ final class IslandModel: ObservableObject {
         self.claudeQuotaReads = claudeQuotaReads ?? ClaudeQuotaReadDependencies()
         self.installationOverride = installation
         self.installation = installation ?? (demo && demoArguments != nil
-            ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
+            ? Self.demoInstallation(demoArguments)
+            : .detect(harnessHomes: defaults.dictionary(forKey: Self.harnessHomesKey) as? [String: String] ?? [:]))
         self.modules = .load(from: defaults)
         self.appliedClaudeProgressRing = Self.progressRingEnabled(Self.claudeProgressRingKey, in: defaults)
         self.demo = demo
@@ -1236,15 +1642,13 @@ final class IslandModel: ObservableObject {
             .appendingPathComponent("CodexPacerIsland/CurrentCycle", isDirectory: true)
         historyStore = QuotaHistoryStore(directory: directory)
         claudeHistoryStore = QuotaHistoryStore(directory: directory.appendingPathComponent("Claude", isDirectory: true))
-        enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
-        if let saved = defaults.string(forKey: "selectedQuotaProvider").flatMap(AgentProvider.init(rawValue:)), enabledProviders.contains(saved) {
+        enabledProviders = configuredProviders
+        if let saved = defaults.string(forKey: "selectedQuotaProvider").flatMap(AgentProvider.init(rawValue:)), quotaProviders.contains(saved) {
             selectedProvider = saved
-        } else { selectedProvider = enabledProviders.first ?? .codex }
+        } else { selectedProvider = quotaProviders.first ?? .codex }
         if !demo { Self.migrateDurableSwitch(in: defaults, home: home) }
         appliedDurable = defaults.bool(forKey: Self.monitorsDurableKey)
-        lifecycle = ApplicationLifecycleCoordinator(demo: demo, configuration: .init(enabled: Set(enabledProviders),
-            sources: [.codex: currentCodexSourceSignature, .claude: currentClaudeSourceSignature, .deepseek: currentDeepSeekSourceSignature],
-            hasDemoSnapshot: demo && demoArguments != nil))
+        lifecycle = ApplicationLifecycleCoordinator(demo: demo, configuration: lifecycleConfiguration)
         deepseekBalanceBinding = currentDeepSeekBalanceBinding
         if !demo { restoreDeepSeekHistory() }
         claudeRemoteTargets = monitorsSSH ? RemoteActivityTarget.claudeCodexTargets(home: home) : []
@@ -1264,6 +1668,8 @@ final class IslandModel: ObservableObject {
         guard !plan.actions.isEmpty else { return }
         syncCodexProgressSwitch()
         syncDeepSeekProgressSwitch()
+        syncLocalHarnessProgress()
+        configureHarnessAccounts()
         performLifecycle(plan)
         let center = NSWorkspace.shared.notificationCenter
         observations.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -1299,6 +1705,8 @@ final class IslandModel: ObservableObject {
     func prepareForSleep() async {
         let plan = lifecycle.prepareForSleep()
         guard plan.actions.contains(.suspendSources) else { return }
+        // Credits stay through sleep; a failed read after waking dims them, and notices stay as they were.
+        harnessAccounts.values.forEach { $0.suspend() }
         performLifecycle(plan)
         navigation.cancel(); clearNavigationError()
         invalidateWork(invalidateSource: false)
@@ -1306,18 +1714,16 @@ final class IslandModel: ObservableObject {
         let balance = cancelDeepSeekBalanceRead(stop: false)
         let deadline = ShutdownDeadline()
         let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
-        let claude = claudeMonitor, deepseek = deepseekMonitor, realtime = realtimeMonitor
+        let harnesses = detachLocalHarnesses()
         await ApplicationLifecycleCoordinator.cleanup([
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
-            .cloud: { await cloud?.suspend() }, .claudeActivity: { await claude.shutdown(deadline: deadline) },
-            .deepseekActivity: { await deepseek.shutdown() },
-            .realtime: { await realtime.shutdown(deadline: deadline, retainingRemoteControlCatalog: true) },
-            .balance: { await balance?.stop() }
-        ], deadline: deadline)
+            .cloud: { await cloud?.suspend() }, .balance: { await balance?.stop() }
+        ], activity: activityAdapters.cleanup(.sleep, deadline: deadline, detached: harnesses), deadline: deadline)
     }
     func resumeAfterSleep() {
         let plan = lifecycle.resume()
         guard !plan.actions.isEmpty else { return }
+        configureHarnessAccounts()
         redrawClock(); performLifecycle(plan)
     }
     /// Elapsed times, countdowns and rate expiry change with time alone.
@@ -1354,6 +1760,7 @@ final class IslandModel: ObservableObject {
     /// A published write redraws every view even when the value is unchanged.
     func close() { if pinned { pinned = false }; setExpanded(false) }
     private func navigationScope(for activity: SessionActivity) -> String? {
+        if let value = localHarnessActivities[activity.provider] { return value.scope }
         if activity.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) == true { return remoteControlAccountScope }
         return activity.claudeCloud == nil ? nil : claudeCloudNavigationScope
     }
@@ -1453,7 +1860,7 @@ final class IslandModel: ObservableObject {
         switch provider {
         case .codex: sourceGeneration
         case .claude: claudeGeneration
-        case .deepseek: deepseekGeneration
+        default: Int(lifecycle.version(provider))
         }
     }
     private func cancelHostTracking(for provider: AgentProvider? = nil, clearApplications: Bool = false) {
@@ -1728,8 +2135,8 @@ final class IslandModel: ObservableObject {
             completionInbox.remove(activityIDs: excluded)
             if activities.contains(where: { excluded.contains($0.id) }) { activities.removeAll { excluded.contains($0.id) } }
         }
-        now = Date(); claudeReceivedActivities = values.filter { !excluded.contains($0.id) }; claudeStreamStatuses = statuses
-        claudeReceivedRequests = requests
+        now = Date(); claudeStreamStatuses = statuses
+        activityState.replaceHarness(.claude, with: .init(activities: values.filter { !excluded.contains($0.id) }, requests: requests))
         let hidden = hiddenEmbeddedActivityIDs
         let measured = performance.filter { !excluded.contains($0.id) }
         completionInbox.updatePerformance(measured)
@@ -1763,15 +2170,26 @@ final class IslandModel: ObservableObject {
         return result
     }
     func refreshTaskSources() {
-        refreshActivity()
+        activityAdapters[.codex]?.start()
         launchOwnedWork(.init(.discovery, identifier: "manual")) { [weak self] ticket in
             guard let self, self.lifecycle.owns(ticket) else { return }
             await self.realtimeMonitor.retryInactiveHelpers()
             guard self.lifecycle.owns(ticket) else { return }
             self.refreshRemote()
             await self.claudeCloudCoordinator?.refresh()
+            for provider in self.enabledProviders where provider != .codex {
+                guard self.lifecycle.owns(ticket) else { return }
+                await self.activityAdapters[provider]?.refresh?()
+            }
         }
         discoverClaudeRemoteTargets(refresh: true)
+    }
+    func refreshLocalHarness(_ provider: AgentProvider) {
+        guard !sleeping, !stopped, isModuleEnabled(provider), localHarnesses[provider] != nil,
+              let refresh = activityAdapters[provider]?.refresh else { return }
+        launchOwnedWork(.init(.activity, provider: provider, identifier: "refresh-harness")) { _ in
+            await refresh()
+        }
     }
     /// A burst of network changes joins one pending retry; sleep cancels it.
     func requestSSHReconnect(at now: Date = Date()) {
@@ -1825,7 +2243,8 @@ final class IslandModel: ObservableObject {
     }
 
     func receiveLocalUpdate(_ values: [SessionActivity], requests: [PendingAttentionRequest], excludedIDs: Set<String> = []) {
-        now = Date(); localActivities = values; codexLogRequests = requests; excludedCodexActivityIDs = excludedIDs
+        now = Date(); excludedCodexActivityIDs = excludedIDs
+        activityState.replaceHarness(.codex, with: .init(activities: values, requests: requests))
         refilterEmbeddedSessions()
     }
 
@@ -1929,17 +2348,117 @@ final class IslandModel: ObservableObject {
         claudeHome.path + "|" + String(monitorsSSH) + (monitorsSSH
             ? "|" + home.path : "")
     }
+    private var configuredProviders: [AgentProvider] {
+        let supported = HarnessRegistry.legacyIDs + localHarnessDescriptors.map(\.id)
+        let enabled = modules.enabledProviders(detection: installation, supported: supported)
+        return supported.filter(enabled.contains)
+    }
+    private var lifecycleConfiguration: ApplicationLifecycleCoordinator.Configuration {
+        var sources: [AgentProvider: String] = [.codex: currentCodexSourceSignature,
+            .claude: currentClaudeSourceSignature, .deepseek: currentDeepSeekSourceSignature]
+        for definition in localHarnesses.definitions where isModuleEnabled(definition.descriptor.id) {
+            sources[definition.descriptor.id] = localHarnessHome(definition).path
+        }
+        return .init(enabled: Set(enabledProviders), sources: sources, hasDemoSnapshot: demo && demoArguments != nil)
+    }
+    /// The data folder chosen in Settings, then the environment, then the default.
+    func localHarnessHome(_ definition: LocalHarnessDefinition) -> URL {
+        let chosen = (defaults.dictionary(forKey: Self.harnessHomesKey) as? [String: String])?[definition.descriptor.id.rawValue]
+            .map { ($0 as NSString).expandingTildeInPath }.flatMap { $0.isEmpty ? nil : $0 }
+        return definition.resolveHome(override: chosen ?? ProcessInfo.processInfo.environment[definition.homeEnvironmentKey]) { $0.hasPrefix("/") }
+    }
+    func localHarnessHome(_ provider: AgentProvider) -> URL? { localHarnesses.definition(for: provider).map(localHarnessHome) }
+    private func bindLocalHarness(_ provider: AgentProvider) {
+        guard !demo, !sleeping, !stopped, isModuleEnabled(provider), !localHarnessActivities.isBound(provider),
+              let definition = localHarnesses.definition(for: provider) else { return }
+        let monitor = localHarnesses.monitor(for: definition)
+        let home = localHarnessHome(definition), version = lifecycle.version(provider)
+        localHarnessActivities.bind(provider, home: home, generation: version)
+        launchOwnedWork(.init(.activity, provider: provider, identifier: "local-harness")) { [weak self] ticket in
+            guard let self, self.lifecycle.owns(ticket) else { return }
+            let policy = self.activityRefreshPolicy
+            await monitor.start(home: home, policy: policy) { [weak self] snapshot in
+                await self?.receiveLocalHarness(provider, snapshot: snapshot, home: home, version: version)
+            }
+        }
+    }
+
+    /// A module's credits changed: redraw what shows them and notify once
+    /// when they fall low or run out. Only signing out, switching accounts or
+    /// sites and turning the module off forget earlier notices; stopping for
+    /// sleep does not, so waking with the same low reading stays quiet.
+    func receiveHarnessCredits(_ provider: AgentProvider) {
+        objectWillChange.send()
+        if !demo, !sleeping, !stopped {
+            present(harnessCreditsAttention.notices(harnessCredits, settings: creditSettings,
+                                                    low: compactLayout.warnings.contains(.lowCredits), now: Date()))
+        }
+        onLayoutChange?(); onStatusChange?()
+    }
+    private func configureHarnessAccounts() {
+        for (provider, connection) in harnessAccounts {
+            if demo {
+                connection.showDemo(isModuleEnabled(provider) && provider == .workbuddy ? DemoScenario.workbuddyCredits(at: now) : nil)
+                continue
+            }
+            connection.configure(enabled: !sleeping && !stopped && isModuleEnabled(provider),
+                                 keepsReading: sleeping && isModuleEnabled(provider))
+        }
+    }
+    private func receiveLocalHarness(_ provider: AgentProvider, snapshot: HarnessActivity, home: URL, version: UInt64) {
+        guard !sleeping, !stopped, isModuleEnabled(provider), lifecycle.version(provider) == version,
+              let update = localHarnessActivities.receive(provider, snapshot: snapshot) else { return }
+        if update.scopeChanged {
+            navigation.cancel(provider: provider)
+            activityState.removeHarness(provider)
+        }
+        if update.needsSourceBinding {
+            completionInbox.bindSourceHomes(provider: provider, localHome: home, localAccountScope: update.activity.scope)
+        }
+        activityState.replaceHarness(provider, with: update.activity)
+        now = Date()
+        combineActivities()
+        localHarnessRevision &+= 1
+        noteLocalHarnessProgress(provider, snapshot: snapshot)
+    }
+    private func resetLocalHarness(_ provider: AgentProvider) {
+        localHarnessActivities.remove(provider)
+        activityState.removeHarness(provider)
+        localHarnessRevision &+= 1
+        guard let monitor = localHarnesses.remove(provider), let stop = activityAdapters[provider]?.stop else {
+            activityAdapters[provider]?.start(); return
+        }
+        launchOwnedWork(.init(.activity, provider: provider, identifier: "reset-harness")) { [weak self] ticket in
+            let deadline = ShutdownDeadline()
+            await deadline.perform([{ await stop(deadline, .reset, monitor) }])
+            guard let self, self.lifecycle.owns(ticket) else { return }
+            self.activityAdapters[provider]?.start()
+        }
+    }
+    private func detachLocalHarnesses() -> LocalHarnessMonitors {
+        localHarnessActivities.detachLocalBindings()
+        localHarnessRevision &+= 1
+        return localHarnesses.detach()
+    }
+    func localHarnessDestination(for activity: SessionActivity) -> (url: URL, application: URL)? {
+        guard let destination = localHarnessActivities[activity.provider]?.conversationURLs[activity.id],
+              let application = MacLocalHarnessApplication.find(provider: activity.provider, destination: destination) else { return nil }
+        return (destination, application)
+    }
     func applySettings(sourceChanged: Bool) {
         installation = installationOverride ?? (demo && demoArguments != nil
-            ? ProviderInstallationDetection(codexInstalled: true, claudeInstalled: true, deepseekInstalled: true) : .detect())
+            ? Self.demoInstallation(demoArguments)
+            : .detect(harnessHomes: defaults.dictionary(forKey: Self.harnessHomesKey) as? [String: String] ?? [:]))
         modules = .load(from: defaults)
+        creditSettings = Self.loadCreditSettings(defaults)
         PacerAccent.current = PacerAccent(defaults: defaults)
         // Light Liquid Glass turns the whole island light before it redraws.
         syncTone()
-        enabledProviders = AgentProvider.allCases.filter { modules.enabledProviders(detection: self.installation).contains($0) }
+        enabledProviders = configuredProviders
         syncCodexProgressSwitch()
         syncDeepSeekProgressSwitch()
-        if !enabledProviders.contains(selectedProvider) { selectedProvider = enabledProviders.first ?? .codex }
+        syncLocalHarnessProgress()
+        if !quotaProviders.contains(selectedProvider) { selectedProvider = quotaProviders.first ?? .codex }
         // The header reports its width only when it changes, so the last measurement
         // stays: clearing it would leave the bar at the wider estimate after any setting.
         compactLayout = .load(from: defaults); settingsRevision += 1
@@ -1947,9 +2466,7 @@ final class IslandModel: ObservableObject {
         // A place chosen in Settings belongs to the display the island is on.
         rememberDisplayPlace()
         if clock != nil { scheduleClock() }
-        let plan = lifecycle.settings(.init(enabled: Set(enabledProviders),
-            sources: [.codex: currentCodexSourceSignature, .claude: currentClaudeSourceSignature, .deepseek: currentDeepSeekSourceSignature],
-            hasDemoSnapshot: demo && demoArguments != nil), explicitlyDisablesClaude: modules.claudeMode == .disabled)
+        let plan = lifecycle.settings(lifecycleConfiguration, explicitlyDisablesClaude: modules.claudeMode == .disabled)
         for provider in plan.changedProviders { navigation.cancel(provider: provider) }
         performLifecycle(plan)
         // SSH is outside the Codex source signature so the Remote Control
@@ -1972,11 +2489,11 @@ final class IslandModel: ObservableObject {
         }
         onLayoutChange?(); onStatusChange?()
     }
-    private func resetCodexSource(versionInvalidated: Bool = false) {
+    private func resetCodexSource() {
         cancelHostTracking(for: .codex, clearApplications: true)
         cancelCodexRemoteProgress(clearHistory: true)
         excludedCodexActivityIDs = []; codexReceivedRequests = []; codexLogRequests = []
-        logWatcher.stop(); invalidateWork(invalidateSource: !versionInvalidated)
+        logWatcher.stop(); invalidateWork(invalidateSource: false)
         let previous = detachCodexQuota(preservingCadence: false)
         codexQuota = nil; codexHistory = QuotaCycleHistory(); codexHistoryWarning = nil; codexErrorMessage = nil
         quotaCLI = nil; attention = AttentionPolicy()
@@ -1998,18 +2515,19 @@ final class IslandModel: ObservableObject {
             }
             let current = generation == self.sourceGeneration && !self.sleeping && !self.stopped && !Task.isCancelled
             let deadline = ShutdownDeadline()
-            let realtime = self.realtimeMonitor
+            let stop = self.stopActivity(.codex, deadline: deadline)
             await ApplicationLifecycleCoordinator.cleanup([
                 .codexQuota: { await previous?.stop() },
-                .realtime: { if current { await realtime.shutdown(deadline: deadline) } },
+                .realtime: { if current { await stop?() } },
                 .reader: { if current { await reader.reset() } }
             ], deadline: deadline)
             guard generation == self.sourceGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
-            self.refreshCodexQuota(); self.refreshActivity(); self.refreshRemote()
+            self.refreshCodexQuota()
+            self.activityAdapters[.codex]?.start()
+            self.activityAdapters[.codex]?.discoverRoutes?()
         }
     }
-    private func resetClaudeSource(versionInvalidated: Bool = false) {
-        if !versionInvalidated { lifecycle.invalidateSources([.claude]) }
+    private func resetClaudeSource() {
         stopClaudeCloudMonitor()
         cancelClaudeRemoteSetup()
         claudeRemoteSetupStatus.removeAll(); claudeRemoteSetupFailures.removeAll(); claudeRemoteSetupFailedAt.removeAll(); claudeRemoteCheckedAt.removeAll()
@@ -2035,12 +2553,12 @@ final class IslandModel: ObservableObject {
             }
             let current = generation == self.claudeGeneration && !self.sleeping && !self.stopped && !Task.isCancelled
             let deadline = ShutdownDeadline()
-            let monitor = self.claudeMonitor
+            let stop = self.stopActivity(.claude, deadline: deadline)
             await ApplicationLifecycleCoordinator.cleanup([
-                .claudeQuota: { await previous?.stop() }, .claudeActivity: { if current { await monitor.shutdown(deadline: deadline) } }
+                .claudeQuota: { await previous?.stop() }, .claudeActivity: { if current { await stop?() } }
             ], deadline: deadline)
             guard generation == self.claudeGeneration, !self.sleeping, !self.stopped, !Task.isCancelled else { return }
-            self.refreshClaudeQuota(); self.startClaudeActivity()
+            self.refreshClaudeQuota(); self.activityAdapters[.claude]?.start()
         }
     }
     func clearSourceState() {
@@ -2071,6 +2589,7 @@ final class IslandModel: ObservableObject {
         flushDeepSeekHistory()
         let plan = lifecycle.shutdown()
         guard plan.actions.contains(.stopSources) else { return }
+        harnessAccounts.values.forEach { $0.stop() }
         desktopApplicationScan?.cancel()
         clock?.invalidate(); closeWork?.cancel()
         observations.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0); DistributedNotificationCenter.default().removeObserver($0) }
@@ -2081,16 +2600,16 @@ final class IslandModel: ObservableObject {
         let balance = cancelDeepSeekBalanceRead(stop: false)
         let deadline = ShutdownDeadline()
         let quota = detachCodexQuota(), claudeQuota = detachClaudeQuota(), cloud = claudeCloudCoordinator
-        let claude = claudeMonitor, deepseek = deepseekMonitor, setup = claudeRemoteSetup, realtime = realtimeMonitor
-        let progressFlag = codexProgressFlagTask, deepseekProgress = deepseekProgressTask
+        let setup = claudeRemoteSetup
+        let harnesses = detachLocalHarnesses()
+        let progressFlag = codexProgressFlagTask
+        let localProgress = Array(localHarnessProgressTasks.values)
         let completed = await ApplicationLifecycleCoordinator.cleanup([
             .codexProgressFlag: { _ = await progressFlag?.value },
             .codexQuota: { await quota?.stop() }, .claudeQuota: { await claudeQuota?.stop() },
-            .cloud: { await cloud?.stop() }, .claudeActivity: { await claude.shutdown(deadline: deadline) },
-            // Removing DeepSeek's reporter entry is local file work that takes milliseconds.
-            .deepseekActivity: { await deepseekProgress?.value; await deepseek.shutdown() }, .remoteSetup: { await setup.shutdown() },
-            .realtime: { await realtime.shutdown(deadline: deadline) }, .balance: { await balance?.stop() }
-        ], deadline: deadline)
+            .cloud: { await cloud?.stop() }, .remoteSetup: { await setup.shutdown() }, .balance: { await balance?.stop() },
+            .harnesses: { for task in localProgress { await task.value } }
+        ], activity: activityAdapters.cleanup(.shutdown, deadline: deadline, detached: harnesses), deadline: deadline)
         if !completed { OwnedProcessTermination.terminateAll() }
     }
 
@@ -2110,6 +2629,23 @@ final class IslandModel: ObservableObject {
         scheduleRateExpiry()
         if oldHeight != panelContentHeight { onLayoutChange?() }
     }
+    private var harnessMaintenanceAt = Date.distantPast
+    /// At most once a minute: credit reminders follow the calendar, so a quiet
+    /// account is still reminded before its credits lapse, and a progress guide
+    /// that waits on the app checks again, so trusting it outside Pacer's
+    /// checks still clears the sidebar dot and the Overview line.
+    private func harnessMaintenance() {
+        guard !demo, !sleeping, !stopped, now.timeIntervalSince(harnessMaintenanceAt) >= 60 else { return }
+        harnessMaintenanceAt = now
+        if !harnessCredits.isEmpty {
+            present(harnessCreditsAttention.notices(harnessCredits, settings: creditSettings,
+                                                    low: compactLayout.warnings.contains(.lowCredits), now: Date()))
+        }
+        for definition in localHarnesses.definitions where progressGuide(definition.descriptor.id)?.waiting == true {
+            recheckLocalHarnessProgress(definition.descriptor.id)
+        }
+    }
+
     private func scheduleClock() {
         clock?.invalidate()
         let interval: TimeInterval = !visiblyExpanded ? 30 : 2
@@ -2138,12 +2674,19 @@ final class IslandModel: ObservableObject {
     }
     private func tick() {
         redrawClock()
+        harnessMaintenance()
         performLifecycle(lifecycle.tick(.init(now: now, expanded: visiblyExpanded, codexConnected: streamStatuses["local"]?.connected == true,
             lastCodexDiscovery: lastDiscovery, lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
             deepseekRunning: running.contains { $0.provider == .deepseek })))
         if !sleeping, !stopped, !demo { onStatusChange?() }
     }
     private func performLifecycle(_ plan: ApplicationLifecycleCoordinator.Plan) {
+        if plan.changedProviders.contains(where: { harnessAccounts[$0] != nil }) {
+            for provider in plan.changedProviders where harnessAccounts[provider] != nil && !isModuleEnabled(provider) {
+                harnessCreditsAttention.reset(provider)
+            }
+            configureHarnessAccounts()
+        }
         for action in plan.actions {
             switch action {
             case .quota(let provider, let force, let active):
@@ -2151,24 +2694,16 @@ final class IslandModel: ObservableObject {
                 case .codex: refreshCodexQuota(force: force)
                 case .claude: refreshClaudeQuota(force: force)
                 case .deepseek: refreshDeepSeekBalance(scheduled: !force, active: active)
+                default: break
                 }
-            case .codexActivity: refreshActivity()
-            case .remoteActivity: refreshRemote()
-            case .activity(let provider):
-                if provider == .claude { startClaudeActivity() }
-                else if provider == .deepseek { startDeepSeekActivity() }
-            case .claudeTargets: discoverClaudeRemoteTargets()
+            case .activity(let provider): activityAdapters[provider]?.start()
+            case .discoverActivityRoutes(let provider): activityAdapters[provider]?.discoverRoutes?()
             case .applications: refreshDesktopApplications()
             case .clock: scheduleClock()
             case .displayExpiry: scheduleRateExpiry()
             case .pruneActivities: pruneCompletions()
             case .pruneHistory: codexHistory.prune(at: now); claudeHistory.prune(at: now)
-            case .resetSource(let provider):
-                switch provider {
-                case .codex: resetCodexSource(versionInvalidated: true)
-                case .claude: resetClaudeSource(versionInvalidated: true)
-                case .deepseek: resetDeepSeekSource(versionInvalidated: true)
-                }
+            case .resetSource(let provider): activityAdapters[provider]?.reset()
             case .updateActivityPolicy: logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval)
             case .cloud: syncClaudeCloudMonitor()
             case .balanceBinding: applyDeepSeekBalanceSource()
@@ -2200,6 +2735,7 @@ final class IslandModel: ObservableObject {
         for snapshot in DemoScenario.quota(.codex, at: now) { codexHistory.record(snapshot); codexQuota = snapshot }
         for snapshot in DemoScenario.quota(.claude, at: now) { claudeHistory.record(snapshot); claudeQuota = snapshot }
         makeDeepSeekDemo()
+        configureHarnessAccounts()
         guard demoArguments != nil else { return }
         setDemoStage(demoArguments?.contains("--demo-cloud") == true ? .tool : .thinking)
         if demoArguments?.contains("--demo-completion") == true { setDemoStage(.completed) }
@@ -2215,6 +2751,8 @@ final class IslandModel: ObservableObject {
         var observed = demoArguments.contains("--demo-subagents") ? DemoScenario.subagentTasks(stage: stage, at: now) : DemoScenario.tasks(stage: stage, at: now)
         if demoArguments.contains("--demo-claude") { observed.append(DemoScenario.claudeTask(stage: stage, at: now)) }
         if demoArguments.contains("--demo-deepseek") { observed.append(DemoScenario.deepseekTask(stage: stage, at: now)) }
+        // A module turned on in the demo joins it with its own task.
+        if isModuleEnabled(.workbuddy) { observed.append(DemoScenario.workbuddyTask(stage: stage, at: now)) }
         demoRequests = []
         if demoArguments.contains("--demo-cloud") {
             let cloud = DemoScenario.claudeCloud(stage: stage, at: now)

@@ -309,11 +309,11 @@ final class WindowsClaudeRemoteTests: XCTestCase {
         XCTAssertEqual(value["enabledPlugins"] as? [String: Bool], ["other@market": true, "pacer@pacer": true])
         XCTAssertEqual((value["permissions"] as? [String: Any])?["allow"] as? [String], ["Read", ClaudeHookInstaller.progressTool])
         XCTAssertNotNil((value["extraKnownMarketplaces"] as? [String: Any])?["pacer"])
-        // A hand-written mode is kept, and a current host sees no rewrite.
+        // An older step-size switch moves to the one mode, and a current host sees no settings rewrite.
         try Data("tool 15\n".utf8).write(to: flag)
         let installed = try Data(contentsOf: settings)
         _ = try await setup.install(target: target, requireHome: true, progressRing: true)
-        XCTAssertEqual(try Data(contentsOf: flag), Data("tool 15\n".utf8)); XCTAssertEqual(try Data(contentsOf: settings), installed)
+        XCTAssertEqual(try Data(contentsOf: flag), Data("tool\n".utf8)); XCTAssertEqual(try Data(contentsOf: settings), installed)
         // Off removes the switch and exactly Pacer's entries; the user's stay.
         _ = try await setup.install(target: target, requireHome: true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: flag.path))

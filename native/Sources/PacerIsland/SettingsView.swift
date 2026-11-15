@@ -77,6 +77,12 @@ struct SettingsView: View {
         return result
     }()
     @State private var pane = SettingsPane.load()
+    /// Shared with Windows; each switch applies at once, like Codex's ring.
+    @State private var disabledHarnessProgress = Set(UserDefaults.standard.stringArray(forKey: IslandModel.disabledHarnessProgressKey) ?? [])
+    @State private var hiddenTurnCredits = Set(UserDefaults.standard.stringArray(forKey: IslandModel.hiddenTurnCreditsKey) ?? [])
+    @State private var harnessHomes = UserDefaults.standard.dictionary(forKey: IslandModel.harnessHomesKey) as? [String: String] ?? [:]
+    /// Modules as the switches stand now, before they are applied.
+    private var library: ModuleLibrary { model.moduleLibrary(modules) }
     /// A row a link elsewhere asked for, scrolled into view when its pane opens.
     @State private var scrollTarget: String?
     private static let gaugeAnchor = SettingsCollapsedBarPane.inspectorAnchor
@@ -91,8 +97,11 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            MainWindowSidebar(selection: $pane, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
-                needsAttention: needsAttention, updateVersion: updater.flow.available?.version)
+            let library = library
+            MainWindowSidebar(selection: $pane, services: library.prominent.map(\.provider), searchable: library.entries.map(\.provider),
+                hiddenModules: library.collapsed.count, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
+                needsAttention: needsAttention, attentionHelp: { $0.provider.flatMap(progressAttention) },
+                updateVersion: updater.flow.available?.version)
                 .background(SidebarMaterial())
             Rectangle().fill(Color.black.opacity(0.25)).frame(width: 1)
             detail.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -104,6 +113,8 @@ struct SettingsView: View {
         .onAppear {
             automaticUpdateChecks = updater.automaticallyChecks
             launchAtLogin.refresh()
+            if let provider = pane.provider, !model.supportedModules.contains(provider) { pane = .overview }
+            refreshProgressConnection()
         }
         .task(id: "\(cliScanRevision):\(executable)") {
             cliReport = nil
@@ -114,7 +125,11 @@ struct SettingsView: View {
             guard !Task.isCancelled else { return }
             cliReport = report
         }
-        .onChange(of: pane) { _, value in UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey) }
+        .onChange(of: pane) { _, value in
+            UserDefaults.standard.set(value.rawValue, forKey: SettingsPane.defaultsKey)
+            refreshProgressConnection()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshProgressConnection() }
         // Settings apply as they change, like System Settings; there is no Save.
         .onChange(of: liveSettings) { _, _ in scheduleApply() }
         .onChange(of: theme) { _, value in value.apply() }
@@ -139,6 +154,12 @@ struct SettingsView: View {
         }
     }
 
+    private func refreshProgressConnection() {
+        if let provider = pane.provider, !HarnessRegistry.legacyIDs.contains(provider) {
+            model.recheckLocalHarnessProgress(provider)
+        }
+    }
+
     /// Overview and History lay out their own cards; every other page is one
     /// centered column of cards under its header.
     private var detail: some View {
@@ -153,7 +174,8 @@ struct SettingsView: View {
                         paneContent
                     }
                     .task {
-                        guard let target = scrollTarget else { return }
+                        // A module's ring card that needs the user comes into view when its page opens.
+                        guard let target = scrollTarget ?? pane.provider.flatMap(progressAttention).map({ _ in ProgressGuideRows.anchor }) else { return }
                         scrollTarget = nil
                         try? await Task.sleep(nanoseconds: 150_000_000)
                         withAnimation { proxy.scrollTo(target, anchor: .center) }
@@ -186,9 +208,9 @@ struct SettingsView: View {
 
     private func providerHeader(_ provider: AgentProvider) -> some View {
         HStack(spacing: 14) {
-            SettingsIconTile(symbol: provider.glyph, tint: provider.shade(light: false), glyph: Color.black.opacity(0.72), size: 40)
+            ProviderAppIcon(provider: provider, size: 40)
             VStack(alignment: .leading, spacing: 3) {
-                Text(provider.displayName).font(.system(size: 22, weight: .bold)).accessibilityAddTraits(.isHeader)
+                Text(provider.settingsTitle).font(.system(size: 22, weight: .bold)).accessibilityAddTraits(.isHeader)
                 HStack(spacing: 6) {
                     Text(L10n.text(model.providerDetected(provider) ? "provider.detected" : "provider.not_detected") +
                         (moduleMode(provider) == .automatic ? " · " + L10n.text("provider.automatic") : ""))
@@ -200,7 +222,7 @@ struct SettingsView: View {
                 .font(.system(size: 12.5)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Toggle(provider.displayName, isOn: moduleBinding(provider)).labelsHidden().toggleStyle(.switch)
+            Toggle(provider.settingsTitle, isOn: moduleBinding(provider)).labelsHidden().toggleStyle(.switch)
         }
     }
 
@@ -218,8 +240,15 @@ struct SettingsView: View {
         case .claude: claudeAttentionKey != nil
         case .codex: moduleEnabled(.codex) && cliReport.map { $0.selected == nil } == true
         case .remote: SettingsConnectionsPane.problemCount(model) > 0
-        default: false
+        default: pane.provider.flatMap(progressAttention) != nil
         }
+    }
+
+    /// What a module's progress ring still needs from the user, while its ring is on.
+    private func progressAttention(_ provider: AgentProvider) -> String? {
+        guard moduleEnabled(provider), !disabledHarnessProgress.contains(provider.rawValue),
+              let guide = model.progressGuide(provider), guide.attention else { return nil }
+        return guide.summary
     }
 
     private var attentionItems: [OverviewAttention] {
@@ -232,6 +261,13 @@ struct SettingsView: View {
             }
             items.append(.init(id: "claude", title: AgentProvider.claude.displayName + " · " + L10n.text(key),
                 detail: L10n.text("main.attention.quota_waits"), action: action, perform: perform))
+        }
+        // A ring whose app still needs a step: what it needs, and its current step.
+        for provider in library.prominent.map(\.provider) {
+            guard let summary = progressAttention(provider), let guide = model.progressGuide(provider) else { continue }
+            items.append(.init(id: "progress." + provider.rawValue, title: provider.displayName + " · " + summary,
+                detail: guide.steps.first { $0.state == .current }?.title ?? guide.line ?? "",
+                action: L10n.text("main.overview.open"), perform: { pane = SettingsPane(provider: provider) }))
         }
         if needsAttention(.codex) {
             items.append(.init(id: "codex", title: "Codex CLI · " + L10n.text("provider.state.not_found"),
@@ -288,12 +324,13 @@ struct SettingsView: View {
                 quotaStyle: $quotaStyle, retention: $completedRetention, showsAppButtons: $showsAppButtons,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) },
                 deepseekDetailed: DeepSeekPanelStyle.load() == .detailed,
-                openGeneral: { pane = .general }, openDeepSeek: { pane = .deepseek })
+                openGeneral: { pane = .general }, openDeepSeek: { pane = .deepseek },
+                openModule: { pane = SettingsPane(provider: $0) }, credits: creditBinding)
         case .notifications:
             SettingsNotificationsPane(model: model, notificationPreference: notificationPreference, layout: $compactLayout,
                 lowBalance: $deepseekLowBalance, spikeLimit: $deepseekSpikeLimit,
                 providers: AgentProvider.allCases.filter { moduleEnabled($0) }, openDeepSeek: { pane = .deepseek },
-                openTaskList: { panelSelection = .block(.tasks); pane = .expandedPanel })
+                credits: creditBinding, openTaskList: { panelSelection = .block(.tasks); pane = .expandedPanel })
         case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
         case .remote:
@@ -304,8 +341,13 @@ struct SettingsView: View {
                 onShowWelcome: onShowWelcome, openPane: { pane = $0 })
         case .support:
             SettingsSupportPane()
+        case .modules:
+            SettingsModuleLibraryPane(library: library, open: { pane = SettingsPane(provider: $0) },
+                toggle: { provider in modules.setMode(moduleEnabled(provider) ? .disabled : .enabled, for: provider) })
         case .overview, .history:
             EmptyView()
+        default:
+            if let provider = pane.provider { providerPane(provider) }
         }
     }
 
@@ -314,6 +356,20 @@ struct SettingsView: View {
     @ViewBuilder private func providerPane(_ provider: AgentProvider) -> some View {
         if !moduleEnabled(provider) {
             MainCard { CardRow(title: L10n.text("main.module_off_hint")) }
+        } else if let descriptor = model.localHarnessDescriptors.first(where: { $0.id == provider }) {
+            SettingsHarnessSections(model: model, descriptor: descriptor,
+                showsProgress: Binding(get: { !disabledHarnessProgress.contains(provider.rawValue) }, set: { visible in
+                    if visible { disabledHarnessProgress.remove(provider.rawValue) } else { disabledHarnessProgress.insert(provider.rawValue) }
+                    UserDefaults.standard.set(disabledHarnessProgress.sorted(), forKey: IslandModel.disabledHarnessProgressKey)
+                    model.refreshProgressPresentation()
+                }),
+                showsTurnCredits: Binding(get: { !hiddenTurnCredits.contains(provider.rawValue) }, set: { visible in
+                    if visible { hiddenTurnCredits.remove(provider.rawValue) } else { hiddenTurnCredits.insert(provider.rawValue) }
+                    UserDefaults.standard.set(hiddenTurnCredits.sorted(), forKey: IslandModel.hiddenTurnCreditsKey)
+                    model.refreshProgressPresentation()
+                }),
+                dataFolder: Binding(get: { harnessHomes[provider.rawValue] ?? "" }, set: { harnessHomes[provider.rawValue] = $0 }),
+                commitDataFolder: { commitHarnessHome(provider) })
         } else if provider == .deepseek {
             SettingsDeepSeekSections(model: model, balanceSource: $deepseekSource, budgets: $deepseekBudgets,
                 // Like Codex, the switch applies at once, so turning it off and quitting still removes the entry.
@@ -469,6 +525,21 @@ struct SettingsView: View {
     /// component is shown sit in its row, under its title.
     private func warning(_ text: String) -> some View {
         Text(text).font(.system(size: 12)).foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A credits module's display and reminder choices, saved as they change.
+    private func creditBinding(_ provider: AgentProvider) -> Binding<HarnessCreditsSettings> {
+        Binding(get: { model.creditSettings(provider) }, set: { model.setCreditSettings(provider, $0) })
+    }
+    /// A data folder applies once committed; an empty field returns to the default.
+    private func commitHarnessHome(_ provider: AgentProvider) {
+        let trimmed = (harnessHomes[provider.rawValue] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        harnessHomes[provider.rawValue] = trimmed.isEmpty ? nil : trimmed
+        var stored = UserDefaults.standard.dictionary(forKey: IslandModel.harnessHomesKey) as? [String: String] ?? [:]
+        guard stored[provider.rawValue] != harnessHomes[provider.rawValue] else { return }
+        stored[provider.rawValue] = harnessHomes[provider.rawValue]
+        UserDefaults.standard.set(stored, forKey: IslandModel.harnessHomesKey)
+        model.applySettings(sourceChanged: true)
     }
 
     private func moduleMode(_ provider: AgentProvider) -> ProviderModuleMode { modules.mode(for: provider) }

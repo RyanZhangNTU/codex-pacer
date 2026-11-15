@@ -25,11 +25,11 @@ final class PresentationEnumCodableTests: XCTestCase {
 
     func testEveryCaseKeepsItsOriginalJSONStringAndRejectsUnknownStrings() throws {
         try check(CompactWarningPresentation.Item.Kind.allCases,
-            ["fiveHour", "ssh", "quotaDelay", "exhausted", "lowBalance", "spike", "overBudget", "nearingBudget"])
+            ["fiveHour", "ssh", "quotaDelay", "exhausted", "lowBalance", "spike", "overBudget", "nearingBudget", "lowCredits"])
         try check(DeepSeekAlertPresentation.Kind.allCases, ["exhausted", "lowBalance", "spike", "overBudget", "nearingBudget"])
         try check(DeepSeekConnectionPresentation.Action.allCases, ["signIn", "refresh"])
         try check(DeepSeekConnectionPresentation.Color.allCases, ["green", "secondary", "orange"])
-        try check(AgentProvider.allCases, ["codex", "claude", "deepseek"])
+        try check(AgentProvider.allCases, ["codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"])
         try check([QuotaDashboardPresentation.Verdict.spare, .steady, .fast], ["spare", "steady", "fast"])
         try check(P.SingleTask.allCases, ["stage", "count", "percent"])
         typealias O = CompactComponentOptions
@@ -46,7 +46,7 @@ final class PresentationEnumCodableTests: XCTestCase {
         try check(O.WarningStyle.allCases, ["capsule", "dot"])
         try check(CompactBarSize.allCases, ["small", "standard", "large", "extraLarge"])
         try check(P.Metric.allCases, ["remaining", "pace"])
-        try check(P.RingChoice.allCases, ["", "none", "codex", "claude", "deepseek"])
+        try check(P.RingChoice.allCases, ["", "none", "codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"])
     }
 
     private func roundTrip<T: Codable & Equatable>(_ type: T.Type, _ oldJSON: String,
@@ -63,7 +63,7 @@ final class PresentationEnumCodableTests: XCTestCase {
         let options = try roundTrip(P.Options.self,
             #"{"singleTask":"count","metric":"pace","codexWindow":"five","claudeWindow":"auto","rings":["","deepseek"]}"#)
         XCTAssertEqual(options.singleTask, .count); XCTAssertEqual(options.metric, .pace)
-        XCTAssertEqual(options.rings, [.automatic, .deepseek]); XCTAssertTrue(options.valid)
+        XCTAssertEqual(options.rings, [.automatic, .init(provider: .deepseek)]); XCTAssertTrue(options.valid)
         for provider in ["codex", "claude", "deepseek"] {
             let entry = try roundTrip(P.Entry.self, "{\"provider\":\"\(provider)\",\"text\":\"43%\",\"stripText\":\"43\",\"dimmed\":false}")
             XCTAssertEqual(entry.provider.rawValue, provider)
@@ -122,7 +122,7 @@ final class PresentationEnumCodableTests: XCTestCase {
             }
         }
         let options: [String: Any] = ["singleTask": "stage", "metric": "remaining", "codexWindow": "auto", "claudeWindow": "auto", "rings": ["", ""]]
-        for (field, invalid) in [("singleTask", "future" as Any), ("metric", "future" as Any), ("rings", ["future", "none"] as Any)] {
+        for (field, invalid) in [("singleTask", "future" as Any), ("metric", "future" as Any), ("rings", ["Future Ring", "none"] as Any)] {
             var changed = options; changed[field] = invalid
             try rejects(P.Options.self, changed, field: field)
             let request: [String: Any] = ["language": "en", "providers": ["codex"], "options": changed, "attached": false, "strip": false]

@@ -31,6 +31,7 @@ public partial class IslandWindow : Window
     private string deepseekPanelStyle = "detailed";
     private readonly WindowsDesktopApplications? desktopApplications;
     private readonly Func<EngineNavigationPlan, EngineTaskRow, Task<bool>> openConversation;
+    private readonly HarnessAccounts? harnessAccounts;
     private readonly HashSet<string> openingActivityContexts = [];
     private readonly Func<bool>? canConnectDeepSeekWeb;
     private bool showAppButtons = true;
@@ -87,7 +88,7 @@ public partial class IslandWindow : Window
         Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null,
         Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null,
         Func<IDisplayTopologySource>? displayTopologyFactory = null, ISystemAppearanceSource? appearanceSource = null,
-        DisplayPresence? presence = null)
+        DisplayPresence? presence = null, HarnessAccounts? harnessAccounts = null)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
@@ -97,6 +98,8 @@ public partial class IslandWindow : Window
         this.desktopApplications = desktopApplications;
         this.canConnectDeepSeekWeb = canConnectDeepSeekWeb;
         this.openConversation = openConversation ?? OpenConversationAsync;
+        this.harnessAccounts = harnessAccounts;
+        if (harnessAccounts != null) harnessAccounts.Changed += UpdateHarnessAccount;
         this.screenGeometry = screenGeometry;
         this.backdropSystemFactory = backdropSystemFactory; this.backdropFactory = backdropFactory;
         ui = UiText.For(chinese);
@@ -339,39 +342,48 @@ public partial class IslandWindow : Window
         var available = desktopApplications?.Available() ?? [];
         bool canOpenHarness = available.Any(value => value.Provider == "deepseek");
         if (harnessAvailable != canOpenHarness) { harnessAvailable = canOpenHarness; foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row); }
-        availableApplications = available.Where(value => enabled.Contains(value.Provider)).Select(value => value.Provider).ToArray();
-        var apps = showAppButtons ? available.Where(value => enabled.Contains(value.Provider)).ToArray() : [];
-        string signature = string.Join(",", apps.Select(value => value.Provider));
+        var local = latest?.Modules?.Where(value => value is { Installed: true, Enabled: true, DisplayName: not null }
+            && WindowsConversationApplication.CanOpenApplication(value.Provider)).Select(value => value.Provider) ?? [];
+        availableApplications = available.Where(value => enabled.Contains(value.Provider)).Select(value => value.Provider).Concat(local).ToArray();
+        string[] apps = showAppButtons ? availableApplications : [];
+        string signature = string.Join(",", apps);
         if (signature == appButtonsSignature) return;
         appButtonsSignature = signature; AppButtons.Children.Clear();
-        foreach (var app in apps)
+        foreach (string provider in apps)
         {
             var button = new Button { Style = (Style)FindResource("IconButton") };
-            var glyph = new IconGlyph { Symbol = app.Provider switch { "codex" => "chevron.left.forwardslash.chevron.right", "deepseek" => "water.waves", _ => "asterisk" }, Width = 14, Height = 14,
-                Ink = new SolidColorBrush(app.Provider switch { "codex" => Color.FromRgb(102, 205, 187), "deepseek" => Color.FromRgb(126, 150, 255), _ => Color.FromRgb(255, 164, 119) }) };
-            button.Content = glyph; SetButtonName(button, ui.Text("windows.open." + app.Provider));
-            AutomationProperties.SetAutomationId(button, "island.open." + app.Provider);
-            button.Click += (_, _) => OpenDesktopApplication(app.Provider, button);
+            string symbol = DesktopPreferences.IsLegacyProvider(provider) ? GuideArt.ProviderSymbol(provider)
+                : GuideArt.Symbol(latest?.Modules?.FirstOrDefault(module => module.Provider == provider)?.Symbol ?? "circle.circle");
+            button.Content = ProviderIcon.CreateLaunch(provider, 17, button, symbol);
+            SetButtonName(button, OpenApplicationLabel(provider));
+            AutomationProperties.SetAutomationId(button, "island.open." + provider);
+            button.Click += async (_, _) =>
+            {
+                if (presentationStopped || !expanded || !Expanded.IsAccessible || !AppButtons.Children.Contains(button)) return;
+                await OpenDesktopApplicationAsync(provider);
+            };
             AppButtons.Children.Add(button);
         }
         AppButtons.Visibility = AppButtonsDivider.Visibility = apps.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
-    private void OpenDesktopApplication(string provider, Button button)
-    {
-        if (presentationStopped || !expanded || !Expanded.IsAccessible || !AppButtons.Children.Contains(button)) return;
-        ClearNavigationError();
-        if (desktopApplications?.Open(provider) == true) DismissForSettings();
-        else ShowNavigationError(ui.Text("windows.app.open_failed"));
-    }
+    private string OpenApplicationLabel(string provider) => DesktopPreferences.IsLegacyProvider(provider) ? ui.Text("windows.open." + provider)
+        : ui.Text("activity.open_app").Replace("%@", latest?.Modules?.FirstOrDefault(module => module.Provider == provider)?.DisplayName ?? provider, StringComparison.Ordinal);
     /// Enabled modules whose desktop app is installed, whether or not their buttons show.
     private string[] availableApplications = [];
     private IEnumerable<string> AvailableApplications() => availableApplications;
     /// An app the header leaves out opens from the More menu.
-    private void OpenDesktopApplicationFromMenu(string provider)
+    private async Task OpenDesktopApplicationFromMenu(string provider)
     {
         if (presentationStopped || !expanded || showAppButtons || !availableApplications.Contains(provider)) return;
+        await OpenDesktopApplicationAsync(provider);
+    }
+    private async Task OpenDesktopApplicationAsync(string provider)
+    {
         ClearNavigationError();
-        if (desktopApplications?.Open(provider) == true) DismissForSettings();
+        bool opened = DesktopPreferences.IsLegacyProvider(provider) ? desktopApplications?.Open(provider) == true
+            : !demo && await WindowsConversationApplication.OpenApplicationAsync(provider);
+        if (presentationStopped || !expanded) return;
+        if (opened) DismissForSettings();
         else ShowNavigationError(ui.Text("windows.app.open_failed"));
     }
     private void OnMouseEnter(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-in"); collapse.Stop(); SetExpanded(true); }
@@ -687,6 +699,7 @@ public partial class IslandWindow : Window
     }
     internal void StopPresentation()
     {
+        if (harnessAccounts != null) harnessAccounts.Changed -= UpdateHarnessAccount;
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged; engine.Snapshot -= QueueSnapshot;
         presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
@@ -724,6 +737,40 @@ public partial class IslandWindow : Window
     private bool panelDirty;
     private (double Width, double Height)? panelSize;
 
+    // Dismissed progress hints, by module, until that module's setup stage changes.
+    private readonly Dictionary<string, string> dismissedProgressHints = new(StringComparer.Ordinal);
+    private string? progressHintProvider;
+
+    /// One line over the tasks while a module's task runs but its progress
+    /// ring still needs a step in the app.
+    private void UpdateProgressHint(EngineSnapshot snapshot)
+    {
+        var modules = snapshot.Modules ?? [];
+        foreach (string key in dismissedProgressHints.Keys.ToArray())
+            if (modules.FirstOrDefault(value => value.Provider == key)?.ProgressGuide?.Stage != dismissedProgressHints[key]) dismissedProgressHints.Remove(key);
+        var running = snapshot.Presentation?.Rows.Where(row => row.Phase is not ("completed" or "interrupted")).Select(row => row.Provider).ToHashSet(StringComparer.Ordinal) ?? [];
+        var module = modules.FirstOrDefault(value => value.Enabled && value.ProgressGuide is { Attention: true, Summary: not null } guide
+            && running.Contains(value.Provider) && !dismissedProgressHints.ContainsKey(value.Provider));
+        progressHintProvider = module?.Provider;
+        if (module?.ProgressGuide is not { } shown) { ProgressHint.Visibility = Visibility.Collapsed; return; }
+        string text = (module.DisplayName ?? module.Provider) + " · " + shown.Summary;
+        ProgressHintText.Text = text; AutomationProperties.SetName(ProgressHint, text);
+        ProgressHintOpen.Content = ui.Text("progress_guide.hint.open");
+        AutomationProperties.SetName(ProgressHintOpen, ui.Text("progress_guide.hint.open"));
+        AutomationProperties.SetName(ProgressHintClose, ui.Text("progress_guide.hint.close"));
+        ProgressHint.Visibility = Visibility.Visible;
+    }
+    private void OnProgressHintOpen(object sender, RoutedEventArgs e)
+    {
+        if (progressHintProvider is string provider) OpenModuleSettings(provider);
+    }
+    private void OnProgressHintClose(object sender, RoutedEventArgs e)
+    {
+        if (progressHintProvider is not string provider || latest?.Modules?.FirstOrDefault(value => value.Provider == provider)?.ProgressGuide is not { } guide) return;
+        dismissedProgressHints[provider] = guide.Stage;
+        if (latest != null) UpdateProgressHint(latest);
+    }
+
     private void Render(EngineSnapshot snapshot)
     {
         if (presentationStopped) return;
@@ -735,6 +782,7 @@ public partial class IslandWindow : Window
         openingActivityContexts.IntersectWith((snapshot.ActivityLinks ?? []).Select(link => link.Context));
         ApplyNavigationFailure(snapshot.NavigationError);
         UpdateAppButtons();
+        UpdateProgressHint(snapshot);
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
         MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
         UpdateCompactBar();
