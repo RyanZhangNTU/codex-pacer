@@ -10,7 +10,8 @@ import json, pathlib, sys
 
 TOOL = {
     'name': 'report_progress',
-    'description': "Report your best estimate of how much of the user's current request is done. Pacer shows it as a progress ring.",
+    # PacerCore's ProgressPrompt.toolDescription, shared by every module.
+    'description': "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: with your first tool calls, again whenever the estimate changes and at least every 5 tool calls while you work, and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools.",
     'inputSchema': {'type': 'object', 'properties': {'percent': {'type': 'integer', 'minimum': 0, 'maximum': 100}},
                     'required': ['percent'], 'additionalProperties': False},
     'annotations': {'readOnlyHint': True, 'openWorldHint': False},

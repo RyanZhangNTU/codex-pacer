@@ -7,7 +7,7 @@ public struct TaskProgressReporter {
     package static let durableArgument = "--durable"
     package static let localHarnessArgument = "--task-progress-mcp"
     private static let limit = 1024 * 1024
-    private static let instructions = "Report your best estimate of how much of the user's current request is done. Call this tool with your first useful tool batch, after meaningful progress, and before a long wait. Use an integer from 0 to 100 and revise it downward when needed. Skip reports for short replies that need no tools."
+    private static let instructions = ProgressPrompt.toolDescription
     private let flag: URL?
     private let capturesDurableReceipts: Bool
     private var pending = Data()

@@ -380,7 +380,7 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         try Data("tool 15\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
         XCTAssertTrue(try run(prompt).contains("moves 15 points or more"))
         try Data("tool progress\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
-        XCTAssertTrue(try run(prompt).contains("whenever you make progress"))
+        XCTAssertTrue(try run(prompt).contains(ProgressPrompt.ask(tool: ClaudeHookInstaller.progressTool)), "The hook's line is Core's shared wording")
         try Data("tool 99\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
         XCTAssertFalse(try run(prompt).contains("points or more"), "A step outside 1-50 falls back to every batch")
         func report(_ input: [String: Any], _ id: String, tool: String = "mcp__pacer__report_progress", agent: String? = nil) -> [String: Any] {

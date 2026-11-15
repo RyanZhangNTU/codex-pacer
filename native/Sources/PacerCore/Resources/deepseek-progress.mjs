@@ -2,7 +2,8 @@
 import { lstatSync, readFileSync } from 'node:fs';
 
 const flag = new URL('enabled', import.meta.url);
-const instructions = "Report your best estimate of how much of the user's current request is done. Call this tool with your first useful tool batch, after meaningful progress, and before stopping to wait for background work. Use an integer from 0 to 100 and revise it downward when needed. Skip reports for short replies that need no tools.";
+// PacerCore's ProgressPrompt.toolDescription, shared by every module.
+const instructions = "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: with your first tool calls, again whenever the estimate changes and at least every 5 tool calls while you work, and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools.";
 const tool = {
     name: 'report_progress',
     description: instructions,

@@ -54,8 +54,12 @@ package enum LocalHarnessProgressSetup {
         \(guidance)
         """ + "\n").utf8)
     }
-    private static let rule = progressRule("For a multi-step task that uses tools, use ToolSearch to find `mcp__pacer_progress__report_progress` and report your current estimate before starting the work. Report again at milestones and before long waits. Pass an integer from 0 to 100. Skip short replies that need no tools. If the tool is unavailable, continue the task.")
-    private static let previousRule = progressRule("For multi-step tasks, call `mcp__pacer_progress__report_progress` with a percentage from 0 to 100 at the first tool batch, at milestones, and before long waits. Search for `pacer_progress` if it is deferred. Skip short replies and continue if the tool is unavailable.")
+    package static let rule = progressRule(ProgressPrompt.ask(tool: "`mcp__pacer_progress__report_progress`"))
+    /// Earlier rules Pacer wrote, replaced by the current one.
+    private static let previousRules = [
+        progressRule("For a multi-step task that uses tools, use ToolSearch to find `mcp__pacer_progress__report_progress` and report your current estimate before starting the work. Report again at milestones and before long waits. Pass an integer from 0 to 100. Skip short replies that need no tools. If the tool is unavailable, continue the task."),
+        progressRule("For multi-step tasks, call `mcp__pacer_progress__report_progress` with a percentage from 0 to 100 at the first tool batch, at milestones, and before long waits. Search for `pacer_progress` if it is deferred. Skip short replies and continue if the tool is unavailable.")
+    ]
 
     private static func directory(_ home: URL) -> URL { home.appendingPathComponent("pacer-progress", isDirectory: true) }
     package static func flag(_ home: URL) -> URL { directory(home).appendingPathComponent("enabled") }
@@ -144,7 +148,7 @@ package enum LocalHarnessProgressSetup {
                 guard let rules, let ruleFile else { return true }
                 try storage.validate(rules); try storage.validate(ruleFile)
                 let original = try storage.exists(ruleFile) ? storage.read(ruleFile) : nil
-                guard original == nil || original == rule || original == previousRule else { return false }
+                guard original == nil || original == rule || previousRules.contains(where: { $0 == original }) else { return false }
                 if checkOnly || verifyOnly { return true }
                 if target.enabled, original != rule {
                     if !storage.isDirectory(rules) { try storage.createDirectory(rules, permissions: 0o700) }

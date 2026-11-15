@@ -50,7 +50,11 @@ def read_object(path):
 # lines are worded as the user's request; only each estimate's number comes back.
 OPEN,CLOSE=chr(0x27e6),chr(0x27e7);TOOL='mcp__plugin_pacer_pacer__report_progress'
 TOOLS=(TOOL,'mcp__pacer__report_progress')
-ASK="The user turned on Pacer's progress ring and asks that "
+# The wording is PacerCore's ProgressPrompt, shared by every module; keep these copies identical.
+ASK_TEMPLATE="The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with {tool}: with your first tool calls, again {when}, and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
+DEFERRED_TEMPLATE=" If {tool} is deferred, find it with tool search first."
+EVERY_STEP="whenever the estimate changes and at least every 5 tool calls while you work"
+MARKER_TEMPLATE="The user turned on Pacer's progress ring and asks that every message you write start with {marker}, your best estimate of how much of their current request is done. Always give a whole number from 0 to 100, and lower it if the work turns out larger."
 WAKE=('<task-notification>','<side-sessions-event>','[SYSTEM NOTIFICATION','<agent-message')
 # Background work a stopped turn waits on is any task but long-lived monitors
 # and Claude Code's own memory and scan work; new task kinds count.
@@ -76,9 +80,9 @@ def machine_prompt(value):
     if source is not None:return source not in ('user','sdk')
     prompt=value.get('prompt');return isinstance(prompt,str) and prompt.lstrip().startswith(WAKE)
 def progress_prompt(mode):
-    if mode=='marker':return ASK+"every message you write start with "+OPEN+"NN%"+CLOSE+", your best estimate of how much of their current request is done. Always give a number."
-    when=" after it moves "+mode[5:]+" points or more" if mode[5:] else " whenever you make progress"
-    return ASK+"you report your best estimate of how much of their current request is done with "+TOOL+": with your first tool calls,"+when+", and before you stop to wait for background work, in the same batch as your other tool calls. Always give a number."
+    if mode=='marker':return MARKER_TEMPLATE.replace('{marker}',OPEN+'NN%'+CLOSE)
+    when='after it moves '+mode[5:]+' points or more' if mode[5:] else EVERY_STEP
+    return (ASK_TEMPLATE+DEFERRED_TEMPLATE).replace('{tool}',TOOL).replace('{when}',when)
 def spool(home,rows,session=None,change=None):
     # Appends rows and updates the session's request state under events.lock.
     folder=home/'pacer';lockfd=private_open(folder/'events.lock',os.O_CREAT|os.O_RDWR);result=None
