@@ -51,7 +51,11 @@ import Security
               let types = bundle.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]],
               types.contains(where: { ($0["CFBundleURLSchemes"] as? [String])?.contains(scheme) == true }) else { return false }
         var code: SecStaticCode?, requirement: SecRequirement?
-        let expression = (pinned ? "identifier \"" + identifier + "\" and " : "") + "anchor apple generic and certificate leaf[subject.O] = \"" + organization + "\""
+        // The publisher's Team ID is steadier than its organization name; the
+        // name stays the fallback for an app without a known team.
+        let publisher = definition.macTeamIdentifier.map { "certificate leaf[subject.OU] = \"" + $0 + "\"" }
+            ?? "certificate leaf[subject.O] = \"" + organization + "\""
+        let expression = (pinned ? "identifier \"" + identifier + "\" and " : "") + "anchor apple generic and " + publisher
         guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
               SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement else { return false }
         return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSBasicValidateOnly), requirement) == errSecSuccess
