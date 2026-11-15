@@ -172,7 +172,7 @@ internal sealed partial class SettingsWindow
         // A prompt the user opened (restart despite a running task, or restart to
         // point) lasts while its step does.
         if (harnessGuidePrompt is { } prompt && (prompt.Provider != provider || prompt.Stage != guide?.Stage)) harnessGuidePrompt = null;
-        string key = System.Text.Json.JsonSerializer.Serialize(new { guide, editable, ui.Language, prompt = harnessGuidePrompt });
+        string key = System.Text.Json.JsonSerializer.Serialize(new { guide, editable, ui.Language, prompt = harnessGuidePrompt, light = settingsLight });
         if (key == harnessProgressKey) return;
         harnessProgressKey = key;
         foreach (UIElement child in harnessProgressBody.Children) PageAccessibility.Retire(child);
@@ -299,6 +299,15 @@ internal sealed partial class SettingsWindow
         return PictureFrame(bar);
     }
 
+    /// A credits dial on this page draws with the page's theme brushes and the brand's shade for it.
+    private QuotaDialInk SettingsDialInk(string provider)
+    {
+        Brush Resource(string key, Brush fallback) => TryFindResource(key) as Brush ?? fallback;
+        return new QuotaDialInk(Resource("SettingsPrimary", PacerPalette.Primary), Resource("SettingsSecondary", PacerPalette.Secondary),
+            Resource("SettingsWarning", PacerPalette.Attention), Resource("SettingsSeparator", PacerPalette.Hairline),
+            settingsLight ? Brushes.White : Brushes.Black, PacerPalette.BrandShade(provider, settingsLight));
+    }
+
     /// Pacer's tool in the app's custom connectors, drawn, with Trust inside a ring.
     private DecorativeBorder TrustPicture(string provider)
     {
@@ -313,8 +322,10 @@ internal sealed partial class SettingsWindow
         var caption = Label(ui.Text("progress_guide.trust_card.caption"), 11); caption.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); lines.Children.Add(caption);
         var detail = Label(ui.Text("progress_guide.trust_card.detail"), 11.5); detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 2, 0, 0); lines.Children.Add(detail);
         grid.Children.Add(lines);
-        var trust = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(14, 4, 14, 5), Background = new SolidColorBrush(PacerPalette.BrandColor(provider)) };
-        trust.Child = new TextBlock { Text = ui.Text("progress_guide.trust_card.button"), FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
+        // As the Mac draws it: white on the brand's deeper shade on a light page, dark ink on its light shade on a dark one.
+        var trust = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(14, 4, 14, 5), Background = PacerPalette.BrandShade(provider, settingsLight) };
+        trust.Child = new TextBlock { Text = ui.Text("progress_guide.trust_card.button"), FontSize = 12.5, FontWeight = FontWeights.SemiBold,
+            Foreground = settingsLight ? Brushes.White : new SolidColorBrush(Color.FromArgb(204, 0, 0, 0)) };
         var ring = new Border { BorderThickness = new Thickness(2.5), CornerRadius = new CornerRadius(10), Padding = new Thickness(3), Child = trust, VerticalAlignment = VerticalAlignment.Center };
         ring.SetResourceReference(Border.BorderBrushProperty, "SettingsAccent");
         Grid.SetColumn(ring, 1); grid.Children.Add(ring);
@@ -477,7 +488,7 @@ internal sealed partial class SettingsWindow
         if (harnessCreditsBlock == null) return;
         var credits = engine?.LatestSnapshot?.AccountCredits?.FirstOrDefault(value => value.Provider == provider);
         var presentation = account?.Reading == null ? null : credits?.Presentation;
-        string key = System.Text.Json.JsonSerializer.Serialize(new { presentation, stale = credits?.Stale, state = account?.State, busy = account?.Busy, ui.Language });
+        string key = System.Text.Json.JsonSerializer.Serialize(new { presentation, stale = credits?.Stale, state = account?.State, busy = account?.Busy, ui.Language, light = settingsLight });
         if (key == harnessCreditsKey) return;
         harnessCreditsKey = key;
         foreach (UIElement child in harnessCreditsBlock.Children) PageAccessibility.Retire(child);
@@ -494,8 +505,9 @@ internal sealed partial class SettingsWindow
         }
         var top = new Grid { Margin = new Thickness(14, 12, 14, 12) };
         top.ColumnDefinitions.Add(new() { Width = new GridLength(104) }); top.ColumnDefinitions.Add(new() { Width = new GridLength(18) }); top.ColumnDefinitions.Add(new());
-        var dial = new QuotaDial(provider, null, null, dialSize: 104, credits: presentation.Dial, creditsText: ui, creditsStale: credits?.Stale == true)
-            { Width = 104, Height = 104, VerticalAlignment = VerticalAlignment.Center };
+        // The page's own ink, not the island's: the island's light text vanished on a light page.
+        var dial = new QuotaDial(provider, null, null, dialSize: 104, credits: presentation.Dial, creditsText: ui, creditsStale: credits?.Stale == true,
+            ink: SettingsDialInk(provider)) { Width = 104, Height = 104, VerticalAlignment = VerticalAlignment.Center };
         Identify(dial, id + ".credits_dial", presentation.Dial.AccessibilityLabel);
         top.Children.Add(dial);
         var lines = new Grid { VerticalAlignment = VerticalAlignment.Center };

@@ -30,6 +30,13 @@ internal static class RingDrawing
     }
 }
 
+/// The colors a credits dial draws with: the island's own by default, or a Settings
+/// page's in its theme (the Mac's CreditsDial switches to system colors off the island).
+internal sealed record QuotaDialInk(Brush Primary, Brush Secondary, Brush Attention, Brush Hairline, Brush Surface, Brush? Tint = null)
+{
+    internal static QuotaDialInk Island => new(PacerPalette.Primary, PacerPalette.Secondary, PacerPalette.Attention, PacerPalette.Hairline, PacerPalette.Surface);
+}
+
 /// <summary>The original quota geometry, with independently missing values and clocks.</summary>
 internal sealed class QuotaDial : FrameworkElement
 {
@@ -43,15 +50,19 @@ internal sealed class QuotaDial : FrameworkElement
     private readonly HarnessCreditsDial? credits;
     private readonly UiText? creditsText;
     private readonly bool creditsStale;
+    private readonly QuotaDialInk? ink;
+    private QuotaDialInk Ink => ink ?? QuotaDialInk.Island;
+    /// The figure's color, for checks that a page's dial follows its theme.
+    internal Brush FigureInk => Ink.Primary;
     /// <param name="gauge">Core's choice of window for the panel's chosen periods; without it 5 hours splits the ring when reported.</param>
     /// <param name="paceTick">The white tick where an even pace would be.</param>
     internal QuotaDial(string provider, EngineQuota? quota, EngineWallet? wallet, bool classic = false,
         DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null, PanelGauge? gauge = null, bool paceTick = true,
-        HarnessCreditsDial? credits = null, UiText? creditsText = null, bool creditsStale = false)
+        HarnessCreditsDial? credits = null, UiText? creditsText = null, bool creditsStale = false, QuotaDialInk? ink = null)
     {
         this.provider = provider; this.wallet = wallet; this.classic = classic; this.dashboard = dashboard;
         this.classicPeriod = classicPeriod; this.dialSize = dialSize; this.gauge = gauge; this.paceTick = paceTick;
-        this.credits = credits; this.creditsText = creditsText; this.creditsStale = creditsStale;
+        this.credits = credits; this.creditsText = creditsText; this.creditsStale = creditsStale; this.ink = ink;
         _ = quota; // Raw transport data cannot replace a shared display projection.
     }
     private readonly Typeface regular = new(PacerFonts.Interface, FontStyles.Normal, FontWeights.Medium, FontStretches.Normal);
@@ -160,14 +171,14 @@ internal sealed class QuotaDial : FrameworkElement
     {
         double radius = Side / 2;
         var centre = new Point(radius, radius);
-        RingDrawing.Arc(drawing, centre, radius, start, sweep, PacerPalette.Hairline, 6, dashed: fraction == null);
+        RingDrawing.Arc(drawing, centre, radius, start, sweep, Ink.Hairline, 6, dashed: fraction == null);
         if (fraction > 0) RingDrawing.Arc(drawing, centre, radius, start, sweep * Math.Min(fraction.Value, 1), tint, 6);
     }
 
     private void DrawDisconnected(DrawingContext drawing)
     {
         double centre = Side / 2;
-        drawing.DrawEllipse(null, DrawingCache.Pen(PacerPalette.Hairline, 1.5), new Point(centre, centre), centre, centre);
+        drawing.DrawEllipse(null, DrawingCache.Pen(Ink.Hairline, 1.5), new Point(centre, centre), centre, centre);
         if (ProviderIcon.Source(provider) is { } icon)
             drawing.DrawImage(icon, new Rect(centre - 12, centre - 12, 24, 24));
     }
@@ -178,23 +189,23 @@ internal sealed class QuotaDial : FrameworkElement
     {
         if (credits == null) { DrawDisconnected(drawing); return; }
         double side = Side;
-        Brush tint = PacerPalette.Provider(provider);
+        Brush tint = Ink.Tint ?? PacerPalette.Provider(provider);
         drawing.PushOpacity(creditsStale ? 0.55 : 1);
         if (credits.Fraction is double fraction) DrawGauge(drawing, fraction, classic ? -90 : 125, classic ? 360 : 290, tint);
-        else drawing.DrawEllipse(null, DrawingCache.Pen(PacerPalette.Hairline, 1.5), new Point(side / 2, side / 2), side / 2, side / 2);
+        else drawing.DrawEllipse(null, DrawingCache.Pen(Ink.Hairline, 1.5), new Point(side / 2, side / 2), side / 2, side / 2);
         // The line above the figure fits inside the ring at its height, 3 px
         // clear of the 6 px stroke: the closed classic ring is narrower there.
         if (credits.Top is string top)
         {
             double inner = side / 2 - 6, rise = side / 2 - side * 0.23;
-            Fit(drawing, Text(top, side * 0.085, credits.TopWarns ? PacerPalette.Attention : PacerPalette.Secondary, credits.TopWarns), side * 0.23,
+            Fit(drawing, Text(top, side * 0.085, credits.TopWarns ? Ink.Attention : Ink.Secondary, credits.TopWarns), side * 0.23,
                 Math.Min(side * 0.72, 2 * Math.Sqrt(Math.Max(0, inner * inner - rise * rise))));
         }
-        var value = Text(credits.Center, side * 0.2, PacerPalette.Primary, true);
+        var value = Text(credits.Center, side * 0.2, Ink.Primary, true);
         double scale = Math.Min(1, side * 0.72 / Math.Max(1, value.WidthIncludingTrailingWhitespace));
         Fit(drawing, value, side / 2 - value.Height * scale / 2 + side * 0.02, side * 0.72);
         if (credits.Badge is string badge) DrawBadge(drawing, badge, credits.BadgeTone, tint, side * 0.088, classic ? side * 0.66 : side - side * 0.165);
-        else if (credits.GapLabel is string label) Centre(drawing, label, side * 0.09, classic ? side * 0.66 : side - side * 0.15, PacerPalette.Secondary);
+        else if (credits.GapLabel is string label) Centre(drawing, label, side * 0.09, classic ? side * 0.66 : side - side * 0.15, Ink.Secondary);
         drawing.Pop();
     }
     /// Draws a line centered and shrunk to fit the ring's inner width.
@@ -209,8 +220,8 @@ internal sealed class QuotaDial : FrameworkElement
     private void DrawBadge(DrawingContext drawing, string badge, string tone, Brush tint, double size, double top)
     {
         Color Of(Brush brush) => brush is SolidColorBrush solid ? solid.Color : Colors.Gray;
-        Color shade = Of(tone == "warning" ? PacerPalette.Attention : tint);
-        Brush ink = tone == "solid" ? PacerPalette.Surface : tone == "warning" ? PacerPalette.Attention : tint;
+        Color shade = Of(tone == "warning" ? Ink.Attention : tint);
+        Brush ink = tone == "solid" ? Ink.Surface : tone == "warning" ? Ink.Attention : tint;
         Brush fill = tone == "solid" ? new SolidColorBrush(shade) : new SolidColorBrush(Color.FromArgb(tone == "warning" ? (byte)66 : (byte)56, shade.R, shade.G, shade.B));
         var text = Text(badge, size, ink, true);
         double width = Math.Min(Side * 0.6, text.WidthIncludingTrailingWhitespace + size * 1.4), height = size * 1.7;

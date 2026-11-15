@@ -141,6 +141,9 @@ internal static class WorkBuddyAccountChecks
             Check(Spoken("credits_planBase").Contains("420.5 / 500", StringComparison.Ordinal) && Spoken("credits_reward").StartsWith("Reward credits 100", StringComparison.Ordinal)
                 && !Spoken("credits_reward").Contains('/'), "The breakdown groups refreshing and lapsing credits, and extra credits have no share");
             Check(reads > 0 && cycles > 0 && writes == 0, "The browser must only make the read-only billing requests");
+            // The page's dial draws with the page's ink: the island's light figure vanished on a light page (11/16 review).
+            Check(Require<QuotaDial>(settings, prefix + ".credits_dial").FigureInk.ToString() == settings.TryFindResource("SettingsPrimary")?.ToString(),
+                "The settings credits dial must draw its figure in the page's own primary ink");
 
             await settings.NavigateAsync("overview");
             await PresentationWait.UntilAsync(() => Find<QuotaDial>(settings, "settings.overview.workbuddy.account.remaining")?.AccessibleName.Contains(monthly, StringComparison.Ordinal) == true,

@@ -71,6 +71,15 @@ internal static class PacerPalette
         "codex" => BrandCodex, "claude" => BrandClaude, "deepseek" => BrandDeepSeek,
         _ => modules.TryGetValue(provider, out var module) ? module.Dark : null
     }) is SolidColorBrush brand ? brand.Color : Color.FromRgb(157, 157, 162);
+    /// A service's brand for a Settings page in the given tone: the deeper shade
+    /// on a light page, as the Mac's provider.shade(light:), whatever the island's tone.
+    internal static Brush BrandShade(string provider, bool light) => provider switch
+    {
+        "codex" => light ? LightCodex : BrandCodex,
+        "claude" => light ? LightClaude : BrandClaude,
+        "deepseek" => light ? LightDeepSeek : BrandDeepSeek,
+        _ => modules.TryGetValue(provider, out var module) ? light ? module.LightInk : module.Dark : light ? LightPrimary : DarkPrimary
+    };
     /// Returns whether a module's colors changed, so drawn views can repaint.
     internal static bool RegisterModules(System.Collections.Generic.IEnumerable<EngineModule>? values)
     {

@@ -548,7 +548,11 @@ internal sealed partial class SettingsWindow : Window
         semanticPaint.Apply(state); bool dark = darkOverride ?? state.Dark;
         SettingsPalette.Apply(Resources, dark, IsActive, state, main: true, AccentPalette.Controls(session.Current.AccentColor, !demo));
         RefreshSurfaceStatus();
+        // Drawn parts take the page's tone when they are built; a new tone rebuilds them.
+        if (settingsLight != !dark) { settingsLight = !dark; RefreshHarnessPage(); }
     }
+    /// Whether the window draws its light theme, for parts that pick explicit colors.
+    private bool settingsLight;
     internal static bool IsSystemDark()
     {
         try { using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"); return key?.GetValue("AppsUseLightTheme") is int value && value == 0; }
