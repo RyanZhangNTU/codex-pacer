@@ -25,7 +25,11 @@ struct HarnessAccountCard: View {
             if let presentation = HarnessCreditsPresentation(credits: connection.credits, settings: settings, now: now) {
                 if showsDetails {
                     HStack(spacing: 20) {
-                        dial(presentation)
+                        VStack(spacing: 6) {
+                            dial(presentation)
+                            // A failed or stale read says so in either layout.
+                            if connection.state == .unavailable { Text(L10n.text("common.not_updated")).font(.system(size: 10)) }
+                        }
                         CreditsLines(presentation: presentation, tint: tint, island: island)
                     }
                 } else {

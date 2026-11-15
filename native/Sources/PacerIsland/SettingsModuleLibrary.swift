@@ -91,9 +91,7 @@ struct SettingsModuleLibraryPane: View {
     @State private var showsNotFound = false
 
     var body: some View {
-        Text(L10n.text("modules.info")).font(.system(size: 12)).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        MainCard(title: L10n.text("modules.on_this_computer")) {
+        MainCard(title: L10n.text("modules.on_this_computer"), info: L10n.text("modules.info")) {
             if library.prominent.isEmpty {
                 CardRow(title: L10n.text("modules.empty"))
             } else {
@@ -103,16 +101,18 @@ struct SettingsModuleLibraryPane: View {
         }
         if !library.collapsed.isEmpty {
             MainCard(title: L10n.text("modules.not_found")) {
-                CardRow(title: L10n.text(showsNotFound ? "modules.hide_not_found" : "modules.show_not_found", library.collapsed.count)) {
-                    Button {
-                        withAnimation(.easeOut(duration: 0.15)) { showsNotFound.toggle() }
-                    } label: {
-                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                // The whole row opens or folds the list, not only its arrow.
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { showsNotFound.toggle() }
+                } label: {
+                    CardRow(title: L10n.text(showsNotFound ? "modules.hide_not_found" : "modules.show_not_found", library.collapsed.count)) {
+                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                             .rotationEffect(.degrees(showsNotFound ? 90 : 0))
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(L10n.text(showsNotFound ? "modules.hide_not_found" : "modules.show_not_found", library.collapsed.count))
+                    .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.text(showsNotFound ? "modules.hide_not_found" : "modules.show_not_found", library.collapsed.count))
                 if showsNotFound {
                     ModuleTileGrid(tiles: library.collapsed.map(ModuleTileContent.init(entry:)), open: open, toggle: toggle)
                         .padding(.vertical, 12)

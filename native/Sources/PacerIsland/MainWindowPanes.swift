@@ -426,16 +426,21 @@ struct SettingsNotificationsPane: View {
                     bar: choice(.budget), system: follows(.budget))
             }
         }
-        // One card per module that reads account credits, like DeepSeek's wallet:
-        // the shared low-credits row, then this module's line and expiry reminder.
-        ForEach(providers.filter { HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true }, id: \.self) { provider in
+        // One card per module that reads account credits, like DeepSeek's wallet: this
+        // module's line and expiry reminder. One low-credits row after them covers them all.
+        let creditModules = providers.filter { HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true }
+        ForEach(creditModules, id: \.self) { provider in
             MainCard(title: provider.settingsTitle) {
-                row(L10n.text("main.notify.low_credits"), note: L10n.text("main.notify.low_credits_note"),
-                    bar: choice(.lowCredits), system: follows(.lowCredits))
                 CardRow(title: L10n.text("credits.reminder.low"), info: L10n.text("credits.reminder.low_info")) { creditsLowField(provider) }
                 CardRow(title: L10n.text("credits.reminder.expiry_title"), info: L10n.text("credits.reminder.expiry_info")) {
                     creditsExpiryField(provider)
                 }
+            }
+        }
+        if !creditModules.isEmpty {
+            MainCard {
+                row(L10n.text("main.notify.low_credits"), note: L10n.text("main.notify.low_credits_note"),
+                    bar: choice(.lowCredits), system: follows(.lowCredits))
             }
         }
         MainCard {

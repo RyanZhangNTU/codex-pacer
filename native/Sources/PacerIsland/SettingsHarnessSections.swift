@@ -57,7 +57,7 @@ struct SettingsHarnessSections: View {
         let status = model.localHarnessStatus(provider)
         let (tint, key, detail): (Color, String, String?) = switch status {
         case .ready: (MainPalette.positive, "harness.data.found", nil)
-        case .missing where model.providerDetected(provider): (.secondary, "harness.data.found", "harness.missing")
+        case .missing where model.providerDetected(provider): (.secondary, "harness.data.missing", "harness.missing")
         case .incompatible: (MainPalette.attention, "harness.data.found", "harness.incompatible")
         case .unavailable: (MainPalette.attention, "harness.data.found", "harness.unavailable")
         case nil where model.providerDetected(provider): (.secondary, "provider.state.searching", nil)
@@ -98,13 +98,16 @@ private struct HarnessAccountRow: View {
 
     var body: some View {
         let reading = connection.reading
+        // Reading with nothing to show yet; signed in, amber when the last read
+        // failed (the reason goes under the row); or signed out.
+        let failed = connection.signedIn && connection.state == .unavailable
         let (tint, key): (Color, String) =
             connection.busy && reading == nil ? (.secondary, "harness.account.reading") :
-            connection.state == .unavailable ? (MainPalette.attention, "harness.account.unavailable") :
-            connection.signedIn && reading != nil ? (MainPalette.positive, "harness.account.signed_in") :
+            connection.signedIn ? (failed ? MainPalette.attention : MainPalette.positive, "harness.account.signed_in") :
             (MainPalette.attention, "harness.account.signed_out")
-        let state = [L10n.text(key), reading?.plan].compactMap { $0 }.joined(separator: " · ")
-        return CardStatusRow(title: L10n.text("harness.account_row"), state: state, tint: tint, help: connection.siteHost) {
+        let state = [L10n.text(key), key == "harness.account.signed_in" ? reading?.plan : nil].compactMap { $0 }.joined(separator: " · ")
+        return CardStatusRow(title: L10n.text("harness.account_row"), state: state, tint: tint, help: connection.siteHost,
+                             detail: failed ? L10n.text("harness.account.unavailable") : nil) {
             Group {
                 if !connection.signedIn {
                     Button(L10n.text("welcome.module.sign_in")) { connection.connect() }.buttonStyle(.mainProminent)

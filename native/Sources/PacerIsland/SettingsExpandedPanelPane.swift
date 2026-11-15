@@ -419,7 +419,7 @@ struct SettingsExpandedPanelPane: View {
         case .block(.workbuddy), .block(.workbuddyAI):
             if case .block(let block) = item, let provider = block.provider {
                 segments(L10n.text("credits.option.center"), stacked: true, selection: creditCenter(provider),
-                         options: HarnessCreditsFigure.allCases.map { ($0, L10n.text("credits.figure." + $0.rawValue)) })
+                         options: HarnessCreditsFigure.allCases.map { ($0, L10n.text("credits.figure_short." + $0.rawValue)) })
                 quotaLayout(detailsHelp: L10n.text("harness.account.details_help"))
                 link(L10n.text("harness.account.connection"), to: L10n.text("harness.account.open_settings"), action: { openModule(provider) })
             }

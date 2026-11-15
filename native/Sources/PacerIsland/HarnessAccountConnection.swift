@@ -70,7 +70,9 @@ import WebKit
     /// The window closes by itself once credits can be read. Switching
     /// accounts signs the current one out first, or it would read at once.
     func connect(switching: Bool = false) {
-        guard enabled, !busy else { return }
+        guard enabled else { return }
+        // Already signing in: bring that window forward instead of ignoring the click.
+        guard !busy else { login?.front(); return }
         scheduled?.cancel(); scheduled = nil
         defaults.removeObject(forKey: key)
         update(nil, .signIn)
@@ -144,7 +146,11 @@ import WebKit
         }
     }
 
+    /// Reads in a row that failed; the next try waits longer each time.
+    private var failures = 0
+
     private func apply(_ result: HarnessAccountCredits?) {
+        failures = result?.reading() != nil || result?.state == .signIn ? 0 : failures + 1
         if result?.reading() != nil { update(result, .ready) }
         // An expired session needs signing in again, so the button returns.
         else if result?.state == .signIn { defaults.removeObject(forKey: key); update(nil, .signIn) }
@@ -161,11 +167,28 @@ import WebKit
         onChange?()
     }
 
+    /// Seconds until the next read, as on Windows: every two minutes while
+    /// readings come in; after a failure 5, 10, then 20 minutes, and at most 30.
+    static func nextRead(state: HarnessAccountCredits.State, failures: Int) -> Int {
+        guard state != .ready else { return 120 }
+        return min(1_800, 300 << max(0, min(failures, 4) - 1))
+    }
+
+    /// How often the sign-in window checks for credits: quickly while the
+    /// user is likely signing in, then less often.
+    static func loginCheckInterval(after elapsed: TimeInterval) -> Duration { elapsed < 120 ? .seconds(3) : .seconds(10) }
+
+    /// The sign-in window opens a few popups for a sign-in step, often blank
+    /// at first and then loading their https page; others stay closed.
+    static func opensLoginPopup(_ url: URL?, open: Int) -> Bool {
+        let scheme = url?.scheme?.lowercased()
+        return open < 4 && (scheme == nil || scheme == "https" || scheme == "about")
+    }
+
     private func schedule() {
         scheduled?.cancel(); scheduled = nil
         guard enabled, state != .signIn, defaults.bool(forKey: key) else { return }
-        // A read that failed, as right after waking, tries again sooner.
-        let seconds = state == .ready ? 120 : 60
+        let seconds = Self.nextRead(state: state, failures: failures)
         scheduled = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             if !Task.isCancelled { self?.refresh() }
@@ -235,7 +258,6 @@ import WebKit
 /// few seconds, wherever the page has gone (a QR or third-party step included),
 /// and the first reading confirms the sign-in and closes the window.
 @MainActor private final class HarnessAccountLogin: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
-    private static let checkInterval: Duration = .seconds(3)
     private let provider: AgentProvider
     private let origin: URL
     private let loginPath: String
@@ -272,9 +294,10 @@ import WebKit
             let panel = makeWindow()
             panel.contentView = NSView.webLoginContainer(banner: strip, page: page)
             window = panel
+            let opened = Date()
             polling = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: Self.checkInterval)
+                    try? await Task.sleep(for: HarnessAccountConnection.loginCheckInterval(after: Date().timeIntervalSince(opened)))
                     guard let self, !Task.isCancelled else { return }
                     await self.check()
                 }
@@ -284,6 +307,10 @@ import WebKit
         }
     }
     func close() { window?.close() }
+    func front() {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
     private func makeWindow() -> NSWindow {
         let available = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1024, height: 900)
@@ -319,8 +346,8 @@ import WebKit
         }
     }
 
-    /// Done and the automatic close return the confirmed reading; closing
-    /// the window before one returns nothing.
+    /// Done, the automatic close and closing the window by hand return the
+    /// confirmed reading; closing it before one returns nothing.
     private func finish() {
         guard let credits = signedIn else { return }
         result?.resume(returning: credits); result = nil
@@ -336,7 +363,8 @@ import WebKit
         popups.removeAll()
         browser?.stopLoading(); browser?.navigationDelegate = nil; browser?.uiDelegate = nil; browser = nil
         window = nil
-        result?.resume(returning: nil); result = nil
+        // Closed by hand after a confirmed reading: that reading counts, as on Windows.
+        result?.resume(returning: signedIn); result = nil
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -353,7 +381,7 @@ import WebKit
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        guard popups.count < 4, navigationAction.request.url?.scheme == "https" else { return nil }
+        guard HarnessAccountConnection.opensLoginPopup(navigationAction.request.url, open: popups.count) else { return nil }
         let panel = makeWindow(), page = WKWebView(frame: .zero, configuration: configuration)
         page.navigationDelegate = self; page.uiDelegate = self
         panel.contentView = page; popups.append(panel); panel.makeKeyAndOrderFront(nil)
