@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "106eba65751f9f0764e7bed6ec6a8fbde5ce644a56bb34a7adf10996e87c1753",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "7edc8ba0f449288e766fcc4dd902d0f7b94bad053166faf33d0327b7aa9f0605",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -1181,7 +1181,7 @@
     "progress_guide.pointer.trust": "Click here to trust pacer_progress",
     "progress_guide.restart.confirm": "%@ has a task running. Restarting stops it. Restart anyway?",
     "progress_guide.restart.confirm_action": "Restart Anyway",
-    "progress_guide.restart.failed": "%@ didn\u2019t quit. Quit it from its icon in the taskbar corner, and Pacer opens it again.",
+    "progress_guide.restart.failed": "%@ didn\u2019t quit. Quit it yourself, and Pacer opens it again.",
     "progress_guide.state.current": "Current step",
     "progress_guide.state.done": "Done",
     "progress_guide.state.pending": "Not yet",

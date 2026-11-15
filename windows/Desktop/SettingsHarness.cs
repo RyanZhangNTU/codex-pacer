@@ -369,9 +369,12 @@ internal sealed partial class SettingsWindow
         {
             issue.Text = ui.Text("progress_guide.restart.failed").Replace("%@", module.DisplayName ?? provider, StringComparison.Ordinal);
             issue.Visibility = Visibility.Visible;
-            return true;
+            // Once the user quits it, Pacer opens it again, as the hint says.
+            if (!await WindowsConversationApplication.WaitForExitAsync(executables, TimeSpan.FromMinutes(3))
+                || !await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return true;
+            issue.Visibility = Visibility.Collapsed;
         }
-        if (result != WindowsConversationApplication.RestartResult.Restarted) return false;
+        else if (result != WindowsConversationApplication.RestartResult.Restarted) return false;
         openedHarnessConnectors.Add(provider);
         harnessAppViews.Remove(provider);
         await RefreshHarnessProgressConnectionAsync(polling: true);

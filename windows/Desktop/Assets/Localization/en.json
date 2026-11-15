@@ -1177,7 +1177,7 @@
     "progress_guide.pointer.trust": "Click here to trust pacer_progress",
     "progress_guide.restart.confirm": "%@ has a task running. Restarting stops it. Restart anyway?",
     "progress_guide.restart.confirm_action": "Restart Anyway",
-    "progress_guide.restart.failed": "%@ didn’t quit. Quit it from its icon in the taskbar corner, and Pacer opens it again.",
+    "progress_guide.restart.failed": "%@ didn’t quit. Quit it yourself, and Pacer opens it again.",
     "progress_guide.state.current": "Current step",
     "progress_guide.state.done": "Done",
     "progress_guide.state.pending": "Not yet",

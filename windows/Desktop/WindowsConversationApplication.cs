@@ -93,6 +93,20 @@ internal sealed class WindowsConversationApplication
         catch (Exception error) when (Recoverable(error)) { return RestartResult.Failed; }
     }
 
+    /// Waits for the user to quit the app after it declined Pacer's request.
+    internal static async Task<bool> WaitForExitAsync(IReadOnlyList<string> executables, TimeSpan timeout)
+    {
+        string[] names = executables.Select(path => Path.GetFileNameWithoutExtension(path.Replace('/', '\\'))).Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!names.Any(name => { var left = Process.GetProcessesByName(name); bool any = left.Length > 0; foreach (var p in left) p.Dispose(); return any; })) return true;
+            await Task.Delay(500);
+        }
+        return false;
+    }
+
     internal WindowsConversationApplication(Func<string, bool> registered,
         Func<string, Uri, Task<bool>>? protocol = null, Func<Uri, Task<bool>>? web = null, Func<uint, ulong, bool>? host = null,
         Func<string, Uri, bool>? signedHandler = null)

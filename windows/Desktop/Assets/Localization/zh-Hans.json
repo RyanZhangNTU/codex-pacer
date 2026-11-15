@@ -1177,7 +1177,7 @@
     "progress_guide.pointer.trust": "点这里信任 pacer_progress",
     "progress_guide.restart.confirm": "%@ 有任务正在进行，重启会中断它。仍要重启？",
     "progress_guide.restart.confirm_action": "仍要重启",
-    "progress_guide.restart.failed": "%@ 没有退出。请从任务栏右下角的图标退出它，Pacer 会接着打开它。",
+    "progress_guide.restart.failed": "%@ 没有退出。请自己退出它，Pacer 会接着打开它。",
     "progress_guide.state.current": "当前步骤",
     "progress_guide.state.done": "已完成",
     "progress_guide.state.pending": "未开始",
