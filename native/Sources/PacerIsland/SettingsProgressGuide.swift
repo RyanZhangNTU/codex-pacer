@@ -11,6 +11,8 @@ struct ProgressGuideRows: View {
     @ObservedObject var model: IslandModel
     let provider: AgentProvider
     @Binding var isOn: Bool
+    /// The connectors link did not open; the app itself opened instead, if it could.
+    @State private var openFailed = false
     static let anchor = "progress-guide"
 
     /// The card shown: nothing while the ring is off, unless removing the tool failed.
@@ -29,9 +31,14 @@ struct ProgressGuideRows: View {
             if let guide, Self.opens(guide) {
                 Rectangle().fill(MainPalette.separator).frame(height: 1).padding(.top, 8)
                 ProgressGuideBody(guide: guide, provider: provider, perform: perform).padding(.top, 4)
+                if openFailed, guide.action == .openConnectors {
+                    Text(L10n.text("harness.progress_state.open_failed")).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
+                        .fixedSize(horizontal: false, vertical: true).padding(.bottom, 8)
+                }
             }
         }
         .id(Self.anchor)
+        .onChange(of: guide?.stage) { _, _ in openFailed = false }
         // While the card waits on the app, check again until the user is done there.
         .task(id: guide?.waiting == true) {
             guard guide?.waiting == true else { return }
@@ -50,9 +57,8 @@ struct ProgressGuideRows: View {
         case .openConnectors:
             // Without the connectors link, the app itself is the next best place.
             Task {
-                if !(await MacLocalHarnessApplication.openProgressConnectors(provider: provider)) {
-                    _ = await MacLocalHarnessApplication.openApplication(provider: provider)
-                }
+                openFailed = !(await MacLocalHarnessApplication.openProgressConnectors(provider: provider))
+                if openFailed { _ = await MacLocalHarnessApplication.openApplication(provider: provider) }
             }
         }
     }
@@ -153,12 +159,12 @@ private struct ProgressGuideBody: View {
                     .font(.system(size: current ? 13.5 : 13, weight: current ? .semibold : .regular))
                     .foregroundStyle(step.state == .done ? AnyShapeStyle(.secondary) : step.state == .pending ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     .fixedSize(horizontal: false, vertical: true)
-                if current, guide.action != nil {
+                if current, guide.action != nil || guide.waitingText != nil {
                     HStack(spacing: 10) {
                         actionButton
-                        if guide.waiting {
-                            Label(L10n.text("progress_guide.waiting"), systemImage: "clock")
-                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                        if let waiting = guide.waitingText {
+                            Label(waiting, systemImage: "clock").font(.system(size: 12)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -215,7 +221,7 @@ private struct DashedRule: View {
 }
 
 /// A small drawing of the app's connectors page, so the user knows what
-/// to look for there: the Refresh button, Pacer's entry and its Trust button.
+/// to look for there: Pacer's entry and its Trust button.
 private struct TrustCardSample: View {
     let provider: AgentProvider
     /// The connector's name as the app lists it.
@@ -227,13 +233,7 @@ private struct TrustCardSample: View {
         let light = colorScheme == .light
         let brand = provider.shade(light: light)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(L10n.text("progress_guide.trust_card.path")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 4)
-                Text(L10n.text("progress_guide.trust_card.refresh")).font(.system(size: 11))
-                    .padding(.horizontal, 6).padding(.vertical, 1)
-                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.primary.opacity(0.22)))
-            }
+            Text(L10n.text("progress_guide.trust_card.path")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color(red: 0.19, green: 0.69, blue: 0.78)).frame(width: 16, height: 16)

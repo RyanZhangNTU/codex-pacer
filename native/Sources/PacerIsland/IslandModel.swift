@@ -641,6 +641,7 @@ final class IslandModel: ObservableObject {
     ///   result arrives, for checks the user did not ask for.
     func syncLocalHarnessProgress(force provider: AgentProvider? = nil, inspectOnly: Bool = false, keepsState: Bool = false) {
         guard !demo, !stopped, installationOverride == nil, let executable = Bundle.main.executableURL else { return }
+        if provider == nil { refreshLocalHarnessApps() }
         for definition in localHarnesses.definitions {
             let id = definition.descriptor.id
             guard let configFile = definition.progressConfigFile, provider == nil || provider == id else { continue }
@@ -670,9 +671,30 @@ final class IslandModel: ObservableObject {
         }
     }
 
+    /// Whether each module's app runs and since when: it reads Pacer's tool only as it starts.
+    @Published private(set) var localHarnessApps: [AgentProvider: HarnessProgressGuide.AppPresence] = [:]
+    private var localHarnessAppObservers: [NSObjectProtocol] = []
+    func refreshLocalHarnessApps() {
+        guard !demo else { return }
+        if localHarnessAppObservers.isEmpty {
+            let center = NSWorkspace.shared.notificationCenter
+            localHarnessAppObservers = [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification].map {
+                center.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.refreshLocalHarnessApps() }
+                }
+            }
+        }
+        var apps: [AgentProvider: HarnessProgressGuide.AppPresence] = [:]
+        for definition in localHarnesses.definitions where definition.descriptor.progressConnector {
+            apps[definition.descriptor.id] = MacLocalHarnessApplication.presence(provider: definition.descriptor.id)
+        }
+        if apps != localHarnessApps { localHarnessApps = apps }
+    }
+
     /// Checks the app's trust again; once the app has made its folder, the
     /// setup it was waiting for continues by itself.
     func recheckLocalHarnessProgress(_ provider: AgentProvider) {
+        refreshLocalHarnessApps()
         if localHarnessProgressStatuses[provider]?.setup == .missingHome {
             guard localHarnessProgressTasks[provider] == nil else { return }
             syncLocalHarnessProgress(force: provider, keepsState: true)
@@ -707,7 +729,8 @@ final class IslandModel: ObservableObject {
         guard let descriptor = HarnessRegistry.descriptor(for: provider), descriptor.progressConnector else { return nil }
         let state = localHarnessProgressStatuses[provider]
         return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
-                                    ringOn: isModuleEnabled(provider) && showsHarnessProgress(provider), name: descriptor.name)
+                                    ringOn: isModuleEnabled(provider) && showsHarnessProgress(provider), name: descriptor.name,
+                                    addedAt: state?.addedAt, app: localHarnessApps[provider])
     }
 
     /// The ⓘ text, also while the ring is off and there is no card to word it.

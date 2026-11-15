@@ -27,6 +27,18 @@ import Security
         return await open([destination], with: application)
     }
 
+    /// Whether the module's app runs, and since when its earliest copy
+    /// started; nil when that cannot be told. The app reads Pacer's tool only as it starts.
+    package static func presence(provider: AgentProvider) -> HarnessProgressGuide.AppPresence? {
+        guard let definition = HarnessRegistry.localHarnesses.first(where: { $0.descriptor.id == provider }),
+              !definition.macBundleIdentifiers.isEmpty else { return nil }
+        let running = NSWorkspace.shared.runningApplications.filter {
+            $0.bundleIdentifier.map(definition.macBundleIdentifiers.contains) == true && !$0.isTerminated
+        }
+        guard !running.isEmpty else { return .notRunning }
+        return running.compactMap(\.launchDate).min().map { .running(since: $0) }
+    }
+
     /// Opens the app itself, so it makes its settings folder.
     package static func openApplication(provider: AgentProvider) async -> Bool {
         guard let application = await find(provider: provider) else { return false }
