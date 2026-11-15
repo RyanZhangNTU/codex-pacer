@@ -1,6 +1,6 @@
 # Harness modules
 
-A Harness is the app that runs a task and keeps its conversation. Codex, Claude Code, DeepSeek Harness and WorkBuddy are modules of one framework: the same registry, module modes, activity lifecycle and settings pages on both platforms. A WorkBuddy task stays a WorkBuddy task even when it runs a DeepSeek model.
+A Harness is the app that runs a task and keeps its conversation. Codex, Claude Code, DeepSeek Harness, WorkBuddy and WorkBuddy AI are modules of one framework: the same registry, module modes, activity lifecycle and settings pages on both platforms. A WorkBuddy task stays a WorkBuddy task even when it runs a DeepSeek model.
 
 ## The registry
 
@@ -63,14 +63,28 @@ For a task source that writes local files or a database:
 
 Colors, icons, sidebar rows, the library, onboarding, Help, the collapsed bar, notifications and History follow from the descriptor on both platforms. Panel blocks are still an enumerated list in `ExpandedPanelLayout`; a module with its own panel block adds a case there.
 
-## WorkBuddy
+## WorkBuddy and WorkBuddy AI
+
+Tencent ships two separate apps. They run side by side, each with its own data folder, sign-in, account, site and link scheme, so each is a module. One adapter (`WorkBuddyHarness`) serves both through an edition.
+
+| | WorkBuddy (`workbuddy`) | WorkBuddy AI (`workbuddy-ai`) |
+| --- | --- | --- |
+| App | `WorkBuddy.exe`; on the Mac, "WorkBuddy" | `WorkBuddyAI.exe`; on the Mac, "WorkBuddy AI" |
+| Data | `~/.workbuddy` | `~/.workbuddy-ai` |
+| Links | `workbuddy://` | `workbuddy-ai://` |
+| Account site | www.workbuddy.cn | www.workbuddy.ai |
+| Name | WorkBuddy | "WorkBuddy AI (International)" in Settings and the Module Library; "WorkBuddy AI" elsewhere |
+
+A module not found on the computer stays in the Module Library, so most people, who have only the China build, never see the international one.
 
 | Topic | Behavior |
 | --- | --- |
-| Data | `~/.workbuddy-ai/workbuddy.db` (SQLite in WAL mode, opened read-only) and `projects/<workspace>/<session>.jsonl`. A custom folder can be chosen in Settings. |
+| Data | `workbuddy.db` (SQLite in WAL mode, opened read-only) and `projects/<workspace>/<session>.jsonl` in the module's folder. A custom folder can be chosen in Settings. |
 | Tasks | Interactive sessions, home-screen tasks and local automation runs. Normal completion and manual stop are told apart by the transcript's final reply or abort marker; a question needs a pending session and an unanswered tool call in the same turn. |
 | Account | The verified `account-snapshot.json` owner scopes tasks and alerts. An unreadable copy during a rewrite is retried, not treated as a sign-out. |
 | Credits | Per turn from `session_usage.credit_json`, keyed by request ID; per day from the UUIDv7 time in those IDs; the balance from the site's bill after sign-in. |
+| Credit kinds | The bill's packages follow WorkBuddy's own families, keyed by package code. Plan base and plan bonus refresh every plan cycle. Rewards and top-ups never refresh and lapse at their own dates. Only the highest plan base counts, as on WorkBuddy's own page. |
+| Dial | Core words it for both platforms (`HarnessCreditsPresentation`). The ring is the month's credits. Above the figure are the days to the refresh, or the extra credits lapsing within the user's window. The center shows the month's share by default, or the month's credits, or everything available. The gap holds the extra credits as an amount, or "This month" when there are none. Extra credits are never shown as a share. |
 | Progress | `pacer_progress` in `mcp.json` with a rule asking tasks to report; WorkBuddy asks the user to trust it once. On by default, like the other rings. |
 
 Measurements and live checks are in [Harness validation](harness-validation.md).

@@ -71,9 +71,10 @@ internal static class HarnessNavigationChecks
                 CheckLaunchIcon(harness.Content, PacerPalette.Secondary, 17);
                 island.CapturePreview(Path.Combine(output, "harness-launch-outline-dark.png"));
             }
-            Check(Descendants(island).OfType<TaskRow>().Where(row => State(row).Provider != "deepseek").All(row =>
-                row.IsEnabled == (engine.LatestSnapshot!.ActivityLinks?.Any(link => link.ActivityID == State(row).Id && link.Provider == State(row).Provider) == true)),
-                "Conversation actions must be backed by the engine's current source-scoped links");
+            var unbacked = Descendants(island).OfType<TaskRow>().Where(row => State(row).Provider != "deepseek" &&
+                row.IsEnabled != (engine.LatestSnapshot!.ActivityLinks?.Any(link => link.ActivityID == State(row).Id && link.Provider == State(row).Provider) == true))
+                .Select(row => State(row).Provider + (row.IsEnabled ? " enabled" : " disabled")).ToArray();
+            Check(unbacked.Length == 0, "Conversation actions must be backed by the engine's current source-scoped links: " + string.Join(", ", unbacked));
             await PresentationWait.CommandSnapshotAsync(engine, "configure", new { enabledProviders = new[] { "deepseek" } });
             await PresentationWait.CommandSnapshotAsync(engine, "demoStage", new { demoStage = 3 }); await island.WaitForPresentationAsync();
             await Until(() => ((Grid)island.FindName("TaskPages")).Children.Count == 1, "A replaced page must release its outgoing visual");

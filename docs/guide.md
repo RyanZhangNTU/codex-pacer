@@ -19,7 +19,7 @@ The first time you open Codex Pacer, a short guide walks you through it:
 
 1. What each part of the collapsed bar means.
 2. **Island**, which sits at the top center of the screen around the notch, or **Free Move**, which you drag anywhere.
-3. Which services to follow: Codex, Claude, DeepSeek and WorkBuddy. Pacer turns on the ones it finds on this computer; the others wait under **more not found on this computer**.
+3. Which services to follow: Codex, Claude, DeepSeek and WorkBuddy (and WorkBuddy AI, the international version, if you have it). Pacer turns on the ones it finds on this computer; the others wait under **more not found on this computer**.
 4. Progress rings, notifications and opening at login.
 
 You can open the guide again from **Help & Updates**. After each update, a short **What's New** note shows the highlights once.
@@ -28,7 +28,7 @@ Three services need a sign-in for their numbers:
 
 - **Claude quota:** click **Sign in to Claude** and sign in to claude.ai in Pacer's own window.
 - **DeepSeek balance:** sign in to the DeepSeek platform in Pacer's window, or paste an API key if DeepSeek Harness uses one.
-- **WorkBuddy credits:** click **Sign In** on the WorkBuddy page and sign in on your WorkBuddy site in Pacer's window.
+- **WorkBuddy credits:** click **Sign In** on the WorkBuddy page and sign in with the account you use in WorkBuddy. WorkBuddy AI has its own page and account.
 
 Codex quota needs nothing extra.
 
@@ -97,7 +97,7 @@ Turn on **Include Codex Dot Tasks** on the Remote page to see Dot Durable tasks.
 
 Spend made elsewhere on your account, such as web searches or another device, is included in today's total and budgets.
 
-**WorkBuddy.** WorkBuddy uses account credits. Once you sign in, its ring shows the credits left in your plan, with the reset date and any credits that expire soon. The bar can show the credits as a number or a ring, and Pacer warns you when 10% of the plan's credits are left. Each WorkBuddy task shows the credits its turn used.
+**WorkBuddy.** WorkBuddy uses account credits. Once you sign in, its ring shows what is left of this month's credits, which refresh every plan cycle. Above the figure, the ring counts down to the refresh, or shows extra credits about to expire. Rewards and top-ups never refresh, so the ring's gap shows them as an amount, such as **+1,300**. When you have none, it says **This month**. The figure in the middle can show this month's share, this month's credits or everything available; choose it on the **Expanded Panel** page. The bar shows everything available by default. Each WorkBuddy task shows the credits its turn used.
 
 ## Services
 
@@ -107,7 +107,7 @@ Spend made elsewhere on your account, such as web searches or another device, is
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
 
-**WorkBuddy.** Pacer follows WorkBuddy's tasks on this computer: running work, questions waiting for you and finished turns. Click a task to return to its conversation. To see your credits, click **Sign In** on the WorkBuddy page; the window closes by itself once you're signed in. The **⋯** menu next to the account switches between the China and international sites, switches account or signs out. History shows the credits you used each day of the last week.
+**WorkBuddy.** Pacer follows WorkBuddy's tasks on this computer: running work, questions waiting for you and finished turns. Click a task to return to its conversation. To see your credits, click **Sign In** on the WorkBuddy page; the window closes by itself once you're signed in. The page lists this month's credits, extra credits and the total, then what each kind has left and when it refreshes or expires. The **⋯** menu next to the account refreshes, opens WorkBuddy's own usage page, switches account or signs out. History shows the credits you used each day of the last week. WorkBuddy AI, the international version, works the same way on its own page and account.
 
 The progress ring is on by default. Pacer adds its progress tool to WorkBuddy; the first time, click **Open Connectors**, choose **Custom Connector** and click **Trust** next to `pacer_progress`. If it's missing, reopen WorkBuddy. Turning the ring off removes the tool. If WorkBuddy keeps its data elsewhere, choose the folder under **Custom Locations**.
 
@@ -131,7 +131,7 @@ Click the gear in the expanded island to open the main window.
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
 | **Collapsed Bar** | What the bar shows and each item's options. |
 | **Expanded Panel** | The panel's blocks, their order and each block's options, including how long finished tasks stay. |
-| **Notifications** | Which events show on the bar or as system notifications, DeepSeek alerts and low WorkBuddy credits. |
+| **Notifications** | Which events show on the bar or as system notifications, DeepSeek alerts, and for WorkBuddy the credits that count as low and how many days before credits expire you're reminded. |
 | **General** | Open at Login, the Dock icon, language and **Hide Project Names** for screen sharing. |
 | **Help & Updates** | Updates, What's New and help. |
 

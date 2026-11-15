@@ -29,7 +29,7 @@ final class PresentationEnumCodableTests: XCTestCase {
         try check(DeepSeekAlertPresentation.Kind.allCases, ["exhausted", "lowBalance", "spike", "overBudget", "nearingBudget"])
         try check(DeepSeekConnectionPresentation.Action.allCases, ["signIn", "refresh"])
         try check(DeepSeekConnectionPresentation.Color.allCases, ["green", "secondary", "orange"])
-        try check(AgentProvider.allCases, ["codex", "claude", "deepseek", "workbuddy"])
+        try check(AgentProvider.allCases, ["codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"])
         try check([QuotaDashboardPresentation.Verdict.spare, .steady, .fast], ["spare", "steady", "fast"])
         try check(P.SingleTask.allCases, ["stage", "count", "percent"])
         typealias O = CompactComponentOptions
@@ -46,7 +46,7 @@ final class PresentationEnumCodableTests: XCTestCase {
         try check(O.WarningStyle.allCases, ["capsule", "dot"])
         try check(CompactBarSize.allCases, ["small", "standard", "large", "extraLarge"])
         try check(P.Metric.allCases, ["remaining", "pace"])
-        try check(P.RingChoice.allCases, ["", "none", "codex", "claude", "deepseek", "workbuddy"])
+        try check(P.RingChoice.allCases, ["", "none", "codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"])
     }
 
     private func roundTrip<T: Codable & Equatable>(_ type: T.Type, _ oldJSON: String,

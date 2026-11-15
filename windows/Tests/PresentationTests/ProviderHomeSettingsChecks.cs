@@ -46,7 +46,9 @@ internal static class ProviderHomeSettingsChecks
                 "A turned-off WorkBuddy shows in the Services sidebar once found on this computer, and otherwise only in the Module Library");
             Find<TextBox>(window, "settings.search").Text = "workbuddy";
             await Pump();
-            Check(window.SearchMatches().SequenceEqual(["workbuddy"]), "Searching for WorkBuddy finds the service page");
+            var matches = window.SearchMatches();
+            Check(matches.FirstOrDefault() == "workbuddy" && matches.Skip(1).All(value => value == "workbuddy-ai"),
+                "Searching for WorkBuddy finds its service page first, and WorkBuddy AI's only after it");
             Invoke(Find<Button>(window, "settings.search.result.workbuddy"));
             await PresentationWait.UntilAsync(() => ModuleSwitch() is { IsEnabled: true, IsChecked: false },
                 "The search result opens the disabled module’s settings page");

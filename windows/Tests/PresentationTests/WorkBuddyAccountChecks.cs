@@ -81,7 +81,7 @@ internal static class WorkBuddyAccountChecks
         var choices = new DesktopPreferences
         {
             LastSettingsPane = "overview", MonitorSSH = false,
-            ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled", ["workbuddy"] = "enabled" }
+            ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled", ["workbuddy"] = "enabled", ["workbuddy-ai"] = "disabled" }
         };
         var preferences = new PreferencesSession(choices, value => engine.SendAsync("configure", value), _ => true);
         var settings = new SettingsWindow(ui, preferences, new DemoStartupRegistration(), true, engine: engine, harnessAccounts: accounts)
@@ -188,7 +188,8 @@ internal static class WorkBuddyAccountChecks
                 var dials = Descendants(group).OfType<QuotaDial>().Where(item => item.IsVisible).ToArray();
                 Check(dial.AccessibleName.Contains(monthly, StringComparison.Ordinal) && dials.Length == 4 &&
                     providers.All(id => ProviderIcon.Source(id) is { } icon && images.Contains(icon)),
-                    "Each service in the shared section must have a dial and its official icon");
+                    "Each service in the shared section must have a dial and its official icon: " + style + ", " + dial.AccessibleName + ", " + dials.Length
+                    + " dials, no icon for " + string.Join("/", providers.Where(id => ProviderIcon.Source(id) is not { } icon || !images.Contains(icon))));
                 var origins = dials.Select(item => item.TranslatePoint(new Point(), group)).ToArray();
                 Check(Math.Abs(origins[0].X - origins[2].X) < 1 && Math.Abs(origins[1].X - origins[3].X) < 1 &&
                     origins[2].Y > origins[0].Y && origins[3].Y > origins[1].Y,

@@ -77,8 +77,12 @@ internal sealed partial class SettingsWindow
         "deepseek" => "DeepSeek",
         "overview" or "history" or "remote" or "notifications" or "about" or "support" or "modules" => ui.Text("main.pane." + pane),
         "expandedPanel" => ui.Text("settings.pane.expanded_panel"),
-        _ => harnessPages.FirstOrDefault(page => page.Provider == pane).Title ?? ui.Text("settings.pane." + pane)
+        _ => harnessPages.FirstOrDefault(page => page.Provider == pane).Title ?? ModuleTitle(pane)
     };
+    // A module can be named before the sidebar lists it, or while it is not found.
+    private string ModuleTitle(string provider) => ui.Has("module." + provider + ".title") ? ui.Text("module." + provider + ".title")
+        : HarnessModule(provider)?.DisplayName is { Length: > 0 and <= 64 } name ? name
+        : ui.Has("settings.pane." + provider) ? ui.Text("settings.pane." + provider) : provider;
     private string PaneSymbol(string pane) => pane switch
     {
         "overview" => "square.grid.2x2",

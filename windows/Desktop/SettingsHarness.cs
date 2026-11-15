@@ -212,6 +212,8 @@ internal sealed partial class SettingsWindow
             var empty = Label(account?.Busy == true ? ui.Text("harness.account.reading") : ui.Text("harness.account.sign_in"), 12.5);
             empty.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); Identify(empty, id + ".credits", empty.Text);
             harnessCreditsBlock.Children.Add(InfoRow(ui.Text("harness.credits"), empty, id: id + ".credits_row"));
+            // Where WorkBuddy shows usage helps before signing in too.
+            AddUsageGuide();
             return;
         }
         var top = new Grid { Margin = new Thickness(14, 12, 14, 12) };
@@ -281,13 +283,16 @@ internal sealed partial class SettingsWindow
                 }
             }
         }
-        if (SettingsPagePolicy.HarnessUsageGuide(provider, HarnessModule(provider)?.UsageGuideUrl) is { } guide)
+        AddUsageGuide();
+
+        void AddUsageGuide()
         {
+            if (SettingsPagePolicy.HarnessUsageGuide(provider, HarnessModule(provider)?.UsageGuideUrl) is not { } guide) return;
             var link = new Button { Content = ui.Text("harness.account_usage_help"), Style = (Style)FindResource("SettingsLink"),
                 HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(14, 6, 14, 10) };
             harnessUsageGuide = link; Identify(link, id + ".accountUsage", ui.Text("harness.account_usage_help"));
             link.Click += (_, _) => { if (!SettingsPagePolicy.OpenHarnessUsage(guide, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
-            harnessCreditsBlock.Children.Add(link);
+            harnessCreditsBlock!.Children.Add(link);
         }
     }
 

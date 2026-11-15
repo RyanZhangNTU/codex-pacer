@@ -101,7 +101,24 @@ WorkBuddy's task records supply the model name. Pacer shows Automatic when the r
 
 WorkBuddy stores credits by request ID in the session's usage record. Pacer matches the request in the transcript to that record and shows the credits in the task row's cost field, unless **Credits per Turn** is off (`hiddenTurnCredits`). A later usage write can update a completed row. The request IDs are UUIDv7, so History groups the week's charges by the time in each ID, falling back to the session's last update; the adapter rereads the week at most every five minutes or when a new charge lands.
 
-Account credits come from the site's billing summary after a separate sign-in. Windows and Mac use the same reader, described by the descriptor's `accountCredits`, with separate browser profiles for the domestic and international sites; the sign-in window closes once a reading arrives. The Windows host sends every reading to the engine (`setAccountCredits`), which draws the collapsed-bar value and ring, the low-credits warning and notifications at 10% of the plan's credits (`HarnessCreditsNoticePolicy`). The ring shows remaining credits across the active packs against their total grants. When billing identifies the subscription pack, Pacer shows that pack's remaining credits, reported usage and reset. Add-on and bonus packs can have separate expiry dates. Pacer shows the earliest confirmed expiry and the credits at that date. A failed package lookup leaves its dates blank. A billing outage marks the last reading as stale, and signing out clears it. [WorkBuddy credit rules](https://www.codebuddy.cn/docs/workbuddy/Credits)
+Account credits come from the site's billing summary after a separate sign-in. WorkBuddy reads www.workbuddy.cn and WorkBuddy AI reads www.workbuddy.ai, each in its own browser profile. Windows and Mac use the same reader (`workbuddy-account-credits.js`), described by the descriptor's `accountCredits`. The sign-in window closes once a reading arrives.
+
+The reader groups the bill's packages by WorkBuddy's own package codes:
+
+- `planBase` and `planBonus` refresh every plan cycle; their refresh is the cycle's end plus one second.
+- `reward` and `topUp` never refresh. Each batch lapses at its `DeductionEndTime`, read from the paid and free package lists. A batch counts only when its rows add up to the package's balance.
+- Only the highest plan base counts.
+
+The Windows host forwards each reading to the engine as read (`setAccountCredits`). The engine returns `HarnessCreditsPresentation` with the snapshot, for the dial, lines and breakdown.
+
+Each module's `HarnessCreditsSettings` choose:
+
+- the dial's center (`monthlyPercent` by default);
+- the collapsed bar's value (`available` by default);
+- the low line (empty is a tenth of the month's credits);
+- the expiry window (3 days by default), which both the reminder and the dial's orange state use.
+
+`HarnessCreditsNoticePolicy` notifies once at the low line, once when the credits run out, and once per lapse date within the window. A failed package lookup leaves its dates blank. A billing outage marks the last reading as stale, and signing out clears it. [WorkBuddy credit rules](https://www.codebuddy.cn/docs/workbuddy/Credits)
 
 ## Codex
 

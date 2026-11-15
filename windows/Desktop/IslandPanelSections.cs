@@ -345,7 +345,8 @@ public partial class IslandWindow
 
         FrameworkElement AccountCell(string provider, bool classic, bool details, bool showsName) =>
             HarnessAccountCard.Build(ui, provider, harnessAccounts?[provider], snapshot.AccountCredits?.FirstOrDefault(value => value.Provider == provider),
-                true, "island." + provider + ".account", classic, details, showsName, () => OpenModuleSettings(provider));
+                true, "island." + provider + ".account", classic, details, showsName, () => OpenModuleSettings(provider),
+                snapshot.Modules?.FirstOrDefault(module => module.Provider == provider)?.DisplayName);
     }
 
     /// The header shows the chosen buttons; the rest wait in the More menu.

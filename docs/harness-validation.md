@@ -1,5 +1,17 @@
 # Harness validation
 
+## WorkBuddy, WorkBuddy AI and credits by kind (November 2026)
+
+Both WorkBuddy builds were installed on one Windows PC, each signed in to a different account. They keep separate data folders, sign-ins, sites and link schemes, and their app icons are identical, so WorkBuddy AI reuses WorkBuddy's artwork.
+
+| Check | Result |
+| --- | --- |
+| Windows engine and Core suite | 1,260 tests, 2 opt-in tests skipped, no failures. Includes the credits presentation tests: the month and the extra credits, the user's center and bar figures, lapse windows, fractional credits and hosts without groups. |
+| Windows desktop integration | 38 checks passed, with five modules in the saved-settings projection. |
+| Windows presentation | The settings group (Codex, Claude and DeepSeek pages, reminders and persistence) passed in both languages and themes. The quota, panel and pages checks passed. The WorkBuddy account check confirmed the credits from the synthetic bill on the settings page, in its breakdown and in Overview, the island section's reading, and that each module keeps its own account. Window-settle, capture and shared-section layout checks could not run: the PC was in use with the island hidden behind a full-screen app. CI runs them. |
+
+Not yet checked live: a real sign-in on either site, the Mac UI, and the island layout on an unobstructed screen.
+
 ## Native WorkBuddy and the module library (November 2026)
 
 | Check | Result |

@@ -92,7 +92,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertEqual(start.activities.map(\.stage), [.working, .starting, .working])
         let active = try XCTUnwrap(start.activities.first)
         XCTAssertFalse(active.id.contains("test-active"))
-        XCTAssertEqual(active.project, "WorkBuddy")
+        XCTAssertEqual(active.project, "WorkBuddy AI", "The international build keeps its own name on the bar and panel")
         XCTAssertEqual(active.title, "fixture title", "A WorkBuddy task shows its session title like other services' tasks")
         XCTAssertEqual(ActivityTaskRowPresentation.title(active, hideProjects: false), "fixture title")
         XCTAssertEqual(ActivityTaskRowPresentation.title(active, hideProjects: true), L10n.text("activity.hidden_name"),

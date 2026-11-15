@@ -211,10 +211,10 @@ internal static class Program
             EngineSnapshot? latest = null;
             client.Snapshot += value => latest = value;
             await client.StartAsync(engine, true, saved!.Language, saved.EngineConfiguration(), referenceFixture: true);
-            Check(latest?.Modules?.Count == 4 && latest.Modules.Single(value => value.Provider == "codex") is { Mode: "disabled", Enabled: false }
+            Check(latest?.Modules?.Count == 5 && latest.Modules.Single(value => value.Provider == "codex") is { Mode: "disabled", Enabled: false }
                 && latest.Modules.Single(value => value.Provider == "claude") is { Mode: "automatic", Enabled: true }, "Saved modes must control the real projection");
-            // Codex and DeepSeek are off in the saved fixture; Claude and the automatic WorkBuddy stay.
-            Check(latest!.Tasks.Count > 0 && latest.Tasks.All(value => value.Provider is "claude" or "workbuddy" && value.Title == "本地任务")
+            // Codex and DeepSeek are off in the saved fixture; Claude and the automatic WorkBuddy modules stay.
+            Check(latest!.Tasks.Count > 0 && latest.Tasks.All(value => value.Provider is "claude" or "workbuddy" or "workbuddy-ai" && value.Title == "本地任务")
                 && latest.Wallet == null, "Saved privacy and module choices must apply before the first snapshot");
             // WorkBuddy's credits dial joins Claude's periods; Claude keeps both of its own.
             Check(latest.QuotaDashboard?.Classic.Slots.Select(value => value.Id).Where(value => value.StartsWith("claude:", StringComparison.Ordinal))
