@@ -112,7 +112,7 @@ Spend made elsewhere on your account, such as web searches or another device, is
 The progress ring is on by default. The first time, the WorkBuddy page shows the steps under the switch, and each one ticks itself:
 
 1. Pacer adds its tool to WorkBuddy.
-2. WorkBuddy reads new tools only when it starts. If it was already open, quit it completely (closing its window isn't enough) and open it again.
+2. WorkBuddy reads new tools only when it starts. If it was already open, click **Restart WorkBuddy**: Pacer asks it to quit and opens it again at its connectors. If a WorkBuddy task is running, Pacer asks first.
 3. Click **Open** to show WorkBuddy's connectors.
 4. Click **Custom Connector** at the top right of that page.
 5. Click **Trust** on `pacer_progress`.

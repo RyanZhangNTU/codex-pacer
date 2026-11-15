@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "54977377ad5f29bc7bde517aaeac216cfcc80397ac0e1d7bc76c29b4a2f34217",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "02df7c7f0c10b7eb78b284f87bd95b224f18c09e08b08a43ad717524cd7ee8ef",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1149,6 +1149,7 @@
     "progress_guide.action.open_app": "\u6253\u5f00 %@",
     "progress_guide.action.open_connectors": "\u6253\u5f00 %@ \u8fde\u63a5\u5668",
     "progress_guide.action.point": "\u5728 %@ \u91cc\u6307\u7ed9\u6211",
+    "progress_guide.action.restart": "\u91cd\u542f %@",
     "progress_guide.action.retry": "\u91cd\u8bd5",
     "progress_guide.chip.adding": "\u6b63\u5728\u6dfb\u52a0\u2026",
     "progress_guide.chip.failed": "\u6ca1\u80fd\u6dfb\u52a0",
@@ -1178,6 +1179,9 @@
     "progress_guide.pointer.not_found": "\u6ca1\u5728 %@ \u91cc\u627e\u5230\u8fd9\u4e2a\u6309\u94ae\u3002\u8bf7\u5148\u6253\u5f00\u5b83\u7684\u7a97\u53e3\u518d\u8bd5\u3002",
     "progress_guide.pointer.stop": "\u4e0d\u7528\u4e86",
     "progress_guide.pointer.trust": "\u70b9\u8fd9\u91cc\u4fe1\u4efb pacer_progress",
+    "progress_guide.restart.confirm": "%@ \u6709\u4efb\u52a1\u6b63\u5728\u8fdb\u884c\uff0c\u91cd\u542f\u4f1a\u4e2d\u65ad\u5b83\u3002\u4ecd\u8981\u91cd\u542f\uff1f",
+    "progress_guide.restart.confirm_action": "\u4ecd\u8981\u91cd\u542f",
+    "progress_guide.restart.failed": "%@ \u6ca1\u6709\u9000\u51fa\u3002\u8bf7\u4ece\u4efb\u52a1\u680f\u53f3\u4e0b\u89d2\u7684\u56fe\u6807\u9000\u51fa\u5b83\uff0cPacer \u4f1a\u63a5\u7740\u6253\u5f00\u5b83\u3002",
     "progress_guide.state.current": "\u5f53\u524d\u6b65\u9aa4",
     "progress_guide.state.done": "\u5df2\u5b8c\u6210",
     "progress_guide.state.pending": "\u672a\u5f00\u59cb",

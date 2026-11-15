@@ -58,6 +58,41 @@ internal sealed class WindowsConversationApplication
         catch (Exception error) when (Recoverable(error)) { return false; }
     }
 
+    internal enum RestartResult { Restarted, StillRunning, Failed }
+
+    /// Asks the app to quit, as Windows does before an update, then starts it
+    /// at its connectors. Never ends it by force: an app that declines stays.
+    internal static async Task<RestartResult> RestartForGuideAsync(string provider, IReadOnlyList<string> executables)
+    {
+        if (!SignedHandlers.ContainsKey(provider)) return RestartResult.Failed;
+        try
+        {
+            bool quit = await Task.Run(async () =>
+            {
+                string[] names = executables.Select(path => Path.GetFileNameWithoutExtension(path.Replace('/', '\\'))).Where(name => name.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                var processes = names.SelectMany(Process.GetProcessesByName).ToArray();
+                try
+                {
+                    // The earliest process is the app itself; its helpers follow it out.
+                    var main = processes.Select(process => { try { return (process, started: process.StartTime); } catch (Exception error) when (Recoverable(error)) { return (process, started: DateTime.MaxValue); } })
+                        .OrderBy(entry => entry.started).Select(entry => entry.process).FirstOrDefault();
+                    if (main != null) RestartManager.AskToQuit(main);
+                }
+                finally { foreach (var process in processes) process.Dispose(); }
+                for (int wait = 0; wait < 60; wait++)
+                {
+                    if (!names.Any(name => { var left = Process.GetProcessesByName(name); bool any = left.Length > 0; foreach (var p in left) p.Dispose(); return any; })) return true;
+                    await Task.Delay(250);
+                }
+                return false;
+            });
+            if (!quit) return RestartResult.StillRunning;
+            return await OpenProgressConnectorsAsync(provider) ? RestartResult.Restarted : RestartResult.Failed;
+        }
+        catch (Exception error) when (Recoverable(error)) { return RestartResult.Failed; }
+    }
+
     internal WindowsConversationApplication(Func<string, bool> registered,
         Func<string, Uri, Task<bool>>? protocol = null, Func<Uri, Task<bool>>? web = null, Func<uint, ulong, bool>? host = null,
         Func<string, Uri, bool>? signedHandler = null)

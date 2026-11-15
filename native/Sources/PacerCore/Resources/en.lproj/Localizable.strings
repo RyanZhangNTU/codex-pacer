@@ -1531,3 +1531,7 @@
 "progress_guide.pointer.stop" = "Stop";
 "progress_guide.trust_card.experts" = "Experts";
 "progress_guide.trust_card.skills" = "Skills";
+"progress_guide.action.restart" = "Restart %@";
+"progress_guide.restart.confirm" = "%@ has a task running. Restarting stops it. Restart anyway?";
+"progress_guide.restart.confirm_action" = "Restart Anyway";
+"progress_guide.restart.failed" = "%@ didn’t quit. Quit it from its icon in the taskbar corner, and Pacer opens it again.";

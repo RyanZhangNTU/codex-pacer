@@ -37,7 +37,8 @@ internal static class AppAutomation
         return [.. ids];
     }
 
-    /// The app's largest window on screen, or null while it has none.
+    /// The app's main window on screen, or null while it has none. Electron
+    /// apps also own a GPU window as large as the main one; it never counts.
     internal static AutomationElement? MainWindow(int[] processes)
     {
         if (processes.Length == 0) return null;
@@ -46,7 +47,8 @@ internal static class AppAutomation
         try
         {
             return AutomationElement.RootElement.FindAll(TreeScope.Children, owned).Cast<AutomationElement>()
-                .Where(window => !window.Current.IsOffscreen && window.Current.BoundingRectangle is { IsEmpty: false, Width: > 200, Height: > 150 })
+                .Where(window => window.Current.ClassName != "Intermediate D3D Window" && !window.Current.IsOffscreen
+                    && window.Current.BoundingRectangle is { IsEmpty: false, Width: > 200, Height: > 150 })
                 .OrderByDescending(window => window.Current.BoundingRectangle.Width * window.Current.BoundingRectangle.Height).FirstOrDefault();
         }
         catch (Exception error) when (error is ElementNotAvailableException or InvalidOperationException or COMException) { return null; }
@@ -74,12 +76,19 @@ internal static class AppAutomation
 
     /// The button to point at, in screen pixels: Custom Connector, or the
     /// Trust button nearest Pacer's tool.
+    ///
+    /// WorkBuddy shows its window's contents to UI Automation only while a
+    /// screen reader runs. Custom Connector sits at a fixed spot in the top
+    /// right of its connectors page, so without the contents the ring goes
+    /// there, measured from the window's frame at its own DPI. Trust moves with
+    /// the list, so it is ringed only when the contents can be read.
     internal static Rect? Target(AutomationElement window, string target)
     {
         try
         {
             if (target == "customConnector")
-                return window.FindFirst(TreeScope.Descendants, Named(CustomConnector, ControlType.Button))?.Current.BoundingRectangle;
+                return window.FindFirst(TreeScope.Descendants, Named(CustomConnector, ControlType.Button))?.Current.BoundingRectangle
+                    ?? CustomConnectorFromFrame(window);
             if (window.FindFirst(TreeScope.Descendants, Named([Tool])) is not { } tool) return null;
             Rect anchor = tool.Current.BoundingRectangle;
             return window.FindAll(TreeScope.Descendants, Named(Trust, ControlType.Button)).Cast<AutomationElement>()
@@ -89,6 +98,19 @@ internal static class AppAutomation
         }
         catch (Exception error) when (error is ElementNotAvailableException or InvalidOperationException or COMException) { return null; }
     }
+
+    // Custom Connector in WorkBuddy 5.9.3, measured at 150% and given here at
+    // 100%: its right edge 31 and its top 46 from the window's top right, 136 by 32.
+    internal static Rect? CustomConnectorFromFrame(AutomationElement window)
+    {
+        Rect frame = window.Current.BoundingRectangle;
+        var handle = new IntPtr(window.Current.NativeWindowHandle);
+        if (frame.IsEmpty || frame.Width < 700 || handle == IntPtr.Zero) return null;
+        double scale = Math.Max(1, GetDpiForWindow(handle)) / 96.0;
+        return FromFrame(frame, scale);
+    }
+    internal static Rect FromFrame(Rect frame, double scale)
+        => new(frame.Right - (31 + 136) * scale, frame.Top + 46 * scale, 136 * scale, 32 * scale);
 
     internal static bool IsForeground(int[] processes)
     {
@@ -112,6 +134,7 @@ internal static class AppAutomation
     }
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsIconic(IntPtr window);
@@ -131,6 +154,8 @@ internal sealed class AppPointer
     private readonly Action<string?> viewChanged;
     private readonly Action notFound;
     private readonly DateTime started = DateTime.UtcNow;
+    // While the app starts, a missing button is not yet a failure.
+    private readonly TimeSpan grace;
     private string target;
     private bool busy, closed;
     private int misses;
@@ -140,9 +165,9 @@ internal sealed class AppPointer
     internal static AppPointer? Current => current;
 
     private AppPointer(string provider, IReadOnlyList<string> executables, string target, string stop,
-        Func<string, string> pointerText, Action<string?> viewChanged, Action notFound)
+        Func<string, string> pointerText, Action<string?> viewChanged, Action notFound, TimeSpan grace)
     {
-        Provider = provider; this.executables = executables; this.target = target;
+        Provider = provider; this.executables = executables; this.target = target; this.grace = grace;
         this.pointerText = pointerText; this.viewChanged = viewChanged; this.notFound = notFound;
         var accent = new SolidColorBrush(Color.FromRgb(11, 99, 206)); accent.Freeze();
         var frame = new Border { BorderThickness = new Thickness(3), CornerRadius = new CornerRadius(10), BorderBrush = accent };
@@ -178,10 +203,10 @@ internal sealed class AppPointer
 
     /// Points at the target in the app; a new pointer replaces any other.
     internal static void Show(string provider, IReadOnlyList<string> executables, string target, string stop,
-        Func<string, string> pointerText, Action<string?> viewChanged, Action notFound)
+        Func<string, string> pointerText, Action<string?> viewChanged, Action notFound, TimeSpan grace = default)
     {
         current?.Stop();
-        current = new AppPointer(provider, executables, target, stop, pointerText, viewChanged, notFound);
+        current = new AppPointer(provider, executables, target, stop, pointerText, viewChanged, notFound, grace);
         current.timer.Start();
         _ = current.TickAsync();
     }
@@ -227,7 +252,11 @@ internal sealed class AppPointer
             if (!front || rect is not { } bounds)
             {
                 Hide();
-                if (front && ++misses >= 15) { notFound(); Stop(); }
+                if (front && DateTime.UtcNow - started > grace && ++misses >= 15)
+                {
+                    if (target == "customConnector") notFound();
+                    Stop();
+                }
                 return;
             }
             misses = 0;

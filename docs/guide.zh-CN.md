@@ -112,7 +112,7 @@ SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也
 进度圆环默认开启。第一次时，WorkBuddy 页的开关下面会列出几步，每一步完成后会自动打勾：
 
 1. Pacer 把进度工具加进 WorkBuddy。
-2. WorkBuddy 只在启动时读取新加的工具。如果它已经开着，要完全退出（只关窗口不算）再重新打开。
+2. WorkBuddy 只在启动时读取新加的工具。如果它已经开着，点“重启 WorkBuddy”：Pacer 会请它退出，再在连接器页重新打开。WorkBuddy 有任务正在进行时，Pacer 会先问你。
 3. 点“打开”，进入 WorkBuddy 的连接器。
 4. 点这一页右上角的“自定义连接器”。
 5. 在 `pacer_progress` 上点“信任”。

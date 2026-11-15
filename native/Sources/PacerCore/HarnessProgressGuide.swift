@@ -18,7 +18,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     public enum Tone: String, Codable, Sendable { case neutral, attention, info, success, error }
     public enum StepState: String, Codable, Sendable { case done, current, pending }
     /// `point`: the host shows where to click in the app.
-    public enum Action: String, Codable, Sendable { case openConnectors, openApp, retry, point }
+    public enum Action: String, Codable, Sendable { case openConnectors, openApp, retry, point, restartApp }
     /// What the current step's picture shows.
     public enum Picture: String, Codable, Sendable { case customConnector, trust }
 
@@ -149,7 +149,8 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         case .turnedOff, .toolOff, .unknown: action = .openConnectors; actionTitle = text("action.open_connectors", name)
         case .openApp: action = .openApp; actionTitle = text("action.open_app", name)
         case .conflict, .failed, .missing, .cleanupFailed: action = .retry; actionTitle = text("action.retry")
-        // Only the user can quit the app; Pacer then sees it start again.
+        // One click: the host asks the app to quit, then opens it at its connectors.
+        case .reopen: action = .restartApp; actionTitle = text("action.restart", name)
         default: action = nil; actionTitle = nil
         }
         attention = [.reopen, .launch, .openConnectors, .customConnector, .trust, .turnedOff, .toolOff, .openApp, .conflict, .failed, .missing].contains(stage)

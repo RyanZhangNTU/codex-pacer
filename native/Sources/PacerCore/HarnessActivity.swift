@@ -113,6 +113,9 @@ package struct LocalHarnessDefinition: Sendable {
     package var progressConfigFile: String?
     package var progressRuleDirectory: String?
     package var progressConnection: LocalHarnessProgressSetup.ConnectionReader?
+    /// The app's own log, under its data folder, where it notes opening its
+    /// custom connectors (`HarnessAppLog`).
+    package var appLogFile: String?
     let makeMonitor: @Sendable (LocalHarnessIO) -> any LocalHarnessMonitor
 
     package func defaultHome(userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {

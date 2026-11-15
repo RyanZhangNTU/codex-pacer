@@ -18,7 +18,8 @@ final class HarnessProgressGuideTests: XCTestCase {
         XCTAssertEqual(reopen.steps.map(\.state), [.done, .current, .pending, .pending, .pending, .pending])
         XCTAssertEqual(reopen.steps[1].title, "Quit WorkBuddy AI completely, then reopen it")
         XCTAssertEqual(reopen.chip, "4 steps left")
-        XCTAssertNil(reopen.action, "Only the user quits the app; Pacer sees it start again")
+        XCTAssertEqual(reopen.action, .restartApp, "One click asks the app to quit and opens it again")
+        XCTAssertEqual(reopen.actionTitle, "Restart WorkBuddy AI")
         XCTAssertEqual(reopen.waitingText, "Waiting for WorkBuddy AI to start again")
         XCTAssertNil(reopen.picture)
 
@@ -94,6 +95,29 @@ final class HarnessProgressGuideTests: XCTestCase {
             XCTAssertTrue(failed.attention)
         }
         XCTAssertEqual(guide(.settingUp)?.steps.map(\.state), [.current, .pending, .pending, .pending, .pending, .pending])
+    }
+
+    func testTheAppLogShowsWhenItsCustomConnectorsOpen() {
+        let lines = [
+            #"{"timestamp":"2026-11-15T06:44:03.280Z","level":"info","message":["[MethodCh] begin #47 wb:mcp:list arg=undefined"]}"#,
+            #"{"timestamp":"2026-11-15T06:44:03.708Z","level":"info","message":["[MethodCh] end #47 wb:mcp:list elapsedMs=428"]}"#,
+            #"{"timestamp":"2026-11-15T07:31:57.487Z","level":"info","message":["[MethodCh] begin #244 wb:mcp:list arg=undefined"]}"#,
+            #"{"timestamp":"2026-11-15T07:31:58.000Z","level":"info","message":["[MethodCh] begin #245 wb:mcp:describe arg=custom-mcp:other"]}"#
+        ].joined(separator: "\n")
+        let opened = ISO8601DateFormatter().date(from: "2026-11-15T07:30:00Z")!
+        XCTAssertTrue(HarnessAppLog.listedConnectors(in: Data(lines.utf8), after: opened))
+        XCTAssertFalse(HarnessAppLog.listedConnectors(in: Data(lines.utf8), after: opened.addingTimeInterval(180)),
+                       "Only a listing after the user opened the connectors counts")
+        // Restarted from the card: the app's own listing as it starts doesn't count, even half a minute in.
+        let restarted = ISO8601DateFormatter().date(from: "2026-11-15T07:31:23Z")!
+        XCTAssertFalse(HarnessAppLog.listedConnectors(in: Data(lines.utf8), after: restarted, appStarted: restarted),
+                       "The first listing within a minute of the app's start is its own")
+        let opening = lines + "\n" + #"{"timestamp":"2026-11-15T07:32:10.000Z","level":"info","message":["[MethodCh] begin #250 wb:mcp:list arg=undefined"]}"#
+        XCTAssertTrue(HarnessAppLog.listedConnectors(in: Data(opening.utf8), after: restarted, appStarted: restarted),
+                      "A later listing is the user opening the custom connectors")
+        XCTAssertTrue(HarnessAppLog.listedConnectors(in: Data(lines.utf8), after: opened, appStarted: opened.addingTimeInterval(-7200)),
+                      "Long after the app started, the next listing counts")
+        XCTAssertEqual(WorkBuddyHarness.china.appLogFile, "logs/daemon.log")
     }
 
     func testARingThatIsOffShowsNothingUnlessCleanupFailed() {

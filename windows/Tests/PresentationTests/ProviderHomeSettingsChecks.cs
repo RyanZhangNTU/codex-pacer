@@ -260,6 +260,10 @@ internal static class ProviderHomeSettingsChecks
             Check(view == "customConnectors", "Pacer's tool on the page means the custom connectors show");
             Check(Over(customRect, custom), "The pointer finds Custom Connector by its name");
             Check(Over(trustRect, trust) && !Over(trustRect, other), "The pointer picks the Trust button beside Pacer's tool");
+            // Measured on WorkBuddy 5.9.3 at 150%: a 2172-wide window at 1326,114 had the button at 3247,183, 204 by 48.
+            var estimate = AppAutomation.FromFrame(new Rect(1326, 114, 2172, 1356), 1.5);
+            Check(Math.Abs(estimate.X - 3247) < 2 && Math.Abs(estimate.Y - 183) < 2 && Math.Abs(estimate.Width - 204) < 1 && Math.Abs(estimate.Height - 48) < 1,
+                "Without the window's contents, the ring goes where WorkBuddy draws Custom Connector");
         }
         finally { window.Close(); }
     }

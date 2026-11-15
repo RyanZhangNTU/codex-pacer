@@ -43,6 +43,7 @@ enum WorkBuddyHarness {
             progressConfigFile: "mcp.json",
             progressRuleDirectory: "rules",
             progressConnection: progressConnection,
+            appLogFile: "logs/daemon.log",
             makeMonitor: { WorkBuddyMonitor(io: $0, edition: edition) })
     }
 

@@ -135,7 +135,7 @@ internal sealed partial class SettingsWindow
         Identify(harnessProgressBody, id + ".progress_guide", title);
         // While the card waits on the app, it checks again every few seconds, so
         // trusting the tool in WorkBuddy beside Pacer ticks the step by itself.
-        var poll = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
+        var poll = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
         poll.Tick += async (_, _) =>
         {
             if (harnessProgressPoll != poll || !IsVisible) { poll.Stop(); return; }
@@ -169,7 +169,10 @@ internal sealed partial class SettingsWindow
             harnessProgressChipText.SetResourceReference(TextBlock.ForegroundProperty, ink);
         }
         if (harnessProgressInfo != null && guide != null) harnessProgressInfo.Text = guide.Info;
-        string key = System.Text.Json.JsonSerializer.Serialize(new { guide, editable, ui.Language });
+        // A prompt the user opened (restart despite a running task, or restart to
+        // point) lasts while its step does.
+        if (harnessGuidePrompt is { } prompt && (prompt.Provider != provider || prompt.Stage != guide?.Stage)) harnessGuidePrompt = null;
+        string key = System.Text.Json.JsonSerializer.Serialize(new { guide, editable, ui.Language, prompt = harnessGuidePrompt });
         if (key == harnessProgressKey) return;
         harnessProgressKey = key;
         foreach (UIElement child in harnessProgressBody.Children) PageAccessibility.Retire(child);
@@ -181,25 +184,40 @@ internal sealed partial class SettingsWindow
         Button? Action()
         {
             if (guide!.Action is not string action || guide.ActionTitle is not string title) return null;
+            // A prompt turns the button into its confirmation.
+            if (harnessGuidePrompt is { Kind: "tasks" }) { action = "restartConfirmed"; title = ui.Text("progress_guide.restart.confirm_action"); }
             var button = new Button { Content = title, IsEnabled = editable && !demo, Margin = new Thickness(0, 0, 10, 0) };
             if (action != "retry") button.Style = (Style)FindResource("SettingsProminentButton");
             Identify(button, id + ".progress_action", title); editors.Add(button);
             button.Click += async (_, _) =>
             {
+                button.IsEnabled = false;
                 bool done = action switch
                 {
-                    "openConnectors" => await OpenHarnessConnectorsAsync(provider),
+                    "openConnectors" => await OpenHarnessConnectorsAsync(provider, guide.Stage == "launch"),
                     "openApp" => await WindowsConversationApplication.OpenApplicationAsync(provider),
                     "point" => await PointInAppAsync(provider, guide.Stage),
+                    "restartApp" => await RestartHarnessAppAsync(provider, confirmed: false),
+                    "restartConfirmed" => await RestartHarnessAppAsync(provider, confirmed: true),
                     _ => await RetryHarnessProgressAsync(provider)
                 };
-                if (!done && harnessProgressBody != null) ShowIssue(action == "retry" ? "harness.progress_state.failed" : "harness.progress_state.open_failed");
+                if (harnessProgressBody == null) return;
+                button.IsEnabled = editable && !demo;
+                if (!done) ShowIssue(action == "retry" ? "harness.progress_state.failed" : "harness.progress_state.open_failed");
             };
             return button;
         }
         UIElement ActionRow()
         {
             var row = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+            if (harnessGuidePrompt is { } shownPrompt)
+            {
+                string name = HarnessModule(provider)?.DisplayName ?? provider;
+                var note = Label(ui.Text("progress_guide.restart.confirm").Replace("%@", name, StringComparison.Ordinal), 12.5);
+                note.TextWrapping = TextWrapping.Wrap; note.Margin = new Thickness(0, 0, 0, 6); note.Width = 420;
+                note.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+                Identify(note, id + ".progress_prompt", note.Text); row.Children.Add(note);
+            }
             if (Action() is { } button) row.Children.Add(button);
             if (guide!.Waiting)
             {
@@ -316,20 +334,57 @@ internal sealed partial class SettingsWindow
     private static readonly HashSet<string> openedHarnessConnectors = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, string?> harnessAppViews = new(StringComparer.Ordinal);
 
-    private async Task<bool> OpenHarnessConnectorsAsync(string provider)
+    // A confirmation the card shows in place of its action.
+    private sealed record HarnessGuidePrompt(string Provider, string Stage, string Kind);
+    private HarnessGuidePrompt? harnessGuidePrompt;
+
+    private void ShowGuidePrompt(string provider, string kind)
+    {
+        if (HarnessModule(provider)?.ProgressGuide is not { } guide) return;
+        harnessGuidePrompt = new(provider, guide.Stage, kind);
+        RefreshHarnessProgressGuide(provider, guide, true);
+    }
+
+    /// Opens the connectors. A closed app starts there, and the pointer then
+    /// rings the next button straight away.
+    private async Task<bool> OpenHarnessConnectorsAsync(string provider, bool launch = false)
     {
         if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return false;
         openedHarnessConnectors.Add(provider);
         await RefreshHarnessProgressConnectionAsync(polling: true);
+        if (launch) StartPointer(provider, "customConnector", startup: true);
+        return true;
+    }
+
+    /// One click for the reopen step: Pacer asks the app to quit and opens it
+    /// at its connectors, then rings Custom Connector. A running task asks first.
+    private async Task<bool> RestartHarnessAppAsync(string provider, bool confirmed)
+    {
+        if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables } module) return false;
+        bool busy = engine?.LatestSnapshot?.Tasks.Any(task => task.Provider == provider && task.Phase is not ("completed" or "interrupted")) == true;
+        if (busy && !confirmed) { ShowGuidePrompt(provider, "tasks"); return true; }
+        harnessGuidePrompt = null;
+        var result = await WindowsConversationApplication.RestartForGuideAsync(provider, executables);
+        if (result == WindowsConversationApplication.RestartResult.StillRunning)
+        {
+            issue.Text = ui.Text("progress_guide.restart.failed").Replace("%@", module.DisplayName ?? provider, StringComparison.Ordinal);
+            issue.Visibility = Visibility.Visible;
+            return true;
+        }
+        if (result != WindowsConversationApplication.RestartResult.Restarted) return false;
+        openedHarnessConnectors.Add(provider);
+        harnessAppViews.Remove(provider);
+        await RefreshHarnessProgressConnectionAsync(polling: true);
+        StartPointer(provider, "customConnector", startup: true);
         return true;
     }
 
     /// Rings the button to click right in the app. The custom step reopens its
-    /// connectors first; the trust step only brings the app forward, since a
-    /// link would leave its custom connectors.
+    /// connectors; the trust step only brings the app forward, since a link
+    /// would leave them.
     private async Task<bool> PointInAppAsync(string provider, string stage)
     {
-        if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables } module) return false;
+        if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables }) return false;
         string target = stage == "trust" ? "trust" : "customConnector";
         if (target == "customConnector")
         {
@@ -337,6 +392,13 @@ internal sealed partial class SettingsWindow
             openedHarnessConnectors.Add(provider);
         }
         else await Task.Run(() => { if (AppAutomation.MainWindow(AppAutomation.ProcessIds(executables)) is { } window) AppAutomation.Raise(window); });
+        StartPointer(provider, target, startup: false);
+        return true;
+    }
+
+    private void StartPointer(string provider, string target, bool startup)
+    {
+        if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables } module) return;
         string name = module.DisplayName ?? provider;
         AppPointer.Show(provider, executables, target, ui.Text("progress_guide.pointer.stop"),
             kind => ui.Text(kind == "trust" ? "progress_guide.pointer.trust" : "progress_guide.pointer.custom_connector"),
@@ -346,8 +408,8 @@ internal sealed partial class SettingsWindow
                 harnessAppViews[provider] = view;
                 _ = RefreshHarnessProgressConnectionAsync(polling: true);
             },
-            () => { issue.Text = ui.Text("progress_guide.pointer.not_found").Replace("%@", name, StringComparison.Ordinal); issue.Visibility = Visibility.Visible; });
-        return true;
+            () => { issue.Text = ui.Text("progress_guide.pointer.not_found").Replace("%@", name, StringComparison.Ordinal); issue.Visibility = Visibility.Visible; },
+            startup ? TimeSpan.FromSeconds(25) : TimeSpan.Zero);
     }
 
     private async Task<bool> RetryHarnessProgressAsync(string provider)
