@@ -23,7 +23,7 @@ final class DemoSettingsTests: XCTestCase {
         let defaults = try defaults(), clock = now
         let model = IslandModel(demo: true, demoClock: { clock }, demoArguments: arguments, defaults: defaults)
         XCTAssertEqual(Set(model.enabledProviders), Set(HarnessRegistry.legacyIDs), "Demo automatic choices use synthetic installations")
-        XCTAssertEqual(model.moduleLibrary(.load(from: defaults)).collapsed.map(\.provider), [.workbuddy],
+        XCTAssertEqual(model.moduleLibrary(.load(from: defaults)).collapsed.map(\.provider), [.workbuddy, .workbuddyAI],
                        "Other modules read as not found in the demo until turned on")
         for stage in DemoTaskStage.allCases {
             model.setDemoStage(stage)
