@@ -29,6 +29,7 @@ struct CreditsDial: View {
                     Text(top).font(.system(size: max(9, size * 0.095), weight: .semibold))
                         .foregroundStyle(dial.topWarns ? warning : secondary)
                         .lineLimit(1).minimumScaleFactor(0.6)
+                        .frame(maxWidth: Self.topWidth(size))
                 }
                 Text(dial.center).font(.system(size: size * 0.22, weight: .semibold, design: .rounded))
                     .foregroundStyle(primary).monospacedDigit().lineLimit(1).minimumScaleFactor(0.35)
@@ -41,6 +42,14 @@ struct CreditsDial: View {
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(dial.accessibilityLabel)
+    }
+
+    /// The widest the line above the figure may run and stay inside the ring:
+    /// the chord at its height, inside the 6-point stroke with 3 points clear,
+    /// and never more than 72% of the dial, as on Windows.
+    static func topWidth(_ size: CGFloat) -> CGFloat {
+        let inner = size / 2 - 6, rise = size / 2 - 0.23 * size
+        return min(0.72 * size, 2 * (max(0, inner * inner - rise * rise)).squareRoot())
     }
 
     /// Extra credits as a capsule, or the month's label, in the ring's gap.
@@ -61,33 +70,49 @@ struct CreditsDial: View {
     }
 }
 
-/// The lines beside a dial: a label, then the value and its detail, the
-/// detail in orange when credits are about to lapse; the plan sits on the first.
+/// The lines beside a dial, laid out like a period of Codex's single view:
+/// the label at the left (the plan beside the first) and the value at the
+/// right, a caption under them in orange when credits are about to lapse,
+/// and a hairline between lines. The column stays narrow enough that values
+/// sit near their labels on a wide card.
 struct CreditsLines: View {
     let presentation: HarnessCreditsPresentation
     let tint: Color
     var island = true
+    static let maxWidth: CGFloat = 340
+
+    private var secondary: Color { island ? PacerPalette.secondary : Color(nsColor: .secondaryLabelColor) }
+    private var tertiary: Color { island ? PacerPalette.tertiary : Color(nsColor: .tertiaryLabelColor) }
+    private var warning: Color { island ? PacerPalette.attention : MainPalette.attention }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(presentation.lines.enumerated()), id: \.offset) { index, line in
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(line.label).font(.system(size: 11)).foregroundStyle(island ? PacerPalette.secondary : .secondary)
+                if index > 0 {
+                    Rectangle().fill(island ? PacerPalette.hairline : MainPalette.separator).frame(height: 1).padding(.vertical, 8)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(line.label).font(.system(size: 11)).foregroundStyle(secondary).lineLimit(1)
                         if index == 0, let plan = presentation.plan {
-                            Text(plan).font(.system(size: 10, weight: .semibold)).foregroundStyle(tint)
+                            Text(plan).font(.system(size: 10, weight: .semibold)).foregroundStyle(tint).lineLimit(1)
                                 .padding(.horizontal, 6).padding(.vertical, 1)
                                 .background(tint.opacity(0.18), in: Capsule())
                         }
+                        Spacer(minLength: 8)
+                        Text(line.value).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(island ? PacerPalette.primary : .primary).lineLimit(1)
                     }
-                    (Text(line.value).fontWeight(.semibold).foregroundColor(island ? PacerPalette.primary : .primary)
-                        + Text(line.detail.map { " · " + $0 } ?? "")
-                            .foregroundColor(line.warns ? (island ? PacerPalette.attention : MainPalette.attention)
-                                                        : (island ? PacerPalette.secondary : .secondary)))
-                        .font(.system(size: 12.5)).monospacedDigit().fixedSize(horizontal: false, vertical: true)
+                    if let detail = line.detail {
+                        Text(detail).font(.system(size: 10)).monospacedDigit().foregroundStyle(line.warns ? warning : tertiary)
+                            .lineLimit(1).truncationMode(.tail)
+                    }
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(line.label + " " + line.value + (line.detail.map { ", " + $0 } ?? ""))
             }
         }
+        .frame(maxWidth: Self.maxWidth, alignment: .leading)
     }
 }
 
