@@ -203,7 +203,16 @@ struct WorkBuddyTranscript {
         let time = Date(timeIntervalSince1970: Double(stamp) / 1000)
         guard time <= now.addingTimeInterval(1) else { return true }
         if type == "message", values["role"]?.matchesStringLiteral("user") == true {
-            guard metadata["startsNewUserRequest"]?.boolean() == true else { return true }
+            // A user line inside the request (WorkBuddy AI 5.9.4 wrote one with
+            // isMeta after a TaskOutput result) is a link of its chain; the rest
+            // of the request, final reply included, hangs off it.
+            guard metadata["startsNewUserRequest"]?.boolean() == true else {
+                if var current = turn, current.id == request, time >= current.started, current.ending != .cancelled,
+                   Self.identifier(values["parentId"]) == current.tail {
+                    current.tail = id; turn = current
+                }
+                return true
+            }
             if let turn, time < turn.started || turn.id == request { return true }
             turn = Turn(id: request, started: time, tail: id)
             return true

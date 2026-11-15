@@ -261,6 +261,37 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertFalse(String(describing: transcript.turn).contains("PRIVATE"))
     }
 
+    func testAUserLineInsideTheRequestKeepsItsChainAndOtherRecordsAreSkipped() throws {
+        // Seen 11/15 on WorkBuddy AI 5.9.4: after a TaskOutput result an isMeta user
+        // line, and the request's last 208 lines, final reply included, hung off it.
+        var transcript = WorkBuddyTranscript()
+        let session = Fixture.session
+        var stamp = updated - 9000
+        func line(_ fields: [String: Any], metadata: [String: Any] = [:]) throws -> Data {
+            var row = fields
+            row["sessionId"] = session; row["timestamp"] = stamp; stamp += 10
+            row["providerData"] = ["conversationRequestId": "request"].merging(metadata) { _, new in new }
+            return try JSONSerialization.data(withJSONObject: row)
+        }
+        let rows = [
+            try line(["type": "session-meta", "id": "meta-record"]),
+            try line(["type": "message", "role": "user", "id": "start"], metadata: ["startsNewUserRequest": true]),
+            try line(["type": "ai-title", "id": "title-record", "parentId": "start"]),
+            try line(["type": "function_call", "name": "TaskOutput", "id": "task", "parentId": "start", "callId": "task-call"]),
+            try line(["type": "file-history-snapshot", "id": "snapshot-record"]),
+            try line(["type": "function_call_result", "status": "completed", "id": "task-result", "parentId": "task", "callId": "task-call"]),
+            try line(["type": "message", "role": "user", "id": "meta-user", "parentId": "task-result",
+                      "content": [["type": "input_text", "text": "PRIVATE"]]], metadata: ["isMeta": true]),
+            try line(["type": "credit-usage", "id": "usage-record"]),
+            try line(["type": "message", "role": "assistant", "status": "completed", "id": "reply", "parentId": "meta-user",
+                      "content": [["type": "output_text", "text": "PRIVATE REPLY"]]]),
+        ]
+        for row in rows { XCTAssertTrue(transcript.consume(row, session: session, now: at)) }
+        XCTAssertEqual(transcript.turn?.id, "request")
+        XCTAssertEqual(transcript.turn?.ending, .reply, "The request's final reply still ends the turn")
+        XCTAssertFalse(String(describing: transcript.turn).contains("PRIVATE"))
+    }
+
     func testOnlyAnAcknowledgedProgressToolCanSupplyAnEstimate() throws {
         var transcript = WorkBuddyTranscript()
         let session = Fixture.session
