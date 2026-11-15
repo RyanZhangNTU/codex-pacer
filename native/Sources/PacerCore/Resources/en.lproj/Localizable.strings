@@ -1529,3 +1529,5 @@
 "progress_guide.pointer.trust" = "Click here to trust pacer_progress";
 "progress_guide.pointer.not_found" = "Couldn’t find this button in %@. Open its window and try again.";
 "progress_guide.pointer.stop" = "Stop";
+"progress_guide.trust_card.experts" = "Experts";
+"progress_guide.trust_card.skills" = "Skills";

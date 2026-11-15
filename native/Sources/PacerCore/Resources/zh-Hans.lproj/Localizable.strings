@@ -1529,3 +1529,5 @@
 "progress_guide.pointer.trust" = "点这里信任 pacer_progress";
 "progress_guide.pointer.not_found" = "没在 %@ 里找到这个按钮。请先打开它的窗口再试。";
 "progress_guide.pointer.stop" = "不用了";
+"progress_guide.trust_card.experts" = "专家";
+"progress_guide.trust_card.skills" = "技能";

@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "51ccf792dc7f5b255da4a019b97a7d23ae9603dcb889cdfa9eae6429b3fefa2a",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "54977377ad5f29bc7bde517aaeac216cfcc80397ac0e1d7bc76c29b4a2f34217",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1201,6 +1201,8 @@
     "progress_guide.trust_card.caption": "\u7b2c\u4e09\u65b9\u670d\u52a1",
     "progress_guide.trust_card.custom": "\u81ea\u5b9a\u4e49\u8fde\u63a5\u5668",
     "progress_guide.trust_card.detail": "\u9996\u6b21\u8fde\u63a5\u6b64 MCP \u670d\u52a1\u9700\u8981\u60a8\u7684\u4fe1\u4efb\u786e\u8ba4\u3002",
+    "progress_guide.trust_card.experts": "\u4e13\u5bb6",
+    "progress_guide.trust_card.skills": "\u6280\u80fd",
     "progress_guide.trust_card.tab": "\u8fde\u63a5\u5668",
     "progress_guide.waiting": "\u7b49\u4f60\u70b9\u5b8c",
     "progress_guide.waiting.reopen": "\u7b49 %@ \u91cd\u65b0\u542f\u52a8",

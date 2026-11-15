@@ -188,8 +188,9 @@ internal sealed partial class SettingsWindow
             {
                 bool done = action switch
                 {
-                    "openConnectors" => await WindowsConversationApplication.OpenProgressConnectorsAsync(provider),
+                    "openConnectors" => await OpenHarnessConnectorsAsync(provider),
                     "openApp" => await WindowsConversationApplication.OpenApplicationAsync(provider),
+                    "point" => await PointInAppAsync(provider, guide.Stage),
                     _ => await RetryHarnessProgressAsync(provider)
                 };
                 if (!done && harnessProgressBody != null) ShowIssue(action == "retry" ? "harness.progress_state.failed" : "harness.progress_state.open_failed");
@@ -244,61 +245,109 @@ internal sealed partial class SettingsWindow
             var title = Label(step.Title, 13, step.State == "current" ? FontWeights.SemiBold : FontWeights.Normal); title.TextWrapping = TextWrapping.Wrap;
             title.SetResourceReference(TextBlock.ForegroundProperty, step.State switch { "done" => "SettingsSecondary", "current" => "SettingsPrimary", _ => "SettingsDisabled" });
             body.Children.Add(title);
+            // Only the current step shows where to click, as one large picture.
+            if (step.State == "current" && guide.Picture is string picture)
+            {
+                var art = picture == "trust" ? TrustPicture(provider) : CustomConnectorPicture();
+                art.Margin = new Thickness(0, 8, 0, 0); body.Children.Add(art);
+            }
             if (step.State == "current" && (guide.Action != null || guide.Waiting)) body.Children.Add(ActionRow());
             line.Children.Add(body);
-            if (step.State == "current" && guide.ShowsTrustCard)
-            {
-                var card = TrustCard(provider); Grid.SetColumn(card, 2); line.Children.Add(card);
-            }
             Identify(line, id + ".progress_step" + index, step.Title);
             AutomationProperties.SetItemStatus(line, ui.Text("progress_guide.state." + step.State));
             harnessProgressBody.Children.Add(line);
         }
     }
 
-    /// A small picture of the app's connectors page, so people know the two
-    /// clicks there: ① Custom Connector at the top, ② Trust on pacer_progress.
-    private DecorativeBorder TrustCard(string provider)
+    /// The top of the app's connectors page, drawn: its tabs, and Custom
+    /// Connector at the right inside a ring, the one button to click now.
+    private DecorativeBorder CustomConnectorPicture()
     {
-        FrameworkElement Mark(string number)
+        var bar = new DockPanel { LastChildFill = true };
+        var button = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 5, 12, 6), Background = new SolidColorBrush(Color.FromRgb(29, 29, 31)) };
+        button.Child = new TextBlock { Text = "\u270E " + ui.Text("progress_guide.trust_card.custom"), FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
+        var ring = new Border { BorderThickness = new Thickness(2.5), CornerRadius = new CornerRadius(11), Padding = new Thickness(3), Child = button, VerticalAlignment = VerticalAlignment.Center };
+        ring.SetResourceReference(Border.BorderBrushProperty, "SettingsAccent");
+        DockPanel.SetDock(ring, Dock.Right); bar.Children.Add(ring);
+        var tabs = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var (key, chosen) in new[] { ("progress_guide.trust_card.experts", false), ("progress_guide.trust_card.skills", false), ("progress_guide.trust_card.tab", true) })
         {
-            var badge = new Border { Width = 15, Height = 15, CornerRadius = new CornerRadius(7.5), Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
-            badge.SetResourceReference(Border.BackgroundProperty, "SettingsAccent");
-            var digit = new TextBlock { Text = number, FontSize = 9.5, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            digit.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSelectionText");
-            badge.Child = digit; return badge;
+            var tab = Label(ui.Text(key), 14, chosen ? FontWeights.Bold : FontWeights.Normal); tab.Margin = new Thickness(0, 0, 18, 0);
+            tab.SetResourceReference(TextBlock.ForegroundProperty, chosen ? "SettingsPrimary" : "SettingsDisabled");
+            tabs.Children.Add(tab);
         }
-        var stack = new StackPanel();
-        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-        var custom = new StackPanel { Orientation = Orientation.Horizontal };
-        custom.Children.Add(Mark("1"));
-        var button = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 3), Background = new SolidColorBrush(Color.FromRgb(29, 29, 31)) };
-        button.Child = new TextBlock { Text = "✎ " + ui.Text("progress_guide.trust_card.custom"), FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
-        custom.Children.Add(button);
-        DockPanel.SetDock(custom, Dock.Right); top.Children.Add(custom);
-        var tab = Label(ui.Text("progress_guide.trust_card.tab"), 11, FontWeights.SemiBold); tab.VerticalAlignment = VerticalAlignment.Center; top.Children.Add(tab);
-        stack.Children.Add(top);
-        var item = new Border { CornerRadius = new CornerRadius(7), BorderThickness = new Thickness(1), Padding = new Thickness(9, 7, 9, 8) };
+        bar.Children.Add(tabs);
+        return PictureFrame(bar);
+    }
+
+    /// Pacer's tool in the app's custom connectors, drawn, with Trust inside a ring.
+    private DecorativeBorder TrustPicture(string provider)
+    {
+        var item = new Border { CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), Padding = new Thickness(11, 9, 11, 10), MaxWidth = 380, HorizontalAlignment = HorizontalAlignment.Left };
         item.SetResourceReference(Border.BorderBrushProperty, "SettingsSeparator"); item.SetResourceReference(Border.BackgroundProperty, "SettingsCard");
-        var lines = new StackPanel();
+        var grid = new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var lines = new StackPanel { Margin = new Thickness(0, 0, 12, 0) };
         var name = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
-        name.Children.Add(new Border { Width = 14, Height = 14, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromRgb(48, 176, 199)), Margin = new Thickness(0, 0, 6, 0) });
-        name.Children.Add(Label("pacer_progress", 11.5, FontWeights.SemiBold));
+        name.Children.Add(new Border { Width = 16, Height = 16, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromRgb(48, 176, 199)), Margin = new Thickness(0, 0, 7, 0) });
+        name.Children.Add(Label("pacer_progress", 12.5, FontWeights.SemiBold));
         lines.Children.Add(name);
-        var caption = Label(ui.Text("progress_guide.trust_card.caption"), 10.5); caption.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); lines.Children.Add(caption);
-        var detail = Label(ui.Text("progress_guide.trust_card.detail"), 11); detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 2, 0, 6); lines.Children.Add(detail);
-        var trust = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(12, 3, 12, 4), BorderThickness = new Thickness(2) };
-        trust.Background = new SolidColorBrush(PacerPalette.BrandColor(provider));
-        trust.SetResourceReference(Border.BorderBrushProperty, "SettingsChipOnStroke");
-        trust.Child = new TextBlock { Text = ui.Text("progress_guide.trust_card.button"), FontSize = 11.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
-        var trustRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        trustRow.Children.Add(Mark("2")); trustRow.Children.Add(trust);
-        lines.Children.Add(trustRow);
-        item.Child = lines; stack.Children.Add(item);
-        var frame = new DecorativeBorder { Width = 236, Margin = new Thickness(14, 0, 0, 0), CornerRadius = new CornerRadius(9), Padding = new Thickness(9), Child = stack, VerticalAlignment = VerticalAlignment.Top };
+        var caption = Label(ui.Text("progress_guide.trust_card.caption"), 11); caption.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); lines.Children.Add(caption);
+        var detail = Label(ui.Text("progress_guide.trust_card.detail"), 11.5); detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 2, 0, 0); lines.Children.Add(detail);
+        grid.Children.Add(lines);
+        var trust = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(14, 4, 14, 5), Background = new SolidColorBrush(PacerPalette.BrandColor(provider)) };
+        trust.Child = new TextBlock { Text = ui.Text("progress_guide.trust_card.button"), FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
+        var ring = new Border { BorderThickness = new Thickness(2.5), CornerRadius = new CornerRadius(10), Padding = new Thickness(3), Child = trust, VerticalAlignment = VerticalAlignment.Center };
+        ring.SetResourceReference(Border.BorderBrushProperty, "SettingsAccent");
+        Grid.SetColumn(ring, 1); grid.Children.Add(ring);
+        item.Child = grid;
+        return PictureFrame(item);
+    }
+
+    // A picture only: the step's title and button carry the meaning.
+    private static DecorativeBorder PictureFrame(UIElement content)
+    {
+        var frame = new DecorativeBorder { CornerRadius = new CornerRadius(10), Padding = new Thickness(14, 12, 14, 12), Child = content, MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Left };
         frame.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");
-        // A picture only: the step's title and button carry the meaning.
         return frame;
+    }
+
+    // Which modules' connectors the user opened from the card, and the page
+    // each app was last seen on, for the guide's open and custom steps.
+    private static readonly HashSet<string> openedHarnessConnectors = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, string?> harnessAppViews = new(StringComparer.Ordinal);
+
+    private async Task<bool> OpenHarnessConnectorsAsync(string provider)
+    {
+        if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return false;
+        openedHarnessConnectors.Add(provider);
+        await RefreshHarnessProgressConnectionAsync(polling: true);
+        return true;
+    }
+
+    /// Rings the button to click right in the app. The custom step reopens its
+    /// connectors first; the trust step only brings the app forward, since a
+    /// link would leave its custom connectors.
+    private async Task<bool> PointInAppAsync(string provider, string stage)
+    {
+        if (HarnessModule(provider) is not { Launch.Executables: { Count: > 0 } executables } module) return false;
+        string target = stage == "trust" ? "trust" : "customConnector";
+        if (target == "customConnector")
+        {
+            if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider)) return false;
+            openedHarnessConnectors.Add(provider);
+        }
+        else await Task.Run(() => { if (AppAutomation.MainWindow(AppAutomation.ProcessIds(executables)) is { } window) AppAutomation.Raise(window); });
+        string name = module.DisplayName ?? provider;
+        AppPointer.Show(provider, executables, target, ui.Text("progress_guide.pointer.stop"),
+            kind => ui.Text(kind == "trust" ? "progress_guide.pointer.trust" : "progress_guide.pointer.custom_connector"),
+            view =>
+            {
+                if (harnessAppViews.TryGetValue(provider, out var seen) && seen == view) return;
+                harnessAppViews[provider] = view;
+                _ = RefreshHarnessProgressConnectionAsync(polling: true);
+            },
+            () => { issue.Text = ui.Text("progress_guide.pointer.not_found").Replace("%@", name, StringComparison.Ordinal); issue.Visibility = Visibility.Visible; });
+        return true;
     }
 
     private async Task<bool> RetryHarnessProgressAsync(string provider)
@@ -472,9 +521,24 @@ internal sealed partial class SettingsWindow
             (polling && module.ProgressGuide is not { Waiting: true }) ||
             session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
         // The app reads its MCP file when it starts, so the card needs to know
-        // whether it runs and since when.
-        var (running, started) = await Task.Run(() => AppPresence(module.Launch?.Executables));
-        try { await client.SendAsync("refreshHarnessProgressConnection", new { provider = module.Provider, appRunning = running, appStartedAt = started }); }
+        // whether it runs and since when, and, on its connector steps, which page
+        // it shows. A pointer already reading the app reports the page itself.
+        string provider = module.Provider;
+        bool reading = module.ProgressGuide?.Stage is "openConnectors" or "customConnector" or "trust" && AppPointer.Current?.Provider != provider;
+        var (running, started, view) = await Task.Run(() =>
+        {
+            var (running, started) = AppPresence(module.Launch?.Executables);
+            string? view = running && reading && AppAutomation.MainWindow(AppAutomation.ProcessIds(module.Launch?.Executables)) is { } window ? AppAutomation.View(window) : null;
+            return (running, started, view);
+        });
+        if (reading) harnessAppViews[provider] = view;
+        if (!running) { openedHarnessConnectors.Remove(provider); harnessAppViews.Remove(provider); }
+        harnessAppViews.TryGetValue(provider, out var page);
+        try
+        {
+            await client.SendAsync("refreshHarnessProgressConnection", new { provider, appRunning = running, appStartedAt = started,
+                appView = page, openedConnectors = openedHarnessConnectors.Contains(provider) });
+        }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { }
     }
 
@@ -532,6 +596,7 @@ internal sealed partial class SettingsWindow
         }
         var guide = closed || !module.Enabled ? null : module.ProgressGuide;
         RefreshHarnessProgressGuide(module.Provider, guide, editable);
+        AppPointer.Follow(module.Provider, guide?.Stage);
         if (harnessProgressPoll != null)
         {
             bool poll = guide is { Waiting: true } && progressOn && !demo;

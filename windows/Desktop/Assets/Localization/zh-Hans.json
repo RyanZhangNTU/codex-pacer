@@ -1197,6 +1197,8 @@
     "progress_guide.trust_card.caption": "第三方服务",
     "progress_guide.trust_card.custom": "自定义连接器",
     "progress_guide.trust_card.detail": "首次连接此 MCP 服务需要您的信任确认。",
+    "progress_guide.trust_card.experts": "专家",
+    "progress_guide.trust_card.skills": "技能",
     "progress_guide.trust_card.tab": "连接器",
     "progress_guide.waiting": "等你点完",
     "progress_guide.waiting.reopen": "等 %@ 重新启动",
