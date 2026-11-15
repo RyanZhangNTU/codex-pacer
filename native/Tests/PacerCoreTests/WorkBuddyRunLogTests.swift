@@ -28,12 +28,12 @@ final class WorkBuddyRunLogTests: XCTestCase {
 
     func testReadsOnlyTheSessionStageAndTimeOfATransition() throws {
         let at = Date(timeIntervalSince1970: 1_800_000_000.12)
-        let entry = try XCTUnwrap(WorkBuddyRunLog.parse(Data(Self.transition(session, "MODEL_STREAM_STARTED", to: "model_streaming", at: at).utf8)))
+        let entry = try XCTUnwrap(WorkBuddyRunLog.parse(Data(Self.transition(session, "MODEL_STREAM_STARTED", to: "model_streaming", at: at).utf8), near: at))
         XCTAssertEqual(entry.session, session.lowercased())
         XCTAssertEqual(entry.stage, .model, "A stream without a tool is the model thinking or writing")
         XCTAssertEqual(entry.at?.timeIntervalSince1970 ?? 0, at.timeIntervalSince1970, accuracy: 0.002)
         let writing = Self.transition(session, "MODEL_STREAM_STARTED", to: "model_streaming", at: at, extra: " | streamingToolName=Write")
-        XCTAssertEqual(WorkBuddyRunLog.parse(Data(writing.utf8))?.stage, .tool, "Writing a tool call counts as the tool")
+        XCTAssertEqual(WorkBuddyRunLog.parse(Data(writing.utf8), near: at)?.stage, .tool, "Writing a tool call counts as the tool")
         let stages: [(String, String, WorkBuddyRunLog.Stage?)] = [
             ("RUN_PREPARING", "preparing", .starting), ("RUN_ACCEPTED", "pending", .starting), ("AGENT_STARTED", "agent_running", .starting),
             ("MODEL_REQUEST_STARTED", "model_requesting", .model), ("MODEL_RESPONSE_DONE", "model_done", .model),
@@ -44,21 +44,46 @@ final class WorkBuddyRunLogTests: XCTestCase {
         for (event, to, stage) in stages { XCTAssertEqual(WorkBuddyRunLog.stage(event: event, to: to, writingTool: false), stage, event + " " + to) }
         for line in ["[2026年11月15日 下午10:05:24.120] [info] [Agent] transition | sessionId=\(session) | event=AGENT_STARTED",
                      Self.transition("not-a-session", "AGENT_STARTED", to: "agent_running", at: at)] {
-            XCTAssertNil(WorkBuddyRunLog.parse(Data(line.utf8)), "Only a run-state transition of a real session counts")
+            XCTAssertNil(WorkBuddyRunLog.parse(Data(line.utf8), near: at), "Only a run-state transition of a real session counts")
         }
-        // Noon and midnight in twelve-hour form, and ISO 8601.
+        // Each region's own format, as WorkBuddy writes it with toLocaleString.
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = WorkBuddyRunLog.localZone
-        let midnight = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 15, hour: 0, minute: 0, second: 1)))
-        XCTAssertEqual(WorkBuddyRunLog.time("[2026年11月15日 上午12:00:01.000] x"), midnight)
-        XCTAssertEqual(WorkBuddyRunLog.time("[2026年11月15日 下午12:00:01.000] x"), midnight.addingTimeInterval(12 * 3600))
-        XCTAssertEqual(WorkBuddyRunLog.time("[2026-11-15T14:05:20.500Z] x")?.timeIntervalSince1970 ?? 0, 1_794_751_520.5, accuracy: 0.001)
-        XCTAssertNil(WorkBuddyRunLog.time("2026年11月15日 下午10:05:24 no brackets"))
+        func local(_ month: Int, _ day: Int, _ hour: Int, _ minute: Int, _ second: Int, _ fraction: Double = 0) throws -> Date {
+            try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour, minute: minute, second: second)))
+                .addingTimeInterval(fraction)
+        }
+        let near = try local(11, 15, 12, 0, 0)
+        let readings: [(String, Date)] = [
+            ("[2026年11月15日 上午12:00:01.000] x", try local(11, 15, 0, 0, 1)),
+            ("[2026年11月15日 下午12:00:01.000] x", try local(11, 15, 12, 0, 1)),
+            ("[2026年11月15日 下午10:05:20.514] x", try local(11, 15, 22, 5, 20, 0.514)),
+            ("[11/15/2026, 1:54:39 PM.902] [Info] x", try local(11, 15, 13, 54, 39, 0.902)),
+            ("[11/15/2026, 12:04:39 AM] x", try local(11, 15, 0, 4, 39)),
+            ("[15/11/2026, 13:54:39] x", try local(11, 15, 13, 54, 39)),
+            ("[15.11.2026, 13:54:39.250] x", try local(11, 15, 13, 54, 39, 0.25)),
+            ("[2026/11/15 13:54:39] x", try local(11, 15, 13, 54, 39)),
+            ("[2026. 11. 15. 오후 1:54:39] x", try local(11, 15, 13, 54, 39)),
+        ]
+        for (text, expected) in readings {
+            XCTAssertEqual(WorkBuddyRunLog.time(Substring(text), near: near)?.timeIntervalSince1970 ?? 0, expected.timeIntervalSince1970, accuracy: 0.001, text)
+        }
+        // Day and month that could swap: the reading nearer the file's last write.
+        XCTAssertEqual(WorkBuddyRunLog.time("[11/12/2026, 9:00:00 AM] x", near: try local(11, 12, 10, 0, 0)), try local(11, 12, 9, 0, 0))
+        XCTAssertEqual(WorkBuddyRunLog.time("[11/12/2026, 9:00:00 AM] x", near: try local(12, 11, 10, 0, 0)), try local(12, 11, 9, 0, 0))
+        XCTAssertEqual(WorkBuddyRunLog.time("[2026-11-15T14:05:20.500Z] x", near: near)?.timeIntervalSince1970 ?? 0, 1_794_751_520.5, accuracy: 0.001)
+        for text in ["2026年11月15日 下午10:05:24 no brackets", "[Info] [pid=1]", "[11/31/26, 9:00:00] x", "[13/13/2026, 9:00:00] x"] {
+            XCTAssertNil(WorkBuddyRunLog.time(Substring(text), near: near), text)
+        }
     }
 
     func testFollowsTheNewestAgentLogsAndReportsOnlyANewStage() throws {
-        XCTAssertTrue(WorkBuddyRunLog.isAgentLog("2026-11-15-22-05-19__b2eb422995fae081350043745df65c69.log"))
-        for name in ["workbuddyMainThread__cb3b8bd1d9dbbab7c7f879f84e33b540.log", "2026-11-15-22-05-19__b2eb422995fae081350043745df65c69.old.log",
-                     "unknown-workspace__0943646edce6afd40ba580bf0ccd807a.log", "AppStartup.log", "2026-11-15-22-05-19_b2eb422995fae081350043745df65c69.log"] {
+        // A task's process is named after its folder; WorkBuddy's own new-task folders by date and time.
+        let hash = "b2eb422995fae081350043745df65c69"
+        for name in ["2026-11-15-22-05-19", "my_project", "__workbuddy_cli_host", "", "workbuddyMainThread", "unknown-workspace"] {
+            XCTAssertTrue(WorkBuddyRunLog.isAgentLog(name + "__" + hash + ".log"), name)
+        }
+        for name in ["2026-11-15-22-05-19__\(hash).old.log", "AppStartup.log", "extension-scheduler-diag.log",
+                     "2026-11-15-22-05-19_\(hash).log", "2026-11-15-22-05-19__\(hash.dropLast()).log", "2026-11-15-22-05-19__\(hash).txt"] {
             XCTAssertFalse(WorkBuddyRunLog.isAgentLog(name), name)
         }
         let files = TestFileSystem(), now = Date()
@@ -66,7 +91,7 @@ final class WorkBuddyRunLogTests: XCTestCase {
         let day = folder.appendingPathComponent("logs/" + formatter.string(from: now), isDirectory: true)
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
         let log = day.appendingPathComponent("2026-11-15-22-05-19__" + String(repeating: "b", count: 32) + ".log")
-        let other = day.appendingPathComponent("workbuddyMainThread__" + String(repeating: "c", count: 32) + ".log")
+        let other = day.appendingPathComponent("extension-scheduler-diag.log")
         // Startup chatter fills most of a process's log before its first transition.
         let chatterLine = Self.stamp(now.addingTimeInterval(-10)) + " [info] [pid=1] [Startup] loading plugins\r\n"
         let chatter = String(repeating: chatterLine, count: 12_000)

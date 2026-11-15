@@ -8,10 +8,14 @@ import Foundation
 /// reads only these lines' session, event, state, whether they name a tool,
 /// and time; nothing else in the logs.
 ///
-/// Each process writes `logs/<date>/<date>-<time>__<hash>.log` in WorkBuddy's
-/// home, one task each, with its local time first on every line in its
-/// system's language, e.g. `[2026年11月15日 下午10:05:20.514]`. A process
-/// started before midnight keeps writing in the previous day's folder.
+/// Each process writes `logs/<date>/<name>__<32 hex digits>.log` in
+/// WorkBuddy's home: a task's process is named after its folder (WorkBuddy's
+/// own new-task folders are named by date and time, `2026-11-15-22-05-19`),
+/// and others are `workbuddyMainThread`, `unknown-workspace`, an empty name or
+/// `__workbuddy_cli_host`, which also runs tasks. Only the transition lines
+/// matter, so every such log is read. A process started before midnight keeps
+/// writing in the previous day's folder. Each line starts with the local time
+/// in the system region's format; see `time(_:near:)`.
 struct WorkBuddyRunLog {
     enum Stage: Equatable {
         /// The run is being set up, before its first model request.
@@ -76,7 +80,7 @@ struct WorkBuddyRunLog {
                 let lineStart = data[start..<found.lowerBound].lastIndex(of: 10).map { $0 + 1 } ?? start
                 let lineEnd = data[found.upperBound..<end].firstIndex(of: 10) ?? end
                 search = lineEnd
-                guard lineEnd - lineStart <= 2048, let entry = Self.parse(data[lineStart..<lineEnd]) else { continue }
+                guard lineEnd - lineStart <= 2048, let entry = Self.parse(data[lineStart..<lineEnd], near: metadata.modified) else { continue }
                 changed = apply(entry.session, State(stage: entry.stage, at: entry.at ?? metadata.modified)) || changed
             }
         }
@@ -117,16 +121,16 @@ struct WorkBuddyRunLog {
     /// default zone from the host's offset, which `Calendar.current` follows.
     static var localZone: TimeZone { Calendar.current.timeZone }
 
-    /// `2026-11-15-22-05-19__<32 hex digits>.log`; the app's own logs have other names.
+    /// `<name>__<32 hex digits>.log`, any name; a rotated `.old.log` and the
+    /// app's other logs don't match.
     static func isAgentLog(_ name: String) -> Bool {
-        let parts = name.split(separator: "_", omittingEmptySubsequences: false)
-        guard name.hasSuffix(".log"), parts.count == 3, parts[1].isEmpty else { return false }
-        let stamp = parts[0], hash = parts[2].dropLast(4)
-        return stamp.count == 19 && stamp.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == "-") }) &&
-            hash.count == 32 && hash.allSatisfy({ $0.isHexDigit })
+        let stem = name.dropLast(4)
+        guard name.hasSuffix(".log"), let split = stem.range(of: "__", options: .backwards) else { return false }
+        let hash = stem[split.upperBound...]
+        return hash.count == 32 && hash.allSatisfy { $0.isASCII && $0.isHexDigit }
     }
 
-    static func parse(_ line: Data) -> (session: String, stage: Stage, at: Date?)? {
+    static func parse(_ line: Data, near reference: Date) -> (session: String, stage: Stage, at: Date?)? {
         let text = String(decoding: line, as: UTF8.self)
         guard let marker = text.range(of: "[SessionRunStateMachine] transition | ") else { return nil }
         var fields: [Substring: Substring] = [:]
@@ -137,7 +141,7 @@ struct WorkBuddyRunLog {
         guard let id = fields["sessionId"].map(String.init), Foundation.UUID(uuidString: id) != nil,
               let stage = stage(event: fields["event"].map(String.init) ?? "", to: fields["to"].map(String.init) ?? "",
                                 writingTool: fields["streamingToolName"] != nil) else { return nil }
-        return (id.lowercased(), stage, time(text[..<marker.lowerBound]))
+        return (id.lowercased(), stage, time(text[..<marker.lowerBound], near: reference))
     }
 
     static func stage(event: String, to: String, writingTool: Bool) -> Stage? {
@@ -159,31 +163,49 @@ struct WorkBuddyRunLog {
         }
     }
 
-    /// The local time in the line's first brackets: Chinese
-    /// (`2026年11月15日 下午10:05:20.514`), or ISO 8601.
-    static func time(_ prefix: Substring) -> Date? {
-        guard prefix.first == "[", let close = prefix.prefix(48).firstIndex(of: "]") else { return nil }
+    /// The time in the line's first brackets. WorkBuddy writes the local time
+    /// in the system region's format: `[2026年11月15日 下午10:05:20.514]` on a
+    /// Chinese Windows, `[11/15/2026, 1:54:39 PM.902]` on a Mac with US
+    /// formats (seen 11/15). So it reads the numbers in order: a four-digit
+    /// year first or third, then hour, minute, second and an optional fraction,
+    /// on a 12-hour clock when the text says AM or PM in a few languages. When
+    /// day and month could swap, the reading nearer `reference`, the file's
+    /// last write, wins. ISO 8601 with a zone is read as written.
+    static func time(_ prefix: Substring, near reference: Date) -> Date? {
+        guard prefix.first == "[", let close = prefix.prefix(64).firstIndex(of: "]") else { return nil }
         let inner = prefix[prefix.index(after: prefix.startIndex)..<close]
-        if let year = inner.firstIndex(of: "年"), let month = inner.firstIndex(of: "月"), let day = inner.firstIndex(of: "日"),
-           year < month, month < day {
-            var clock = inner[inner.index(after: day)...].trimmingCharacters(in: .whitespaces)[...]
-            var afternoon: Bool?
-            if clock.hasPrefix("上午") { afternoon = false; clock = clock.dropFirst(2) }
-            else if clock.hasPrefix("下午") { afternoon = true; clock = clock.dropFirst(2) }
-            let parts = clock.split(separator: ":")
-            guard parts.count == 3, let y = Int(inner[..<year]), let m = Int(inner[inner.index(after: year)..<month]),
-                  let d = Int(inner[inner.index(after: month)..<day]), var hour = Int(parts[0]), let minute = Int(parts[1]),
-                  let seconds = Double(parts[2]), (0...23).contains(hour), (0...59).contains(minute), (0..<61).contains(seconds) else { return nil }
-            if let afternoon { hour = hour % 12 + (afternoon ? 12 : 0) }
-            var calendar = Calendar(identifier: .gregorian); calendar.timeZone = localZone
-            let whole = Int(seconds)
-            guard let date = calendar.date(from: DateComponents(year: y, month: m, day: d, hour: hour, minute: minute, second: whole)) else { return nil }
-            return date.addingTimeInterval(seconds - Double(whole))
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: String(inner)) { return date }
+        iso.formatOptions = [.withInternetDateTime]
+        if let date = iso.date(from: String(inner)) { return date }
+        var runs: [Substring] = [], start: Substring.Index?
+        for index in inner.indices {
+            let digit = inner[index].isASCII && inner[index].isNumber
+            if digit, start == nil { start = index }
+            if !digit, let first = start { runs.append(inner[first..<index]); start = nil }
         }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: String(inner)) { return date }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: String(inner))
+        if let first = start { runs.append(inner[first...]) }
+        guard (6...7).contains(runs.count), runs.allSatisfy({ $0.count <= 4 }) else { return nil }
+        let values = runs.compactMap { Int($0) }
+        let dates: [(year: Int, month: Int, day: Int)]
+        if runs[0].count == 4 { dates = [(values[0], values[1], values[2])] }
+        else if runs[2].count == 4 { dates = [(values[2], values[0], values[1]), (values[2], values[1], values[0])] }
+        else { return nil }
+        var hour = values[3]
+        let minute = values[4], second = values[5]
+        guard (0...23).contains(hour), (0...59).contains(minute), (0...60).contains(second) else { return nil }
+        let words = inner.lowercased()
+        if ["pm", "p.m.", "下午", "晚上", "午後", "오후"].contains(where: { words.contains($0) }) { hour = hour % 12 + 12 }
+        else if ["am", "a.m.", "上午", "凌晨", "早上", "午前", "오전"].contains(where: { words.contains($0) }) { hour %= 12 }
+        let fraction = runs.count == 7 ? Double(values[6]) / pow(10, Double(runs[6].count)) : 0
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = localZone
+        let readings = dates.compactMap { date -> Date? in
+            let parts = DateComponents(year: date.year, month: date.month, day: date.day, hour: hour, minute: minute, second: second)
+            guard (1...12).contains(date.month), let value = calendar.date(from: parts),
+                  calendar.component(.day, from: value) == date.day else { return nil }
+            return value.addingTimeInterval(fraction)
+        }
+        return readings.min { abs($0.timeIntervalSince(reference)) < abs($1.timeIntervalSince(reference)) }
     }
 }
