@@ -6,8 +6,8 @@ import SwiftUI
 /// the same picture the card shows, and what comes next. The card's Open
 /// and Restart open it. It waits hidden while the app restarts or opens,
 /// for up to two minutes, follows the steps once shown, and closes itself
-/// once there is nothing left to click, on Close, or with Settings. It
-/// never takes focus and never reads the app's window.
+/// once there is nothing left to click or on Close. It outlives Settings,
+/// checking the module itself, never takes focus and never reads the app's window.
 @MainActor final class HarnessGuideFloat {
     private weak var model: IslandModel?
     private(set) var provider: AgentProvider?

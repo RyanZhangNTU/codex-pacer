@@ -618,7 +618,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     private func closeSettings() {
-        model.harnessGuideFloat.close()
         settingsWindow?.orderOut(nil)
         settingsWindow?.contentView = nil
         updateDockIcon(windowOpen: false)
@@ -630,11 +629,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if closing === whatsNewWindow, !model.isDemo, let version = Self.version { WhatsNew.markSeen(version) }
         guard closing === settingsWindow || closing === welcomeWindow || closing === whatsNewWindow else { return }
         closing.contentView = nil
-        if closing === settingsWindow {
-            updateDockIcon(windowOpen: false)
-            // The floating guide belongs to the card that opened it.
-            model.harnessGuideFloat.close()
-        }
+        // The floating guide outlives Settings: the user works in the app with Settings closed.
+        if closing === settingsWindow { updateDockIcon(windowOpen: false) }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
