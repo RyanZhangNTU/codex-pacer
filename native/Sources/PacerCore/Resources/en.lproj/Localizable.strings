@@ -1470,10 +1470,10 @@
 "credits.reminder.expiry_title" = "Remind before credits expire";
 "credits.reminder.expiry_info" = "Rewards and top-ups lapse at their own dates. The dial also turns orange this many days before.";
 "credits.reminder.days_within" = "days ahead";
-"progress_guide.info" = "%1$@ reports how much of a task is done, and Pacer draws it around the task icon. %2$@ reads new tools only when it starts, so the first time it needs to be quit completely and reopened; closing its window isn’t enough. It connects only tools you trust, so trust pacer_progress once in its connectors. Tasks that are already open won’t show a ring. When a Pacer update changes the tool, %3$@ asks you to trust it again.";
+"progress_guide.info" = "%1$@ reports how much of a task is done, and Pacer draws it around the task icon. %2$@ reads new tools only when it starts, so the first time it needs to be quit completely and reopened; closing its window isn’t enough. It connects only tools you trust, so trust pacer_progress once under Custom Connector in its connectors. Show Me points at each button right in %3$@. Tasks that are already open won’t show a ring.";
 "progress_guide.step.added" = "Progress tool added";
-"progress_guide.step.trust" = "In %@, click Custom Connector, then Trust next to pacer_progress";
-"progress_guide.step.retrust" = "In %@, click Custom Connector, then Trust next to pacer_progress again";
+"progress_guide.step.trust" = "Click Trust on pacer_progress";
+"progress_guide.step.retrust" = "Click Trust on pacer_progress again";
 "progress_guide.step.trusted" = "%@ trusts pacer_progress";
 "progress_guide.step.first_task" = "Start a new task";
 "progress_guide.chip.adding" = "Adding…";
@@ -1521,3 +1521,11 @@
 "progress_guide.waiting.reopen" = "Waiting for %@ to start again";
 "progress_guide.trust_card.tab" = "Connectors";
 "progress_guide.trust_card.custom" = "Custom Connector";
+"progress_guide.step.open_connectors" = "Open %@’s connectors";
+"progress_guide.step.custom_connector" = "Click Custom Connector at the top right";
+"progress_guide.action.open" = "Open";
+"progress_guide.action.point" = "Show Me in %@";
+"progress_guide.pointer.custom_connector" = "Click here for Custom Connector";
+"progress_guide.pointer.trust" = "Click here to trust pacer_progress";
+"progress_guide.pointer.not_found" = "Couldn’t find this button in %@. Open its window and try again.";
+"progress_guide.pointer.stop" = "Stop";

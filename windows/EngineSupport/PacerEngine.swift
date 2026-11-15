@@ -302,6 +302,8 @@ actor EngineRuntime {
     private var localProgressStatuses: [AgentProvider: LocalHarnessProgressSetup.State] = [:]
     /// The module's app as the host last saw it, for the reopen step.
     private var localHarnessApps: [AgentProvider: HarnessProgressGuide.AppPresence] = [:]
+    private var localHarnessViews: [AgentProvider: HarnessProgressGuide.AppView] = [:]
+    private var openedHarnessConnectors: Set<AgentProvider> = []
     private let managesDeepSeekProgress: Bool
     private var deepseekProgressQueue = ProgressSetupQueue<DeepSeekProgressSetup.Target>()
     /// The latest DeepSeek setup, which shutdown lets finish.
@@ -835,8 +837,12 @@ actor EngineRuntime {
             if let running = command.params?.appRunning {
                 let started = command.params?.appStartedAt.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
                 let presence: HarnessProgressGuide.AppPresence? = running ? started.map { .running(since: $0) } : .notRunning
-                if localHarnessApps[provider] != presence {
-                    localHarnessApps[provider] = presence
+                let view = running ? command.params?.appView.flatMap(HarnessProgressGuide.AppView.init(rawValue:)) : nil
+                // A closed app starts over at its connectors.
+                var opened = openedHarnessConnectors
+                if !running { opened.remove(provider) } else if command.params?.openedConnectors == true { opened.insert(provider) }
+                if localHarnessApps[provider] != presence || localHarnessViews[provider] != view || opened != openedHarnessConnectors {
+                    localHarnessApps[provider] = presence; localHarnessViews[provider] = view; openedHarnessConnectors = opened
                     if projectionReady { publish(notices: []) }
                 }
             }
@@ -1435,7 +1441,8 @@ actor EngineRuntime {
             let state = localProgressStatuses[provider]
             module.progressGuide = HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
                 ringOn: enabled.contains(provider) && !disabledHarnessProgress.contains(provider), name: descriptor.name,
-                addedAt: state?.addedAt, app: localHarnessApps[provider])
+                addedAt: state?.addedAt, app: localHarnessApps[provider], view: localHarnessViews[provider],
+                openedConnectors: openedHarnessConnectors.contains(provider))
         }
         if let daily = demo && provider == .workbuddy ? DemoScenario.workbuddyDaily(at: now()) : harnessActivities[provider]?.usage?.daily {
             module.week = HarnessWeekPresentation.week(provider: provider, daily: daily, now: now())
