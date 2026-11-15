@@ -147,13 +147,16 @@ public struct HarnessAccountCredits: Codable, Equatable, Sendable {
         /// How full the dial is: the month's credits, which refresh, so a fraction means something.
         public var monthlyFraction: Double? { percent.map { $0 / 100 } }
 
-        /// Extra credits that lapse within the window, with the earliest date among them.
-        public func expiringSoon(within days: Int, at now: Date) -> ExpiringCredits? {
+        /// The first extra credits to lapse within the window: those lapsing on
+        /// the earliest day, so "300 expire tomorrow" doesn't add a batch that
+        /// lapses later in the window (it read "1,000 expire tomorrow").
+        public func expiringSoon(within days: Int, at now: Date, calendar: Calendar = .current) -> ExpiringCredits? {
             guard days > 0, let extra else { return nil }
             let limit = now.addingTimeInterval(TimeInterval(days) * 86_400)
             let soon = extra.batches.filter { $0.date > now && $0.date <= limit }
-            guard let first = soon.first else { return nil }
-            return .init(credits: soon.map(\.credits).reduce(0, +), date: first.date)
+            guard let first = soon.min(by: { $0.date < $1.date }) else { return nil }
+            let day = soon.filter { calendar.isDate($0.date, inSameDayAs: first.date) }
+            return .init(credits: day.map(\.credits).reduce(0, +), date: first.date)
         }
         /// The credits that count as low: the user's line, or a tenth of the month's credits.
         public func lowLine(_ settings: HarnessCreditsSettings) -> Double {

@@ -11,7 +11,9 @@ internal sealed record ProviderWebDefinition(string ID, Uri Origin, string Login
 {
     internal static readonly ProviderWebDefinition DeepSeek = new("deepseek", DeepSeekWebScripts.Origin, "usage", "CodexPacer.DeepSeek", ["/api/v0/users/get_user_summary"]);
     internal static readonly ProviderWebDefinition Claude = new("claude", new("https://claude.ai/"), "", "CodexPacer.Claude");
-    internal static ProviderWebDefinition WorkBuddy(bool china) => new("workbuddy",
+    // Each edition has its own ID, so the sign-in window words itself for the
+    // module it signs in (WorkBuddy AI showed WorkBuddy's text, 11/16 review).
+    internal static ProviderWebDefinition WorkBuddy(bool china) => new(china ? "workbuddy" : "workbuddy-ai",
         new(china ? "https://www.workbuddy.cn/" : "https://www.workbuddy.ai/"), "profile/plans-usage",
         "CodexPacer.WorkBuddy", ["/billing/meter/get-user-resource-summary", "/billing/meter/get-user-resource-paid-packages",
             "/billing/meter/get-user-resource-free-packages"], "POST", ConfirmByReading: true);

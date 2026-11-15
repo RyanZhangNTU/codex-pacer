@@ -123,6 +123,8 @@ internal static class WorkBuddyAccountChecks
             await PresentationWait.UntilAsync(() => account.Reading is { Remaining: 520.5, Total: 600, Reserved: 12.25 } && !account.Busy,
                 "The isolated web reader should return only credit package totals from a successful request");
             Check(international.Reading == null && international.State == "signIn", "WorkBuddy AI keeps its own account, untouched by WorkBuddy's sign-in");
+            Check(ProviderWebDefinition.WorkBuddy(false).ID == "workbuddy-ai" && ui.Has("workbuddy-ai.login.title") && ProviderWebDefinition.WorkBuddy(true).ID == "workbuddy",
+                "Each edition's sign-in window uses its own wording");
             // The host forwards the bill to the engine, which words the dial and the breakdown for every view.
             await PresentationWait.CommandSnapshotAsync(engine, "setAccountCredits", new { provider = "workbuddy", accountCredits = account.EngineCredits(), stale = false });
             string Spoken(string field) => Find<FrameworkElement>(settings, prefix + "." + field) is { } element ? AutomationProperties.GetName(element) : "";

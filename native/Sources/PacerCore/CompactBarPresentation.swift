@@ -324,7 +324,7 @@ public enum CompactBarPresentation {
             }
             if let account = credits(provider) {
                 return .init(provider: provider, text: account.text, stripText: account.stripText, dimmed: account.dimmed,
-                    value: account.percent, low: choices.lowColor && account.percent.map { $0 <= lowQuota } == true ? true : nil)
+                    value: account.percent, low: choices.lowColor && account.low == true ? true : nil)
             }
             let raw = value(provider), number = percent(raw)
             return .init(provider: provider, text: number == "—" ? number : number + "%",

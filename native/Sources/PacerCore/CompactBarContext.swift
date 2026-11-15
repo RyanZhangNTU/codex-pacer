@@ -44,13 +44,19 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
         /// What is left of the plan cycle, or of all credits without one, in percent.
         public let percent: Double?
         public let dimmed: Bool
-        public init(provider: AgentProvider, credits: HarnessAccountCredits?, stale: Bool, now: Date, figure: HarnessCreditsFigure = .available) {
+        /// At or below the low line the credit alerts use, whichever figure the
+        /// bar shows: the month's share alone turned a bar of plentiful extra
+        /// credits orange (11/16 review).
+        public let low: Bool?
+        public init(provider: AgentProvider, credits: HarnessAccountCredits?, stale: Bool, now: Date, figure: HarnessCreditsFigure = .available,
+                    settings: HarnessCreditsSettings = .default) {
             self.provider = provider
             let reading = credits?.reading(at: now)
             text = reading.map { $0.compactFigure(figure) } ?? "—"
             stripText = text
             percent = reading?.percent
             dimmed = reading == nil || stale
+            low = reading.map { HarnessCreditsNoticePolicy.level($0, settings: settings) != nil }
         }
     }
     private enum Status: Codable, Equatable, Sendable {

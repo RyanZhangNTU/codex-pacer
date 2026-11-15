@@ -34,7 +34,9 @@ public struct HarnessCreditsNoticePolicy: Equatable, Sendable {
                         detail: L10n.text("harness.notice.expiring_credits_detail", HarnessCreditsPresentation.grouped(soon.credits),
                                           L10n.moment(soon.date, relativeTo: now))))
                 }
-            } else {
+            } else if reading.extra.map({ $0.remaining <= 0 || !$0.batches.isEmpty }) ?? true {
+                // Forget the date only when the bill's batches say nothing lapses
+                // soon; a reading without them (a slow detail request) proves nothing.
                 expiryNotified[provider] = nil
             }
             let level = Self.level(reading, settings: options)

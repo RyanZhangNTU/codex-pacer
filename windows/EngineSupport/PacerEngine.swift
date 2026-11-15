@@ -2790,7 +2790,7 @@ actor EngineRuntime {
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))
             }, wallet: compactWallet, credits: creditModules.map { provider in
                 .init(provider: provider, credits: credits[provider], stale: accountCredits[provider]?.stale == true, now: date,
-                      figure: creditSettings[provider]?.bar ?? .available)
+                      figure: creditSettings[provider]?.bar ?? .available, settings: creditSettings[provider] ?? .default)
             }, firstOutput: latestFirstOutput?.seconds, warnings: compactWarnings, groups: taskPresentation.groups, overview: taskPresentation.overview,
             firstOutputs: activityState.firstOutputHistory.values, now: date)
         let displayedQuota = AgentProvider.allCases.compactMap { provider in snapshots[provider].map { EngineQuota($0, provider: provider, at: date) } }
@@ -3088,8 +3088,13 @@ actor EngineRuntime {
             fields.append(source)
         }
         if scope == "quota" {
-            guard enabled.contains(provider), let account = (provider == .claude ? claudeQuotaState?.snapshot : codexQuota)?.accountScope else { return nil }
-            fields.append(account)
+            guard enabled.contains(provider) else { return nil }
+            // A credits module's alerts belong to its own source, appended above;
+            // borrowing Codex's account left them with no action while Codex was off.
+            if HarnessRegistry.legacyIDSet.contains(provider) {
+                guard let account = (provider == .claude ? claudeQuotaState?.snapshot : codexQuota)?.accountScope else { return nil }
+                fields.append(account)
+            }
         }
         fields.append(scope)
         return CompletionDismissalStore.digest(fields)

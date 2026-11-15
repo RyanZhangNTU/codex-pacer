@@ -111,6 +111,26 @@ final class HarnessCreditsPresentationTests: XCTestCase {
         XCTAssertEqual(HarnessCreditsNoticePolicy.level(try XCTUnwrap(standard().reading(at: now)), settings: .init(lowCredits: 4_620)), .low)
     }
 
+    /// 11/16 review: the soonest lapse counted every batch in the window under
+    /// the earliest date; a bill without batch details made the lapse notify
+    /// again; and the bar went orange on the month's share alone.
+    func testSoonestLapseCountsItsOwnDayAndBillsWithoutBatchesDontRenotify() throws {
+        let two = standard(groups: [.init(kind: .reward, remaining: 1_000, expiries: [.init(credits: 300, at: days(1)), .init(credits: 700, at: days(2))])])
+        let soon = try XCTUnwrap(try XCTUnwrap(two.reading(at: now)).expiringSoon(within: 3, at: now, calendar: calendar))
+        XCTAssertEqual(soon.credits, 300, "Only the credits lapsing on the earliest day")
+        var policy = HarnessCreditsNoticePolicy()
+        XCTAssertEqual(policy.notices([.workbuddy: two], low: false, now: now).count, 1)
+        let withoutBatches = standard(groups: [.init(kind: .reward, remaining: 1_000, expiries: [])])
+        XCTAssertTrue(policy.notices([.workbuddy: withoutBatches], low: false, now: now).isEmpty)
+        XCTAssertTrue(policy.notices([.workbuddy: two], low: false, now: now).isEmpty, "A bill without its batches proves nothing; the lapse stays announced")
+        // Plentiful extra credits keep the bar calm though the month is nearly spent.
+        let spentMonth = HarnessAccountCredits(state: .ready, remaining: 1_605, total: 1_700, reserved: 0, plan: nil, cycle: nil, expiration: nil,
+            groups: [.init(kind: .planBase, remaining: 5, total: 100, refresh: days(14)), .init(kind: .topUp, remaining: 1_600, expiries: [])])
+        XCTAssertEqual(CompactBarContext.Credits(provider: .workbuddy, credits: spentMonth, stale: false, now: now).low, false)
+        XCTAssertEqual(CompactBarContext.Credits(provider: .workbuddy, credits: spentMonth, stale: false, now: now,
+                                                 settings: .init(lowCredits: 2_000)).low, true, "The user's own line decides")
+    }
+
     func testSettingsFallBackOneByOne() throws {
         let decoded = try JSONDecoder().decode(HarnessCreditsSettings.self,
             from: Data(#"{"center":"bogus","bar":"monthlyPercent","lowCredits":-4,"expiryDays":99}"#.utf8))
