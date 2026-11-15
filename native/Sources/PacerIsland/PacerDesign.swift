@@ -305,3 +305,12 @@ struct IslandIconButton: View {
 struct Hairline: View {
     var body: some View { Rectangle().fill(PacerPalette.hairline).frame(height: 1) }
 }
+
+extension L10n {
+    /// Text for a key built from a module's ID, or `fallback` when this
+    /// version has no such key, so a raw key never shows.
+    static func moduleText(_ key: String, fallback: String) -> String {
+        let text = L10n.text(key)
+        return text == key ? fallback : text
+    }
+}

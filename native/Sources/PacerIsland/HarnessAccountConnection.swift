@@ -47,9 +47,11 @@ import WebKit
     var signedIn: Bool { defaults.bool(forKey: key) || reading != nil }
     var canDisconnect: Bool { signedIn }
 
-    func configure(enabled: Bool) {
+    /// - Parameter keepsReading: the module stays on and only pauses, as for
+    ///   sleep: the last bill stays, and a failed read after waking dims it.
+    func configure(enabled: Bool, keepsReading: Bool = false) {
         guard self.enabled != enabled else { return }
-        stop()
+        if enabled || keepsReading { halt() } else { stop() }
         self.enabled = enabled
         if enabled, defaults.bool(forKey: key) { refresh() }
     }
@@ -106,11 +108,23 @@ import WebKit
     }
 
     func stop() {
-        enabled = false; revision &+= 1
+        enabled = false
+        halt()
+        update(nil, .signIn)
+    }
+
+    /// Pauses for sleep; the last bill stays until a read replaces or dims it.
+    func suspend() {
+        enabled = false
+        halt()
+    }
+
+    private func halt() {
+        revision &+= 1
         operation?.cancel(); operation = nil
         scheduled?.cancel(); scheduled = nil
         login?.close(); login = nil
-        busy = false; update(nil, .signIn)
+        busy = false
     }
 
     /// Demo credits, with no account behind them.
@@ -150,7 +164,8 @@ import WebKit
     private func schedule() {
         scheduled?.cancel(); scheduled = nil
         guard enabled, state != .signIn, defaults.bool(forKey: key) else { return }
-        let seconds = state == .ready ? 120 : 300
+        // A read that failed, as right after waking, tries again sooner.
+        let seconds = state == .ready ? 120 : 60
         scheduled = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             if !Task.isCancelled { self?.refresh() }

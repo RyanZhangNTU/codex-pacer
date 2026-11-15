@@ -323,7 +323,7 @@ struct WelcomeView: View {
         let settings: (title: String, connects: Bool, perform: () -> Void) = (L10n.text("welcome.module.settings"), false,
             { onOpenSettings(SettingsPane(provider: provider)) })
         guard model.providerDetected(provider) else {
-            return ModuleStatus(text: L10n.text("welcome.module.\(provider.rawValue)_missing"), action: settings)
+            return ModuleStatus(text: L10n.moduleText("welcome.module.\(provider.rawValue)_missing", fallback: provider.displayName), action: settings)
         }
         let ready = ModuleStatus(text: L10n.text("welcome.module.ready") +
             (modules.mode(for: provider) == .automatic ? " · " + L10n.text("welcome.module.automatic") : ""), ready: true)

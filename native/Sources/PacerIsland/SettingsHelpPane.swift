@@ -115,15 +115,15 @@ struct SettingsHelpPane: View {
 
     @ViewBuilder private func workbuddyRows(_ provider: AgentProvider) -> some View {
         let tint = provider.tint
-        row("help.workbuddy.credits") {
+        row("help." + provider.rawValue + ".credits") {
             QuotaRingsGlyph(rings: [.init(tint: tint, remaining: 64, stale: false)])
             Text("1,280").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(tint)
         }
-        row("help.workbuddy.cost") {
+        row("help." + provider.rawValue + ".cost") {
             Text("12").font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(tint)
         }
-        row("help.workbuddy.progress") { ProgressRingSample(fraction: 0.62, tint: tint) }
-        row("help.workbuddy.apps") {
+        row("help." + provider.rawValue + ".progress") { ProgressRingSample(fraction: 0.62, tint: tint) }
+        row("help." + provider.rawValue + ".apps") {
             ProviderAppIcon(provider: provider, size: 14, outline: true).foregroundStyle(tint)
         }
     }

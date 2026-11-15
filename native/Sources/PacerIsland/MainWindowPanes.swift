@@ -302,12 +302,12 @@ struct HistoryPane: View {
     /// A module's week of credits, drawn like DeepSeek's week.
     private func creditsCard(_ provider: AgentProvider) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.text("main.history." + provider.rawValue + "_week")).font(.system(size: 13.5, weight: .semibold))
+            Text(L10n.moduleText("main.history." + provider.rawValue + "_week", fallback: provider.displayName)).font(.system(size: 13.5, weight: .semibold))
                 .foregroundStyle(PacerPalette.primary)
             if let week = model.harnessWeek(provider) {
                 WeekBarsChart(value: week, tint: provider.tint)
             } else {
-                Text(L10n.text("main.history." + provider.rawValue + "_empty")).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
+                Text(L10n.moduleText("main.history." + provider.rawValue + "_empty", fallback: provider.displayName)).font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
             }
         }
         .padding(.horizontal, 18).padding(.vertical, 16)

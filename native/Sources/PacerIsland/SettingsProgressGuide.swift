@@ -15,6 +15,11 @@ struct ProgressGuideRows: View {
     @State private var openFailed = false
     static let anchor = "progress-guide"
 
+    /// Pacer couldn't open the app; the user opens it and finds the connectors.
+    static func openFailed(_ provider: AgentProvider) -> String {
+        L10n.text("harness.progress_state.open_failed", HarnessRegistry.descriptor(for: provider)?.name ?? provider.displayName)
+    }
+
     /// The card shown: nothing while the ring is off, unless removing the tool failed.
     static func guide(_ model: IslandModel, _ provider: AgentProvider, isOn: Bool) -> HarnessProgressGuide? {
         let guide = model.progressGuide(provider)
@@ -32,8 +37,8 @@ struct ProgressGuideRows: View {
                 Rectangle().fill(MainPalette.separator).frame(height: 1).padding(.top, 8)
                 ProgressGuideBody(guide: guide, provider: provider, restart: model.harnessRestarts[provider], perform: perform)
                     .padding(.top, 4)
-                if openFailed, guide.action == .openConnectors {
-                    Text(L10n.text("harness.progress_state.open_failed")).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
+                if openFailed, [.openConnectors, .openApp].contains(guide.action) {
+                    Text(Self.openFailed(provider)).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
                         .fixedSize(horizontal: false, vertical: true).padding(.bottom, 8)
                 }
             }
@@ -54,7 +59,7 @@ struct ProgressGuideRows: View {
     private func perform(_ action: HarnessProgressGuide.Action) {
         switch action {
         case .retry: model.syncLocalHarnessProgress(force: provider)
-        case .openApp: Task { _ = await MacLocalHarnessApplication.openApplication(provider: provider) }
+        case .openApp: Task { openFailed = !(await MacLocalHarnessApplication.openApplication(provider: provider)) }
         case .openConnectors:
             // Without the connectors link, the app itself is the next best place.
             let screen = NSApp.keyWindow?.screen
@@ -184,6 +189,10 @@ private struct ProgressGuideBody: View {
                             HStack(spacing: 10) { actionButton; waitingLabel }
                             VStack(alignment: .leading, spacing: 8) { actionButton; waitingLabel }
                         }
+                    }
+                    if guide.action == .restartApp, restart == .cannotOpen {
+                        Text(ProgressGuideRows.openFailed(provider)).font(.system(size: 12))
+                            .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
                     }
                     if guide.action == .restartApp, restart == .failed {
                         Text(L10n.text("progress_guide.restart.failed", provider.displayName)).font(.system(size: 12))

@@ -126,6 +126,27 @@ final class DemoWorkBuddyTests: XCTestCase {
         XCTAssertNil(defaults.string(forKey: "providerModule.workbuddy"), "The flag saves no module choice")
     }
 
+    func testCreditsStayThroughSleepAndClearOnlyWhenTheModuleTurnsOff() async throws {
+        let domain = testDefaultsName("demo-workbuddy-sleep")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let model = IslandModel(demo: true, demoArguments: ["--demo", "--demo-workbuddy"], defaults: defaults)
+        defer { removeTestDefaults(domain) }
+        let connection = try XCTUnwrap(model.harnessAccount(.workbuddy))
+        let bill = try XCTUnwrap(connection.credits)
+        connection.suspend()
+        XCTAssertEqual(connection.credits, bill, "Sleep keeps the last bill")
+        connection.configure(enabled: true)
+        XCTAssertEqual(connection.credits, bill, "Waking keeps it until a read replaces or dims it")
+        connection.configure(enabled: false, keepsReading: true)
+        XCTAssertEqual(connection.credits, bill)
+        connection.configure(enabled: true)
+        connection.configure(enabled: false)
+        XCTAssertNil(connection.credits, "Turning the module off forgets the account's bill")
+        XCTAssertEqual(L10n.moduleText("main.history.future-module_week", fallback: "Future"), "Future", "A key this version lacks shows the module's name")
+        XCTAssertEqual(L10n.moduleText("main.history.workbuddy-ai_week", fallback: "x"), L10n.text("main.history.workbuddy-ai_week"))
+        await model.shutdown()
+    }
+
     func testRestartingOverARunningTaskAsksFirstAndADemoNeverQuitsTheApp() async throws {
         let domain = testDefaultsName("demo-workbuddy-restart")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))

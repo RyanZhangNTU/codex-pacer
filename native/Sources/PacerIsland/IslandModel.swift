@@ -709,7 +709,8 @@ final class IslandModel: ObservableObject {
     func harnessRestartInFlight(_ provider: AgentProvider) -> Bool { harnessRestarting.contains(provider) }
     /// A restart the card asked for: waiting for the user to confirm over a
     /// running task, under way, or refused by the app.
-    enum HarnessRestart: Equatable { case confirm, restarting, failed }
+    /// `cannotOpen`: Pacer couldn't open the app, before or after quitting it.
+    enum HarnessRestart: Equatable { case confirm, restarting, failed, cannotOpen }
     @Published private(set) var harnessRestarts: [AgentProvider: HarnessRestart] = [:]
     private var harnessRestarting: Set<AgentProvider> = []
     /// The page each module's app shows, as its own log tells.
@@ -756,10 +757,11 @@ final class IslandModel: ObservableObject {
     /// confirm. It never forces the app to quit.
     func restartHarness(_ provider: AgentProvider, screen: NSScreen? = nil) async {
         guard !harnessRestarting.contains(provider) else { return }
-        let busy = visibleActivities.contains { $0.provider == provider && $0.phase == .running }
+        let busy = visibleActivities.contains { $0.provider == provider && [.running, .waitingForInput].contains($0.phase) }
         if busy, harnessRestarts[provider] != .confirm { harnessRestarts[provider] = .confirm; return }
-        // A demo never quits a real app.
+        // A demo never quits a real app, and an app Pacer can't open again stays as it is.
         guard !demo else { return }
+        guard await MacLocalHarnessApplication.find(provider: provider) != nil else { harnessRestarts[provider] = .cannotOpen; return }
         showHarnessFloat(provider, on: screen)
         let requested = Date()
         harnessRestarts[provider] = .restarting
@@ -782,7 +784,7 @@ final class IslandModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
         refreshLocalHarnessApps()
-        _ = await openHarnessConnectors(provider, screen: screen, requested: requested)
+        if !(await openHarnessConnectors(provider, screen: screen, requested: requested)) { harnessRestarts[provider] = .cannotOpen }
     }
 
     /// The app's own log tells which page it shows since the card opened its
@@ -1691,7 +1693,8 @@ final class IslandModel: ObservableObject {
     func prepareForSleep() async {
         let plan = lifecycle.prepareForSleep()
         guard plan.actions.contains(.suspendSources) else { return }
-        harnessAccounts.values.forEach { $0.stop() }
+        // Credits stay through sleep; a failed read after waking dims them, and notices stay as they were.
+        harnessAccounts.values.forEach { $0.suspend() }
         performLifecycle(plan)
         navigation.cancel(); clearNavigationError()
         invalidateWork(invalidateSource: false)
@@ -2372,7 +2375,8 @@ final class IslandModel: ObservableObject {
                 connection.showDemo(isModuleEnabled(provider) && provider == .workbuddy ? DemoScenario.workbuddyCredits(at: now) : nil)
                 continue
             }
-            connection.configure(enabled: !sleeping && !stopped && isModuleEnabled(provider))
+            connection.configure(enabled: !sleeping && !stopped && isModuleEnabled(provider),
+                                 keepsReading: sleeping && isModuleEnabled(provider))
         }
     }
     private func receiveLocalHarness(_ provider: AgentProvider, snapshot: HarnessActivity, home: URL, version: UInt64) {
