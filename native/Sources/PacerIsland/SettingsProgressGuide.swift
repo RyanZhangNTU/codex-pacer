@@ -160,12 +160,10 @@ private struct ProgressGuideBody: View {
                     .foregroundStyle(step.state == .done ? AnyShapeStyle(.secondary) : step.state == .pending ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     .fixedSize(horizontal: false, vertical: true)
                 if current, guide.action != nil || guide.waitingText != nil {
-                    HStack(spacing: 10) {
-                        actionButton
-                        if let waiting = guide.waitingText {
-                            Label(waiting, systemImage: "clock").font(.system(size: 12)).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                    // The button keeps its whole title; the waiting line moves under it when they don't fit side by side.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { actionButton; waitingLabel }
+                        VStack(alignment: .leading, spacing: 8) { actionButton; waitingLabel }
                     }
                 }
             }
@@ -180,7 +178,13 @@ private struct ProgressGuideBody: View {
     /// Opening the app is prominent, like signing in; Retry is an ordinary button.
     @ViewBuilder private var actionButton: some View {
         if let action = guide.action, let title = guide.actionTitle {
-            Button(title) { perform(action) }.buttonStyle(MainButtonStyle(prominent: action != .retry, height: 28))
+            Button(title) { perform(action) }.buttonStyle(MainButtonStyle(prominent: action != .retry, height: 28)).fixedSize()
+        }
+    }
+
+    @ViewBuilder private var waitingLabel: some View {
+        if let waiting = guide.waitingText {
+            Label(waiting, systemImage: "clock").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize()
         }
     }
 }
@@ -221,7 +225,8 @@ private struct DashedRule: View {
 }
 
 /// A small drawing of the app's connectors page, so the user knows what
-/// to look for there: Pacer's entry and its Trust button.
+/// to click there: ① Custom Connector at the top right, then ② Trust on
+/// Pacer's entry.
 private struct TrustCardSample: View {
     let provider: AgentProvider
     /// The connector's name as the app lists it.
@@ -233,7 +238,19 @@ private struct TrustCardSample: View {
         let light = colorScheme == .light
         let brand = provider.shade(light: light)
         VStack(alignment: .leading, spacing: 8) {
-            Text(L10n.text("progress_guide.trust_card.path")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            HStack(spacing: 5) {
+                Text(L10n.text("progress_guide.trust_card.tab")).font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                number(1)
+                // The app's own black button, drawn as it looks there.
+                Label(L10n.text("progress_guide.trust_card.custom"), systemImage: "square.and.pencil")
+                    .font(.system(size: 10.5, weight: .semibold)).lineLimit(1).foregroundStyle(.white)
+                    .padding(.horizontal, 8).frame(height: 22)
+                    .background(Color(red: 0x1D / 255, green: 0x1D / 255, blue: 0x1F / 255), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(light ? 0 : 0.18)))
+                    .fixedSize()
+            }
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color(red: 0.19, green: 0.69, blue: 0.78)).frame(width: 16, height: 16)
@@ -242,22 +259,29 @@ private struct TrustCardSample: View {
                 Text(L10n.text("progress_guide.trust_card.caption")).font(.system(size: 10.5)).foregroundStyle(.tertiary)
                 Text(L10n.text("progress_guide.trust_card.detail")).font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(L10n.text("progress_guide.trust_card.button")).font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(light ? .white : Color.black.opacity(0.8))
-                    .padding(.horizontal, 12).frame(height: 24)
-                    .background(brand, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .padding(3)
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(accent.opacity(0.45), lineWidth: 3))
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                HStack(spacing: 5) {
+                    Spacer(minLength: 0)
+                    number(2)
+                    Text(L10n.text("progress_guide.trust_card.button")).font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(light ? .white : Color.black.opacity(0.8))
+                        .padding(.horizontal, 12).frame(height: 24)
+                        .background(brand, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
             }
             .padding(.horizontal, 10).padding(.vertical, 9)
             .background(MainPalette.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(MainPalette.cardBorder))
         }
         .padding(10)
-        .frame(width: 252)
+        .frame(width: 268)
         .background(MainPalette.fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         // A picture of the app's page; the step above already says what to do.
         .accessibilityHidden(true)
+    }
+
+    /// Which click comes first, in Pacer's accent.
+    private func number(_ value: Int) -> some View {
+        Text("\(value)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+            .frame(width: 16, height: 16).background(accent, in: Circle())
     }
 }
