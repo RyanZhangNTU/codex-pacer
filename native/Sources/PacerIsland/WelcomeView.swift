@@ -253,7 +253,7 @@ struct WelcomeView: View {
                 ProviderAppIcon(provider: provider, size: 40)
                     .saturation(enabled ? 1 : 0).opacity(enabled ? 1 : 0.5)
                 Spacer()
-                Toggle(provider.displayName, isOn: Binding(get: { enabled }, set: { setModule(provider, enabled: $0) }))
+                Toggle(provider.settingsTitle, isOn: Binding(get: { enabled }, set: { setModule(provider, enabled: $0) }))
                     .labelsHidden().toggleStyle(.switch)
             }
             Text(provider.settingsTitle).font(.system(size: 15, weight: .semibold))

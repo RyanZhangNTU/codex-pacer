@@ -220,7 +220,7 @@ struct SettingsView: View {
                 .font(.system(size: 12.5)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Toggle(provider.displayName, isOn: moduleBinding(provider)).labelsHidden().toggleStyle(.switch)
+            Toggle(provider.settingsTitle, isOn: moduleBinding(provider)).labelsHidden().toggleStyle(.switch)
         }
     }
 
