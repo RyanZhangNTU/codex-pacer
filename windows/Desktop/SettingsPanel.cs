@@ -598,9 +598,12 @@ internal sealed partial class SettingsWindow
         FrameworkElement content;
         if (narrow)
         {
-            name.HorizontalAlignment = HorizontalAlignment.Center; name.Margin = new Thickness(0, 5, 0, 0);
+            // A name wider than its narrow cell shrinks to fit, so "WorkBuddy" never reads "Work…".
+            name.TextTrimming = TextTrimming.None;
+            var fitted = new Viewbox { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, Child = name,
+                HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 5, 0, 0) };
             marker.HorizontalAlignment = HorizontalAlignment.Center;
-            content = new StackPanel { Margin = new Thickness(4, 8, 4, 8), VerticalAlignment = VerticalAlignment.Center, Children = { marker, name } };
+            content = new StackPanel { Margin = new Thickness(4, 8, 4, 8), VerticalAlignment = VerticalAlignment.Center, Children = { marker, fitted } };
         }
         else
         {
