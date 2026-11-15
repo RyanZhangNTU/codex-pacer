@@ -59,7 +59,8 @@ enum DeepSeekSessionLog {
         "assistant/message", "tool/call", "tool/result", "tool/ptc-dispatch", "tool/ptc-dispatch-start",
         "job/registered", "job/settled", "approval/asked", "approval/decided", "turn/end"]
     private static let progressName = Data(CodexProgressEvidence.qualified.utf8)
-    private static let progressAck = Data(CodexProgressEvidence.acknowledgment.utf8)
+    // Both the bare receipt and the current reply start with it.
+    private static let progressAck = Data(CodexProgressEvidence.receipt.utf8)
     private static let questionNames: Set<String> = ["ask_user_question", "ask_user", "question"]
     /// Every question tool name contains one of these, wherever its field sits.
     private static let questionHints = [Data("question".utf8), Data("ask_user".utf8)]

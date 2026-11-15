@@ -1,40 +1,25 @@
 """Pacer's progress tool for Claude Code: a stdio MCP server with one tool.
 
 Pacer's PreToolUse hook reads the estimate from the call's input; this process
-only acknowledges it. When the progress-ring switch holds "tool N", each reply
-names the estimate at which the next report is due, so the model reports after
-a change of N points rather than with every batch. Claude starts one server per
-session, so the last estimate kept here belongs to that session.
+only acknowledges it, in the same words as every other module's reporter.
 """
-import json, pathlib, sys
+import json, sys
 
 TOOL = {
     'name': 'report_progress',
     # PacerCore's ProgressPrompt.toolDescription, shared by every module.
-    'description': "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: first, before or with your first other tool call, even if the estimate is still low; again whenever the estimate changes and at least every 5 tool calls while you work; and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools.",
+    'description': "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: first, before or with your first other tool call, even if the estimate is still low; again whenever you make progress; and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools.",
     'inputSchema': {'type': 'object', 'properties': {'percent': {'type': 'integer', 'minimum': 0, 'maximum': 100}},
                     'required': ['percent'], 'additionalProperties': False},
     'annotations': {'readOnlyHint': True, 'openWorldHint': False},
 }
-
-def step_from_switch(argv):
-    # --home <Claude home>; read once, when the session starts.
-    if '--home' not in argv[:-1]: return 0
-    try: words = (pathlib.Path(argv[argv.index('--home') + 1]).expanduser() / 'pacer' / 'progress-ring').read_bytes()[:16].split()
-    except OSError: return 0
-    return int(words[1]) if words[:1] == [b'tool'] and len(words) > 1 and words[1].isdigit() and 0 < int(words[1]) <= 50 else 0
-
-STEP = step_from_switch(sys.argv)
+# PacerCore's ProgressPrompt.acknowledgement: a nudge for the next report.
+ACCEPTED = "pacer-progress:accepted. Report again as soon as you make more progress."
 
 def reply(ident, result=None, error=None):
     message = {'jsonrpc': '2.0', 'id': ident}
     message.update({'error': error} if error else {'result': result})
     sys.stdout.write(json.dumps(message, separators=(',', ':')) + '\n'); sys.stdout.flush()
-
-def acknowledgement(percent):
-    if not STEP or percent >= 100: return 'ok'
-    if percent + STEP >= 100: return 'ok'
-    return 'ok. Next report when your estimate reaches %d%%.' % (percent + STEP)
 
 def answer(method, params):
     if method == 'initialize':
@@ -45,7 +30,7 @@ def answer(method, params):
     if method == 'tools/call':
         value = (params.get('arguments') or {}).get('percent')
         valid = params.get('name') == TOOL['name'] and type(value) is int and 0 <= value <= 100
-        text = acknowledgement(value) if valid else 'percent must be a whole number from 0 to 100'
+        text = ACCEPTED if valid else 'percent must be a whole number from 0 to 100'
         return {'content': [{'type': 'text', 'text': text}], 'isError': not valid}
     return None
 

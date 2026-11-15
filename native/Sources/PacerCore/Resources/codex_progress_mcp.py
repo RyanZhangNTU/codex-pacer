@@ -14,7 +14,9 @@ LIMIT = 1024 * 1024
 SERVER = "pacer_progress"
 TOOL = "report_progress"
 # PacerCore's ProgressPrompt.toolDescription, shared by every module.
-GUIDANCE = "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: first, before or with your first other tool call, even if the estimate is still low; again whenever the estimate changes and at least every 5 tool calls while you work; and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
+GUIDANCE = "The user turned on Pacer's progress ring and asks you to report your best estimate of how much of their current request is done with this tool: first, before or with your first other tool call, even if the estimate is still low; again whenever you make progress; and before you stop to wait for background work or for the user. Send each report in the same batch as your other tool calls. Always give a whole number from 0 to 100, and lower it if the work turns out larger. Skip replies that need no tools."
+# PacerCore's ProgressPrompt.acknowledgement: the receipt Pacer reads, and a nudge for the next report.
+ACCEPTED = "pacer-progress:accepted. Report again as soon as you make more progress."
 DEFINITION = {
     "name": TOOL, "description": GUIDANCE,
     "inputSchema": {"type": "object", "properties": {"percent": {"type": "integer", "minimum": 0, "maximum": 100}},
@@ -154,7 +156,7 @@ def respond(message, flag, durable=False):
             receipt = durable_receipt(params, percent)
             if receipt:
                 record_receipt(receipt, flag)
-        text = "pacer-progress:accepted" if valid else (
+        text = ACCEPTED if valid else (
             "Expected an integer from 0 to 100." if active else "Pacer task progress is disabled."
         )
         result = {"content": [{"type": "text", "text": text}], "isError": not valid}

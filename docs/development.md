@@ -387,18 +387,17 @@ Every task row draws one 28-pt status icon: a glyph for what the task is doing, 
 
 Every ring is on by default (WorkBuddy's unless listed in `disabledHarnessProgress`); WorkBuddy's adds Pacer’s tool there. Each provider reports through a tool that accepts one integer from 0 to 100. Pacer reads the successful call from the provider’s own records and keeps only the estimate, bounded identifiers and timestamps.
 
-Every module asks in the same words, `ProgressPrompt` in Core. The same text appears in four places:
+Every module asks in the same words, `ProgressPrompt` in Core. The same text appears in three places:
 - Claude's per-request line, which names the tool and adds how to find a deferred one;
 - each reporter's tool description and server instructions, which say "this tool";
-- WorkBuddy's rule;
-- Claude's step and marker modes, in the same sentences.
+- WorkBuddy's rule.
 
 It asks only for the number, in a concrete rhythm:
 - first, before or with the first other tool call, even while the estimate is low, so the ring shows at once;
-- again whenever the estimate changes, and at least every 5 tool calls;
+- again whenever the model makes progress;
 - before stopping to wait.
 
-Each report goes in the same batch as the other calls. Wording such as "at milestones" got WorkBuddy one report at the start and one at the end, and "with your first tool calls" let the first report come late. The Python and JavaScript copies are checked word for word by `ProgressPromptTests`, and the Windows reporter stays byte for byte the shared one. Each update reaches users silently: Claude's line from the next message, the tool descriptions in new sessions.
+Each report goes in the same batch as the other calls, and every reporter answers an accepted one with `ProgressPrompt.acknowledgement`, which asks for the next report as soon as there is more progress. Wording such as "at milestones" got WorkBuddy one report at the start and one at the end, "with your first tool calls" let the first report come late, and "at least every 5 tool calls" read as the only reason to report, so gaps of 16 and 31 calls followed. Pacer finds a report in an agent's records by its exact reply, the acknowledgement or the older `pacer-progress:accepted`; nothing else counts. The Python and JavaScript copies are checked word for word by `ProgressPromptTests`, and the Windows reporter stays byte for byte the shared one. Each update reaches users silently: Claude's line from the next message, the tool descriptions and replies in new sessions. Claude's switch file has one mode; older contents (`on`, which asked for a leading `⟦NN%⟧` marker, and `tool N`, which asked for a report after N points) are rewritten to `tool`.
 
 | Provider | Reporting tool | Setup Pacer owns |
 | --- | --- | --- |

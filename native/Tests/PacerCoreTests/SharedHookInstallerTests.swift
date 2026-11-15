@@ -151,21 +151,23 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertEqual(installer.ensureInstalled(home: home), .current); XCTAssertEqual(storage.replacements, writes)
         XCTAssertTrue(installer.details(home: home).telemetryConfigured)
     }
-    func testProgressRingSwitchAddsAndRemovesTheBackgroundDisplayObserver() throws {
+    func testAnOlderRingSwitchAsksForThePluginToolWithoutADisplayObserver() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
         let flag = ClaudeProgressRingSwitch.flagURL(home: home)
         func display() throws -> [[String: Any]]? { (try object(settings, storage)["hooks"] as? [String: [[String: Any]]])?["MessageDisplay"] }
         XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
         XCTAssertNil(try display(), "Pacer telemetry alone keeps the display observer off")
-        storage.files[flag] = Data("on\n".utf8)
-        XCTAssertTrue(installer.details(home: home).updateAvailable)
-        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
-        let entry = try XCTUnwrap((try display()?.first?["hooks"] as? [[String: Any]])?.first)
-        XCTAssertEqual(entry["async"] as? Bool, true, "The observer runs in the background and never holds display")
-        XCTAssertEqual(installer.ensureInstalled(home: home), .current)
-        storage.files.removeValue(forKey: flag)
-        XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
-        XCTAssertNil(try display())
+        // `on` once asked for leading markers and `tool 15` for a step size; both now mean the tool.
+        for older in ["on\n", "tool 15\n"] {
+            storage.files[flag] = Data(older.utf8)
+            XCTAssertTrue(installer.details(home: home).updateAvailable)
+            XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+            XCTAssertNil(try display(), older)
+            XCTAssertEqual((try object(settings, storage)["enabledPlugins"] as? [String: Bool])?["pacer@pacer"], true, older)
+            XCTAssertEqual(installer.ensureInstalled(home: home), .current)
+            storage.files.removeValue(forKey: flag)
+            XCTAssertEqual(installer.ensureInstalled(home: home), .installed)
+        }
     }
     func testToolModeListsEnablesAndApprovesPacersPluginAndRemovesOnlyItsOwnEntries() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")

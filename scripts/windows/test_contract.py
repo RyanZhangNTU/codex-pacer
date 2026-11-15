@@ -545,7 +545,8 @@ class CodexRemoteProgressTests(unittest.TestCase):
                                       capture_output=True, text=True, timeout=30, env=dict(os.environ, **entry["env"]))
                 replies = [json.loads(line) for line in done.stdout.splitlines()]
                 self.assertEqual([tool["name"] for tool in replies[0]["result"]["tools"]], ["report_progress"])
-                self.assertEqual(replies[1]["result"]["content"][0]["text"], "pacer-progress:accepted")
+                self.assertEqual(replies[1]["result"]["content"][0]["text"],
+                                 "pacer-progress:accepted. Report again as soon as you make more progress.")
             self.assertEqual(self.run_setup(home, False), {"configured": False, "conflict": False})
             self.assertEqual(config.read_text(encoding="utf-8"), user, "Turning off restores the user's file exactly")
             self.assertFalse((home / "pacer/codex-progress/native/enabled").exists())
