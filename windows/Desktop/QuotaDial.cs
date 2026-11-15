@@ -182,8 +182,14 @@ internal sealed class QuotaDial : FrameworkElement
         drawing.PushOpacity(creditsStale ? 0.55 : 1);
         if (credits.Fraction is double fraction) DrawGauge(drawing, fraction, classic ? -90 : 125, classic ? 360 : 290, tint);
         else drawing.DrawEllipse(null, DrawingCache.Pen(PacerPalette.Hairline, 1.5), new Point(side / 2, side / 2), side / 2, side / 2);
+        // The line above the figure fits inside the ring at its height, 3 px
+        // clear of the 6 px stroke: the closed classic ring is narrower there.
         if (credits.Top is string top)
-            Fit(drawing, Text(top, side * 0.085, credits.TopWarns ? PacerPalette.Attention : PacerPalette.Secondary, credits.TopWarns), side * 0.23, side * 0.72);
+        {
+            double inner = side / 2 - 6, rise = side / 2 - side * 0.23;
+            Fit(drawing, Text(top, side * 0.085, credits.TopWarns ? PacerPalette.Attention : PacerPalette.Secondary, credits.TopWarns), side * 0.23,
+                Math.Min(side * 0.72, 2 * Math.Sqrt(Math.Max(0, inner * inner - rise * rise))));
+        }
         var value = Text(credits.Center, side * 0.2, PacerPalette.Primary, true);
         double scale = Math.Min(1, side * 0.72 / Math.Max(1, value.WidthIncludingTrailingWhitespace));
         Fit(drawing, value, side / 2 - value.Height * scale / 2 + side * 0.02, side * 0.72);

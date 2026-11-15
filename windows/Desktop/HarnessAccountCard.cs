@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 namespace CodexPacer.Windows;
 
@@ -36,8 +37,13 @@ internal static class HarnessAccountCard
             if (details)
                 for (int index = 0; index < presentation.Lines.Count; index++)
                 {
-                    var line = presentation.Lines[index];
-                    Line(line.Label + "  " + line.Value + (line.Detail is string detail ? " · " + detail : ""), "line" + index, line.Warns);
+                    if (index > 0)
+                    {
+                        var rule = new Border { Height = 1, Margin = new Thickness(0, 8, 0, 8) };
+                        if (island) rule.Background = PacerPalette.Hairline; else rule.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
+                        body.Children.Add(rule);
+                    }
+                    body.Children.Add(CreditLine(presentation.Lines[index], index == 0 ? presentation.Plan : null, provider, island, id + ".line" + index));
                 }
             if (stale) Line(ui.Text("common.not_updated"), "state");
         }
@@ -74,7 +80,9 @@ internal static class HarnessAccountCard
             row.ColumnDefinitions.Add(new() { Width = new GridLength(20) });
             row.ColumnDefinitions.Add(new());
             row.Children.Add(dial);
-            body.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(body, 2); row.Children.Add(body);
+            // On a wide card the values stay near their labels.
+            body.VerticalAlignment = VerticalAlignment.Center; body.MaxWidth = 340; body.HorizontalAlignment = HorizontalAlignment.Left;
+            Grid.SetColumn(body, 2); row.Children.Add(body);
             return row;
         }
         var cell = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -91,6 +99,53 @@ internal static class HarnessAccountCard
         body.MaxWidth = 130;
         cell.Children.Add(body);
         return cell;
+    }
+
+    /// One of Core's credit lines, laid out like a period of Codex's single
+    /// view: the label (and the plan on the first line) at the left, the value
+    /// at the right in tabular figures, and its date or expiry under it.
+    private static FrameworkElement CreditLine(HarnessCreditsLine line, string? plan, string provider, bool island, string id)
+    {
+        TextBlock Text(string text, double size, string role, bool bold = false)
+        {
+            var block = new TextBlock { Text = text, FontSize = size, FontWeight = bold ? FontWeights.SemiBold : FontWeights.Medium,
+                TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+            block.Typography.NumeralAlignment = FontNumeralAlignment.Tabular;
+            if (island) block.Foreground = role switch { "primary" => PacerPalette.Primary, "attention" => PacerPalette.Attention,
+                "tertiary" => PacerPalette.Tertiary, _ => PacerPalette.Secondary };
+            else block.SetResourceReference(TextBlock.ForegroundProperty, role switch { "primary" => "SettingsPrimary",
+                "attention" => "SettingsWarning", _ => "SettingsSecondary" });
+            return block;
+        }
+        var group = new StackPanel();
+        var head = new Grid { MinHeight = 18 };
+        head.ColumnDefinitions.Add(new()); head.ColumnDefinitions.Add(new() { Width = new GridLength(8) });
+        head.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var title = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        title.Children.Add(Text(line.Label, 11, "secondary"));
+        if (plan != null)
+        {
+            var tint = PacerPalette.Provider(provider);
+            Color shade = tint is SolidColorBrush solid ? solid.Color : Colors.Gray;
+            var chip = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(6, 0, 6, 1), Margin = new Thickness(6, 0, 0, 0),
+                Background = new SolidColorBrush(Color.FromArgb(46, shade.R, shade.G, shade.B)), VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock { Text = plan, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = tint } };
+            title.Children.Add(chip);
+        }
+        head.Children.Add(title);
+        var value = Text(line.Value, 13, "primary", true);
+        Grid.SetColumn(value, 2); head.Children.Add(value);
+        group.Children.Add(head);
+        if (line.Detail is string detail)
+        {
+            var caption = Text(detail, 10, line.Warns ? "attention" : "tertiary");
+            caption.Margin = new Thickness(0, 3, 0, 0);
+            group.Children.Add(caption);
+        }
+        string spoken = line.Label + " " + line.Value + (line.Detail is string said ? ", " + said : "");
+        AutomationProperties.SetAutomationId(group, id);
+        AutomationProperties.SetName(group, spoken);
+        return group;
     }
 
     internal static CultureInfo Culture(UiText ui) => CultureInfo.GetCultureInfo(ui.Language == "zh-Hans" ? "zh-CN" : "en-US");

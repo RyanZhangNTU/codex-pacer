@@ -23,7 +23,12 @@ internal sealed class ClassicQuotaView : StackPanel
         {
             FrameworkElement cell;
             if (slot.Period == null && account != null)
-                cell = account(slot.Provider, layout.Slots.Count == 1 && options.QuotaDetails, layout.Slots.Count > 1 || !options.QuotaDetails);
+            {
+                bool details = layout.Slots.Count == 1 && options.QuotaDetails;
+                cell = account(slot.Provider, details, !details);
+                // With its lines beside it, the dial keeps the single view's inset, clear of the panel's edge.
+                if (details) cell.Margin = new Thickness(9, 0, 9, 0);
+            }
             else if (slot.Provider == "deepseek") cell = new DeepSeekQuotaCell(wallet, ui, 88, connectDeepSeek, connectUnavailable, deepseekStatus, budgetDial: budgetDial);
             else
             {

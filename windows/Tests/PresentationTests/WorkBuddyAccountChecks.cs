@@ -151,6 +151,25 @@ internal static class WorkBuddyAccountChecks
                 "The expanded island must show the account value");
             Check(!Descendants(island).OfType<TextBlock>().Any(v => v.IsVisible && v.Text == ui.Text("provider.none_enabled")),
                 "WorkBuddy by itself counts as an enabled service");
+            // With the row to itself, each credit line reads as a label, a value and its date like Codex's
+            // single view, and the dial keeps that view's inset in both styles (classic once sat 9 px out).
+            double? splitInset = null;
+            foreach (string style in new[] { "split", "classic" })
+            {
+                island.ApplyPreferences(choices with { ExpandedQuotaStyle = style }); await island.WaitForPresentationAsync();
+                var alone = Require<FrameworkElement>(island, "island.section.quota.workbuddy");
+                double inset = Require<QuotaDial>(alone, readout).TranslatePoint(new Point(), alone).X;
+                splitInset ??= inset;
+                var line = Require<FrameworkElement>(alone, "island.workbuddy.account.line0");
+                var parts = Descendants(line).OfType<TextBlock>().ToArray();
+                var label = parts.FirstOrDefault(text => text.Text == "Monthly");
+                var value = parts.FirstOrDefault(text => text.Text == "420.5 / 500");
+                Check(label != null && value != null && parts.Any(text => text.Text.StartsWith("Refreshes", StringComparison.Ordinal)) &&
+                    value.TranslatePoint(new Point(), line).X > label.TranslatePoint(new Point(), line).X + label.ActualWidth &&
+                    AutomationProperties.GetName(line).Contains("420.5 / 500", StringComparison.Ordinal) && Math.Abs(inset - splitInset.Value) < 1,
+                    "WorkBuddy's own row must read label, value and date per line, its " + style + " dial inset like the single view: " + inset);
+            }
+            island.ApplyPreferences(choices); await island.WaitForPresentationAsync();
 
             await CheckTaskReading();
 
