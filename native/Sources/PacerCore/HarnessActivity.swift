@@ -105,6 +105,8 @@ package struct LocalHarnessDefinition: Sendable {
     package var macApplicationNames: [String] = []
     package var macBundleIdentifiers: Set<String> = []
     package var macSigningOrganization: String?
+    /// The Apple team that signs the Mac app, steadier than its organization name.
+    package var macTeamIdentifier: String?
     package var conversationScheme: String?
     /// The app's own page for its connectors, under the conversation scheme.
     package var connectorsPath: String?
