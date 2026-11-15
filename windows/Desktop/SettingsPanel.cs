@@ -240,21 +240,24 @@ internal sealed partial class SettingsWindow
         tasks.Children.Add(Link("settings.hide_projects", "main.panel.in_general", "panel.link.hide_projects", "general"));
         panelInspectorPanels["tasks"] = tasks; body.Children.Add(tasks);
 
-        foreach (string provider in new[] { "codex", "claude", "workbuddy" })
+        foreach (string provider in new[] { "codex", "claude" }.Concat(CreditModules()))
         {
             var quota = new StackPanel();
-            bool account = provider == "workbuddy";
+            bool account = provider is not ("codex" or "claude");
             if (!account)
                 quota.Children.Add(Stacked(provider + "Periods", "main.panel.periods", PanelSegmentChoices(provider + "Periods", "main.panel.periods",
                     [("both", "main.panel.periods_both"), ("weekly", "main.panel.periods_weekly"), ("fiveHour", "main.panel.periods_five")],
                     value => ChoosePanel(provider + "Periods", value))));
+            if (account)
+                quota.Children.Add(Stacked(provider + ".center", "credits.option.center", PanelSegmentChoices(provider + ".center", "credits.option.center",
+                    [("monthlyPercent", "credits.figure.monthlyPercent"), ("monthlyRemaining", "credits.figure.monthlyRemaining"), ("available", "credits.figure.available")], value => ChangeCredits(provider, choice => choice with { Center = value }))));
             quota.Children.Add(Inline(provider + ".style", "main.panel.style", PanelSegmentChoices(provider + ".style", "main.panel.style",
                 [("split", "appearance.quota_split"), ("classic", "appearance.quota_classic")], value => Change(p => p with { ExpandedQuotaStyle = value }))));
             quota.Children.Add(Inline(provider + ".arrange", "main.panel.arrange", PanelSegmentChoices(provider + ".arrange", "main.panel.arrange",
                 [("pair", "main.panel.arrange_pair"), ("stack", "main.panel.arrange_stack")], value => ChoosePanel("quotaArrange", value))));
             quota.Children.Add(Switch(provider + ".details", "main.panel.details", account ? "harness.account.details_help" : "main.panel.details_help",
                 value => ChoosePanel("quotaDetails", value)));
-            if (account) quota.Children.Add(Link("harness.account.connection", "harness.account.open_settings", "panel.link.workbuddy", provider));
+            if (account) quota.Children.Add(Link("harness.account.connection", "harness.account.open_settings", "panel.link." + provider, provider));
             else quota.Children.Add(Switch(provider + ".paceTick", "main.panel.pace_tick", "main.panel.pace_tick_help", value => ChoosePanel("paceTick", value)));
             panelInspectorPanels[provider] = quota; body.Children.Add(quota);
         }
@@ -461,8 +464,9 @@ internal sealed partial class SettingsWindow
         }
         panelPreview?.Update(options);
         panelRetention!.SelectedValue = preferences.RetentionMinutes;
-        foreach (string provider in new[] { "codex", "claude", "workbuddy" })
+        foreach (string provider in new[] { "codex", "claude" }.Concat(CreditModules()))
         {
+            if (provider is not ("codex" or "claude")) Pick(provider + ".center", preferences.Credits(provider).Center);
             Pick(provider + "Periods", options.Periods(provider)); Pick(provider + ".style", preferences.ExpandedQuotaStyle);
             Pick(provider + ".arrange", options.QuotaArrange); Flip(provider + ".details", options.QuotaDetails); Flip(provider + ".paceTick", options.PaceTick);
         }
@@ -486,7 +490,7 @@ internal sealed partial class SettingsWindow
             _ => BlockLabel(section.Kind)
         };
         string key = section.Providers is ["deepseek"] ? "layout.group.balance"
-            : section.Providers.Any(provider => provider is "deepseek" or "workbuddy") ? "layout.group.quota_balance" : "layout.group.quota";
+            : section.Providers.Any(provider => provider == "deepseek" || CreditModules().Contains(provider)) ? "layout.group.quota_balance" : "layout.group.quota";
         return ui.Text(key);
     }
 
@@ -573,7 +577,7 @@ internal sealed partial class SettingsWindow
             "deepseek" => Both("main.panel.dial", ui.Text(options.DeepseekDial == "day" ? "main.panel.dial_day" : "main.panel.dial_budget")),
             "deepseekSpend" => Both("main.panel.spend_tasks", ui.Text("main.panel.spend_count").Replace("%ld", count, StringComparison.Ordinal)),
             "deepseekWeek" => Both("main.panel.week_line", ui.Text(options.WeekLine ? "main.panel.show" : "main.panel.hide")),
-            "workbuddy" => ui.Text("harness.account.title"),
+            var credits when CreditModules().Contains(credits) => Both("credits.option.center", ui.Text("credits.figure." + session.Current.Credits(credits).Center)),
             _ => ""
         };
     }

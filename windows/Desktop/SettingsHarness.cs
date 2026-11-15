@@ -20,7 +20,9 @@ internal sealed partial class SettingsWindow
     private Button? harnessAutomatic, harnessRefresh, harnessProgressRetry, harnessProgressConnectors;
     private Ellipse? harnessStatusDot, harnessAccountDot;
     private TextBlock? harnessDetection, harnessState, harnessHint, harnessProgressState;
-    private TextBlock? harnessAccountState, harnessAccountHelp, harnessCredits, harnessCreditsDetail;
+    private TextBlock? harnessAccountState, harnessAccountHelp;
+    private StackPanel? harnessCreditsBlock;
+    private string harnessCreditsKey = "";
     private Button? harnessAccountSignIn, harnessAccountOptions, harnessUsageGuide;
     private bool refreshingHarness;
 
@@ -31,7 +33,7 @@ internal sealed partial class SettingsWindow
         harnessAutomatic = harnessRefresh = harnessProgressRetry = harnessProgressConnectors = null;
         harnessStatusDot = harnessAccountDot = null;
         harnessDetection = harnessState = harnessHint = harnessProgressState = null;
-        harnessAccountState = harnessAccountHelp = harnessCredits = harnessCreditsDetail = null;
+        harnessAccountState = harnessAccountHelp = null; harnessCreditsBlock = null; harnessCreditsKey = "";
         harnessAccountSignIn = harnessAccountOptions = harnessUsageGuide = null;
         refreshingHarness = false;
     }
@@ -68,7 +70,8 @@ internal sealed partial class SettingsWindow
         if (descriptor.ReportsAccountCredits == true)
         {
             rows.Add(BuildHarnessAccountRow(provider, id));
-            rows.Add(BuildHarnessCreditsRow(provider, id, descriptor));
+            harnessCreditsBlock = new StackPanel(); Identify(harnessCreditsBlock, id + ".credits_block", ui.Text("harness.credits"));
+            rows.Add(harnessCreditsBlock);
         }
         harnessSections.Children.Add(SectionTitle(ui.Text("main.section.status")));
         harnessSections.Children.Add(Card(rows.ToArray()));
@@ -148,7 +151,7 @@ internal sealed partial class SettingsWindow
         Identify(harnessAccountState, id + ".account_state", ""); trailing.Children.Add(harnessAccountState);
         var signIn = new Button { Content = ui.Text("welcome.module.sign_in"), Style = (Style)FindResource("SettingsProminentButton") };
         harnessAccountSignIn = signIn; Identify(signIn, id + ".sign_in", ui.Text("welcome.module.sign_in")); editors.Add(signIn); trailing.Children.Add(signIn);
-        signIn.Click += async (_, _) => await RunHarnessAccountAsync(() => harnessAccount?.ConnectAsync() ?? Task.CompletedTask);
+        signIn.Click += async (_, _) => await RunHarnessAccountAsync(() => HarnessAccount?.ConnectAsync() ?? Task.CompletedTask);
         var more = new IconGlyph { Symbol = "ellipsis.circle", Width = 16, Height = 16 }; more.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
         var options = new Button { Content = more, ContentTemplate = null, Style = (Style)FindResource("SettingsSidebarButton"), Width = 22, Height = 22,
             Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
@@ -158,65 +161,134 @@ internal sealed partial class SettingsWindow
         return InfoRow(ui.Text("harness.account_row"), trailing, detail: harnessAccountHelp, id: id + ".account");
     }
 
+    /// The page's own module: each credits module keeps its own account and site.
+    private HarnessAccountConnection? HarnessAccount => harnessAccounts?[activePane];
+
+    private void OnAccountChanged(string provider) => RefreshAccountCards();
+
     private void OpenHarnessAccountMenu(string provider, string id)
     {
-        if (harnessAccount is not { } account || harnessAccountOptions is not { } anchor) return;
+        if (HarnessAccount is not { } account || harnessAccountOptions is not { } anchor) return;
         var menu = new ContextMenu { PlacementTarget = anchor, FontFamily = PacerFonts.Interface };
-        MenuItem Item(string key, string suffix, Action action, bool enabled = true)
+        MenuItem Item(string text, string suffix, Action action, bool enabled = true)
         {
-            var item = new MenuItem { Header = ui.Text(key), IsEnabled = enabled }; Identify(item, id + "." + suffix, ui.Text(key));
+            var item = new MenuItem { Header = text, IsEnabled = enabled }; Identify(item, id + "." + suffix, text);
             item.Click += (_, _) => action(); return item;
         }
-        menu.Items.Add(Item("common.refresh", "refresh", () => _ = RunHarnessAccountAsync(account.RefreshAsync)));
-        // The bill lives on the site the account belongs to; Automatic follows the app's language.
-        var site = new MenuItem { Header = ui.Text("harness.account.site") }; Identify(site, id + ".site", ui.Text("harness.account.site"));
-        foreach (var (value, label) in new[] { ("automatic", ui.Text("harness.site.automatic")),
-            ("china", ui.Text("harness.site.china").Replace("%@", "workbuddy.cn", StringComparison.Ordinal)),
-            ("international", ui.Text("harness.site.international").Replace("%@", "workbuddy.ai", StringComparison.Ordinal)) })
-        {
-            var choice = new MenuItem { Header = label, IsCheckable = true, IsChecked = session.Current.WorkBuddyAccountSite == value };
-            Identify(choice, id + ".site." + value, label);
-            choice.Click += async (_, _) =>
-            {
-                if (value == session.Current.WorkBuddyAccountSite) return;
-                await Change(p => p with { WorkBuddyAccountSite = value });
-                harnessAccount?.SelectSite(session.Current.UsesWorkBuddyChina(ui.Language == "zh-Hans"));
-            };
-            site.Items.Add(choice);
-        }
-        menu.Items.Add(site);
-        menu.Items.Add(Item("harness.account.switch", "switch_account", () => _ = RunHarnessAccountAsync(account.ConnectAsync)));
-        menu.Items.Add(Item("harness.account.sign_out", "sign_out", () => _ = RunHarnessAccountAsync(account.DisconnectAsync), account.CanDisconnect));
+        menu.Items.Add(Item(ui.Text("common.refresh"), "refresh", () => _ = RunHarnessAccountAsync(account.RefreshAsync)));
+        if (SettingsPagePolicy.HarnessUsageGuide(provider, HarnessModule(provider)?.UsageGuideUrl) is { } guide)
+            menu.Items.Add(Item(ui.Text("harness.account_usage_help"), "usage",
+                () => { if (!SettingsPagePolicy.OpenHarnessUsage(guide, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); }));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(Item(ui.Text("harness.account.switch"), "switch_account", () => _ = RunHarnessAccountAsync(account.ConnectAsync)));
+        menu.Items.Add(Item(ui.Text("harness.account.sign_out"), "sign_out", () => _ = RunHarnessAccountAsync(account.DisconnectAsync), account.CanDisconnect));
         anchor.ContextMenu = menu; menu.IsOpen = true;
     }
 
     private async Task RunHarnessAccountAsync(Func<Task> action)
     {
-        if (sourceClosed || busy || harnessAccount is not { Busy: false }) return;
+        if (sourceClosed || busy || HarnessAccount is not { Busy: false }) return;
         ClearIssue();
         try { await action(); }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error)) { if (!sourceClosed) ShowIssue("harness.account.unavailable"); }
         finally { if (!sourceClosed) RefreshAccountCards(); }
     }
 
-    /// What is left, and when the plan resets or a pack expires; the trend lives on History.
-    private Grid BuildHarnessCreditsRow(string provider, string id, EngineModule descriptor)
+    /// Core's dial beside the month, extra and total lines, then the breakdown by
+    /// how each kind of credit behaves, and the service's own usage page.
+    private void RefreshHarnessCredits(string provider, HarnessAccountConnection? account)
     {
-        var trailing = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        harnessCredits = Label("", 12.5); harnessCredits.VerticalAlignment = VerticalAlignment.Center;
-        harnessCredits.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-        Identify(harnessCredits, id + ".credits", ""); trailing.Children.Add(harnessCredits);
-        if (SettingsPagePolicy.HarnessUsageGuide(provider, descriptor.UsageGuideUrl) is { } guide)
+        if (harnessCreditsBlock == null) return;
+        var credits = engine?.LatestSnapshot?.AccountCredits?.FirstOrDefault(value => value.Provider == provider);
+        var presentation = account?.Reading == null ? null : credits?.Presentation;
+        string key = System.Text.Json.JsonSerializer.Serialize(new { presentation, stale = credits?.Stale, state = account?.State, busy = account?.Busy, ui.Language });
+        if (key == harnessCreditsKey) return;
+        harnessCreditsKey = key;
+        foreach (UIElement child in harnessCreditsBlock.Children) PageAccessibility.Retire(child);
+        harnessCreditsBlock.Children.Clear();
+        string id = "settings." + provider;
+        if (presentation == null)
         {
-            var link = new Button { Content = ui.Text("harness.account_usage_help"), Style = (Style)FindResource("SettingsLink"), Margin = new Thickness(10, 0, 0, 0) };
+            var empty = Label(account?.Busy == true ? ui.Text("harness.account.reading") : ui.Text("harness.account.sign_in"), 12.5);
+            empty.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); Identify(empty, id + ".credits", empty.Text);
+            harnessCreditsBlock.Children.Add(InfoRow(ui.Text("harness.credits"), empty, id: id + ".credits_row"));
+            return;
+        }
+        var top = new Grid { Margin = new Thickness(14, 12, 14, 12) };
+        top.ColumnDefinitions.Add(new() { Width = new GridLength(104) }); top.ColumnDefinitions.Add(new() { Width = new GridLength(18) }); top.ColumnDefinitions.Add(new());
+        var dial = new QuotaDial(provider, null, null, dialSize: 104, credits: presentation.Dial, creditsText: ui, creditsStale: credits?.Stale == true)
+            { Width = 104, Height = 104, VerticalAlignment = VerticalAlignment.Center };
+        Identify(dial, id + ".credits_dial", presentation.Dial.AccessibilityLabel);
+        top.Children.Add(dial);
+        var lines = new Grid { VerticalAlignment = VerticalAlignment.Center };
+        lines.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); lines.ColumnDefinitions.Add(new());
+        for (int index = 0; index < presentation.Lines.Count; index++)
+        {
+            var line = presentation.Lines[index];
+            lines.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            var label = Label(line.Label, 12.5); label.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+            label.Margin = new Thickness(0, 3, 12, 3); Grid.SetRow(label, index); lines.Children.Add(label);
+            var value = new WrapPanel { Margin = new Thickness(0, 3, 0, 3), VerticalAlignment = VerticalAlignment.Center };
+            var amount = Label(line.Value, 12.5, FontWeights.SemiBold); value.Children.Add(amount);
+            if (line.Detail is string detail)
+            {
+                var note = Label(" · " + detail, 12.5);
+                note.SetResourceReference(TextBlock.ForegroundProperty, line.Warns ? "SettingsWarning" : "SettingsSecondary");
+                value.Children.Add(note);
+            }
+            // The plan's name sits with the month's credits, as on WorkBuddy's own page.
+            if (index == 0 && presentation.Plan is string plan)
+            {
+                var badge = new Border { CornerRadius = new CornerRadius(5), Padding = new Thickness(6, 1, 6, 1), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                badge.SetResourceReference(Border.BackgroundProperty, "SettingsAccentSoft");
+                badge.Child = Label(plan, 11.5, FontWeights.SemiBold); value.Children.Add(badge);
+            }
+            Identify(value, id + ".credits_line" + index, line.Label + " " + line.Value + (line.Detail is string spoken ? " · " + spoken : ""));
+            Grid.SetRow(value, index); Grid.SetColumn(value, 1); lines.Children.Add(value);
+        }
+        Grid.SetColumn(lines, 2); top.Children.Add(lines);
+        harnessCreditsBlock.Children.Add(top);
+        if (presentation.Sections.Count > 0)
+        {
+            var info = InfoBox(ui.Text("credits.details_info")); info.Margin = new Thickness(14, 0, 14, 8);
+            var heading = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 0, 14, 2) };
+            var title = Label(ui.Text("credits.details"), 12, FontWeights.SemiBold); title.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+            heading.Children.Add(title); heading.Children.Add(InfoButton(ui.Text("credits.details"), info, id + ".credits_details"));
+            harnessCreditsBlock.Children.Add(heading); harnessCreditsBlock.Children.Add(info);
+            foreach (var section in presentation.Sections)
+            {
+                var caption = Label(section.Title, 11.5); caption.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+                caption.Margin = new Thickness(14, 6, 14, 2); harnessCreditsBlock.Children.Add(caption);
+                foreach (var row in section.Rows)
+                {
+                    var line = new Grid { Margin = new Thickness(14, 0, 14, 0), MinHeight = 32 };
+                    line.ColumnDefinitions.Add(new()); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); line.ColumnDefinitions.Add(new() { Width = new GridLength(128) });
+                    var name = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                    name.Children.Add(Label(row.Name, 12.5));
+                    if (row.Chip is string chip)
+                    {
+                        var mark = new Border { CornerRadius = new CornerRadius(5), Padding = new Thickness(6, 1, 6, 1), Margin = new Thickness(8, 0, 0, 0) };
+                        mark.SetResourceReference(Border.BackgroundProperty, "SettingsNoticeFill");
+                        var chipText = Label(chip, 11, FontWeights.SemiBold); chipText.SetResourceReference(TextBlock.ForegroundProperty, "SettingsNoticeText");
+                        mark.Child = chipText; name.Children.Add(mark);
+                    }
+                    line.Children.Add(name);
+                    var amount = Label(row.Amount, 12.5); amount.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(amount, 1); line.Children.Add(amount);
+                    var date = Label(row.Date ?? "", 12); date.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+                    date.HorizontalAlignment = HorizontalAlignment.Right; date.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(date, 2); line.Children.Add(date);
+                    Identify(line, id + ".credits_" + row.Kind, row.Name + " " + row.Amount + (row.Date is string when ? " · " + when : "") + (row.Chip is string soon ? " · " + soon : ""));
+                    harnessCreditsBlock.Children.Add(line);
+                }
+            }
+        }
+        if (SettingsPagePolicy.HarnessUsageGuide(provider, HarnessModule(provider)?.UsageGuideUrl) is { } guide)
+        {
+            var link = new Button { Content = ui.Text("harness.account_usage_help"), Style = (Style)FindResource("SettingsLink"),
+                HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(14, 6, 14, 10) };
             harnessUsageGuide = link; Identify(link, id + ".accountUsage", ui.Text("harness.account_usage_help"));
             link.Click += (_, _) => { if (!SettingsPagePolicy.OpenHarnessUsage(guide, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
-            trailing.Children.Add(link);
+            harnessCreditsBlock.Children.Add(link);
         }
-        harnessCreditsDetail = Detail(""); Identify(harnessCreditsDetail, id + ".credits_detail", "");
-        string name = descriptor.DisplayName ?? PaneTitle(provider);
-        return InfoRow(ui.Text("harness.credits"), trailing, ui.Text("main.info.harness_credits").Replace("%@", name, StringComparison.Ordinal),
-            harnessCreditsDetail, id + ".credits_row");
     }
 
     private async Task RefreshHarnessProgressConnectionAsync()
@@ -305,11 +377,10 @@ internal sealed partial class SettingsWindow
     private void RefreshHarnessAccount(bool editable)
     {
         if (harnessAccountState == null) return;
-        var account = harnessAccount;
+        var account = HarnessAccount;
         bool busyReading = account?.Busy == true, signedIn = account?.Reading != null;
         string state = busyReading ? "harness.account.reading" : signedIn ? "harness.account.signed_in" : "harness.account.signed_out";
-        string text = ui.Text(state) + (signedIn && account!.Reading!.Plan is string plan && !busyReading ? " · " + plan : "");
-        SetStatus(harnessAccountDot, harnessAccountState, text, signedIn ? "positive" : "neutral");
+        SetStatus(harnessAccountDot, harnessAccountState, ui.Text(state), signedIn ? "positive" : "neutral");
         bool idle = editable && account is { Busy: false, Available: true };
         harnessAccountSignIn!.Visibility = signedIn ? Visibility.Collapsed : Visibility.Visible;
         harnessAccountOptions!.Visibility = signedIn ? Visibility.Visible : Visibility.Collapsed;
@@ -317,25 +388,7 @@ internal sealed partial class SettingsWindow
         string help = account is { Available: false } ? ui.Text("harness.account.runtime")
             : account?.State == "unavailable" ? ui.Text("harness.account.unavailable") : "";
         SetHarnessText(harnessAccountHelp, help);
-        if (harnessCredits == null) return;
-        if (account?.Reading is { } reading)
-        {
-            string left = HarnessAccountCard.Fields(ui, "harness.credits.left", HarnessAccountCard.Amount(ui, reading.Remaining));
-            harnessCredits.Text = left; AutomationProperties.SetName(harnessCredits, left);
-            var details = new List<string>();
-            var culture = HarnessAccountCard.Culture(ui);
-            string Date(DateTimeOffset value) => value.ToLocalTime().ToString(ui.Language == "zh-Hans" ? "M月d日" : "MMM d", culture);
-            if (reading.Cycle is { ResetsAt: { } reset } && reset > DateTimeOffset.UtcNow)
-                details.Add(HarnessAccountCard.Fields(ui, "harness.account.cycle_reset", Date(reset)));
-            if (reading.Expiration is { } expiring && expiring.At > DateTimeOffset.UtcNow)
-                details.Add(HarnessAccountCard.Fields(ui, "harness.account.expiring", HarnessAccountCard.Amount(ui, expiring.Credits), Date(expiring.At)));
-            SetHarnessText(harnessCreditsDetail, string.Join(" · ", details));
-        }
-        else
-        {
-            harnessCredits.Text = "—"; AutomationProperties.SetName(harnessCredits, ui.Text("harness.account.sign_in"));
-            SetHarnessText(harnessCreditsDetail, signedIn || busyReading ? "" : ui.Text("harness.account.sign_in"));
-        }
+        RefreshHarnessCredits(activePane, account);
     }
 
     private static void SetHarnessText(TextBlock? label, string text)

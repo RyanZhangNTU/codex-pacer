@@ -73,9 +73,10 @@ internal static class WorkBuddyAccountChecks
                     status, "Fixture", "Content-Type: " + type + "\r\nCache-Control: no-store");
             };
         }
-        var china = new WorkBuddyAccountSession(ui, true, Path.Combine(root, "cn"), Attach);
-        var international = new WorkBuddyAccountSession(ui, false, Path.Combine(root, "ai"), Attach);
-        await using var account = new HarnessAccountConnection(international, china, true, Application.Current.Dispatcher);
+        // WorkBuddy signs in on workbuddy.cn and WorkBuddy AI on workbuddy.ai, each with its own profile and account.
+        var account = new HarnessAccountConnection("workbuddy", new WorkBuddyAccountSession(ui, true, Path.Combine(root, "cn"), Attach), Application.Current.Dispatcher);
+        var international = new HarnessAccountConnection("workbuddy-ai", new WorkBuddyAccountSession(ui, false, Path.Combine(root, "ai"), Attach), Application.Current.Dispatcher);
+        await using var accounts = new HarnessAccounts([account, international]);
         await using var engine = new EngineClient();
         var choices = new DesktopPreferences
         {
@@ -83,12 +84,12 @@ internal static class WorkBuddyAccountChecks
             ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled", ["workbuddy"] = "enabled" }
         };
         var preferences = new PreferencesSession(choices, value => engine.SendAsync("configure", value), _ => true);
-        var settings = new SettingsWindow(ui, preferences, new DemoStartupRegistration(), true, engine: engine, harnessAccount: account)
+        var settings = new SettingsWindow(ui, preferences, new DemoStartupRegistration(), true, engine: engine, harnessAccounts: accounts)
             { ShowActivated = false, IsHitTestVisible = false };
-        var island = new IslandWindow(engine, true, false, animationOverride: false, harnessAccount: account)
+        var island = new IslandWindow(engine, true, false, animationOverride: false, harnessAccounts: accounts)
             { ShowActivated = false, IsHitTestVisible = false };
         const string readout = "island.workbuddy.account.remaining";
-        const string balance = "520.5 credits available";
+        const string monthly = "420.5";
         const string prefix = "settings.workbuddy";
         try
         {
@@ -100,7 +101,7 @@ internal static class WorkBuddyAccountChecks
             account.SetEnabled(true);
             await settings.NavigateAsync("workbuddy");
             await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".account_state")?.Text == ui.Text("harness.account.signed_out")
-                && Find<TextBlock>(settings, prefix + ".credits")?.Text == "—",
+                && Find<TextBlock>(settings, prefix + ".credits")?.Text == ui.Text("harness.account.sign_in"),
                 "Settings should distinguish a disconnected account from zero credits");
             Check(Require<Button>(settings, prefix + ".sign_in").IsVisible && Find<Button>(settings, prefix + ".account_options")?.IsVisible != true,
                 "Signing in is the one action while signed out, as on Claude's page");
@@ -121,24 +122,31 @@ internal static class WorkBuddyAccountChecks
             await PresentationWait.UntilAsync(() => !window.IsVisible, "The window must close by itself after confirming");
             await PresentationWait.UntilAsync(() => account.Reading is { Remaining: 520.5, Total: 600, Reserved: 12.25 } && !account.Busy,
                 "The isolated web reader should return only credit package totals from a successful request");
-            await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".credits")?.Text == "520.5 left",
+            Check(international.Reading == null && international.State == "signIn", "WorkBuddy AI keeps its own account, untouched by WorkBuddy's sign-in");
+            // The host forwards the bill to the engine, which words the dial and the breakdown for every view.
+            await PresentationWait.CommandSnapshotAsync(engine, "setAccountCredits", new { provider = "workbuddy", accountCredits = account.EngineCredits(), stale = false });
+            string Spoken(string field) => Find<FrameworkElement>(settings, prefix + "." + field) is { } element ? AutomationProperties.GetName(element) : "";
+            await PresentationWait.UntilAsync(() => Spoken("credits_line2").Contains("520.5", StringComparison.Ordinal),
                 "The native settings page must display available credits without opening the browser");
             Check(Require<TextBlock>(settings, prefix + ".account_state").Text.StartsWith(ui.Text("harness.account.signed_in"), StringComparison.Ordinal)
                 && Require<Button>(settings, prefix + ".account_options").IsVisible && Find<Button>(settings, prefix + ".sign_in")?.IsVisible != true,
                 "Once signed in, the account row offers its menu instead of Sign In");
-            string detail = Require<TextBlock>(settings, prefix + ".credits_detail").Text;
             Check(account.Reading!.Cycle is { Remaining: 420.5, Total: 500, Used: 67.25 } cycle &&
-                cycle.ResetsAt?.ToUnixTimeSeconds() == reset.ToUnixTimeSeconds() + 1 && detail.Contains("Plan resets", StringComparison.Ordinal),
-                "The plan window must use the subscription's own credits and reset");
+                cycle.ResetsAt?.ToUnixTimeSeconds() == reset.ToUnixTimeSeconds() + 1 &&
+                Spoken("credits_line0").Contains("420.5 / 500", StringComparison.Ordinal) && Spoken("credits_line0").Contains("Refreshes", StringComparison.Ordinal),
+                "This month's line must use the subscription's own credits and refresh");
             Check(account.Reading.Expiration is { Credits: 100 } exp && exp.At.ToUnixTimeSeconds() == expiration.ToUnixTimeSeconds() &&
-                detail.Contains("100 credits expire", StringComparison.Ordinal), "A top-up's deduction deadline is separate from the plan reset");
+                Spoken("credits_line1").Contains("100 credits", StringComparison.Ordinal) && Spoken("credits_line1").Contains("Earliest expiry", StringComparison.Ordinal),
+                "Extra credits show as an amount with their own expiry, separate from the plan refresh");
+            Check(Spoken("credits_planBase").Contains("420.5 / 500", StringComparison.Ordinal) && Spoken("credits_reward").StartsWith("Reward credits 100", StringComparison.Ordinal)
+                && !Spoken("credits_reward").Contains('/'), "The breakdown groups refreshing and lapsing credits, and extra credits have no share");
             Check(reads > 0 && cycles > 0 && writes == 0, "The browser must only make the read-only billing requests");
 
             await settings.NavigateAsync("overview");
-            Check(Require<QuotaDial>(settings, "settings.overview.workbuddy.account.remaining").AccessibleName == balance,
+            await PresentationWait.UntilAsync(() => Find<QuotaDial>(settings, "settings.overview.workbuddy.account.remaining")?.AccessibleName.Contains(monthly, StringComparison.Ordinal) == true,
                 "Overview must show the same account value");
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync();
-            Check(Require<QuotaDial>(island, readout).AccessibleName == balance &&
+            Check(Require<QuotaDial>(island, readout).AccessibleName.Contains(monthly, StringComparison.Ordinal) &&
                 Find<FrameworkElement>(island, "island.section.quota.workbuddy") != null,
                 "The expanded island must show the account value");
             Check(!Descendants(island).OfType<TextBlock>().Any(v => v.IsVisible && v.Text == ui.Text("provider.none_enabled")),
@@ -178,7 +186,7 @@ internal static class WorkBuddyAccountChecks
                 var dial = Require<QuotaDial>(group, readout);
                 var images = Descendants(group).OfType<Image>().Select(image => image.Source).ToArray();
                 var dials = Descendants(group).OfType<QuotaDial>().Where(item => item.IsVisible).ToArray();
-                Check(dial.AccessibleName == balance && dials.Length == 4 &&
+                Check(dial.AccessibleName.Contains(monthly, StringComparison.Ordinal) && dials.Length == 4 &&
                     providers.All(id => ProviderIcon.Source(id) is { } icon && images.Contains(icon)),
                     "Each service in the shared section must have a dial and its official icon");
                 var origins = dials.Select(item => item.TranslatePoint(new Point(), group)).ToArray();
@@ -203,8 +211,7 @@ internal static class WorkBuddyAccountChecks
             int beforeDisconnectedRefresh = reads;
             await account.RefreshAsync();
             Check(reads == beforeDisconnectedRefresh && !account.CanDisconnect, "A disconnected browser profile cannot resume account polling");
-            account.SelectSite(false);
-            Check(account.Reading == null && account.State == "signIn", "Switching sites must discard the previous site's balance");
+            Check(international.Reading == null && international.State == "signIn", "Signing out of WorkBuddy leaves WorkBuddy AI's account alone");
             Console.WriteLine("PASS WorkBuddy account credits, plan reset and pack expiry, Settings, Overview, both shared quota layouts, official icons, refresh recovery and site isolation.");
         }
         finally

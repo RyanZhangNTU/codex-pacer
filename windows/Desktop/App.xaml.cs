@@ -18,7 +18,7 @@ public partial class App : Application
     private EngineClient? engine;
     private DeepSeekConnectionCoordinator? webConnection;
     private ClaudeConnectionCoordinator? claudeConnection;
-    private HarnessAccountConnection? workBuddyAccount;
+    private HarnessAccounts? harnessAccounts;
     private Forms.NotifyIcon? tray;
     private System.Drawing.Icon? trayIcon;
     private IslandWindow? island;
@@ -201,21 +201,19 @@ public partial class App : Application
         claudeConnection = new ClaudeConnectionCoordinator(engine, demo ? new OfflineClaudeWebSession() : new ClaudeWebSession(ui),
             Dispatcher, bridgeEnabled: !demo, newSession: async () => settingsSession != null &&
                 await settingsSession.ChangeAsync(value => value with { ClaudeOrganization = "" }) == PreferencesApplyResult.Applied);
-        workBuddyAccount = demo
-            ? new(new DemoHarnessAccountSession(), new DemoHarnessAccountSession(), false, Dispatcher)
-            : new(new WorkBuddyAccountSession(ui, false), new WorkBuddyAccountSession(ui, true),
-                preferences.UsesWorkBuddyChina(language == "zh-Hans"), Dispatcher);
+        var accounts = harnessAccounts = HarnessAccounts.ForWorkBuddy(ui, demo, Dispatcher);
         engine.Snapshot += snapshot =>
         {
             // Colors come with the registry entry; the island redraws on its next snapshot.
             PacerPalette.RegisterModules(snapshot.Modules);
             WindowsConversationApplication.Register(snapshot.Modules);
-            workBuddyAccount.SetEnabled(snapshot.Modules?.Any(module =>
-                module.Provider == "workbuddy" && module is { Enabled: true, ReportsAccountCredits: true }) == true);
+            foreach (var account in accounts.All)
+                account.SetEnabled(snapshot.Modules?.Any(module =>
+                    module.Provider == account.Provider && module is { Enabled: true, ReportsAccountCredits: true }) == true);
         };
         // The engine draws the collapsed bar and sends reminders, so it gets
         // every change of the reading the host's sign-in produced.
-        if (!demo) workBuddyAccount.Changed += () => _ = PushAccountCreditsAsync();
+        if (!demo) accounts.Changed += provider => _ = PushAccountCreditsAsync(provider);
         Activated += async (_, _) =>
         {
             if (quitting || !engineReady.Task.IsCompletedSuccessfully) return;
@@ -226,7 +224,7 @@ public partial class App : Application
         var applications = demo ? new WindowsDesktopApplications(_ => true, _ => true) : new WindowsDesktopApplications();
         island = new IslandWindow(engine, demo, language == "zh-Hans", position, desktopApplications: applications,
             displayMode: positionIndex >= 0 ? 2 : Array.IndexOf(new[] { "automatic", "notch", "floating" }, preferences.DisplayMode),
-            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccount: workBuddyAccount);
+            canConnectDeepSeekWeb: () => webConnection.Available, harnessAccounts: accounts);
         if (capture < 0 || activationQa != null)
             instanceActivation = new WindowsInstanceActivation(island, action =>
             {
@@ -338,7 +336,7 @@ public partial class App : Application
             if (capture < 0) engine.Status += RestartAfterEngineExit;
             await webConnection.StartAsync();
             await claudeConnection.StartAsync();
-            if (!demo) { pushedAccountCredits = null; await PushAccountCreditsAsync(); }
+            if (!demo && harnessAccounts != null) { pushedAccountCredits.Clear(); foreach (var account in harnessAccounts.All) await PushAccountCreditsAsync(account.Provider); }
             await island.SynchronizeExpansionAsync();
             if (preferencesUnavailable) island.SetStatus(ui.Text("windows.settings.read_failed"));
             if (demo && stage != 0) await engine.SendAsync("demoStage", new { demoStage = stage });
@@ -382,7 +380,7 @@ public partial class App : Application
         {
             settings = new SettingsWindow(ui, settingsSession, startupRegistration, demo, darkOverride: demoDark, engine: engine, sourceReady: engineReady.Task, notifications: notifications,
                 webConnection: webConnection, claudeConnection: claudeConnection, surfaceWindow: island, preferencesStore: preferencesStore,
-                updater: updates, harnessAccount: workBuddyAccount);
+                updater: updates, harnessAccounts: harnessAccounts);
             settings.QuitRequested += Quit; settings.RestartRequested += Restart;
             settings.WelcomeRequested += () => _ = ShowGuideAsync(true);
             settings.SignedReleaseNotesRequested += ShowSignedUpdateNotes;
@@ -391,19 +389,19 @@ public partial class App : Application
         settings.Show(); settings.Activate();
     }
 
-    private string? pushedAccountCredits;
-    private async Task PushAccountCreditsAsync()
+    private readonly System.Collections.Generic.Dictionary<string, string> pushedAccountCredits = new(StringComparer.Ordinal);
+    private async Task PushAccountCreditsAsync(string provider)
     {
         // Sleep hides the reading without changing the account; the engine keeps
         // its last credits and alert state until a fresh reading arrives.
-        if (quitting || workBuddyAccount is not { } account || engine is not { } client || !engineReady.Task.IsCompletedSuccessfully
+        if (quitting || harnessAccounts?[provider] is not { } account || engine is not { } client || !engineReady.Task.IsCompletedSuccessfully
             || account.Busy || account.Sleeping) return;
-        var payload = new { provider = "workbuddy", accountCredits = account.EngineCredits(), stale = account.State == "unavailable" };
+        var payload = new { provider, accountCredits = account.EngineCredits(), stale = account.State == "unavailable" };
         string encoded = System.Text.Json.JsonSerializer.Serialize(payload);
-        if (encoded == pushedAccountCredits) return;
-        pushedAccountCredits = encoded;
+        if (pushedAccountCredits.TryGetValue(provider, out var pushed) && pushed == encoded) return;
+        pushedAccountCredits[provider] = encoded;
         try { await client.SendAsync("setAccountCredits", payload); }
-        catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException) { pushedAccountCredits = null; }
+        catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException) { pushedAccountCredits.Remove(provider); }
     }
 
     private async void OpenProviderSettings(string provider)
@@ -470,7 +468,7 @@ public partial class App : Application
         if (settings != null) { settings.AllowClose = true; settings.Close(); }
         if (webConnection != null) await webConnection.DisposeAsync();
         if (claudeConnection != null) await claudeConnection.DisposeAsync();
-        if (workBuddyAccount != null) await workBuddyAccount.DisposeAsync();
+        if (harnessAccounts != null) await harnessAccounts.DisposeAsync();
         if (updates != null) await updates.DisposeAsync();
         island?.StopPresentation();
         if (engine != null && notifications != null) engine.Snapshot -= notifications.Receive;
@@ -491,7 +489,7 @@ public partial class App : Application
         Dispatcher.BeginInvoke(new Action(async () =>
         {
             if (quitting || !engineReady.Task.IsCompletedSuccessfully || engine == null) return;
-            workBuddyAccount?.SetSleeping(change.Mode == PowerModes.Suspend);
+            foreach (var account in harnessAccounts?.All ?? []) account.SetSleeping(change.Mode == PowerModes.Suspend);
             try { await engine.SendAsync(method); }
             catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
             { if (!quitting && ui != null) island?.SetStatus(ui.Text("windows.connection.refresh_failed")); }

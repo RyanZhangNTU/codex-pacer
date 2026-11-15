@@ -63,7 +63,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
 
     private func monitor() throws -> any LocalHarnessMonitor {
         var modules = LocalHarnessMonitors(platform: .windows, io: .init(files: TestFileSystem(), events: NoEvents(), now: { [at] in at }))
-        let definition = try XCTUnwrap(modules.definition(for: WorkBuddyHarness.id))
+        let definition = try XCTUnwrap(modules.definition(for: WorkBuddyHarness.id(.international)))
         return modules.monitor(for: definition)
     }
 
@@ -100,7 +100,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertNil(active.turnID)
         XCTAssertNil(active.threadURL)
 
-        let provider = WorkBuddyHarness.id
+        let provider = WorkBuddyHarness.id(.international)
         var state = ActivityApplicationState()
         state.replaceHarness(provider, with: start)
         let running = state.reconcile(at: at, retention: 1800, visibility: .init())

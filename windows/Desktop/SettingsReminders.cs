@@ -16,6 +16,8 @@ internal sealed partial class SettingsWindow
     private readonly Dictionary<string, CheckBox> reminderKinds = new(), reminderFollows = new();
     private StackPanel? reminderQuotaRows, reminderWalletRows, reminderCreditRows;
     private readonly System.Collections.Generic.Dictionary<string, TextBlock> reminderCreditTitles = new();
+    private readonly Dictionary<string, Border> reminderCreditCards = new();
+    private readonly Dictionary<string, (TextBox Low, CheckBox Expiry, TextBox Days)> reminderCreditFields = new();
     private bool reminderRebuildPending;
     private FrameworkElement? reminderFooter;
     private TextBox? reminderLow, reminderSpike;
@@ -28,7 +30,7 @@ internal sealed partial class SettingsWindow
     private void ClearReminders()
     {
         reminderKinds.Clear(); reminderFollows.Clear(); reminderQuotaRows = reminderWalletRows = reminderCreditRows = null; reminderFooter = null;
-        reminderCreditTitles.Clear();
+        reminderCreditTitles.Clear(); reminderCreditCards.Clear(); reminderCreditFields.Clear();
         reminderLow = reminderSpike = null; reminderAmountIssue = notificationIssue = null; notificationSwitch = null; reminderRetention = null;
         reminderLowValue = reminderSpikeValue = null; Array.Clear(reminderPendingAmount);
     }
@@ -145,6 +147,8 @@ internal sealed partial class SettingsWindow
         {
             var title = SectionTitle(PaneTitle(module.Provider)); reminderCreditRows.Children.Add(title);
             reminderCreditTitles[module.Provider] = title;
+            var card = Card(CreditsLowRow(module.Provider), CreditsExpiryRow(module.Provider));
+            reminderCreditCards[module.Provider] = card; reminderCreditRows.Children.Add(card);
         }
         if (creditModules.Length > 0)
             reminderCreditRows.Children.Add(Card(MatrixRow(ui.Text("main.notify.low_credits"), BarCell("lowCredits", ui.Text("main.notify.low_credits")),
@@ -156,6 +160,67 @@ internal sealed partial class SettingsWindow
             async () => { if (activePane == "notifications") await NavigateToPanelBlockAsync("tasks"); });
         form.Children.Add(Card(reminderRetention));
     }
+    /// The credits that count as low; empty follows a tenth of the month's credits.
+    private Grid CreditsLowRow(string provider)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var field = new TextBox { Width = 76, MaxLength = 12, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center,
+            Style = (Style)FindResource("SettingsPathInput"), FontSize = 12 };
+        Identify(field, "settings.reminders." + provider + ".lowCredits", ui.Text("credits.reminder.low"));
+        editors.Add(field); row.Children.Add(field);
+        var unit = Label(ui.Text("credits.reminder.low_unit")); unit.Margin = new Thickness(6, 0, 0, 0);
+        unit.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); row.Children.Add(unit);
+        async Task Commit()
+        {
+            if (sourceClosed || activePane != "notifications") return;
+            string text = field.Text.Trim();
+            double? value = text.Length == 0 ? null
+                : double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsed)
+                    && parsed is >= 0 and <= 1e9 ? parsed : double.NaN;
+            if (value is double invalid && double.IsNaN(invalid)) { RefreshValues(); return; }
+            if (value == session.Current.Credits(provider).LowCredits) return;
+            await ChangeCredits(provider, choice => choice with { LowCredits = value });
+        }
+        field.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await Commit(); } };
+        field.LostKeyboardFocus += async (_, _) => await Commit();
+        var days = new TextBox(); var expiry = new CheckBox();
+        reminderCreditFields[provider] = (field, expiry, days);
+        return InfoRow(ui.Text("credits.reminder.low"), row, ui.Text("credits.reminder.low_info"), id: "settings.reminders." + provider + ".low");
+    }
+
+    /// Extra credits lapse at their own dates; how many days ahead count as soon is the user's.
+    private Grid CreditsExpiryRow(string provider)
+    {
+        var (low, _, _) = reminderCreditFields[provider];
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var days = new TextBox { Width = 44, MaxLength = 2, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center,
+            Style = (Style)FindResource("SettingsPathInput"), FontSize = 12 };
+        Identify(days, "settings.reminders." + provider + ".expiryDays", ui.Text("credits.reminder.expiry_title"));
+        editors.Add(days); row.Children.Add(days);
+        var unit = Label(ui.Text("credits.reminder.days_within")); unit.Margin = new Thickness(6, 0, 12, 0);
+        unit.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); row.Children.Add(unit);
+        var expiry = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };
+        Identify(expiry, "settings.reminders." + provider + ".expiry", ui.Text("credits.reminder.expiry_title"));
+        editors.Add(expiry); row.Children.Add(expiry);
+        async Task CommitDays()
+        {
+            if (sourceClosed || activePane != "notifications") return;
+            if (!int.TryParse(days.Text.Trim(), out int value) || value is < 1 or > 30) { RefreshValues(); return; }
+            if (value == session.Current.Credits(provider).ExpiryDays) return;
+            await ChangeCredits(provider, choice => choice with { ExpiryDays = value });
+        }
+        days.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await CommitDays(); } };
+        days.LostKeyboardFocus += async (_, _) => await CommitDays();
+        expiry.Click += async (_, _) =>
+        {
+            if (sourceClosed || activePane != "notifications") return;
+            bool on = expiry.IsChecked == true;
+            await ChangeCredits(provider, choice => choice with { ExpiryReminder = on });
+        };
+        reminderCreditFields[provider] = (low, expiry, days);
+        return InfoRow(ui.Text("credits.reminder.expiry_title"), row, ui.Text("credits.reminder.expiry_info"), id: "settings.reminders." + provider + ".expiry_row");
+    }
+
     private FrameworkElement ReminderAmount(bool low)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
@@ -214,7 +279,19 @@ internal sealed partial class SettingsWindow
             _ = Dispatcher.InvokeAsync(() => { reminderRebuildPending = false; if (!sourceClosed && activePane == "notifications") { RebuildPane("notifications"); RefreshValues(); } });
         }
         bool credits = false;
-        foreach (var pair in reminderCreditTitles) { bool on = Module(pair.Key); pair.Value.Visibility = on ? Visibility.Visible : Visibility.Collapsed; credits |= on; }
+        foreach (var pair in reminderCreditTitles)
+        {
+            bool on = Module(pair.Key); credits |= on;
+            pair.Value.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            if (reminderCreditCards.TryGetValue(pair.Key, out var card)) card.Visibility = pair.Value.Visibility;
+            if (!reminderCreditFields.TryGetValue(pair.Key, out var fields)) continue;
+            var choice = preferences.Credits(pair.Key);
+            if (!fields.Low.IsKeyboardFocusWithin)
+                fields.Low.Text = choice.LowCredits?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "";
+            fields.Expiry.IsChecked = choice.ExpiryReminder;
+            if (!fields.Days.IsKeyboardFocusWithin) fields.Days.Text = choice.ExpiryDays.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            fields.Low.IsEnabled = fields.Expiry.IsEnabled = fields.Days.IsEnabled = enabled && connected;
+        }
         if (reminderCreditRows != null) reminderCreditRows.Visibility = credits ? Visibility.Visible : Visibility.Collapsed;
         bool system = notifications?.DesiredEnabled ?? preferences.SystemNotifications;
         foreach (var pair in reminderFollows)

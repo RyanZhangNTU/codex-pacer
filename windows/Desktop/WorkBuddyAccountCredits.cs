@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,7 +17,8 @@ internal sealed record HarnessAccountReading(double Remaining, double Total, dou
 internal sealed record HarnessPlanCycle(double Total, double Remaining, double? Used, DateTimeOffset? ResetsAt);
 internal sealed record HarnessExpiringCredits(double Credits, DateTimeOffset At);
 
-internal sealed record HarnessAccountReply(string State, HarnessAccountReading? Reading = null)
+/// <param name="Source">The script's reading as it came, for the engine, which reads its groups.</param>
+internal sealed record HarnessAccountReply(string State, HarnessAccountReading? Reading = null, JsonElement? Source = null)
 {
     internal static HarnessAccountReply FromPage(JsonElement json)
     {
@@ -32,7 +34,7 @@ internal sealed record HarnessAccountReply(string State, HarnessAccountReading? 
             Number(expiry, "credits") is double credits && credits > 0 && credits <= remaining + 0.000001)
             expiration = new(credits, at);
         string? plan = Text(json, "plan") is { Length: > 0 and <= 80 } name ? name : null;
-        return new("ready", new(remaining, total, reserved, plan, cycle, expiration));
+        return new("ready", new(remaining, total, reserved, plan, cycle, expiration), json.Clone());
     }
 
     private static DateTimeOffset? FutureDate(JsonElement json, string field) =>
@@ -64,8 +66,20 @@ internal sealed class DemoHarnessAccountSession : IHarnessAccountSession
     public Task<HarnessAccountReply> ReadCreditsAsync(CancellationToken cancellation)
     {
         var now = DateTimeOffset.UtcNow;
-        return Task.FromResult(new HarnessAccountReply("ready", new(3_260, 5_000, 12, "Pro",
-            new(4_000, 2_660, 1_340, now.AddDays(12)), new(600, now.AddDays(9)))));
+        long refresh = now.AddDays(14).ToUnixTimeSeconds(), reward = now.AddDays(2).ToUnixTimeSeconds(), topUp = now.AddDays(29).ToUnixTimeSeconds();
+        return Task.FromResult(HarnessAccountReply.FromPage(JsonSerializer.SerializeToElement(new
+        {
+            state = "ready", remaining = 4_620.0, total = 5_500.0, reserved = 12.0, plan = "Standard",
+            cycle = new { total = 2_000.0, remaining = 1_320.0, used = 680.0, reset = refresh },
+            expiration = new { credits = 300.0, at = reward },
+            groups = new object[]
+            {
+                new { kind = "planBase", remaining = 1_320.0, total = 2_000.0, refresh },
+                new { kind = "planBonus", remaining = 2_000.0, total = 2_000.0, refresh },
+                new { kind = "reward", remaining = 300.0, expiries = new[] { new { credits = 300.0, at = reward } } },
+                new { kind = "topUp", remaining = 1_000.0, expiries = new[] { new { credits = 1_000.0, at = topUp } } }
+            }
+        })));
     }
     public Task<bool> SignInAsync(CancellationToken cancellation) => Task.FromResult(true);
     public Task ClearAsync(CancellationToken cancellation) => Task.CompletedTask;
@@ -137,8 +151,7 @@ internal sealed class WorkBuddyAccountSession : ProviderWebSession, IHarnessAcco
 /// A host-owned, read-only account connection. The browser and the local task source have separate lifetimes.
 internal sealed class HarnessAccountConnection : IAsyncDisposable
 {
-    private readonly IHarnessAccountSession international, china;
-    private IHarnessAccountSession session;
+    private readonly IHarnessAccountSession session;
     private readonly DispatcherTimer timer;
     private readonly CancellationTokenSource lifetime = new();
     private CancellationTokenSource? operation;
@@ -146,24 +159,21 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
     internal event Action? Changed;
     internal string State { get; private set; } = "signIn";
     internal HarnessAccountReading? Reading { get; private set; }
+    private JsonElement? source;
+    /// The module this account belongs to; each module signs in on its own site.
+    internal string Provider { get; }
     internal bool Busy => operation != null;
     internal bool Available => !disposed && session.Available;
     internal bool CanDisconnect => session.IsConnected;
     /// While asleep the reading is hidden but the account is unchanged.
     internal bool Sleeping => sleeping;
-    internal bool UsesChina => ReferenceEquals(session, china);
 
-    /// The reading in Core's account credits shape, for the engine.
-    internal object? EngineCredits() => Reading is not { } reading ? null : new
-    {
-        state = "ready", remaining = reading.Remaining, total = reading.Total, reserved = reading.Reserved, plan = reading.Plan,
-        cycle = reading.Cycle is not { } cycle ? null : new { total = cycle.Total, remaining = cycle.Remaining, used = cycle.Used, reset = cycle.ResetsAt?.ToUnixTimeSeconds() },
-        expiration = reading.Expiration is not { } expiring ? null : new { credits = expiring.Credits, at = expiring.At.ToUnixTimeSeconds() }
-    };
+    /// The reading in Core's account credits shape, groups included, for the engine.
+    internal JsonElement? EngineCredits() => Reading == null ? null : source;
 
-    internal HarnessAccountConnection(IHarnessAccountSession international, IHarnessAccountSession china, bool useChina, Dispatcher dispatcher)
+    internal HarnessAccountConnection(string provider, IHarnessAccountSession session, Dispatcher dispatcher)
     {
-        this.international = international; this.china = china; session = useChina ? china : international;
+        Provider = provider; this.session = session;
         timer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromMinutes(2) };
     }
 
@@ -219,16 +229,6 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
         await session.ClearAsync(token);
     });
 
-    internal void SelectSite(bool useChina)
-    {
-        var selected = useChina ? china : international;
-        if (disposed || ReferenceEquals(session, selected)) return;
-        StopTimer(); operation?.Cancel(); operation = null;
-        session = selected; Reading = null; State = "signIn";
-        Changed?.Invoke();
-        if (enabled && !sleeping && session.IsConnected) _ = RefreshAsync();
-    }
-
     private async Task RunAsync(Func<CancellationToken, Task> run)
     {
         if (disposed || sleeping || !enabled || Busy) return;
@@ -250,7 +250,7 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
     private void Apply(HarnessAccountReply result)
     {
         State = result.State;
-        if (result.State != "unavailable") Reading = result.Reading;
+        if (result.State != "unavailable") { Reading = result.Reading; source = result.Source; }
         StopTimer();
         if (State != "signIn" && enabled && !sleeping && session.IsConnected)
         {
@@ -265,6 +265,36 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
     {
         if (disposed) return;
         disposed = true; StopTimer(); lifetime.Cancel(); operation = null;
-        await international.DisposeAsync(); await china.DisposeAsync(); lifetime.Dispose();
+        await session.DisposeAsync(); lifetime.Dispose();
+    }
+}
+
+/// Every credits module's own account, by module ID. WorkBuddy signs in on
+/// workbuddy.cn and WorkBuddy AI on workbuddy.ai, each in its own profile.
+internal sealed class HarnessAccounts : IAsyncDisposable
+{
+    private readonly System.Collections.Generic.Dictionary<string, HarnessAccountConnection> connections = new(StringComparer.Ordinal);
+    internal event Action<string>? Changed;
+
+    internal HarnessAccounts(System.Collections.Generic.IEnumerable<HarnessAccountConnection> values)
+    {
+        foreach (var connection in values)
+        {
+            connections[connection.Provider] = connection;
+            string provider = connection.Provider;
+            connection.Changed += () => Changed?.Invoke(provider);
+        }
+    }
+
+    internal HarnessAccountConnection? this[string provider] => connections.TryGetValue(provider, out var connection) ? connection : null;
+    internal System.Collections.Generic.IEnumerable<HarnessAccountConnection> All => connections.Values;
+
+    /// WorkBuddy's China build signs in on workbuddy.cn; WorkBuddy AI, the international build, on workbuddy.ai.
+    internal static HarnessAccounts ForWorkBuddy(UiText ui, bool demo, Dispatcher dispatcher) => new(new[] { ("workbuddy", true), ("workbuddy-ai", false) }
+        .Select(pair => new HarnessAccountConnection(pair.Item1, demo ? new DemoHarnessAccountSession() : new WorkBuddyAccountSession(ui, pair.Item2), dispatcher)));
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var connection in connections.Values) await connection.DisposeAsync();
     }
 }

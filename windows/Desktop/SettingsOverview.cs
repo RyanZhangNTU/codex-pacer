@@ -140,7 +140,7 @@ internal sealed partial class SettingsWindow
         var attention = AttentionItems();
         string? update = updater?.CurrentOffer?.Version;
         string key = JsonSerializer.Serialize(new { snapshot?.Presentation, snapshot?.QuotaDashboard, snapshot?.Wallet, snapshot?.Modules, snapshot?.ActivityLinks,
-            credits = harnessAccount?.Reading, creditsState = harnessAccount?.State, creditsBusy = harnessAccount?.Busy,
+            credits = snapshot?.AccountCredits, creditsState = harnessAccounts?.All.Select(account => account.Provider + account.State + account.Busy),
             attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed });
         if (key == overviewKey) return;
         overviewKey = key;
@@ -300,7 +300,8 @@ internal sealed partial class SettingsWindow
         if (HarnessPane(provider) && HarnessModule(provider) is { } module)
         {
             if (module.ReportsAccountCredits == true)
-                content.Children.Add(HarnessAccountCard.Build(ui, harnessAccount, true, "settings.overview." + provider + ".account",
+                content.Children.Add(HarnessAccountCard.Build(ui, provider, harnessAccounts?[provider],
+                    snapshot.AccountCredits?.FirstOrDefault(value => value.Provider == provider), true, "settings.overview." + provider + ".account",
                     classic: session.Current.ExpandedQuotaStyle == "classic", details: choices.QuotaDetails,
                     openSettings: () => _ = NavigateAsync(provider)));
             // Like the other services, the card shows its balance; local task state appears only when it needs a look.

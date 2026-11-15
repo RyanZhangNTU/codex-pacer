@@ -269,17 +269,19 @@ public partial class IslandWindow
         PanelContent.InvalidateMeasure();
     }
 
-    private void UpdateHarnessAccount()
+    private void UpdateHarnessAccount(string provider)
     {
         if (presentationStopped || latest == null) return;
         if (PanelLive) { if (RenderPanel(latest)) Relayout(); }
         else panelDirty = true;
     }
 
-    private void OpenWorkBuddySettings()
+    private void OpenModuleSettings(string provider)
     {
-        if (!presentationStopped && expanded) ProviderSettingsRequested?.Invoke("workbuddy");
+        if (!presentationStopped && expanded) ProviderSettingsRequested?.Invoke(provider);
     }
+    private bool ReportsCredits(EngineSnapshot snapshot, string provider) =>
+        snapshot.Modules?.Any(module => module.Provider == provider && module.ReportsAccountCredits == true) == true;
 
     /// One quota section in the chosen style, as Core drew it for its services.
     /// Returns false, keeping the section's views, when nothing it draws changed.
@@ -291,7 +293,8 @@ public partial class IslandWindow
         DashboardProvider? Reading(string provider) => dashboard?.Providers.FirstOrDefault(value => value.Provider == provider);
         string? Help(string provider) => snapshot.Sources.FirstOrDefault(source => source.Provider == provider && source.Transport == "app-server")?.Reason;
         bool deepseek = section.Providers.Contains("deepseek") || layout?.Slots.Any(slot => slot.Provider == "deepseek") == true;
-        bool accountCredits = section.Providers.Contains("workbuddy");
+        var creditModules = section.Providers.Where(provider => ReportsCredits(snapshot, provider)).ToArray();
+        bool accountCredits = creditModules.Length > 0;
         if (!Redraw(slots, new
         {
             section, layout, style = expandedQuotaStyle, deepseekPanelStyle, options = options.Key, panelBudgetDial,
@@ -299,8 +302,8 @@ public partial class IslandWindow
             quota = snapshot.Quota.Where(value => section.Providers.Contains(value.Provider)), help = section.Providers.Select(Help),
             gauges = section.Providers.Select(provider => panel?.Gauge(provider)), wallet = deepseek ? snapshot.Wallet : null,
             connection = deepseek ? snapshot.DeepseekConnection : null, web = deepseek && canConnectDeepSeekWeb?.Invoke() == true,
-            credits = accountCredits ? harnessAccount?.Reading : null, creditState = accountCredits ? harnessAccount?.State : null,
-            creditBusy = accountCredits && harnessAccount?.Busy == true
+            credits = creditModules.Select(provider => snapshot.AccountCredits?.FirstOrDefault(value => value.Provider == provider)),
+            creditStates = creditModules.Select(provider => harnessAccounts?[provider] is { } account ? account.State + account.Busy : null)
         })) return false;
         slots.Children.Clear(); slots.ColumnDefinitions.Clear(); slots.RowDefinitions.Clear();
         string connectUnavailable = ui.Text(demo ? "windows.deepseek.demo_web_help" : "windows.deepseek.runtime_required");
@@ -309,10 +312,10 @@ public partial class IslandWindow
         else if (layout?.Kind == "classicRings" && dashboard != null)
             slots.Children.Add(new ClassicQuotaView(layout, section.Providers.Select(Reading).OfType<DashboardProvider>().ToArray(), snapshot.Quota, snapshot.Wallet, ui,
                 QuotaStatus, DeepSeekConnectAction(snapshot), connectUnavailable, DeepSeekStatus(snapshot), options, panelBudgetDial,
-                (details, showsName) => AccountCell(true, details, showsName)));
+                (provider, details, showsName) => AccountCell(provider, true, details, showsName)));
         else if (layout?.Kind == "splitSingle" && accountCredits && section.Providers.Count == 1)
         {
-            var cell = AccountCell(false, true, false);
+            var cell = AccountCell(section.Providers[0], false, true, false);
             cell.Margin = new Thickness(9, 0, 9, 0); slots.Children.Add(cell);
         }
         else if (layout?.Kind == "splitSingle" && Reading(section.Providers[0]) is { } single)
@@ -329,7 +332,7 @@ public partial class IslandWindow
                 var reading = Reading(providers[index]);
                 FrameworkElement cell = providers[index] switch
                 {
-                    "workbuddy" => AccountCell(false, false, true),
+                    var credits when ReportsCredits(snapshot, credits) => AccountCell(credits, false, false, true),
                     "deepseek" => new DeepSeekQuotaCell(snapshot.Wallet, ui, connectAction: DeepSeekConnectAction(snapshot), connectUnavailable: connectUnavailable,
                         balanceStatus: DeepSeekStatus(snapshot), budgetDial: panelBudgetDial),
                     var provider => new QuotaCell(provider, snapshot.Quota.FirstOrDefault(q => q.Provider == provider), snapshot.Wallet, Help(provider),
@@ -340,8 +343,9 @@ public partial class IslandWindow
         }
         return true;
 
-        FrameworkElement AccountCell(bool classic, bool details, bool showsName) =>
-            HarnessAccountCard.Build(ui, harnessAccount, true, "island.workbuddy.account", classic, details, showsName, OpenWorkBuddySettings);
+        FrameworkElement AccountCell(string provider, bool classic, bool details, bool showsName) =>
+            HarnessAccountCard.Build(ui, provider, harnessAccounts?[provider], snapshot.AccountCredits?.FirstOrDefault(value => value.Provider == provider),
+                true, "island." + provider + ".account", classic, details, showsName, () => OpenModuleSettings(provider));
     }
 
     /// The header shows the chosen buttons; the rest wait in the More menu.

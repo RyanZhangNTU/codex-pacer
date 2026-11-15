@@ -42,7 +42,7 @@ internal sealed partial class SettingsWindow : Window
     private readonly Action<string>? guideCopyLink;
     private readonly Func<Uri, bool>? systemSettingsLauncher;
     private readonly Grid client = new() { Width = DefaultWidth, Height = DefaultHeight };
-    private readonly HarnessAccountConnection? harnessAccount;
+    private readonly HarnessAccounts? harnessAccounts;
     private readonly StackPanel form = new() { Margin = new Thickness(32, 10, 32, 32), MaxWidth = ColumnWidth };
     private readonly TextBlock issue = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 10) };
     private readonly Button recoveryRestart = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(10, 0, 10, 10) };
@@ -72,13 +72,13 @@ internal sealed partial class SettingsWindow : Window
 
     internal SettingsWindow(UiText ui, PreferencesSession session, IStartupRegistration startup, bool demo, bool? darkOverride = null, EngineClient? engine = null, Task? sourceReady = null, NotificationSession? notifications = null,
         DeepSeekConnectionCoordinator? webConnection = null, ClaudeConnectionCoordinator? claudeConnection = null, Action? openNotificationSettings = null, IslandWindow? surfaceWindow = null, PreferencesStore? preferencesStore = null, IDisplayTopologySource? displayTopology = null, Func<Uri, bool>? guideLinkLauncher = null, Action<string>? guideCopyLink = null, ISystemAppearanceSource? appearanceSource = null, Func<Uri, bool>? systemSettingsLauncher = null, WindowsUpdateService? updater = null,
-        HarnessAccountConnection? harnessAccount = null)
+        HarnessAccounts? harnessAccounts = null)
     {
         if (darkOverride != null && !demo) throw new ArgumentException("Theme fixtures require demo mode.");
         WindowRendering.Prepare(this);
         this.ui = ui; this.session = session; this.startup = startup; this.demo = demo; this.darkOverride = darkOverride;
         this.engine = engine;
-        this.harnessAccount = harnessAccount;
+        this.harnessAccounts = harnessAccounts;
         this.updater = updater;
         this.webConnection = webConnection;
         this.claudeConnection = claudeConnection;
@@ -148,7 +148,7 @@ internal sealed partial class SettingsWindow : Window
         if (updater != null) updater.Changed += OnUpdateStatus;
         appearanceDisplays.Changed += OnAppearanceDisplaysChanged;
         if (engine != null) { engine.Snapshot += OnProviderSnapshot; engine.Status += OnProviderStatus; }
-        if (harnessAccount != null) harnessAccount.Changed += RefreshAccountCards;
+        if (harnessAccounts != null) harnessAccounts.Changed += OnAccountChanged;
         Closing += (_, e) => { if (busy && !AllowClose) e.Cancel = true; };
         Closed += (_, _) =>
         {
@@ -160,7 +160,7 @@ internal sealed partial class SettingsWindow : Window
             appearanceDisplays.Changed -= OnAppearanceDisplaysChanged;
             if (ownsAppearanceDisplays) appearanceDisplays.Dispose();
             if (engine != null) { engine.Snapshot -= OnProviderSnapshot; engine.Status -= OnProviderStatus; }
-            if (harnessAccount != null) harnessAccount.Changed -= RefreshAccountCards;
+            if (harnessAccounts != null) harnessAccounts.Changed -= OnAccountChanged;
         };
         // PreviewKeyDown yields to ComboBox's Escape handling while its menu is open.
         KeyDown += (_, e) =>
@@ -175,6 +175,14 @@ internal sealed partial class SettingsWindow : Window
     private static string Version => typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "";
     private TextBlock Label(string text, double size = 13, FontWeight? weight = null)
         => new() { Text = text, FontSize = size, FontWeight = weight ?? FontWeights.Normal, VerticalAlignment = VerticalAlignment.Center };
+    /// Modules that read account credits; before the first snapshot, the two WorkBuddy builds.
+    private string[] CreditModules()
+    {
+        var known = (engine?.LatestSnapshot?.Modules ?? []).Where(module => module.ReportsAccountCredits == true).Select(module => module.Provider).ToArray();
+        return known.Length > 0 ? known : ["workbuddy", "workbuddy-ai"];
+    }
+    private Task ChangeCredits(string provider, Func<HarnessCreditsChoice, HarnessCreditsChoice> update) =>
+        Change(p => p with { HarnessCredits = new(p.HarnessCredits, StringComparer.Ordinal) { [provider] = update(p.Credits(provider)) } });
     private TextBlock Detail(string text)
     {
         var label = Label(text, 11.5); label.TextWrapping = TextWrapping.Wrap; label.Margin = new Thickness(0, 2, 0, 0);

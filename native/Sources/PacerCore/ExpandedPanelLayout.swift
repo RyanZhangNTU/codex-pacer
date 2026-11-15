@@ -7,6 +7,7 @@ import Foundation
 public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
     public enum Block: String, CaseIterable, Codable, Sendable, Identifiable {
         case tasks, codex, claude, deepseek, deepseekSpend, deepseekWeek, workbuddy
+        case workbuddyAI = "workbuddy-ai"
         public var id: String { rawValue }
         public var label: String { L10n.text("panel.block." + rawValue) }
         public var detail: String { L10n.text("panel.block_detail." + rawValue) }
@@ -20,6 +21,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
             case .claude: .claude
             case .deepseek, .deepseekSpend, .deepseekWeek: .deepseek
             case .workbuddy: .workbuddy
+            case .workbuddyAI: .workbuddyAI
             }
         }
         /// Adjacent quota blocks share one row when the panel pairs them.
@@ -37,7 +39,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
             case .deepseek: "water.waves"
             case .deepseekSpend: "chart.pie"
             case .deepseekWeek: "chart.xyaxis.line"
-            case .workbuddy: "briefcase"
+            case .workbuddy, .workbuddyAI: "briefcase"
             }
         }
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool { provider.map(providers.contains) ?? true }
@@ -69,6 +71,7 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
         var blocks: [Block] = [.tasks, .codex, .claude, .deepseek]
         let quotaProviders = providers.filter { HarnessRegistry.descriptor(for: $0)?.hasQuotaDisplay == true }
         if providers.contains(.workbuddy) { blocks.append(.workbuddy) }
+        if providers.contains(.workbuddyAI) { blocks.append(.workbuddyAI) }
         if deepseekDetailed, quotaProviders == [.deepseek] { blocks += [.deepseekSpend, .deepseekWeek] }
         return Self(blocks: blocks)
     }

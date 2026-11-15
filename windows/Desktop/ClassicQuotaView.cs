@@ -15,7 +15,7 @@ internal sealed class ClassicQuotaView : StackPanel
     /// <param name="providers">That section's services' readings.</param>
     internal ClassicQuotaView(DashboardLayout layout, IReadOnlyList<DashboardProvider> providers, IReadOnlyList<EngineQuota> raw, EngineWallet? wallet, UiText ui,
         Func<DashboardProvider?, FrameworkElement?> status, Action? connectDeepSeek = null, string? connectUnavailable = null, FrameworkElement? deepseekStatus = null,
-        PanelOptions? options = null, bool budgetDial = true, Func<bool, bool, FrameworkElement>? account = null)
+        PanelOptions? options = null, bool budgetDial = true, Func<string, bool, bool, FrameworkElement>? account = null)
     {
         options ??= PanelOptions.Default;
         var row = new Grid(); Children.Add(row);
@@ -23,7 +23,7 @@ internal sealed class ClassicQuotaView : StackPanel
         {
             FrameworkElement cell;
             if (slot.Period == null && account != null)
-                cell = account(layout.Slots.Count == 1 && options.QuotaDetails, layout.Slots.Count > 1 || !options.QuotaDetails);
+                cell = account(slot.Provider, layout.Slots.Count == 1 && options.QuotaDetails, layout.Slots.Count > 1 || !options.QuotaDetails);
             else if (slot.Provider == "deepseek") cell = new DeepSeekQuotaCell(wallet, ui, 88, connectDeepSeek, connectUnavailable, deepseekStatus, budgetDial: budgetDial);
             else
             {

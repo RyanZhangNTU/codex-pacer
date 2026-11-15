@@ -31,7 +31,7 @@ public partial class IslandWindow : Window
     private string deepseekPanelStyle = "detailed";
     private readonly WindowsDesktopApplications? desktopApplications;
     private readonly Func<EngineNavigationPlan, EngineTaskRow, Task<bool>> openConversation;
-    private readonly HarnessAccountConnection? harnessAccount;
+    private readonly HarnessAccounts? harnessAccounts;
     private readonly HashSet<string> openingActivityContexts = [];
     private readonly Func<bool>? canConnectDeepSeekWeb;
     private bool showAppButtons = true;
@@ -88,7 +88,7 @@ public partial class IslandWindow : Window
         Func<(MotionBounds Screen, MotionBounds WorkArea)>? screenGeometry = null,
         Func<IBackdropSystemSource>? backdropSystemFactory = null, Func<Window, ICompositionBackdrop>? backdropFactory = null,
         Func<IDisplayTopologySource>? displayTopologyFactory = null, ISystemAppearanceSource? appearanceSource = null,
-        DisplayPresence? presence = null, HarnessAccountConnection? harnessAccount = null)
+        DisplayPresence? presence = null, HarnessAccounts? harnessAccounts = null)
     {
         InitializeComponent();
         Icon = BitmapFrame.Create(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"), UriKind.Absolute));
@@ -98,8 +98,8 @@ public partial class IslandWindow : Window
         this.desktopApplications = desktopApplications;
         this.canConnectDeepSeekWeb = canConnectDeepSeekWeb;
         this.openConversation = openConversation ?? OpenConversationAsync;
-        this.harnessAccount = harnessAccount;
-        if (harnessAccount != null) harnessAccount.Changed += UpdateHarnessAccount;
+        this.harnessAccounts = harnessAccounts;
+        if (harnessAccounts != null) harnessAccounts.Changed += UpdateHarnessAccount;
         this.screenGeometry = screenGeometry;
         this.backdropSystemFactory = backdropSystemFactory; this.backdropFactory = backdropFactory;
         ui = UiText.For(chinese);
@@ -699,7 +699,7 @@ public partial class IslandWindow : Window
     }
     internal void StopPresentation()
     {
-        if (harnessAccount != null) harnessAccount.Changed -= UpdateHarnessAccount;
+        if (harnessAccounts != null) harnessAccounts.Changed -= UpdateHarnessAccount;
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged; engine.Snapshot -= QueueSnapshot;
         presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();

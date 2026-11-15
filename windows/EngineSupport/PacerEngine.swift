@@ -293,6 +293,7 @@ actor EngineRuntime {
     private var accountCredits: [AgentProvider: (credits: HarnessAccountCredits, stale: Bool)] = [:]
     private var creditsNoticePolicy = HarnessCreditsNoticePolicy()
     private var hiddenTurnCredits: Set<AgentProvider> = []
+    private var creditSettings: [AgentProvider: HarnessCreditsSettings] = [:]
     /// Data folders chosen in Settings for local modules.
     private var harnessHomeOverrides: [AgentProvider: URL] = [:]
     private let managesLocalHarnessProgress: Bool
@@ -1094,6 +1095,15 @@ actor EngineRuntime {
             return Set(try moduleIDs(names).filter(eligible.contains))
         }
         let selectedHiddenCredits = try parameters.hiddenTurnCredits.map { Set(try moduleIDs($0)) }
+        let selectedCredits = try parameters.harnessCredits.map { values -> [AgentProvider: HarnessCreditsSettings] in
+            _ = try moduleIDs(Array(values.keys))
+            var result: [AgentProvider: HarnessCreditsSettings] = [:]
+            for (name, value) in values {
+                guard let provider = byProviderID[name], HarnessRegistry.descriptor(for: provider)?.reportsAccountCredits == true else { continue }
+                result[provider] = value
+            }
+            return result
+        }
         let selectedHomes = try parameters.harnessHomes.map { homes -> [AgentProvider: URL] in
             _ = try moduleIDs(Array(homes.keys))
             var result: [AgentProvider: URL] = [:]
@@ -1163,6 +1173,7 @@ actor EngineRuntime {
         if let value = parameters.deepseekProgressRing { deepseekProgressRing = value }
         if let selectedProgress { disabledHarnessProgress = selectedProgress }
         if let selectedHiddenCredits { hiddenTurnCredits = selectedHiddenCredits }
+        if let selectedCredits { creditSettings = selectedCredits }
         // A moved data folder changes the module's source identity, which
         // resets it through the lifecycle plan below.
         if let selectedHomes { harnessHomeOverrides = selectedHomes }
@@ -2664,7 +2675,7 @@ actor EngineRuntime {
         let credits: [AgentProvider: HarnessAccountCredits] = Dictionary(uniqueKeysWithValues: creditModules.compactMap { provider in
             (demo ? DemoScenario.workbuddyCredits(at: date) : accountCredits[provider]?.credits).map { (provider, $0) }
         })
-        walletNotices += creditsNoticePolicy.notices(credits, low: reminderSettings.contains(.lowCredits), now: date)
+        walletNotices += creditsNoticePolicy.notices(credits, settings: creditSettings, low: reminderSettings.contains(.lowCredits), now: date)
         let legacy = HarnessRegistry.legacyIDSet
         let selected: Set<String>?
         if activities.count > 256, !enabled.isSubset(of: legacy) {
@@ -2721,12 +2732,13 @@ actor EngineRuntime {
             }
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
-            failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, credits: credits, now: date)
+            failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, credits: credits, creditSettings: creditSettings, now: date)
         let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests, completions: inbox.unreadActivities,
             sources: HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay && enabled.contains($0.id) }.map(\.id).map { provider in
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))
             }, wallet: compactWallet, credits: creditModules.map { provider in
-                .init(provider: provider, credits: credits[provider], stale: accountCredits[provider]?.stale == true, now: date)
+                .init(provider: provider, credits: credits[provider], stale: accountCredits[provider]?.stale == true, now: date,
+                      figure: creditSettings[provider]?.bar ?? .available)
             }, firstOutput: latestFirstOutput?.seconds, warnings: compactWarnings, groups: taskPresentation.groups, overview: taskPresentation.overview,
             firstOutputs: activityState.firstOutputHistory.values, now: date)
         let displayedQuota = AgentProvider.allCases.compactMap { provider in snapshots[provider].map { EngineQuota($0, provider: provider, at: date) } }
@@ -2810,7 +2822,8 @@ actor EngineRuntime {
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
         snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in
-            credits[provider].map { .init(provider: provider.rawValue, credits: $0, stale: accountCredits[provider]?.stale == true) }
+            credits[provider].map { .init(provider: provider.rawValue, credits: $0, stale: accountCredits[provider]?.stale == true,
+                                          presentation: HarnessCreditsPresentation(credits: $0, settings: creditSettings[provider] ?? .default, now: date)) }
         }
         snapshot.remoteControlDirectory = monitorRemoteControl ? desktopState?.remoteControlDirectory : nil
         guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {

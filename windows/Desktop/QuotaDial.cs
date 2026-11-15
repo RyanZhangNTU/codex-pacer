@@ -40,18 +40,18 @@ internal sealed class QuotaDial : FrameworkElement
     private readonly double? dialSize;
     private readonly PanelGauge? gauge;
     private readonly bool paceTick;
-    private readonly HarnessAccountReading? account;
-    private readonly UiText? accountText;
-    private readonly bool accountStale;
+    private readonly HarnessCreditsDial? credits;
+    private readonly UiText? creditsText;
+    private readonly bool creditsStale;
     /// <param name="gauge">Core's choice of window for the panel's chosen periods; without it 5 hours splits the ring when reported.</param>
     /// <param name="paceTick">The white tick where an even pace would be.</param>
     internal QuotaDial(string provider, EngineQuota? quota, EngineWallet? wallet, bool classic = false,
         DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null, PanelGauge? gauge = null, bool paceTick = true,
-        HarnessAccountReading? account = null, UiText? accountText = null, bool accountStale = false)
+        HarnessCreditsDial? credits = null, UiText? creditsText = null, bool creditsStale = false)
     {
         this.provider = provider; this.wallet = wallet; this.classic = classic; this.dashboard = dashboard;
         this.classicPeriod = classicPeriod; this.dialSize = dialSize; this.gauge = gauge; this.paceTick = paceTick;
-        this.account = account; this.accountText = accountText; this.accountStale = accountStale;
+        this.credits = credits; this.creditsText = creditsText; this.creditsStale = creditsStale;
         _ = quota; // Raw transport data cannot replace a shared display projection.
     }
     private readonly Typeface regular = new(PacerFonts.Interface, FontStyles.Normal, FontWeights.Medium, FontStretches.Normal);
@@ -69,7 +69,7 @@ internal sealed class QuotaDial : FrameworkElement
     internal QuotaWindow? GaugeWindow => ShortGauge ? Short : Weekly;
     private DashboardReading? ClassicReading => classicPeriod == "5h" ? dashboard?.FiveHour : dashboard?.Weekly;
     internal QuotaWindow? Selected => classic ? classicPeriod == "5h" ? Short : Weekly : GaugeWindow;
-    internal string AccessibleName => accountText != null ? account == null ? "WorkBuddy" : HarnessAccountCard.AvailableText(accountText, account.Remaining)
+    internal string AccessibleName => creditsText != null ? credits?.AccessibilityLabel ?? creditsText.Text("harness.account.sign_in")
         : provider == "deepseek" ? wallet?.Dial?.AccessibilityLabel ?? provider
         : classic && ClassicReading != null ? ClassicReading.ClassicAccessibilityLabel
         : dashboard != null ? string.Join("\n", Split ? new[] { dashboard.FiveHour.AccessibilityLabel, dashboard.Weekly.AccessibilityLabel } : new[] { GaugeReading!.AccessibilityLabel })
@@ -89,7 +89,7 @@ internal sealed class QuotaDial : FrameworkElement
     protected override void OnRender(DrawingContext drawing)
     {
         base.OnRender(drawing);
-        if (accountText != null) { DrawAccount(drawing, accountText); return; }
+        if (creditsText != null) { DrawCredits(drawing); return; }
         if (provider == "deepseek") { DrawWallet(drawing); return; }
         if (dashboard == null || (classic ? ClassicReading?.Availability == "unavailable" : GaugeReading?.Availability == "unavailable" && !Split))
         {
@@ -172,23 +172,44 @@ internal sealed class QuotaDial : FrameworkElement
             drawing.DrawImage(icon, new Rect(centre - 12, centre - 12, 24, 24));
     }
 
-    private void DrawAccount(DrawingContext drawing, UiText ui)
+    /// The ring is what is left of the month's credits; the days left sit above
+    /// the chosen figure; the gap holds the extra credits, or "This month".
+    private void DrawCredits(DrawingContext drawing)
     {
-        if (account == null) { DrawDisconnected(drawing); return; }
-        drawing.PushOpacity(accountStale ? 0.55 : 1);
-        if (account.Fraction is double fraction)
-            DrawGauge(drawing, fraction, classic ? -90 : 125, classic ? 360 : 290, PacerPalette.Provider(provider));
-        else
-            drawing.DrawEllipse(null, DrawingCache.Pen(PacerPalette.Hairline, 1.5), new Point(Side / 2, Side / 2), Side / 2, Side / 2);
-        var value = Text(HarnessAccountCard.Amount(ui, account.Remaining), Side * 0.22, PacerPalette.Primary, true);
-        double top = Side / 2 - 15, width = Side * 0.72;
-        double scale = Math.Min(1, width / Math.Max(1, value.WidthIncludingTrailingWhitespace));
-        drawing.PushTransform(new TranslateTransform((Side - value.WidthIncludingTrailingWhitespace * scale) / 2, top));
-        drawing.PushTransform(new ScaleTransform(scale, scale));
-        drawing.DrawText(value, new Point()); drawing.Pop(); drawing.Pop();
-        WalletSubtitle(drawing, Text(ui.Text("harness.account.available_label"), 10, PacerPalette.Secondary),
-            top + Math.Max(21, value.Height * scale) + 3, width);
+        if (credits == null) { DrawDisconnected(drawing); return; }
+        double side = Side;
+        Brush tint = PacerPalette.Provider(provider);
+        drawing.PushOpacity(creditsStale ? 0.55 : 1);
+        if (credits.Fraction is double fraction) DrawGauge(drawing, fraction, classic ? -90 : 125, classic ? 360 : 290, tint);
+        else drawing.DrawEllipse(null, DrawingCache.Pen(PacerPalette.Hairline, 1.5), new Point(side / 2, side / 2), side / 2, side / 2);
+        if (credits.Top is string top)
+            Fit(drawing, Text(top, side * 0.085, credits.TopWarns ? PacerPalette.Attention : PacerPalette.Secondary, credits.TopWarns), side * 0.23, side * 0.72);
+        var value = Text(credits.Center, side * 0.2, PacerPalette.Primary, true);
+        double scale = Math.Min(1, side * 0.72 / Math.Max(1, value.WidthIncludingTrailingWhitespace));
+        Fit(drawing, value, side / 2 - value.Height * scale / 2 + side * 0.02, side * 0.72);
+        if (credits.Badge is string badge) DrawBadge(drawing, badge, credits.BadgeTone, tint, side * 0.088, classic ? side * 0.66 : side - side * 0.165);
+        else if (credits.GapLabel is string label) Centre(drawing, label, side * 0.09, classic ? side * 0.66 : side - side * 0.15, PacerPalette.Secondary);
         drawing.Pop();
+    }
+    /// Draws a line centered and shrunk to fit the ring's inner width.
+    private void Fit(DrawingContext drawing, FormattedText text, double top, double width)
+    {
+        double scale = Math.Min(1, width / Math.Max(1, text.WidthIncludingTrailingWhitespace));
+        drawing.PushTransform(new TranslateTransform((Side - text.WidthIncludingTrailingWhitespace * scale) / 2, top));
+        drawing.PushTransform(new ScaleTransform(scale, scale));
+        drawing.DrawText(text, new Point()); drawing.Pop(); drawing.Pop();
+    }
+    /// Extra credits as a capsule: the service's tint, orange when some lapse soon, solid once the month is spent.
+    private void DrawBadge(DrawingContext drawing, string badge, string tone, Brush tint, double size, double top)
+    {
+        Color Of(Brush brush) => brush is SolidColorBrush solid ? solid.Color : Colors.Gray;
+        Color shade = Of(tone == "warning" ? PacerPalette.Attention : tint);
+        Brush ink = tone == "solid" ? PacerPalette.Surface : tone == "warning" ? PacerPalette.Attention : tint;
+        Brush fill = tone == "solid" ? new SolidColorBrush(shade) : new SolidColorBrush(Color.FromArgb(tone == "warning" ? (byte)66 : (byte)56, shade.R, shade.G, shade.B));
+        var text = Text(badge, size, ink, true);
+        double width = Math.Min(Side * 0.6, text.WidthIncludingTrailingWhitespace + size * 1.4), height = size * 1.7;
+        drawing.DrawRoundedRectangle(fill, null, new Rect((Side - width) / 2, top, width, height), height / 2, height / 2);
+        Fit(drawing, text, top + (height - text.Height) / 2, width - size * 0.8);
     }
     private void Value(DrawingContext drawing, QuotaWindow? window, double size, double baseline, string? period, double percentSize = 9)
     {

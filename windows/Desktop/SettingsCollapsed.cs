@@ -304,6 +304,14 @@ internal sealed partial class SettingsWindow
             var host = new StackPanel(); host.Children.Add(Hair()); host.Children.Add(row);
             compactWindowRows[provider] = host; compactWindowsPanel.Children.Add(host);
         }
+        foreach (string provider in CreditModules())
+        {
+            var combo = CompactChoice("credits." + provider, [("monthlyPercent", "credits.figure.monthlyPercent"), ("monthlyRemaining", "credits.figure.monthlyRemaining"), ("available", "credits.figure.available")],
+                value => ChangeCredits(provider, choice => choice with { Bar = value }), titleKey: "credits.option.bar");
+            var row = InfoRow(PaneTitle(provider) + " · " + ui.Text("credits.option.bar"), combo, id: "compact.credits." + provider);
+            var host = new StackPanel(); host.Children.Add(Hair()); host.Children.Add(row);
+            compactWindowRows["credits." + provider] = host; compactWindowsPanel.Children.Add(host);
+        }
         body.Children.Add(compactWindowsPanel);
         // Which warnings the bar shows is chosen in Notifications, beside their
         // system notifications; this card keeps their style and limit.
@@ -472,6 +480,13 @@ internal sealed partial class SettingsWindow
             compactChoices["window." + window.Provider].SelectedValue = window.Selection;
             compactChoices["window." + window.Provider].Visibility = window.WeeklyOnly ? Visibility.Collapsed : Visibility.Visible;
             compactWindowValues[window.Provider].Visibility = window.WeeklyOnly ? Visibility.Visible : Visibility.Collapsed;
+        }
+        // Each credits module's value: everything available, or the month's credits as an amount or a share.
+        foreach (string provider in CreditModules())
+        {
+            if (!compactWindowRows.TryGetValue("credits." + provider, out var creditsRow)) continue;
+            creditsRow.Visibility = providers.Contains(provider) && selected == "quota" ? Visibility.Visible : Visibility.Collapsed;
+            compactChoices["credits." + provider].SelectedValue = session.Current.Credits(provider).Bar;
         }
     }
 }

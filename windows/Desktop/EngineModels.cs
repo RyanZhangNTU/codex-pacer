@@ -20,7 +20,17 @@ internal sealed record EngineSnapshot(
     IReadOnlyList<EngineAccountCredits>? AccountCredits = null);
 /// A module's account credits as the engine knows them, with what the bill
 /// service reported; drawn the same way in Settings, Overview and the island.
-internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale);
+internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale,
+    HarnessCreditsPresentation? Presentation = null);
+/// What a credits module draws, worded by Core: the dial, the summary lines and the breakdown.
+internal sealed record HarnessCreditsPresentation(HarnessCreditsDial Dial, string? Plan, IReadOnlyList<HarnessCreditsLine> Lines,
+    IReadOnlyList<HarnessCreditsSection> Sections, string BarText);
+/// The ring is the month's credits; Top is the days left; Badge is the extra credits, or GapLabel when there are none.
+internal sealed record HarnessCreditsDial(double? Fraction, string Center, string? Top, bool TopWarns, string? Badge, string BadgeTone,
+    string? GapLabel, string AccessibilityLabel);
+internal sealed record HarnessCreditsLine(string Label, string Value, string? Detail, bool Warns);
+internal sealed record HarnessCreditsSection(string Title, IReadOnlyList<HarnessCreditsRow> Rows);
+internal sealed record HarnessCreditsRow(string Kind, string Name, string Amount, string? Date, string? Chip);
 /// Core's account credits as JSON: amounts, the plan cycle and the next expiry, times in seconds since 1970.
 internal sealed record HarnessAccountCredits(string State, double? Remaining, double? Total, double? Reserved, string? Plan,
     HarnessAccountCycle? Cycle = null, HarnessAccountExpiration? Expiration = null);

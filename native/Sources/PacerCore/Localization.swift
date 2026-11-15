@@ -92,6 +92,10 @@ public enum L10n {
     public static func text(_ key: String, _ arguments: CVarArg..., language selected: AppLanguage? = nil) -> String {
         current.resources.text(key, arguments: arguments, language: selected ?? language)
     }
+    /// The same text with arguments gathered at run time.
+    public static func text(_ key: String, arguments: [CVarArg], language selected: AppLanguage? = nil) -> String {
+        current.resources.text(key, arguments: arguments, language: selected ?? language)
+    }
 
     public static func date(_ value: Date, date dateStyle: Date.FormatStyle.DateStyle = .abbreviated,
                             time timeStyle: Date.FormatStyle.TimeStyle = .shortened) -> String {

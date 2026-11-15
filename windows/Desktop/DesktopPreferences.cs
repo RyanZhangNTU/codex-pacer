@@ -97,8 +97,9 @@ internal sealed record DesktopPreferences
     public string[] HiddenTurnCredits { get; init; } = [];
     // Data folders chosen for local modules, by module ID.
     public Dictionary<string, string> HarnessHomes { get; init; } = new();
-    public string WorkBuddyAccountSite { get; init; } = "automatic";
-    internal bool UsesWorkBuddyChina(bool chinese) => WorkBuddyAccountSite == "china" || WorkBuddyAccountSite == "automatic" && chinese;
+    // Each credits module's dial center, bar value and reminders, by module ID.
+    public Dictionary<string, HarnessCreditsChoice> HarnessCredits { get; init; } = new();
+    internal HarnessCreditsChoice Credits(string provider) => HarnessCredits.TryGetValue(provider, out var choice) ? choice : HarnessCreditsChoice.Default;
     public bool MonitorSSH { get; init; } = true;
     public bool AutomaticUpdates { get; init; } = true;
     public int RetentionMinutes { get; init; } = 30;
@@ -131,7 +132,6 @@ internal sealed record DesktopPreferences
         && ValidRing(QuotaRingOuter) && ValidRing(QuotaRingInner)
         && DeepSeekPanelStyle is "simple" or "detailed" && DeepSeekMode is "balance" or "budget"
         && DeepSeekBalanceSource is "automatic" or "web" or "apiKey"
-        && WorkBuddyAccountSite is "automatic" or "china" or "international"
         && DeepSeekRingPeriod is "day" or "week" && DeepSeekSpeedSource is "local" or "account"
         && ValidAmount(DeepSeekDailyBudget) && ValidAmount(DeepSeekWeeklyBudget)
         && ValidAmount(DeepSeekLowBalanceLine) && ValidAmount(DeepSeekSpikeLimit)
@@ -146,7 +146,8 @@ internal sealed record DesktopPreferences
         && LegacyProviders.All(ProviderModes.ContainsKey)
         && ProviderModes.All(pair => ValidProviderId(pair.Key) && ValidProviderMode(pair.Value))
         && ValidModuleList(DisabledHarnessProgress, legacy: false) && ValidModuleList(HiddenTurnCredits, legacy: true)
-        && HarnessHomes is { Count: <= 128 } && HarnessHomes.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && ValidPath(pair.Value));
+        && HarnessHomes is { Count: <= 128 } && HarnessHomes.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && ValidPath(pair.Value))
+        && HarnessCredits is { Count: <= 128 } && HarnessCredits.All(pair => ValidProviderId(pair.Key) && !IsLegacyProvider(pair.Key) && pair.Value is { IsValid: true });
 
     private static bool ValidModuleList(string[]? ids, bool legacy) => ids is { Length: <= 128 }
         && ids.Distinct(StringComparer.Ordinal).Count() == ids.Length && ids.All(id => id != null && ValidProviderId(id) && (legacy || !IsLegacyProvider(id)));
@@ -186,6 +187,11 @@ internal sealed record DesktopPreferences
             disabledHarnessProgress = DisabledHarnessProgress,
             hiddenTurnCredits = HiddenTurnCredits,
             harnessHomes = HarnessHomes,
+            harnessCredits = HarnessCredits.ToDictionary(pair => pair.Key, pair => new
+            {
+                center = pair.Value.Center, bar = pair.Value.Bar, lowCredits = pair.Value.LowCredits,
+                expiryReminder = pair.Value.ExpiryReminder, expiryDays = pair.Value.ExpiryDays
+            }),
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
@@ -198,4 +204,21 @@ internal sealed record DesktopPreferences
             deepseekHome = DeepseekHome
         };
     }
+}
+
+/// One credits module's choices, as Core's HarnessCreditsSettings: what the
+/// dial's center and the collapsed bar show, the low line and the expiry reminder.
+public sealed record HarnessCreditsChoice
+{
+    public static readonly HarnessCreditsChoice Default = new();
+    internal static readonly string[] Figures = ["monthlyPercent", "monthlyRemaining", "available"];
+    public string Center { get; init; } = "monthlyPercent";
+    public string Bar { get; init; } = "available";
+    /// Credits that count as low; empty follows a tenth of the month's credits.
+    public double? LowCredits { get; init; }
+    public bool ExpiryReminder { get; init; } = true;
+    /// Days ahead that count as soon, for the reminder and the dial.
+    public int ExpiryDays { get; init; } = 3;
+    internal bool IsValid => Figures.Contains(Center) && Figures.Contains(Bar) && LowCredits is null or (>= 0 and <= 1e9)
+        && ExpiryDays is >= 1 and <= 30;
 }

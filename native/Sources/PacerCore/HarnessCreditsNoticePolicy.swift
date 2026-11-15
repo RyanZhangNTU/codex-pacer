@@ -1,32 +1,45 @@
 import Foundation
 
-/// Account credits notify once when they fall to the low line and once when
-/// they run out. Another low notice waits until they recover with room to spare.
+/// Account credits notify once when they fall to the low line, once when they
+/// run out, and once when extra credits are about to lapse. Another low notice
+/// waits until the credits recover with room to spare.
 public struct HarnessCreditsNoticePolicy: Equatable, Sendable {
     public enum Level: Equatable, Sendable { case low, exhausted }
-    /// Percent of the plan cycle, or of all credits, that counts as low.
-    public static let lowPercent = 10.0
-    /// Above this the low notice can fire again.
-    public static let recoveredPercent = 20.0
 
     private var notified: [AgentProvider: Level] = [:]
+    /// The lapse date already announced, so each batch notifies once.
+    private var expiryNotified: [AgentProvider: Date] = [:]
 
     public init() {}
 
-    public static func level(_ reading: HarnessAccountCredits.Reading) -> Level? {
+    /// Low is at or below the user's line, which defaults to a tenth of the month's credits.
+    public static func level(_ reading: HarnessAccountCredits.Reading, settings: HarnessCreditsSettings = .default) -> Level? {
         if reading.remaining <= 0 { return .exhausted }
-        guard let percent = reading.percent else { return nil }
-        return percent <= lowPercent ? .low : nil
+        return reading.remaining <= reading.lowLine(settings) ? .low : nil
     }
 
-    /// `low` follows the low-credits reminder; running out always notifies.
-    public mutating func notices(_ credits: [AgentProvider: HarnessAccountCredits], low: Bool, now: Date) -> [IslandNotice] {
+    /// `low` follows the low-credits reminder; running out always notifies;
+    /// lapsing extra credits follow each module's own expiry reminder.
+    public mutating func notices(_ credits: [AgentProvider: HarnessAccountCredits], settings: [AgentProvider: HarnessCreditsSettings] = [:],
+                                 low: Bool, now: Date) -> [IslandNotice] {
         var result: [IslandNotice] = []
         for provider in HarnessRegistry.ids(where: \.reportsAccountCredits) {
             guard let reading = credits[provider]?.reading(at: now) else { continue }
-            let level = Self.level(reading)
+            let options = settings[provider] ?? .default
+            if options.expiryReminder, let soon = reading.expiringSoon(within: options.expiryDays, at: now) {
+                if expiryNotified[provider] != soon.date {
+                    expiryNotified[provider] = soon.date
+                    result.append(.init(id: provider.rawValue + ":credits:expiring:" + String(Int(soon.date.timeIntervalSince1970)), kind: .lowQuota,
+                        title: provider.displayName + " · " + L10n.text("harness.notice.expiring_credits"),
+                        detail: L10n.text("harness.notice.expiring_credits_detail", HarnessCreditsPresentation.grouped(soon.credits),
+                                          L10n.moment(soon.date, relativeTo: now))))
+                }
+            } else {
+                expiryNotified[provider] = nil
+            }
+            let level = Self.level(reading, settings: options)
             if level == nil {
-                if reading.percent.map({ $0 > Self.recoveredPercent }) ?? true { notified[provider] = nil }
+                if reading.remaining > reading.lowLine(options) * 2 { notified[provider] = nil }
                 continue
             }
             guard let level, notified[provider] != level, notified[provider] != .exhausted || level == .exhausted else { continue }
@@ -42,5 +55,5 @@ public struct HarnessCreditsNoticePolicy: Equatable, Sendable {
     }
 
     /// Forget a module's notices, as after signing out or turning it off.
-    public mutating func reset(_ provider: AgentProvider) { notified[provider] = nil }
+    public mutating func reset(_ provider: AgentProvider) { notified[provider] = nil; expiryNotified[provider] = nil }
 }

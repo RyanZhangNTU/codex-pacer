@@ -3,29 +3,46 @@ import CryptoKit
 import SQLite3
 
 enum WorkBuddyHarness {
-    static let id = AgentProvider.workbuddy
-    static let accountCredits = HarnessAccountCreditsDefinition(
-        sites: [.init(id: "international", url: URL(string: "https://www.workbuddy.ai/")!),
-                .init(id: "china", url: URL(string: "https://www.workbuddy.cn/")!)],
-        chineseSite: "china", loginPath: "profile/plans-usage",
-        billingPath: "/billing/meter/get-user-resource-summary", scriptResource: "workbuddy-account-credits")
-    static let definition = LocalHarnessDefinition(
-        descriptor: .init(id: id, name: "WorkBuddy", symbol: "briefcase",
-                          brand: .init(dark: .init(0xC3ABF1), light: .init(0x6942A2), accentLift: 0.22, accentLuminance: 0.095),
-                          website: URL(string: "https://www.workbuddy.ai/"), balance: .accountCredits,
-                          hasRateDisplay: true, hasTaskProgress: true, reportsSessionUsage: true,
-                          usageGuide: URL(string: "https://www.workbuddy.ai/docs/workbuddy/usage"), progressConnector: true,
-                          accountCredits: accountCredits),
-        platforms: [.windows, .macOS], home: ".workbuddy-ai", dataFile: "workbuddy.db",
-        windowsExecutables: ["WorkBuddyAI/WorkBuddyAI.exe", "Programs/WorkBuddyAI/WorkBuddyAI.exe"],
-        macApplicationNames: ["WorkBuddy AI", "WorkBuddy"], macBundleIdentifiers: ["com.tencent.workbuddy.mac"],
-        macSigningOrganization: "Tencent Technology (Shenzhen) Company Limited",
-        conversationScheme: "workbuddy-ai",
-        connectorsPath: "connectors",
-        progressConfigFile: "mcp.json",
-        progressRuleDirectory: "rules",
-        progressConnection: progressConnection,
-        makeMonitor: { WorkBuddyMonitor(io: $0) })
+    /// The China build (WorkBuddy, workbuddy.cn) and the international build
+    /// (WorkBuddy AI, workbuddy.ai) are separate apps with their own data
+    /// folder, account, site and links, so each is a module of its own.
+    enum Edition: Sendable { case china, international }
+
+    static let china = makeDefinition(.china)
+    static let international = makeDefinition(.international)
+    static func id(_ edition: Edition) -> AgentProvider { edition == .china ? .workbuddy : .workbuddyAI }
+    static func definition(for edition: Edition) -> LocalHarnessDefinition { edition == .china ? china : international }
+
+    static func accountCredits(_ edition: Edition) -> HarnessAccountCreditsDefinition {
+        let site = edition == .china ? "china" : "international"
+        return HarnessAccountCreditsDefinition(
+            sites: [.init(id: site, url: URL(string: edition == .china ? "https://www.workbuddy.cn/" : "https://www.workbuddy.ai/")!)],
+            chineseSite: site, loginPath: "profile/plans-usage",
+            billingPath: "/billing/meter/get-user-resource-summary", scriptResource: "workbuddy-account-credits")
+    }
+
+    private static func makeDefinition(_ edition: Edition) -> LocalHarnessDefinition {
+        let china = edition == .china
+        return LocalHarnessDefinition(
+            descriptor: .init(id: id(edition), name: china ? "WorkBuddy" : "WorkBuddy AI", symbol: "briefcase",
+                              brand: .init(dark: .init(0xC3ABF1), light: .init(0x6942A2), accentLift: 0.22, accentLuminance: 0.095),
+                              website: URL(string: china ? "https://www.workbuddy.cn/" : "https://www.workbuddy.ai/"), balance: .accountCredits,
+                              hasRateDisplay: true, hasTaskProgress: true, reportsSessionUsage: true,
+                              usageGuide: URL(string: china ? "https://www.codebuddy.cn/docs/workbuddy/Usage" : "https://www.workbuddy.ai/docs/workbuddy/usage"),
+                              progressConnector: true, accountCredits: accountCredits(edition)),
+            platforms: [.windows, .macOS], home: china ? ".workbuddy" : ".workbuddy-ai", dataFile: "workbuddy.db",
+            windowsExecutables: china ? ["WorkBuddy/WorkBuddy.exe", "Programs/WorkBuddy/WorkBuddy.exe"]
+                : ["WorkBuddyAI/WorkBuddyAI.exe", "Programs/WorkBuddyAI/WorkBuddyAI.exe"],
+            macApplicationNames: china ? ["WorkBuddy"] : ["WorkBuddy AI"],
+            macBundleIdentifiers: china ? ["com.tencent.workbuddy.mac"] : [],
+            macSigningOrganization: "Tencent Technology (Shenzhen) Company Limited",
+            conversationScheme: china ? "workbuddy" : "workbuddy-ai",
+            connectorsPath: "connectors",
+            progressConfigFile: "mcp.json",
+            progressRuleDirectory: "rules",
+            progressConnection: progressConnection,
+            makeMonitor: { WorkBuddyMonitor(io: $0, edition: edition) })
+    }
 
     /// The time in a UUIDv7, with or without hyphens.
     static func chargeTime(_ id: String) -> Date? {
@@ -470,7 +487,11 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
     private var dailyCharged: Date?
     private var dailyReadAt: Date?
 
-    init(io: LocalHarnessIO) { self.io = io }
+    private let edition: WorkBuddyHarness.Edition
+    private nonisolated var id: AgentProvider { WorkBuddyHarness.id(edition) }
+    private nonisolated var definition: LocalHarnessDefinition { WorkBuddyHarness.definition(for: edition) }
+
+    init(io: LocalHarnessIO, edition: WorkBuddyHarness.Edition) { self.io = io; self.edition = edition }
 
     func start(home: URL, policy: ActivityRefreshPolicy, publish: @escaping @Sendable (HarnessActivity) async -> Void) async {
         _ = reset()
@@ -509,7 +530,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         guard let home, let publish, let watcher else { return }
         readRevision &+= 1
         let current = generation, revision = readRevision
-        let db = home.appendingPathComponent(WorkBuddyHarness.definition.dataFile)
+        let db = home.appendingPathComponent(definition.dataFile)
         let wal = home.appendingPathComponent(db.lastPathComponent + "-wal")
         let shm = home.appendingPathComponent(db.lastPathComponent + "-shm")
         let accountDirectory = home.appendingPathComponent("storage/skeleton", isDirectory: true)
@@ -608,7 +629,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         transcripts = transcripts.filter { currentIDs.contains($0.key) }
         witnessed = witnessed.filter { currentIDs.contains($0.key) }
         witnessedRuns.formIntersection(runs.map(\.id))
-        let canNavigate = home.standardizedFileURL == WorkBuddyHarness.definition.defaultHome().standardizedFileURL
+        let canNavigate = home.standardizedFileURL == definition.defaultHome().standardizedFileURL
         let allRows = rows + linkedRows
         let candidates = linkedRows.isEmpty ? rows : allRows.sorted {
             let left = $0.isRunning || $0.status == "pending", right = $1.isRunning || $1.status == "pending"
@@ -633,7 +654,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
             let running = row.isRunning && age < WorkBuddySessionStore.activityLifetime
             let stage: ActivityStage = row.status == "planning" ? .starting : .working
             let session = CompletionDismissalStore.digest(["workbuddy-session", owner, row.id])
-            var task = SessionActivity.observedSession(provider: WorkBuddyHarness.id, session: session, stage: stage, at: row.updated)
+            var task = SessionActivity.observedSession(provider: id, session: session, stage: stage, at: row.updated)
             task.applyObservedTitle(row.title, project: row.directory.map { URL(fileURLWithPath: $0).lastPathComponent })
             if let turn = turns[row.id], turn.started <= row.updated.addingTimeInterval(1) {
                 let turnID = CompletionDismissalStore.digest(["workbuddy-turn", session, turn.id])
@@ -649,7 +670,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
                     witnessed[row.id] = turn.id
                     state = .waiting(.input)
                     changedAt = question.time
-                    observation.requests.append(Self.request(question, session: session, turn: turnID))
+                    observation.requests.append(request(question, session: session, turn: turnID))
                 } else if let ending = turn.ending, let ended = turn.ended,
                           [row.updated, row.lastActivity].compactMap({ $0 }).contains(where: { abs($0.timeIntervalSince(ended)) <= 3 }),
                           let terminal = terminalState(status: row.status, ending: ending) {
@@ -667,7 +688,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
                 continue
             }
             observation.activities.append(task)
-            if canNavigate, age < WorkBuddySessionStore.endingLifetime, let url = Self.conversationURL(row.id) {
+            if canNavigate, age < WorkBuddySessionStore.endingLifetime, let url = conversationURL(row.id) {
                 observation.conversationURLs[task.id] = url
             }
         }
@@ -691,7 +712,7 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
                 if linked?.status == "pending", let turn, let question = turn.question, turn.ending == nil,
                    question.time <= observedAt.addingTimeInterval(1) {
                     state = .waiting(.input); changedAt = question.time
-                    observation.requests.append(Self.request(question, session: session, turn: turnID))
+                    observation.requests.append(request(question, session: session, turn: turnID))
                 } else {
                     state = .working(turn?.calls.isEmpty != false ? .working : .tool)
                     changedAt = observedAt
@@ -701,12 +722,12 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
             case .failed, .interrupted:
                 state = .interrupted(failed: run.state == .failed); changedAt = run.updated
             }
-            var task = SessionActivity.observedSession(provider: WorkBuddyHarness.id, session: session, stage: .starting, at: changedAt)
+            var task = SessionActivity.observedSession(provider: id, session: session, stage: .starting, at: changedAt)
             task.applyObservedTurn(state, id: turnID, started: run.started, at: min(now, changedAt), live: live,
                                    model: turn?.model?.displayName, effort: turn?.effort)
             turn?.applyMeasurements(to: &task, turnID: turnID, credits: linked.flatMap { usage.turnCredits[$0.id] }, notBefore: run.started)
             observation.activities.append(task)
-            if canNavigate, let url = linked.flatMap({ Self.conversationURL($0.id) }) { observation.conversationURLs[task.id] = url }
+            if canNavigate, let url = linked.flatMap({ conversationURL($0.id) }) { observation.conversationURLs[task.id] = url }
         }
     }
 
@@ -730,13 +751,13 @@ actor WorkBuddyMonitor: LocalHarnessMonitor {
         return turns
     }
 
-    private static func request(_ question: WorkBuddyTranscript.Question, session: String, turn: String) -> PendingAttentionRequest {
+    private nonisolated func request(_ question: WorkBuddyTranscript.Question, session: String, turn: String) -> PendingAttentionRequest {
         .init(id: CompletionDismissalStore.digest(["workbuddy-question", turn, question.call]), threadID: session,
-              sourceHostID: nil, sourceName: WorkBuddyHarness.id.displayName, kind: .input, detectedAt: question.time, provider: WorkBuddyHarness.id)
+              sourceHostID: nil, sourceName: id.displayName, kind: .input, detectedAt: question.time, provider: id)
     }
 
-    private static func conversationURL(_ id: String) -> URL? {
-        guard let uuid = Foundation.UUID(uuidString: id), let scheme = WorkBuddyHarness.definition.conversationScheme else { return nil }
+    private nonisolated func conversationURL(_ id: String) -> URL? {
+        guard let uuid = Foundation.UUID(uuidString: id), let scheme = definition.conversationScheme else { return nil }
         return URL(string: scheme + "://chat/" + uuid.uuidString.lowercased())
     }
 

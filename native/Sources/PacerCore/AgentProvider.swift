@@ -13,6 +13,7 @@ public struct AgentProvider: RawRepresentable, Hashable, CaseIterable, Codable, 
     public static let claude = Self(registeredID: "claude")
     public static let deepseek = Self(registeredID: "deepseek")
     public static let workbuddy = Self(registeredID: "workbuddy")
+    public static let workbuddyAI = Self(registeredID: "workbuddy-ai")
     public static var allCases: [Self] { HarnessRegistry.ids }
 
     public var id: String { rawValue }

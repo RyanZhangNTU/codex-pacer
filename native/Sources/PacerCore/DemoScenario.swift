@@ -174,11 +174,18 @@ public enum DemoScenario {
         }
     }
 
-    /// Plan credits partway through the month, with a pack that expires sooner.
+    /// Plan credits partway through the month, with rewards about to lapse and a top-up.
     public static func workbuddyCredits(at now: Date) -> HarnessAccountCredits {
-        HarnessAccountCredits(state: .ready, remaining: 3_260, total: 5_000, reserved: 12, plan: "Pro",
-            cycle: .init(total: 4_000, remaining: 2_660, used: 1_340, reset: now.addingTimeInterval(12 * 86_400).timeIntervalSince1970),
-            expiration: .init(credits: 600, at: now.addingTimeInterval(9 * 86_400).timeIntervalSince1970))
+        let refresh = now.addingTimeInterval(14 * 86_400).timeIntervalSince1970
+        let reward = now.addingTimeInterval(2 * 86_400).timeIntervalSince1970
+        let topUp = now.addingTimeInterval(29 * 86_400).timeIntervalSince1970
+        return HarnessAccountCredits(state: .ready, remaining: 4_620, total: 5_500, reserved: 12, plan: "Standard",
+            cycle: .init(total: 2_000, remaining: 1_320, used: 680, reset: refresh),
+            expiration: .init(credits: 300, at: reward),
+            groups: [.init(kind: .planBase, remaining: 1_320, total: 2_000, refresh: refresh),
+                     .init(kind: .planBonus, remaining: 2_000, total: 2_000, refresh: refresh),
+                     .init(kind: .reward, remaining: 300, expiries: [.init(credits: 300, at: reward)]),
+                     .init(kind: .topUp, remaining: 1_000, expiries: [.init(credits: 1_000, at: topUp)])])
     }
 
     /// A week of uneven spending with peak-hour work on weekdays.

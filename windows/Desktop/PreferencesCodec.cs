@@ -166,7 +166,8 @@ internal static class PreferencesCodec
         DeepSeekPanelStyle = value.DeepSeekPanelStyle is "simple" ? "simple" : "detailed",
         DeepSeekMode = value.DeepSeekMode is "budget" ? "budget" : "balance",
         DeepSeekBalanceSource = value.DeepSeekBalanceSource is "apiKey" or "web" ? value.DeepSeekBalanceSource : "automatic",
-        WorkBuddyAccountSite = value.WorkBuddyAccountSite is "china" or "international" ? value.WorkBuddyAccountSite : "automatic",
+        HarnessCredits = (value.HarnessCredits ?? new()).Where(pair => DesktopPreferences.ValidProviderId(pair.Key) && !DesktopPreferences.IsLegacyProvider(pair.Key)
+            && pair.Value is { IsValid: true }).Take(128).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
         DeepSeekSpeedSource = value.DeepSeekSpeedSource is "account" ? "account" : "local",
         DeepSeekRingPeriod = value.DeepSeekRingPeriod is "week" ? "week" : "day",
         CompactSingleTask = value.CompactSingleTask is "count" or "percent" ? value.CompactSingleTask : "stage",

@@ -59,6 +59,8 @@ struct EngineCommand: Decodable {
         var harnessHomes: [String: String]?
         /// Modules whose task rows leave out the credits each turn used.
         var hiddenTurnCredits: [String]?
+        /// Each credits module's dial, bar value and reminder choices.
+        var harnessCredits: [String: HarnessCreditsSettings]?
         var activityID: String?
         var snapshotSequence: UInt64?
         var deepseekKey: String?
@@ -248,6 +250,8 @@ struct EngineAccountCredits: Codable, Equatable {
     let provider: String
     let credits: HarnessAccountCredits
     let stale: Bool
+    /// What the host draws: the dial, the lines and the breakdown, worded by Core.
+    var presentation: HarnessCreditsPresentation? = nil
 }
 
 struct EngineQuota: Codable, Equatable {

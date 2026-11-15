@@ -61,7 +61,7 @@ final class HarnessActivityStoreTests: XCTestCase {
 
     func testBaselineDoesNotAlertAndRetirementClearsOnlyItsSource() {
         var store = HarnessActivityStore()
-        let id = WorkBuddyHarness.id
+        let id = WorkBuddyHarness.id(.international)
         let first = HarnessSourceKey(provider: id, stream: "local", scope: "first")
         let second = HarnessSourceKey(provider: id, stream: "local", scope: "second")
         let question = PendingAttentionRequest(id: "question", threadID: "task", sourceHostID: nil,
@@ -81,7 +81,7 @@ final class HarnessActivityStoreTests: XCTestCase {
     }
 
     func testHealthChangesRetainUsageAndScopeChangeClearsIt() throws {
-        let id = WorkBuddyHarness.id
+        let id = WorkBuddyHarness.id(.international)
         var projections = HarnessActivitySources()
         projections.bind(id, home: FileManager.default.temporaryDirectory, generation: 4)
         var data = HarnessActivity(status: .ready)

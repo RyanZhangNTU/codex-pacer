@@ -47,7 +47,8 @@ public enum CompactWarningPresentation {
                              snapshots: [AgentProvider: QuotaSnapshot], failed: Set<AgentProvider> = [],
                              selections: [AgentProvider: QuotaWindowSelection] = [:], sshIssue: Bool = false,
                              wallet: DeepSeekAlertPresentation? = nil,
-                             credits: [AgentProvider: HarnessAccountCredits] = [:], now: Date) -> [Item] {
+                             credits: [AgentProvider: HarnessAccountCredits] = [:],
+                             creditSettings: [AgentProvider: HarnessCreditsSettings] = [:], now: Date) -> [Item] {
         let ordered = HarnessRegistry.ids(where: \.hasQuotaWindows).filter(enabled.contains)
         func windows(_ provider: AgentProvider) -> [QuotaWindow] {
             guard let snapshot = snapshots[provider] else { return [] }
@@ -86,7 +87,7 @@ public enum CompactWarningPresentation {
         }
         if warnings.contains(.lowCredits) {
             for provider in HarnessRegistry.ids(where: \.reportsAccountCredits) where enabled.contains(provider) {
-                guard let reading = credits[provider]?.reading(at: now), let level = HarnessCreditsNoticePolicy.level(reading) else { continue }
+                guard let reading = credits[provider]?.reading(at: now), let level = HarnessCreditsNoticePolicy.level(reading, settings: creditSettings[provider] ?? .default) else { continue }
                 result.append(.init(kind: .lowCredits, provider: provider.rawValue, solid: level == .exhausted, label: nil,
                     symbol: "exclamationmark.circle",
                     help: L10n.text("warning.low_credits_help", provider.displayName, HarnessAccountCredits.compactAmount(reading.remaining))))

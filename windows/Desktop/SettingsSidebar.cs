@@ -54,7 +54,8 @@ internal sealed partial class SettingsWindow
         var pages = (engine?.LatestSnapshot?.Modules ?? [])
             .Where(module => module.DisplayName is { Length: > 0 and <= 64 } && DesktopPreferences.ValidProviderId(module.Provider)
                 && !Panes.Contains(module.Provider) && CanonicalPane(module.Provider) == module.Provider)
-            .Select(module => (module.Provider, module.DisplayName!, GuideArt.Symbol(module.Symbol ?? "circle.circle")))
+            .Select(module => (module.Provider, ui.Has("module." + module.Provider + ".title") ? ui.Text("module." + module.Provider + ".title") : module.DisplayName!,
+                GuideArt.Symbol(module.Symbol ?? "circle.circle")))
             .DistinctBy(page => page.Provider).ToArray();
         if (harnessPages.SequenceEqual(pages)) return false;
         foreach (var page in harnessPages)
