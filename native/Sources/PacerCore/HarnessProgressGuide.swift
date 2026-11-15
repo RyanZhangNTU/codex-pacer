@@ -14,7 +14,9 @@ import Foundation
 ///   never reads the app's window and needs no permission.
 public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     public enum Stage: String, Codable, Sendable {
-        case adding, reopen, launch, openConnectors, customConnector, trust, firstTask, ready
+        /// `opening`: the card opened the connectors and the app hasn't shown
+        /// them yet; it takes a few seconds as the app starts.
+        case adding, reopen, launch, openConnectors, opening, customConnector, trust, firstTask, ready
         case turnedOff, toolOff, openApp, conflict, failed, missing, unknown, cleanupFailed
     }
     public enum Tone: String, Codable, Sendable { case neutral, attention, info, success, error }
@@ -86,13 +88,16 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
             case .conflict: stage = .conflict
             case .failed: stage = .failed
             case .configured:
+                // An app running since before Pacer last wrote its entry hasn't
+                // read it, whatever its approvals still say: the user may have
+                // turned the tool off or removed it there, then the ring off and on.
+                if !reported, case .running(let since)? = app, let addedAt, since < addedAt { stage = .reopen; break }
                 switch connection {
                 case .needsTrust, .retrust:
                     switch app {
                     case .notRunning?: stage = .launch
-                    case .running(let since)? where addedAt.map({ since < $0 }) ?? false: stage = .reopen
                     default:
-                        stage = view == .customConnectors ? .trust : openedConnectors || view == .connectors ? .customConnector : .openConnectors
+                        stage = view == .customConnectors ? .trust : view == .connectors ? .customConnector : openedConnectors ? .opening : .openConnectors
                     }
                 case .trusted: stage = reported ? .ready : .firstTask
                 case .disabled: stage = .turnedOff
@@ -104,7 +109,8 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         }
         self.stage = stage
         let again = connection == .retrust
-        let flow: [Stage] = [.adding, .reopen, .launch, .openConnectors, .customConnector, .trust, .firstTask]
+        // Starting a new task is no chore: once trusted, the steps give way to one line.
+        let flow: [Stage] = [.adding, .reopen, .launch, .openConnectors, .opening, .customConnector, .trust]
         let position = flow.firstIndex(of: stage) ?? 0
         // Each step's index in `flow` once it is the current one.
         func state(_ current: [Stage], doneFrom: Int) -> StepState {
@@ -118,25 +124,23 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         steps = flow.contains(stage) ? [
             Step(title: text("step.added"), state: stage == .adding ? .current : .done),
             Step(title: load, state: state([.reopen, .launch], doneFrom: 3)),
-            Step(title: text("step.open_connectors", name), state: state([.openConnectors], doneFrom: 4)),
-            Step(title: text("step.custom_connector"), state: state([.customConnector], doneFrom: 5)),
-            Step(title: stage == .firstTask ? text("step.trusted", name) : text(again ? "step.retrust" : "step.trust"), state: state([.trust], doneFrom: 6)),
-            Step(title: text("step.first_task"), state: stage == .firstTask ? .current : .pending)
+            Step(title: text("step.open_connectors", name), state: state([.openConnectors, .opening], doneFrom: 5)),
+            Step(title: text("step.custom_connector"), state: state([.customConnector], doneFrom: 6)),
+            Step(title: text(again ? "step.retrust" : "step.trust"), state: state([.trust], doneFrom: 7))
         ] : []
-        // The steps the user still has to take, not counting the new task.
-        let left = steps.dropLast().filter { $0.state != .done }.count
+        let left = steps.filter { $0.state != .done }.count
         let flowChip = again ? text("chip.retrust") : left == 1 ? text("chip.trust") : text("chip.steps_left", left)
         switch stage {
         case .adding: chip = text("chip.adding"); tone = .neutral
-        case .reopen, .launch, .openConnectors, .customConnector, .trust: chip = flowChip; tone = .attention
-        case .firstTask: chip = text("chip.first_task"); tone = .info
-        case .ready: chip = text("chip.ready"); tone = .success
+        case .reopen, .launch, .openConnectors, .opening, .customConnector, .trust: chip = flowChip; tone = .attention
+        case .firstTask, .ready: chip = text("chip.ready"); tone = .success
         case .turnedOff, .toolOff: chip = text("chip.turned_off", name); tone = .attention
         case .openApp: chip = text("chip.open_app", name); tone = .attention
         case .conflict, .failed, .missing, .cleanupFailed: chip = text("chip.failed"); tone = .error
         case .unknown: chip = text("chip.unknown"); tone = .neutral
         }
         switch stage {
+        case .firstTask: line = text("line.new_tasks", name)
         case .turnedOff: line = text("line.turned_off", name)
         case .toolOff: line = text("line.tool_off", name)
         case .conflict: line = text("line.conflict", name)
@@ -156,27 +160,40 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
         case .reopen: action = .restartApp; actionTitle = text("action.restart", name)
         default: action = nil; actionTitle = nil
         }
-        attention = [.reopen, .launch, .openConnectors, .customConnector, .trust, .turnedOff, .toolOff, .openApp, .conflict, .failed, .missing].contains(stage)
+        attention = [.reopen, .launch, .openConnectors, .opening, .customConnector, .trust, .turnedOff, .toolOff, .openApp, .conflict, .failed, .missing].contains(stage)
         switch stage {
-        case .reopen, .launch, .openConnectors, .customConnector, .trust:
+        case .reopen, .launch, .openConnectors, .opening, .customConnector, .trust:
             summary = again ? text("summary.retrust") : left == 1 ? text("summary.trust") : text("summary.steps_left", left)
         case .turnedOff, .toolOff: summary = text("summary.turned_off", name)
         case .openApp: summary = text("summary.open_app", name)
         case .conflict, .failed, .missing: summary = text("summary.failed")
         default: summary = nil
         }
-        waiting = [.reopen, .launch, .openConnectors, .customConnector, .trust, .turnedOff, .toolOff, .openApp, .unknown].contains(stage)
+        waiting = [.reopen, .launch, .openConnectors, .opening, .customConnector, .trust, .turnedOff, .toolOff, .openApp, .unknown].contains(stage)
         waitingText = switch stage {
         case .reopen: text("waiting.reopen", name)
+        case .opening: text("waiting.opening", name)
         case .customConnector, .trust, .turnedOff, .toolOff, .openApp: text("waiting")
         default: nil
         }
         picture = stage == .customConnector ? .customConnector : stage == .trust ? .trust : nil
         switch stage {
+        case .opening: floatTitle = text("float.opening", name); floatNext = text("float.then_custom")
         case .customConnector: floatTitle = text("float.custom_connector", name); floatNext = text(again ? "float.next_retrust" : "float.next_trust")
-        case .trust: floatTitle = text(again ? "step.retrust" : "step.trust"); floatNext = text("float.next_task")
-        case .firstTask: floatTitle = text("float.first_task", name); floatNext = nil
+        case .trust: floatTitle = text(again ? "step.retrust" : "step.trust"); floatNext = nil
+        case .firstTask: floatTitle = text("float.done", name); floatNext = nil
         default: floatTitle = nil; floatNext = nil
+        }
+    }
+
+    /// What the floating guide says before the card's click reaches the app:
+    /// Pacer restarts it, or opens it at its connectors.
+    public static func pendingFloat(stage: Stage, name: String, language: AppLanguage? = nil) -> (title: String, next: String)? {
+        func text(_ key: String, _ arguments: CVarArg...) -> String { L10n.text("progress_guide." + key, arguments: arguments, language: language) }
+        switch stage {
+        case .reopen: return (text("float.restarting", name), text("float.then_custom"))
+        case .launch, .openConnectors: return (text("float.opening", name), text("float.then_custom"))
+        default: return nil
         }
     }
 

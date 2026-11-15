@@ -842,13 +842,14 @@ actor EngineRuntime {
                 // card; a closed app starts over at its connectors.
                 var opened = openedHarnessConnectors
                 opened[provider] = running ? command.params?.openedConnectorsAt.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0) : nil } : nil
-                // WorkBuddy notes in its log when its custom connectors list its
-                // servers. It also lists them once as it starts, which doesn't count.
+                // WorkBuddy notes in its log when it shows its connector market
+                // and when its custom connectors list its servers.
                 var view: HarnessProgressGuide.AppView?
-                if let openedAt = opened[provider], let log = definition.appLogFile, case .running(let since)? = presence,
-                   let data = HarnessAppLog.read(localHarnessHome(definition).appendingPathComponent(log)),
-                   HarnessAppLog.listedConnectors(in: data, after: openedAt, appStarted: since) {
-                    view = .customConnectors
+                if let openedAt = opened[provider], case .running(let since)? = presence {
+                    let data = definition.appLogFile.flatMap {
+                        HarnessAppLog.read(localHarnessHome(definition).appendingPathComponent($0), since: min(openedAt, since))
+                    }
+                    view = HarnessAppLog.view(in: data, opened: openedAt, appStarted: since, now: now())
                 }
                 if localHarnessApps[provider] != presence || localHarnessViews[provider] != view || opened != openedHarnessConnectors {
                     localHarnessApps[provider] = presence; localHarnessViews[provider] = view; openedHarnessConnectors = opened

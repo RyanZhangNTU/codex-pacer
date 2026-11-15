@@ -1474,12 +1474,9 @@
 "progress_guide.step.added" = "Progress tool added";
 "progress_guide.step.trust" = "Click Trust on pacer_progress";
 "progress_guide.step.retrust" = "Click Trust on pacer_progress again";
-"progress_guide.step.trusted" = "%@ trusts pacer_progress";
-"progress_guide.step.first_task" = "Start a new task";
 "progress_guide.chip.adding" = "Adding…";
 "progress_guide.chip.trust" = "1 step left";
 "progress_guide.chip.retrust" = "Trust again";
-"progress_guide.chip.first_task" = "Trusted";
 "progress_guide.chip.ready" = "Ready";
 "progress_guide.chip.turned_off" = "Off in %@";
 "progress_guide.chip.open_app" = "Open %@ once";
@@ -1492,6 +1489,7 @@
 "progress_guide.line.missing" = "The progress tool is gone from %@.";
 "progress_guide.line.unknown" = "Couldn’t read %@’s connectors.";
 "progress_guide.line.cleanup_failed" = "Couldn’t remove the progress tool.";
+"progress_guide.line.new_tasks" = "Works in new %@ conversations.";
 "progress_guide.action.open_connectors" = "Open %@ Connectors";
 "progress_guide.action.open_app" = "Open %@";
 "progress_guide.action.retry" = "Retry";
@@ -1527,8 +1525,11 @@
 "progress_guide.float.custom_connector" = "Click Custom Connector at the top right of %@";
 "progress_guide.float.next_trust" = "Next: click Trust on pacer_progress";
 "progress_guide.float.next_retrust" = "Next: click Trust on pacer_progress again";
-"progress_guide.float.next_task" = "Next: start a new task";
-"progress_guide.float.first_task" = "Trusted. Start a new task in %@, and Pacer shows its progress ring.";
+"progress_guide.float.opening" = "Opening %@’s connectors. This takes a few seconds…";
+"progress_guide.float.restarting" = "Restarting %@. Its connectors open by themselves in a few seconds…";
+"progress_guide.float.then_custom" = "Then click Custom Connector at the top right";
+"progress_guide.float.done" = "Done. New %@ conversations show their progress ring.";
+"progress_guide.waiting.opening" = "Waiting for %@ to show its connectors";
 "progress_guide.float.close" = "Close";
 "progress_guide.trust_card.experts" = "Experts";
 "progress_guide.trust_card.skills" = "Skills";

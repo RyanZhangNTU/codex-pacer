@@ -1474,12 +1474,9 @@
 "progress_guide.step.added" = "已加入进度工具";
 "progress_guide.step.trust" = "在 pacer_progress 上点「信任」";
 "progress_guide.step.retrust" = "在 pacer_progress 上再点一次「信任」";
-"progress_guide.step.trusted" = "%@ 已信任 pacer_progress";
-"progress_guide.step.first_task" = "开一个新任务";
 "progress_guide.chip.adding" = "正在添加…";
 "progress_guide.chip.trust" = "还差 1 步";
 "progress_guide.chip.retrust" = "需要再信任一次";
-"progress_guide.chip.first_task" = "已信任";
 "progress_guide.chip.ready" = "已就绪";
 "progress_guide.chip.turned_off" = "已在 %@ 里关闭";
 "progress_guide.chip.open_app" = "先打开一次 %@";
@@ -1492,6 +1489,7 @@
 "progress_guide.line.missing" = "%@ 里的进度工具不见了。";
 "progress_guide.line.unknown" = "无法读取 %@ 的连接器状态。";
 "progress_guide.line.cleanup_failed" = "无法移除进度工具。";
+"progress_guide.line.new_tasks" = "在 %@ 新开的对话里生效。";
 "progress_guide.action.open_connectors" = "打开 %@ 连接器";
 "progress_guide.action.open_app" = "打开 %@";
 "progress_guide.action.retry" = "重试";
@@ -1527,8 +1525,11 @@
 "progress_guide.float.custom_connector" = "点 %@ 右上角的「自定义连接器」";
 "progress_guide.float.next_trust" = "下一步：在 pacer_progress 上点「信任」";
 "progress_guide.float.next_retrust" = "下一步：在 pacer_progress 上再点一次「信任」";
-"progress_guide.float.next_task" = "下一步：开一个新任务";
-"progress_guide.float.first_task" = "已信任。在 %@ 开一个新任务，Pacer 就会显示它的进度圆环。";
+"progress_guide.float.opening" = "正在打开 %@ 的连接器页面，需要几秒，请稍候…";
+"progress_guide.float.restarting" = "正在重启 %@，之后会自动打开连接器页面，请稍候…";
+"progress_guide.float.then_custom" = "打开后：点右上角的「自定义连接器」";
+"progress_guide.float.done" = "完成了。在 %@ 新开的对话里，就能看到进度圆环。";
+"progress_guide.waiting.opening" = "等 %@ 打开连接器页面";
 "progress_guide.float.close" = "关闭";
 "progress_guide.trust_card.experts" = "专家";
 "progress_guide.trust_card.skills" = "技能";

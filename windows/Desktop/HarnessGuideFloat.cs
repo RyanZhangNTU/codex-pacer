@@ -61,15 +61,33 @@ internal sealed class HarnessGuideFloat : Window
         var guide = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == shown.Provider) is { Enabled: true } module
             && !preferences.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal) ? module.ProgressGuide : null;
         if (client.IsConnectionClosed) { shown.Close(); return; }
-        if (guide is { FloatTitle: not null }) { shown.emptySince = null; shown.Present(guide); return; }
-        if (!shown.Presented && guide?.Stage is ("reopen" or "launch" or "openConnectors")
-            && DateTime.UtcNow - shown.OpenedAt <= TimeSpan.FromMinutes(2)) return;
+        if (guide is { FloatTitle: not null })
+        {
+            shown.emptySince = null; shown.reachedApp = true; shown.Present(guide);
+            // Once done, the guide says so briefly; the card keeps the line.
+            shown.doneSince = guide.Stage == "firstTask" ? shown.doneSince ?? DateTime.UtcNow : null;
+            if (DateTime.UtcNow - shown.doneSince >= TimeSpan.FromSeconds(8)) shown.Close();
+            return;
+        }
+        // Right after the click, the app restarts or starts; the guide says so
+        // until it reaches the first step in the app.
+        if (!shown.reachedApp && guide?.Stage is ("reopen" or "launch" or "openConnectors")
+            && DateTime.UtcNow - shown.OpenedAt <= TimeSpan.FromMinutes(2))
+        {
+            string name = client.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == shown.Provider)?.DisplayName ?? shown.Provider;
+            string title = shown.ui.Text(guide.Stage == "reopen" ? "progress_guide.float.restarting" : "progress_guide.float.opening").Replace("%@", name, StringComparison.Ordinal);
+            shown.Present(guide with { FloatTitle = title, FloatNext = shown.ui.Text("progress_guide.float.then_custom"), Picture = null });
+            return;
+        }
         // A check can read the app while it writes its approvals; the guide
         // closes only once nothing is left to do for two checks in a row.
         shown.emptySince ??= DateTime.UtcNow;
         if (DateTime.UtcNow - shown.emptySince.Value >= TimeSpan.FromSeconds(2.5)) shown.Close();
     }
-    private DateTime? emptySince;
+    private DateTime? emptySince, doneSince;
+    // The guide has shown a step from the app itself, past the restart or start.
+    private bool reachedApp;
+    private readonly UiText ui;
 
     private readonly Func<string, UIElement> picture;
     private readonly System.Drawing.Rectangle area;
@@ -86,7 +104,7 @@ internal sealed class HarnessGuideFloat : Window
     /// <param name="area">The work area of Settings' screen, in pixels.</param>
     internal HarnessGuideFloat(string provider, UiText ui, ResourceDictionary resources, Func<string, UIElement> picture, System.Drawing.Rectangle area)
     {
-        Provider = provider; this.picture = picture; this.area = area;
+        Provider = provider; this.picture = picture; this.area = area; this.ui = ui;
         WindowRendering.Prepare(this); FontFamily = PacerFonts.Interface; Language = PacerFonts.RenderingLanguage(ui);
         WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true;
         ShowInTaskbar = false; ShowActivated = false; ResizeMode = ResizeMode.NoResize; SizeToContent = SizeToContent.WidthAndHeight;
