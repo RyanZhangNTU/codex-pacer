@@ -1521,4 +1521,3 @@
 "progress_guide.waiting.reopen" = "等 %@ 重新启动";
 "progress_guide.trust_card.tab" = "连接器";
 "progress_guide.trust_card.custom" = "自定义连接器";
-"progress_guide.trust_card.path" = "连接器 › 自定义连接器";

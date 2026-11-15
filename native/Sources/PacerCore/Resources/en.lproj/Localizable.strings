@@ -1521,4 +1521,3 @@
 "progress_guide.waiting.reopen" = "Waiting for %@ to start again";
 "progress_guide.trust_card.tab" = "Connectors";
 "progress_guide.trust_card.custom" = "Custom Connector";
-"progress_guide.trust_card.path" = "Connectors › Custom connectors";

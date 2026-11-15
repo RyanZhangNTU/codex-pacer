@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "f65a345460769cb1c2601f6efb3661025c8373ead40558950a64f1d8cc5a767b",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "9ddae964eeb6cd54becd9449a79d288b6cfd1c4eff3366a8f2910f4bda58585e",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1193,7 +1193,6 @@
     "progress_guide.trust_card.caption": "\u7b2c\u4e09\u65b9\u670d\u52a1",
     "progress_guide.trust_card.custom": "\u81ea\u5b9a\u4e49\u8fde\u63a5\u5668",
     "progress_guide.trust_card.detail": "\u9996\u6b21\u8fde\u63a5\u6b64 MCP \u670d\u52a1\u9700\u8981\u60a8\u7684\u4fe1\u4efb\u786e\u8ba4\u3002",
-    "progress_guide.trust_card.path": "\u8fde\u63a5\u5668 \u203a \u81ea\u5b9a\u4e49\u8fde\u63a5\u5668",
     "progress_guide.trust_card.tab": "\u8fde\u63a5\u5668",
     "progress_guide.waiting": "\u7b49\u4f60\u70b9\u5b8c",
     "progress_guide.waiting.reopen": "\u7b49 %@ \u91cd\u65b0\u542f\u52a8",
