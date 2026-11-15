@@ -41,11 +41,16 @@ import Security
 
     /// The module's running app, the frontmost copy first.
     package static func running(provider: AgentProvider) -> NSRunningApplication? {
-        guard let definition = HarnessRegistry.localHarnesses.first(where: { $0.descriptor.id == provider }) else { return nil }
-        let apps = NSWorkspace.shared.runningApplications.filter {
+        let apps = runningAll(provider: provider)
+        return apps.first(where: \.isActive) ?? apps.first
+    }
+
+    /// Every running copy of the module's app.
+    package static func runningAll(provider: AgentProvider) -> [NSRunningApplication] {
+        guard let definition = HarnessRegistry.localHarnesses.first(where: { $0.descriptor.id == provider }) else { return [] }
+        return NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier.map(definition.macBundleIdentifiers.contains) == true && !$0.isTerminated
         }
-        return apps.first(where: \.isActive) ?? apps.first
     }
 
     /// Opens the app itself, so it makes its settings folder.

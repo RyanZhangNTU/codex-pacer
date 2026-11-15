@@ -31,7 +31,7 @@ struct ProgressGuideRows: View {
             if let guide, Self.opens(guide) {
                 Rectangle().fill(MainPalette.separator).frame(height: 1).padding(.top, 8)
                 ProgressGuideBody(guide: guide, provider: provider, pointerMissing: model.harnessPointerMissing.contains(provider),
-                                  perform: perform).padding(.top, 4)
+                                  restart: model.harnessRestarts[provider], perform: perform).padding(.top, 4)
                 if openFailed, guide.action == .openConnectors {
                     Text(L10n.text("harness.progress_state.open_failed")).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
                         .fixedSize(horizontal: false, vertical: true).padding(.bottom, 8)
@@ -58,11 +58,12 @@ struct ProgressGuideRows: View {
         case .openConnectors:
             // Without the connectors link, the app itself is the next best place.
             Task {
-                openFailed = !(await MacLocalHarnessApplication.openProgressConnectors(provider: provider))
+                openFailed = !(await model.openHarnessConnectors(provider))
                 if openFailed { _ = await MacLocalHarnessApplication.openApplication(provider: provider) }
-                else { model.noteOpenedConnectors(provider) }
             }
-        case .point: Task { await model.pointInHarness(provider) }
+        // The pointer comes up by itself; there is no button for it.
+        case .point: break
+        case .restartApp: Task { await model.restartHarness(provider) }
         }
     }
 }
@@ -133,6 +134,7 @@ private struct ProgressGuideBody: View {
     let guide: HarnessProgressGuide
     let provider: AgentProvider
     var pointerMissing = false
+    var restart: IslandModel.HarnessRestart?
     let perform: (HarnessProgressGuide.Action) -> Void
 
     static func shows(_ guide: HarnessProgressGuide) -> Bool { !guide.steps.isEmpty || guide.line != nil || guide.action != nil }
@@ -172,12 +174,20 @@ private struct ProgressGuideBody: View {
                     case .trust?: TrustPicture(provider: provider)
                     case nil: EmptyView()
                     }
-                    if guide.action != nil || guide.waitingText != nil {
+                    if guide.action == .restartApp, restart == .confirm {
+                        Text(L10n.text("progress_guide.restart.confirm", provider.displayName)).font(.system(size: 12))
+                            .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if (guide.action != nil && guide.action != .point) || guide.waitingText != nil {
                         // The button keeps its whole title; the waiting line moves under it when they don't fit side by side.
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 10) { actionButton; waitingLabel }
                             VStack(alignment: .leading, spacing: 8) { actionButton; waitingLabel }
                         }
+                    }
+                    if guide.action == .restartApp, restart == .failed {
+                        Text(L10n.text("progress_guide.restart.failed", provider.displayName)).font(.system(size: 12))
+                            .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
                     }
                     if pointerMissing, guide.action == .point {
                         Text(L10n.text("progress_guide.pointer.not_found", provider.displayName)).font(.system(size: 12))
@@ -194,8 +204,11 @@ private struct ProgressGuideBody: View {
 
     /// Opening the app and pointing in it are prominent, like signing in; Retry is an ordinary button.
     @ViewBuilder private var actionButton: some View {
-        if let action = guide.action, let title = guide.actionTitle {
-            Button(title) { perform(action) }.buttonStyle(MainButtonStyle(prominent: action != .retry, height: 28)).fixedSize()
+        if let action = guide.action, action != .point, let title = guide.actionTitle {
+            // Over a running task the restart asks once more before it quits the app.
+            let shown = action == .restartApp && restart == .confirm ? L10n.text("progress_guide.restart.confirm_action") : title
+            Button(shown) { perform(action) }.buttonStyle(MainButtonStyle(prominent: action != .retry, height: 28)).fixedSize()
+                .disabled(action == .restartApp && restart == .restarting)
         }
     }
 

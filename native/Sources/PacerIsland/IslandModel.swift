@@ -683,6 +683,15 @@ final class IslandModel: ObservableObject {
                     MainActor.assumeIsolated { self?.refreshLocalHarnessApps() }
                 }
             }
+            // The app coming to the front on a click-here step brings the pointer up.
+            localHarnessAppObservers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    for definition in self.localHarnesses.definitions where definition.descriptor.progressConnector {
+                        self.autoPointHarness(definition.descriptor.id)
+                    }
+                }
+            })
         }
         var apps: [AgentProvider: HarnessProgressGuide.AppPresence] = [:]
         for definition in localHarnesses.definitions where definition.descriptor.progressConnector {
@@ -695,15 +704,21 @@ final class IslandModel: ObservableObject {
         if apps != localHarnessApps { localHarnessApps = apps }
     }
 
-    /// The card opened a module's connectors; kept in memory until the app quits.
-    @Published private(set) var harnessOpenedConnectors: Set<AgentProvider> = []
+    /// When the card opened a module's connectors; kept in memory until the
+    /// app quits. The app's own log counts its custom connectors after this.
+    @Published private(set) var harnessOpenedConnectors: [AgentProvider: Date] = [:]
+    /// A restart the card asked for: waiting for the user to confirm over a
+    /// running task, under way, or refused by the app.
+    enum HarnessRestart: Equatable { case confirm, restarting, failed }
+    @Published private(set) var harnessRestarts: [AgentProvider: HarnessRestart] = [:]
+    private var harnessRestarting: Set<AgentProvider> = []
     /// The page each module's app shows, as the pointer last read it.
     @Published private(set) var harnessAppViews: [AgentProvider: HarnessProgressGuide.AppView] = [:]
     /// The pointer could not find the button it was asked to show.
     @Published private(set) var harnessPointerMissing: Set<AgentProvider> = []
     private(set) lazy var harnessPointer = HarnessPointer(model: self)
 
-    func noteOpenedConnectors(_ provider: AgentProvider) { harnessOpenedConnectors.insert(provider) }
+    func noteOpenedConnectors(_ provider: AgentProvider, at date: Date = Date()) { harnessOpenedConnectors[provider] = date }
     func reportHarnessView(_ provider: AgentProvider, _ view: HarnessProgressGuide.AppView) {
         if harnessAppViews[provider] != view { harnessAppViews[provider] = view }
     }
@@ -713,32 +728,95 @@ final class IslandModel: ObservableObject {
         }
     }
     func forgetHarnessPage(_ provider: AgentProvider) {
-        harnessOpenedConnectors.remove(provider)
+        harnessOpenedConnectors[provider] = nil
         harnessAppViews[provider] = nil
-        if harnessPointer.provider == provider { harnessPointer.stop() }
+        harnessPointerDismissed[provider] = nil
+        if harnessRestarts[provider] == .confirm { harnessRestarts[provider] = nil }
+        if harnessPointer.provider == provider, !harnessPointer.inGrace { harnessPointer.stop() }
     }
 
-    /// Shows where to click in the app. The custom connectors step first
-    /// opens the connectors, which brings the app forward on the right page;
-    /// the trust step only brings it forward, since the link would leave
-    /// the custom connectors. Pacer needs Accessibility to read the buttons'
-    /// places, and the system asks for it the first time.
-    func pointInHarness(_ provider: AgentProvider) async {
-        guard let guide = progressGuide(provider), let picture = guide.picture else { return }
-        setHarnessPointerMissing(provider, false)
-        if picture == .customConnector {
-            if await MacLocalHarnessApplication.openProgressConnectors(provider: provider) { noteOpenedConnectors(provider) }
-        } else {
-            MacLocalHarnessApplication.running(provider: provider)?.activate()
-        }
-        guard MacHarnessPointerScan.trusted(prompt: true) else { return }
+    /// The step whose pointer the user closed, or that gave up, by module;
+    /// it stays away until the step changes.
+    private var harnessPointerDismissed: [AgentProvider: HarnessProgressGuide.Stage] = [:]
+    func dismissHarnessPointer(_ provider: AgentProvider) {
+        harnessPointerDismissed[provider] = progressGuide(provider)?.stage
+    }
+
+    /// Points at the button by itself once the app is in front on a
+    /// click-here step and Pacer may read the app's buttons; the system
+    /// asks for that when the card opens the app.
+    func autoPointHarness(_ provider: AgentProvider) {
+        guard !demo, harnessPointer.provider == nil, let guide = progressGuide(provider), guide.picture != nil,
+              harnessPointerDismissed[provider] != guide.stage,
+              MacLocalHarnessApplication.running(provider: provider)?.isActive == true,
+              MacHarnessPointerScan.trusted(prompt: false) else { return }
         harnessPointer.start(provider)
+    }
+
+    /// Opens the app's connectors from the card, and asks once for
+    /// Accessibility so the next steps can be pointed at in the app.
+    func openHarnessConnectors(_ provider: AgentProvider) async -> Bool {
+        guard await MacLocalHarnessApplication.openProgressConnectors(provider: provider) else { return false }
+        noteOpenedConnectors(provider)
+        if MacHarnessPointerScan.trusted(prompt: true) { harnessPointer.start(provider, grace: 10) }
+        return true
+    }
+
+    /// Quits the app the way its own Quit does, waits for it to close, then
+    /// opens it on its connectors so it reads Pacer's tool, and points at
+    /// Custom Connector when Pacer may read the app's buttons. Over a running
+    /// task the first click only asks to confirm. It never forces the app to quit.
+    func restartHarness(_ provider: AgentProvider) async {
+        guard !harnessRestarting.contains(provider) else { return }
+        let busy = visibleActivities.contains { $0.provider == provider && $0.phase == .running }
+        if busy, harnessRestarts[provider] != .confirm { harnessRestarts[provider] = .confirm; return }
+        // A demo never quits a real app.
+        guard !demo else { return }
+        harnessRestarts[provider] = .restarting
+        harnessRestarting.insert(provider)
+        defer { harnessRestarting.remove(provider) }
+        let running = MacLocalHarnessApplication.runningAll(provider: provider)
+        running.forEach { $0.terminate() }
+        // After 10 seconds the card asks the user to quit it; Pacer keeps
+        // waiting a while longer and opens it once it has quit.
+        let start = Date()
+        while running.contains(where: { !$0.isTerminated }), Date().timeIntervalSince(start) < 180 {
+            if Date().timeIntervalSince(start) > 10, harnessRestarts[provider] == .restarting { harnessRestarts[provider] = .failed }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        guard running.allSatisfy(\.isTerminated) else { return }
+        harnessRestarts[provider] = nil
+        refreshLocalHarnessApps()
+        guard await MacLocalHarnessApplication.openProgressConnectors(provider: provider) else { return }
+        noteOpenedConnectors(provider)
+        // Without permission the card still says what to click; the ring needs it.
+        if MacHarnessPointerScan.trusted(prompt: true) { harnessPointer.start(provider, grace: 25) }
+    }
+
+    /// The app writes to its own log the moment it lists its custom
+    /// connectors, so the card moves on without reading the app's window.
+    /// Only a listing after the card opened the connectors counts, and not
+    /// the one the app makes as it starts (Core ignores that first one).
+    private func checkHarnessLog(_ provider: AgentProvider) {
+        guard let opened = harnessOpenedConnectors[provider], harnessAppViews[provider] != .customConnectors,
+              let definition = localHarnesses.definition(for: provider), let logFile = definition.appLogFile,
+              case .running(let since)? = localHarnessApps[provider],
+              [.openConnectors, .customConnector].contains(progressGuide(provider)?.stage) else { return }
+        let log = localHarnessHome(definition).appendingPathComponent(logFile)
+        Task { [weak self] in
+            let listed = await Task.detached(priority: .utility) {
+                HarnessAppLog.read(log).map { HarnessAppLog.listedConnectors(in: $0, after: opened, appStarted: since) } ?? false
+            }.value
+            if listed { self?.reportHarnessView(provider, .customConnectors) }
+        }
     }
 
     /// Checks the app's trust again; once the app has made its folder, the
     /// setup it was waiting for continues by itself.
     func recheckLocalHarnessProgress(_ provider: AgentProvider) {
         refreshLocalHarnessApps()
+        checkHarnessLog(provider)
+        autoPointHarness(provider)
         if localHarnessProgressStatuses[provider]?.setup == .missingHome {
             guard localHarnessProgressTasks[provider] == nil else { return }
             syncLocalHarnessProgress(force: provider, keepsState: true)
@@ -775,7 +853,7 @@ final class IslandModel: ObservableObject {
         return HarnessProgressGuide(setup: state?.setup, connection: state?.connection, reported: state?.reported ?? false,
                                     ringOn: isModuleEnabled(provider) && showsHarnessProgress(provider), name: descriptor.name,
                                     addedAt: state?.addedAt, app: localHarnessApps[provider],
-                                    view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors.contains(provider))
+                                    view: harnessAppViews[provider], openedConnectors: harnessOpenedConnectors[provider] != nil)
     }
 
     /// The ⓘ text, also while the ring is off and there is no card to word it.

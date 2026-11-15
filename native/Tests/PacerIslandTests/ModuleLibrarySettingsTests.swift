@@ -112,7 +112,7 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         let (model, _) = try model()
         model.noteOpenedConnectors(.workbuddy)
         model.reportHarnessView(.workbuddy, .customConnectors)
-        XCTAssertEqual(model.harnessOpenedConnectors, [.workbuddy])
+        XCTAssertEqual(Set(model.harnessOpenedConnectors.keys), [.workbuddy], "When the card opened them is kept for the app's log")
         XCTAssertEqual(model.harnessAppViews[.workbuddy], .customConnectors)
         XCTAssertNil(model.harnessAppViews[.workbuddyAI], "Each edition keeps its own page")
         model.setHarnessPointerMissing(.workbuddy, true)

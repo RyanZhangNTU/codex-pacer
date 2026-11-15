@@ -125,4 +125,20 @@ final class DemoWorkBuddyTests: XCTestCase {
         XCTAssertNil(plain.harnessWeek(.workbuddy))
         XCTAssertNil(defaults.string(forKey: "providerModule.workbuddy"), "The flag saves no module choice")
     }
+
+    func testRestartingOverARunningTaskAsksFirstAndADemoNeverQuitsTheApp() async throws {
+        let domain = testDefaultsName("demo-workbuddy-restart")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let model = IslandModel(demo: true, demoArguments: ["--demo", "--demo-workbuddy"], defaults: defaults)
+        defer { removeTestDefaults(domain) }
+        model.setDemoStage(.thinking)
+        XCTAssertTrue(model.visibleActivities.contains { $0.provider == .workbuddy && $0.phase == .running })
+        await model.restartHarness(.workbuddy)
+        XCTAssertEqual(model.harnessRestarts[.workbuddy], .confirm, "The first click over a running task only asks")
+        await model.restartHarness(.workbuddy)
+        XCTAssertEqual(model.harnessRestarts[.workbuddy], .confirm, "Confirmed, a demo still leaves the real app alone")
+        model.forgetHarnessPage(.workbuddy)
+        XCTAssertNil(model.harnessRestarts[.workbuddy], "The question goes once the app quits")
+        await model.shutdown()
+    }
 }

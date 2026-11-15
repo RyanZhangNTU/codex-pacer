@@ -5,9 +5,10 @@ import SwiftUI
 
 /// Points at the button the progress ring's setup asks the user to click,
 /// right over the module's app: a pulsing ring around it and a bubble that
-/// says what to do. It reads the button's place every half second, hides
-/// while the app is not in front, and stops once the step is done, after
-/// three minutes or when the user says so. It never clicks for the user.
+/// says what to do. It comes up by itself once the app is in front on that
+/// step, reads the button's place every half second, hides while the app
+/// is not in front, and stops once the step is done, after three minutes
+/// or when the user says so. It never clicks for the user.
 @MainActor final class HarnessPointer {
     private weak var model: IslandModel?
     private(set) var provider: AgentProvider?
@@ -31,10 +32,15 @@ import SwiftUI
         guide?(provider) ?? model?.progressGuide(provider)
     }
 
-    func start(_ provider: AgentProvider) {
+    /// While a restarted app starts, a missing app, step or button is waited for.
+    private var graceUntil = Date.distantPast
+    var inGrace: Bool { provider != nil && Date() < graceUntil }
+
+    func start(_ provider: AgentProvider, grace: TimeInterval = 0) {
         stop()
         self.provider = provider
         started = Date(); misses = 0
+        graceUntil = started.addingTimeInterval(grace)
         model?.setHarnessPointerMissing(provider, false)
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -42,7 +48,10 @@ import SwiftUI
         tick()
     }
 
-    func stop() {
+    /// - Parameter dismiss: the user closed it, or it gave up; it then stays
+    ///   away until the card's step changes.
+    func stop(dismiss: Bool = false) {
+        if dismiss, let provider { model?.dismissHarnessPointer(provider) }
         timer?.invalidate(); timer = nil
         hide()
         provider = nil
@@ -53,8 +62,9 @@ import SwiftUI
     }
 
     private func tick() {
-        guard let provider, currentGuide(provider)?.picture != nil, Date().timeIntervalSince(started) < Self.lifetime,
-              let app = application(provider) else { return stop() }
+        guard let provider else { return stop() }
+        guard Date().timeIntervalSince(started) < Self.lifetime else { return stop(dismiss: true) }
+        guard currentGuide(provider)?.picture != nil, let app = application(provider) else { return inGrace ? hide() : stop() }
         // Only over the app itself; it comes back when the app does.
         guard app.isActive else { return hide() }
         guard !scanning else { return }
@@ -71,14 +81,14 @@ import SwiftUI
         guard let model, self.provider == provider else { return }
         // Pacer's entry showing means the custom connectors are open: the ring moves to Trust.
         if let view = result?.view { model.reportHarnessView(provider, view) }
-        guard let guide = currentGuide(provider), let picture = guide.picture else { return stop() }
+        guard let guide = currentGuide(provider), let picture = guide.picture else { return inGrace ? hide() : stop() }
         let target = picture == .trust ? result?.trust : result?.customConnector
         guard application(provider)?.isActive == true else { return hide() }
         guard let target else {
             hide()
             // Fifteen looks in a row with the app in front: the card says it wasn't found, and pointing ends.
-            misses += 1
-            if misses >= Self.missLimit { model.setHarnessPointerMissing(provider, true); stop() }
+            if !inGrace { misses += 1 }
+            if misses >= Self.missLimit { model.setHarnessPointerMissing(provider, true); stop(dismiss: true) }
             return
         }
         misses = 0
@@ -94,7 +104,7 @@ import SwiftUI
     private func show(around target: CGRect, text: String) {
         let pad: CGFloat = 16
         ring.show(PointerRing(), frame: target.insetBy(dx: -pad, dy: -pad))
-        let content = PointerBubble(text: text, stop: { [weak self] in self?.stop() })
+        let content = PointerBubble(text: text, stop: { [weak self] in self?.stop(dismiss: true) })
         let size = NSHostingView(rootView: content).fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(target) }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         // Under the button, its right edge lined up; above it when there is no room below.
