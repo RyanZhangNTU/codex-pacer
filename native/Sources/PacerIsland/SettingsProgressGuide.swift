@@ -30,8 +30,8 @@ struct ProgressGuideRows: View {
                 .frame(minHeight: 28)
             if let guide, Self.opens(guide) {
                 Rectangle().fill(MainPalette.separator).frame(height: 1).padding(.top, 8)
-                ProgressGuideBody(guide: guide, provider: provider, pointerMissing: model.harnessPointerMissing.contains(provider),
-                                  restart: model.harnessRestarts[provider], perform: perform).padding(.top, 4)
+                ProgressGuideBody(guide: guide, provider: provider, restart: model.harnessRestarts[provider], perform: perform)
+                    .padding(.top, 4)
                 if openFailed, guide.action == .openConnectors {
                     Text(L10n.text("harness.progress_state.open_failed")).font(.system(size: 12)).foregroundStyle(MainPalette.attention)
                         .fixedSize(horizontal: false, vertical: true).padding(.bottom, 8)
@@ -39,7 +39,7 @@ struct ProgressGuideRows: View {
             }
         }
         .id(Self.anchor)
-        .onChange(of: guide?.stage) { _, _ in openFailed = false; model.setHarnessPointerMissing(provider, false) }
+        .onChange(of: guide?.stage) { _, _ in openFailed = false }
         // While the card waits on the app, check again until the user is done there.
         .task(id: guide?.waiting == true) {
             guard guide?.waiting == true else { return }
@@ -57,13 +57,14 @@ struct ProgressGuideRows: View {
         case .openApp: Task { _ = await MacLocalHarnessApplication.openApplication(provider: provider) }
         case .openConnectors:
             // Without the connectors link, the app itself is the next best place.
+            let screen = NSApp.keyWindow?.screen
             Task {
-                openFailed = !(await model.openHarnessConnectors(provider))
+                openFailed = !(await model.openHarnessConnectors(provider, screen: screen))
                 if openFailed { _ = await MacLocalHarnessApplication.openApplication(provider: provider) }
             }
-        // The pointer comes up by itself; there is no button for it.
-        case .point: break
-        case .restartApp: Task { await model.restartHarness(provider) }
+        case .restartApp:
+            let screen = NSApp.keyWindow?.screen
+            Task { await model.restartHarness(provider, screen: screen) }
         }
     }
 }
@@ -133,7 +134,6 @@ struct ProgressGuideChip: View {
 private struct ProgressGuideBody: View {
     let guide: HarnessProgressGuide
     let provider: AgentProvider
-    var pointerMissing = false
     var restart: IslandModel.HarnessRestart?
     let perform: (HarnessProgressGuide.Action) -> Void
 
@@ -178,7 +178,7 @@ private struct ProgressGuideBody: View {
                         Text(L10n.text("progress_guide.restart.confirm", provider.displayName)).font(.system(size: 12))
                             .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
                     }
-                    if (guide.action != nil && guide.action != .point) || guide.waitingText != nil {
+                    if guide.action != nil || guide.waitingText != nil {
                         // The button keeps its whole title; the waiting line moves under it when they don't fit side by side.
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 10) { actionButton; waitingLabel }
@@ -187,10 +187,6 @@ private struct ProgressGuideBody: View {
                     }
                     if guide.action == .restartApp, restart == .failed {
                         Text(L10n.text("progress_guide.restart.failed", provider.displayName)).font(.system(size: 12))
-                            .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if pointerMissing, guide.action == .point {
-                        Text(L10n.text("progress_guide.pointer.not_found", provider.displayName)).font(.system(size: 12))
                             .foregroundStyle(MainPalette.attention).fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -202,9 +198,9 @@ private struct ProgressGuideBody: View {
         .accessibilityValue(L10n.text("progress_guide.state." + step.state.rawValue))
     }
 
-    /// Opening the app and pointing in it are prominent, like signing in; Retry is an ordinary button.
+    /// Opening or restarting the app is prominent, like signing in; Retry is an ordinary button.
     @ViewBuilder private var actionButton: some View {
-        if let action = guide.action, action != .point, let title = guide.actionTitle {
+        if let action = guide.action, let title = guide.actionTitle {
             // Over a running task the restart asks once more before it quits the app.
             let shown = action == .restartApp && restart == .confirm ? L10n.text("progress_guide.restart.confirm_action") : title
             Button(shown) { perform(action) }.buttonStyle(MainButtonStyle(prominent: action != .retry, height: 28)).fixedSize()
@@ -316,5 +312,31 @@ struct TrustPicture: View {
         .background(MainPalette.infoFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(MainPalette.cardBorder))
         .accessibilityHidden(true)
+    }
+}
+
+/// A ring that pulses outward around the button a picture shows, still
+/// when Reduce Motion is on.
+struct PulsingRing: View {
+    var cornerRadius: CGFloat = 9
+    var lineWidth: CGFloat = 2.5
+    @Environment(\.pacerAccent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape.strokeBorder(accent, lineWidth: lineWidth)
+            .background {
+                if !reduceMotion {
+                    shape.stroke(accent.opacity(pulsing ? 0 : 0.55), lineWidth: pulsing ? 12 : 2)
+                        .scaleEffect(pulsing ? 1.08 : 1)
+                }
+            }
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { pulsing = true }
+            }
+            .accessibilityHidden(true)
     }
 }

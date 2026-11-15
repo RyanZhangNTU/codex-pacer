@@ -115,8 +115,6 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         XCTAssertEqual(Set(model.harnessOpenedConnectors.keys), [.workbuddy], "When the card opened them is kept for the app's log")
         XCTAssertEqual(model.harnessAppViews[.workbuddy], .customConnectors)
         XCTAssertNil(model.harnessAppViews[.workbuddyAI], "Each edition keeps its own page")
-        model.setHarnessPointerMissing(.workbuddy, true)
-        XCTAssertEqual(model.harnessPointerMissing, [.workbuddy])
         model.forgetHarnessPage(.workbuddy)
         XCTAssertTrue(model.harnessOpenedConnectors.isEmpty, "A quit app starts again on its own page")
         XCTAssertNil(model.harnessAppViews[.workbuddy])

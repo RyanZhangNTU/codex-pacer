@@ -19,8 +19,7 @@ public struct HarnessProgressGuide: Codable, Equatable, Sendable {
     }
     public enum Tone: String, Codable, Sendable { case neutral, attention, info, success, error }
     public enum StepState: String, Codable, Sendable { case done, current, pending }
-    /// No stage asks for `point` any more; it stays until the Mac drops its pointer.
-    public enum Action: String, Codable, Sendable { case openConnectors, openApp, retry, restartApp, point }
+    public enum Action: String, Codable, Sendable { case openConnectors, openApp, retry, restartApp }
     /// What the current step's picture shows.
     public enum Picture: String, Codable, Sendable { case customConnector, trust }
 
