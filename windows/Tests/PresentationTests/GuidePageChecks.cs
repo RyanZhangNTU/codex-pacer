@@ -136,6 +136,23 @@ internal static class GuidePageChecks
                 "Only the three settings highlights carry a link");
         }
         finally { freshWindow.Close(); }
+        // 4.5: WorkBuddy, the Module Library and remote Codex progress; only the library links to a page.
+        var modules = await Query("4.4.4", current: "4.5.0"); var modulesBody = Body(modules);
+        var modulesWindow = new GuideWindow(ui, modulesBody, modules, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            modulesWindow.Show(); await Pump();
+            var missing = new[] { "whats_new.workbuddy", "whats_new.module_library", "whats_new.remote_progress" }
+                .Where(key => !SelfAndDescendants(modulesBody).OfType<TextBlock>().Any(text => text.Text == ui.Text(key))).ToArray();
+            Check(modules.Releases.Count > 0 && modules.Releases[0].Version == "4.5.0" && missing.Length == 0,
+                "The 4.5 note leads with its three highlights: " + string.Join(",", modules.Releases.Select(release => release.Version)) + " missing " + string.Join(",", missing));
+            Invoke(Find<Button>(modulesWindow, "guide.control.openModules")); await Pump();
+            Check(settingsActions.Last() == "modules", "The Module Library highlight opens the Module Library");
+            Check(SelfAndDescendants(modulesBody).OfType<FrameworkElement>().Count(value => AutomationProperties.GetAutomationId(value).StartsWith("guide.control.", StringComparison.Ordinal)) == 1,
+                "Only the Module Library highlight carries a link");
+            Capture(modulesWindow.ClientContent, Path.Combine(output, "pages-whats-new-4.5-" + language + (dark ? "-dark" : "-light") + ".png"));
+        }
+        finally { modulesWindow.Close(); }
         string? copied = null;
         using var appearance = new AppearanceFixture();
         var settings = new SettingsWindow(ui, session, startup, true, dark, engine, notifications: notifications, guideLinkLauncher: uri => { links.Add(uri); return true; }, guideCopyLink: value => copied = value, appearanceSource: appearance) { ShowActivated = false, IsHitTestVisible = false };
