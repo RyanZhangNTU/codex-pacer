@@ -106,9 +106,9 @@ public partial class App : Application
         if (providersIndex >= 0)
         {
             if (!demo || providersIndex + 1 >= e.Args.Length) throw new ArgumentException("Provider fixtures require demo mode.");
-            string[] known = ["codex", "claude", "deepseek", "workbuddy"];
+            string[] known = ["codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"];
             string[] providers = e.Args[providersIndex + 1] == "all" ? ["codex", "claude", "deepseek"] : e.Args[providersIndex + 1].Split(',');
-            if (providers.Length is < 1 or > 4 || providers.Distinct().Count() != providers.Length || providers.Any(value => !known.Contains(value)))
+            if (providers.Length is < 1 or > 5 || providers.Distinct().Count() != providers.Length || providers.Any(value => !known.Contains(value)))
                 throw new ArgumentException("Unknown demo providers.");
             preferences = preferences with { ProviderModes = known.ToDictionary(provider => provider, provider => providers.Contains(provider) ? "enabled" : "disabled") };
         }
@@ -128,7 +128,7 @@ public partial class App : Application
         int paneIndex = Array.IndexOf(e.Args, "--settings-pane");
         if (paneIndex >= 0)
         {
-            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "modules" or "harness.workbuddy" or "notifications" or "reminders" or "remote" or "about" or "support"))
+            if (!demo || !captureSettings || paneIndex + 1 >= e.Args.Length || e.Args[paneIndex + 1] is not ("overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "codex" or "claude" or "deepseek" or "modules" or "harness.workbuddy" or "harness.workbuddy-ai" or "notifications" or "reminders" or "remote" or "about" or "support"))
                 throw new ArgumentException("Settings pane fixtures require a supported demo preview.");
             preferences = preferences with { LastSettingsPane = e.Args[paneIndex + 1] };
         }

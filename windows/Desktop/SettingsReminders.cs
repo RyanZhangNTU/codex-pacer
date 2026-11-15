@@ -175,7 +175,9 @@ internal sealed partial class SettingsWindow
             if (sourceClosed || activePane != "notifications") return;
             string text = field.Text.Trim();
             double? value = text.Length == 0 ? null
-                : double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsed)
+                // "1,000" is how the panel writes credits; group separators are accepted.
+                : double.TryParse(text.Replace(" ", "", StringComparison.Ordinal), System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out double parsed)
                     && parsed is >= 0 and <= 1e9 ? parsed : double.NaN;
             if (value is double invalid && double.IsNaN(invalid)) { RefreshValues(); return; }
             if (value == session.Current.Credits(provider).LowCredits) return;

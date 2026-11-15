@@ -442,9 +442,11 @@ internal sealed class GuideContent : StackPanel
     }
     private Border Module(string provider)
     {
+        // Onboarding names a module as Settings does, with the edition, as on the Mac.
         string name = provider switch
         {
             "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek",
+            _ when ui.Has("module." + provider + ".title") => ui.Text("module." + provider + ".title"),
             _ => snapshot()?.Modules?.FirstOrDefault(value => value.Provider == provider)?.DisplayName ?? provider
         };
         var layout = new Grid { Margin = new Thickness(12) };

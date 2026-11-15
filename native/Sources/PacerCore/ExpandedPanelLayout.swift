@@ -65,13 +65,13 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
         self.blocks = blocks.filter { seen.insert($0).inserted }
     }
 
-    /// The panel before blocks: tasks, then every quota, then DeepSeek's spend
-    /// and week when DeepSeek is the only service and its content was Detailed.
+    /// The panel before blocks: tasks, then every quota and balance, then
+    /// DeepSeek's spend and week when DeepSeek is the only quota service and its
+    /// content was Detailed. Services that are off keep their places, so the
+    /// first edit saves a block that shows once its service is turned on.
     public static func automatic(providers: Set<AgentProvider>, deepseekDetailed: Bool) -> Self {
-        var blocks: [Block] = [.tasks, .codex, .claude, .deepseek]
+        var blocks: [Block] = [.tasks, .codex, .claude, .deepseek, .workbuddy, .workbuddyAI]
         let quotaProviders = providers.filter { HarnessRegistry.descriptor(for: $0)?.hasQuotaDisplay == true }
-        if providers.contains(.workbuddy) { blocks.append(.workbuddy) }
-        if providers.contains(.workbuddyAI) { blocks.append(.workbuddyAI) }
         if deepseekDetailed, quotaProviders == [.deepseek] { blocks += [.deepseekSpend, .deepseekWeek] }
         return Self(blocks: blocks)
     }
@@ -96,11 +96,15 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
             guard !isLastVisible(block, providers: providers) else { return }
             blocks.removeAll { $0 == block }
         } else {
-            let order = Block.allCases
-            let rank = order.firstIndex(of: block) ?? order.count
-            let index = blocks.firstIndex { (order.firstIndex(of: $0) ?? order.count) > rank } ?? blocks.count
-            blocks.insert(block, at: index)
+            insertAtUsualPlace(block)
         }
+    }
+
+    private mutating func insertAtUsualPlace(_ block: Block) {
+        let order = Block.allCases
+        let rank = order.firstIndex(of: block) ?? order.count
+        let index = blocks.firstIndex { (order.firstIndex(of: $0) ?? order.count) > rank } ?? blocks.count
+        blocks.insert(block, at: index)
     }
 
     /// Moves a block before another, or to the end.
@@ -121,7 +125,12 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
         blocks.remove(at: index); blocks.insert(block, at: target)
     }
 
-    private enum CodingKeys: String, CodingKey { case version, blocks }
+    /// `known` lists the blocks that existed when the layout was saved; text
+    /// without it predates WorkBuddy. A block added since joins the layout at
+    /// its usual place, hidden while its service is off, and a later save keeps
+    /// the user's choice. Earlier versions ignore the key.
+    private enum CodingKeys: String, CodingKey { case version, blocks, known }
+    private static let firstBlocks: [Block] = [.tasks, .codex, .claude, .deepseek, .deepseekSpend, .deepseekWeek]
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -130,12 +139,15 @@ public struct ExpandedPanelLayout: Equatable, Codable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported panel layout")
         }
         self.init(blocks: try values.decode([String].self, forKey: .blocks).compactMap(Block.saved))
+        let known = Set(((try? values.decodeIfPresent([String].self, forKey: .known)) ?? nil)?.compactMap(Block.saved) ?? Self.firstBlocks)
+        for block in Block.allCases where !known.contains(block) && !blocks.contains(block) { insertAtUsualPlace(block) }
     }
 
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(Self.version, forKey: .version)
         try values.encode(blocks.map(\.rawValue), forKey: .blocks)
+        try values.encode(Block.allCases.map(\.rawValue), forKey: .known)
     }
 
     /// Missing, damaged, oversized or newer text reads as no saved layout.

@@ -137,6 +137,27 @@ final class SharedHookInstallerTests: XCTestCase {
         XCTAssertNil(LocalHarnessProgressSetup.addedAt(home, storage: storage))
         XCTAssertNil(LocalHarnessProgressSetup.removedAt(home, storage: storage))
     }
+    func testUninstallTakesPacersOwnFilesEvenWhenTheAppsConfigIsDamaged() throws {
+        let (home, storage, _) = fixture()
+        let reporter = home.appendingPathComponent("Pacer Engine.exe").path
+        let on = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: true, ruleDirectory: "rules")
+        let off = LocalHarnessProgressSetup.Target(home: home, configFile: "mcp.json", reporter: reporter, enabled: false, ruleDirectory: "rules")
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(on, storage: storage), .configured)
+        XCTAssertTrue(LocalHarnessProgressSetup.markReported(home, storage: storage))
+        let rule = home.appendingPathComponent("rules", isDirectory: true).appendingPathComponent("codex-pacer-progress.mdc")
+        let config = home.appendingPathComponent("mcp.json")
+        XCTAssertNotNil(storage.files[rule])
+        storage.files[config] = Data("{ damaged".utf8)
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(off, storage: storage, checkOnly: true, matchNativeReporter: true), .conflict)
+        XCTAssertNotNil(storage.files[rule], "Checking before uninstall changes nothing")
+        XCTAssertEqual(LocalHarnessProgressSetup.apply(off, storage: storage, matchNativeReporter: true), .conflict,
+            "The entry in a damaged config is still the user's to remove")
+        XCTAssertNil(storage.files[rule], "Pacer's rule goes even so")
+        XCTAssertNil(storage.files[LocalHarnessProgressSetup.flag(home)])
+        XCTAssertFalse(LocalHarnessProgressSetup.reported(home, storage: storage))
+        XCTAssertNil(LocalHarnessProgressSetup.addedAt(home, storage: storage))
+        XCTAssertEqual(storage.files[config], Data("{ damaged".utf8), "The app's config stays as it was")
+    }
     func testInjectedPythonCommandsAtomicPermissionsAndIdempotence() throws {
         let (home, storage, installer) = fixture(), settings = home.appendingPathComponent("settings.json")
         XCTAssertEqual(installer.ensureInstalled(home: home), .installed)

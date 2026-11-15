@@ -41,9 +41,9 @@ internal sealed partial class SettingsWindow
         var locations = Disclosure(ui.Text("provider.custom_locations"), body, SavedHome(provider).Length > 0, "settings." + provider + ".locations");
         providerHomeLocations = locations;
         string label = ui.Text(provider switch { "claude" => "provider.claude_home", "deepseek" => "deepseek.home", _ => "harness.data_folder" });
-        // The default folder is the prompt, as the Mac shows ~/.claude.
-        string? defaultHome = engine?.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == provider)?.DefaultHome;
-        string prompt = provider == "claude" ? @"~\.claude" : defaultHome is { Length: > 0 } local ? ShortHome(local) : label;
+        // The default folder is the prompt, as the Mac shows ~/.claude; a
+        // module's default arrives with the folder inspection.
+        string prompt = provider == "claude" ? @"~\.claude" : label;
         var field = new TextBox { Style = (Style)FindResource("SettingsPathInput"), Tag = prompt, MaxLength = 32768, VerticalContentAlignment = VerticalAlignment.Center };
         providerHomeField = field; Identify(field, "settings." + provider + ".home", label); editors.Add(field);
         field.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await CommitProviderHome(provider, field); } };
@@ -98,6 +98,7 @@ internal sealed partial class SettingsWindow
             var report = await engine.QueryAsync<ProviderHomeReport>("inspectProviderHome", new { provider, sourceHome = saved });
             if (sourceClosed || pane != homePaneRevision || SavedHome(provider) != saved || providerHomeField == null) return;
             providerHomeField.ToolTip = report.EffectiveHome;
+            if (provider is not ("claude" or "deepseek") && report.DefaultHome is { Length: > 0 } fallback) providerHomeField.Tag = ShortHome(fallback);
             if (providerHomeLocations != null && saved.Length == 0 && provider != "deepseek") providerHomeLocations.Tag = ShortHome(report.EffectiveHome);
             if (providerHomeField.Text == saved && saved.Length > 0 && report.Issue != null) SetSourceIssue(providerHomeIssue, report.Issue);
         }

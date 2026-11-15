@@ -93,6 +93,8 @@ final class WorkBuddyHarnessTests: XCTestCase {
         let active = try XCTUnwrap(start.activities.first)
         XCTAssertFalse(active.id.contains("test-active"))
         XCTAssertEqual(active.project, "WorkBuddy AI", "The international build keeps its own name on the bar and panel")
+        XCTAssertTrue(start.activities.allSatisfy { $0.project == "WorkBuddy AI" },
+                      "Home-screen tasks name the module, never their dated folder (11/16 review)")
         XCTAssertEqual(active.title, "fixture title", "A WorkBuddy task shows its session title like other services' tasks")
         XCTAssertEqual(ActivityTaskRowPresentation.title(active, hideProjects: false), "fixture title")
         XCTAssertEqual(ActivityTaskRowPresentation.title(active, hideProjects: true), L10n.text("activity.hidden_name"),
@@ -465,7 +467,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
             ALTER TABLE sessions ADD COLUMN cwd TEXT;
             ALTER TABLE sessions ADD COLUMN model TEXT;
             ALTER TABLE sessions ADD COLUMN thought_level TEXT;
-            INSERT INTO sessions VALUES ('\(session)','account','working',\(updated),NULL,'local',NULL,1,0,
+            INSERT INTO sessions VALUES ('\(session)','account','working',\(updated),NULL,'local',NULL,0,0,
                 'Fixture task','C:/fixture','deepseek-v4.1-flash-sg','high');
             """)
         let workspace = fixture.home.appendingPathComponent("projects/C-fixture", isDirectory: true)
@@ -513,7 +515,7 @@ final class WorkBuddyHarnessTests: XCTestCase {
         XCTAssertEqual(row.effort, L10n.text("model.effort.high"))
         XCTAssertEqual(row.rate?.value, 40)
         XCTAssertEqual(completed.title, "Fixture task", "The session title is the task title, as for the other services")
-        XCTAssertEqual(completed.project, "fixture")
+        XCTAssertEqual(completed.project, "fixture", "A folder the user chose names the task's project")
         await monitor.stop()
     }
 

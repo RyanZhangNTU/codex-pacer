@@ -891,7 +891,7 @@
 "deepseek.reset_day" = "Resets 0:00";
 "deepseek.reset_week" = "Resets Mon 0:00";
 "help.services.title" = "Module colors";
-"help.services.detail" = "Each service has its own color, the same as its icon.";
+"help.services.detail" = "Rings and progress take each service’s color.";
 "help.services.shades" = "With one accent color, each service is a different shade of it.";
 "help.customize.title" = "Customize";
 "help.customize.detail" = "Choose what shows, in what order and which module each ring shows in Settings → Collapsed Bar; choose the warnings in Settings → Reminders.";
@@ -1383,7 +1383,7 @@
 "harness.site.international" = "International (%@)";
 "harness.credits" = "Credits";
 "harness.credits.left" = "%@ left";
-"harness.turn_credits" = "Credits per Turn";
+"harness.turn_credits" = "Turn Credits";
 "harness.data_folder" = "Data Folder";
 "main.info.harness_credits" = "Credits come from your %@ bill and refresh about once a minute while tasks run or the panel is open. Each task row shows what its latest turn used.";
 "workbuddy.progress_ring_help" = "WorkBuddy reports how much is done, drawn around the task icon. Pacer adds its progress tool to WorkBuddy’s connectors; trust it once in WorkBuddy.";
@@ -1462,6 +1462,9 @@
 "credits.figure.monthlyPercent" = "Monthly credits left (%)";
 "credits.figure.monthlyRemaining" = "Monthly credits left";
 "credits.figure.available" = "All available credits";
+"credits.figure_short.monthlyPercent" = "Monthly %";
+"credits.figure_short.monthlyRemaining" = "Monthly left";
+"credits.figure_short.available" = "All credits";
 "credits.option.center" = "Dial center";
 "credits.option.bar" = "Value";
 "credits.reminder.low" = "Available credits below";
@@ -1497,7 +1500,7 @@
 "progress_guide.chip.unknown" = "Can’t check";
 "progress_guide.line.turned_off" = "Turn pacer_progress back on in %@.";
 "progress_guide.line.tool_off" = "Turn the report_progress tool back on in %@.";
-"progress_guide.line.conflict" = "%@ already has a pacer_progress that Pacer didn’t add.";
+"progress_guide.line.conflict" = "%@’s connector settings have something Pacer won’t change, such as a pacer_progress it didn’t add or an mcp.json it can’t read.";
 "progress_guide.line.failed" = "Couldn’t write %@’s settings.";
 "progress_guide.line.missing" = "The progress tool is gone from %@.";
 "progress_guide.line.unknown" = "Couldn’t read %@’s connectors.";

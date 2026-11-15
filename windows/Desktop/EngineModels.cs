@@ -59,7 +59,7 @@ internal sealed record ClaudeAccountReport(string Context, string SelectedOrgani
 internal sealed record ClaudeOrganization(string ID, string? Name, string? Label = null);
 internal sealed record DeepSeekConnection(string Context, string Source, string? Mode, bool HasKey, bool Refreshing, bool WebAvailable, DeepSeekConnectionReading Reading, DeepSeekBalanceStatus? Status = null);
 internal sealed record DeepSeekBalanceStatus(string Message, string Tone, IReadOnlyList<QuotaConnectionAction> Actions);
-internal sealed record ProviderHomeReport(string Provider, string Home, string EffectiveHome, string? Issue, bool Readable);
+internal sealed record ProviderHomeReport(string Provider, string Home, string EffectiveHome, string? Issue, bool Readable, string? DefaultHome = null);
 internal sealed record DeepSeekConnectionReading(string Title, string Text, string Color, string DetectedText, bool Connected, bool KeyEditor, bool ShowDetection, string? Action, string? ActionLabel);
 internal sealed record EngineHostRequest(string RequestID, string Context, bool Cancelled);
 internal sealed record CompactWarningItem(string Kind, string? Provider, bool Solid, string? Label, string? Symbol, string Help);
@@ -81,7 +81,7 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
     string? UsageGuideUrl = null, bool? ProgressConnector = null, bool? HasTaskProgress = null, bool? ReportsSessionUsage = null,
     string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null,
     EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
-    bool? Local = null, string? Home = null, string? DefaultHome = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
+    bool? Local = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
     HarnessProgressGuide? ProgressGuide = null)
 {
     /// Found on this computer or turned on explicitly. Older engines send

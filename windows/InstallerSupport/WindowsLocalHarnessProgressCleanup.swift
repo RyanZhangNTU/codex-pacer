@@ -1,6 +1,7 @@
 import Foundation
 import PacerCore
 import PacerEngineSupport
+import WinSDK
 
 public enum WindowsLocalHarnessProgressCleanup {
     struct Failure: Error {}
@@ -23,6 +24,11 @@ public enum WindowsLocalHarnessProgressCleanup {
                                                               ruleDirectory: definition.progressRuleDirectory)
                 if LocalHarnessProgressSetup.apply(target, storage: storage, checkOnly: checkOnly, matchNativeReporter: true,
                     owns: { paths.ownsLocalHarness($0, arguments: $1, home: $2) }) != nil { failed = true }
+                // Pacer's folder goes too once nothing is left in it; anything else keeps it.
+                let directory = LocalHarnessProgressSetup.flag(folder).deletingLastPathComponent()
+                if !checkOnly, (try? storage.validate(directory)) != nil, storage.isDirectory(directory) {
+                    _ = RemoveDirectoryW(WindowsLocalProfileStorage.wide(directory))
+                }
             }
         }
         if failed { throw Failure() }

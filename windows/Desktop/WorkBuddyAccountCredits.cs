@@ -270,13 +270,17 @@ internal sealed class HarnessAccountConnection : IAsyncDisposable
     {
         State = result.State;
         if (result.State != "unavailable") { Reading = result.Reading; source = result.Source; }
+        // Failures back off, 5 then 10, 20 and at most 30 minutes, as DeepSeek's
+        // balance does; each read starts a browser (11/16 review).
+        failures = State == "unavailable" ? Math.Min(failures + 1, 4) : 0;
         StopTimer();
         if (State != "signIn" && enabled && !sleeping && session.IsConnected)
         {
-            timer.Interval = TimeSpan.FromMinutes(State == "ready" ? 2 : 5);
+            timer.Interval = TimeSpan.FromMinutes(State == "ready" ? 2 : Math.Min(30, 5 << Math.Max(0, failures - 1)));
             timer.Tick += OnTick; timer.Start();
         }
     }
+    private int failures;
 
     private void StopTimer() { timer.Stop(); timer.Tick -= OnTick; }
     private async void OnTick(object? sender, EventArgs e) => await RefreshAsync();

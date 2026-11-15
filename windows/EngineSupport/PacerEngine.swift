@@ -314,6 +314,7 @@ actor EngineRuntime {
     private let codexProgressPaths: WindowsCodexProgressPaths
     private var codexProgressQueue = ProgressSetupQueue<CodexProgressSetup.Target>()
     private var codexProgressSetup: CodexProgressSetupStatus?
+    private var lastFailedSetupRetry = Date.distantPast
     private let codexProgressGate = CodexProgressSwitchGate()
     private var progressRingProviders: Set<AgentProvider> {
         var providers: Set<AgentProvider> = []
@@ -1462,11 +1463,8 @@ actor EngineRuntime {
             module.launch = .init(scheme: scheme, publisher: publisher, executables: definition.windowsExecutables,
                                   connectorsPath: definition.connectorsPath)
         }
-        if let definition {
-            module.local = true
-            module.home = EngineCodexSourceReport.path(localHarnessHome(definition))
-            module.defaultHome = EngineCodexSourceReport.path(definition.defaultHome())
-        }
+        // The data folder and its default stay in the Settings query.
+        if definition != nil { module.local = true }
         return module
     }
 
@@ -1746,6 +1744,14 @@ actor EngineRuntime {
                state.connection != .trusted || !state.reported {
                 scheduleLocalHarnessProgress(definition, inspectOnly: true)
             }
+        }
+        // A setup that failed, such as on a busy runtime folder, tries again every ten minutes.
+        if now().timeIntervalSince(lastFailedSetupRetry) >= 600 {
+            lastFailedSetupRetry = now()
+            for definition in localHarnesses.definitions where localProgressStatuses[definition.descriptor.id]?.setup == .failed {
+                scheduleLocalHarnessProgress(definition)
+            }
+            if codexProgressSetup == .failed { scheduleCodexProgressSetup() }
         }
         // Automatic modules notice a new or removed app within ten minutes;
         // Settings and source changes detect at once through configure.

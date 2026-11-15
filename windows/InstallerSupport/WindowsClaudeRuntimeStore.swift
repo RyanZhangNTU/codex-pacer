@@ -58,7 +58,9 @@ public struct WindowsClaudeRuntimeStore {
         let name = "Global\\CodexPacer." + directoryName + "." + Self.digest(Data(root.path.lowercased().utf8))
         guard let mutex = CreateMutexW(nil, false, Array(name.utf16) + [0]) else { throw Failure.busy }
         defer { _ = CloseHandle(mutex) }
-        let state = WaitForSingleObject(mutex, 2000)
+        // Codex's and WorkBuddy's reporters prepare the runtime together on the
+        // first start after an update; copying it takes longer than two seconds.
+        let state = WaitForSingleObject(mutex, 30_000)
         guard state == WAIT_OBJECT_0 || state == DWORD(0x80) /* WAIT_ABANDONED_0 */ else { throw Failure.busy }
         defer { _ = ReleaseMutex(mutex) }
         return try action()

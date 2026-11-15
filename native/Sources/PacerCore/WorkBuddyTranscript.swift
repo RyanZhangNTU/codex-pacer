@@ -153,12 +153,16 @@ struct WorkBuddyTranscript {
         for end in data.indices where data[end] == 10 {
             if !droppingLine, end > start {
                 if !consume(Data(data[start..<end]), session: session, now: now) { turn = nil }
+                // A line stamped after this read began waits for the next read,
+                // where it once was skipped for good and broke the chain.
+                if deferred { deferred = false; break }
             }
             droppingLine = false
             start = end + 1
         }
         offset += UInt64(start - data.startIndex)
     }
+    private var deferred = false
 
     /// Where the last line that opens a request starts, searched back from the
     /// end through `catchUpLimit` by its raw bytes; JSON escapes a quote inside
@@ -201,7 +205,11 @@ struct WorkBuddyTranscript {
               let metadata = try? values["providerData"]?.fields(Self.metadataFields),
               let request = Self.identifier(metadata["conversationRequestId"]) else { return true }
         let time = Date(timeIntervalSince1970: Double(stamp) / 1000)
-        guard time <= now.addingTimeInterval(1) else { return true }
+        guard time <= now.addingTimeInterval(1) else {
+            // Written after this read's clock; a stamp far ahead is not waited for.
+            if time <= now.addingTimeInterval(300) { deferred = true }
+            return true
+        }
         if type == "message", values["role"]?.matchesStringLiteral("user") == true {
             // A user line inside the request (WorkBuddy AI 5.9.4 wrote one with
             // isMeta after a TaskOutput result) is a link of its chain; the rest

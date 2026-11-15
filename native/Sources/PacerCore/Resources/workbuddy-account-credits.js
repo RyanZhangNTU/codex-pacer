@@ -101,14 +101,15 @@ async function readGroups(summary, packages) {
             const dates = rows.filter(row => row.PackageCode === code).map(row => timestamp(row.CycleEndTime) + 1);
             if (dates.length && future(dates[0]) && dates.every(value => value === dates[0])) codes.get(code).refresh = dates[0];
         }
-        // A batch's date counts only when the dated rows add up to the package's balance.
+        // A batch's date counts only when the dated rows add up to the package's
+        // balance, within a hundredth: the rows carry more decimals than the total.
         for (const code of lapsing) {
             const own = rows.filter(row => row.PackageCode === code);
             const unique = own.filter((row, index) => typeof row.ResourceId !== "string" ||
                 own.findIndex(other => other.ResourceId === row.ResourceId) === index);
             const dated = unique.map(row => ({ credits: amount(row.CycleCapacityRemainPrecise), at: timestamp(row.DeductionEndTime) }));
             if (dated.some(row => row.credits == null) ||
-                Math.abs(dated.reduce((sum, row) => sum + row.credits, 0) - codes.get(code).remaining) > 0.000001) continue;
+                Math.abs(dated.reduce((sum, row) => sum + row.credits, 0) - codes.get(code).remaining) > 0.01) continue;
             batches.set(code, dated.filter(row => row.credits > 0 && future(row.at)));
         }
     } finally { clearTimeout(deadline); }
@@ -152,9 +153,10 @@ try {
         const frozen = item.CycleFrozenCapacity == null ? 0 : amount(item.CycleFrozenCapacity);
         if (amount(item.CycleRemainCapacity) === null || amount(item.CycleTotalCapacity) === null || frozen === null) return { state: "unavailable" };
     }
-    // A successful empty list means no active packages. Other units alone
-    // give us no information about the credits balance.
-    if (entries.length && !packages.length) return { state: "unavailable" };
+    // Every WorkBuddy account has at least its free plan, so an empty list is
+    // no proof of a sign-in: unverified, it could close the sign-in window and
+    // announce zero credits. Other units alone say nothing about credits either.
+    if (!packages.length) return { state: "unavailable" };
     const subscription = reply.data.SubscriptionPackageCode;
     const plans = packages.filter(item => packageCode(item.PackageCode) && kindOf(item.PackageCode, subscription) === "planBase");
     if (new Set(plans.map(item => item.PackageCode)).size > 1) {

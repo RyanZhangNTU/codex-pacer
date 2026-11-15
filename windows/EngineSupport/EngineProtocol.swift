@@ -226,8 +226,6 @@ struct EngineModule: Codable, Equatable {
     var prominent: Bool? = nil
     /// Read by the shared local adapter, with a data folder Settings can change.
     var local: Bool? = nil
-    var home: String? = nil
-    var defaultHome: String? = nil
     /// The last seven days of account credits, for History.
     var week: DeepSeekSoloPresentation.Week? = nil
     /// How the host opens the app: its URL scheme, the signer its handler

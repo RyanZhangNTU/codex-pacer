@@ -173,13 +173,30 @@ package enum LocalHarnessProgressSetup {
                 try storage.validate(config)
                 return try storage.exists(config) ? storage.read(config) : nil
             }
+            // Uninstalling leaves nothing of Pacer's in the app's folder, even
+            // when the app's own config can't be read: its entry is then the
+            // only thing left for the user, as the uninstaller says.
+            let uninstalling = !target.enabled && !checkOnly && matchNativeReporter
+            func releaseOwnFiles() throws {
+                if storage.exists(flag) { try storage.remove(flag) }
+                for marker in [reportedMarker(target.home), addedMarker(target.home), removedMarker(target.home)] {
+                    try storage.validate(marker)
+                    if storage.exists(marker) { try storage.remove(marker) }
+                }
+            }
             let original = try readConfig()
             var root: [String: Any] = [:]
             if let original {
-                guard original.count <= limit, let object = (try? JSONSerialization.jsonObject(with: original)) as? [String: Any] else { return .conflict }
+                guard original.count <= limit, let object = (try? JSONSerialization.jsonObject(with: original)) as? [String: Any] else {
+                    if uninstalling { try releaseOwnFiles(); _ = try editRule() }
+                    return .conflict
+                }
                 root = object
             }
-            guard var servers = (root["mcpServers"] ?? [String: Any]()) as? [String: Any] else { return .conflict }
+            guard var servers = (root["mcpServers"] ?? [String: Any]()) as? [String: Any] else {
+                if uninstalling { try releaseOwnFiles(); _ = try editRule() }
+                return .conflict
+            }
             let previous = servers[server]
             if let previous {
                 let object = previous as? [String: Any]
@@ -192,14 +209,7 @@ package enum LocalHarnessProgressSetup {
                     return target.enabled || owned ? .conflict : nil
                 }
             }
-            if !target.enabled && !checkOnly && matchNativeReporter && storage.exists(flag) { try storage.remove(flag) }
-            // Uninstalling leaves nothing of Pacer's in the app's folder.
-            if !target.enabled && !checkOnly && matchNativeReporter {
-                for marker in [reportedMarker(target.home), addedMarker(target.home), removedMarker(target.home)] {
-                    try storage.validate(marker)
-                    if storage.exists(marker) { try storage.remove(marker) }
-                }
-            }
+            if uninstalling { try releaseOwnFiles() }
             if matchNativeReporter, try !editRule() { return .conflict }
             if !target.enabled && previous == nil { return nil }
             if checkOnly { return target.enabled ? .configured : nil }

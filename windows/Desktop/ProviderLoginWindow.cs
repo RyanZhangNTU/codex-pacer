@@ -26,6 +26,8 @@ internal class ProviderLoginWindow : Window
     private enum Phase { Prompt, LoadFailed, SignedIn }
     internal static readonly TimeSpan AutoCloseDelay = TimeSpan.FromMilliseconds(1500);
     internal static readonly TimeSpan ReadingInterval = TimeSpan.FromSeconds(3);
+    internal static readonly TimeSpan SlowReadingInterval = TimeSpan.FromSeconds(10), ReadingSlowdown = TimeSpan.FromMinutes(2);
+    private DateTime readingSince = DateTime.UtcNow;
     private static readonly Color Confirmed = Color.FromRgb(48, 186, 85);
     private readonly UiText ui;
     private readonly ProviderWebDefinition provider;
@@ -101,7 +103,12 @@ internal class ProviderLoginWindow : Window
         refresh.Click += (_, _) => Reload();
         later.Click += (_, _) => Close();
         done.Click += async (_, _) => await (CheckCompletion = FinishAsync(requiringSession: true));
-        observer.Tick += async (_, _) => await ObserveAsync();
+        observer.Tick += async (_, _) =>
+        {
+            // A window left open stops asking the account every few seconds.
+            if (provider.ConfirmByReading && DateTime.UtcNow - readingSince > ReadingSlowdown) observer.Interval = SlowReadingInterval;
+            await ObserveAsync();
+        };
         Closing += async (_, e) =>
         {
             if (allowClose || closed) return;
@@ -134,7 +141,7 @@ internal class ProviderLoginWindow : Window
             await page.Initialize(runtime, cancellation); fixture?.Invoke(page.Core); Configure(page, this);
             RefreshBrowserTheme();
             await page.Navigate(new Uri(provider.Origin, provider.LoginPath), cancellation);
-            observer.Start();
+            readingSince = DateTime.UtcNow; observer.Start();
             // A reading waits for the first interval, as on the Mac, so it doesn't race the page's own load.
             if (!provider.ConfirmByReading) await ObserveAsync();
         }

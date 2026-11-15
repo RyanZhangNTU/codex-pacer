@@ -40,7 +40,7 @@ The platform contract (`windows/platform-contract.json`, checked by `check-contr
 
 ## WorkBuddy
 
-WorkBuddy AI starts off. Enable it in **Settings → WorkBuddy**. Pacer opens `workbuddy.db` read-only when the WAL and SHM are present. The data directory is `%USERPROFILE%\.workbuddy-ai` by default. Set `WORKBUDDY_CONFIG_DIR` to an absolute path in Pacer’s environment to use a different directory. The account snapshot limits reads to the signed-in user. The query checks the 512 most recently inserted session rows and follows observed sessions by primary key. Pacer can miss an older session resumed outside those rows.
+WorkBuddy (the China build, data in `%USERPROFILE%\.workbuddy`) and WorkBuddy AI (the international build, `%USERPROFILE%\.workbuddy-ai`) are separate modules. Like the other services, each is automatic: it turns on when Pacer finds its app or its data folder, and its own Settings page or the Module Library turns it off. Pacer opens `workbuddy.db` read-only when the WAL and SHM are present. Set `WORKBUDDY_CONFIG_DIR` or `WORKBUDDY_AI_CONFIG_DIR` to an absolute path in Pacer’s environment, or choose a folder in the module's Settings page, to use a different directory. The account snapshot limits reads to the signed-in user. The query checks the 512 most recently inserted session rows and follows observed sessions by primary key. Pacer can miss an older session resumed outside those rows.
 
 WorkBuddy AI 5.9.4 wrote both a reply and a manual stop as `completed`. Pacer checks the same turn in the local transcript to distinguish completion, cancellation and a pending question. It keeps task metadata, not the text of prompts, replies or answers. A completed or interrupted turn can remain in the inbox; a baseline read does not send an alert. The default profile can open an exact conversation through the signed WorkBuddy app.
 
@@ -48,7 +48,7 @@ A running task shows its stage like the other modules (starting, thinking or a t
 
 A tool call that writes a file holds the whole file, and WorkBuddy appended 342 KB in three seconds while writing a web page. The transcript reader catches up on up to 32 MB of new lines and parses lines up to 8 MB. A first read, or a larger gap, starts at the latest request: it searches back for `"startsNewUserRequest":true` in raw bytes, up to 32 MB. Before 11/15 a burst over 256 KB restarted the reader at the last 256 KB, past the request that opened the turn. The row then lost its turn: no ring, model or speed, and "Awaiting usage".
 
-WorkBuddy settings and Overview can show context and credits for the latest session. Account credits come from the WorkBuddy site after the user signs in through Pacer’s own WebView2 profile. The host reads the account independently of the local task monitor. Turn on the task progress ring in WorkBuddy settings to install the local MCP tool and its reporting rule. A percentage appears after WorkBuddy calls the tool and records a successful reply for that turn.
+WorkBuddy settings and Overview can show context and credits for the latest session. Account credits come from the WorkBuddy site after the user signs in through Pacer’s own WebView2 profile. The host reads the account independently of the local task monitor. The task progress ring is on by default (a module listed in `disabledHarnessProgress` has it off): it adds the local MCP tool and its reporting rule, and the user trusts the tool once in WorkBuddy, guided by the card on the module's Settings page. A percentage appears after WorkBuddy calls the tool and records a successful reply for that turn.
 
 ## Log paths longer than MAX_PATH
 
@@ -148,7 +148,7 @@ The package ships the official CPython embeddable runtime for its architecture, 
 - For Codex, the folder name also carries the first 12 hex digits of the reporter's SHA-256. Store Codex can prefer a private AppData copy at the previous path, so a reporter change needs a new path.
 - WorkBuddy trusts a command by its path and arguments, so its reporter lives in the Python-only folder and is replaced in place. Python reads the script and closes it before it runs, so a running reporter doesn't block the replacement. A Pacer update then keeps WorkBuddy's trust; only a new Python pin changes the command.
 
-**Ownership.** The root and each version folder carry a `.pacer-owned.json` marker; an unmarked non-empty folder is never taken over. Files are checked by handle for owner, reparse points and hard links before any write or truncation. The owner must be the current user's SID, or BUILTIN\Administrators only when the token is elevated with that group enabled. Locks are a Windows mutex with a 2-second wait.
+**Ownership.** The root and each version folder carry a `.pacer-owned.json` marker; an unmarked non-empty folder is never taken over. Files are checked by handle for owner, reparse points and hard links before any write or truncation. The owner must be the current user's SID, or BUILTIN\Administrators only when the token is elevated with that group enabled. Locks are a Windows mutex with a 30-second wait: Codex's and WorkBuddy's reporters prepare the runtime together on the first start after an update, and a setup that still fails is retried every ten minutes.
 
 **Hook command.** Claude Code runs hooks through Git Bash, or PowerShell when Git Bash is missing, so the command is chosen in this order:
 

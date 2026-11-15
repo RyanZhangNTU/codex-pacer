@@ -250,7 +250,7 @@ internal sealed partial class SettingsWindow
                     value => ChoosePanel(provider + "Periods", value))));
             if (account)
                 quota.Children.Add(Stacked(provider + ".center", "credits.option.center", PanelSegmentChoices(provider + ".center", "credits.option.center",
-                    [("monthlyPercent", "credits.figure.monthlyPercent"), ("monthlyRemaining", "credits.figure.monthlyRemaining"), ("available", "credits.figure.available")], value => ChangeCredits(provider, choice => choice with { Center = value }))));
+                    [("monthlyPercent", "credits.figure_short.monthlyPercent"), ("monthlyRemaining", "credits.figure_short.monthlyRemaining"), ("available", "credits.figure_short.available")], value => ChangeCredits(provider, choice => choice with { Center = value }))));
             quota.Children.Add(Inline(provider + ".style", "main.panel.style", PanelSegmentChoices(provider + ".style", "main.panel.style",
                 [("split", "appearance.quota_split"), ("classic", "appearance.quota_classic")], value => Change(p => p with { ExpandedQuotaStyle = value }))));
             quota.Children.Add(Inline(provider + ".arrange", "main.panel.arrange", PanelSegmentChoices(provider + ".arrange", "main.panel.arrange",

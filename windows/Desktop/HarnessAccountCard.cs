@@ -28,7 +28,10 @@ internal static class HarnessAccountCard
             AutomationProperties.SetName(label, text);
             body.Children.Add(label);
         }
-        string state = connection?.Busy == true ? "reading" : connection?.State == "unavailable" ? "unavailable" : "sign_in";
+        // As on the Mac: signed in without credits yet reads as reading, and the
+        // card then links to Settings instead of offering to sign in again.
+        bool signedIn = connection?.Reading != null;
+        string state = connection?.Busy == true ? "reading" : connection?.State == "unavailable" ? "unavailable" : signedIn ? "reading" : "sign_in";
         string stateText = ui.Text("harness.account." + state);
         string help = presentation == null ? stateText
             : string.Join("\n", presentation.Lines.Select(line => line.Label + " " + line.Value + (line.Detail is string detail ? " · " + detail : "")));
@@ -47,21 +50,21 @@ internal static class HarnessAccountCard
                 }
             if (stale) Line(ui.Text("common.not_updated"), "state");
         }
-        else if (details) Line(stateText, "state");
+        else if (details || signedIn) Line(stateText, "state");
         // Signing in starts here, as DeepSeek's and Claude's do.
-        if (presentation == null && (connection != null || openSettings != null))
+        if (presentation == null && (connection != null || openSettings != null) && (!signedIn || openSettings != null))
         {
-            var open = new Button { Content = ui.Text("welcome.module.sign_in"), HorizontalAlignment = details ? HorizontalAlignment.Left : HorizontalAlignment.Center,
+            var open = new Button { Content = ui.Text(signedIn ? "common.open_settings" : "welcome.module.sign_in"), HorizontalAlignment = details ? HorizontalAlignment.Left : HorizontalAlignment.Center,
                 Margin = new Thickness(0, 3, 0, 0), FontSize = 11 };
             open.SetResourceReference(FrameworkElement.StyleProperty, "QuotaLinkButton");
             // The same title template as DeepSeek's actions, so the text follows the island's light or dark ink.
             open.SetResourceReference(ContentControl.ContentTemplateProperty, "QuotaActionTitle");
-            AutomationProperties.SetAutomationId(open, id + ".sign_in");
+            AutomationProperties.SetAutomationId(open, id + (signedIn ? ".open_settings" : ".sign_in"));
             AutomationProperties.SetHelpText(open, stateText);
             open.Click += async (_, _) =>
             {
                 if (!open.IsVisible) return;
-                if (connection is { Available: true, Busy: false }) await connection.ConnectAsync();
+                if (!signedIn && connection is { Available: true, Busy: false }) await connection.ConnectAsync();
                 else openSettings?.Invoke();
             };
             body.Children.Add(open);
@@ -78,9 +81,9 @@ internal static class HarnessAccountCard
             var row = new Grid();
             row.ColumnDefinitions.Add(new() { Width = new GridLength(size) });
             row.ColumnDefinitions.Add(new() { Width = new GridLength(20) });
-            // The lines reach the panel's right edge like Codex's single view; on
-            // a wide Overview card they stop at 340 so values stay near their labels.
-            row.ColumnDefinitions.Add(new() { MaxWidth = 340 });
+            // The lines take the rest of the row like Codex's single view, in the
+            // panel and on the Overview card, so values line up at its right edge.
+            row.ColumnDefinitions.Add(new());
             row.Children.Add(dial);
             body.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(body, 2); row.Children.Add(body);

@@ -716,9 +716,12 @@ internal sealed partial class SettingsWindow
     {
         if (harnessAccountState == null) return;
         var account = HarnessAccount;
-        bool busyReading = account?.Busy == true, signedIn = account?.Reading != null;
-        string state = busyReading ? "harness.account.reading" : signedIn ? "harness.account.signed_in" : "harness.account.signed_out";
-        SetStatus(harnessAccountDot, harnessAccountState, ui.Text(state), signedIn ? "positive" : "neutral");
+        // The Mac's order: reading before the first credits, a failed read in
+        // amber with its sentence under the row, then signed in with the plan.
+        bool signedIn = account?.Reading != null, busyReading = account?.Busy == true && !signedIn, failed = account?.State == "unavailable";
+        string state = ui.Text(busyReading ? "harness.account.reading" : signedIn ? "harness.account.signed_in" : "harness.account.signed_out")
+            + (!busyReading && account?.Reading?.Plan is { Length: > 0 } plan ? " · " + plan : "");
+        SetStatus(harnessAccountDot, harnessAccountState, state, busyReading ? "neutral" : failed || !signedIn ? "attention" : "positive");
         bool idle = editable && account is { Busy: false, Available: true };
         harnessAccountSignIn!.Visibility = signedIn ? Visibility.Collapsed : Visibility.Visible;
         harnessAccountOptions!.Visibility = signedIn ? Visibility.Visible : Visibility.Collapsed;

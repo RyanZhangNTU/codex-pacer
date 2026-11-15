@@ -744,7 +744,7 @@
 "deepseek.remove_key" = "移除";
 "deepseek.key_help" = "Key 保存在登录钥匙串中，只用于读取余额。";
 "deepseek.key_invalid" = "这不像是 DeepSeek API Key。";
-"deepseek.turn_cost" = "显示每个回合的估算花费";
+"deepseek.turn_cost" = "显示每一轮的估算花费";
 "deepseek.turn_cost_help" = "显示在 DeepSeek 任务行的模型名前。";
 "deepseek.progress_ring" = "显示 DeepSeek 任务进度";
 "deepseek.progress_ring_help" = "在 Harness 数据目录中添加 Pacer 的上报工具，Harness 的所有配置和命令行都会使用它。进度环显示 DeepSeek 对当前请求的完成度估算。";
@@ -788,7 +788,7 @@
 "deepseek.peak_hours_help" = "高峰价（×2）：北京时间工作日 09:00–12:00、14:00–18:00，已换算为本机时区。周末和 2026 年法定节假日按平价。";
 "deepseek.estimate_help" = "花费由本机按 token 数和公布单价估算，以开放平台账单为准。";
 "deepseek.dial_accessibility" = "DeepSeek 余额 %1$@，今天已花 %2$@，%3$@";
-"deepseek.turn_cost_row_help" = "这一回合的估算花费";
+"deepseek.turn_cost_row_help" = "这一轮的估算花费";
 "deepseek.turn_cost_accessibility" = "估算花费 %@";
 "demo.deepseek_project" = "order-service";
 "demo.deepseek_task" = "迁移订单表结构";
@@ -891,7 +891,7 @@
 "deepseek.reset_day" = "0:00 重置";
 "deepseek.reset_week" = "周一 0:00 重置";
 "help.services.title" = "模块颜色";
-"help.services.detail" = "每个服务都有自己的颜色，和它的图标一致。";
+"help.services.detail" = "圆环和进度使用各服务的颜色。";
 "help.services.shades" = "选了单色强调色时，各服务是这个颜色的不同深浅。";
 "help.customize.title" = "自定义";
 "help.customize.detail" = "在“设置 → 折叠栏”中选显示哪些内容、怎么排列、圆环对应哪个模块；在“设置 → 提醒”中选显示哪些警告。";
@@ -916,7 +916,7 @@
 "help.claude.remote.detail" = "SSH 主机上的 Claude Code 任务也会显示。";
 "help.claude.apps.title" = "其他应用";
 "help.claude.apps.detail" = "第三方应用里的会话会标出应用名，点击直接跳到那个应用。";
-"help.deepseek.cost.title" = "回合花费";
+"help.deepseek.cost.title" = "本轮花费";
 "help.deepseek.cost.detail" = "任务行显示这一轮大约花了多少。";
 "help.deepseek.balance.title" = "余额";
 "help.deepseek.balance.detail" = "在“设置 → DeepSeek”中登录开放平台，或粘贴 API Key。";
@@ -1375,7 +1375,7 @@
 "harness.data" = "本地数据";
 "harness.data.found" = "已找到";
 "harness.data.missing" = "未找到";
-"harness.account_row" = "账户";
+"harness.account_row" = "账号";
 "harness.account.signed_in" = "已登录";
 "harness.account.signed_out" = "未登录";
 "harness.site.automatic" = "自动";
@@ -1452,7 +1452,7 @@
 "credits.group.planBonus" = "套餐赠送积分";
 "credits.group.reward" = "平台奖励积分";
 "credits.group.topUp" = "加油包积分";
-"credits.section.monthly" = "本月 · 每月刷新";
+"credits.section.monthly" = "本月 · 每个套餐周期刷新";
 "credits.section.extra" = "额外 · 不刷新，到期作废";
 "credits.expires_on" = "%@ 到期";
 "credits.chip_today" = "今天到期";
@@ -1462,6 +1462,9 @@
 "credits.figure.monthlyPercent" = "本月剩余比例";
 "credits.figure.monthlyRemaining" = "本月剩余积分";
 "credits.figure.available" = "全部可用积分";
+"credits.figure_short.monthlyPercent" = "本月比例";
+"credits.figure_short.monthlyRemaining" = "本月剩余";
+"credits.figure_short.available" = "全部可用";
 "credits.option.center" = "圆环中间";
 "credits.option.bar" = "数值";
 "credits.reminder.low" = "可用积分低于";
@@ -1497,7 +1500,7 @@
 "progress_guide.chip.unknown" = "无法确认";
 "progress_guide.line.turned_off" = "在 %@ 里重新打开 pacer_progress。";
 "progress_guide.line.tool_off" = "在 %@ 里重新打开 report_progress 工具。";
-"progress_guide.line.conflict" = "%@ 里已有一个不是 Pacer 加的 pacer_progress。";
+"progress_guide.line.conflict" = "%@ 的连接器配置里有 Pacer 不会改动的内容，例如不是 Pacer 加的 pacer_progress，或无法读取的 mcp.json。";
 "progress_guide.line.failed" = "无法写入 %@ 的配置。";
 "progress_guide.line.missing" = "%@ 里的进度工具不见了。";
 "progress_guide.line.unknown" = "无法读取 %@ 的连接器状态。";
