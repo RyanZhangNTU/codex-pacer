@@ -737,6 +737,40 @@ public partial class IslandWindow : Window
     private bool panelDirty;
     private (double Width, double Height)? panelSize;
 
+    // Dismissed progress hints, by module, until that module's setup stage changes.
+    private readonly Dictionary<string, string> dismissedProgressHints = new(StringComparer.Ordinal);
+    private string? progressHintProvider;
+
+    /// One line over the tasks while a module's task runs but its progress
+    /// ring still needs a step in the app.
+    private void UpdateProgressHint(EngineSnapshot snapshot)
+    {
+        var modules = snapshot.Modules ?? [];
+        foreach (string key in dismissedProgressHints.Keys.ToArray())
+            if (modules.FirstOrDefault(value => value.Provider == key)?.ProgressGuide?.Stage != dismissedProgressHints[key]) dismissedProgressHints.Remove(key);
+        var running = snapshot.Presentation?.Rows.Where(row => row.Phase is not ("completed" or "interrupted")).Select(row => row.Provider).ToHashSet(StringComparer.Ordinal) ?? [];
+        var module = modules.FirstOrDefault(value => value.Enabled && value.ProgressGuide is { Attention: true, Summary: not null } guide
+            && running.Contains(value.Provider) && !dismissedProgressHints.ContainsKey(value.Provider));
+        progressHintProvider = module?.Provider;
+        if (module?.ProgressGuide is not { } shown) { ProgressHint.Visibility = Visibility.Collapsed; return; }
+        string text = (module.DisplayName ?? module.Provider) + " · " + shown.Summary;
+        ProgressHintText.Text = text; AutomationProperties.SetName(ProgressHint, text);
+        ProgressHintOpen.Content = ui.Text("progress_guide.hint.open");
+        AutomationProperties.SetName(ProgressHintOpen, ui.Text("progress_guide.hint.open"));
+        AutomationProperties.SetName(ProgressHintClose, ui.Text("progress_guide.hint.close"));
+        ProgressHint.Visibility = Visibility.Visible;
+    }
+    private void OnProgressHintOpen(object sender, RoutedEventArgs e)
+    {
+        if (progressHintProvider is string provider) OpenModuleSettings(provider);
+    }
+    private void OnProgressHintClose(object sender, RoutedEventArgs e)
+    {
+        if (progressHintProvider is not string provider || latest?.Modules?.FirstOrDefault(value => value.Provider == provider)?.ProgressGuide is not { } guide) return;
+        dismissedProgressHints[provider] = guide.Stage;
+        if (latest != null) UpdateProgressHint(latest);
+    }
+
     private void Render(EngineSnapshot snapshot)
     {
         if (presentationStopped) return;
@@ -748,6 +782,7 @@ public partial class IslandWindow : Window
         openingActivityContexts.IntersectWith((snapshot.ActivityLinks ?? []).Select(link => link.Context));
         ApplyNavigationFailure(snapshot.NavigationError);
         UpdateAppButtons();
+        UpdateProgressHint(snapshot);
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
         MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
         UpdateCompactBar();

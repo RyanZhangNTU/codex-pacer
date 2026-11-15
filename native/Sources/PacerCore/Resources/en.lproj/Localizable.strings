@@ -1509,3 +1509,9 @@
 "progress_guide.trust_card.button" = "Trust";
 "progress_guide.trust_card.path" = "Connectors › Custom connectors";
 "progress_guide.waiting" = "Waiting for you";
+"progress_guide.trust_card.refresh" = "Refresh";
+"progress_guide.state.done" = "Done";
+"progress_guide.state.current" = "Current step";
+"progress_guide.state.pending" = "Not yet";
+"progress_guide.hint.open" = "Settings";
+"progress_guide.hint.close" = "Hide";

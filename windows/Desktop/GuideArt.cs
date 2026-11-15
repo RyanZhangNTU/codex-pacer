@@ -174,6 +174,12 @@ internal sealed class DecorativeImage : Image
     protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePeer(this);
 }
 
+/// A drawn picture made of controls, such as another app's card.
+internal sealed class DecorativeBorder : Border
+{
+    protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePeer(this);
+}
+
 /// The bar opened under a pointer, drawn at a quarter of its size. Motion
 /// is left to the island itself; this is its resting open state.
 internal sealed class WelcomeGestureScene : Grid

@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "26011fbb8fd2fb9a49d206dcc7e9280edc6f1847be00f28c678e2bbce644037b",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "6224c53f5b6e8fe2258bfc6e2e63dbe358309ac1e2678ad3b4010f035b4112db",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1157,6 +1157,8 @@
     "progress_guide.chip.trust": "\u8fd8\u5dee 1 \u6b65",
     "progress_guide.chip.turned_off": "\u5df2\u5728 %@ \u91cc\u5173\u95ed",
     "progress_guide.chip.unknown": "\u65e0\u6cd5\u786e\u8ba4",
+    "progress_guide.hint.close": "\u9690\u85cf",
+    "progress_guide.hint.open": "\u8bbe\u7f6e",
     "progress_guide.info": "%1$@ \u4f1a\u62a5\u544a\u4efb\u52a1\u5b8c\u6210\u4e86\u591a\u5c11\uff0cPacer \u628a\u5b83\u753b\u6210\u4efb\u52a1\u56fe\u6807\u5916\u7684\u5706\u73af\u3002%2$@ \u53ea\u8fde\u63a5\u4f60\u4fe1\u4efb\u8fc7\u7684\u5de5\u5177\uff0c\u6240\u4ee5\u8981\u5728\u5b83\u7684\u8fde\u63a5\u5668\u91cc\u4fe1\u4efb\u4e00\u6b21 pacer_progress\uff1b\u5217\u8868\u91cc\u6ca1\u6709\u65f6\uff0c\u70b9\u90a3\u91cc\u7684\u300c\u5237\u65b0\u300d\u3002\u5df2\u7ecf\u5f00\u7740\u7684\u4efb\u52a1\u4e0d\u4f1a\u51fa\u73b0\u5706\u73af\u3002Pacer \u66f4\u65b0\u4e86\u8fdb\u5ea6\u5de5\u5177\u540e\uff0c%3$@ \u4f1a\u8981\u6c42\u518d\u4fe1\u4efb\u4e00\u6b21\u3002",
     "progress_guide.line.cleanup_failed": "\u65e0\u6cd5\u79fb\u9664\u8fdb\u5ea6\u5de5\u5177\u3002",
     "progress_guide.line.conflict": "%@ \u91cc\u5df2\u6709\u4e00\u4e2a\u4e0d\u662f Pacer \u52a0\u7684 pacer_progress\u3002",
@@ -1169,6 +1171,9 @@
     "progress_guide.onboarding.many": "%@ \u8fd8\u8981\u5404\u81ea\u5728\u8fde\u63a5\u5668\u91cc\u70b9\u4e00\u6b21\u300c\u4fe1\u4efb\u300d\u3002",
     "progress_guide.onboarding.one": "\u8fd8\u8981\u5728 %@ \u7684\u8fde\u63a5\u5668\u91cc\u70b9\u4e00\u6b21\u300c\u4fe1\u4efb\u300d\u3002",
     "progress_guide.onboarding.separator": " \u548c ",
+    "progress_guide.state.current": "\u5f53\u524d\u6b65\u9aa4",
+    "progress_guide.state.done": "\u5df2\u5b8c\u6210",
+    "progress_guide.state.pending": "\u672a\u5f00\u59cb",
     "progress_guide.step.added": "\u5df2\u52a0\u5165\u8fdb\u5ea6\u5de5\u5177",
     "progress_guide.step.first_task": "\u5f00\u4e00\u4e2a\u65b0\u4efb\u52a1",
     "progress_guide.step.retrust": "\u5728 %@ \u91cc\u518d\u4fe1\u4efb\u4e00\u6b21 pacer_progress",
@@ -1183,6 +1188,7 @@
     "progress_guide.trust_card.caption": "\u7b2c\u4e09\u65b9\u670d\u52a1",
     "progress_guide.trust_card.detail": "\u9996\u6b21\u8fde\u63a5\u6b64 MCP \u670d\u52a1\u9700\u8981\u60a8\u7684\u4fe1\u4efb\u786e\u8ba4\u3002",
     "progress_guide.trust_card.path": "\u8fde\u63a5\u5668 \u203a \u81ea\u5b9a\u4e49\u8fde\u63a5\u5668",
+    "progress_guide.trust_card.refresh": "\u5237\u65b0",
     "progress_guide.waiting": "\u7b49\u4f60\u70b9\u5b8c",
     "provider.automatic": "\u81ea\u52a8",
     "provider.choose_claude_home": "\u9009\u62e9 Claude \u914d\u7f6e\u76ee\u5f55",

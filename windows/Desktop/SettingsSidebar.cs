@@ -63,6 +63,7 @@ internal sealed partial class SettingsWindow
             PageAccessibility.Retire(navigation[page.Provider]);
             navigation.Remove(page.Provider);
             moduleOff.Remove(page.Provider);
+            attentionDots.Remove(page.Provider);
         }
         harnessRows.Children.Clear();
         harnessPages = pages;
@@ -230,7 +231,7 @@ internal sealed partial class SettingsWindow
             modulesMoreCount = Label("", 11); modulesMoreCount.Visibility = Visibility.Collapsed;
             modulesMoreCount.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); end.Children.Add(modulesMoreCount);
         }
-        if (pane is "claude" or "codex" or "remote")
+        if (pane is "claude" or "codex" or "remote" || HarnessPane(pane))
         {
             // Amber only says that something needs the user.
             var dot = new Ellipse { Width = 7, Height = 7, Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };

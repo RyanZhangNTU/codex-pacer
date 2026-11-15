@@ -34,8 +34,8 @@ enum WorkBuddyHarness {
             windowsExecutables: china ? ["WorkBuddy/WorkBuddy.exe", "Programs/WorkBuddy/WorkBuddy.exe"]
                 : ["WorkBuddyAI/WorkBuddyAI.exe", "Programs/WorkBuddyAI/WorkBuddyAI.exe"],
             macApplicationNames: china ? ["WorkBuddy"] : ["WorkBuddy AI"],
-            // WorkBuddy's own Mac updater accepts these two IDs; the China build uses the Tencent one.
-            macBundleIdentifiers: china ? ["com.tencent.workbuddy.mac"] : ["com.workbuddy.workbuddy"],
+            // Read from the installed apps: WorkBuddy 5.9.3 and WorkBuddy AI 5.9.4, both from team FN2V63AD2J.
+            macBundleIdentifiers: china ? ["com.tencent.workbuddy.mac"] : ["com.workbuddy.workbuddy-ai"],
             macSigningOrganization: "Tencent Technology (Shenzhen) Company Limited",
             macTeamIdentifier: "FN2V63AD2J",
             conversationScheme: china ? "workbuddy" : "workbuddy-ai",

@@ -70,6 +70,14 @@ internal sealed partial class SettingsWindow
         }
         if (enabled.Contains("codex") && sidebarCodexReport is { SelectedExecutable: null })
             items.Add(new("codex", "Codex CLI · " + ui.Text("provider.state.not_found"), ui.Text("main.attention.codex_cli"), ui.Text("main.overview.open"), () => NavigateAsync("codex")));
+        // A module whose app must still trust Pacer's progress tool, or that lost it.
+        foreach (var module in snapshot.Modules ?? [])
+        {
+            if (!module.Enabled || !HarnessPane(module.Provider) || module.ProgressGuide is not { Attention: true, Summary: string summary } guide) continue;
+            string detail = guide.Steps.FirstOrDefault(step => step.State == "current")?.Title ?? guide.Line ?? "";
+            string provider = module.Provider;
+            items.Add(new(provider, PaneTitle(provider) + " · " + summary, detail, ui.Text("main.overview.open"), () => NavigateAsync(provider)));
+        }
         int problems = RemoteProblems(snapshot);
         if (problems > 0)
             items.Add(new("remote", ui.Text("main.pane.remote"), ui.Text(problems == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying").Replace("%ld", problems.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal),

@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "225dc39271aa07492501ac5a12656ada8c85f03d358a1df17910e0ae1d936c95",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "d50b6477d8af405bded0ee6ea9e4636943cc04cc63471403017716485bd9ed0b",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -1157,6 +1157,8 @@
     "progress_guide.chip.trust": "1 step left",
     "progress_guide.chip.turned_off": "Off in %@",
     "progress_guide.chip.unknown": "Can\u2019t check",
+    "progress_guide.hint.close": "Hide",
+    "progress_guide.hint.open": "Settings",
     "progress_guide.info": "%1$@ reports how much of a task is done, and Pacer draws it around the task icon. %2$@ connects only tools you trust, so trust pacer_progress once in its connectors. If it isn\u2019t listed, click Refresh there. Tasks that are already open won\u2019t show a ring. When a Pacer update changes the tool, %3$@ asks you to trust it again.",
     "progress_guide.line.cleanup_failed": "Couldn\u2019t remove the progress tool.",
     "progress_guide.line.conflict": "%@ already has a pacer_progress that Pacer didn\u2019t add.",
@@ -1169,6 +1171,9 @@
     "progress_guide.onboarding.many": "%@ each need one Trust in their connectors.",
     "progress_guide.onboarding.one": "%@ also needs one Trust in its connectors.",
     "progress_guide.onboarding.separator": " and ",
+    "progress_guide.state.current": "Current step",
+    "progress_guide.state.done": "Done",
+    "progress_guide.state.pending": "Not yet",
     "progress_guide.step.added": "Progress tool added",
     "progress_guide.step.first_task": "Start a new task",
     "progress_guide.step.retrust": "Trust pacer_progress in %@ again",
@@ -1183,6 +1188,7 @@
     "progress_guide.trust_card.caption": "Third-party service",
     "progress_guide.trust_card.detail": "Trust this MCP service before it first connects.",
     "progress_guide.trust_card.path": "Connectors \u203a Custom connectors",
+    "progress_guide.trust_card.refresh": "Refresh",
     "progress_guide.waiting": "Waiting for you",
     "provider.automatic": "Automatic",
     "provider.choose_claude_home": "Choose the Claude configuration folder",

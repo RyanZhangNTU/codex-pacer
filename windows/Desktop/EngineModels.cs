@@ -81,12 +81,17 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
     string? UsageGuideUrl = null, bool? ProgressConnector = null, bool? HasTaskProgress = null, bool? ReportsSessionUsage = null,
     string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null,
     EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
-    bool? Local = null, string? Home = null, string? DefaultHome = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null)
+    bool? Local = null, string? Home = null, string? DefaultHome = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
+    HarnessProgressGuide? ProgressGuide = null)
 {
     /// Found on this computer or turned on explicitly. Older engines send
     /// nothing, so their modules stay listed.
     internal bool IsProminent => Prominent ?? true;
 }
+/// The progress ring card for a module whose app must trust Pacer's tool, worded by Core.
+internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
+    string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, bool ShowsTrustCard, string Info);
+internal sealed record HarnessProgressStep(string Title, string State);
 internal sealed record EngineModuleBrand(string Dark, string Light, double AccentLift, double AccentLuminance);
 internal sealed record EngineModuleLaunch(string Scheme, string Publisher, IReadOnlyList<string> Executables, string? ConnectorsPath);
 internal sealed record HarnessUsage(int? ContextUsed, int? ContextCapacity, double? SessionCredits, double MeasuredAt);

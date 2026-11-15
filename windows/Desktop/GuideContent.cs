@@ -324,8 +324,10 @@ internal sealed class GuideContent : StackPanel
                     loginProblem.Visibility = blocked.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
                 });
                 var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
+                var ringRow = ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings);
+                ringRow.Children.Add(TrustNote());
                 var choices = Group(54,
-                    ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings),
+                    ringRow,
                     ChoiceRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 28), ui.Text("settings.system_notifications"), ui.Text("main.welcome.notifications_info"), notificationProblem, notification),
                     ChoiceRow(GuideArt.Tile("power", Color.FromRgb(51, 189, 102), 28), ui.Text("settings.open_at_login"), ui.Text("main.welcome.login_info"), loginProblem, Login(ui.Text("settings.open_at_login"), "welcome.startup")),
                     ChoiceRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 28), ui.Text("welcome.layout.title"), ui.Text("main.welcome.layout_info"), null, layout));
@@ -388,6 +390,32 @@ internal sealed class GuideContent : StackPanel
         Grid.SetColumn(control, 2); row.Children.Add(control);
         AutomationProperties.SetHelpText(control, info);
         var host = new StackPanel(); host.Children.Add(row); host.Children.Add(box); return host;
+    }
+    /// Under the ring switch: the apps that must still trust Pacer's progress
+    /// tool themselves, with a way to their page in Settings.
+    private Border TrustNote()
+    {
+        var note = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(11, 7, 8, 7), Margin = new Thickness(52, 0, 12, 10), Visibility = Visibility.Collapsed };
+        note.SetResourceReference(Border.BackgroundProperty, "SettingsNoticeFill");
+        var grid = new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var text = Text("", 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsNoticeText");
+        text.VerticalAlignment = VerticalAlignment.Center; text.Margin = new Thickness(0, 0, 10, 0); grid.Children.Add(text);
+        string? first = null;
+        var open = Button(ui.Text("progress_guide.onboarding.action"), "welcome.rings.trust", () => { if (first != null) settings(first); });
+        Grid.SetColumn(open, 1); grid.Children.Add(open);
+        note.Child = grid; Identify(note, "welcome.rings.note", "");
+        refresh.Add(() =>
+        {
+            var waiting = (snapshot()?.Modules ?? []).Where(module => module.Enabled && module.ProgressConnector == true
+                && !session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)
+                && module.ProgressGuide is { } guide && (guide.Attention || guide.Stage == "adding")).ToArray();
+            first = waiting.FirstOrDefault()?.Provider;
+            string names = string.Join(ui.Text("progress_guide.onboarding.separator"), waiting.Select(module => module.DisplayName ?? module.Provider));
+            text.Text = waiting.Length == 0 ? "" : ui.Text(waiting.Length == 1 ? "progress_guide.onboarding.one" : "progress_guide.onboarding.many").Replace("%@", names, StringComparison.Ordinal);
+            AutomationProperties.SetName(note, text.Text);
+            note.Visibility = waiting.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        });
+        return note;
     }
     private string StartupDetail()
     {

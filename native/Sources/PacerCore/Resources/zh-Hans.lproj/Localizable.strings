@@ -1509,3 +1509,9 @@
 "progress_guide.trust_card.button" = "信任";
 "progress_guide.trust_card.path" = "连接器 › 自定义连接器";
 "progress_guide.waiting" = "等你点完";
+"progress_guide.trust_card.refresh" = "刷新";
+"progress_guide.state.done" = "已完成";
+"progress_guide.state.current" = "当前步骤";
+"progress_guide.state.pending" = "未开始";
+"progress_guide.hint.open" = "设置";
+"progress_guide.hint.close" = "隐藏";

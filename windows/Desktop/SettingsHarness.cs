@@ -5,7 +5,9 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace CodexPacer.Windows;
 
@@ -17,9 +19,15 @@ internal sealed partial class SettingsWindow
     private StackPanel? harnessSections;
     private Border? harnessOff;
     private CheckBox? harnessEnabled, harnessProgress, harnessTurnCredits;
-    private Button? harnessAutomatic, harnessRefresh, harnessProgressRetry, harnessProgressConnectors;
+    private Button? harnessAutomatic, harnessRefresh;
     private Ellipse? harnessStatusDot, harnessAccountDot;
-    private TextBlock? harnessDetection, harnessState, harnessHint, harnessProgressState;
+    private TextBlock? harnessDetection, harnessState, harnessHint;
+    // The progress ring's step card, for a module whose app must trust Pacer's tool.
+    private Border? harnessProgressChip;
+    private TextBlock? harnessProgressChipText, harnessProgressInfo;
+    private StackPanel? harnessProgressBody;
+    private string harnessProgressKey = "";
+    private DispatcherTimer? harnessProgressPoll;
     private TextBlock? harnessAccountState, harnessAccountHelp;
     private StackPanel? harnessCreditsBlock;
     private string harnessCreditsKey = "";
@@ -30,9 +38,11 @@ internal sealed partial class SettingsWindow
     {
         harnessSections = null; harnessOff = null;
         harnessEnabled = harnessProgress = harnessTurnCredits = null;
-        harnessAutomatic = harnessRefresh = harnessProgressRetry = harnessProgressConnectors = null;
+        harnessAutomatic = harnessRefresh = null;
         harnessStatusDot = harnessAccountDot = null;
-        harnessDetection = harnessState = harnessHint = harnessProgressState = null;
+        harnessDetection = harnessState = harnessHint = null;
+        harnessProgressPoll?.Stop(); harnessProgressPoll = null;
+        harnessProgressChip = null; harnessProgressChipText = harnessProgressInfo = null; harnessProgressBody = null; harnessProgressKey = "";
         harnessAccountState = harnessAccountHelp = null; harnessCreditsBlock = null; harnessCreditsKey = "";
         harnessAccountSignIn = harnessAccountOptions = harnessUsageGuide = null;
         refreshingHarness = false;
@@ -97,7 +107,9 @@ internal sealed partial class SettingsWindow
         if (descriptor.Local == true) harnessSections.Children.Add(Card(ProviderHomeEditor(provider)));
     }
 
-    private Grid BuildHarnessProgressRow(EngineClient client, string provider, string id, EngineModule descriptor)
+    /// The progress ring switch. A module whose app must trust Pacer's tool also
+    /// gets Core's step card under it, until the app has reported progress.
+    private UIElement BuildHarnessProgressRow(EngineClient client, string provider, string id, EngineModule descriptor)
     {
         string title = ui.Text("main.claude.ring");
         var progress = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };
@@ -108,37 +120,180 @@ internal sealed partial class SettingsWindow
             DisabledHarnessProgress = value ? p.DisabledHarnessProgress.Where(item => item != provider).ToArray()
                 : p.DisabledHarnessProgress.Append(provider).Distinct(StringComparer.Ordinal).ToArray()
         });
-        var controls = new StackPanel { Orientation = Orientation.Horizontal };
-        if (descriptor.ProgressConnector == true)
+        string help = descriptor.ProgressGuide?.Info
+            ?? (ui.Has(provider + ".progress_ring_help") ? ui.Text(provider + ".progress_ring_help") : ui.Text("harness.show_progress_help"));
+        if (descriptor.ProgressConnector != true) return InfoRow(title, progress, help, id: id + ".progress");
+        var trailing = new StackPanel { Orientation = Orientation.Horizontal };
+        harnessProgressChipText = Label("", 11.5, FontWeights.SemiBold);
+        harnessProgressChip = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center, Child = harnessProgressChipText, Visibility = Visibility.Collapsed };
+        Identify(harnessProgressChip, id + ".progress_chip", "");
+        trailing.Children.Add(harnessProgressChip); trailing.Children.Add(progress);
+        var row = InfoRow(title, trailing, help, id: id + ".progress");
+        harnessProgressInfo = row.Children.OfType<Border>().FirstOrDefault(box => Grid.GetRow(box) == 1)?.Child as TextBlock;
+        harnessProgressBody = new StackPanel { Margin = new Thickness(14, 0, 14, 0), Visibility = Visibility.Collapsed };
+        Identify(harnessProgressBody, id + ".progress_guide", title);
+        // While the card waits on the app, it checks again every few seconds, so
+        // trusting the tool in WorkBuddy beside Pacer ticks the step by itself.
+        var poll = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
+        poll.Tick += async (_, _) =>
         {
-            harnessProgressState = Detail("");
-            Identify(harnessProgressState, id + ".progress_state", "");
-            var retry = new Button { Content = ui.Text("connections.retry"), Margin = new Thickness(0, 0, 8, 0) };
-            harnessProgressRetry = retry; editors.Add(retry);
-            Identify(retry, id + ".progress_retry", ui.Text("connections.retry"));
-            retry.Click += async (_, _) =>
+            if (harnessProgressPoll != poll || !IsVisible) { poll.Stop(); return; }
+            await RefreshHarnessProgressConnectionAsync(polling: true);
+        };
+        harnessProgressPoll = poll;
+        var panel = new StackPanel(); panel.Children.Add(row); panel.Children.Add(harnessProgressBody);
+        return panel;
+    }
+
+    /// Draws Core's guide: the chip beside the switch, then the steps, or one
+    /// line and its action for a problem. Explanations stay behind the ⓘ.
+    internal void RefreshHarnessProgressGuide(string provider, HarnessProgressGuide? guide, bool editable)
+    {
+        if (harnessProgressBody == null) return;
+        string id = "settings." + provider;
+        if (harnessProgressChip != null && harnessProgressChipText != null)
+        {
+            harnessProgressChip.Visibility = guide == null ? Visibility.Collapsed : Visibility.Visible;
+            string chip = guide == null ? "" : guide.Tone == "success" ? "\u2713 " + guide.Chip : guide.Chip;
+            harnessProgressChipText.Text = chip; AutomationProperties.SetName(harnessProgressChip, chip);
+            var (fill, ink) = guide?.Tone switch
             {
-                try { await client.SendAsync("retryHarnessProgressSetup", new { provider }); }
-                catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException)
-                { if (harnessProgressRetry == retry) ShowIssue("harness.progress_state.failed"); }
+                "attention" => ("SettingsNoticeFill", "SettingsNoticeText"),
+                "info" => ("SettingsChipOn", "SettingsChipOnText"),
+                "success" => ("SettingsSuccessFill", "SettingsSuccessText"),
+                "error" => ("SettingsErrorFill", "SettingsErrorText"),
+                _ => ("SettingsFill", "SettingsSecondary")
             };
-            controls.Children.Add(retry);
-            if (WindowsConversationApplication.CanOpenConnectors(provider))
-            {
-                var connectors = new Button { Content = ui.Text("harness.progress_state.open_connectors"), Margin = new Thickness(0, 0, 8, 0) };
-                harnessProgressConnectors = connectors;
-                Identify(connectors, id + ".progress_connectors", ui.Text("harness.progress_state.open_connectors"));
-                connectors.Click += async (_, _) =>
-                {
-                    if (!await WindowsConversationApplication.OpenProgressConnectorsAsync(provider) && harnessProgressConnectors == connectors)
-                        ShowIssue("harness.progress_state.open_failed");
-                };
-                controls.Children.Add(connectors);
-            }
+            harnessProgressChip.SetResourceReference(Border.BackgroundProperty, fill);
+            harnessProgressChipText.SetResourceReference(TextBlock.ForegroundProperty, ink);
         }
-        controls.Children.Add(progress);
-        string help = ui.Has(provider + ".progress_ring_help") ? ui.Text(provider + ".progress_ring_help") : ui.Text("harness.show_progress_help");
-        return InfoRow(title, controls, help, harnessProgressState, id + ".progress");
+        if (harnessProgressInfo != null && guide != null) harnessProgressInfo.Text = guide.Info;
+        string key = System.Text.Json.JsonSerializer.Serialize(new { guide, editable, ui.Language });
+        if (key == harnessProgressKey) return;
+        harnessProgressKey = key;
+        foreach (UIElement child in harnessProgressBody.Children) PageAccessibility.Retire(child);
+        harnessProgressBody.Children.Clear();
+        bool shown = guide != null && (guide.Steps.Count > 0 || guide.Line != null);
+        harnessProgressBody.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
+        if (!shown) return;
+
+        Button? Action()
+        {
+            if (guide!.Action is not string action || guide.ActionTitle is not string title) return null;
+            var button = new Button { Content = title, IsEnabled = editable && !demo, Margin = new Thickness(0, 0, 10, 0) };
+            if (action != "retry") button.Style = (Style)FindResource("SettingsProminentButton");
+            Identify(button, id + ".progress_action", title); editors.Add(button);
+            button.Click += async (_, _) =>
+            {
+                bool done = action switch
+                {
+                    "openConnectors" => await WindowsConversationApplication.OpenProgressConnectorsAsync(provider),
+                    "openApp" => await WindowsConversationApplication.OpenApplicationAsync(provider),
+                    _ => await RetryHarnessProgressAsync(provider)
+                };
+                if (!done && harnessProgressBody != null) ShowIssue(action == "retry" ? "harness.progress_state.failed" : "harness.progress_state.open_failed");
+            };
+            return button;
+        }
+        UIElement ActionRow()
+        {
+            var row = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+            if (Action() is { } button) row.Children.Add(button);
+            if (guide!.Waiting)
+            {
+                var waiting = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                var glyph = new IconGlyph { Symbol = "clock", Width = 13, Height = 13, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
+                glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+                var text = Label(ui.Text("progress_guide.waiting"), 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+                text.VerticalAlignment = VerticalAlignment.Center;
+                waiting.Children.Add(glyph); waiting.Children.Add(text);
+                Identify(waiting, id + ".progress_waiting", text.Text);
+                row.Children.Add(waiting);
+            }
+            return row;
+        }
+
+        if (guide!.Steps.Count == 0)
+        {
+            var problem = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+            var line = Label(guide.Line!, 12.5); line.TextWrapping = TextWrapping.Wrap;
+            Identify(line, id + ".progress_line", guide.Line!); problem.Children.Add(line);
+            problem.Children.Add(ActionRow());
+            harnessProgressBody.Children.Add(problem);
+            return;
+        }
+        for (int index = 0; index < guide.Steps.Count; index++)
+        {
+            var step = guide.Steps[index];
+            var line = new Grid { Margin = new Thickness(0, index == 0 ? 0 : 4, 0, index == guide.Steps.Count - 1 ? 12 : 4) };
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
+            line.ColumnDefinitions.Add(new ColumnDefinition());
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var mark = new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(10), VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 1, 0, 0) };
+            var number = new TextBlock { FontSize = 11, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                Text = step.State == "done" ? "\u2713" : (index + 1).ToString(System.Globalization.CultureInfo.CurrentCulture) };
+            switch (step.State)
+            {
+                case "done": mark.SetResourceReference(Border.BackgroundProperty, "SettingsSuccess"); number.Foreground = Brushes.White; break;
+                case "current": mark.SetResourceReference(Border.BackgroundProperty, "SettingsAccent"); number.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSelectionText"); break;
+                default: mark.BorderThickness = new Thickness(1.5); mark.SetResourceReference(Border.BorderBrushProperty, "SettingsDisabled"); number.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); break;
+            }
+            mark.Child = number; line.Children.Add(mark);
+            var body = new StackPanel(); Grid.SetColumn(body, 1);
+            var title = Label(step.Title, 13, step.State == "current" ? FontWeights.SemiBold : FontWeights.Normal); title.TextWrapping = TextWrapping.Wrap;
+            title.SetResourceReference(TextBlock.ForegroundProperty, step.State switch { "done" => "SettingsSecondary", "current" => "SettingsPrimary", _ => "SettingsDisabled" });
+            body.Children.Add(title);
+            if (step.State == "current" && (guide.Action != null || guide.Waiting)) body.Children.Add(ActionRow());
+            line.Children.Add(body);
+            if (step.State == "current" && guide.ShowsTrustCard)
+            {
+                var card = TrustCard(provider); Grid.SetColumn(card, 2); line.Children.Add(card);
+            }
+            Identify(line, id + ".progress_step" + index, step.Title);
+            AutomationProperties.SetItemStatus(line, ui.Text("progress_guide.state." + step.State));
+            harnessProgressBody.Children.Add(line);
+        }
+    }
+
+    /// A small picture of the app's own trust card, so people know what to click there.
+    private DecorativeBorder TrustCard(string provider)
+    {
+        var stack = new StackPanel();
+        var path = new DockPanel { Margin = new Thickness(0, 0, 0, 7) };
+        var refresh = new Border { CornerRadius = new CornerRadius(5), BorderThickness = new Thickness(1), Padding = new Thickness(6, 0, 6, 1) };
+        refresh.SetResourceReference(Border.BorderBrushProperty, "SettingsPickerStroke");
+        var refreshText = Label(ui.Text("progress_guide.trust_card.refresh"), 10.5); refresh.Child = refreshText;
+        DockPanel.SetDock(refresh, Dock.Right); path.Children.Add(refresh);
+        var trail = Label(ui.Text("progress_guide.trust_card.path"), 10.5); trail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        trail.VerticalAlignment = VerticalAlignment.Center; path.Children.Add(trail);
+        stack.Children.Add(path);
+        var item = new Border { CornerRadius = new CornerRadius(7), BorderThickness = new Thickness(1), Padding = new Thickness(9, 7, 9, 8) };
+        item.SetResourceReference(Border.BorderBrushProperty, "SettingsSeparator"); item.SetResourceReference(Border.BackgroundProperty, "SettingsCard");
+        var lines = new StackPanel();
+        var name = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
+        name.Children.Add(new Border { Width = 14, Height = 14, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromRgb(48, 176, 199)), Margin = new Thickness(0, 0, 6, 0) });
+        name.Children.Add(Label("pacer_progress", 11.5, FontWeights.SemiBold));
+        lines.Children.Add(name);
+        var caption = Label(ui.Text("progress_guide.trust_card.caption"), 10.5); caption.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); lines.Children.Add(caption);
+        var detail = Label(ui.Text("progress_guide.trust_card.detail"), 11); detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 2, 0, 6); lines.Children.Add(detail);
+        var trust = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(12, 3, 12, 4), HorizontalAlignment = HorizontalAlignment.Right, BorderThickness = new Thickness(2) };
+        trust.Background = new SolidColorBrush(PacerPalette.BrandColor(provider));
+        trust.SetResourceReference(Border.BorderBrushProperty, "SettingsChipOnStroke");
+        trust.Child = new TextBlock { Text = ui.Text("progress_guide.trust_card.button"), FontSize = 11.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
+        lines.Children.Add(trust);
+        item.Child = lines; stack.Children.Add(item);
+        var frame = new DecorativeBorder { Width = 236, Margin = new Thickness(14, 0, 0, 0), CornerRadius = new CornerRadius(9), Padding = new Thickness(9), Child = stack, VerticalAlignment = VerticalAlignment.Top };
+        frame.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");
+        // A picture only: the step's title and button carry the meaning.
+        return frame;
+    }
+
+    private async Task<bool> RetryHarnessProgressAsync(string provider)
+    {
+        if (engine is not { IsConnectionClosed: false } client) return false;
+        try { await client.SendAsync("retryHarnessProgressSetup", new { provider }); return true; }
+        catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { return false; }
     }
 
     /// As Claude's account row: a dot and state, then Sign In, or the account menu once signed in.
@@ -296,10 +451,13 @@ internal sealed partial class SettingsWindow
         }
     }
 
-    private async Task RefreshHarnessProgressConnectionAsync()
+    /// Checks the app's trust again: when Settings comes forward, and every few
+    /// seconds while the step card waits on the app.
+    private async Task RefreshHarnessProgressConnectionAsync(bool polling = false)
     {
-        if (demo || !IsActive || engine is not { IsConnectionClosed: false } client ||
-            HarnessModule(activePane) is not { Enabled: true, ProgressSetup: "configured", ProgressConnection: not null } module ||
+        if (demo || (!polling && !IsActive) || engine is not { IsConnectionClosed: false } client ||
+            HarnessModule(activePane) is not { Enabled: true, ProgressConnector: true, ProgressSetup: "configured" or "missingHome" } module ||
+            (polling && module.ProgressGuide is not { Waiting: true }) ||
             session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)) return;
         try { await client.SendAsync("refreshHarnessProgressConnection", new { provider = module.Provider }); }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException) { }
@@ -332,38 +490,13 @@ internal sealed partial class SettingsWindow
             harnessTurnCredits.IsChecked = !session.Current.HiddenTurnCredits.Contains(module.Provider, StringComparer.Ordinal);
             harnessTurnCredits.IsEnabled = editable;
         }
-        string? setup = closed ? null : module.ProgressSetup;
-        string? connection = setup == "configured" && progressOn ? module.ProgressConnection : null;
-        bool retrySetup = setup is "missingHome" or "conflict" or "failed" || connection == "missing";
-        string? progressKey = setup switch
+        var guide = closed || !module.Enabled ? null : module.ProgressGuide;
+        RefreshHarnessProgressGuide(module.Provider, guide, editable);
+        if (harnessProgressPoll != null)
         {
-            "settingUp" => "harness.progress_state.setting_up",
-            "configured" when progressOn => connection switch
-            {
-                "needsTrust" => "harness.progress_state.needs_trust",
-                "trusted" => "harness.progress_state.trusted",
-                "disabled" => "harness.progress_state.disabled",
-                "toolDisabled" => "harness.progress_state.tool_disabled",
-                "missing" => "harness.progress_state.missing",
-                "unknown" => "harness.progress_state.unknown",
-                _ => "harness.progress_state.configured"
-            },
-            "missingHome" => "harness.progress_state.missing_home",
-            "conflict" => "harness.progress_state.conflict",
-            "failed" => progressOn ? "harness.progress_state.failed" : "harness.progress_state.cleanup_failed",
-            _ => null
-        };
-        SetHarnessText(harnessProgressState, progressKey == null ? "" : ui.Text(progressKey));
-        if (harnessProgressRetry != null)
-        {
-            harnessProgressRetry.Visibility = retrySetup ? Visibility.Visible : Visibility.Collapsed;
-            harnessProgressRetry.IsEnabled = editable && retrySetup;
-        }
-        if (harnessProgressConnectors != null)
-        {
-            // Trusting the tool is the one step left to the user.
-            harnessProgressConnectors.Visibility = connection is "needsTrust" or "disabled" or "toolDisabled" or "unknown" ? Visibility.Visible : Visibility.Collapsed;
-            harnessProgressConnectors.IsEnabled = editable && !demo;
+            bool poll = guide is { Waiting: true } && progressOn && !demo;
+            if (poll && !harnessProgressPoll.IsEnabled) harnessProgressPoll.Start();
+            else if (!poll) harnessProgressPoll.Stop();
         }
         var (status, hint, tone) = closed ? (ui.Text("windows.connection.closed"), "", "neutral") : HarnessStatus(module);
         SetStatus(harnessStatusDot, harnessState, status, tone);

@@ -122,7 +122,7 @@ final class HarnessCreditsPresentationTests: XCTestCase {
         XCTAssertEqual(WorkBuddyHarness.international.home, ".workbuddy-ai")
         XCTAssertEqual(WorkBuddyHarness.china.conversationScheme, "workbuddy")
         XCTAssertEqual(WorkBuddyHarness.china.macBundleIdentifiers, ["com.tencent.workbuddy.mac"])
-        XCTAssertEqual(WorkBuddyHarness.international.macBundleIdentifiers, ["com.workbuddy.workbuddy"], "WorkBuddy's own Mac updater names both IDs")
+        XCTAssertEqual(WorkBuddyHarness.international.macBundleIdentifiers, ["com.workbuddy.workbuddy-ai"], "As read from the installed WorkBuddy AI")
         XCTAssertEqual(WorkBuddyHarness.international.macTeamIdentifier, WorkBuddyHarness.china.macTeamIdentifier)
         XCTAssertEqual(WorkBuddyHarness.international.conversationScheme, "workbuddy-ai")
         XCTAssertEqual(WorkBuddyHarness.accountCredits(.china).sites.map(\.url.host), ["www.workbuddy.cn"])

@@ -85,7 +85,7 @@ A module not found on the computer stays in the Module Library, so most people, 
 | Credits | Per turn from `session_usage.credit_json`, keyed by request ID; per day from the UUIDv7 time in those IDs; the balance from the site's bill after sign-in. |
 | Credit kinds | The bill's packages follow WorkBuddy's own families, keyed by package code. Plan base and plan bonus refresh every plan cycle. Rewards and top-ups never refresh and lapse at their own dates. Only the highest plan base counts, as on WorkBuddy's own page. |
 | Dial | Core words it for both platforms (`HarnessCreditsPresentation`). The ring is the month's credits. Above the figure are the days to the refresh, or the extra credits lapsing within the user's window. The center shows the month's share by default, or the month's credits, or everything available. The gap holds the extra credits as an amount, or "This month" when there are none. Extra credits are never shown as a share. |
-| Progress | `pacer_progress` in `mcp.json` with a rule asking tasks to report; WorkBuddy asks the user to trust it once. On by default, like the other rings. |
+| Progress | `pacer_progress` in `mcp.json` with a rule asking tasks to report; WorkBuddy asks the user to trust it once. On by default, like the other rings. `HarnessProgressGuide` turns the setup into steps until WorkBuddy reports progress. |
 
 Measurements and live checks are in [Harness validation](harness-validation.md).
 

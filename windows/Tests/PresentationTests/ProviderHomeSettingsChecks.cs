@@ -70,6 +70,7 @@ internal static class ProviderHomeSettingsChecks
             Check(Descendants(window).OfType<TextBlock>().Any(value => value.Text == detection), "The header describes detection on a Windows PC");
             var progress = Find<CheckBox>(window, id + ".progress");
             Check(progress.IsEnabled && progress.IsChecked == true, "The progress ring is on by default, like the built-in services' rings");
+            CheckProgressGuide(window, id);
             Toggle(progress);
             await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false
                 && session.Current.DisabledHarnessProgress.SequenceEqual(["workbuddy"]), "The progress switch saves independently of the module mode");
@@ -232,6 +233,31 @@ internal static class ProviderHomeSettingsChecks
             "Cloud Projects remains connected and the implemented embedding control is enabled");
     }
     private static void Enter(Window window, TextBox field) => field.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter) { RoutedEvent = Keyboard.KeyDownEvent });
+    /// Core words each stage; the page draws the steps, one action and the
+    /// app's trust card while waiting, one line for a problem, and only the chip once ready.
+    private static void CheckProgressGuide(SettingsWindow window, string id)
+    {
+        static HarnessProgressGuide Guide(string stage, string tone, HarnessProgressStep[] steps, string? line, string? action, bool waiting, bool card) =>
+            new(stage, stage + " chip", tone, steps, line, action, action == null ? null : stage + " action", action != null, action == null ? null : "summary", waiting, card, "Why and how");
+        bool Shown(string field) => Descendants(window).OfType<FrameworkElement>().Any(value => AutomationProperties.GetAutomationId(value) == id + "." + field && value.Visibility == Visibility.Visible);
+        var body = Find<StackPanel>(window, id + ".progress_guide");
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("trust", "attention",
+            [new("Tool added", "done"), new("Trust it in WorkBuddy", "current"), new("Start a new task", "pending")], null, "openConnectors", true, true), true);
+        Check(body.Visibility == Visibility.Visible && Find<Border>(window, id + ".progress_chip").Visibility == Visibility.Visible
+            && AutomationProperties.GetName(Find<Border>(window, id + ".progress_chip")) == "trust chip"
+            && Shown("progress_step0") && Shown("progress_step2") && Find<Button>(window, id + ".progress_action").Content as string == "trust action"
+            && Shown("progress_waiting") && Descendants(body).OfType<DecorativeBorder>().Count() == 1,
+            "While the app must trust the tool, the card shows its steps, one action, the waiting state and the app's trust card");
+        Check(!Descendants(body).OfType<TextBlock>().Any(text => text.Text == "Why and how"), "The explanation stays behind the ⓘ");
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("turnedOff", "attention", [], "Turn it back on.", "openConnectors", true, false), true);
+        Check(Find<TextBlock>(window, id + ".progress_line").Text == "Turn it back on." && !Shown("progress_step0") && Shown("progress_action")
+            && !Descendants(body).OfType<DecorativeBorder>().Any(), "A problem is one line and its action");
+        window.RefreshHarnessProgressGuide("workbuddy", Guide("ready", "success", [], null, null, false, false), true);
+        Check(body.Visibility == Visibility.Collapsed && AutomationProperties.GetName(Find<Border>(window, id + ".progress_chip")) == "✓ ready chip",
+            "Once ready, the card folds to the row and its chip");
+        window.RefreshHarnessProgressGuide("workbuddy", null, true);
+        Check(Find<Border>(window, id + ".progress_chip").Visibility == Visibility.Collapsed, "Without a guide the row is only the switch");
+    }
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().SingleOrDefault(value => AutomationProperties.GetAutomationId(value) == id)
