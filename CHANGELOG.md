@@ -9,7 +9,7 @@
 - SSH tasks come back as soon as the network does. After sleep, a display wake, an unlock or a VPN reconnect, Pacer retries the SSH hosts it could not reach instead of waiting out their backoff of up to 15 minutes.
 - The progress ring asks every agent in the same words to report whenever it makes progress, so rings move more steadily. Claude's progress switch has one mode; older settings are updated, on remote hosts too.
 - A Codex chat started outside a project shows the name Codex gives it while it runs, instead of its folder name. A model from another family keeps its brand in its short name, such as DeepSeek V4 Pro in a Codex task.
-- Windows: sign-in windows for Claude, DeepSeek and WorkBuddy use the Mac's banner and close by themselves once the account is confirmed. File changes that arrive together are read correctly; records after the first could be read from the wrong place.
+- Windows: sign-in windows for Claude, DeepSeek and WorkBuddy say what signing in gives in a banner above the page, and close by themselves once the account is confirmed, with no Continue button. Task updates that arrive in a burst are no longer missed: when several files changed at once, every change after the first could be read from the wrong place.
 
 ## 4.4.4
 
