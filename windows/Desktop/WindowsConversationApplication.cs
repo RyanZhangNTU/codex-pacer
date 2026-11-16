@@ -22,7 +22,8 @@ internal sealed class WindowsConversationApplication
     private readonly Func<Uri, Task<bool>> web;
     private readonly Func<uint, ulong, bool> host;
     private readonly Func<string, Uri, bool> signedHandler;
-    private sealed record SignedHandler(string Scheme, string Publisher, string[] ProgramFiles, string[] UserPrograms, string? ConnectorsPath);
+    /// `Executables` are the app's file names; it may be installed to any local folder.
+    private sealed record SignedHandler(string Scheme, string Publisher, string[] Executables, string? ConnectorsPath);
     // Modules that open through their own URL scheme come from the engine's
     // registry; the handler must still carry the declared signer.
     private static volatile IReadOnlyDictionary<string, SignedHandler> SignedHandlers = new Dictionary<string, SignedHandler>(StringComparer.Ordinal);
@@ -33,15 +34,16 @@ internal sealed class WindowsConversationApplication
         {
             if (module.Launch is not { } launch || !DesktopPreferences.ValidProviderId(module.Provider)
                 || !Regex.IsMatch(launch.Scheme, "^[a-z][a-z0-9+.-]{0,31}$") || launch.Publisher.Length is 0 or > 256) continue;
-            string[] paths = launch.Executables.Where(path => path.Length is > 0 and <= 260 && !Path.IsPathRooted(path) && !path.Contains(".."))
-                .Select(path => path.Replace('/', '\\')).ToArray();
-            if (paths.Length == 0) continue;
+            string[] names = launch.Executables.Where(path => path.Length is > 0 and <= 260 && !Path.IsPathRooted(path) && !path.Contains(".."))
+                .Select(path => Path.GetFileName(path.Replace('/', '\\'))).Where(name => name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (names.Length == 0) continue;
             string? connectors = launch.ConnectorsPath is { } value && Regex.IsMatch(value, "^[a-z][a-z0-9/-]{0,63}$") ? value : null;
-            next[module.Provider] = new(launch.Scheme, launch.Publisher, paths, paths, connectors);
+            next[module.Provider] = new(launch.Scheme, launch.Publisher, names, connectors);
         }
         if (!next.Keys.Order().SequenceEqual(SignedHandlers.Keys.Order()) || next.Any(pair => !SignedHandlers.TryGetValue(pair.Key, out var known)
             || known.Scheme != pair.Value.Scheme || known.Publisher != pair.Value.Publisher || known.ConnectorsPath != pair.Value.ConnectorsPath
-            || !known.ProgramFiles.SequenceEqual(pair.Value.ProgramFiles))) SignedHandlers = next;
+            || !known.Executables.SequenceEqual(pair.Value.Executables))) SignedHandlers = next;
     }
     internal static bool CanOpenApplication(string provider) => SignedHandlers.ContainsKey(provider);
     internal static bool CanOpenConnectors(string provider) => SignedHandlers.TryGetValue(provider, out var handler) && handler.ConnectorsPath != null;
@@ -71,8 +73,8 @@ internal sealed class WindowsConversationApplication
         if (!SignedHandlers.TryGetValue(provider, out var application)) return RestartResult.Failed;
         try
         {
-            // Nothing is ended unless Pacer can start the app again: an app in a
-            // folder of its own choosing, or with an edited handler, stays running.
+            // Nothing is ended unless Pacer can start the app again: an app whose
+            // handler is edited, unsigned or on another computer stays running.
             if (await Task.Run(() => ResolveSignedHandler(application)) == null) return RestartResult.Failed;
             bool quit = await Task.Run(async () =>
             {
@@ -210,27 +212,28 @@ internal sealed class WindowsConversationApplication
         return process != null;
     }
     /// The app Pacer may start: the registered handler, exactly `"path" "%1"`,
-    /// in its standard install folder and signed by its publisher.
+    /// on a local drive, named as the app's executable and signed by its
+    /// publisher. The folder is whichever one the user installed it to.
     private static string? ResolveSignedHandler(SignedHandler application)
     {
         using var key = Registry.ClassesRoot.OpenSubKey(application.Scheme + @"\shell\open\command");
         if (key?.GetValue(null) is not string registeredCommand) return null;
         var handler = Regex.Match(registeredCommand, "\\A\"([^\"\\r\\n]+)\" \"%1\"\\z", RegexOptions.CultureInvariant);
-        if (!handler.Success) return null;
-        string path = Path.GetFullPath(handler.Groups[1].Value);
-        bool Matches(Environment.SpecialFolder folder, string[] names)
-        {
-            string root = Environment.GetFolderPath(folder);
-            return root.Length != 0 && Array.Exists(names, name => StringComparer.OrdinalIgnoreCase.Equals(path, Path.Combine(root, name)));
-        }
-        bool installed = Matches(Environment.SpecialFolder.ProgramFiles, application.ProgramFiles) ||
-            Matches(Environment.SpecialFolder.LocalApplicationData, application.UserPrograms);
-        if (!installed || !File.Exists(path) || !UpdateAuthenticode.VerifySigner(path, encoded =>
+        if (!handler.Success || LocalHandlerPath(handler.Groups[1].Value, application.Executables) is not string path) return null;
+        if (new DriveInfo(path).DriveType is not (DriveType.Fixed or DriveType.Removable) || !File.Exists(path) || !UpdateAuthenticode.VerifySigner(path, encoded =>
         {
             using var signer = X509CertificateLoader.LoadCertificate(encoded);
             return signer.GetNameInfo(X509NameType.SimpleName, false) == application.Publisher;
         })) return null;
         return path;
+    }
+    /// The full path when it is on a drive letter and names one of the app's
+    /// executables; shares, relative paths and other programs are refused.
+    internal static string? LocalHandlerPath(string value, IReadOnlyCollection<string> names)
+    {
+        if (value.Length is < 4 or > 32767 || value.Any(char.IsControl) || !Regex.IsMatch(value, @"\A[A-Za-z]:[\\/]", RegexOptions.CultureInvariant)) return null;
+        string path = Path.GetFullPath(value);
+        return Regex.IsMatch(path, @"\A[A-Za-z]:\\", RegexOptions.CultureInvariant) && names.Contains(Path.GetFileName(path), StringComparer.OrdinalIgnoreCase) ? path : null;
     }
     private static bool Recoverable(Exception error) => error is COMException or Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException or CryptographicException;
 }
