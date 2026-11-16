@@ -581,7 +581,7 @@
 "connections.host.setup_failed" = "配置失败";
 "welcome.window_title" = "欢迎使用 Codex Pacer";
 "welcome.title" = "欢迎使用 Codex Pacer 4.0";
-"welcome.subtitle" = "同时追踪 Codex、Claude Code 与 DeepSeek Harness 的任务、额度和余额。";
+"welcome.subtitle" = "同时追踪 Codex、Claude Code、DeepSeek 与 WorkBuddy 的任务、额度、余额和积分。";
 "welcome.layout.title" = "自定义折叠栏";
 "welcome.layout.detail" = "选择显示哪些内容";
 "welcome.go" = "前往";
@@ -593,7 +593,8 @@
 "welcome.part.task_detail" = "进行中的任务数";
 "welcome.part.rate" = "速度";
 "welcome.part.rate_detail" = "每秒输出";
-"welcome.part.quota" = "剩余额度";
+"welcome.part.quota" = "剩余";
+"welcome.part.quota_detail" = "额度、余额或积分";
 "welcome.part.warning" = "警告";
 "welcome.part.warning_detail" = "有问题才出现";
 "welcome.badges" = "徽标";

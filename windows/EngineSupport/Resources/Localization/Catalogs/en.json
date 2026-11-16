@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "ae31400b60765dae8a8b34155d33eabd5bfba2a36017ce98eb9a0a65290ee87c",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "2a49991bf05d7859c1067727bfbf0bc3a960ad9618bd9c194cfdb4b83c3c519e",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -1453,7 +1453,8 @@
     "welcome.modules_note": "Each module works on its own; turn any of them on or off anytime in Settings.",
     "welcome.next": "Next",
     "welcome.notifications_detail": "When a task needs you, ends, or quota runs low",
-    "welcome.part.quota": "Quota Left",
+    "welcome.part.quota": "Remaining",
+    "welcome.part.quota_detail": "Quota, balance or credits",
     "welcome.part.rate": "Speed",
     "welcome.part.rate_detail": "Tokens per sec",
     "welcome.part.task": "Tasks",
@@ -1464,7 +1465,7 @@
     "welcome.step.island": "Step 1 \u00b7 Meet the Island",
     "welcome.step.start": "Step 2 \u00b7 Choose What to Follow",
     "welcome.step_of": "Step %ld of %ld",
-    "welcome.subtitle": "Follows tasks, quota and balance for Codex, Claude Code and DeepSeek Harness.",
+    "welcome.subtitle": "Tasks, quota, balance and credits for Codex, Claude Code, DeepSeek and WorkBuddy.",
     "welcome.title": "Welcome to Codex Pacer 4.0",
     "welcome.window_title": "Welcome to Codex Pacer",
     "whats_new.app_buttons": "Open Codex or Claude from the island",

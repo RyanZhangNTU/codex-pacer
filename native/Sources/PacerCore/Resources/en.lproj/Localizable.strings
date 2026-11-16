@@ -581,7 +581,7 @@
 "connections.host.setup_failed" = "setup failed";
 "welcome.window_title" = "Welcome to Codex Pacer";
 "welcome.title" = "Welcome to Codex Pacer 4.0";
-"welcome.subtitle" = "Follows tasks, quota and balance for Codex, Claude Code and DeepSeek Harness.";
+"welcome.subtitle" = "Tasks, quota, balance and credits for Codex, Claude Code, DeepSeek and WorkBuddy.";
 "welcome.layout.title" = "Customize the Collapsed Bar";
 "welcome.layout.detail" = "Choose what it shows";
 "welcome.go" = "Open";
@@ -593,7 +593,8 @@
 "welcome.part.task_detail" = "In progress";
 "welcome.part.rate" = "Speed";
 "welcome.part.rate_detail" = "Tokens per sec";
-"welcome.part.quota" = "Quota Left";
+"welcome.part.quota" = "Remaining";
+"welcome.part.quota_detail" = "Quota, balance or credits";
 "welcome.part.warning" = "Warnings";
 "welcome.part.warning_detail" = "Only if needed";
 "welcome.badges" = "Badge";

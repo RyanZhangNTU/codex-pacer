@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "5a6c54b7fffd671986877f042bc537ad700ea712fe8533ef3c530b846deb0719",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "b0f3371ab4f7329d236773d5d85a3853c54ad32db8b709d5c46f99f1f5d87a3a",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1453,7 +1453,8 @@
     "welcome.modules_note": "\u5404\u6a21\u5757\u4e92\u4e0d\u5f71\u54cd\uff0c\u53ef\u968f\u65f6\u5728\u8bbe\u7f6e\u91cc\u5f00\u542f\u6216\u5173\u95ed\u3002",
     "welcome.next": "\u4e0b\u4e00\u6b65",
     "welcome.notifications_detail": "\u9700\u8981\u56de\u590d\u3001\u4efb\u52a1\u7ed3\u675f\u6216\u989d\u5ea6\u4e0d\u8db3\u65f6",
-    "welcome.part.quota": "\u5269\u4f59\u989d\u5ea6",
+    "welcome.part.quota": "\u5269\u4f59",
+    "welcome.part.quota_detail": "\u989d\u5ea6\u3001\u4f59\u989d\u6216\u79ef\u5206",
     "welcome.part.rate": "\u901f\u5ea6",
     "welcome.part.rate_detail": "\u6bcf\u79d2\u8f93\u51fa",
     "welcome.part.task": "\u4efb\u52a1",
@@ -1464,7 +1465,7 @@
     "welcome.step.island": "\u7b2c 1 \u6b65 \u00b7 \u8ba4\u8bc6\u7075\u52a8\u5c9b",
     "welcome.step.start": "\u7b2c 2 \u6b65 \u00b7 \u9009\u62e9\u8981\u8ffd\u8e2a\u7684\u670d\u52a1",
     "welcome.step_of": "\u7b2c %ld \u6b65\uff0c\u5171 %ld \u6b65",
-    "welcome.subtitle": "\u540c\u65f6\u8ffd\u8e2a Codex\u3001Claude Code \u4e0e DeepSeek Harness \u7684\u4efb\u52a1\u3001\u989d\u5ea6\u548c\u4f59\u989d\u3002",
+    "welcome.subtitle": "\u540c\u65f6\u8ffd\u8e2a Codex\u3001Claude Code\u3001DeepSeek \u4e0e WorkBuddy \u7684\u4efb\u52a1\u3001\u989d\u5ea6\u3001\u4f59\u989d\u548c\u79ef\u5206\u3002",
     "welcome.title": "\u6b22\u8fce\u4f7f\u7528 Codex Pacer 4.0",
     "welcome.window_title": "\u6b22\u8fce\u4f7f\u7528 Codex Pacer",
     "whats_new.app_buttons": "\u4ece\u7075\u52a8\u5c9b\u6253\u5f00 Codex \u6216 Claude",
