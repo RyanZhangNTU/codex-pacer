@@ -43,6 +43,12 @@ internal static class UpdateFailureSettingsChecks
             window.Show(); await Pump();
             await Until(() => Has(window, "settings.overview.update_failure"), "Overview shows the failed check");
             Capture(window, Path.Combine(output, "update-failure-overview-" + name + ".png"));
+            var close = Find<Button>(window, "settings.overview.update_failure_close");
+            ((System.Windows.Automation.Provider.IInvokeProvider)new System.Windows.Automation.Peers.ButtonAutomationPeer(close)
+                .GetPattern(System.Windows.Automation.Peers.PatternInterface.Invoke)).Invoke();
+            await Until(() => !Has(window, "settings.overview.update_failure")
+                && updates.DismissedFailure?.ToUnixTimeSeconds() == updates.LastCheck?.ToUnixTimeSeconds(),
+                "Closing the banner hides this failure, and keeps that across launches as on the Mac");
             await window.NavigateAsync("about"); await Pump();
             await Until(() => Find<FrameworkElement>(window, "settings.update.recovery") is { IsVisible: true } && Has(window, "update.recovery.retry"),
                 "Help & Updates shows what to try and where else to get Pacer");

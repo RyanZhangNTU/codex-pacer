@@ -105,7 +105,7 @@ internal sealed class UpdateRecoveryView : StackPanel
         lastCheck.Visibility = lastCheck.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         githubDetail.Text = check ? ui.Text("update.route.github_latest").Replace("%@", InstallerSuffix(), StringComparison.Ordinal)
             : ui.Text("update.route.github_file").Replace("%@", InstallerName(version!), StringComparison.Ordinal);
-        string retryText = ui.Text(check ? "update.failure.retry_check" : "update.failure.retry_download");
+        retryText = ui.Text(check ? "update.failure.retry_check" : "update.failure.retry_download");
         retry.Content = retryText; AutomationProperties.SetName(retry, retryText);
         retryAction = tryAgain; retry.Visibility = tryAgain == null ? Visibility.Collapsed : Visibility.Visible;
         AutomationProperties.SetName(title, title.Text); AutomationProperties.SetName(detail, detail.Text);
@@ -113,6 +113,18 @@ internal sealed class UpdateRecoveryView : StackPanel
         issue.Visibility = Visibility.Collapsed;
     }
     internal bool RetryEnabled { get => retry.IsEnabled; set => retry.IsEnabled = value; }
+    private string retryText = "";
+    /// While a check runs, its button says so and waits.
+    internal bool Checking
+    {
+        set
+        {
+            string text = value ? ui.Text("updates.checking") : retryText;
+            if (text.Length == 0) return;
+            retry.Content = text; AutomationProperties.SetName(retry, text);
+            if (value) retry.IsEnabled = false;
+        }
+    }
 
     /// The installer for this computer's architecture, as each GitHub Release names it.
     internal static string InstallerSuffix() => "windows-" + Architecture() + "-setup.exe";

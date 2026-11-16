@@ -25,7 +25,9 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     /// An offer older than this is verified again before its download starts.
     internal static readonly TimeSpan OfferLifetime = TimeSpan.FromMinutes(30);
     internal const string SkipKey = "SkipThisVersion", AutomaticKey = "PacerAutomaticChecks", LastCheckKey = "PacerLastCheckUtc",
-        PatchFailedKey = UpdateHandoff.PatchFailedKey;
+        PatchFailedKey = UpdateHandoff.PatchFailedKey,
+        // When the last check failed, kept until one succeeds so a restart still shows it, as on the Mac.
+        CheckFailedKey = "PacerCheckFailedUtc";
     private readonly UpdateFeedClient? client;
     private readonly WindowsUpdateState? state;
     private readonly Func<DateTimeOffset> now;
@@ -58,6 +60,18 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
         get { try { return state?.Read(BannerDismissedKey); } catch (Exception error) when (Recoverable(error)) { return null; } }
         set { try { state?.Write(BannerDismissedKey, value ?? ""); } catch (Exception error) when (Recoverable(error)) { } }
     }
+    internal const string FailureDismissedKey = "PacerUpdateFailureDismissedUtc";
+    /// The failed check whose Overview banner was closed, kept across launches as
+    /// the Mac's updateFailureDismissed; the next failed check shows it again.
+    internal DateTimeOffset? DismissedFailure
+    {
+        get
+        {
+            try { return state?.Read(FailureDismissedKey) is string saved && long.TryParse(saved, NumberStyles.Integer, CultureInfo.InvariantCulture, out long seconds) ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null; }
+            catch (Exception error) when (Recoverable(error)) { return null; }
+        }
+        set { try { state?.Write(FailureDismissedKey, value?.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture) ?? ""); } catch (Exception error) when (Recoverable(error)) { } }
+    }
     internal event Action<WindowsUpdateStatus>? Changed;
     internal IWindowsUpdatePresenter? Presenter { get; set; }
     /// What Install would download: the patch when it applies to this
@@ -78,6 +92,9 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             {
                 if (state?.Read(LastCheckKey) is string saved && long.TryParse(saved, NumberStyles.Integer, CultureInfo.InvariantCulture, out long seconds))
                     lastCheck = lastSuccess = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                if (state?.Read(CheckFailedKey) is string failed && long.TryParse(failed, NumberStyles.Integer, CultureInfo.InvariantCulture, out long failedAt)
+                    && DateTimeOffset.FromUnixTimeSeconds(failedAt) is var at && at > lastSuccess)
+                { lastCheck = at; CheckFailed = true; }
                 state?.Write(AutomaticKey, automatic ? "1" : "0");
             }).WaitAsync(TimeSpan.FromSeconds(10));
             Publish(new(true, false, "updates.policy")); ArmAutomatic();
@@ -106,6 +123,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
                 found = await client.ReadOfferAsync(lifetime.Token);
                 lastSuccess = lastCheck; CheckFailed = false;
                 state?.Write(LastCheckKey, lastCheck.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
+                state?.Write(CheckFailedKey, "");
                 // A manual check can still offer a skipped build.
                 if (found != null && !manual && state?.Read(SkipKey) == found.Build.ToString()) found = null;
             }
@@ -115,6 +133,8 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
                 // Scheduled checks fail as visibly as manual ones: behind a network
                 // that cannot reach GitHub, every check fails and nothing else says so.
                 CheckFailed = true;
+                try { state?.Write(CheckFailedKey, lastCheck.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture)); }
+                catch (Exception saving) when (Recoverable(saving)) { }
                 Publish(Status with { MessageKey = "windows.updates.failed" });
                 if (manual) Presenter?.Failed();
                 return false;

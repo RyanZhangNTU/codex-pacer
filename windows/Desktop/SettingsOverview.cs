@@ -212,7 +212,7 @@ internal sealed partial class SettingsWindow
     }
     /// Every failed check, scheduled ones included, shows until it is closed or a check succeeds.
     private bool CheckFailureBannerShown(string? update) => update == null && updater?.CheckFailed == true && updater.Status.Available
-        && !updater.Status.Busy && dismissedCheckFailure != updater.LastCheck;
+        && !updater.Status.Busy && (dismissedCheckFailure ?? updater.DismissedFailure)?.ToUnixTimeSeconds() != updater.LastCheck?.ToUnixTimeSeconds();
     /// A check that could not reach GitHub, with the way to the other places to get Pacer.
     private Border CheckFailureBanner()
     {
@@ -230,7 +230,7 @@ internal sealed partial class SettingsWindow
         var glyph = new IconGlyph { Symbol = "xmark", Width = 11, Height = 11 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
         var close = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 24, Height = 24, Padding = new Thickness(0), Content = glyph, Margin = new Thickness(8, 0, 0, 0), ToolTip = ui.Text("main.update.later") };
         Identify(close, "settings.overview.update_failure_close", ui.Text("main.update.later"));
-        close.Click += (_, _) => { dismissedCheckFailure = updater?.LastCheck; RefreshOverview(); };
+        close.Click += (_, _) => { dismissedCheckFailure = updater?.LastCheck; if (updater != null) updater.DismissedFailure = updater.LastCheck; RefreshOverview(); };
         actions.Children.Add(close);
         Grid.SetColumn(actions, 2); grid.Children.Add(actions);
         var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(16, 12, 16, 12), Margin = new Thickness(0, 0, 0, 22), Child = grid };

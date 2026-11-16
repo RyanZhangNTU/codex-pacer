@@ -112,6 +112,7 @@ internal sealed partial class SettingsWindow
                     updateRecovery.Show(kind, Version.Length > 0 ? Version : ui.Text("build.development"), kind == UpdateRecoveryView.Kind.Download ? found : null, updater?.LastSuccess,
                         kind == UpdateRecoveryView.Kind.Download ? () => _ = InstallInlineAsync() : () => { inlineUpdateText = null; if (updater != null) _ = updater.CheckAsync(); });
                 updateRecovery.RetryEnabled = available;
+                updateRecovery.Checking = status.Busy && status.MessageKey == "updates.checking";
             }
             if (recovery != null)
             {
@@ -128,7 +129,8 @@ internal sealed partial class SettingsWindow
     /// the last check while no version is offered.
     private UpdateRecoveryView.Kind? RecoveryKind(string? found, bool downloading, WindowsUpdateStatus status)
     {
-        if (downloading || status.Busy) return null;
+        // A check started from the panel keeps it in place while it runs, as on the Mac.
+        if (downloading || status.Busy && status.MessageKey != "updates.checking") return null;
         if (inlineDownloadFailed && found != null) return UpdateRecoveryView.Kind.Download;
         return updater?.CheckFailed == true && found == null && status.Available ? UpdateRecoveryView.Kind.Check : null;
     }
