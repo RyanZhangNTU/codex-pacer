@@ -158,6 +158,9 @@ struct SettingsDeepSeekSections: View {
         .font(.system(size: 12.5))
     }
 
+    static let sources: [(DeepSeekBalanceSource, String)] = [(.automatic, "deepseek.source.automatic"),
+        (.web, "deepseek.source.web_short"), (.apiKey, "deepseek.source.api_short")]
+
     private var connection: DeepSeekConnectionPresentation {
         .init(source: balanceSource, detected: model.deepseekDetectedMode, balance: model.deepseekBalance,
             error: model.deepseekBalanceError, refreshing: model.deepseekRefreshing, now: model.now)
@@ -180,12 +183,15 @@ struct SettingsDeepSeekSections: View {
             case nil: EmptyView()
             }
             Menu {
-                Picker(L10n.text("deepseek.balance_source"), selection: $balanceSource) {
-                    Text(L10n.text("deepseek.source.automatic")).tag(DeepSeekBalanceSource.automatic)
-                    Text(L10n.text("deepseek.source.web_short")).tag(DeepSeekBalanceSource.web)
-                    Text(L10n.text("deepseek.source.api_short")).tag(DeepSeekBalanceSource.apiKey)
+                // One checkable item per source. An inline picker here took the
+                // card's switch style, which split each item and greyed it, so
+                // no other source could be chosen (as OutlineMenu found).
+                Section(L10n.text("deepseek.balance_source")) {
+                    ForEach(Self.sources, id: \.0) { source, key in
+                        Toggle(L10n.text(key), isOn: Binding(get: { balanceSource == source }, set: { if $0 { balanceSource = source } }))
+                    }
                 }
-                .pickerStyle(.inline)
+                .toggleStyle(.automatic)
                 if !presentation.keyEditor, presentation.connected {
                     Divider()
                     Button(L10n.text("claude.account.switch")) { model.connectDeepSeek() }

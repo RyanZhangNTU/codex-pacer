@@ -160,6 +160,18 @@ final class DeepSeekIslandTests: XCTestCase {
         await model.shutdown()
     }
 
+    /// The ⋯ menu offers every balance source, each with words in both
+    /// languages, so switching to an API key is always one click away.
+    func testTheSourceMenuOffersEverySourceWithItsName() {
+        XCTAssertEqual(SettingsDeepSeekSections.sources.map(\.0), DeepSeekBalanceSource.allCases)
+        for language in [AppLanguage.english, .simplifiedChinese] {
+            for (_, key) in SettingsDeepSeekSections.sources {
+                let title = L10n.text(key, language: language)
+                XCTAssertFalse(title.isEmpty); XCTAssertNotEqual(title, key, "\(key) in \(language)")
+            }
+        }
+    }
+
     func testBalanceNoticesFireOnceEachTimeTheLineIsCrossed() {
         let now = Date()
         func wallet(_ total: Double) -> DeepSeekWallet {
