@@ -278,13 +278,20 @@ public struct NativeDesktopSession {
               let thread = Self.valid(thread), Self.valid(sender) != nil else { return }
         let announcesRoute = method == "thread-stream-following-status-requested" ||
             (method == "thread-stream-following-changed" && following == true)
-        guard (announcesRoute && version == 1) || (method == "thread-stream-state-changed" && version == 11),
+        guard (announcesRoute && version == 1) || (method == "thread-stream-state-changed" && Self.readsStream(version)),
               (announcedRoutes[host] ?? .distantPast) <= now else { return }
         announcedRoutes = announcedRoutes.filter { $0.value > now }
         guard announcedRoutes.count < 64 else { return }
         announcedRoutes[host] = now.addingTimeInterval(Self.routeAnnouncementInterval)
         try frame(["kind": "remoteControlRoute", "hostId": host, "threadId": thread])
     }
+    /// Codex Desktop numbers its thread state messages: 11 until 26.1111, which
+    /// sends 13 with the same snapshots and patches. Newer numbers are read too,
+    /// so the next bump doesn't drop the connection while the changes still parse;
+    /// a change that doesn't parse ends only that connection, as before.
+    static let minimumStreamVersion = 11
+    static func readsStream(_ version: Int?) -> Bool { version.map { $0 >= minimumStreamVersion } ?? false }
+
     mutating func receive(_ bytes: Data, at now: Date = Date(), projectedItems: Bool = false) throws {
         let root = try JSONFieldView.document(bytes, projectedItems: projectedItems)
         guard root.isObject else { throw JSONFieldView.Failure.malformed }
@@ -337,7 +344,7 @@ public struct NativeDesktopSession {
         // Existing owners may publish targeted patches before asking a newly
         // connected observer for its following status. Use routing metadata to
         // request our own snapshot; never consume another client's patch stream.
-        if ready, method == "thread-stream-state-changed", fields["version"]?.integer() == 11,
+        if ready, method == "thread-stream-state-changed", Self.readsStream(fields["version"]?.integer()),
            Self.valid(fields["sourceClientId"]?.string()) != nil, !followed.contains(key), !excluded.contains(key) {
             if !waiting.contains(key), waiting.count < 256 { waiting.append(key) }
             try drain(); return
@@ -371,7 +378,7 @@ public struct NativeDesktopSession {
             try follow(key, value: false); streams.removeValue(forKey: key); try drain()
             return
         }
-        guard fields["version"]?.integer() == 11, let owner = Self.valid(fields["sourceClientId"]?.string()) else { throw JSONFieldView.Failure.malformed }
+        guard Self.readsStream(fields["version"]?.integer()), let owner = Self.valid(fields["sourceClientId"]?.string()) else { throw JSONFieldView.Failure.malformed }
         notifications += 1
         let old = streams[key]
         var projection = old ?? DesktopWireProjection(threadID: thread, attentionOnly: !suppliesRuntime(host),
