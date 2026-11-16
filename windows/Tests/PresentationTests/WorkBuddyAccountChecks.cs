@@ -29,7 +29,7 @@ internal static class WorkBuddyAccountChecks
         CoreWebView2? login = null;
         int reads = 0, cycles = 0, writes = 0;
         bool authenticated = false, serviceDown = false, cycleUnavailable = false, enterprise = false;
-        int enterpriseReads = 0; string? enterpriseHeader = null;
+        int accountLists = 0, enterpriseReads = 0; string? enterpriseHeader = null;
         DateTimeOffset reset = DateTimeOffset.UtcNow.AddDays(17);
         DateTimeOffset enterpriseEnd = DateTimeOffset.UtcNow.AddDays(9);
         DateTimeOffset expiration = reset.AddDays(-7);
@@ -75,7 +75,7 @@ internal static class WorkBuddyAccountChecks
                 // The site lists the signed-in accounts; a personal one keeps the personal bill (#241).
                 else if (url == Accounts && e.Request.Method == "GET")
                 {
-                    status = authenticated ? 200 : 401; type = "application/json";
+                    accountLists++; status = authenticated ? 200 : 401; type = "application/json";
                     body = enterprise
                         ? """{"code":0,"data":{"accounts":[{"type":"personal","uid":"fixture-user"},{"type":"enterprise","uid":"fixture-user","enterpriseId":"fixture-team","lastLogin":"2026-11-16 09:00:00"}]}}"""
                         : """{"code":0,"data":{"accounts":[{"type":"personal","uid":"fixture-user","lastLogin":"2026-11-16 09:00:00"}]}}""";
@@ -134,8 +134,9 @@ internal static class WorkBuddyAccountChecks
                 && window.Title == ui.Text("workbuddy.login.title") + " · www.workbuddy.cn"
                 && Require<Button>(window, "workbuddy.login.later").IsVisible && !Require<Button>(window, "workbuddy.login.done").IsVisible,
                 "The WorkBuddy sign-in uses the shared banner, with nothing to confirm while signed out");
-            int signedOutReads = reads;
-            await PresentationWait.UntilAsync(() => reads > signedOutReads, "The window must check the account through its own profile while it is open");
+            // Signed out, the site's account list already answers 401, so the read ends there.
+            int signedOutReads = accountLists;
+            await PresentationWait.UntilAsync(() => accountLists > signedOutReads, "The window must check the account through its own profile while it is open");
             Check(window.IsVisible && Require<TextBlock>(window, "workbuddy.login.heading").Text == ui.Text("workbuddy.login.prompt"),
                 "A signed-out reading keeps the window open");
             authenticated = true;
@@ -291,9 +292,9 @@ internal static class WorkBuddyAccountChecks
             Check(account.Reading?.Remaining == 520.5, "A later refresh must restore the reading");
             await account.DisconnectAsync();
             Check(account.Reading == null && account.State == "signIn", "Disconnect must clear the displayed reading");
-            int beforeDisconnectedRefresh = reads;
+            int beforeDisconnectedRefresh = reads + accountLists;
             await account.RefreshAsync();
-            Check(reads == beforeDisconnectedRefresh && !account.CanDisconnect, "A disconnected browser profile cannot resume account polling");
+            Check(reads + accountLists == beforeDisconnectedRefresh && !account.CanDisconnect, "A disconnected browser profile cannot resume account polling");
             Check(international.Reading == null && international.State == "signIn", "Signing out of WorkBuddy leaves WorkBuddy AI's account alone");
             Console.WriteLine("PASS WorkBuddy account credits, plan reset and pack expiry, Settings, Overview, both shared quota layouts, official icons, refresh recovery and site isolation.");
         }
