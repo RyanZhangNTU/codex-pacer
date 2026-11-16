@@ -8,15 +8,17 @@ import CWindowsSupport
 public enum WindowsDeepSeekApplication {
     public static let filename = "DeepSeek Harness.exe"
     private static let product = Array("DeepSeek Harness".utf16) + [0]
-    // The published 0.2.1-rc.5 desktop retains Electron's CompanyName. It is
-    // not the package.json author; keep this aligned with binary provenance.
-    private static let company = Array("GitHub, Inc.".utf16) + [0]
+    // Keep these aligned with binary provenance, not the package.json author.
+    // 0.2.2 and later carry DeepSeek's own CompanyName, the name they are signed
+    // with; the published 0.2.1-rc.5 desktop retained Electron's.
+    private static let companies = ["Hangzhou DeepSeek Artificial Intelligence Co., Ltd.", "GitHub, Inc."].map { Array($0.utf16) + [0] }
 
     public static func isApplication(_ url: URL) -> Bool {
         guard url.isFileURL, url.lastPathComponent.caseInsensitiveCompare(filename) == .orderedSame else { return false }
         let path = WindowsCodexExecutableDiscovery.path(url)
         guard localPath(path) else { return false }
-        return pacer_windows_product_matches(Array(path.utf16) + [0], product, company) != 0
+        let wide = Array(path.utf16) + [0]
+        return companies.contains { pacer_windows_product_matches(wide, product, $0) != 0 }
     }
     public static func find(applicationURLs: [URL]? = nil, userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
                             environment: [String: String] = ProcessInfo.processInfo.environment,
