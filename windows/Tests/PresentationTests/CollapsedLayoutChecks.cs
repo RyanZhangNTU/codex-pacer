@@ -57,9 +57,11 @@ internal static class CollapsedLayoutChecks
                     await ShowRate(83, "083", "83");
                     Check(island.LogicalTarget == initial, "The floating bar returns to the original bounds");
                 }
+                // On the strip the magnitude moves under the number, beside t/s: 1 over "k t/s".
+                else if (strip) await ShowRate(999.5, "1", "1000", "k t/s");
                 else await ShowRate(999.5, "1.0k", "1000");
 
-                async Task ShowRate(double? rate, string text, string spoken)
+                async Task ShowRate(double? rate, string text, string spoken, string? unit = null)
                 {
                     if (rate is double number) values["rate"] = number;
                     else values.Remove("rate");
@@ -69,7 +71,7 @@ internal static class CollapsedLayoutChecks
                     Button? button = null;
                     await Until(() => (button = SelfAndDescendants(island).OfType<Button>()
                         .FirstOrDefault(value => value.IsVisible && AutomationProperties.GetAutomationId(value) == id))?.Content is CompactValueView view
-                        && view.Text == text);
+                        && view.Text == text && (unit == null || view.UnitText == unit));
                     await island.WaitForPresentationAsync();
                     Check(AutomationProperties.GetName(button!) == spoken + " t/s", "UI Automation reports the rate without padding or abbreviation");
                 }
