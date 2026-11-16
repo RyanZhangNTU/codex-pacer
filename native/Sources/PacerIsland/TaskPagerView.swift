@@ -45,13 +45,18 @@ struct TaskPagerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             header
+            ForEach(model.progressGuideHints, id: \.provider) { hint in
+                ProgressGuideHint(text: hint.summary, language: language,
+                                  open: { model.openSettings(for: hint.provider) },
+                                  dismiss: { model.dismissProgressGuideHint(hint.provider) })
+            }
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowSpacing) {
                     ForEach(pageRows, id: \.activity.id) { row in
                         let activity = row.activity
                         TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
                             enabled: model.canOpen(activity), accent: model.taskAccent,
-                            costDetail: model.deepseekCostDetail(activity), options: model.panelOptions) {
+                            costHelp: model.deepseekCostHelp(activity), options: model.panelOptions) {
                                 model.open(activity)
                             }
                             .frame(height: rowHeight)
@@ -155,5 +160,34 @@ private struct TaskPageWheelHandler: NSViewRepresentable {
             }
         }
         deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+    }
+}
+
+/// A running task has no ring because its app still needs a step: one line
+/// above the rows, until the user opens Settings or closes it.
+private struct ProgressGuideHint: View {
+    let text: String
+    let language: AppLanguage
+    let open: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle().fill(PacerPalette.attention).frame(width: 7, height: 7).accessibilityHidden(true)
+            Text(text).font(.system(size: 12)).foregroundStyle(PacerPalette.primary).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 6)
+            Button(L10n.text("progress_guide.hint.open", language: language), action: open)
+                .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(PacerPalette.attention)
+            Button(action: dismiss) {
+                Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold)).foregroundStyle(PacerPalette.tertiary)
+                    .frame(width: 18, height: 18).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L10n.text("progress_guide.hint.close", language: language))
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(PacerPalette.attention.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(.horizontal, IslandMetrics.rowInset - 4).padding(.bottom, 2)
+        .accessibilityElement(children: .contain)
     }
 }

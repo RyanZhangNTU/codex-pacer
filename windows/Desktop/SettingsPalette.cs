@@ -20,7 +20,8 @@ internal static class SettingsPalette
             resources["SettingsDisabled"] = DesktopAppearance.Ink(colors.Disabled);
             foreach (string key in new[] { "SettingsAccent", "SettingsLinkText", "SettingsIslandLink", "SettingsSwitchOn", "SettingsHover", "SettingsWarning", "SettingsExpiry", "SettingsSuccess", "SettingsSidebarSelection" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
             resources["SettingsAccentSoft"] = DesktopAppearance.Ink(colors.Control);
-            foreach (string key in new[] { "SettingsTileAdded", "SettingsNoticeFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
+            foreach (string key in new[] { "SettingsTileAdded", "SettingsNoticeFill", "SettingsSuccessFill", "SettingsErrorFill" }) resources[key] = DesktopAppearance.Ink(colors.Control);
+            foreach (string key in new[] { "SettingsSuccessText", "SettingsErrorText" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             resources["SettingsTileIdle"] = DesktopAppearance.Ink(colors.Window);
             foreach (string key in new[] { "SettingsTileRing", "SettingsNoticeText" }) resources[key] = DesktopAppearance.Ink(colors.Text);
             foreach (string key in new[] { "SettingsTileRemove", "SettingsChipOn", "SettingsChipOnStroke" }) resources[key] = DesktopAppearance.Ink(colors.Highlight);
@@ -100,6 +101,11 @@ internal static class SettingsPalette
         // A component that is not added yet: a soft amber note.
         if (dark) resources["SettingsNoticeFill"] = new SolidColorBrush(Color.FromArgb(41, 255, 159, 10)); else Brush("SettingsNoticeFill", 255, 244, 229);
         if (dark) Brush("SettingsNoticeText", 255, 179, 92); else Brush("SettingsNoticeText", 138, 75, 0);
+        // A finished state and a failure, as soft chips with readable text.
+        if (dark) resources["SettingsSuccessFill"] = new SolidColorBrush(Color.FromArgb(41, 48, 209, 88)); else Brush("SettingsSuccessFill", 232, 245, 236);
+        if (dark) Brush("SettingsSuccessText", 104, 214, 133); else Brush("SettingsSuccessText", 30, 123, 52);
+        if (dark) resources["SettingsErrorFill"] = new SolidColorBrush(Color.FromArgb(41, 255, 69, 58)); else Brush("SettingsErrorFill", 253, 236, 234);
+        if (dark) Brush("SettingsErrorText", 255, 128, 120); else Brush("SettingsErrorText", 180, 35, 24);
         // A chosen chip: a tint of the accent with readable accent text.
         Color card = dark ? main ? Color.FromRgb(36, 36, 40) : Color.FromRgb(36, 36, 36) : Colors.White;
         Color chip = Blend(tint, dark ? 0.25 : 0.12, card);

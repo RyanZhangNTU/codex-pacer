@@ -35,6 +35,7 @@ final class EngineProviderHomeSettingsTests: XCTestCase {
             let report = EngineProviderHomeReport.inspect(provider: provider, home: " \"" + path + "\" ", fallback: file)
             XCTAssertEqual(report.provider, provider.rawValue); XCTAssertEqual(report.home, path)
             XCTAssertEqual(report.effectiveHome, path); XCTAssertNil(report.issue); XCTAssertTrue(report.readable)
+            XCTAssertEqual(report.defaultHome, EngineCodexSourceReport.path(file), "Settings shows the default it would fall back to")
             for invalid in ["relative/home", EngineCodexSourceReport.path(file), path + "/missing"] {
                 let rejected = EngineProviderHomeReport.inspect(provider: provider, home: invalid, fallback: root)
                 XCTAssertNotNil(rejected.issue); XCTAssertFalse(rejected.readable)
@@ -56,6 +57,7 @@ final class EngineProviderHomeSettingsTests: XCTestCase {
             XCTAssertTrue(try frames.report().effectiveHome.lowercased().contains("demo"))
             _ = await runtime.receive(try command("inspectProviderHome", ["provider": provider, "sourceHome": path]))
             XCTAssertEqual(try frames.report().effectiveHome, path)
+            XCTAssertEqual(try frames.report().defaultHome, defaults[provider], "A custom folder keeps the default as the field's prompt")
         }
         XCTAssertEqual(frames.snapshots().count, before, "Draft validation must not publish or start a collector")
         _ = await runtime.receive(try command("configure", ["claudeHome": path, "deepseekHome": path]))

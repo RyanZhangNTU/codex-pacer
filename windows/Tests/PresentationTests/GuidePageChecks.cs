@@ -52,8 +52,19 @@ internal static class GuidePageChecks
             Check(notch.IsChecked == true && free.IsChecked == false, "Choosing the island mode saves at once");
             Select(free); await Until(() => session.Current.DisplayMode == "floating" && notch.IsEnabled && free.IsEnabled);
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
+            // A service not found on this computer folds below the others. Its disclosure style comes from the
+            // guide window's resources; looking it up in the application's crashed every such onboarding.
+            snapshot = engine.LatestSnapshot! with { Modules = new[] { new EngineModule("codex", "automatic", true, true, Prominent: true),
+                new EngineModule("claude", "automatic", true, true, Prominent: true), new EngineModule("deepseek", "automatic", true, true, Prominent: true),
+                new EngineModule("workbuddy-ai", "automatic", false, false, DisplayName: "WorkBuddy AI", Prominent: false) } };
             Invoke(Find<Button>(window, "welcome.next")); await Pump();
             Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(2), "Continue reaches the services page");
+            var more = Find<Expander>(window, "welcome.modules.more");
+            Check(!more.IsExpanded && more.Style == window.FindResource("SettingsDisclosure")
+                && (string)more.Header == ui.Text("welcome.modules.more").Replace("%ld", "1", StringComparison.Ordinal), "Services not found here fold under a styled disclosure");
+            more.IsExpanded = true; await Pump();
+            Check(Has(window, "welcome.module.workbuddy-ai"), "Opening the fold shows the services not found here");
+            more.IsExpanded = false; await Pump();
             foreach (string provider in new[] { "codex", "claude", "deepseek" })
             {
                 var toggle = Find<CheckBox>(window, "welcome.module." + provider); Toggle(toggle);
@@ -136,6 +147,23 @@ internal static class GuidePageChecks
                 "Only the three settings highlights carry a link");
         }
         finally { freshWindow.Close(); }
+        // 4.5: WorkBuddy, the Module Library and remote Codex progress; only the library links to a page.
+        var modules = await Query("4.4.4", current: "4.5.0"); var modulesBody = Body(modules);
+        var modulesWindow = new GuideWindow(ui, modulesBody, modules, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            modulesWindow.Show(); await Pump();
+            var missing = new[] { "whats_new.workbuddy", "whats_new.module_library", "whats_new.remote_progress" }
+                .Where(key => !SelfAndDescendants(modulesBody).OfType<TextBlock>().Any(text => text.Text == ui.Text(key))).ToArray();
+            Check(modules.Releases.Count > 0 && modules.Releases[0].Version == "4.5.0" && missing.Length == 0,
+                "The 4.5 note leads with its three highlights: " + string.Join(",", modules.Releases.Select(release => release.Version)) + " missing " + string.Join(",", missing));
+            Invoke(Find<Button>(modulesWindow, "guide.control.openModules")); await Pump();
+            Check(settingsActions.Last() == "modules", "The Module Library highlight opens the Module Library");
+            Check(SelfAndDescendants(modulesBody).OfType<FrameworkElement>().Count(value => AutomationProperties.GetAutomationId(value).StartsWith("guide.control.", StringComparison.Ordinal)) == 1,
+                "Only the Module Library highlight carries a link");
+            Capture(modulesWindow.ClientContent, Path.Combine(output, "pages-whats-new-4.5-" + language + (dark ? "-dark" : "-light") + ".png"));
+        }
+        finally { modulesWindow.Close(); }
         string? copied = null;
         using var appearance = new AppearanceFixture();
         var settings = new SettingsWindow(ui, session, startup, true, dark, engine, notifications: notifications, guideLinkLauncher: uri => { links.Add(uri); return true; }, guideCopyLink: value => copied = value, appearanceSource: appearance) { ShowActivated = false, IsHitTestVisible = false };
@@ -146,10 +174,34 @@ internal static class GuidePageChecks
             // Help & Updates is a remembered page; its tabs, links and Support write nothing more.
             Select(Find<RadioButton>(settings, "settings.pane.about")); await Until(() => session.Current.LastSettingsPane == "about" && Has(settings, "settings.about.help"));
             await session.WaitForChangesAsync(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
+            // The app registers each module's colors from the engine, as here, before Help draws them.
+            PacerPalette.RegisterModules(engine.LatestSnapshot?.Modules);
             Select(Find<RadioButton>(settings, "settings.about.help")); await Until(() => Has(settings, "help.module.codex"));
             // Help opens on the collapsed bar's marks, one topic at a time, as on the Mac.
             Check(Find<RadioButton>(settings, "help.topic.collapsed").IsChecked == true && Has(settings, "help.move") && Has(settings, "help.services") && !Has(settings, "help.hover"),
                 "Help opens on the collapsed topic and explains dragging, snapping and reset");
+            // Module colors fold behind one palette row and open to each service's color, as on the Mac.
+            settings.UpdateLayout();
+            var colors = Find<FrameworkElement>(settings, "help.services.codex");
+            Check(!colors.IsVisible, "Module colors start folded behind a single palette");
+            Invoke(Find<Button>(settings, "help.services.toggle")); await Pump(); settings.UpdateLayout();
+            Check(colors.IsVisible && Has(settings, "help.services.claude") && Has(settings, "help.services.deepseek"), "Opening module colors lists each service with its color");
+            settings.CapturePreview(Path.Combine(output, "pages-help-colors-" + language + (dark ? "-dark" : "-light") + ".png"));
+            // On light glass the samples draw on the island's light face in its dark ink.
+            PacerPalette.ApplyTone(true);
+            try
+            {
+                Select(Find<RadioButton>(settings, "help.topic.expanded")); await Pump(); Find<FrameworkElement>(settings, "help.pace").BringIntoView(); await Pump();
+                settings.CapturePreview(Path.Combine(output, "pages-help-expanded-glass-" + language + (dark ? "-dark" : "-light") + ".png"));
+                Select(Find<RadioButton>(settings, "help.topic.collapsed")); await Pump(); Find<FrameworkElement>(settings, "help.move").BringIntoView(); await Pump();
+                settings.CapturePreview(Path.Combine(output, "pages-help-collapsed-glass-" + language + (dark ? "-dark" : "-light") + ".png"));
+            }
+            finally { PacerPalette.ApplyTone(false); }
+            Select(Find<RadioButton>(settings, "help.topic.expanded")); await Pump(); Select(Find<RadioButton>(settings, "help.topic.collapsed")); await Pump();
+            colors = Find<FrameworkElement>(settings, "help.services.codex");
+            Invoke(Find<Button>(settings, "help.services.toggle")); await Pump(); settings.UpdateLayout();
+            Invoke(Find<Button>(settings, "help.services.toggle")); await Pump(); settings.UpdateLayout();
+            Check(!colors.IsVisible, "Module colors fold again");
             var enable = SelfAndDescendants(settings).OfType<TextBlock>().Single(text => text.Text == ui.Text("help.enable.detail"));
             Check(enable.Visibility != Visibility.Visible, "The module footer stays hidden on the bar topics");
             Check(new[] { "help.welcome", "guide.link.manual", "guide.link.issues" }.All(id => Find<Button>(settings, id).Focusable && AutomationProperties.GetHelpText(Find<Button>(settings, id)).Length > 0),

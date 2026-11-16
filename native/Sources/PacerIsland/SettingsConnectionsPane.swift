@@ -202,10 +202,6 @@ private struct ProviderTile: View {
     var size: CGFloat = 22
 
     var body: some View {
-        Image(systemName: provider.glyph).font(.system(size: size * 0.45, weight: .semibold))
-            .foregroundStyle(Color.black.opacity(0.72))
-            .frame(width: size, height: size)
-            .background(provider.shade(light: false).gradient, in: RoundedRectangle(cornerRadius: size * 0.27, style: .continuous))
-            .accessibilityHidden(true)
+        ProviderAppIcon(provider: provider, size: size)
     }
 }

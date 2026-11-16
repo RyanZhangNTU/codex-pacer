@@ -160,7 +160,7 @@ final class QuotaDashboardLayoutTests: XCTestCase {
         let slots = QuotaDashboardLayout.slots(providers: [.claude, .codex])
         XCTAssertEqual(slots.map(\.provider), [.codex, .claude])
         XCTAssertEqual(Set(slots.map(\.id)).count, 2)
-        for provider in AgentProvider.allCases {
+        for provider in HarnessRegistry.legacyIDs {
             XCTAssertEqual(QuotaDashboardLayout.slots(providers: [provider]).map(\.provider), [provider])
         }
         XCTAssertTrue(QuotaDashboardLayout.slots(providers: []).isEmpty)
@@ -172,7 +172,7 @@ final class QuotaDashboardLayoutTests: XCTestCase {
         XCTAssertEqual(both.map(\.provider), [.codex, .claude])
         XCTAssertEqual(both.map(\.period), [.weekly, .weekly])
         XCTAssertTrue(both.allSatisfy(\.identifiesProvider))
-        for provider in AgentProvider.allCases {
+        for provider in HarnessRegistry.legacyIDs {
             let single = ClassicQuotaDashboardLayout.slots(providers: [provider])
             XCTAssertEqual(single.map(\.provider), [provider, provider])
             XCTAssertEqual(single.map(\.period), [.fiveHour, .weekly])

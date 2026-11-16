@@ -95,4 +95,35 @@ extension EngineClaudeRemoteServices {
             loadDigests: { store.load() }, saveDigests: { store.save($0) },
             loadConflicts: { store.loadConflicts() }, saveConflicts: { store.save(conflicts: $0) })
     }
+
+    /// Pacer's Codex progress tool on SSH and WSL hosts, on the same schedule
+    /// and transports as Claude's setup. The ring switch selects the digest.
+    static func codexProgress(ssh: WindowsSSHServices? = nil, wsl: WindowsWSLServices? = nil) -> Self? {
+        guard ssh != nil || wsl != nil, let off = try? CodexRemoteProgressSetup.digest(enabled: false),
+              let on = try? CodexRemoteProgressSetup.digest(enabled: true) else { return nil }
+        let file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CodexPacer/CodexRemote/progress-v1.json")
+        let store = WindowsClaudeRemoteDigestStore(file: file)
+        let transport = ClaudeRemoteSetup(executable: ssh?.ssh ?? WindowsExecutables.ssh, makeOperation: { executable, args in
+            WindowsClaudeSetupOperation(executable: executable, arguments: args,
+                environment: ssh?.environment ?? ProcessInfo.processInfo.environment, wsl: wsl)
+        }, validDestination: { ClaudeSSHRouteResolver.validDestination($0) }, validIdentityFile: { WindowsSSHServices.validIdentity($0) },
+            commandBuilder: { target, command in
+                if target.id.hasPrefix(ConnectionSource.wslPrefix) {
+                    guard let wsl else { throw ClaudeRemoteSetup.Failure.invalidTarget }
+                    return try wsl.codexSetupArguments(target, command: command)
+                }
+                guard let route = target.sshArguments(validDestination: { ClaudeSSHRouteResolver.validDestination($0) },
+                                                      validIdentityFile: { WindowsSSHServices.validIdentity($0) }) else { throw ClaudeRemoteSetup.Failure.invalidTarget }
+                return route + [command]
+            })
+        return .init(digest: { $0 ? on : off },
+            install: { target, ring, _ in
+                let status = try await CodexRemoteProgressSetup.install(target: target, enabled: ring, transport: transport)
+                // The coordinator records a successful run; a conflict leaves the host's own entry alone.
+                return ClaudeHookInstaller.Status(hooksConfigured: status.configured, telemetryConfigured: false, statusLineConfigured: false)
+            },
+            shutdown: { await transport.shutdown() },
+            loadDigests: { store.load() }, saveDigests: { store.save($0) })
+    }
 }

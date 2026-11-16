@@ -13,8 +13,18 @@ namespace CodexPacer.Windows;
 internal static class GuideArt
 {
     internal static readonly Color CodexTile = Color.FromRgb(125, 214, 196), ClaudeTile = Color.FromRgb(242, 156, 107), DeepSeekTile = Color.FromRgb(123, 147, 255);
-    internal static Color ProviderTile(string provider) => provider == "claude" ? ClaudeTile : provider == "deepseek" ? DeepSeekTile : CodexTile;
-    internal static string ProviderSymbol(string provider) => provider == "claude" ? "asterisk" : provider == "deepseek" ? "water.waves" : "chevron.left.forwardslash.chevron.right";
+    /// Other modules use their registry color, which the engine sends with each snapshot.
+    internal static Color ProviderTile(string provider) => provider switch
+    {
+        "codex" => CodexTile, "claude" => ClaudeTile, "deepseek" => DeepSeekTile,
+        _ => PacerPalette.Brand(provider) is { } brand && brand.Dark is { Length: 7 } hex
+            && uint.TryParse(hex.AsSpan(1), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out uint rgb)
+            ? Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb) : Color.FromRgb(161, 161, 166)
+    };
+    internal static string ProviderSymbol(string provider) => provider switch
+    {
+        "codex" => "chevron.left.forwardslash.chevron.right", "claude" => "asterisk", "deepseek" => "water.waves", _ => "circle.circle"
+    };
 
     /// Release highlights name Mac symbols; the nearest drawn glyph stands in.
     internal static string Symbol(string symbol) => IconGlyph.Has(symbol) ? symbol : symbol switch
@@ -98,21 +108,20 @@ internal sealed class WelcomeIslandMap : Grid
         var left = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(18, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         task.Margin = new Thickness(0, 0, 8, 0); left.Children.Add(task); left.Children.Add(rate);
         var right = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 18, 0), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
-        quota.Margin = new Thickness(0, 0, 8, 0); right.Children.Add(quota); right.Children.Add(warning);
+        // Warnings come before the quota, as in the default collapsed bar.
+        warning.Margin = new Thickness(0, 0, 8, 0); right.Children.Add(warning); right.Children.Add(quota);
         bar.Children.Add(left); bar.Children.Add(right); Children.Add(bar);
 
         var labels = new Grid { VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(12, 0, 12, 14) };
         labels.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); labels.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         labels.ColumnDefinitions.Add(new ColumnDefinition()); labels.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); labels.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var quotaDetail = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-        quotaDetail.Children.Add(GuideArt.Dot(PacerPalette.Codex)); quotaDetail.Children.Add(Detail("Codex", new Thickness(4, 0, 8, 0)));
-        quotaDetail.Children.Add(GuideArt.Dot(PacerPalette.Claude)); quotaDetail.Children.Add(Detail("Claude", new Thickness(4, 0, 0, 0)));
+        // The quota part stands for every service's quota, balance or credits, not just the two drawn.
         var parts = new (FrameworkElement Part, string Title, UIElement Detail, int Column)[]
         {
             (task, ui.Text("welcome.part.task"), Detail(ui.Text("welcome.part.task_detail")), 0),
             (rate, ui.Text("welcome.part.rate"), Detail(ui.Text("welcome.part.rate_detail")), 1),
-            (quota, ui.Text("welcome.part.quota"), quotaDetail, 3),
-            (warning, ui.Text("welcome.part.warning"), Detail(ui.Text("welcome.part.warning_detail")), 4)
+            (warning, ui.Text("welcome.part.warning"), Detail(ui.Text("welcome.part.warning_detail")), 3),
+            (quota, ui.Text("welcome.part.quota"), Detail(ui.Text("welcome.part.quota_detail")), 4)
         };
         foreach (var part in parts)
         {
@@ -160,6 +169,12 @@ internal sealed class DecorativePeer(FrameworkElement owner) : FrameworkElementA
 }
 
 internal sealed class DecorativeImage : Image
+{
+    protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePeer(this);
+}
+
+/// A drawn picture made of controls, such as another app's card.
+internal sealed class DecorativeBorder : Border
 {
     protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePeer(this);
 }

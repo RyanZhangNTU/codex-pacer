@@ -24,6 +24,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="[2.6.4]"/>
     <PackageReference Include="Microsoft.Web.WebView2" Version="[1.0.4314.35]"/>
     <Resource Include="Assets/Fonts/*.ttf"/>
+    <Resource Include="../../native/Sources/PacerCore/Resources/provider-*.png" Link="Assets/Providers/%(Filename)%(Extension)"/>
     <!-- WPF reads these from its pack resources. The SDK's default image
          content glob must not also export nonexistent loose output files. -->
     <EmbeddedResource Include="Assets/Localization/*.json"/>

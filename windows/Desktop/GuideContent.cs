@@ -284,21 +284,30 @@ internal sealed class GuideContent : StackPanel
                 break;
             case 2:
                 var services = PageHeader(ui.Text("main.welcome.services_title"), ui.Text("welcome.modules_note")); services.Margin = new Thickness(0, 4, 0, 24); Children.Add(services);
-                var modules = new Grid();
-                string[] providers = ["codex", "claude", "deepseek"];
-                for (int i = 0; i < providers.Length; i++)
+                // Services found on this computer, or turned on, come first; the rest fold away, as in the module library.
+                var known = (snapshot()?.Modules ?? []).Where(value => DesktopPreferences.ValidProviderId(value.Provider)).ToArray();
+                string[] shown = known.Length == 0 ? [.. DesktopPreferences.LegacyProviders] : known.Where(value => value.IsProminent).Select(value => value.Provider).ToArray();
+                string[] folded = known.Where(value => !value.IsProminent).Select(value => value.Provider).ToArray();
+                Children.Add(ModuleCards(shown));
+                if (folded.Length > 0)
                 {
-                    if (i > 0) modules.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
-                    modules.ColumnDefinitions.Add(new ColumnDefinition());
-                    var card = Module(providers[i]); Grid.SetColumn(card, i * 2); modules.Children.Add(card);
+                    // The disclosure style lives in the guide window's own resources, not the application's.
+                    var more = new Expander { Header = ui.Text("welcome.modules.more").Replace("%ld", folded.Length.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal),
+                        IsExpanded = false, Margin = new Thickness(0, 14, 0, 0) };
+                    more.SetResourceReference(FrameworkElement.StyleProperty, "SettingsDisclosure");
+                    var inner = ModuleCards(folded); inner.Margin = new Thickness(0, 10, 0, 0); more.Content = inner;
+                    Identify(more, "welcome.modules.more", (string)more.Header);
+                    Children.Add(more);
                 }
-                Children.Add(modules);
                 break;
             default:
                 var finish = PageHeader(ui.Text("main.welcome.finish_title"), ui.Text("main.welcome.finish_subtitle")); finish.Margin = new Thickness(24, 4, 24, 24); Children.Add(finish);
                 // One switch for every service's ring; Settings keeps one per service.
-                var rings = Switch(ui.Text("main.claude.ring"), "welcome.rings", () => session.Current.ClaudeProgressRing || session.Current.CodexProgressRing || session.Current.DeepSeekProgressRing,
-                    value => Preference(p => p with { ClaudeProgressRing = value, CodexProgressRing = value, DeepSeekProgressRing = value }));
+                string[] localRings = (snapshot()?.Modules ?? []).Where(value => value.Local == true && value.HasTaskProgress == true).Select(value => value.Provider).ToArray();
+                var rings = Switch(ui.Text("main.claude.ring"), "welcome.rings", () => session.Current.ClaudeProgressRing || session.Current.CodexProgressRing || session.Current.DeepSeekProgressRing
+                        || localRings.Any(provider => !session.Current.DisabledHarnessProgress.Contains(provider)),
+                    value => Preference(p => p with { ClaudeProgressRing = value, CodexProgressRing = value, DeepSeekProgressRing = value,
+                        DisabledHarnessProgress = value ? p.DisabledHarnessProgress.Except(localRings).ToArray() : p.DisabledHarnessProgress.Union(localRings).ToArray() }));
                 var notification = Switch(ui.Text("settings.system_notifications"), "welcome.notifications", () => notifications?.DesiredEnabled == true,
                     async value => notifications != null && await notifications.SetEnabledAsync(value) == NotificationChangeResult.Applied);
                 refresh.Add(() => notification.IsEnabled = !changing && !session.RequiresRestart && notifications != null);
@@ -317,8 +326,10 @@ internal sealed class GuideContent : StackPanel
                     loginProblem.Visibility = blocked.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
                 });
                 var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
+                var ringRow = ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings);
+                ringRow.Children.Add(TrustNote());
                 var choices = Group(54,
-                    ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings),
+                    ringRow,
                     ChoiceRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 28), ui.Text("settings.system_notifications"), ui.Text("main.welcome.notifications_info"), notificationProblem, notification),
                     ChoiceRow(GuideArt.Tile("power", Color.FromRgb(51, 189, 102), 28), ui.Text("settings.open_at_login"), ui.Text("main.welcome.login_info"), loginProblem, Login(ui.Text("settings.open_at_login"), "welcome.startup")),
                     ChoiceRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 28), ui.Text("welcome.layout.title"), ui.Text("main.welcome.layout_info"), null, layout));
@@ -382,20 +393,69 @@ internal sealed class GuideContent : StackPanel
         AutomationProperties.SetHelpText(control, info);
         var host = new StackPanel(); host.Children.Add(row); host.Children.Add(box); return host;
     }
+    /// Under the ring switch: the apps that must still trust Pacer's progress
+    /// tool themselves, with a way to their page in Settings.
+    private Border TrustNote()
+    {
+        var note = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(11, 7, 8, 7), Margin = new Thickness(52, 0, 12, 10), Visibility = Visibility.Collapsed };
+        note.SetResourceReference(Border.BackgroundProperty, "SettingsNoticeFill");
+        var grid = new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var text = Text("", 12); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsNoticeText");
+        text.VerticalAlignment = VerticalAlignment.Center; text.Margin = new Thickness(0, 0, 10, 0); grid.Children.Add(text);
+        string? first = null;
+        var open = Button(ui.Text("progress_guide.onboarding.action"), "welcome.rings.trust", () => { if (first != null) settings(first); });
+        Grid.SetColumn(open, 1); grid.Children.Add(open);
+        note.Child = grid; Identify(note, "welcome.rings.note", "");
+        refresh.Add(() =>
+        {
+            var waiting = (snapshot()?.Modules ?? []).Where(module => module.Enabled && module.ProgressConnector == true
+                && !session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal)
+                && module.ProgressGuide is { } guide && (guide.Attention || guide.Stage == "adding")).ToArray();
+            first = waiting.FirstOrDefault()?.Provider;
+            string names = string.Join(ui.Text("progress_guide.onboarding.separator"), waiting.Select(module => module.DisplayName ?? module.Provider));
+            text.Text = waiting.Length == 0 ? "" : ui.Text(waiting.Length == 1 ? "progress_guide.onboarding.one" : "progress_guide.onboarding.many").Replace("%@", names, StringComparison.Ordinal);
+            AutomationProperties.SetName(note, text.Text);
+            note.Visibility = waiting.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        });
+        return note;
+    }
     private string StartupDetail()
     {
         var state = startup.Read();
         return state.BlockReason switch { StartupBlockReason.Disabled => ui.Text("windows.settings.startup_disabled"), StartupBlockReason.Policy => ui.Text("windows.settings.startup_policy"),
             StartupBlockReason.OtherInstallation => ui.Text("windows.settings.startup_other"), StartupBlockReason.Unknown => ui.Text("windows.settings.startup_unknown"), _ => "" };
     }
+    /// Up to three cards a row, the same width as before.
+    private Grid ModuleCards(string[] providers)
+    {
+        var grid = new Grid();
+        int columns = Math.Max(1, Math.Min(3, providers.Length));
+        for (int column = 0; column < columns; column++)
+        {
+            if (column > 0) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+        }
+        for (int i = 0; i < providers.Length; i++)
+        {
+            if (i % columns == 0) { if (i > 0) grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(12) }); grid.RowDefinitions.Add(new RowDefinition()); }
+            var card = Module(providers[i]); Grid.SetColumn(card, i % columns * 2); Grid.SetRow(card, i / columns * 2); grid.Children.Add(card);
+        }
+        return grid;
+    }
     private Border Module(string provider)
     {
-        string name = provider == "codex" ? "Codex" : provider == "claude" ? "Claude" : "DeepSeek";
+        // Onboarding names a module as Settings does, with the edition, as on the Mac.
+        string name = provider switch
+        {
+            "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek",
+            _ when ui.Has("module." + provider + ".title") => ui.Text("module." + provider + ".title"),
+            _ => snapshot()?.Modules?.FirstOrDefault(value => value.Provider == provider)?.DisplayName ?? provider
+        };
         var layout = new Grid { Margin = new Thickness(12) };
         foreach (var height in new[] { GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto }) layout.RowDefinitions.Add(new RowDefinition { Height = height });
         var top = new Grid();
-        var tile = GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), 34, darkGlyph: true); tile.HorizontalAlignment = HorizontalAlignment.Left; top.Children.Add(tile);
-        var toggle = Switch(name, "welcome.module." + provider, () => session.Current.ProviderModes[provider] switch
+        var tile = ProviderIcon.Tile(provider, 34); tile.HorizontalAlignment = HorizontalAlignment.Left; top.Children.Add(tile);
+        var toggle = Switch(name, "welcome.module." + provider, () => session.Current.ProviderModes.GetValueOrDefault(provider, "automatic") switch
         { "enabled" => true, "disabled" => false, _ => snapshot()?.Modules?.FirstOrDefault(value => value.Provider == provider)?.Enabled == true },
             value => Preference(p => p with { ProviderModes = new(p.ProviderModes) { [provider] = value ? "enabled" : "disabled" } }));
         toggle.HorizontalAlignment = HorizontalAlignment.Right; toggle.VerticalAlignment = VerticalAlignment.Top; top.Children.Add(toggle); layout.Children.Add(top);
@@ -414,18 +474,25 @@ internal sealed class GuideContent : StackPanel
         {
             var latest = snapshot(); var module = latest?.Modules?.FirstOrDefault(value => value.Provider == provider);
             bool enabled = toggle.IsChecked == true, isReady = false, connects = false; string? titleKey = null;
-            string text = catalog.ModuleOff[provider];
+            string text = catalog.ModuleOff.TryGetValue(provider, out var off) ? off : name;
             if (enabled)
             {
-                if (module?.Installed == false) { text = ui.Text("welcome.module." + provider + "_missing"); titleKey = "welcome.module.settings"; }
+                // A key built from a module's ID must never throw: an unknown module shows its name.
+                if (module?.Installed == false)
+                {
+                    string missing = "welcome.module." + provider + "_missing";
+                    text = ui.Has(missing) ? ui.Text(missing) : name; titleKey = "welcome.module.settings";
+                }
                 else if (module == null || module.Installed == null) text = ui.Text("claude.account.checking");
                 else if (provider == "claude" && latest?.ClaudeConnection?.State == "checking" || provider == "deepseek" && latest?.DeepseekConnection?.Refreshing == true && latest.Wallet?.Balance == null)
                     text = ui.Text("claude.account.checking");
                 else if (provider == "claude" && latest?.ClaudeConnection is { State: not "signedIn" } claude)
                 { text = ui.Text(claude.State == "workspaceNeeded" ? "claude.account.workspace_needed" : "welcome.module.sign_in_detail"); titleKey = claude.State == "workspaceNeeded" ? "claude.quota.choose_workspace" : "welcome.module.sign_in"; connects = true; }
+                else if (module?.ReportsAccountCredits == true && latest?.Demo != true && latest?.AccountCredits?.Any(value => value.Provider == provider) != true)
+                { text = ui.Text("welcome.module.credits_sign_in_detail"); titleKey = "welcome.module.sign_in"; connects = true; }
                 else if (provider == "deepseek" && latest?.Wallet?.Balance == null)
                 { bool key = latest?.DeepseekConnection?.Mode == "apiKey"; text = ui.Text(key ? "welcome.module.balance_detail" : "welcome.module.balance_sign_in_detail"); titleKey = key ? "deepseek.paste_key_short" : "welcome.module.sign_in"; connects = true; }
-                else { text = ui.Text("welcome.module.ready") + (session.Current.ProviderModes[provider] == "automatic" ? " · " + ui.Text("welcome.module.automatic") : ""); isReady = true; }
+                else { text = ui.Text("welcome.module.ready") + (session.Current.ProviderModes.GetValueOrDefault(provider, "automatic") == "automatic" ? " · " + ui.Text("welcome.module.automatic") : ""); isReady = true; }
             }
             status.Text = text; status.ToolTip = text; AutomationProperties.SetName(status, text); ready.Visibility = isReady ? Visibility.Visible : Visibility.Collapsed;
             title.SetResourceReference(TextBlock.ForegroundProperty, enabled ? "SettingsPrimary" : "SettingsSecondary"); tile.Opacity = enabled ? 1 : 0.45;
@@ -558,7 +625,10 @@ internal sealed class GuideContent : StackPanel
     /// "Settings ›" at the end of a highlight whose setting lives on a page.
     private Button? PaneLink(GuideItem item)
     {
-        string? pane = item.Control switch { "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", _ => null };
+        string? pane = item.Control switch
+        {
+            "openExpandedPanel" => "expandedPanel", "openCollapsedBar" => "collapsed", "openAppearance" => "appearance", "openModules" => "modules", _ => null
+        };
         if (pane == null) return null;
         var content = new StackPanel { Orientation = Orientation.Horizontal };
         var text = Text(ui.Text("whats_new.open_settings"), 12.5); text.SetResourceReference(TextBlock.ForegroundProperty, "SettingsLinkText"); content.Children.Add(text);
@@ -593,7 +663,10 @@ internal sealed class GuideContent : StackPanel
     /// an issue), then what each mark means, one topic at a time.
     internal void Help()
     {
-        Reset(); string[] providers = ["codex", "claude", "deepseek"];
+        // Every registered module has a topic, in registry order, as on the Mac.
+        Reset();
+        var registered = (snapshot()?.Modules ?? []).Where(value => DesktopPreferences.ValidProviderId(value.Provider)).ToArray();
+        string[] providers = registered.Length == 0 ? [.. DesktopPreferences.LegacyProviders] : registered.Select(value => value.Provider).ToArray();
         var quick = new Grid { Margin = new Thickness(0, 0, 0, 22) };
         var tiles = new[] {
             QuickTile(Button(ui.Text("help.quick.welcome"), "help.welcome", welcome), "hand.wave", ui.Text("help.quick.welcome"), ui.Text("help.quick.welcome_detail"), false),
@@ -611,15 +684,15 @@ internal sealed class GuideContent : StackPanel
         foreach (string id in new[] { "collapsed", "expanded" }.Concat(providers))
         {
             bool module = providers.Contains(id);
-            string name = id switch { "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek", _ => ui.Text("help.section." + id) };
+            string name = id switch
+            {
+                "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek",
+                _ when module => registered.FirstOrDefault(value => value.Provider == id)?.DisplayName ?? id,
+                _ => ui.Text("help.section." + id)
+            };
             var chip = new RadioButton { Style = (Style)FindResource("SettingsTopicChip"), GroupName = "help.topics", Margin = new Thickness(0, 0, 6, 6) };
             var label = new StackPanel { Orientation = Orientation.Horizontal };
-            if (module)
-            {
-                var glyph = new IconGlyph { Symbol = GuideArt.ProviderSymbol(id), Width = 11, Height = 11, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center, Ink = PacerPalette.Provider(id) };
-                chip.Checked += (_, _) => glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSelectionText"); chip.Unchecked += (_, _) => glyph.Ink = PacerPalette.Provider(id);
-                label.Children.Add(glyph);
-            }
+            if (module) label.Children.Add(ProviderIcon.Caption(id));
             var text = new TextBlock { Text = name, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
             text.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Control.Foreground)) { Source = chip }); label.Children.Add(text);
             chip.Content = label; Identify(chip, module ? "help.module." + id : "help.topic." + id, name);
@@ -636,11 +709,7 @@ internal sealed class GuideContent : StackPanel
         target.Children.Clear();
         if (id == "collapsed")
         {
-            // Under one accent the services are its shades, as the tiles draw them.
-            bool shades = PacerPalette.Accent != "multicolor";
-            var services = HelpRow("help.services", providers.Select(provider => (UIElement)GuideArt.Tile(GuideArt.ProviderSymbol(provider), GuideArt.ProviderTile(provider), 18, true)).ToArray());
-            if (shades && services.Children.OfType<StackPanel>().FirstOrDefault(child => Grid.GetColumn(child) == 1)?.Children[1] is TextBlock detail) detail.Text = ui.Text("help.services.shades");
-            target.Children.Add(Group(HelpInset, services,
+            target.Children.Add(Group(HelpInset, ServicesRow(providers),
                 HelpRow("help.tasks", Tasks(1, "codex"), Tasks(2, "codex", "claude"), Tasks(3, providers)),
                 HelpRow("help.attention", Badge(1)),
                 HelpRow("help.endings", Badge(2), Badge(3)),
@@ -652,7 +721,8 @@ internal sealed class GuideContent : StackPanel
         else if (id == "expanded")
             target.Children.Add(Group(HelpInset,
                 HelpRow("help.hover", Mark("cursorarrow.rays")), HelpRow("help.open", Mark("arrow.up.forward.app")),
-                HelpRow("help.app_buttons", providers.Select(provider => (UIElement)Mark(GuideArt.ProviderSymbol(provider), PacerPalette.Provider(provider), 12)).ToArray()),
+                // Three icons stand for all, as on the Mac, so the swatch stays roomy as modules are added.
+                HelpRow("help.app_buttons", providers.Take(3).Select(provider => (UIElement)ProviderIcon.CreateLaunch(provider, 14)).ToArray()),
                 HelpRow("help.read", Mark("checkmark.rectangle.stack")), HelpRow("help.pace", PaceSample())));
         else
         {
@@ -660,6 +730,49 @@ internal sealed class GuideContent : StackPanel
             target.Children.Add(Group(HelpInset, details.Children.Cast<UIElement>().ToArray().Select(child => { details.Children.Remove(child); return child; }).ToArray()));
         }
         Refresh();
+    }
+    /// The services' colors fold away behind one row with a palette; opening it
+    /// lists each service with its icon, name and color, as on the Mac.
+    private StackPanel ServicesRow(string[] providers)
+    {
+        var row = HelpRow("help.services", Mark("paintpalette"));
+        string title = ui.Text("help.services.title");
+        // The row button supplies the side padding; the row keeps only its height.
+        row.Margin = new Thickness(0, 8, 0, 8); Identify(row, "help.services.row", title);
+        // Under one accent the services are its shades, as the tiles draw them.
+        if (PacerPalette.Accent != "multicolor" && row.Children.OfType<StackPanel>().FirstOrDefault(child => Grid.GetColumn(child) == 1)?.Children[1] is TextBlock detail)
+            detail.Text = ui.Text("help.services.shades");
+        var chevron = new IconGlyph { Symbol = "chevron.right", Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
+            RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = new RotateTransform(0) };
+        chevron.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); Grid.SetColumn(chevron, 2); row.Children.Add(chevron);
+        // Each service under the title, left edge with the text, wrapping as the page narrows.
+        var colors = new WrapPanel { Margin = new Thickness(14 + 84 + 14, 0, 14, 10), Visibility = Visibility.Collapsed };
+        foreach (string provider in providers)
+        {
+            string name = provider switch
+            {
+                "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek",
+                _ => snapshot()?.Modules?.FirstOrDefault(value => value.Provider == provider)?.DisplayName ?? provider
+            };
+            var item = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 16, 8) };
+            var icon = ProviderIcon.Tile(provider, 14); icon.VerticalAlignment = VerticalAlignment.Center; item.Children.Add(icon);
+            var label = Text(name, 12); label.Margin = new Thickness(6, 0, 6, 0); label.VerticalAlignment = VerticalAlignment.Center; item.Children.Add(label);
+            item.Children.Add(new Border { Width = 18, Height = 6, CornerRadius = new CornerRadius(3), Background = PacerPalette.Provider(provider), VerticalAlignment = VerticalAlignment.Center });
+            Identify(item, "help.services." + provider, name); colors.Children.Add(item);
+        }
+        var toggle = new Button { Style = (Style)FindResource("SettingsRowButton"), ContentTemplate = null, Content = row,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(0) };
+        Identify(toggle, "help.services.toggle", title);
+        AutomationProperties.SetItemStatus(toggle, ui.Text("main.info_hidden"));
+        toggle.Click += (_, _) =>
+        {
+            bool open = colors.Visibility != Visibility.Visible;
+            colors.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            ((RotateTransform)chevron.RenderTransform).Angle = open ? 90 : 0;
+            AutomationProperties.SetItemStatus(toggle, ui.Text(open ? "main.info_shown" : "main.info_hidden"));
+        };
+        var host = new StackPanel(); host.Children.Add(toggle); host.Children.Add(colors); Identify(host, "help.services", title); return host;
     }
     /// One way in: its symbol on a soft tile, a title and a sentence, with an arrow when it leaves Pacer.
     private Button QuickTile(Button button, string symbol, string title, string detail, bool external)
@@ -696,13 +809,31 @@ internal sealed class GuideContent : StackPanel
     private void ModuleHelp(Panel target, string provider)
     {
         target.Children.Clear(); Brush tint = PacerPalette.Provider(provider); double remaining = provider == "claude" ? 81 : 58;
-        string[] keys = provider == "codex" ? ["quota", "windows", "remote", "apps"] : provider == "claude" ? ["quota", "windows", "cloud", "remote", "apps"] : ["balance", "mode", "cost", "peak", "clock", "alerts", "speed"];
+        string[] keys = provider switch
+        {
+            "codex" => ["quota", "windows", "remote", "apps"],
+            "claude" => ["quota", "windows", "cloud", "remote", "apps"],
+            "deepseek" => ["balance", "mode", "cost", "peak", "clock", "alerts", "speed"],
+            // A module's own topics; one without any still says what Pacer follows.
+            _ => new[] { "credits", "cost", "progress", "apps" }.Where(key => ui.Has("help." + provider + "." + key + ".title")).ToArray()
+        };
+        if (keys.Length == 0)
+        {
+            string name = snapshot()?.Modules?.FirstOrDefault(value => value.Provider == provider)?.DisplayName ?? provider;
+            var row = HelpRow("help.harness.tasks", ProviderIcon.Tile(provider, 18));
+            foreach (var text in row.Children.OfType<StackPanel>().SelectMany(panel => panel.Children.OfType<TextBlock>()))
+                text.Text = text.Text.Replace("%@", name, StringComparison.Ordinal);
+            target.Children.Add(row); return;
+        }
         foreach (string key in keys)
         {
             UIElement[] samples = provider == "deepseek" ? DeepSeekSample(key) : key switch
             {
                 "quota" => [Rings((provider, remaining)), Figure(remaining + "%", tint)],
                 "windows" => [Warning("codex5hLow", false, provider), Warning("codex5hExhausted", true, provider)],
+                "credits" => [ProviderIcon.Tile(provider, 18), Figure("3.3k", tint)],
+                "cost" => [Figure("0.57", tint)],
+                "progress" => [Mark("checkmark.circle", tint)],
                 "cloud" => [Mark("cloud", tint)], "remote" => [Mark("network", tint)], _ => [Mark("square.on.square", tint)]
             };
             if (target.Children.Count > 0) { var line = new Border { Height = 1, Margin = new Thickness(14, 0, 14, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); target.Children.Add(line); }
@@ -713,7 +844,7 @@ internal sealed class GuideContent : StackPanel
     {
         switch (key)
         {
-            case "balance": return [GuideArt.Tile(GuideArt.ProviderSymbol("deepseek"), GuideArt.ProviderTile("deepseek"), 18, true), Figure("¥86", PacerPalette.DeepSeek)];
+            case "balance": return [ProviderIcon.Tile("deepseek", 18), Figure("¥86", PacerPalette.DeepSeek)];
             case "mode": return [Mark("clock", PacerPalette.DeepSeek), Mark("chart.pie", PacerPalette.DeepSeek)];
             case "cost": return [Figure("≈¥0.42", PacerPalette.DeepSeek, 11)];
             case "peak": return [Figure("×2", PacerPalette.Attention)];
@@ -813,7 +944,11 @@ internal sealed class GuideContent : StackPanel
         var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         Button? copy = null; copy = Button(ui.Text("support.qq.copy"), "support.qq.copy", () => _ = Copy(copy!, number, "support.qq.copy"));
         actions.Children.Add(copy);
-        string? image = file != null && file == Path.GetFileName(file) ? Path.Combine(AppContext.BaseDirectory, "CodexPacerPortable_PacerCore.resources", file) : null;
+        // Core's resources sit beside the engine, so the code was never found next to the app.
+        string? image = file != null && file == Path.GetFileName(file)
+            ? new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "Engine") }
+                .Select(folder => Path.Combine(folder, "CodexPacerPortable_PacerCore.resources", file)).FirstOrDefault(File.Exists)
+            : null;
         if (image != null && File.Exists(image))
         {
             Popup? popup = null;

@@ -48,11 +48,27 @@ final class ExpandedPanelTests: XCTestCase {
         XCTAssertNil(Layout.decode(nil)); XCTAssertNil(Layout.decode("not json"))
         XCTAssertNil(Layout.decode(#"{"version":2,"blocks":["tasks"]}"#), "A newer layout reads as automatic")
         XCTAssertNil(Layout.decode(String(repeating: " ", count: Layout.byteLimit + 1)))
-        let value = try XCTUnwrap(Layout.decode(#"{"version":1,"blocks":["claude","future","tasks","claude"]}"#))
+        let known = #""known":["tasks","codex","claude","deepseek","deepseekSpend","deepseekWeek","workbuddy","workbuddy-ai"]"#
+        let value = try XCTUnwrap(Layout.decode(#"{"version":1,"blocks":["claude","future","tasks","claude"],"# + known + "}"))
         XCTAssertEqual(value.blocks, [.claude, .tasks])
-        XCTAssertEqual(value.json, #"{"blocks":["claude","tasks"],"version":1}"#)
+        XCTAssertEqual(value.json, #"{"blocks":["claude","tasks"],"# + known + #","version":1}"#)
         XCTAssertEqual(Layout.decode(value.json), value)
-        XCTAssertEqual(Layout.decode(#"{"version":1,"blocks":[]}"#)?.blocks, [], "An empty saved layout stays empty")
+        XCTAssertEqual(Layout.decode(#"{"version":1,"blocks":[],"# + known + "}")?.blocks, [], "An empty saved layout stays empty")
+    }
+
+    func testLayoutsSavedBeforeANewBlockGainItOnce() throws {
+        // 4.4.4 and earlier wrote no `known` list and never offered WorkBuddy.
+        let older = try XCTUnwrap(Layout.decode(#"{"version":1,"blocks":["claude","tasks","deepseek"]}"#))
+        XCTAssertEqual(older.blocks, [.claude, .tasks, .deepseek, .workbuddy, .workbuddyAI],
+            "A block added since joins at its usual place")
+        XCTAssertEqual(older.visibleBlocks(providers: [.claude, .deepseek]), [.claude, .tasks, .deepseek],
+            "It stays hidden while its service is off")
+        XCTAssertEqual(Layout.decode(#"{"version":1,"blocks":["workbuddy-ai","claude"]}"#)?.blocks, [.workbuddy, .workbuddyAI, .claude],
+            "A block already placed stays once, and the new one goes before the first block that usually follows it")
+        var removed = older; removed.toggle(.workbuddy, providers: all)
+        XCTAssertEqual(Layout.decode(removed.json)?.blocks, [.claude, .tasks, .deepseek, .workbuddyAI], "A removal saved since stays removed")
+        XCTAssertEqual(Layout.decode(#"{"version":1,"blocks":["tasks"],"known":"damaged"}"#)?.blocks, [.tasks, .workbuddy, .workbuddyAI],
+            "A damaged list reads as an older layout")
     }
 
     func testEditsKeepUsualOrderHiddenPlacesAndTheLastShownBlock() {
@@ -242,11 +258,37 @@ final class ExpandedPanelTests: XCTestCase {
 
     // MARK: Settings page projection
 
+    func testAccountCreditsBlockKeepsLegacyQuotaAndWorksWithAllProviders() throws {
+        var request = P.Request(providers: [.codex, .claude, .deepseek, .workbuddy], language: "en")
+        let all = try XCTUnwrap(P.project(request))
+        XCTAssertEqual(all.sections.map(\.kind), [.tasks, .quota])
+        XCTAssertEqual(all.sections[1].providers, [.codex, .claude, .deepseek, .workbuddy])
+        for style in QuotaDashboardPresentation.Style.allCases {
+            let slots = QuotaDashboardPresentation.slots(providers: all.sections[1].providers, style: style)
+            XCTAssertEqual(slots.count, 4)
+            XCTAssertEqual(slots.last?.id, "workbuddy:credits")
+            XCTAssertNil(slots.last?.period)
+            XCTAssertEqual(QuotaDashboardPresentation.Layout.columns(for: slots.count), 2)
+        }
+        XCTAssertTrue(all.visible.contains("workbuddy"))
+        request.action = .init(kind: "move", block: "workbuddy", before: "tasks")
+        let moved = try XCTUnwrap(P.project(request))
+        XCTAssertEqual(moved.sections.first?.kind, .quota)
+        XCTAssertEqual(moved.sections.first?.providers, [.workbuddy])
+        XCTAssertEqual(moved.sections.first?.actions, true)
+        request.layout = moved.layoutJSON; request.action = nil; request.providers.removeAll { $0 == .workbuddy }
+        let disabled = try XCTUnwrap(P.project(request))
+        XCTAssertFalse(disabled.visible.contains("workbuddy"))
+        XCTAssertTrue(disabled.blocks.contains("workbuddy"))
+    }
+
     func testProjectionEditsSavesAndRestoresTheLayout() throws {
         let request = P.Request(providers: [.codex, .claude], language: "en")
         let automatic = try XCTUnwrap(P.project(request))
         XCTAssertNil(automatic.layoutJSON, "Nothing is saved until an edit")
-        XCTAssertEqual(automatic.blocks, ["tasks", "codex", "claude", "deepseek"]); XCTAssertEqual(automatic.visible, ["tasks", "codex", "claude"])
+        XCTAssertEqual(automatic.blocks, ["tasks", "codex", "claude", "deepseek", "workbuddy", "workbuddy-ai"],
+            "Services that are off keep their places, so a saved layout shows them once turned on")
+        XCTAssertEqual(automatic.visible, ["tasks", "codex", "claude"])
         XCTAssertEqual(automatic.catalog.first { $0.id == "deepseek" }?.available, false)
         XCTAssertEqual(automatic.catalog.first { $0.id == "deepseekWeek" }?.placed, false)
         XCTAssertEqual(automatic.groups.map(\.id), ["tasks", "quota", "deepseek"])
@@ -255,7 +297,8 @@ final class ExpandedPanelTests: XCTestCase {
         var edit = request; edit.action = .init(kind: "shift", block: "tasks", offset: 1)
         let moved = try XCTUnwrap(P.project(edit))
         XCTAssertEqual(moved.visible, ["codex", "tasks", "claude"])
-        XCTAssertEqual(moved.layoutJSON, #"{"blocks":["codex","tasks","claude","deepseek"],"version":1}"#)
+        XCTAssertEqual(moved.layoutJSON, #"{"blocks":["codex","tasks","claude","deepseek","workbuddy","workbuddy-ai"],"#
+            + #""known":["tasks","codex","claude","deepseek","deepseekSpend","deepseekWeek","workbuddy","workbuddy-ai"],"version":1}"#)
         var removal = request; removal.layout = #"{"version":1,"blocks":["claude"]}"#; removal.action = .init(kind: "toggle", block: "claude")
         let kept = try XCTUnwrap(P.project(removal))
         XCTAssertEqual(kept.visible, ["claude"]); XCTAssertEqual(kept.catalog.first { $0.id == "claude" }?.locked, true)

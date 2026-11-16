@@ -48,12 +48,17 @@ final class EngineModuleTests: XCTestCase {
         let runtime = EngineRuntime(demo: false, dismissalStore: nil, installationDetection: { await detector.read() }, output: { capture.append($0) })
         _ = await runtime.receive(try command("initialize", homes(root)))
         XCTAssertEqual(Set(capture.snapshot()?.sources.map(\.provider) ?? []), ["claude"])
-        XCTAssertEqual(capture.snapshot()?.modules?.first { $0.provider == "codex" }, .init(provider: "codex", mode: "automatic", installed: false, enabled: false))
+        let codex = try XCTUnwrap(capture.snapshot()?.modules?.first { $0.provider == "codex" })
+        XCTAssertEqual([codex.mode, String(codex.installed == true), String(codex.enabled)], ["automatic", "false", "false"])
+        XCTAssertEqual(codex.prominent, false, "A module not found here stays in the module library")
+        XCTAssertEqual(codex.brand?.dark, "#7DD6C4"); XCTAssertEqual(codex.balance, "quotaWindows"); XCTAssertNil(codex.local)
         _ = await runtime.receive(try command("configure", ["providerModes": ["codex": "enabled", "claude": "disabled"]]))
         XCTAssertEqual(Set(capture.snapshot()?.sources.map(\.provider) ?? []), ["codex"])
         await detector.replace(.init(codexInstalled: false, claudeInstalled: false))
         await runtime.maintenanceRefresh()
-        XCTAssertEqual(capture.snapshot()?.modules?.first { $0.provider == "codex" }, .init(provider: "codex", mode: "enabled", installed: false, enabled: true))
+        let enabled = try XCTUnwrap(capture.snapshot()?.modules?.first { $0.provider == "codex" })
+        XCTAssertEqual([enabled.mode, String(enabled.installed == true), String(enabled.enabled)], ["enabled", "false", "true"])
+        XCTAssertEqual(enabled.prominent, true, "Turning a module on explicitly lists it even when it isn't found")
         _ = await runtime.receive(try command("configure", ["providerModes": ["deepseek": "disabled"]]))
         let reads = await detector.reads
         await runtime.maintenanceRefresh()
@@ -96,7 +101,7 @@ final class EngineModuleTests: XCTestCase {
         XCTAssertFalse(original.tasks.contains { $0.provider == "codex" })
         for parameters: [String: Any] in [
             ["providerModes": ["codex": "enable"], "hideProjects": true],
-            ["providerModes": ["unknown": "automatic"], "hideProjects": true],
+            ["providerModes": [String(repeating: "x", count: 65): "automatic"], "hideProjects": true],
             ["providerModes": automatic, "enabledProviders": [] as [String], "hideProjects": true]
         ] {
             _ = await runtime.receive(try command("configure", parameters))
@@ -105,6 +110,11 @@ final class EngineModuleTests: XCTestCase {
             XCTAssertEqual(capture.snapshot()?.tasks.map(\.title), original.tasks.map(\.title))
             XCTAssertEqual(capture.snapshot()?.modules, original.modules)
         }
+        // A module the engine doesn't know, from a newer or older host, is ignored.
+        _ = await runtime.receive(try command("configure", ["providerModes": ["future-module": "enabled", "codex": "automatic"],
+                                                             "disabledHarnessProgress": ["future-module"]]))
+        XCTAssertEqual(capture.snapshot()?.modules?.first { $0.provider == "codex" }?.enabled, true)
+        XCTAssertNil(capture.snapshot()?.modules?.first { $0.provider == "future-module" })
         await runtime.stop()
     }
 }

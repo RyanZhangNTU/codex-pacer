@@ -42,6 +42,54 @@ final class UpdateFlowTests: XCTestCase {
         XCTAssertEqual(flow.phase, .idle, "A background check does not show a manual result")
     }
 
+    func testAnyFailedCheckOffersOtherWaysUntilACheckReadsTheFeed() {
+        let then = Date(timeIntervalSince1970: 1_000), later = Date(timeIntervalSince1970: 2_000)
+        var flow = UpdateFlow()
+        XCTAssertNil(flow.failure)
+        // A scheduled check fails only at the end of its cycle, and counts as much as one asked for.
+        flow.finishedCycle(error: URLError(.timedOut), at: then)
+        XCTAssertEqual(flow.failure, .check)
+        XCTAssertEqual(flow.checkFailedAt, then)
+        XCTAssertNil(flow.lastSuccess)
+        XCTAssertEqual(flow.phase, .idle, "A scheduled failure doesn't take over the status line")
+
+        flow.begin(.check)
+        XCTAssertEqual(flow.failure, .check, "The panel stays while the check runs again")
+        flow.failed("offline", at: later)
+        XCTAssertEqual(flow.checkFailedAt, later, "Each failure is a new one, which brings back a closed banner")
+
+        flow.begin(.check)
+        flow.notFound(at: later)
+        XCTAssertNil(flow.failure)
+        XCTAssertNil(flow.checkFailedAt)
+        XCTAssertEqual(flow.lastSuccess, later)
+
+        flow.finishedCycle(error: URLError(.cannotFindHost), at: later)
+        XCTAssertEqual(flow.found(release, installable: true, at: then), .dismiss)
+        XCTAssertNil(flow.failure, "Finding a version reads the feed too")
+        XCTAssertEqual(flow.lastSuccess, then)
+    }
+
+    func testAFailedCheckWithAVersionWaitingOffersTheUpdateNotOtherWays() {
+        var flow = UpdateFlow(available: release)
+        flow.finishedCycle(error: URLError(.notConnectedToInternet))
+        XCTAssertNotNil(flow.checkFailedAt)
+        XCTAssertNil(flow.failure, "The found version's own banner and button still stand")
+    }
+
+    func testAFailedDownloadOffersOtherWaysForThatVersion() {
+        var flow = UpdateFlow(available: release)
+        flow.begin(.install)
+        flow.failed("The download timed out")
+        flow.finishedCycle(error: URLError(.timedOut))
+        XCTAssertEqual(flow.failure, .download(release))
+        XCTAssertNil(flow.checkFailedAt, "A download that failed is not a failed check")
+        flow.begin(.install)
+        XCTAssertNil(flow.failure, "Trying again shows the download instead")
+        flow.cancelled()
+        XCTAssertNil(flow.failure, "Cancelling is not a failure")
+    }
+
     func testCancellingOrDeferringInstallerAuthorizationAllowsRetry() {
         for error in [SUError.installationCanceledError, .installationAuthorizeLaterError] {
             var flow = UpdateFlow(available: release)

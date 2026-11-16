@@ -12,9 +12,11 @@ struct SettingsHelpPane: View {
     private static let repository = "https://github.com/RyanZhangNTU/codex-pacer"
     var onShowWelcome: (() -> Void)?
     @State private var topic = HelpTopic.collapsed
+    @State private var showsServiceColors: Bool
 
-    init(onShowWelcome: (() -> Void)? = nil) {
+    init(onShowWelcome: (() -> Void)? = nil, showsServiceColors: Bool = false) {
         self.onShowWelcome = onShowWelcome
+        _showsServiceColors = State(initialValue: showsServiceColors)
     }
 
     var body: some View {
@@ -37,9 +39,7 @@ struct SettingsHelpPane: View {
                 switch topic {
                 case .collapsed: collapsedRows
                 case .expanded: expandedRows
-                case .module(.codex): codexRows
-                case .module(.claude): claudeRows
-                case .module(.deepseek): deepseekRows
+                case .module(let provider): moduleRows(provider)
                 }
             }
         }
@@ -50,10 +50,7 @@ struct SettingsHelpPane: View {
     }
 
     @ViewBuilder private var collapsedRows: some View {
-        // Under one accent the services are its shades, as the tiles draw them.
-        row("help.services", detail: PacerAccent.current == .multicolor ? nil : "help.services.shades") {
-            ForEach(AgentProvider.allCases, id: \.self) { ProviderTile(provider: $0) }
-        }
+        servicesRow
         row("help.tasks") {
             ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [.codex: 1]))
             ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1, .claude: 1]))
@@ -85,14 +82,45 @@ struct SettingsHelpPane: View {
         row("help.hover", symbol: "cursorarrow.rays")
         row("help.open", symbol: "arrow.up.forward.app")
         row("help.app_buttons") {
-            ForEach(AgentProvider.allCases, id: \.self) { provider in
-                Image(systemName: provider.glyph).font(.system(size: 12, weight: .semibold)).foregroundStyle(provider.tint)
+            // Three stand for all, so the swatch never crowds as modules are added.
+            ForEach(HelpTopic.modules.prefix(3), id: \.self) { provider in
+                ProviderAppIcon(provider: provider, size: 14, outline: true)
+                    .foregroundStyle(PacerPalette.secondary)
             }
         }
         row("help.read", symbol: "checkmark.rectangle.stack")
         row("help.pace") {
             PaceTickSample()
             QuotaVerdictChip(verdict: .spare)
+        }
+    }
+
+    /// A module's own marks. One without its own topic gets the rows every
+    /// module shares, so adding a Harness never breaks Help.
+    @ViewBuilder private func moduleRows(_ provider: AgentProvider) -> some View {
+        switch provider {
+        case .codex: codexRows
+        case .claude: claudeRows
+        case .deepseek: deepseekRows
+        case .workbuddy, .workbuddyAI: workbuddyRows(provider)
+        default:
+            row(title: L10n.text("help.harness.tasks.title", provider.displayName),
+                detail: L10n.text("help.harness.tasks.detail", provider.displayName)) { ProviderTile(provider: provider) }
+        }
+    }
+
+    @ViewBuilder private func workbuddyRows(_ provider: AgentProvider) -> some View {
+        let tint = provider.tint
+        row("help." + provider.rawValue + ".credits") {
+            QuotaRingsGlyph(rings: [.init(tint: tint, remaining: 64, stale: false)])
+            Text("1,280").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(tint)
+        }
+        row("help." + provider.rawValue + ".cost") {
+            Text("12").font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(tint)
+        }
+        row("help." + provider.rawValue + ".progress") { ProgressRingSample(fraction: 0.62, tint: tint) }
+        row("help." + provider.rawValue + ".apps") {
+            ProviderAppIcon(provider: provider, size: 14, outline: true).foregroundStyle(tint)
         }
     }
 
@@ -143,6 +171,48 @@ struct SettingsHelpPane: View {
         row("help.deepseek.speed") { SpeedBarsSample() }
     }
 
+    /// The services' colors fold away behind one row; opening it lists each
+    /// service with its color.
+    private var servicesRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button { withAnimation(.easeOut(duration: 0.15)) { showsServiceColors.toggle() } } label: {
+                HStack(spacing: 14) {
+                    IslandSampleSwatch {
+                        Image(systemName: "paintpalette").font(.system(size: 13, weight: .semibold)).foregroundStyle(PacerPalette.primary)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.text("help.services.title")).font(.system(size: 13))
+                        // Under one accent the services are its shades, as the tiles draw them.
+                        Text(L10n.text(PacerAccent.current == .multicolor ? "help.services.detail" : "help.services.shades"))
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(showsServiceColors ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(L10n.text(showsServiceColors ? "main.info_shown" : "main.info_hidden"))
+            if showsServiceColors {
+                FlowRow(spacing: 16, lineSpacing: 8) {
+                    ForEach(HelpTopic.modules, id: \.self) { provider in
+                        HStack(spacing: 6) {
+                            ProviderAppIcon(provider: provider, size: 14)
+                            Text(provider.displayName).font(.system(size: 12))
+                            Capsule().fill(provider.tint).frame(width: 18, height: 6)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                .padding(.leading, 84 + 14)
+                .padding(.bottom, 4)
+            }
+        }
+    }
+
     private func quotaRow(_ key: String, provider: AgentProvider, remaining: Double) -> some View {
         row(key) {
             QuotaRingsGlyph(rings: [.init(tint: provider.tint, remaining: remaining, stale: false)])
@@ -163,11 +233,15 @@ struct SettingsHelpPane: View {
 
     /// `detail` replaces the entry's own explanation when one applies.
     private func row<Sample: View>(_ key: String, detail: String? = nil, @ViewBuilder sample: () -> Sample) -> some View {
+        row(title: L10n.text(key + ".title"), detail: L10n.text(detail ?? key + ".detail"), sample: sample)
+    }
+
+    private func row<Sample: View>(title: String, detail: String, @ViewBuilder sample: () -> Sample) -> some View {
         HStack(spacing: 14) {
             IslandSampleSwatch(content: sample)
             VStack(alignment: .leading, spacing: 2) {
-                Text(L10n.text(key + ".title")).font(.system(size: 13))
-                Text(L10n.text(detail ?? key + ".detail")).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                Text(title).font(.system(size: 13))
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -175,11 +249,31 @@ struct SettingsHelpPane: View {
     }
 }
 
+/// A reported estimate as task rows draw it: an arc over a faint track.
+private struct ProgressRingSample: View {
+    let fraction: Double
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(tint.opacity(0.22), lineWidth: 2.2)
+            Circle().trim(from: 0, to: fraction).stroke(tint, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 14, height: 14)
+    }
+}
+
 /// What the legend shows: the bar, the panel or one module's own marks.
 private enum HelpTopic: Hashable {
     case collapsed, expanded, module(AgentProvider)
 
-    static var all: [HelpTopic] { [.collapsed, .expanded] + AgentProvider.allCases.map(HelpTopic.module) }
+    /// Every module this Mac can run, in the registry's order.
+    static var modules: [AgentProvider] {
+        HarnessRegistry.legacyIDs + HarnessRegistry.localHarnesses.filter { $0.platforms.contains(.macOS) }.map(\.descriptor.id)
+    }
+
+    static var all: [HelpTopic] { [.collapsed, .expanded] + modules.map(HelpTopic.module) }
     var isModule: Bool { if case .module = self { true } else { false } }
     var title: String {
         switch self {
@@ -196,14 +290,14 @@ private struct TopicChips: View {
     @Environment(\.pacerAccent) private var accent
 
     var body: some View {
-        HStack(spacing: 6) {
+        // Chips wrap instead of cutting a name short, so both WorkBuddy editions stay apart.
+        FlowRow(spacing: 6, lineSpacing: 6) {
             ForEach(HelpTopic.all, id: \.self) { topic in
                 let selected = topic == selection
                 Button { selection = topic } label: {
                     HStack(spacing: 5) {
                         if case .module(let provider) = topic {
-                            Image(systemName: provider.glyph).font(.system(size: 9.5, weight: .semibold))
-                                .foregroundStyle(selected ? Color.white : provider.tint)
+                            ProviderAppIcon(provider: provider, size: 13)
                         }
                         Text(topic.title).font(.system(size: 12, weight: selected ? .semibold : .regular))
                     }
@@ -268,9 +362,10 @@ private struct QuickTile: View {
 private struct MoveSample: View {
     var body: some View {
         HStack(spacing: 5) {
-            Capsule().fill(Color.white.opacity(0.25)).overlay(Capsule().stroke(Color.white.opacity(0.55), lineWidth: 1))
+            // The island's own ink, so the sample reads on light glass as on dark.
+            Capsule().fill(PacerPalette.primary.opacity(0.18)).overlay(Capsule().stroke(PacerPalette.primary.opacity(0.55), lineWidth: 1))
                 .frame(width: 20, height: 8)
-            Image(systemName: "arrow.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Color.white)
+            Image(systemName: "arrow.right").font(.system(size: 9, weight: .bold)).foregroundStyle(PacerPalette.primary)
             RoundedRectangle(cornerRadius: 1.5).fill(AgentProvider.codex.tint).frame(width: 3, height: 18)
         }
     }
@@ -302,10 +397,7 @@ private struct ProviderTile: View {
     let provider: AgentProvider
 
     var body: some View {
-        Image(systemName: provider.glyph).font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(Color.black.opacity(0.72))
-            .frame(width: 18, height: 18)
-            .background(provider.tint, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        ProviderAppIcon(provider: provider, size: 18)
     }
 }
 
@@ -317,7 +409,7 @@ private struct PaceTickSample: View {
             Circle().trim(from: 0, to: 0.62)
                 .stroke(AgentProvider.codex.tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-            Capsule().fill(Color.white).frame(width: 1.5, height: 7)
+            Capsule().fill(PacerPalette.primary).frame(width: 1.5, height: 7)
                 .offset(y: -10).rotationEffect(.degrees(0.45 * 360))
         }
         .frame(width: 20, height: 20)

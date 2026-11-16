@@ -87,7 +87,10 @@ struct MainCard<Content: View>: View {
     var padding: CGFloat = 14
     /// Shown at the end of the title line, such as column names.
     var titleTrailing: AnyView? = nil
+    /// An ⓘ beside the title that opens this explanation under it.
+    var info: String? = nil
     @ViewBuilder let content: Content
+    @State private var showsInfo = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -96,11 +99,14 @@ struct MainCard<Content: View>: View {
                     if let title {
                         Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
                             .accessibilityAddTraits(.isHeader)
+                        if info != nil { InfoButton(title: title, isOn: $showsInfo).padding(.leading, 4) }
                     }
                     Spacer(minLength: 8)
                     if let titleTrailing { titleTrailing }
                 }
+                .frame(minHeight: 20)
                 .padding(.leading, 4).padding(.trailing, padding + 1)
+                if showsInfo, let info { InfoBox(text: info).padding(.horizontal, 4) }
             }
             _VariadicView.Tree(CardRows()) { content }
                 .padding(.horizontal, padding)
@@ -224,11 +230,14 @@ struct ProgressRingToggle: View {
     var status: String? = nil
     var canRetry = false
     var retry: () -> Void = {}
+    var secondaryTitle: String? = nil
+    var secondaryAction: () -> Void = {}
 
     var body: some View {
         CardRow(title: L10n.text("main.claude.ring"), detail: status, info: info) {
             HStack(spacing: 8) {
                 if canRetry { Button(L10n.text("connections.retry"), action: retry).buttonStyle(.main) }
+                if let secondaryTitle { Button(secondaryTitle, action: secondaryAction).buttonStyle(.main) }
                 Toggle(L10n.text("main.claude.ring"), isOn: $isOn).labelsHidden().toggleStyle(.switch)
             }
         }
@@ -454,6 +463,8 @@ struct CardPathField: View {
     let commit: () -> Void
     let choose: () -> Void
     var extra: AnyView? = nil
+    /// Without a page's own focus tracking, the field commits when it loses focus too.
+    @FocusState private var ownFocus: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -470,6 +481,7 @@ struct CardPathField: View {
     @ViewBuilder private var textField: some View {
         let base = TextField(title, text: $text, prompt: Text(prompt)).textFieldStyle(.roundedBorder).labelsHidden()
             .font(.system(size: 12.5)).onSubmit(commit)
-        if let focus, let field { base.focused(focus, equals: field) } else { base }
+        if let focus, let field { base.focused(focus, equals: field) }
+        else { base.focused($ownFocus).onChange(of: ownFocus) { _, focused in if !focused { commit() } } }
     }
 }

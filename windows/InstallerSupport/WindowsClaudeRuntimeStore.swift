@@ -58,7 +58,9 @@ public struct WindowsClaudeRuntimeStore {
         let name = "Global\\CodexPacer." + directoryName + "." + Self.digest(Data(root.path.lowercased().utf8))
         guard let mutex = CreateMutexW(nil, false, Array(name.utf16) + [0]) else { throw Failure.busy }
         defer { _ = CloseHandle(mutex) }
-        let state = WaitForSingleObject(mutex, 2000)
+        // Codex's and WorkBuddy's reporters prepare the runtime together on the
+        // first start after an update; copying it takes longer than two seconds.
+        let state = WaitForSingleObject(mutex, 30_000)
         guard state == WAIT_OBJECT_0 || state == DWORD(0x80) /* WAIT_ABANDONED_0 */ else { throw Failure.busy }
         defer { _ = ReleaseMutex(mutex) }
         return try action()
@@ -110,7 +112,9 @@ public struct WindowsClaudeRuntimeStore {
     public func ensure(package source: URL, home: URL) throws -> URL {
         try ensure(package: source, home: home, progressReporter: nil)
     }
-    func ensure(package source: URL, home: URL, progressReporter: Data?) throws -> URL {
+    /// - Parameter stablePath: keep the reporter in the Python-only folder and
+    ///   replace it there, for harnesses that key their trust to the command.
+    func ensure(package source: URL, home: URL, progressReporter: Data?, stablePath: Bool = false) throws -> URL {
         try storage.validate(home)
         guard storage.isDirectory(home) else { throw Failure.unsafeRuntime }
         let pin = try WindowsPythonPin.load()
@@ -138,7 +142,10 @@ public struct WindowsClaudeRuntimeStore {
             bytes.append((file, progressReporter))
             // Store Codex can prefer a private AppData copy at the previous path.
             // A reporter change needs a new path even when Python stays pinned.
-            identifier += "-" + file.sha256.prefix(12)
+            // WorkBuddy instead trusts a command by its path and arguments, so its
+            // reporter keeps one path and is replaced in place. Python reads the
+            // script and closes it before running, so a running reporter allows it.
+            if !stablePath { identifier += "-" + file.sha256.prefix(12) }
         }
         try createDirectory(root)
         let marker = root.appendingPathComponent(Self.marker)

@@ -364,7 +364,7 @@ final class SelfReportedProgressTests: XCTestCase {
         XCTAssertEqual(FileManager.default.contents(atPath: flag.path), Data("tool\n".utf8), "An older marker switch moves to the tool")
         try Data("tool 15\n".utf8).write(to: flag)
         XCTAssertTrue(ClaudeProgressRingSwitch.apply(enabled: true, home: home))
-        XCTAssertEqual(FileManager.default.contents(atPath: flag.path), Data("tool 15\n".utf8), "A hand-written mode is kept")
+        XCTAssertEqual(FileManager.default.contents(atPath: flag.path), Data("tool\n".utf8), "An older step-size switch moves to the one mode")
         XCTAssertTrue(ClaudeProgressRingSwitch.apply(enabled: false, home: home))
         XCTAssertFalse(FileManager.default.fileExists(atPath: flag.path))
     }

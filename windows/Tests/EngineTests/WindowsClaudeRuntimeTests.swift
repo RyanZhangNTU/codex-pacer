@@ -85,6 +85,39 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: script), bytes)
     }
 
+    /// WorkBuddy trusts a command by its path and arguments, so its reporter
+    /// keeps one path across updates and is replaced in place (11/15: each
+    /// reporter change otherwise asked the user to trust the tool again).
+    func testLocalHarnessReporterKeepsOnePathAcrossUpdates() throws {
+        let fixture = try fixture()
+        let root = fixture.root.deletingLastPathComponent().appendingPathComponent("CodexProgressRuntime")
+        let home = fixture.homes[0], package = try self.package
+        let paths = WindowsCodexProgressPaths(root: root)
+        let runtime = WindowsCodexProgressRuntime(root: root)
+        let stable = try runtime.prepare(home: home, package: package, stablePath: true)
+        let script = URL(fileURLWithPath: stable.arguments[2])
+        let current = try Data(contentsOf: script)
+        XCTAssertEqual(script.deletingLastPathComponent().lastPathComponent, try WindowsPythonPin.load().identifier)
+        XCTAssertTrue(paths.ownsLocalHarness(stable.executable, arguments: paths.localHarnessCommand(stable, home: home).arguments, home: home))
+
+        // An older reporter in the same place, as a previous Pacer left it.
+        let marker = script.deletingLastPathComponent().appendingPathComponent(".pacer-owned.json")
+        let older = Data("# Previous reporter\n".utf8)
+        try older.write(to: script)
+        var record = try read(marker)
+        record["files"] = try XCTUnwrap(record["files"] as? [[String: Any]]).map { file in
+            file["name"] as? String == script.lastPathComponent
+                ? ["name": script.lastPathComponent, "bytes": older.count, "sha256": WindowsClaudeRuntimeStore.digest(older)] : file
+        }
+        try write(record, marker)
+        XCTAssertEqual(try runtime.prepare(home: home, package: package, stablePath: true), stable, "An update keeps the command")
+        XCTAssertEqual(try Data(contentsOf: script), current, "and replaces the reporter in place")
+
+        let codex = try runtime.prepare(home: home, package: package)
+        XCTAssertNotEqual(codex.executable, stable.executable, "Codex keeps a path per reporter")
+        XCTAssertTrue(paths.owns(codex, home: home) && paths.owns(stable, home: home))
+    }
+
     func testMultipleHomesShareRuntimeAndUninstallRestoresBoth() throws {
         let fixture = try fixture(), runtime = WindowsClaudeHookRuntime(root: fixture.root)
         for home in fixture.homes {
@@ -319,7 +352,7 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         try runtime.uninstall(homes: [home])
         XCTAssertTrue(NSDictionary(dictionary: original).isEqual(to: try read(home.appendingPathComponent("settings.json"))))
     }
-    func testProgressRingHookAsksForTheMarkerAndHidesItOnScreen() throws {
+    func testProgressRingHookAsksForThePluginToolInOneWording() throws {
         let home = try fixture().homes[0], python = try package.appendingPathComponent("python.exe"), pacer = home.appendingPathComponent("pacer")
         try FileManager.default.createDirectory(at: pacer, withIntermediateDirectories: true)
         let hook = pacer.appendingPathComponent("hook.py"); try WindowsClaudeHookRuntime.script().write(to: hook)
@@ -336,31 +369,16 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
             XCTAssertEqual(process.terminationStatus, 0)
             return String(decoding: data, as: UTF8.self)
         }
-        func shown(_ text: String) throws -> String? {
-            let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
-            return (value["hookSpecificOutput"] as? [String: Any])?["displayContent"] as? String
-        }
-        let open = "\u{27E6}", close = "\u{27E7}"
+        let open = "\u{27E6}", close = "\u{27E7}", flag = ClaudeProgressRingSwitch.flagURL(home: home)
         let prompt: [String: Any] = ["hook_event_name": "UserPromptSubmit", "session_id": "synthetic-ring-session", "prompt_id": "synthetic-prompt", "prompt": "PRIVATE"]
         XCTAssertEqual(try run(prompt), "", "The ring stays off until its switch file exists")
-        try Data("on\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
-        XCTAssertTrue(try run(prompt).contains("additionalContext"))
-        func message(_ index: Int, _ delta: String, agent: String? = nil) -> [String: Any] {
-            var value = prompt.merging(["hook_event_name": "MessageDisplay", "turn_id": "turn", "message_id": "message", "final": false, "index": index, "delta": delta]) { _, new in new }
-            if let agent { value["agent_id"] = agent }
-            return value
-        }
-        // Claude shows displayContent in place of the lines; its stored message keeps the marker.
-        XCTAssertEqual(try shown(run(message(0, open + "62%" + close + " Reading the docs next.\n"))), "Reading the docs next.\n")
-        XCTAssertEqual(try shown(run(message(0, open + "63%" + close + "\n\n## Next\n"))), "## Next\n")
-        for unchanged in [message(1, open + "70%" + close + " later\n"), message(0, "No marker\n"),
-                          message(0, open + "120%" + close + " x\n"), message(0, open + "50%" + close + " x\n", agent: "child")] {
-            XCTAssertEqual(try run(unchanged), "", "Only a valid leading marker of a main-thread message is hidden")
-        }
-        // "tool" in the switch asks for the report_progress tool of Pacer's plugin, but only a
-        // session that started with the plugin enabled has it; its input is read before the call runs.
-        try Data("tool\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
+        // Any switch asks for the report_progress tool of Pacer's plugin (`on` once asked for leading
+        // markers), but only a session that started with the plugin enabled has it.
+        try Data("on\n".utf8).write(to: flag)
         XCTAssertEqual(try run(prompt), "", "A session without the plugin is never asked to call it")
+        let shown = prompt.merging(["hook_event_name": "MessageDisplay", "turn_id": "turn", "message_id": "message", "final": false, "index": 0,
+                                    "delta": open + "62%" + close + " Reading the docs next.\n"]) { _, new in new }
+        XCTAssertEqual(try run(shown), "", "A leading marker is neither hidden nor read")
         let start: [String: Any] = ["hook_event_name": "SessionStart", "session_id": "synthetic-ring-session", "source": "startup"]
         XCTAssertEqual(try run(start), "")
         let spool = pacer.appendingPathComponent("events.jsonl")
@@ -375,14 +393,12 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         XCTAssertEqual(try run(running), "")
         XCTAssertTrue(try run(running, entrypoint: "claude-desktop").contains(ClaudeHookInstaller.progressTool))
         XCTAssertEqual(try run(start), "")
-        XCTAssertTrue(try run(prompt).contains(ClaudeHookInstaller.progressTool))
-        XCTAssertFalse(try run(prompt).contains("points or more"), "Without a step, every batch reports")
-        try Data("tool 15\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
-        XCTAssertTrue(try run(prompt).contains("moves 15 points or more"))
-        try Data("tool progress\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
-        XCTAssertTrue(try run(prompt).contains("whenever you make progress"))
-        try Data("tool 99\n".utf8).write(to: ClaudeProgressRingSwitch.flagURL(home: home))
-        XCTAssertFalse(try run(prompt).contains("points or more"), "A step outside 1-50 falls back to every batch")
+        // Older switches that chose a step size ask in the same one wording.
+        for older in ["on\n", "tool\n", "tool 15\n", "tool progress\n"] {
+            try Data(older.utf8).write(to: flag)
+            XCTAssertTrue(try run(prompt).contains(ProgressPrompt.ask(tool: ClaudeHookInstaller.progressTool)), "The hook's line is Core's shared wording")
+            XCTAssertFalse(try run(prompt).contains("points or more"), older)
+        }
         func report(_ input: [String: Any], _ id: String, tool: String = "mcp__pacer__report_progress", agent: String? = nil) -> [String: Any] {
             var value = prompt.merging(["hook_event_name": "PreToolUse", "tool_name": tool, "tool_use_id": id, "tool_input": input]) { _, new in new }
             if let agent { value["agent_id"] = agent }
@@ -409,7 +425,7 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         let all = try String(contentsOf: pacer.appendingPathComponent("events.jsonl"), encoding: .utf8).split(separator: "\n")
             .compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
         let rows = all.filter { $0["kind"] as? String == "progress" }
-        XCTAssertEqual(rows.compactMap { $0["progress"] as? Int }, [62, 63, 55])
+        XCTAssertEqual(rows.compactMap { $0["progress"] as? Int }, [55])
         XCTAssertEqual(all.first { $0["promptId"] as? String == "woken-prompt" && $0["kind"] as? String == "prompt" }?["wake"] as? Bool, true)
         let waits = all.filter { $0["kind"] as? String == "waiting" }
         XCTAssertEqual(waits.compactMap { $0["background"] as? [String] }, [["shell"], ["local_powershell"], [], []])

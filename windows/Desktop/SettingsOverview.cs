@@ -39,7 +39,7 @@ internal sealed partial class SettingsWindow
     private string[] EnabledProviders()
     {
         var snapshot = engine?.LatestSnapshot;
-        if (snapshot?.Modules is { } modules) return new[] { "codex", "claude", "deepseek" }.Where(provider => modules.Any(value => value.Provider == provider && value.Enabled)).ToArray();
+        if (snapshot?.Modules is { } modules) return DesktopPreferences.LegacyProviders.Where(provider => modules.Any(value => value.Provider == provider && value.Enabled)).ToArray();
         return snapshot?.QuotaDashboard?.Providers.Select(value => value.Provider).ToArray() ?? [];
     }
 
@@ -70,6 +70,14 @@ internal sealed partial class SettingsWindow
         }
         if (enabled.Contains("codex") && sidebarCodexReport is { SelectedExecutable: null })
             items.Add(new("codex", "Codex CLI · " + ui.Text("provider.state.not_found"), ui.Text("main.attention.codex_cli"), ui.Text("main.overview.open"), () => NavigateAsync("codex")));
+        // A module whose app must still trust Pacer's progress tool, or that lost it.
+        foreach (var module in snapshot.Modules ?? [])
+        {
+            if (!module.Enabled || !HarnessPane(module.Provider) || module.ProgressGuide is not { Attention: true, Summary: string summary } guide) continue;
+            string detail = guide.Steps.FirstOrDefault(step => step.State == "current")?.Title ?? guide.Line ?? "";
+            string provider = module.Provider;
+            items.Add(new(provider, PaneTitle(provider) + " · " + summary, detail, ui.Text("main.overview.open"), () => NavigateAsync(provider)));
+        }
         int problems = RemoteProblems(snapshot);
         if (problems > 0)
             items.Add(new("remote", ui.Text("main.pane.remote"), ui.Text(problems == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying").Replace("%ld", problems.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal),
@@ -99,7 +107,7 @@ internal sealed partial class SettingsWindow
         }
     }
 
-    private void ClearOverview() { overviewBody = historyBody = null; overviewSubtitle = null; overviewKey = historyKey = null; bannerStatus = null; bannerProgress = null; bannerNotes = bannerInstall = bannerCancel = bannerLater = null; }
+    private void ClearOverview() { overviewBody = historyBody = null; overviewSubtitle = null; overviewKey = historyKey = null; bannerStatus = null; bannerProgress = null; bannerNotes = bannerInstall = bannerCancel = bannerLater = bannerWays = null; }
 
     private void BuildOverview()
     {
@@ -140,21 +148,26 @@ internal sealed partial class SettingsWindow
         var attention = AttentionItems();
         string? update = updater?.CurrentOffer?.Version;
         string key = JsonSerializer.Serialize(new { snapshot?.Presentation, snapshot?.QuotaDashboard, snapshot?.Wallet, snapshot?.Modules, snapshot?.ActivityLinks,
-            attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed });
+            credits = snapshot?.AccountCredits, creditsState = harnessAccounts?.All.Select(account => account.Provider + account.State + account.Busy),
+            attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed,
+            checkFailed = CheckFailureBannerShown(update) });
         if (key == overviewKey) return;
         overviewKey = key;
         editors.RemoveAll(editor => editor.IsDescendantOf(overviewBody));
         foreach (UIElement child in overviewBody.Children) PageAccessibility.Retire(child);
         overviewBody.Children.Clear();
         if (update != null && (update != (dismissedUpdate ?? updater?.DismissedBanner) || inlineDownload != null)) overviewBody.Children.Add(UpdateBanner(update));
+        else if (CheckFailureBannerShown(update)) overviewBody.Children.Add(CheckFailureBanner());
         if (attention.Count > 0) overviewBody.Children.Add(AttentionCard(attention));
         var enabled = closed ? [] : EnabledProviders();
-        if (enabled.Length == 0)
+        var harnesses = closed ? [] : (snapshot?.Modules ?? []).Where(module => module.Enabled && HarnessPane(module.Provider)).Select(module => module.Provider);
+        var services = enabled.Concat(harnesses).ToArray();
+        if (services.Length == 0)
         {
             var none = Label(closed ? ui.Text("windows.connection.closed") : ui.Text("provider.none_enabled")); none.TextWrapping = TextWrapping.Wrap; none.Margin = new Thickness(0, 12, 0, 12);
             overviewBody.Children.Add(Card(Row(none, new Border())));
         }
-        else overviewBody.Children.Add(ServiceCards(snapshot!, enabled));
+        else overviewBody.Children.Add(ServiceCards(snapshot!, services));
         overviewBody.Children.Add(TasksCard(snapshot, rows));
     }
 
@@ -175,6 +188,10 @@ internal sealed partial class SettingsWindow
         bannerNotes = new Button { Content = ui.Text("main.update.notes"), Margin = new Thickness(0, 0, 8, 0) };
         Identify(bannerNotes, "settings.overview.update_notes", ui.Text("main.update.notes")); bannerNotes.Click += ReadUpdateNotes;
         actions.Children.Add(bannerNotes);
+        // After a failed download, the other places to get the installer, in Help & Updates.
+        bannerWays = new Button { Content = ui.Text("update.failure.show_ways"), Margin = new Thickness(0, 0, 8, 0), Visibility = Visibility.Collapsed };
+        Identify(bannerWays, "settings.overview.update_download_ways", ui.Text("update.failure.show_ways")); bannerWays.Click += (_, _) => _ = NavigateAsync("about");
+        actions.Children.Add(bannerWays);
         var install = new Button { Content = ui.Text("main.update.install"), Style = (Style)FindResource("SettingsProminentButton") };
         Identify(install, "settings.overview.update", ui.Text("main.update.install")); bannerInstall = install;
         // One click downloads, installs and restarts right here, with its progress in the banner, as on the Mac.
@@ -193,9 +210,37 @@ internal sealed partial class SettingsWindow
         card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         RefreshBanner(); return card;
     }
+    /// Every failed check, scheduled ones included, shows until it is closed or a check succeeds.
+    private bool CheckFailureBannerShown(string? update) => update == null && updater?.CheckFailed == true && updater.Status.Available
+        && !updater.Status.Busy && (dismissedCheckFailure ?? updater.DismissedFailure)?.ToUnixTimeSeconds() != updater.LastCheck?.ToUnixTimeSeconds();
+    /// A check that could not reach GitHub, with the way to the other places to get Pacer.
+    private Border CheckFailureBanner()
+    {
+        var grid = new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var icon = GuideArt.Tile("network.slash", Color.FromRgb(0xF2, 0xA5, 0x3A), 30); icon.Margin = new Thickness(0, 0, 12, 0); icon.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(icon);
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(Label(ui.Text("update.failure.banner_check"), 13, FontWeights.SemiBold));
+        var detail = Detail(ui.Text("update.failure.banner_check_detail")); detail.FontSize = 11.5; text.Children.Add(detail);
+        Grid.SetColumn(text, 1); grid.Children.Add(text);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var ways = new Button { Content = ui.Text("update.failure.show_ways") };
+        Identify(ways, "settings.overview.update_ways", ui.Text("update.failure.show_ways"));
+        ways.Click += (_, _) => _ = NavigateAsync("about");
+        actions.Children.Add(ways);
+        var glyph = new IconGlyph { Symbol = "xmark", Width = 11, Height = 11 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        var close = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 24, Height = 24, Padding = new Thickness(0), Content = glyph, Margin = new Thickness(8, 0, 0, 0), ToolTip = ui.Text("main.update.later") };
+        Identify(close, "settings.overview.update_failure_close", ui.Text("main.update.later"));
+        close.Click += (_, _) => { dismissedCheckFailure = updater?.LastCheck; if (updater != null) updater.DismissedFailure = updater.LastCheck; RefreshOverview(); };
+        actions.Children.Add(close);
+        Grid.SetColumn(actions, 2); grid.Children.Add(actions);
+        var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(16, 12, 16, 12), Margin = new Thickness(0, 0, 0, 22), Child = grid };
+        card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
+        Identify(card, "settings.overview.update_failure", ui.Text("update.failure.banner_check"));
+        return card;
+    }
     private TextBlock? bannerStatus;
     private ProgressBar? bannerProgress;
-    private Button? bannerNotes, bannerInstall, bannerCancel, bannerLater;
+    private Button? bannerNotes, bannerInstall, bannerCancel, bannerLater, bannerWays;
     /// The banner's line and buttons follow the same download as Help & Updates' card.
     private void RefreshBanner()
     {
@@ -208,6 +253,7 @@ internal sealed partial class SettingsWindow
         bannerProgress.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
         bannerProgress.IsIndeterminate = downloading && inlineFraction == null; if (inlineFraction is { } value) bannerProgress.Value = value;
         if (bannerNotes != null) bannerNotes.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
+        if (bannerWays != null) bannerWays.Visibility = inlineDownloadFailed && !downloading ? Visibility.Visible : Visibility.Collapsed;
         if (bannerInstall != null)
         {
             bannerInstall.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
@@ -278,7 +324,8 @@ internal sealed partial class SettingsWindow
         var content = new StackPanel();
         var header = new Grid { Margin = new Thickness(0, 0, 0, 12) };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var tile = ProviderTile(provider); tile.Margin = new Thickness(0, 0, 8, 0); header.Children.Add(tile);
+        var tile = ProviderIcon.Tile(provider, 22, PaneSymbol(provider));
+        tile.Margin = new Thickness(0, 0, 8, 0); header.Children.Add(tile);
         var name = new TextBlock { Text = PaneTitle(provider), FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(name, 1); header.Children.Add(name);
         var details = new Button { Content = ui.Text("main.overview.details"), Style = (Style)FindResource("SettingsLink"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
@@ -293,7 +340,19 @@ internal sealed partial class SettingsWindow
         // pace tick and dial, but not its block order or which blocks show.
         var panel = snapshot.ExpandedPanel;
         var choices = panel?.Options ?? PanelOptions.Default;
-        if (provider == "deepseek") content.Children.Add(DeepSeekOverview(snapshot.Wallet, connectUnavailable, panel?.BudgetDial ?? true));
+        if (HarnessPane(provider) && HarnessModule(provider) is { } module)
+        {
+            if (module.ReportsAccountCredits == true)
+                content.Children.Add(HarnessAccountCard.Build(ui, provider, harnessAccounts?[provider],
+                    snapshot.AccountCredits?.FirstOrDefault(value => value.Provider == provider), true, "settings.overview." + provider + ".account",
+                    classic: session.Current.ExpandedQuotaStyle == "classic", details: choices.QuotaDetails,
+                    openSettings: () => _ = NavigateAsync(provider)));
+            // Like the other services, the card shows its balance; local task state appears only when it needs a look.
+            var (status, _, _) = HarnessStatus(module);
+            if (module.ReportsAccountCredits != true || module.Status != "ready")
+                content.Children.Add(new TextBlock { Text = status, FontSize = 12, Foreground = PacerPalette.Secondary, TextWrapping = TextWrapping.Wrap });
+        }
+        else if (provider == "deepseek") content.Children.Add(DeepSeekOverview(snapshot.Wallet, connectUnavailable, panel?.BudgetDial ?? true));
         else if (snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider) is { } reading)
         {
             var raw = snapshot.Quota.FirstOrDefault(value => value.Provider == provider);
@@ -381,7 +440,10 @@ internal sealed partial class SettingsWindow
         string? provider = historyProvider != null && quota.Contains(historyProvider) ? historyProvider : quota.FirstOrDefault();
         var history = provider == null ? null : snapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider)?.History;
         var week = enabled.Contains("deepseek") ? snapshot?.Wallet?.Solo?.Week : null;
-        string key = JsonSerializer.Serialize(new { provider, quota, history?.Title, week?.AccessibilityLabel, deepseek = enabled.Contains("deepseek"), closed, busy, session.RequiresRestart });
+        // Modules with account credits show their week the same way.
+        var credits = closed ? [] : (snapshot?.Modules ?? []).Where(value => value.Enabled && value.ReportsAccountCredits == true).ToArray();
+        string key = JsonSerializer.Serialize(new { provider, quota, history?.Title, week?.AccessibilityLabel, deepseek = enabled.Contains("deepseek"),
+            credits = credits.Select(value => value.Provider + ":" + value.Week?.AccessibilityLabel).ToArray(), closed, busy, session.RequiresRestart });
         if (key != historyKey)
         {
             historyKey = key;
@@ -397,7 +459,18 @@ internal sealed partial class SettingsWindow
                 var card = IslandCard(content, new Thickness(18, 16, 18, 16)); Identify(card, "settings.history.deepseek", ui.Text("main.history.deepseek_week"));
                 historyBody.Children.Add(card);
             }
-            if (enabled.Length == 0)
+            foreach (var module in credits)
+            {
+                string titleKey = "main.history." + module.Provider + "_week", emptyKey = "main.history." + module.Provider + "_empty";
+                string title = ui.Has(titleKey) ? ui.Text(titleKey) : PaneTitle(module.Provider);
+                var content = new StackPanel();
+                content.Children.Add(new TextBlock { Text = title, FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = PacerPalette.Primary, Margin = new Thickness(0, 0, 0, 12) });
+                if (module.Week is { Days.Count: >= 2 } credited) content.Children.Add(new DeepSeekWeekView(credited));
+                else content.Children.Add(new TextBlock { Text = ui.Has(emptyKey) ? ui.Text(emptyKey) : "", FontSize = 12, Foreground = PacerPalette.Secondary });
+                var card = IslandCard(content, new Thickness(18, 16, 18, 16)); Identify(card, "settings.history." + module.Provider, title);
+                historyBody.Children.Add(card);
+            }
+            if (enabled.Length == 0 && credits.Length == 0)
             {
                 var none = Label(closed ? ui.Text("windows.connection.closed") : ui.Text("provider.none_enabled")); none.TextWrapping = TextWrapping.Wrap; none.Margin = new Thickness(0, 12, 0, 12);
                 historyBody.Children.Add(Card(Row(none, new Border())));

@@ -48,7 +48,7 @@ internal static class ClaudeConnectionChecks
             Invoke(signIn); await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.MainReady);
             var login = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); login.IsHitTestVisible = false;
             Put(site.Main!, "sessionKey", "fixture-claude-account-a");
-            Invoke(Find<Button>(login, "claude.login.continue")); await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
+            await login.FinishNow(); await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
             Check(session.Current.ClaudeOrganization == "" && engine.LatestSnapshot!.Quota.Count == 0, "A successful login cannot silently choose the first workspace");
             Check(newSignIns == 1, "A new Claude session must clear its persisted organization through the normal preference transaction");
             Invoke(signIn); var picker = await Picker();
@@ -89,7 +89,7 @@ internal static class ClaudeConnectionChecks
             var switchAccount = await Menu(options, "settings.claude.switch_account"); Invoke(switchAccount);
             await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.MainReady);
             login = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); login.IsHitTestVisible = false;
-            Put(site.Main!, "sessionKey", "fixture-claude-account-b"); Invoke(Find<Button>(login, "claude.login.continue"));
+            Put(site.Main!, "sessionKey", "fixture-claude-account-b"); await login.FinishNow();
             await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
             Check(session.Current.ClaudeOrganization == "" && engine.LatestSnapshot!.Quota.Count == 0, "A different account cannot inherit the old workspace or quota");
             Check(newSignIns == 2, "An account switch must clear the persisted organization exactly once");

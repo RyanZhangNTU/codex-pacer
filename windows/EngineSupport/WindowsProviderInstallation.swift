@@ -18,12 +18,32 @@ enum WindowsPackageLocations {
     }
 }
 
+/// The executables URL schemes are registered to open with.
+enum WindowsURLHandler {
+    /// The quoted executable in the scheme's open command, from HKCU then HKLM.
+    static func paths(scheme: String) -> [String] {
+        guard scheme.range(of: "^[a-z][a-z0-9+.-]{0,31}$", options: .regularExpression) != nil else { return [] }
+        let name = Array(scheme.utf16) + [0]
+        return (0..<2).compactMap { index in
+            var path = [UInt16](repeating: 0, count: 32768)
+            guard pacer_url_handler_path(name, index, &path, path.count) != 0 else { return nil }
+            return String(decoding: path.prefix { $0 != 0 }, as: UTF16.self)
+        }
+    }
+    /// A path on a drive letter, never a share or a relative path.
+    static func localDrivePath(_ value: String) -> Bool {
+        value.utf16.count < 32768 && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+            && value.range(of: #"^[A-Za-z]:[\\/]"#, options: .regularExpression) != nil
+    }
+}
+
 /// Only installation metadata and known executable locations are inspected.
 /// Detection never launches a provider or opens authentication files.
 enum WindowsProviderInstallation {
     static func detect(userHome: URL, environment: [String: String], applicationURLs: [AgentProvider: [URL]]?,
                        systemBinDirectories: [String],
-                       packageLocations: (String) -> [URL] = { WindowsPackageLocations.find(family: $0) }) -> ProviderInstallationDetection {
+                       packageLocations: (String) -> [URL] = { WindowsPackageLocations.find(family: $0) },
+                       registeredHandlers: (String) -> [String] = WindowsURLHandler.paths) -> ProviderInstallationDetection {
         let codexApps = applicationURLs?[.codex] ?? packageLocations("OpenAI.Codex_2p2nqsd0c76g0")
         // Registered MSIX identity is authoritative for installation. Some
         // packages deny binary reads, even though the app is available to launch.
@@ -54,7 +74,26 @@ enum WindowsProviderInstallation {
             isDirectory: &isDirectory) && isDirectory.boolValue
         let desktop = WindowsDeepSeekApplication.find(applicationURLs: applicationURLs?[.deepseek], userHome: userHome, environment: environment) != nil
         let deepseek = desktop || app(applicationURLs?[.deepseek] ?? [], paths: ["app/dsh.exe", "dsh.exe"]) || cli("dsh") || hasSessions
-        return .init(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek)
+        let additional = HarnessRegistry.localHarnesses.filter { definition in
+            guard definition.platforms.contains(.windows) else { return false }
+            if let supplied = applicationURLs?[definition.descriptor.id] { return supplied.contains(where: executable) }
+            // Explicit application lists make installation probes deterministic in tests.
+            guard applicationURLs == nil else { return false }
+            let roots = ["ProgramFiles", "LOCALAPPDATA"].compactMap { WindowsEnvironment.value($0, in: environment) }
+                .filter(WindowsCodexExecutableDiscovery.absolute)
+            let home = definition.resolveHome(override: WindowsEnvironment.value(definition.homeEnvironmentKey, in: environment),
+                isAbsolute: WindowsCodexExecutableDiscovery.absolute, userHome: userHome)
+            // An app installed to a folder of the user's choosing is found
+            // through the link handler it registers, by its executable's name.
+            let names = Set(definition.windowsExecutables.compactMap { $0.split(separator: "/").last.map { $0.lowercased() } })
+            let registered = definition.conversationScheme.map(registeredHandlers) ?? []
+            let handler = registered.prefix(2).contains { path in
+                WindowsURLHandler.localDrivePath(path) && names.contains(URL(fileURLWithPath: path).lastPathComponent.lowercased())
+                    && executable(URL(fileURLWithPath: path))
+            }
+            return app(roots.map { URL(fileURLWithPath: $0) }, paths: definition.windowsExecutables) || handler || definition.hasLocalData(home: home)
+        }.map(\.descriptor.id)
+        return .init(codexInstalled: codex, claudeInstalled: claude, deepseekInstalled: deepseek, additional: Set(additional))
     }
 }
 

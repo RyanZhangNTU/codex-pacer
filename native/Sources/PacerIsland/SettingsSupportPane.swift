@@ -180,7 +180,7 @@ private struct QQGroupRow: View {
 
 /// A QR code, shown on request: a payment app's on white, the QQ group's on
 /// its own dark card, so each scans in dark Settings too.
-private struct SupportCodeButton: View {
+struct SupportCodeButton: View {
     let code: ProjectSupport.Code
     /// Coffee buttons fill their card; a row's button keeps to its label.
     var expands = true

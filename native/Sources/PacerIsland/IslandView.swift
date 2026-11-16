@@ -291,7 +291,7 @@ struct IslandPanelControls: View {
             if !apps.isEmpty {
                 ForEach(apps, id: \.self) { provider in
                     IslandIconButton(symbol: provider.glyph, title: L10n.text("activity.open_app", provider.displayName, language: language),
-                        tint: provider.tint) { model.openDesktopApplication(provider) }
+                        provider: provider) { model.openDesktopApplication(provider) }
                 }
                 Rectangle().fill(PacerPalette.hairline).frame(width: 1, height: 14).padding(.horizontal, 4).accessibilityHidden(true)
             }
@@ -325,7 +325,13 @@ struct IslandPanelControls: View {
     @ViewBuilder private func menu(_ actions: Set<ExpandedPanelOptions.HeaderAction>) -> some View {
         let apps = model.showsAppButtons ? [] : model.desktopAppProviders
         ForEach(apps, id: \.self) { provider in
-            Button(L10n.text("activity.open_app", provider.displayName, language: language)) { model.openDesktopApplication(provider) }
+            Button { model.openDesktopApplication(provider) } label: {
+                Label {
+                    Text(L10n.text("activity.open_app", provider.displayName, language: language))
+                } icon: {
+                    ProviderAppIcon(provider: provider, size: 14, outline: true)
+                }
+            }
         }
         if !actions.contains(.markRead) {
             Button(L10n.text("activity.mark_all_read", language: language)) { model.markAllRead() }.disabled(!model.canMarkAllRead)

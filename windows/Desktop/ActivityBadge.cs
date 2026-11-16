@@ -479,7 +479,7 @@ internal sealed class OrbitPaint : FrameworkElement
     private Stop[] from = [], to = [];
     private IReadOnlyDictionary<string, int>? weights;
     private bool animated;
-    private (Color Codex, Color Claude, Color DeepSeek) shades;
+    private (Color Codex, Color Claude, Color DeepSeek, Color Other) shades;
     private AnimationLease? transition;
     internal event Action? Changed;
     /// While a change of services eases between its stops.
@@ -488,7 +488,7 @@ internal sealed class OrbitPaint : FrameworkElement
     internal void Update(IReadOnlyDictionary<string, int> values, bool animate)
     {
         // The services' shades follow the accent and the island's tone, so a new shade redraws the same weights.
-        var now = (Shade("codex"), Shade("claude"), Shade("deepseek"));
+        var now = (Shade("codex"), Shade("claude"), Shade("deepseek"), PacerPalette.Neutral);
         if (weights != null && animated == animate && shades == now && weights.Count == values.Count && weights.All(pair => values.TryGetValue(pair.Key, out int count) && count == pair.Value)) return;
         shades = now;
         var shown = Current();
@@ -522,7 +522,8 @@ internal sealed class OrbitPaint : FrameworkElement
         (byte)Math.Clamp(Math.Round(a.G + (b.G - a.G) * t), 0, 255), (byte)Math.Clamp(Math.Round(a.B + (b.B - a.B) * t), 0, 255));
     private static Stop[] Stops(IReadOnlyDictionary<string, int> weights, bool animate)
     {
-        string[] providers = ["codex", "claude", "deepseek"];
+        var builtIn = DesktopPreferences.LegacyProviders;
+        var providers = builtIn.Concat(weights.Keys.Where(id => !builtIn.Contains(id)).OrderBy(id => id, StringComparer.Ordinal)).ToArray();
         int Weight(string provider) => weights.TryGetValue(provider, out int count) ? Math.Max(0, count) : 0;
         int count = providers.Count(p => Weight(p) > 0), total = Math.Max(1, providers.Sum(Weight));
         double span = count > 1 ? 0.5 : 0.34, slot = 1.0 / Math.Max(1, count), last = 0;

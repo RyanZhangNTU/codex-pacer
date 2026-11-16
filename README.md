@@ -5,7 +5,7 @@
 <h1 align="center">Codex Pacer</h1>
 
 <p align="center">
-  A Dynamic Island for <b>Codex</b>, <b>Claude Code</b> and <b>DeepSeek Harness</b>, on Mac and Windows.<br>
+  A Dynamic Island for <b>Codex</b>, <b>Claude Code</b>, <b>DeepSeek Harness</b> and <b>WorkBuddy</b>, on Mac and Windows.<br>
   See every running task, its progress and your quota without leaving what you're doing.
 </p>
 
@@ -26,12 +26,14 @@
 
 ## Features
 
-- **Progress for every task.** Codex, Claude Code and DeepSeek Harness report how much of your request is done. Each task shows it as a ring around its icon, and the collapsed bar can show the average.
+- **Progress for every task.** Codex, Claude Code, DeepSeek Harness and WorkBuddy report how much of your request is done. Each task shows it as a ring around its icon, and the collapsed bar can show the average.
 - **Every task in one place.** Tasks on this computer, on your SSH hosts, in WSL, through Codex Remote Control and in Claude's cloud Projects, each with its stage, model, speed and turn time.
 - **Know when you're needed.** A task waiting for your reply or approval turns the island amber, and a finished task stays until you've seen it. System notifications are optional.
 - **Jump back in.** Click a task to open its conversation in the app that runs it.
 - **Quota with pace.** Each service's 5-hour and weekly quota on one ring, with a tick that shows whether you're ahead of or behind an even pace, and a forecast for the reset.
 - **DeepSeek balance and budgets.** Today's spend on a 24-hour dial with the peak-price hours marked, or daily and weekly budgets paced like quota. Spending elsewhere on your account counts too.
+- **WorkBuddy credits.** WorkBuddy and WorkBuddy AI show the month's credits, any extra credits and when they expire, with reminders before they run low or lapse.
+- **Only the services you use.** Settings lists the services found on this computer. Turn on or get the others in the Module Library.
 - **Overview and history.** The main window opens on everything that needs you, with each service's quota history.
 - **English and Simplified Chinese.**
 
@@ -58,13 +60,13 @@ On first launch a short guide helps you pick a layout and the services to follow
 ## Requirements
 
 - macOS 14 or later (Apple silicon or Intel), or Windows 10 version 2004 or later (x64 or ARM64). Liquid Glass needs macOS 26 or Windows 11 22H2.
-- At least one of Codex, Claude Code or DeepSeek Harness, installed and signed in.
+- At least one of Codex, Claude Code, DeepSeek Harness or WorkBuddy, installed and signed in.
 - For SSH hosts: SSH access without a password prompt, and Python 3 on the host.
 
 ## Privacy
 
 - No account and no analytics. Pacer reads the logs your agents already write and keeps only what the island shows: task titles, stages, timing and token counts. It never keeps your prompts or replies.
-- Claude and DeepSeek sign in inside Pacer's own window. Pacer never reads other apps' passwords or browser cookies.
+- Claude, DeepSeek and WorkBuddy sign in inside Pacer's own window. Pacer never reads other apps' passwords or browser cookies.
 - Anything Pacer adds to your agents' settings is removed when you turn that feature off.
 - **Hide Project Names** keeps task titles off screen when you share it.
 
@@ -74,4 +76,4 @@ Bug reports and ideas are welcome in [Issues](https://github.com/RyanZhangNTU/co
 
 ## License
 
-[MIT](LICENSE). Codex Pacer is an independent project and is not affiliated with OpenAI, Anthropic or DeepSeek. Codex, Claude and DeepSeek are trademarks of their respective owners. Codex Pacer includes the decompression part of [Zstandard](https://github.com/facebook/zstd) (BSD license).
+[MIT](LICENSE). Codex Pacer is an independent project and is not affiliated with OpenAI, Anthropic, DeepSeek or Tencent. Codex, Claude, DeepSeek and WorkBuddy are trademarks of their respective owners. Codex Pacer includes the decompression part of [Zstandard](https://github.com/facebook/zstd) (BSD license).

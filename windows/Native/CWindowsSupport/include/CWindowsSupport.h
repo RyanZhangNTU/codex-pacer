@@ -20,6 +20,10 @@ typedef void (*pacer_change_callback)(void *context, int valid);
 void *pacer_watch_directory(const uint16_t *path, int is_directory, void *context,
                            pacer_change_callback callback, void (*closed)(void *));
 void pacer_close_directory_watch(void *watch);
+/* Parses one ReadDirectoryChangesW result for a watch of name, or of a whole
+   directory when name is NULL. Returns 1 when it concerns the watch and adds
+   the callback flags. */
+int pacer_directory_parse(const void *buffer, uint32_t count, const uint16_t *name, int *flags);
 // 1 registered, 0 empty, -1 unknown. A notification only invalidates the list.
 int pacer_wsl_registration_presence(void);
 void *pacer_watch_wsl_registrations(void *context, pacer_change_callback callback, void (*closed)(void *));
@@ -57,6 +61,7 @@ void pacer_proxy_relay_close(void *relay);
 int pacer_is_windows_executable(const uint16_t *path);
 int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company);
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity);
+int pacer_url_handler_path(const uint16_t *scheme, size_t index, uint16_t *path, size_t capacity);
 int pacer_codex_package_path(size_t index, uint16_t *path, size_t capacity);
 int pacer_package_path(const uint16_t *family, size_t index, uint16_t *path, size_t capacity);
 // True when a local pipe of this name exists; it neither connects nor waits.

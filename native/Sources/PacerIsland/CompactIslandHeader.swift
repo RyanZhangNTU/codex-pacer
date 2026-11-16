@@ -203,6 +203,7 @@ struct CompactIslandComponent: View {
             case .spike: warning = .spendSpike
             case .overBudget, .nearingBudget: warning = .budget
             case .exhausted, .lowBalance: warning = .lowBalance
+            case .lowCredits: warning = .lowCredits
             }
             if !result.contains(warning) { result.append(warning) }
         }
@@ -330,20 +331,28 @@ struct CompactIslandComponent: View {
                 color: PacerPalette.primary, glyph: .stopwatch)
                 .accessibilityElement(children: .ignore).accessibilityLabel(item.accessibility)
         case .quota:
-            let entries = item.entries
+            // One unit that every value shares sits once under them; mixed
+            // units (58 %, 1.2 k¥) go under each value and take turns with it.
+            let entries = item.entries, shared = item.stripUnit
             VStack(spacing: 0) {
                 if entries.count > 1, choices.quotaMultiple == .pair {
                     VStack(spacing: 2) {
-                        ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in stripNumber(entry.stripText, color: valueColor(entry)) }
+                        ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                            VStack(spacing: 0) {
+                                stripNumber(entry.stripText, color: valueColor(entry))
+                                if shared == nil, let unit = entry.stripUnit { stripUnit(unit) }
+                            }
+                        }
                     }
                 } else if entries.count > 1 {
-                    AlternatingQuotaText(entries: entries.map { .init(text: $0.stripText, color: NSColor(valueColor($0)), splitsUnit: false) },
+                    AlternatingQuotaText(entries: entries.map { .init(text: $0.stripText, color: NSColor(valueColor($0)), splitsUnit: false,
+                                                                       unitBelow: shared == nil ? $0.stripUnit : nil) },
                         animates: !layoutProbe, font: .monospacedDigitSystemFont(ofSize: metrics.stripValue, weight: .semibold),
-                        centered: true, maxWidth: max(16, snapshot.stripWidth - 6))
+                        unitSize: metrics.stripUnit, centered: true, maxWidth: max(16, snapshot.stripWidth - 6))
                 } else if let entry = entries.first {
                     stripNumber(entry.stripText, color: valueColor(entry))
                 }
-                if let unit = item.stripUnit { stripUnit(unit) }
+                if let unit = shared { stripUnit(unit) }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(item.accessibility)

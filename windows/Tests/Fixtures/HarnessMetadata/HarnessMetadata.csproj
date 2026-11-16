@@ -6,7 +6,9 @@
     <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>DeepSeek Harness</AssemblyName>
     <Product>DeepSeek Harness</Product>
-    <Company>GitHub, Inc.</Company>
+    <Company>Hangzhou DeepSeek Artificial Intelligence Co., Ltd.</Company>
+    <!-- harness-fixture.ps1 also builds the earlier desktop, which kept Electron's company name. -->
+    <Company Condition="'$(HarnessFixtureCompany)' != ''">$(HarnessFixtureCompany)</Company>
     <Version>0.0.0</Version>
   </PropertyGroup>
 </Project>

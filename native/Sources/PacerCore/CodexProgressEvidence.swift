@@ -6,7 +6,15 @@ enum CodexProgressEvidence {
     static let server = "pacer_progress"
     static let tool = "report_progress"
     static let qualified = "mcp__pacer_progress__report_progress"
-    static let acknowledgment = "pacer-progress:accepted"
+    /// What every reporter's reply to an accepted estimate starts with.
+    static let receipt = "pacer-progress:accepted"
+    /// The current reply, which also asks for the next report. Earlier
+    /// reporters replied with the bare receipt; both count, and nothing else.
+    static let acknowledgment = ProgressPrompt.acknowledgement
+    static func isReceipt(_ text: String?) -> Bool { text == receipt || text == acknowledgment }
+    private static func isReceipt(_ view: JSONFieldView?) -> Bool {
+        view?.matchesStringLiteral(receipt) == true || view?.matchesStringLiteral(acknowledgment) == true
+    }
 
     static func matches(name: String?, namespace: String?) -> Bool {
         (name == qualified && (namespace == nil || namespace == "")) ||
@@ -35,14 +43,21 @@ enum CodexProgressEvidence {
         return value
     }
 
+    static func percentInToolArguments(_ view: JSONFieldView?) -> Int? {
+        if view?.isObject == true { return percent(view) }
+        guard let raw = view?.string(limit: 128),
+              let json = try? JSONFieldView.document(Data(raw.utf8), maximumBytes: 128) else { return nil }
+        return percent(json)
+    }
+
     static func isAcknowledgment(_ output: Any?) -> Bool {
-        if let text = output as? String { return text == acknowledgment }
+        if let text = output as? String { return isReceipt(text) }
         guard let items = output as? [[String: Any]], (1...2).contains(items.count), let item = items.last else { return false }
         if items.count == 2 {
             guard items[0]["type"] as? String == "input_text", let prefix = items[0]["text"] as? String,
                   prefix.utf8.count <= 128, prefix.hasPrefix("Wall time: "), prefix.hasSuffix("\nOutput:") else { return false }
         }
-        return ["input_text", "text"].contains(item["type"] as? String ?? "") && item["text"] as? String == acknowledgment
+        return ["input_text", "text"].contains(item["type"] as? String ?? "") && isReceipt(item["text"] as? String)
     }
 
     static func isReportItem(_ item: [String: Any]) -> Bool {
@@ -62,7 +77,15 @@ enum CodexProgressEvidence {
               fields["isError"]?.boolean() != true, fields["is_error"]?.boolean() != true,
               let items = try? fields["content"]?.elements(maximumCount: 1), items.count == 1,
               let item = try? items[0].fields(["type", "text"]) else { return false }
-        return item["type"]?.string(limit: 16) == "text" && item["text"]?.string(limit: 32) == acknowledgment
+        return item["type"]?.string(limit: 16) == "text" && isReceipt(item["text"])
+    }
+
+    static func textReceiptAccepted(_ view: JSONFieldView?) -> Bool {
+        if isReceipt(view) { return true }
+        guard let item = try? view?.fields(["type", "text", "isError", "is_error"]),
+              item["type"]?.matchesStringLiteral("text") == true,
+              item["isError"]?.boolean() != true, item["is_error"]?.boolean() != true else { return false }
+        return isReceipt(item["text"])
     }
 
     /// Match modern turn IDs and older bounded IDs without guessing ownership.

@@ -22,6 +22,9 @@ struct AlternatingQuotaText: NSViewRepresentable {
         let color: NSColor
         /// The trailing "%" draws as a smaller unit in the unit color.
         var splitsUnit = true
+        /// What the number counts, on its own line under it, as the strip
+        /// draws every unit; it takes turns with its number.
+        var unitBelow: String? = nil
     }
     static let interval: CFTimeInterval = 4
     static let fade: CFTimeInterval = 0.35
@@ -43,33 +46,38 @@ struct AlternatingQuotaText: NSViewRepresentable {
 
     func makeNSView(context: Context) -> AlternatingQuotaView { AlternatingQuotaView() }
     func updateNSView(_ view: AlternatingQuotaView, context: Context) {
-        let shown = fitted
-        view.update(strings: entries.map(shown.attributed), animates: animates, font: shown.font, centered: centered, maxWidth: maxWidth)
+        view.update(strings: shownStrings, animates: animates, font: font, centered: centered, maxWidth: maxWidth, textHeight: textHeight)
     }
     /// The widest value reserves the slot, so taking turns never moves its neighbors.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: AlternatingQuotaView, context: Context) -> CGSize? {
-        let shown = fitted
-        return CGSize(width: min(maxWidth, ceil(shown.widest)), height: ceil(shown.font.ascender - shown.font.descender))
+        CGSize(width: min(maxWidth, ceil(shownStrings.map { $0.size().width }.max() ?? 0)), height: textHeight)
     }
     var widest: CGFloat { entries.map { attributed($0).size().width }.max() ?? 0 }
-    /// The type shrinks, as the strip's other numbers do, until the widest
-    /// value fits `maxWidth`, so a long reading such as 1000% is not cut off.
-    var fitted: Self {
-        guard maxWidth.isFinite, maxWidth > 0 else { return self }
-        var shown = self
+    /// One line, or two when a unit sits under its number.
+    var textHeight: CGFloat {
+        guard entries.contains(where: { $0.unitBelow != nil }) else { return ceil(font.ascender - font.descender) }
+        return ceil(entries.map { attributed($0).size().height }.max() ?? 0)
+    }
+    var shownStrings: [NSAttributedString] { entries.map { attributed($0, scale: scale(for: $0)) } }
+    /// Each value shrinks on its own, as the strip's other numbers do, until it
+    /// fits `maxWidth`, so a long reading such as 1000% is not cut off and a
+    /// short one beside it keeps its size.
+    func scale(for entry: Entry) -> CGFloat {
+        guard maxWidth.isFinite, maxWidth > 0 else { return 1 }
+        var scale: CGFloat = 1
         // Glyphs widen slightly at smaller optical sizes and the unit's kerning
         // has a floor, so a few passes settle the last fraction.
         for _ in 0..<4 {
-            let width = shown.widest
+            let width = attributed(entry, scale: scale).size().width
             guard width > maxWidth else { break }
-            let scale = max(Self.minimumScale, maxWidth / width * shown.font.pointSize / font.pointSize)
-            shown.font = NSFont(descriptor: font.fontDescriptor, size: font.pointSize * scale) ?? font
-            shown.unitSize = unitSize * scale
+            scale = max(Self.minimumScale, scale * maxWidth / width)
             if scale == Self.minimumScale { break }
         }
-        return shown
+        return scale
     }
-    func attributed(_ entry: Entry) -> NSAttributedString {
+    func attributed(_ entry: Entry, scale: CGFloat = 1) -> NSAttributedString {
+        let font = scale == 1 ? font : NSFont(descriptor: font.fontDescriptor, size: font.pointSize * scale) ?? font
+        let unitSize = unitSize * scale
         let value = NSMutableAttributedString()
         let percent = entry.splitsUnit && entry.text.count > 1 && entry.text.hasSuffix("%")
         let number = percent ? String(entry.text.dropLast()) : entry.text
@@ -84,6 +92,10 @@ struct AlternatingQuotaText: NSViewRepresentable {
             value.append(NSAttributedString(string: "%", attributes: [
                 .font: NSFont.systemFont(ofSize: unitSize, weight: .medium), .foregroundColor: unitColor]))
         }
+        if let unit = entry.unitBelow {
+            value.append(NSAttributedString(string: "\n" + unit, attributes: [
+                .font: NSFont.systemFont(ofSize: unitSize, weight: .medium), .foregroundColor: unitColor]))
+        }
         return value
     }
 }
@@ -95,6 +107,7 @@ final class AlternatingQuotaView: NSView {
     private var font = AlternatingQuotaText.font
     private var centered = false
     private var maxWidth: CGFloat = .infinity
+    private var textHeight: CGFloat = 0
     private var slideHeight: CGFloat = 0
     private var occlusionObserver: NSObjectProtocol?
 
@@ -110,14 +123,17 @@ final class AlternatingQuotaView: NSView {
 
     func update(entries: [AlternatingQuotaText.Entry], animates: Bool, font: NSFont = AlternatingQuotaText.font) {
         let text = AlternatingQuotaText(entries: entries, animates: animates, font: font)
-        update(strings: entries.map(text.attributed), animates: animates, font: font)
+        update(strings: entries.map { text.attributed($0) }, animates: animates, font: font)
     }
 
-    func update(strings: [NSAttributedString], animates: Bool, font: NSFont, centered: Bool = false, maxWidth: CGFloat = .infinity) {
+    func update(strings: [NSAttributedString], animates: Bool, font: NSFont, centered: Bool = false, maxWidth: CGFloat = .infinity,
+                textHeight: CGFloat? = nil) {
+        let textHeight = textHeight ?? ceil(font.ascender - font.descender)
         guard strings != self.strings || animates != self.animates || font != self.font || centered != self.centered
-            || maxWidth != self.maxWidth else { return }
+            || maxWidth != self.maxWidth || textHeight != self.textHeight else { return }
         let restart = strings.count != layers.count || animates != self.animates || font != self.font
         self.strings = strings; self.animates = animates; self.font = font; self.centered = centered; self.maxWidth = maxWidth
+        self.textHeight = textHeight
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if strings.count != layers.count {
             layers.forEach { $0.removeFromSuperlayer() }
@@ -174,7 +190,7 @@ final class AlternatingQuotaView: NSView {
     }
 
     private func layoutLayers() {
-        let height = ceil(font.ascender - font.descender)
+        let height = textHeight > 0 ? textHeight : ceil(font.ascender - font.descender)
         for text in layers {
             text.frame = backingAlignedRect(CGRect(x: 0, y: (bounds.height - height) / 2, width: bounds.width, height: height),
                 options: .alignAllEdgesNearest)

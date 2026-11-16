@@ -26,6 +26,7 @@ public struct AttentionPolicy: Sendable {
     public init() {}
 
     public mutating func requestNotices(_ requests: [PendingAttentionRequest]) -> [IslandNotice] {
+        guard !requests.isEmpty else { pendingRequests.removeAll(); return [] }
         // Only the same observed thread/turn/call can share a reminder across
         // sources. A source change alone says nothing about question identity.
         func key(_ request: PendingAttentionRequest) -> String {

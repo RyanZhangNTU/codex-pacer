@@ -28,6 +28,10 @@ struct SettingsExpandedPanelPane: View {
     let deepseekDetailed: Bool
     let openGeneral: () -> Void
     let openDeepSeek: () -> Void
+    /// A credits module's page, for its account.
+    var openModule: (AgentProvider) -> Void = { _ in }
+    /// Each credits module's choices; the center figure is edited here.
+    var credits: (AgentProvider) -> Binding<HarnessCreditsSettings> = { _ in .constant(.default) }
     /// Where a dragged block would land; SwiftUI reports no cancelled drag,
     /// so nothing else about the drag is kept.
     @State private var dropTarget: DropTarget?
@@ -91,7 +95,8 @@ struct SettingsExpandedPanelPane: View {
     }
 
     /// The short line under a block's name in the outline.
-    static func summary(_ block: ExpandedPanelLayout.Block, options: ExpandedPanelOptions) -> String {
+    static func summary(_ block: ExpandedPanelLayout.Block, options: ExpandedPanelOptions,
+                        center: (ExpandedPanelLayout.Block) -> HarnessCreditsFigure = { _ in .monthlyPercent }) -> String {
         switch block {
         case .tasks:
             "\(L10n.text("main.panel.page_size")) \(options.pageSize) · "
@@ -104,7 +109,14 @@ struct SettingsExpandedPanelPane: View {
             L10n.text("main.panel.spend_tasks") + " · " + L10n.text("main.panel.spend_count", options.spendTasks)
         case .deepseekWeek:
             L10n.text("main.panel.week_line") + " · " + L10n.text(options.weekLine ? "main.panel.show" : "main.panel.hide")
+        case .workbuddy, .workbuddyAI:
+            L10n.text("credits.option.center") + " · " + L10n.text("credits.figure." + center(block).rawValue)
         }
+    }
+
+    private func creditCenter(_ provider: AgentProvider) -> Binding<HarnessCreditsFigure> {
+        let binding = credits(provider)
+        return Binding(get: { binding.wrappedValue.center }, set: { binding.wrappedValue.center = $0 })
     }
 
     private static func periodsLabel(_ periods: ExpandedPanelOptions.Periods) -> String {
@@ -173,7 +185,7 @@ struct SettingsExpandedPanelPane: View {
         switch first {
         case .tasks:
             return ExpandedPanelPresentation.header(.init(kind: .tasks), budgetDial: false).title
-        case .codex, .claude, .deepseek:
+        case .codex, .claude, .deepseek, .workbuddy, .workbuddyAI:
             return ExpandedPanelPresentation.header(.init(kind: .quota, providers: row.compactMap(\.provider)), budgetDial: false).title
         case .deepseekSpend, .deepseekWeek:
             return first.label
@@ -184,14 +196,19 @@ struct SettingsExpandedPanelPane: View {
     private func outlineBlock(_ block: ExpandedPanelLayout.Block, paired: Bool) -> some View {
         let isSelected = selected == .block(block)
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        let summary = Self.summary(block, options: options)
+        let summary = Self.summary(block, options: options, center: { credits($0.provider ?? .workbuddy).wrappedValue.center })
         let grip = Image(systemName: "circle.grid.2x3.fill").font(.system(size: 7)).foregroundStyle(Outline.grip)
-        let dot = Circle().fill(block.provider?.shade(light: false) ?? Outline.secondary).frame(width: 8, height: 8)
+        let marker = Group {
+            if block.isQuota, let provider = block.provider {
+                ProviderAppIcon(provider: provider, size: 14)
+            } else {
+                Circle().fill(block.provider?.shade(light: false) ?? Outline.secondary).frame(width: 8, height: 8)
+            }
+        }
         return Group {
             if paired {
-                // Three to a row leave no room beside the dot, so the name takes its own line.
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 0) { dot; Spacer(minLength: 4); grip }
+                    HStack(spacing: 0) { marker; Spacer(minLength: 4); grip }
                     Text(block.provider?.displayName ?? block.label).font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Outline.label).lineLimit(1).minimumScaleFactor(0.8)
                 }
@@ -199,7 +216,7 @@ struct SettingsExpandedPanelPane: View {
             } else {
                 HStack(spacing: 6) {
                     grip.frame(width: 10)
-                    dot
+                    marker
                     VStack(alignment: .leading, spacing: 1) {
                         Text(block.label).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Outline.label).lineLimit(1)
                         Text(summary).font(.system(size: 11)).foregroundStyle(Outline.secondary).lineLimit(1)
@@ -321,7 +338,7 @@ struct SettingsExpandedPanelPane: View {
     /// Clicking selects; the round button adds or removes.
     private func blockTile(_ block: ExpandedPanelLayout.Block) -> some View {
         LibraryTile(label: block.label, symbol: block.symbol, placed: layout.blocks.contains(block),
-                    selected: selected == .block(block), tint: tint(block),
+                    selected: selected == .block(block), tint: tint(block), provider: block.isQuota ? block.provider : nil,
                     faint: !block.isAvailable(for: providerSet), locked: locked(.block(block)),
                     addLabel: L10n.text("main.library.add_to_panel", block.label),
                     removeLabel: L10n.text("main.library.remove_from_panel", block.label),
@@ -399,6 +416,13 @@ struct SettingsExpandedPanelPane: View {
             switchRow(L10n.text("main.panel.elsewhere"), help: L10n.text("main.panel.elsewhere_help"), isOn: $options.spendElsewhere)
         case .block(.deepseekWeek):
             switchRow(L10n.text("main.panel.week_line"), help: L10n.text("main.panel.week_line_help"), isOn: $options.weekLine)
+        case .block(.workbuddy), .block(.workbuddyAI):
+            if case .block(let block) = item, let provider = block.provider {
+                segments(L10n.text("credits.option.center"), stacked: true, selection: creditCenter(provider),
+                         options: HarnessCreditsFigure.allCases.map { ($0, L10n.text("credits.figure_short." + $0.rawValue)) })
+                quotaLayout(detailsHelp: L10n.text("harness.account.details_help"))
+                link(L10n.text("harness.account.connection"), to: L10n.text("harness.account.open_settings"), action: { openModule(provider) })
+            }
         case .actions:
             switchRow(L10n.text("panel.action.apps"), isOn: $showsAppButtons)
             switchRow(L10n.text("panel.action.markRead"), isOn: action(.markRead))
@@ -412,13 +436,17 @@ struct SettingsExpandedPanelPane: View {
                  selection: Binding(get: { options.periods(for: provider) }, set: { options.setPeriods($0, for: provider) }),
                  options: [(.both, L10n.text("main.panel.periods_both")), (.weekly, L10n.text("main.panel.periods_weekly")),
                            (.fiveHour, L10n.text("main.panel.periods_five"))])
+        quotaLayout(detailsHelp: L10n.text("main.panel.details_help"))
+        switchRow(L10n.text("main.panel.pace_tick"), help: L10n.text("main.panel.pace_tick_help"), isOn: $options.paceTick)
+    }
+
+    @ViewBuilder private func quotaLayout(detailsHelp: String) -> some View {
         segments(L10n.text("main.panel.style"), selection: $quotaStyle, options: ExpandedQuotaStyle.allCases.map { ($0, $0.label) })
         if providers.filter({ ExpandedPanelLayout.Block.quotaBlock(for: $0) != nil }).count > 1 {
             segments(L10n.text("main.panel.arrange"), selection: $options.quotaArrange,
                      options: [(.pair, L10n.text("main.panel.arrange_pair")), (.stack, L10n.text("main.panel.arrange_stack"))])
         }
-        switchRow(L10n.text("main.panel.details"), help: L10n.text("main.panel.details_help"), isOn: $options.quotaDetails)
-        switchRow(L10n.text("main.panel.pace_tick"), help: L10n.text("main.panel.pace_tick_help"), isOn: $options.paceTick)
+        switchRow(L10n.text("main.panel.details"), help: detailsHelp, isOn: $options.quotaDetails)
     }
 
     private func segments<Value: Hashable>(_ title: String, help: String? = nil, stacked: Bool = false,
@@ -461,6 +489,9 @@ extension ExpandedPanelLayout.Block {
         case .codex: .codex
         case .claude: .claude
         case .deepseek: .deepseek
+        case .workbuddy: .workbuddy
+        case .workbuddyAI: .workbuddyAI
+        default: nil
         }
     }
 }
@@ -486,11 +517,16 @@ private struct PanelBlockInspector<Rows: View>: View {
                 .padding(.leading, 4).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 12) {
-                    Image(systemName: block?.symbol ?? "ellipsis").font(.system(size: 15, weight: .regular))
-                        .foregroundStyle(tint ?? Color.secondary)
-                        .frame(width: 34, height: 34)
-                        .background((tint ?? Color.secondary).opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .accessibilityHidden(true)
+                    Group {
+                        if block?.isQuota == true, let provider = block?.provider {
+                            ProviderAppIcon(provider: provider, size: 30)
+                        } else {
+                            Image(systemName: block?.symbol ?? "ellipsis").font(.system(size: 15, weight: .regular))
+                                .foregroundStyle(tint ?? Color.secondary)
+                                .frame(width: 34, height: 34)
+                                .background((tint ?? Color.secondary).opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        }
+                    }.frame(width: 34, height: 34).accessibilityHidden(true)
                     HStack(spacing: 2) {
                         Text(name).font(.system(size: 15, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
                             .accessibilityAddTraits(.isHeader)

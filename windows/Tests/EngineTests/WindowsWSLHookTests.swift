@@ -43,8 +43,8 @@ private final class WSLHookChild: ChildProcessConnection, @unchecked Sendable {
     func close() { lock.lock(); closes += 1; lock.unlock(); exited.finish(); ioClosed.finish() }
     func terminateImmediately() { lock.lock(); kills += 1; lock.unlock(); exited.finish(); ioClosed.finish() }
     func counts() -> (Int, Int) { lock.lock(); defer { lock.unlock() }; return (closes, kills) }
-    func complete() async {
-        await output(Data(#"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false,"telemetryConflictReason":"none"}"#.utf8))
+    func complete(_ response: String = #"{"hooksConfigured":true,"telemetryConfigured":true,"statusLineConfigured":true,"telemetryConflict":false,"telemetryConflictReason":"none"}"#) async {
+        await output(Data(response.utf8))
         exited.finish(); ioClosed.finish()
     }
 }
@@ -134,6 +134,32 @@ final class WindowsWSLHookTests: XCTestCase {
         XCTAssertThrowsError(try operation.result()) { XCTAssertEqual($0 as? ClaudeRemoteSetup.Failure, .cancelled) }
         operation.abort(.cancelled)
         XCTAssertGreaterThan(capture.2.counts().0, 0); XCTAssertGreaterThan(capture.2.counts().1, 0)
+    }
+    /// Codex's progress tool goes to the distribution's Codex home through the same supervisor.
+    func testCodexProgressSetupUsesTheCodexRouteInWSL() async throws {
+        let profile = WindowsWSLProfile(distro: "Fixture", user: "fixture", uid: 1000, home: "/home/fixture", identity: "2:40",
+            codexHome: "/home/fixture/.codex", claudeHome: "/home/fixture/.claude", codexIdentity: "2:41", claudeIdentity: "2:42")
+        let registry = WindowsWSLRegistry(), launch = WSLHookLaunch()
+        XCTAssertTrue(registry.accept([profile], installed: ["fixture"], ticket: registry.begin()))
+        let wsl = WindowsWSLServices(registry: registry, start: { request, input, output, _ in launch.start(request, input, output) })
+        let target = try XCTUnwrap(profile.target(.codex))
+        let command = try CodexRemoteProgressSetup.command(home: target.home, enabled: true)
+        let arguments = try wsl.codexSetupArguments(target, command: command)
+        XCTAssertEqual(Array(arguments.prefix(3)), ["--pacer-wsl", "codex", target.id])
+        XCTAssertThrowsError(try wsl.codexSetupArguments(XCTUnwrap(profile.target(.claude)), command: command), "A Claude route never carries Codex setup") {
+            XCTAssertEqual($0 as? ClaudeRemoteSetup.Failure, .invalidTarget)
+        }
+        let operation = WindowsClaudeSetupOperation(executable: wsl.executable, arguments: arguments, environment: [:], wsl: wsl)
+        try operation.start()
+        let capture = try XCTUnwrap(launch.read())
+        let route = try XCTUnwrap(capture.0.arguments.last.flatMap { Data(base64Encoded: $0) })
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: route) as? [String: Any])
+        XCTAssertEqual(value["provider"] as? String, "codex"); XCTAssertEqual(value["root"] as? String, "/home/fixture/.codex")
+        XCTAssertTrue(String(decoding: capture.1, as: UTF8.self).hasSuffix(command), "The supervisor receives the setup command on stdin")
+        await capture.2.complete(#"{"configured":true,"conflict":false}"#)
+        let response = try XCTUnwrap(operation.result())
+        XCTAssertEqual(try CodexRemoteProgressSetup.status(data: response.data, exitStatus: response.exitStatus), .init(configured: true, conflict: false))
+        operation.close()
     }
     func testCombinedTargetsStayBoundedWithoutDroppingTheWSLGroup() async throws {
         let jobs = WSLHookJobs(), digests = WSLHookDigests()

@@ -30,6 +30,13 @@ internal static class RingDrawing
     }
 }
 
+/// The colors a credits dial draws with: the island's own by default, or a Settings
+/// page's in its theme (the Mac's CreditsDial switches to system colors off the island).
+internal sealed record QuotaDialInk(Brush Primary, Brush Secondary, Brush Attention, Brush Hairline, Brush Surface, Brush? Tint = null)
+{
+    internal static QuotaDialInk Island => new(PacerPalette.Primary, PacerPalette.Secondary, PacerPalette.Attention, PacerPalette.Hairline, PacerPalette.Surface);
+}
+
 /// <summary>The original quota geometry, with independently missing values and clocks.</summary>
 internal sealed class QuotaDial : FrameworkElement
 {
@@ -40,13 +47,22 @@ internal sealed class QuotaDial : FrameworkElement
     private readonly double? dialSize;
     private readonly PanelGauge? gauge;
     private readonly bool paceTick;
+    private readonly HarnessCreditsDial? credits;
+    private readonly UiText? creditsText;
+    private readonly bool creditsStale;
+    private readonly QuotaDialInk? ink;
+    private QuotaDialInk Ink => ink ?? QuotaDialInk.Island;
+    /// The figure's color, for checks that a page's dial follows its theme.
+    internal Brush FigureInk => Ink.Primary;
     /// <param name="gauge">Core's choice of window for the panel's chosen periods; without it 5 hours splits the ring when reported.</param>
     /// <param name="paceTick">The white tick where an even pace would be.</param>
     internal QuotaDial(string provider, EngineQuota? quota, EngineWallet? wallet, bool classic = false,
-        DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null, PanelGauge? gauge = null, bool paceTick = true)
+        DashboardProvider? dashboard = null, string classicPeriod = "7d", double? dialSize = null, PanelGauge? gauge = null, bool paceTick = true,
+        HarnessCreditsDial? credits = null, UiText? creditsText = null, bool creditsStale = false, QuotaDialInk? ink = null)
     {
         this.provider = provider; this.wallet = wallet; this.classic = classic; this.dashboard = dashboard;
         this.classicPeriod = classicPeriod; this.dialSize = dialSize; this.gauge = gauge; this.paceTick = paceTick;
+        this.credits = credits; this.creditsText = creditsText; this.creditsStale = creditsStale; this.ink = ink;
         _ = quota; // Raw transport data cannot replace a shared display projection.
     }
     private readonly Typeface regular = new(PacerFonts.Interface, FontStyles.Normal, FontWeights.Medium, FontStretches.Normal);
@@ -64,7 +80,8 @@ internal sealed class QuotaDial : FrameworkElement
     internal QuotaWindow? GaugeWindow => ShortGauge ? Short : Weekly;
     private DashboardReading? ClassicReading => classicPeriod == "5h" ? dashboard?.FiveHour : dashboard?.Weekly;
     internal QuotaWindow? Selected => classic ? classicPeriod == "5h" ? Short : Weekly : GaugeWindow;
-    internal string AccessibleName => provider == "deepseek" ? wallet?.Dial?.AccessibilityLabel ?? provider
+    internal string AccessibleName => creditsText != null ? credits?.AccessibilityLabel ?? creditsText.Text("harness.account.sign_in")
+        : provider == "deepseek" ? wallet?.Dial?.AccessibilityLabel ?? provider
         : classic && ClassicReading != null ? ClassicReading.ClassicAccessibilityLabel
         : dashboard != null ? string.Join("\n", Split ? new[] { dashboard.FiveHour.AccessibilityLabel, dashboard.Weekly.AccessibilityLabel } : new[] { GaugeReading!.AccessibilityLabel })
         : provider;
@@ -83,13 +100,12 @@ internal sealed class QuotaDial : FrameworkElement
     protected override void OnRender(DrawingContext drawing)
     {
         base.OnRender(drawing);
+        if (creditsText != null) { DrawCredits(drawing); return; }
         if (provider == "deepseek") { DrawWallet(drawing); return; }
         if (dashboard == null || (classic ? ClassicReading?.Availability == "unavailable" : GaugeReading?.Availability == "unavailable" && !Split))
         {
-            drawing.DrawEllipse(null, new Pen(PacerPalette.Hairline, 1.5), new Point(Side / 2, Side / 2), Side / 2, Side / 2);
-            drawing.PushTransform(new TranslateTransform(Side / 2 - 10, Side / 2 - 10));
-            IconGlyph.Draw(drawing, provider == "claude" ? "asterisk" : "chevron.left.forwardslash.chevron.right", PacerPalette.Tertiary, 20, 20);
-            drawing.Pop(); return;
+            DrawDisconnected(drawing);
+            return;
         }
         if (classic)
         {
@@ -141,18 +157,76 @@ internal sealed class QuotaDial : FrameworkElement
     }
     private void Gauge(DrawingContext drawing, QuotaWindow? window, double start, double sweep, bool shortPeriod)
     {
+        DrawGauge(drawing, window?.RemainingPercent is double percent ? percent / 100 : null, start, sweep,
+            shortPeriod && window?.Pressing == true ? PacerPalette.Attention : PacerPalette.Provider(provider));
         double radius = Side / 2;
-        var centre = new Point(radius, radius);
-        RingDrawing.Arc(drawing, centre, radius, start, sweep, PacerPalette.Hairline, 6, dashed: window?.RemainingPercent == null);
-        if (window?.RemainingPercent is double percent && percent > 0)
-            RingDrawing.Arc(drawing, centre, radius, start, sweep * Math.Clamp(percent / 100, 0, 1),
-                shortPeriod && window.Pressing ? PacerPalette.Attention : PacerPalette.Provider(provider), 6);
         if (paceTick && window?.RemainingTimePercent is double time)
         {
             drawing.PushTransform(new RotateTransform(start + sweep * Math.Clamp(time / 100, 0, 1) + 90, radius, radius));
             drawing.DrawRoundedRectangle(Brushes.White, new Pen(PacerPalette.Ink(0, 0, 0, 115), 0.5), new Rect(radius - 1.25, -6, 2.5, 12), 1.25, 1.25);
             drawing.Pop();
         }
+    }
+    private void DrawGauge(DrawingContext drawing, double? fraction, double start, double sweep, Brush tint)
+    {
+        double radius = Side / 2;
+        var centre = new Point(radius, radius);
+        RingDrawing.Arc(drawing, centre, radius, start, sweep, Ink.Hairline, 6, dashed: fraction == null);
+        if (fraction > 0) RingDrawing.Arc(drawing, centre, radius, start, sweep * Math.Min(fraction.Value, 1), tint, 6);
+    }
+
+    private void DrawDisconnected(DrawingContext drawing)
+    {
+        double centre = Side / 2;
+        drawing.DrawEllipse(null, DrawingCache.Pen(Ink.Hairline, 1.5), new Point(centre, centre), centre, centre);
+        if (ProviderIcon.Source(provider) is { } icon)
+            drawing.DrawImage(icon, new Rect(centre - 12, centre - 12, 24, 24));
+    }
+
+    /// The ring is what is left of the month's credits; the days left sit above
+    /// the chosen figure; the gap holds the extra credits, or "This month".
+    private void DrawCredits(DrawingContext drawing)
+    {
+        if (credits == null) { DrawDisconnected(drawing); return; }
+        double side = Side;
+        Brush tint = Ink.Tint ?? PacerPalette.Provider(provider);
+        drawing.PushOpacity(creditsStale ? 0.55 : 1);
+        if (credits.Fraction is double fraction) DrawGauge(drawing, fraction, classic ? -90 : 125, classic ? 360 : 290, tint);
+        else drawing.DrawEllipse(null, DrawingCache.Pen(Ink.Hairline, 1.5), new Point(side / 2, side / 2), side / 2, side / 2);
+        // The line above the figure fits inside the ring at its height, 3 px
+        // clear of the 6 px stroke: the closed classic ring is narrower there.
+        if (credits.Top is string top)
+        {
+            double inner = side / 2 - 6, rise = side / 2 - side * 0.23;
+            Fit(drawing, Text(top, side * 0.085, credits.TopWarns ? Ink.Attention : Ink.Secondary, credits.TopWarns), side * 0.23,
+                Math.Min(side * 0.72, 2 * Math.Sqrt(Math.Max(0, inner * inner - rise * rise))));
+        }
+        var value = Text(credits.Center, side * 0.2, Ink.Primary, true);
+        double scale = Math.Min(1, side * 0.72 / Math.Max(1, value.WidthIncludingTrailingWhitespace));
+        Fit(drawing, value, side / 2 - value.Height * scale / 2 + side * 0.02, side * 0.72);
+        if (credits.Badge is string badge) DrawBadge(drawing, badge, credits.BadgeTone, tint, side * 0.088, classic ? side * 0.66 : side - side * 0.165);
+        else if (credits.GapLabel is string label) Centre(drawing, label, side * 0.09, classic ? side * 0.66 : side - side * 0.15, Ink.Secondary);
+        drawing.Pop();
+    }
+    /// Draws a line centered and shrunk to fit the ring's inner width.
+    private void Fit(DrawingContext drawing, FormattedText text, double top, double width)
+    {
+        double scale = Math.Min(1, width / Math.Max(1, text.WidthIncludingTrailingWhitespace));
+        drawing.PushTransform(new TranslateTransform((Side - text.WidthIncludingTrailingWhitespace * scale) / 2, top));
+        drawing.PushTransform(new ScaleTransform(scale, scale));
+        drawing.DrawText(text, new Point()); drawing.Pop(); drawing.Pop();
+    }
+    /// Extra credits as a capsule: the service's tint, orange when some lapse soon, solid once the month is spent.
+    private void DrawBadge(DrawingContext drawing, string badge, string tone, Brush tint, double size, double top)
+    {
+        Color Of(Brush brush) => brush is SolidColorBrush solid ? solid.Color : Colors.Gray;
+        Color shade = Of(tone == "warning" ? Ink.Attention : tint);
+        Brush ink = tone == "solid" ? Ink.Surface : tone == "warning" ? Ink.Attention : tint;
+        Brush fill = tone == "solid" ? new SolidColorBrush(shade) : new SolidColorBrush(Color.FromArgb(tone == "warning" ? (byte)66 : (byte)56, shade.R, shade.G, shade.B));
+        var text = Text(badge, size, ink, true);
+        double width = Math.Min(Side * 0.6, text.WidthIncludingTrailingWhitespace + size * 1.4), height = size * 1.7;
+        drawing.DrawRoundedRectangle(fill, null, new Rect((Side - width) / 2, top, width, height), height / 2, height / 2);
+        Fit(drawing, text, top + (height - text.Height) / 2, width - size * 0.8);
     }
     private void Value(DrawingContext drawing, QuotaWindow? window, double size, double baseline, string? period, double percentSize = 9)
     {
@@ -259,6 +333,7 @@ internal sealed class QuotaCell : StackPanel
         var dial = new QuotaDial(provider, quota, wallet, dashboard: dashboard, gauge: gauge, paceTick: paceTick) { Width = 104, Height = 104, HorizontalAlignment = HorizontalAlignment.Center };
         Children.Add(dial);
         var caption = new StackPanel { Orientation = Orientation.Horizontal, Height = 15, Margin = new Thickness(0, 8, 0, 6), HorizontalAlignment = HorizontalAlignment.Center };
+        caption.Children.Add(ProviderIcon.Caption(provider));
         caption.Children.Add(new TextBlock { Text = provider switch { "codex" => "Codex", "claude" => "Claude", _ => "DeepSeek" },
             FontSize = 11, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         var shown = dial.GaugeWindow;

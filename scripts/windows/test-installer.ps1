@@ -40,7 +40,7 @@ function Assert-PacerReporter([bool]$Enabled) {
     $taskCodexReporter.StandardInput.Flush()
     $taskReply = $taskCodexReporter.StandardOutput.ReadLineAsync().WaitAsync([TimeSpan]::FromSeconds(10)).GetAwaiter().GetResult() | ConvertFrom-Json
     Assert-Pacer ($taskReply.id -eq 1 -and $taskReply.result.isError -eq !$Enabled) 'The cached reporter did not honor its enabled state.'
-    if ($Enabled) { Assert-Pacer ($taskReply.result.content[0].text -eq 'pacer-progress:accepted') 'The reporter did not acknowledge an estimate.' }
+    if ($Enabled) { Assert-Pacer ($taskReply.result.content[0].text -eq 'pacer-progress:accepted. Report again as soon as you make more progress.') 'The reporter did not acknowledge an estimate.' }
 }
 function Invoke-PacerTestProcess([string]$File, [string[]]$Arguments, [int[]]$Expected = @(0), [switch]$Offline, [string]$StdinJson = $null) {
     $taskStart = [Diagnostics.ProcessStartInfo]::new($File)

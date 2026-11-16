@@ -56,6 +56,26 @@ final class LocalizationTests: XCTestCase {
         }
     }
 
+    /// Both hosts build these keys from a module's ID; Windows throws on a
+    /// missing one (the welcome guide crashed for WorkBuddy AI, 11/16) and the
+    /// Mac shows the raw key. Every harness module has each family.
+    func testEveryHarnessModuleHasTheKeysBuiltFromItsID() throws {
+        let directory = try XCTUnwrap(L10n.localizationResourceURL(for: .english))
+        let english = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: directory.appendingPathComponent("Localizable.strings")),
+            options: [], format: nil) as? [String: String])
+        for descriptor in HarnessRegistry.descriptors where !HarnessRegistry.legacyIDSet.contains(descriptor.id) {
+            let id = descriptor.id.rawValue
+            var keys = ["welcome.module.\(id)_missing", "\(id).progress_ring_help", "main.search.\(id)", "module.\(id).summary",
+                        "panel.block.\(id)", "panel.block_detail.\(id)"]
+            keys += ["credits", "cost", "progress", "apps"].flatMap { ["help.\(id).\($0).title", "help.\(id).\($0).detail"] }
+            if descriptor.reportsAccountCredits {
+                keys += ["main.history.\(id)_week", "main.history.\(id)_empty"]
+                keys += ["title", "prompt", "prompt_detail", "signed_in", "signed_in_detail"].map { "\(id).login.\($0)" }
+            }
+            for key in keys { XCTAssertNotNil(english[key], key) }
+        }
+    }
+
     func testFormattingKeepsNamesAndInterpolatedValues() {
         XCTAssertEqual(L10n.text("quota.days", 7, language: .english), "7-day quota")
         XCTAssertEqual(L10n.text("quota.days", 7, language: .simplifiedChinese), "7 天额度")

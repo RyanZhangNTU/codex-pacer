@@ -130,6 +130,7 @@ struct SettingsCollapsedBarPane: View {
             CardPicker(title: L10n.text("layout.option.quota_multiple"), selection: $options.quotaMultiple,
                        options: CompactComponentOptions.QuotaMultiple.allCases.map { ($0, L10n.text("layout.option.quota_multiple." + $0.rawValue)) })
             windowPickers
+            creditFigurePickers
         case .quotaGauge:
             CardPicker(title: L10n.text("layout.option.ring_layout"), selection: $options.ringLayout,
                        options: CompactComponentOptions.RingLayout.allCases.map { ($0, L10n.text("layout.option.ring_layout." + $0.rawValue)) })
@@ -162,6 +163,19 @@ struct SettingsCollapsedBarPane: View {
                            options: [(2, L10n.text("layout.option.warning_limit.two")), (0, L10n.text("layout.option.warning_limit.all"))])
         default:
             EmptyView()
+        }
+    }
+
+    /// Which figure each credits module's value shows: the month's percent, the
+    /// month's credits or everything available.
+    @ViewBuilder private var creditFigurePickers: some View {
+        ForEach(providers.filter { HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true }, id: \.self) { provider in
+            CardPicker(title: provider.settingsTitle + " · " + L10n.text("credits.option.bar"),
+                       selection: Binding(get: { model.creditSettings(provider).bar }, set: { value in
+                           var settings = model.creditSettings(provider); settings.bar = value
+                           model.setCreditSettings(provider, settings)
+                       }),
+                       options: HarnessCreditsFigure.allCases.map { ($0, L10n.text("credits.figure." + $0.rawValue)) })
         }
     }
 
@@ -201,8 +215,11 @@ struct SettingsCollapsedBarPane: View {
 
     /// Which service each ring shows. Unset follows the services in order.
     @ViewBuilder private var ringPickers: some View {
+        // As the bar chooses: quota windows, then account credits with a reading, then a wallet.
         let automatic: [AgentProvider] = {
-            var result = Array(providers.filter { $0 != .deepseek }.prefix(2))
+            let windows = providers.filter { HarnessRegistry.descriptor(for: $0)?.hasQuotaWindows == true }
+            let credits = providers.filter { model.harnessAccount($0)?.reading?.percent != nil }
+            var result = Array((windows + credits).prefix(2))
             if result.count == 1, providers.contains(.deepseek) { result.append(.deepseek) }
             return result
         }()
@@ -219,7 +236,8 @@ struct SettingsCollapsedBarPane: View {
                        selection: Binding(get: { current[slot.rawValue] }, set: { value in
                            quotaRings = current; quotaRings[slot.rawValue] = value
                        }),
-                       options: providers.map { ($0.rawValue, $0.displayName) } + [("none", L10n.text("layout.ring_none"))])
+                       options: providers.filter { HarnessRegistry.descriptor(for: $0)?.balance != nil }.map { ($0.rawValue, $0.displayName) }
+                           + [("none", L10n.text("layout.ring_none"))])
         }
         if showsDeepSeek, !deepseekHasBudget {
             Text(L10n.text("layout.ring_deepseek_needs_budget")).font(.system(size: 12)).foregroundStyle(MainPalette.attention)

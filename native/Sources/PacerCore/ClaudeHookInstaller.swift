@@ -90,7 +90,7 @@ public struct ClaudeHookInstaller {
         do { needsMigration = try migrated(value, home: home) != nil }
         catch { needsMigration = true }
         status.updateAvailable = configured && (needsMigration || installedScriptOutdated(home: home) ||
-            progressMode(home: home) == .tool && pluginOutdated(home: home))
+            progressRingOn(home: home) && pluginOutdated(home: home))
         return status
     }
     @discardableResult public func install(home: URL) throws -> Status {
@@ -110,9 +110,9 @@ public struct ClaudeHookInstaller {
         reconcileEnvironment(&env, added: &added, conflict: conflict, automatic: false)
         if env != value["env"] as? [String: String] ?? [:] { if env.isEmpty { value.removeValue(forKey: "env") } else { value["env"] = env } }
         manifest["addedEnvironment"] = added
-        setDisplayObserver(&hooks, wanted: conflict != .none || !ClaudeTelemetryRules.configured(env) || progressMode(home: home) == .marker, home: home)
+        setDisplayObserver(&hooks, wanted: conflict != .none || !ClaudeTelemetryRules.configured(env), home: home)
         value["hooks"] = hooks
-        let wantsPlugin = progressMode(home: home) == .tool
+        let wantsPlugin = progressRingOn(home: home)
         try setPlugin(&value, manifest: &manifest, wanted: wantsPlugin, home: home)
         let previousLine = value["statusLine"]
         if let previousLine, !(previousLine is [String: Any]) { throw Failure.invalidSettings }
@@ -141,7 +141,7 @@ public struct ClaudeHookInstaller {
               let existing = try? settings(home: home) else { return false }
         var changed = false
         if installedScriptOutdated(home: home), (try? writeScript(home: home)) != nil { changed = true }
-        if progressMode(home: home) == .tool, pluginOutdated(home: home) {
+        if progressRingOn(home: home), pluginOutdated(home: home) {
             guard (try? writePlugin(home: home)) != nil else { return changed }
             changed = true
         }
@@ -196,17 +196,12 @@ public struct ClaudeHookInstaller {
             if added.isEmpty && previousManifest["addedEnvironment"] == nil { manifest.removeValue(forKey: "addedEnvironment") }
             else { manifest["addedEnvironment"] = added }
         }
-        let mode = progressMode(home: home)
-        let wantsDisplay = telemetryConflict(result, home: home) != .none || !ClaudeTelemetryRules.configured(env) || mode == .marker
+        let wantsDisplay = telemetryConflict(result, home: home) != .none || !ClaudeTelemetryRules.configured(env)
         if let groups = hooks[displayEvent] as? [[String: Any]], groups.contains(where: { containsOwned($0, home: home) }) {
             setDisplayObserver(&hooks, wanted: wantsDisplay, home: home)
-        } else if mode == .marker {
-            // Leading markers are read from each message's first displayed
-            // lines: that switch adds the background observer and removing it drops it.
-            setDisplayObserver(&hooks, wanted: true, home: home)
         }
         result["hooks"] = hooks
-        try setPlugin(&result, manifest: &manifest, wanted: mode == .tool, home: home)
+        try setPlugin(&result, manifest: &manifest, wanted: progressRingOn(home: home), home: home)
         if var line = value["statusLine"] as? [String: Any], line["command"] as? String != statusLineCommand(home: home),
            ownsStatusLine(line["command"] as? String, home: home) {
             line["command"] = statusLineCommand(home: home); result["statusLine"] = line
@@ -265,15 +260,9 @@ public struct ClaudeHookInstaller {
             if kept.isEmpty { return nil }; group["hooks"] = kept; return group
         }
     }
-    /// How the progress ring asks for estimates: its switch file holds `tool`
-    /// (Pacer's plugin tool) or another word (a leading marker in each message).
-    private enum ProgressMode { case marker, tool }
-    private func progressMode(home: URL) -> ProgressMode? {
-        let flag = ClaudeProgressRingSwitch.flagURL(home: home)
-        guard storage.exists(flag) else { return nil }
-        let text = (try? storage.read(flag)).map { String(decoding: $0.prefix(16), as: UTF8.self) } ?? ""
-        return text.split(whereSeparator: \.isWhitespace).first == "tool" ? .tool : .marker
-    }
+    /// While the progress ring's switch file exists, estimates come through
+    /// Pacer's plugin tool; whatever the file holds, there is no other mode.
+    private func progressRingOn(home: URL) -> Bool { storage.exists(ClaudeProgressRingSwitch.flagURL(home: home)) }
     /// Pacer's Claude Code plugin is a local marketplace in Pacer's hook folder
     /// whose one plugin serves `report_progress`. While the ring asks for the
     /// tool, settings list that marketplace, enable the plugin and pre-approve

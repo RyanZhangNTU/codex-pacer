@@ -12,6 +12,7 @@ struct EngineCommand: Decodable {
     let id: String
     let method: String
     let params: Parameters?
+    let supportsHarnessModules: Bool?
 
     struct Parameters: Decodable {
         var shell: EngineShellProjection.Request?
@@ -44,10 +45,29 @@ struct EngineCommand: Decodable {
         var claudeProgressRing: Bool?
         var codexProgressRing: Bool?
         var deepseekProgressRing: Bool?
+        /// Modules whose progress ring is off. A ring is on unless listed.
+        var disabledHarnessProgress: [String]?
         var retentionMinutes: Int?
         var enabledProviders: [String]?
         var providerModes: [String: String]?
         var provider: String?
+        /// A module's account credits from the host's sign-in; null clears them.
+        var accountCredits: HarnessAccountCredits?
+        var stale: Bool?
+        /// Data folders chosen in Settings for local modules, by module ID.
+        /// An empty path restores the default.
+        var harnessHomes: [String: String]?
+        /// Modules whose task rows leave out the credits each turn used.
+        var hiddenTurnCredits: [String]?
+        /// Each credits module's dial, bar value and reminder choices.
+        var harnessCredits: [String: HarnessCreditsSettings]?
+        /// With `refreshHarnessProgressConnection`: whether the module's app
+        /// runs, and since when (seconds since 1970), as the host sees it.
+        var appRunning: Bool?
+        var appStartedAt: Double?
+        /// And when the user opened the connectors from the card (seconds
+        /// since 1970), while that still holds.
+        var openedConnectorsAt: Double?
         var activityID: String?
         var snapshotSequence: UInt64?
         var deepseekKey: String?
@@ -133,13 +153,13 @@ struct EngineTask: Codable, Equatable {
         let rate = activity.displayedOutputEstimate(at: now)
         id = activity.id; provider = activity.provider.rawValue
         sessionID = activity.threadID; turnID = activity.turnID; parentThreadID = activity.parentThreadID
-        title = hideProjects ? L10n.text("activity.local_task") : activity.title ?? activity.project
+        title = activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.local_task") : activity.title ?? activity.project)
         source = hideProjects && activity.claudeCloud != nil ? L10n.text("connections.kind.claude_cloud")
             : activity.sourceHost ?? L10n.text("common.local")
         sourceID = activity.sourceHostID
         phase = activity.observedPhase(at: now).rawValue; stage = activity.stage.rawValue
         stageLabel = [.completed, .interrupted].contains(activity.phase) ? activity.endingLabel : activity.stage.label
-        model = activity.modelName.map(ModelDisplay.name); effort = activity.reasoningEffort
+        model = activity.modelName.map { ModelDisplay.name($0, provider: activity.provider) }; effort = activity.reasoningEffort
         tokensPerSecond = rate?.value; rateReportedAt = rate?.reportedAt.timeIntervalSince1970
         rateIsFresh = rate?.isFresh == true; rateIsEstimated = activity.displayedRateIsEstimated(at: now)
         firstTokenLatency = activity.firstTokenLatency
@@ -184,6 +204,61 @@ struct EngineModule: Codable, Equatable {
     let mode: String
     let installed: Bool?
     let enabled: Bool
+    var displayName: String? = nil
+    var symbol: String? = nil
+    var status: String? = nil
+    var usage: HarnessUsage? = nil
+    var usageGuideURL: URL? = nil
+    var progressConnector: Bool? = nil
+    var hasTaskProgress: Bool? = nil
+    var reportsSessionUsage: Bool? = nil
+    var reportsAccountCredits: Bool? = nil
+    var progressSetup: LocalHarnessProgressStatus? = nil
+    var progressConnection: LocalHarnessProgressConnection? = nil
+    /// The progress ring card, worded by Core, for a module whose app must trust Pacer's tool.
+    var progressGuide: HarnessProgressGuide? = nil
+    /// Registry facts, so the host draws every module from one description.
+    var brand: EngineModuleBrand? = nil
+    var website: URL? = nil
+    var balance: String? = nil
+    /// Found on this computer or turned on explicitly: listed without
+    /// opening the module library.
+    var prominent: Bool? = nil
+    /// Read by the shared local adapter, with a data folder Settings can change.
+    var local: Bool? = nil
+    /// The last seven days of account credits, for History.
+    var week: DeepSeekSoloPresentation.Week? = nil
+    /// How the host opens the app: its URL scheme, the signer its handler
+    /// must carry, and where the app installs.
+    var launch: EngineModuleLaunch? = nil
+}
+
+struct EngineModuleLaunch: Codable, Equatable {
+    let scheme: String
+    let publisher: String
+    let executables: [String]
+    let connectorsPath: String?
+}
+
+struct EngineModuleBrand: Codable, Equatable {
+    let dark: String
+    let light: String
+    let accentLift: Double
+    let accentLuminance: Double
+    init(_ brand: HarnessBrand) {
+        dark = brand.dark.hex; light = brand.light.hex
+        accentLift = brand.accentLift; accentLuminance = brand.accentLuminance
+    }
+}
+
+/// A module's account credits as the engine knows them: from the host's
+/// sign-in, or the demo's sample.
+struct EngineAccountCredits: Codable, Equatable {
+    let provider: String
+    let credits: HarnessAccountCredits
+    let stale: Bool
+    /// What the host draws: the dial, the lines and the breakdown, worded by Core.
+    var presentation: HarnessCreditsPresentation? = nil
 }
 
 struct EngineQuota: Codable, Equatable {
@@ -289,6 +364,7 @@ struct EngineSnapshot: Codable, Equatable {
     let navigationError: EngineNavigationFailure?
     let openingActivityIDs: [String]?
     var expandedPanel: EngineExpandedPanel? = nil
+    var accountCredits: [EngineAccountCredits]? = nil
     var wslAvailability: WindowsWSLAvailability?
     var remoteControlDirectory: RemoteControlDirectoryStatus?
 

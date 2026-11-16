@@ -67,11 +67,17 @@ final class CompactBarScenarioTableTests: XCTestCase {
                                 switch entry.provider {
                                 case .deepseek: expectedText = wallet
                                 case .codex, .claude: expectedText = try XCTUnwrap(metric.quota[entry.provider.rawValue])
+                                default: XCTFail("Unexpected quota provider \(entry.provider)"); continue
                                 }
                                 XCTAssertEqual(entry.text, expectedText, label)
-                                let strip = entry.provider == .deepseek || row.providers.contains("deepseek")
-                                    ? expectedText : String(expectedText.dropLast())
-                                XCTAssertEqual(entry.stripText, strip, label)
+                                // On its side the symbol moves under the number; a balance keeps its whole yuan.
+                                if entry.provider == .deepseek {
+                                    XCTAssertEqual(entry.stripUnit, "¥", label)
+                                    XCTAssertEqual(entry.stripText.split(separator: ".").first.map(String.init), String(expectedText.dropFirst()), label)
+                                } else {
+                                    XCTAssertEqual(entry.stripText, String(expectedText.dropLast()), label)
+                                    XCTAssertEqual(entry.stripUnit, "%", label)
+                                }
                                 XCTAssertFalse(entry.dimmed, label)
                             }
                             let times = try component("timeRemaining", output).entries

@@ -30,4 +30,16 @@ public struct WindowsCodexProgressPaths: Sendable {
             version.lastPathComponent.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}-[0-9a-f]{12}(?:-[0-9a-f]{12})?\z"#, options: .regularExpression) != nil &&
             command.arguments == self.command(python: python, home: home).arguments
     }
+
+    package func localHarnessCommand(_ command: CodexProgressCommand, home: URL) -> CodexProgressCommand {
+        .init(executable: URL(fileURLWithPath: command.executable),
+              arguments: Array(command.arguments.dropLast()) + [LocalHarnessProgressSetup.managedArgument, LocalHarnessProgressSetup.flag(home).path])
+    }
+
+    package func ownsLocalHarness(_ executable: String, arguments: [String], home: URL) -> Bool {
+        guard WindowsCodexExecutableDiscovery.absolute(executable), arguments.count == 5 else { return false }
+        let python = URL(fileURLWithPath: executable)
+        let standard = command(python: python, home: home)
+        return owns(standard, home: home) && arguments == localHarnessCommand(standard, home: home).arguments
+    }
 }

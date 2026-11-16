@@ -1,4 +1,5 @@
 import AppKit
+import PacerCore
 import SwiftUI
 
 /// The light and dark colors a page library draws its tiles in.
@@ -32,13 +33,13 @@ enum LibraryPalette {
 /// the round button at its end adds or removes it and leaves the selection.
 struct LibraryTile: View {
     @Environment(\.pacerAccent) private var accent
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let label: String
     let symbol: String
     let placed: Bool
     let selected: Bool
     /// The icon's color while placed; the label's ink otherwise.
     var tint: Color? = nil
+    var provider: AgentProvider? = nil
     /// The service is off or unavailable: still selectable, drawn faint.
     var faint = false
     /// The last block a panel keeps: its button cannot remove it.
@@ -51,16 +52,20 @@ struct LibraryTile: View {
     var lockedHelp: String? = nil
     let select: () -> Void
     var toggle: () -> Void = {}
-    @State private var hovering = false
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         HStack(spacing: 0) {
             Button(action: select) {
                 HStack(spacing: 7) {
-                    Image(systemName: symbol).font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(placed ? tint ?? LibraryPalette.placedInk : LibraryPalette.freeIcon)
-                        .frame(width: 16)
+                    Group {
+                        if let provider {
+                            ProviderAppIcon(provider: provider, size: 14)
+                        } else {
+                            Image(systemName: symbol).font(.system(size: 12, weight: .regular))
+                                .foregroundStyle(placed ? tint ?? LibraryPalette.placedInk : LibraryPalette.freeIcon)
+                        }
+                    }.frame(width: 16)
                     Text(label).font(.system(size: 12.5)).lineLimit(1).minimumScaleFactor(0.85)
                         .foregroundStyle(placed ? LibraryPalette.placedInk : LibraryPalette.freeInk)
                     Spacer(minLength: 4)
@@ -74,7 +79,9 @@ struct LibraryTile: View {
                 Text(always).font(.system(size: 11)).foregroundStyle(LibraryPalette.freeIcon).lineLimit(1)
                     .padding(.trailing, 11)
             } else {
-                roundButton
+                LibraryRoundButton(placed: placed, locked: locked, addLabel: addLabel, removeLabel: removeLabel,
+                                   lockedHelp: lockedHelp, toggle: toggle)
+                    .frame(height: 34)
             }
         }
         .frame(height: 34)
@@ -82,6 +89,21 @@ struct LibraryTile: View {
         .overlay(shape.strokeBorder(selected ? accent : LibraryPalette.border, lineWidth: selected ? 1.5 : 1))
         .opacity(faint ? 0.55 : 1)
     }
+}
+
+/// A library tile's round button, shared by every page library.
+struct LibraryRoundButton: View {
+    @Environment(\.pacerAccent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let placed: Bool
+    var locked = false
+    let addLabel: String
+    let removeLabel: String
+    var lockedHelp: String? = nil
+    let toggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View { roundButton }
 
     /// Hollow ＋ to add; an accent ✓ once added, which turns into a neutral
     /// − under the pointer; gray and still when the tile cannot be removed.
@@ -97,7 +119,7 @@ struct LibraryTile: View {
                 .background(fill, in: Circle())
                 .overlay(Circle().strokeBorder(placed ? .clear : hover ? accent : LibraryPalette.buttonRing, lineWidth: 1))
                 .padding(.trailing, 5)
-                .frame(width: 38, height: 34, alignment: .trailing)
+                .frame(width: 38, alignment: .trailing).frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
         }
         // Plain buttons fade when disabled; the locked gray is already drawn.

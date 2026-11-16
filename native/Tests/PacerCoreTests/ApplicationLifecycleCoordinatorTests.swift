@@ -5,7 +5,7 @@ import XCTest
 final class ApplicationLifecycleCoordinatorTests: XCTestCase {
     private typealias Lifecycle = ApplicationLifecycleCoordinator
     private let date = Date(timeIntervalSince1970: 1_800_000_000)
-    private func configuration(claude: String = "claude-first", enabled: Set<AgentProvider> = Set(AgentProvider.allCases), demo: Bool = false) -> Lifecycle.Configuration {
+    private func configuration(claude: String = "claude-first", enabled: Set<AgentProvider> = Set(HarnessRegistry.legacyIDs), demo: Bool = false) -> Lifecycle.Configuration {
         .init(enabled: enabled, sources: [.codex: "codex", .claude: claude, .deepseek: "deepseek"], hasDemoSnapshot: demo)
     }
     func testChangedSourceInvalidatesOnlyItsOwnedWorkBeforeResetAndPublication() {
@@ -29,7 +29,7 @@ final class ApplicationLifecycleCoordinatorTests: XCTestCase {
         XCTAssertTrue(state.acceptsObservedWork)
         let start = state.start()
         XCTAssertEqual(state.phase, .running)
-        XCTAssertLessThan(start.actions.firstIndex(of: .quota(.codex, force: true))!, start.actions.firstIndex(of: .codexActivity)!)
+        XCTAssertLessThan(start.actions.firstIndex(of: .quota(.codex, force: true))!, start.actions.firstIndex(of: .activity(.codex))!)
         XCTAssertTrue(state.start().actions.isEmpty)
         let old = state.work.begin(.init(.hostScan, provider: .claude), version: state.version(.claude))
         XCTAssertTrue(state.prepareForSleep().actions.contains(.suspendSources))
@@ -49,12 +49,13 @@ final class ApplicationLifecycleCoordinatorTests: XCTestCase {
             .init(now: date, expanded: false, codexConnected: connected, lastCodexDiscovery: date.addingTimeInterval(-age),
                 lastRemoteDiscovery: date.addingTimeInterval(-age), lastClaudeDiscovery: .distantPast, deepseekRunning: true)
         }
-        XCTAssertFalse(state.tick(input(119.999, connected: true)).actions.contains(.codexActivity))
-        XCTAssertTrue(state.tick(input(120, connected: true)).actions.contains(.codexActivity))
-        XCTAssertFalse(state.tick(input(59.999, connected: false)).actions.contains(.codexActivity))
-        XCTAssertTrue(state.tick(input(60, connected: false)).actions.contains(.codexActivity))
+        XCTAssertFalse(state.tick(input(119.999, connected: true)).actions.contains(.activity(.codex)))
+        XCTAssertTrue(state.tick(input(120, connected: true)).actions.contains(.activity(.codex)))
+        XCTAssertFalse(state.tick(input(59.999, connected: false)).actions.contains(.activity(.codex)))
+        XCTAssertTrue(state.tick(input(60, connected: false)).actions.contains(.activity(.codex)))
         let plan = state.tick(input(30, connected: true))
-        XCTAssertTrue(plan.actions.contains(.remoteActivity)); XCTAssertFalse(plan.actions.contains(.claudeTargets))
+        XCTAssertTrue(plan.actions.contains(.discoverActivityRoutes(.codex)))
+        XCTAssertFalse(plan.actions.contains(.discoverActivityRoutes(.claude)))
         XCTAssertTrue(plan.actions.contains(.quota(.deepseek, force: false, active: true)))
         _ = state.prepareForSleep()
         XCTAssertEqual(state.tick(input(1000, connected: false)).actions, [.pruneActivities, .pruneHistory])

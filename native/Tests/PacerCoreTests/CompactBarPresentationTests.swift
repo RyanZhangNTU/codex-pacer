@@ -32,7 +32,7 @@ final class CompactBarPresentationTests: XCTestCase {
         var request = CompactBarPresentation.Request(layout: legacy, language: "en", providers: [])
         let initial = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertEqual(initial.editorLeading, ["firstOutput", "tps"])
-        XCTAssertEqual(initial.warnings, ["ssh", "lowBalance", "spendSpike", "budget"])
+        XCTAssertEqual(initial.warnings, ["ssh", "lowBalance", "spendSpike", "budget", "lowCredits"])
         request.action = .init(kind: "shift", component: "tps", offset: -1)
         let moved = try XCTUnwrap(CompactBarPresentation.project(request))
         let saved = try JSONDecoder().decode(CompactIslandLayout.self, from: Data(moved.layoutJSON.utf8))
@@ -90,7 +90,7 @@ final class CompactBarPresentationTests: XCTestCase {
         var value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertTrue(value.gaugeClock); XCTAssertTrue(value.rings.isEmpty)
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, input.wallet?.balance)
-        request.options.rings = [.deepseek, .deepseek]
+        request.options.rings = [.init(provider: .deepseek), .init(provider: .deepseek)]
         value = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertFalse(value.gaugeClock); XCTAssertEqual(value.rings.count, 1)
         XCTAssertEqual(try component("quota", in: value).entries.first?.text, input.wallet?.budget)
@@ -128,8 +128,9 @@ final class CompactBarPresentationTests: XCTestCase {
     func testRateFormattingKeepsCompactValuesShortAtRoundingBoundaries() throws {
         let request = CompactBarPresentation.Request(language: "en", providers: [.codex], context: context())
         let encoded = try JSONEncoder().encode(request)
-        for (rate, horizontal, strip, spoken) in [(nil, "000", "000", "0"), (7.0, "007", "007", "7"),
-            (999.4, "999", "999", "999"), (999.5, "1000", "1.0k", "1000"), (999_999.0, "999999", "1.0M", "999999")] {
+        for (rate, horizontal, strip, stripUnit, spoken) in [(nil, "000", "000", "t/s", "0"), (7.0, "007", "007", "t/s", "7"),
+            (999.4, "999", "999", "t/s", "999"), (999.5, "1000", "1", "k t/s", "1000"), (1_234.0, "1234", "1.2", "k t/s", "1234"),
+            (999_999.0, "999999", "1", "M t/s", "999999")] {
             var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
             var values = try XCTUnwrap(wire["context"] as? [String: Any])
             values["rate"] = rate; wire["context"] = values
@@ -137,7 +138,8 @@ final class CompactBarPresentationTests: XCTestCase {
             let output = try XCTUnwrap(CompactBarPresentation.project(input))
             let tps = try component("tps", in: output)
             XCTAssertTrue(output.leading.contains("tps")); XCTAssertTrue(output.stripLanes?.leading.contains("tps") == true)
-            XCTAssertEqual(tps.text, horizontal); XCTAssertEqual(tps.stripText, strip); XCTAssertEqual(tps.accessibility, spoken + " t/s")
+            XCTAssertEqual(tps.text, horizontal); XCTAssertEqual(tps.stripText, strip); XCTAssertEqual(tps.stripUnit, stripUnit)
+            XCTAssertEqual(tps.accessibility, spoken + " t/s")
         }
     }
     func testContextOmitsAccountCreditsAndTaskIdentityWithoutMutatingTheSource() throws {
@@ -155,8 +157,13 @@ final class CompactBarPresentationTests: XCTestCase {
         XCTAssertEqual(CompactBarPresentation.project(request)?.editorLeading, ["activity", "tps"])
         var unknown = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
         var options = try XCTUnwrap(unknown["options"] as? [String: Any])
-        options["rings"] = ["foreign", "none"]; unknown["options"] = options
+        options["rings"] = ["Foreign Ring", "none"]; unknown["options"] = options
         XCTAssertNil(CompactBarPresentation.project(try JSONSerialization.data(withJSONObject: unknown)))
+        options["rings"] = ["future-module", "none"]; unknown["options"] = options
+        let future = try JSONDecoder().decode(CompactBarPresentation.Request.self, from: JSONSerialization.data(withJSONObject: unknown))
+        XCTAssertEqual(future.options.rings, [.none, .none])
+        XCTAssertEqual(CompactBarPresentation.project(future)?.rings, [],
+                       "A ring from a module this version doesn't know draws nothing instead of rejecting the bar")
         request.options.rings = [.none]; XCTAssertNil(CompactBarPresentation.project(request))
         request.options = .init(); request.options.codexWindow = "bad\nwindow"; XCTAssertNil(CompactBarPresentation.project(request))
         request.options = .init(); request.action = .init(kind: "move", component: "activity", lane: "center"); XCTAssertNil(CompactBarPresentation.project(request))

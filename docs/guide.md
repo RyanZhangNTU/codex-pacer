@@ -19,15 +19,16 @@ The first time you open Codex Pacer, a short guide walks you through it:
 
 1. What each part of the collapsed bar means.
 2. **Island**, which sits at the top center of the screen around the notch, or **Free Move**, which you drag anywhere.
-3. Which services to follow: Codex, Claude and DeepSeek. Pacer turns on the ones it finds installed.
+3. Which services to follow: Codex, Claude, DeepSeek and WorkBuddy (and WorkBuddy AI, the international version, if you have it). Pacer turns on the ones it finds on this computer; the others wait under **more not found on this computer**.
 4. Progress rings, notifications and opening at login.
 
 You can open the guide again from **Help & Updates**. After each update, a short **What's New** note shows the highlights once.
 
-Two services need a sign-in for their numbers:
+Three services need a sign-in for their numbers:
 
 - **Claude quota:** click **Sign in to Claude** and sign in to claude.ai in Pacer's own window.
 - **DeepSeek balance:** sign in to the DeepSeek platform in Pacer's window, or paste an API key if DeepSeek Harness uses one.
+- **WorkBuddy credits:** click **Sign In** on the WorkBuddy page and sign in with the account you use in WorkBuddy. WorkBuddy AI has its own page and account.
 
 Codex quota needs nothing extra.
 
@@ -39,8 +40,8 @@ Codex quota needs nothing extra.
 | --- | --- |
 | **Task badge** | How many tasks are running. Its ring shows which services are working, or their average progress. Amber means a task needs your reply or approval; a check means one just finished. |
 | **Speed** | The combined output speed of your running tasks, in tokens per second. Shows `000` when no rate is available. |
-| **Quota** | Quota left for Codex and Claude, or your DeepSeek balance or budget. |
-| **Warnings** | Appear only when something needs attention, such as low quota or a disconnected SSH host. |
+| **Quota** | Quota left for Codex and Claude, your DeepSeek balance or budget, or your WorkBuddy credits. |
+| **Warnings** | Appear only when something needs attention, such as low quota, low credits or a disconnected SSH host. |
 
 **Hover** to expand the island, **move away** to collapse it. Click the top to keep it open, and press Esc to close it.
 
@@ -57,12 +58,12 @@ All your tasks share one list. Tasks that need you come first, then running task
 - **Click a task** to open its conversation in the app that runs it.
 - **A finished task** stays as a card until you open it, or until its retention time passes (30 minutes by default, set on the task list in **Expanded Panel**). **Mark All as Read** clears every finished card at once.
 - **Agents a task starts** are grouped under it.
-- **App buttons** in the header open Codex, Claude or DeepSeek Harness directly. Buttons you take out of the header wait in the **⋯** menu, beside **Refresh** and **Quit**.
+- **App buttons** in the header open Codex, Claude, DeepSeek Harness or WorkBuddy directly. Buttons you take out of the header wait in the **⋯** menu, beside **Refresh** and **Quit**.
 - With more tasks than fit on a page (three by default), use the arrows to page through them.
 
 ### Arranging the panel
 
-The panel is a column of blocks: the task list, a quota block for each service, DeepSeek's balance, where today's DeepSeek spend went, and its last 7 days. On the **Expanded Panel** page, drag a block in the outline to move it and click it to see its choices. In the list below, the round button at the end of each block adds it to the panel or removes it. Until you change anything, the panel follows the services you turn on. **Restore Automatic** goes back to that.
+The panel is a column of blocks: the task list, a quota block for each service, DeepSeek's balance, where today's DeepSeek spend went, its last 7 days, and WorkBuddy's credits. On the **Expanded Panel** page, drag a block in the outline to move it and click it to see its choices. In the list below, the round button at the end of each block adds it to the panel or removes it. Until you change anything, the panel follows the services you turn on. **Restore Automatic** goes back to that.
 
 - **Task list:** 3 to 6 tasks per page, rows of two lines or one, and which details each row shows.
 - **Quota:** each service can show both windows, only the week or only 5 hours. Quotas next to each other share a row; choose **One row each** to give every service its own row with its pace, reset and forecast beside it. The style and the pace tick are here too.
@@ -70,7 +71,7 @@ The panel is a column of blocks: the task list, a quota block for each service, 
 
 ## Progress rings
 
-Codex, Claude Code and DeepSeek Harness each report how much of your request is done. Pacer draws it as a ring around the task's icon.
+Codex, Claude Code, DeepSeek Harness and WorkBuddy each report how much of your request is done. Pacer draws it as a ring around the task's icon.
 
 | You see | It means |
 | --- | --- |
@@ -81,6 +82,8 @@ Codex, Claude Code and DeepSeek Harness each report how much of your request is 
 | A full ring and a check | The request is done. |
 
 Estimates are the agent's own guess, so a ring can move back. Rings are on by default; turn them off for each service with **Progress Ring** on its page in the main window. Start a new session after turning a ring on.
+
+Codex tasks on SSH hosts, and in WSL on Windows, report too: Pacer sets reporting up on each connected host that runs Codex. Tasks that were already running pick it up once Codex reconnects to the host.
 
 Turn on **Include Codex Dot Tasks** on the Remote page to see Dot Durable tasks. It is off by default because checking them uses more power; after an upgrade it stays on if Dot tasks already reported progress on this computer. Pacer labels Dot tasks assigned to this computer with `Dot`, even when their chats are closed. On Windows this works with the Microsoft Store version of Codex Desktop and its default profile. The Codex **Progress Ring** switch sets up percentage reporting. Restart Codex Desktop after turning the ring on so Dot tasks pick it up. Turning the ring off stops new reports right away. Pacer still shows whether the task is running or has finished.
 
@@ -94,6 +97,8 @@ Turn on **Include Codex Dot Tasks** on the Remote page to see Dot Durable tasks.
 
 Spend made elsewhere on your account, such as web searches or another device, is included in today's total and budgets.
 
+**WorkBuddy.** WorkBuddy uses account credits. Once you sign in, its ring shows what is left of this month's credits, which refresh every plan cycle. Above the figure, the ring counts down to the refresh, or shows extra credits about to expire. Rewards and top-ups never refresh, so the ring's gap shows them as an amount, such as **+1,300**. When you have none, it says **This month**. The figure in the middle can show this month's share, this month's credits or everything available; choose it on the **Expanded Panel** page. The bar shows everything available by default. Each WorkBuddy task shows the credits its turn used.
+
 ## Services
 
 **Codex.** Pacer finds the Codex app or CLI on its own. Tasks from apps that embed Codex show that app's name; hide them with **Sessions from Other Apps**.
@@ -101,6 +106,20 @@ Spend made elsewhere on your account, such as web searches or another device, is
 **Claude Code.** Task tracking sets itself up when the Claude module is on. Restart running Claude Code sessions once afterwards. With **Show Claude cloud Projects** on, Pacer also follows your cloud Project threads and tells you when one ends or waits for you.
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
+
+**WorkBuddy.** Pacer follows WorkBuddy's tasks on this computer: running work, questions waiting for you and finished turns. Click a task to return to its conversation. To see your credits, click **Sign In** on the WorkBuddy page; the window closes by itself once you're signed in. The page lists this month's credits, extra credits and the total, then what each kind has left and when it refreshes or expires. The **⋯** menu next to the account refreshes, opens WorkBuddy's own usage page, switches account or signs out. History shows the credits you used each day of the last week. WorkBuddy AI, the international version, works the same way on its own page and account.
+
+The progress ring is on by default. The first time, the WorkBuddy page shows the steps under the switch, and each one ticks itself:
+
+1. Pacer adds its tool to WorkBuddy.
+2. WorkBuddy reads new tools only when it starts. If it was already open, click **Restart WorkBuddy**: Pacer closes it and opens it again at its connectors. If a WorkBuddy task is running, Pacer asks first.
+3. Click **Open** to show WorkBuddy's connectors.
+4. Click **Custom Connector** at the top right of that page.
+5. Click **Trust** on `pacer_progress`.
+
+Once you trust it, the steps fold away into one line: it works in new WorkBuddy conversations. That line goes too once WorkBuddy first reports progress.
+
+After you click **Open** or **Restart**, a small floating guide shows in the corner of your screen. WorkBuddy takes some seconds to start and show its connectors, so the guide first asks you to wait, then shows steps 4 and 5, each with a picture of what to click. It follows along as you click, even with Settings closed, and needs no permission. It closes by itself when you're done, or with its close button. If you turn the tool off or remove it in WorkBuddy and then turn the ring off and on, Pacer asks you to restart WorkBuddy so it reads the tool again. If a Pacer update changes the tool, WorkBuddy asks you to trust it again, and the sidebar, Overview and the expanded panel say so. Turning the ring off removes the tool. If WorkBuddy keeps its data elsewhere, choose the folder under **Custom Locations**.
 
 **SSH hosts.** Pacer follows the hosts you already use in Codex and Claude. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.
 
@@ -115,13 +134,14 @@ Click the gear in the expanded island to open the main window.
 | Page | What's there |
 | --- | --- |
 | **Overview** | Anything that needs you, each service at a glance and the running tasks. |
-| **History** | Each service's quota over the current period, and DeepSeek's last 7 days. |
-| **Codex, Claude, DeepSeek** | Turn each service on or off, sign in, progress rings and custom folders. |
+| **History** | Each service's quota over the current period, and the last 7 days of DeepSeek spend and WorkBuddy credits. |
+| **Codex, Claude, DeepSeek, WorkBuddy** | Turn each service on or off, sign in, progress rings and custom folders. Only services found on this computer, or turned on, are listed. |
+| **Module Library** | Every service Pacer can follow. Those found on this computer come first; the rest are folded away. Turn any of them on or off, or follow the link to get one. |
 | **Remote** | SSH hosts, WSL and Remote Control. |
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
 | **Collapsed Bar** | What the bar shows and each item's options. |
 | **Expanded Panel** | The panel's blocks, their order and each block's options, including how long finished tasks stay. |
-| **Notifications** | Which events show on the bar or as system notifications, and DeepSeek alerts. |
+| **Notifications** | Which events show on the bar or as system notifications, DeepSeek alerts, and for WorkBuddy the credits that count as low and how many days before credits expire you're reminded. |
 | **General** | Open at Login, the Dock icon, language and **Hide Project Names** for screen sharing. |
 | **Help & Updates** | Updates, What's New and help. |
 

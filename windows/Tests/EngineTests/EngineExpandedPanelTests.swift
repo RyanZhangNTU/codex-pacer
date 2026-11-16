@@ -66,7 +66,8 @@ final class EngineExpandedPanelTests: XCTestCase {
         let reply = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
         let value = try XCTUnwrap(reply["value"] as? [String: Any])
         XCTAssertEqual(value["visible"] as? [String], ["tasks", "codex", "deepseek", "deepseekWeek"])
-        XCTAssertEqual(value["layoutJSON"] as? String, #"{"blocks":["tasks","codex","claude","deepseek","deepseekWeek"],"version":1}"#)
+        XCTAssertEqual(value["layoutJSON"] as? String, #"{"blocks":["tasks","codex","claude","deepseek","deepseekWeek","workbuddy","workbuddy-ai"],"#
+            + #""known":["tasks","codex","claude","deepseek","deepseekSpend","deepseekWeek","workbuddy","workbuddy-ai"],"version":1}"#)
         var bad = wire; bad["params"] = ["shell": ["panel": ["providers": ["codex"], "deepseekDetailed": true, "hasBudget": false, "language": "en",
             "action": ["kind": "toggle", "block": "future"]]]]
         XCTAssertNil(EngineShellProjection.reply(try EngineCommand.decode(JSONSerialization.data(withJSONObject: bad))))

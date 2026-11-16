@@ -73,7 +73,7 @@ final class EngineGuidePagesTests: XCTestCase {
                     XCTAssertFalse(item.title.isEmpty); XCTAssertFalse(item.detail.isEmpty)
                 }
             }
-            XCTAssertEqual(value.moduleOff.count, 3)
+            XCTAssertEqual(value.moduleOff.count, HarnessRegistry.ids.count, "Every registered module has its onboarding text")
         }
     }
     func testPublicLinksAndPackagedQRCodeUseProjectSupport() throws {

@@ -463,6 +463,18 @@ public actor RealtimeActivityMonitor {
             retryAfter.removeValue(forKey: id); failureCounts[id] = nil
         }
     }
+    /// After a network change, reconnects SSH helpers that are waiting out a
+    /// backoff. Live helpers, the Desktop pipe and WSL keep their schedule.
+    public func reconnectUnreachableSSH() async {
+        guard configuration?.includeSSH == true else { return }
+        let due = retryAfter.keys.filter { id in
+            connections[id] == nil && failed[id]?.alias != nil && !id.hasPrefix(ConnectionSource.wslPrefix)
+        }
+        guard !due.isEmpty else { return }
+        for id in due { retryAfter.removeValue(forKey: id); failureCounts[id] = nil }
+        retryTask?.cancel(); retryTask = nil
+        await retry(generation: startGeneration)
+    }
     private func connectDesktop(_ source: Source, hosts: [String: String], catalog: [String: RemoteControlActivityTarget]?) async {
         let id = UUID()
         let collector = services.makeDesktop(URL(fileURLWithPath: source.home), Set(hosts.keys).union(["local"]),

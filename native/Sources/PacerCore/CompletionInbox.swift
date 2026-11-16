@@ -57,9 +57,9 @@ public struct CompletionInbox: Sendable {
     /// Rebinding only changes lookup scope; it never deletes another profile's acknowledgments.
     public mutating func bindSourceHomes(provider: AgentProvider, localHome: URL, remoteHomes: [String: String] = [:],
                                          remoteControlHostIDs: Set<String> = [], remoteControlAccountScope: String? = nil,
-                                         durableAccountScope: String? = nil) {
+                                         durableAccountScope: String? = nil, localAccountScope: String? = nil) {
         let local = localHome.standardizedFileURL.resolvingSymlinksInPath().path
-        let localHash = CompletionDismissalStore.digest(["source-home-v1", provider.rawValue, local])
+        let localHash = CompletionDismissalStore.digest(["source-home-v1", provider.rawValue, local] + (localAccountScope.map { [$0] } ?? []))
         var namespaces = ["local": localHash]
         for (host, remoteHome) in remoteHomes where !host.isEmpty && !remoteHome.isEmpty && !host.hasPrefix("remote-control:") {
             namespaces[host] = CompletionDismissalStore.digest(["source-home-v1", provider.rawValue, localHash, host, remoteHome])
