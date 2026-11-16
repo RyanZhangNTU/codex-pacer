@@ -82,7 +82,8 @@ struct SettingsHelpPane: View {
         row("help.hover", symbol: "cursorarrow.rays")
         row("help.open", symbol: "arrow.up.forward.app")
         row("help.app_buttons") {
-            ForEach(HelpTopic.modules, id: \.self) { provider in
+            // Three stand for all, so the swatch never crowds as modules are added.
+            ForEach(HelpTopic.modules.prefix(3), id: \.self) { provider in
                 ProviderAppIcon(provider: provider, size: 14, outline: true)
                     .foregroundStyle(PacerPalette.secondary)
             }

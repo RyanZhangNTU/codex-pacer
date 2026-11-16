@@ -191,7 +191,7 @@ struct UpdateFailurePanel: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
                     Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Text(lastSuccess).font(.system(size: 11.5)).foregroundStyle(.tertiary)
+                    if let lastSuccess { Text(lastSuccess).font(.system(size: 11.5)).foregroundStyle(.tertiary) }
                 }
                 Spacer(minLength: 8)
                 retry
@@ -232,8 +232,10 @@ struct UpdateFailurePanel: View {
         case .download(let release): L10n.text("update.failure.download_detail", release.version)
         }
     }
-    private var lastSuccess: String {
-        updater.flow.lastSuccess.map { L10n.text("update.failure.last_success", L10n.date($0)) } ?? L10n.text("update.failure.never_checked")
+    /// Versions before 4.5.0 kept no record of a check that worked, so an
+    /// unknown time says nothing rather than claim none ever did.
+    private var lastSuccess: String? {
+        updater.flow.lastSuccess.map { L10n.text("update.failure.last_success", L10n.date($0)) }
     }
     /// The found version's own file, or the latest one's ending.
     private var githubDetail: String {
