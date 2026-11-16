@@ -174,10 +174,34 @@ internal static class GuidePageChecks
             // Help & Updates is a remembered page; its tabs, links and Support write nothing more.
             Select(Find<RadioButton>(settings, "settings.pane.about")); await Until(() => session.Current.LastSettingsPane == "about" && Has(settings, "settings.about.help"));
             await session.WaitForChangesAsync(); int beforeReadOnly = saved; string beforeBytes = JsonSerializer.Serialize(session.Current);
+            // The app registers each module's colors from the engine, as here, before Help draws them.
+            PacerPalette.RegisterModules(engine.LatestSnapshot?.Modules);
             Select(Find<RadioButton>(settings, "settings.about.help")); await Until(() => Has(settings, "help.module.codex"));
             // Help opens on the collapsed bar's marks, one topic at a time, as on the Mac.
             Check(Find<RadioButton>(settings, "help.topic.collapsed").IsChecked == true && Has(settings, "help.move") && Has(settings, "help.services") && !Has(settings, "help.hover"),
                 "Help opens on the collapsed topic and explains dragging, snapping and reset");
+            // Module colors fold behind one palette row and open to each service's color, as on the Mac.
+            settings.UpdateLayout();
+            var colors = Find<FrameworkElement>(settings, "help.services.codex");
+            Check(!colors.IsVisible, "Module colors start folded behind a single palette");
+            Invoke(Find<Button>(settings, "help.services.toggle")); await Pump(); settings.UpdateLayout();
+            Check(colors.IsVisible && Has(settings, "help.services.claude") && Has(settings, "help.services.deepseek"), "Opening module colors lists each service with its color");
+            settings.CapturePreview(Path.Combine(output, "pages-help-colors-" + language + (dark ? "-dark" : "-light") + ".png"));
+            // On light glass the samples draw on the island's light face in its dark ink.
+            PacerPalette.ApplyTone(true);
+            try
+            {
+                Select(Find<RadioButton>(settings, "help.topic.expanded")); await Pump(); Find<FrameworkElement>(settings, "help.pace").BringIntoView(); await Pump();
+                settings.CapturePreview(Path.Combine(output, "pages-help-expanded-glass-" + language + (dark ? "-dark" : "-light") + ".png"));
+                Select(Find<RadioButton>(settings, "help.topic.collapsed")); await Pump(); Find<FrameworkElement>(settings, "help.move").BringIntoView(); await Pump();
+                settings.CapturePreview(Path.Combine(output, "pages-help-collapsed-glass-" + language + (dark ? "-dark" : "-light") + ".png"));
+            }
+            finally { PacerPalette.ApplyTone(false); }
+            Select(Find<RadioButton>(settings, "help.topic.expanded")); await Pump(); Select(Find<RadioButton>(settings, "help.topic.collapsed")); await Pump();
+            colors = Find<FrameworkElement>(settings, "help.services.codex");
+            Invoke(Find<Button>(settings, "help.services.toggle")); await Pump(); settings.UpdateLayout();
+            Invoke(Find<Button>(settings, "help.services.toggle")); await Pump(); settings.UpdateLayout();
+            Check(!colors.IsVisible, "Module colors fold again");
             var enable = SelfAndDescendants(settings).OfType<TextBlock>().Single(text => text.Text == ui.Text("help.enable.detail"));
             Check(enable.Visibility != Visibility.Visible, "The module footer stays hidden on the bar topics");
             Check(new[] { "help.welcome", "guide.link.manual", "guide.link.issues" }.All(id => Find<Button>(settings, id).Focusable && AutomationProperties.GetHelpText(Find<Button>(settings, id)).Length > 0),
