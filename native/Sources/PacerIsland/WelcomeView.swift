@@ -430,7 +430,7 @@ private struct WelcomeChoiceRow<Control: View>: View {
 /// The collapsed bar hanging from a notched menu bar, with callouts tied to
 /// each part by measured anchors.
 private struct WelcomeIslandMap: View {
-    enum Part: CaseIterable { case task, rate, quota, warning }
+    enum Part: CaseIterable { case task, rate, warning, quota }
     enum Mark: Hashable { case part(Part), label(Part) }
     struct Anchors: PreferenceKey {
         static var defaultValue: [Mark: Anchor<CGRect>] = [:]
@@ -496,7 +496,9 @@ private struct WelcomeIslandMap: View {
             }
             .frame(width: Self.wing)
             Color.clear.frame(width: Self.camera)
+            // The default bar's order: the warning, then what is left.
             HStack(spacing: 8) {
+                FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint).mark(.warning, focus)
                 HStack(spacing: 5) {
                     QuotaRingsGlyph(rings: [.init(tint: AgentProvider.codex.tint, remaining: 58, stale: false),
                         .init(tint: AgentProvider.claude.tint, remaining: 81, stale: false)])
@@ -504,7 +506,6 @@ private struct WelcomeIslandMap: View {
                         .init(text: "81%", color: NSColor(AgentProvider.claude.tint))], animates: true)
                 }
                 .mark(.quota, focus)
-                FiveHourAlertGlyph(alert: .low(12), tint: AgentProvider.codex.tint).mark(.warning, focus)
             }
             .frame(width: Self.wing)
         }
@@ -523,15 +524,8 @@ private struct WelcomeIslandMap: View {
             label(.task, L10n.text("welcome.part.task")) { Text(L10n.text("welcome.part.task_detail")) }
             label(.rate, L10n.text("welcome.part.rate")) { Text(L10n.text("welcome.part.rate_detail")) }
             Spacer(minLength: 0)
-            label(.quota, L10n.text("welcome.part.quota")) {
-                HStack(spacing: 4) {
-                    Circle().fill(AgentProvider.codex.tint).frame(width: 6, height: 6)
-                    Text(AgentProvider.codex.displayName)
-                    Circle().fill(AgentProvider.claude.tint).frame(width: 6, height: 6).padding(.leading, 4)
-                    Text(AgentProvider.claude.displayName)
-                }
-            }
             label(.warning, L10n.text("welcome.part.warning")) { Text(L10n.text("welcome.part.warning_detail")) }
+            label(.quota, L10n.text("welcome.part.quota")) { Text(L10n.text("welcome.part.quota_detail")) }
         }
         .padding(.horizontal, 12)
     }
