@@ -19,6 +19,8 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
     public struct Wallet: Codable, Equatable, Sendable {
         public let hasBalance: Bool, hasBudget: Bool, dimmed: Bool
         public let balance: String, budget: String?, stripBalance: String, stripBudget: String?
+        /// What the strip's balance and budget count, under their numbers.
+        public let stripBalanceUnit: String?, stripBudgetUnit: String?
         public let budgetPercent: Double?
         public let peakNow: Bool
         public let todayTotal: Double
@@ -31,8 +33,10 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
             dimmed = [.stale, .disconnected].contains(wallet.state)
             balance = wallet.balance.map { DeepSeekWallet.compactAmount($0.total) } ?? "¥—"
             budget = selected.map { DeepSeekWallet.compactRemaining($0.remaining) }
-            stripBalance = wallet.balance.map { $0.total < 10 ? String(format: "¥%.1f", $0.total) : DeepSeekWallet.compactAmount($0.total) } ?? "¥—"
-            stripBudget = budget
+            let balanceFigure = CompactStripFigure.amount(wallet.balance?.total, symbol: "¥", roundsDown: true)
+            let budgetFigure = selected.map { CompactStripFigure.amount($0.remaining, symbol: "¥", roundsDown: true) }
+            stripBalance = balanceFigure.number; stripBalanceUnit = balanceFigure.unit
+            stripBudget = budgetFigure?.number; stripBudgetUnit = budgetFigure?.unit
             budgetPercent = selected.map { max(0, $0.remaining) / $0.limit * 100 }
             peakNow = wallet.peakNow; todayTotal = wallet.todayTotal
         }
@@ -41,6 +45,8 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
     public struct Credits: Codable, Equatable, Sendable {
         public let provider: AgentProvider
         public let text: String, stripText: String
+        /// What the strip's number counts, under it.
+        public let stripUnit: String?
         /// What is left of the plan cycle, or of all credits without one, in percent.
         public let percent: Double?
         public let dimmed: Bool
@@ -53,7 +59,8 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
             self.provider = provider
             let reading = credits?.reading(at: now)
             text = reading.map { $0.compactFigure(figure) } ?? "—"
-            stripText = text
+            let strip = reading.map { $0.stripFigure(figure) }
+            stripText = strip?.number ?? "—"; stripUnit = strip?.unit
             percent = reading?.percent
             dimmed = reading == nil || stale
             low = reading.map { HarnessCreditsNoticePolicy.level($0, settings: settings) != nil }

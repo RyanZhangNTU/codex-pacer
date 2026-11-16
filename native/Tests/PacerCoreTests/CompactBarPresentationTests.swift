@@ -128,8 +128,9 @@ final class CompactBarPresentationTests: XCTestCase {
     func testRateFormattingKeepsCompactValuesShortAtRoundingBoundaries() throws {
         let request = CompactBarPresentation.Request(language: "en", providers: [.codex], context: context())
         let encoded = try JSONEncoder().encode(request)
-        for (rate, horizontal, strip, spoken) in [(nil, "000", "000", "0"), (7.0, "007", "007", "7"),
-            (999.4, "999", "999", "999"), (999.5, "1000", "1.0k", "1000"), (999_999.0, "999999", "1.0M", "999999")] {
+        for (rate, horizontal, strip, stripUnit, spoken) in [(nil, "000", "000", "t/s", "0"), (7.0, "007", "007", "t/s", "7"),
+            (999.4, "999", "999", "t/s", "999"), (999.5, "1000", "1", "k t/s", "1000"), (1_234.0, "1234", "1.2", "k t/s", "1234"),
+            (999_999.0, "999999", "1", "M t/s", "999999")] {
             var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
             var values = try XCTUnwrap(wire["context"] as? [String: Any])
             values["rate"] = rate; wire["context"] = values
@@ -137,7 +138,8 @@ final class CompactBarPresentationTests: XCTestCase {
             let output = try XCTUnwrap(CompactBarPresentation.project(input))
             let tps = try component("tps", in: output)
             XCTAssertTrue(output.leading.contains("tps")); XCTAssertTrue(output.stripLanes?.leading.contains("tps") == true)
-            XCTAssertEqual(tps.text, horizontal); XCTAssertEqual(tps.stripText, strip); XCTAssertEqual(tps.accessibility, spoken + " t/s")
+            XCTAssertEqual(tps.text, horizontal); XCTAssertEqual(tps.stripText, strip); XCTAssertEqual(tps.stripUnit, stripUnit)
+            XCTAssertEqual(tps.accessibility, spoken + " t/s")
         }
     }
     func testContextOmitsAccountCreditsAndTaskIdentityWithoutMutatingTheSource() throws {

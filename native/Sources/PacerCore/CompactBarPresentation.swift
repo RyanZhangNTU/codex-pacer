@@ -102,13 +102,17 @@ public enum CompactBarPresentation {
     public struct Entry: Codable, Equatable, Sendable {
         public let provider: AgentProvider
         public let text: String, stripText: String
+        /// What `stripText` counts, drawn under it in the strip: `%`, `¥`, `k`.
+        public let stripUnit: String?
         public let dimmed: Bool
         /// The percent behind the text, when it has one.
         public let value: Double?
         /// Remaining quota at or below `lowQuota` with the low color chosen.
         public let low: Bool?
-        public init(provider: AgentProvider, text: String, stripText: String, dimmed: Bool, value: Double? = nil, low: Bool? = nil) {
-            self.provider = provider; self.text = text; self.stripText = stripText; self.dimmed = dimmed; self.value = value; self.low = low
+        public init(provider: AgentProvider, text: String, stripText: String, stripUnit: String? = nil, dimmed: Bool,
+                    value: Double? = nil, low: Bool? = nil) {
+            self.provider = provider; self.text = text; self.stripText = stripText; self.stripUnit = stripUnit; self.dimmed = dimmed
+            self.value = value; self.low = low
         }
     }
     public struct Ring: Codable, Equatable, Sendable {
@@ -311,24 +315,24 @@ public enum CompactBarPresentation {
             return value($0) != nil
         }
         let alternating = known.isEmpty ? Array(ordered.prefix(1)) : known
-        // Balances and credits are amounts, not percentages.
-        let amounts = alternating.contains { !windowed($0) }
         func percent(_ value: Double?) -> String { value.map { String(Int($0.rounded())) } ?? "—" }
         let metric = request.options.metric
         func entry(_ provider: AgentProvider) -> Entry {
             if provider == .deepseek {
                 return .init(provider: provider, text: usesBudget ? wallet?.budget ?? "¥—" : wallet?.balance ?? "¥—",
-                    stripText: usesBudget ? wallet?.stripBudget ?? "¥—" : wallet?.stripBalance ?? "¥—", dimmed: wallet?.dimmed == true,
+                    stripText: (usesBudget ? wallet?.stripBudget : wallet?.stripBalance) ?? "—",
+                    stripUnit: (usesBudget ? wallet?.stripBudgetUnit : wallet?.stripBalanceUnit) ?? "¥", dimmed: wallet?.dimmed == true,
                     value: usesBudget ? wallet?.budgetPercent : nil,
                     low: usesBudget && choices.lowColor && wallet?.budgetPercent.map { $0 <= lowQuota } == true ? true : nil)
             }
             if let account = credits(provider) {
-                return .init(provider: provider, text: account.text, stripText: account.stripText, dimmed: account.dimmed,
+                return .init(provider: provider, text: account.text, stripText: account.stripText, stripUnit: account.stripUnit,
+                    dimmed: account.dimmed,
                     value: account.percent, low: choices.lowColor && account.low == true ? true : nil)
             }
             let raw = value(provider), number = percent(raw)
             return .init(provider: provider, text: number == "—" ? number : number + "%",
-                stripText: number == "—" || !amounts ? number : number + "%", dimmed: false, value: raw,
+                stripText: number, stripUnit: "%", dimmed: false, value: raw,
                 low: metric == .remaining && choices.lowColor && raw.map { $0 <= lowQuota } == true ? true : nil)
         }
         var entries = alternating.map(entry)
@@ -378,7 +382,8 @@ public enum CompactBarPresentation {
                     return String(format: "%03.0f", rate)
                 }
                 text = shown.map { format($0, compact: compact) } ?? "000"
-                stripText = shown.map { format($0, compact: true) } ?? "000"; unit = "t/s"; stripUnit = unit
+                let figure = CompactStripFigure.rate(shown)
+                unit = "t/s"; stripText = figure.number; stripUnit = figure.unit
                 visible = context.map { rateIsVisible(context: $0, attached: request.attached, strip: request.strip,
                     showsStatus: showsStatus, language: language) } ?? false
                 accessibility = (shown.map { String(format: "%.0f", $0) } ?? "0") + " t/s"
@@ -396,7 +401,8 @@ public enum CompactBarPresentation {
                 stripText = seconds.map { String(format: $0 < 10 ? "%.1f" : "%.0f", $0) } ?? "—"; stripUnit = "s"
                 help = L10n.text(median == nil ? "layout.latest_ttft_help" : "layout.median_ttft_help", language: language)
             case .warnings: visible = context?.warnings.isEmpty == false; help = CompactWarningPresentation.summary(context?.warnings ?? [])
-            case .quota: values = entries; stripUnit = amounts ? nil : "%"; help = quotaHelp + "\n" + L10n.text("layout.metric_help", language: language)
+            // One unit shared by every value sits under them; mixed units take turns with their values.
+            case .quota: values = entries; stripUnit = Set(entries.map(\.stripUnit)).count == 1 ? entries.first?.stripUnit : nil; help = quotaHelp + "\n" + L10n.text("layout.metric_help", language: language)
             case .quotaGauge: visible = !rings.isEmpty || clock; help = clock ? "" : gaugeHelp + "\n" + L10n.text("layout.gauge_help", language: language)
             case .priceClock: visible = visible && (choices.clockShow == .always || wallet?.peakNow == true)
             case .quotaLabel: text = L10n.text(request.options.metric.labelKey, language: language); help = quotaHelp + "\n" + L10n.text("layout.metric_help", language: language)
