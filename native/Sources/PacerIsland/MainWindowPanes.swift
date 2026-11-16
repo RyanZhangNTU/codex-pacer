@@ -30,7 +30,7 @@ struct OverviewPane: View {
                 }
                 .buttonStyle(.main).help(L10n.text("common.refresh")).accessibilityLabel(L10n.text("common.refresh"))
             }
-            UpdateBanner(updater: updater)
+            UpdateBanner(updater: updater, showWays: { open(.about) })
             if !attention.isEmpty { attentionCard }
             if model.enabledProviders.isEmpty {
                 MainCard {

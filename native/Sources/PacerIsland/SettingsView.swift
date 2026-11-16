@@ -101,7 +101,7 @@ struct SettingsView: View {
             MainWindowSidebar(selection: $pane, services: library.prominent.map(\.provider), searchable: library.entries.map(\.provider),
                 hiddenModules: library.collapsed.count, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
                 needsAttention: needsAttention, attentionHelp: { $0.provider.flatMap(progressAttention) },
-                updateVersion: updater.flow.available?.version)
+                updateVersion: updater.flow.available?.version, updateCheckFailed: updater.flow.failure == .check)
                 .background(SidebarMaterial())
             Rectangle().fill(Color.black.opacity(0.25)).frame(width: 1)
             detail.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

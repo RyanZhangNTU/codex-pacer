@@ -203,6 +203,8 @@ struct MainWindowSidebar: View {
     var attentionHelp: (SettingsPane) -> String? = { _ in nil }
     /// A found version replaces the installed one under Help & Updates.
     var updateVersion: String?
+    /// A check failed and no version is waiting: Help & Updates says so in amber.
+    var updateCheckFailed = false
     @State private var query = ""
     private static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     static let width: CGFloat = 220
@@ -324,14 +326,17 @@ struct MainWindowSidebar: View {
                         if let updateVersion {
                             Text(L10n.text("main.update.sidebar", updateVersion)).font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(accent).monospacedDigit()
+                        } else if updateCheckFailed {
+                            Text(L10n.text("update.failure.sidebar")).font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(MainPalette.attention)
                         } else {
                             Text(Self.version ?? L10n.text("build.development")).font(.system(size: 11))
                                 .foregroundStyle(.secondary).monospacedDigit()
                         }
                     }
                     Spacer(minLength: 4)
-                    if updateVersion != nil {
-                        Circle().fill(accent).frame(width: 7, height: 7).accessibilityHidden(true)
+                    if updateVersion != nil || updateCheckFailed {
+                        Circle().fill(updateVersion != nil ? accent : MainPalette.attention).frame(width: 7, height: 7).accessibilityHidden(true)
                     }
                 }
                 .padding(.horizontal, 8).padding(.vertical, 4)

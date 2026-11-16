@@ -24,14 +24,35 @@ struct UpdateFlow: Equatable {
     /// checks have none and only record what they find.
     enum Request { case check, install }
     enum Choice { case install, dismiss }
+    /// What to offer other ways for: a check that couldn't read the feed while
+    /// no version is waiting, or a found version that didn't download.
+    enum Failure: Equatable { case check, download(Release) }
 
     private(set) var phase: Phase = .idle
     private(set) var available: Release?
     private(set) var request: Request?
+    /// When the latest check, scheduled or asked for, failed; a check that
+    /// reads the feed clears it.
+    private(set) var checkFailedAt: Date?
+    /// The last check that read the feed.
+    private(set) var lastSuccess: Date?
+    private var failedRequest: Request?
     private var expected: UInt64 = 0
     private var received: UInt64 = 0
 
-    init(available: Release? = nil) { self.available = available }
+    init(available: Release? = nil, checkFailedAt: Date? = nil, lastSuccess: Date? = nil) {
+        self.available = available; self.checkFailedAt = checkFailedAt; self.lastSuccess = lastSuccess
+    }
+
+    var failure: Failure? {
+        if case .failed = phase, failedRequest == .install, let available { return .download(available) }
+        return checkFailedAt != nil && available == nil ? .check : nil
+    }
+
+    private mutating func readFeed(at date: Date) {
+        checkFailedAt = nil
+        lastSuccess = date
+    }
 
     var isBusy: Bool {
         switch phase {
@@ -47,7 +68,8 @@ struct UpdateFlow: Equatable {
 
     /// Install only when the user asked for it in this session; otherwise
     /// remember the version and end the session, so nothing waits on a reply.
-    mutating func found(_ release: Release, installable: Bool) -> Choice {
+    mutating func found(_ release: Release, installable: Bool, at date: Date = Date()) -> Choice {
+        readFeed(at: date)
         guard installable else {
             if request != nil { phase = .idle }
             return .dismiss
@@ -58,13 +80,16 @@ struct UpdateFlow: Equatable {
         return .dismiss
     }
 
-    mutating func notFound() {
+    mutating func notFound(at date: Date = Date()) {
+        readFeed(at: date)
         available = nil
         if request != nil { phase = .upToDate }
         request = nil
     }
 
-    mutating func failed(_ message: String) {
+    mutating func failed(_ message: String, at date: Date = Date()) {
+        failedRequest = request
+        if request != .install { checkFailedAt = date }
         phase = .failed(message)
         request = nil
     }
@@ -110,16 +135,20 @@ struct UpdateFlow: Equatable {
         request = nil
     }
 
-    /// Sparkle reports some results only when the cycle ends.
-    mutating func finishedCycle(error: Error?) {
-        guard let failure = error as NSError?, failure.domain == SUSparkleErrorDomain else { return }
-        switch failure.code {
-        case Int(SUError.noUpdateError.rawValue):
-            notFound()
-        case Int(SUError.installationCanceledError.rawValue), Int(SUError.installationAuthorizeLaterError.rawValue):
+    /// Sparkle reports some results only when the cycle ends, and a
+    /// scheduled check's failure only here: it counts as much as one asked for.
+    mutating func finishedCycle(error: Error?, at date: Date = Date()) {
+        guard let failure = error as NSError? else { return }
+        switch (failure.domain, failure.code) {
+        case (SUSparkleErrorDomain, Int(SUError.noUpdateError.rawValue)):
+            notFound(at: date)
+        case (SUSparkleErrorDomain, Int(SUError.installationCanceledError.rawValue)),
+             (SUSparkleErrorDomain, Int(SUError.installationAuthorizeLaterError.rawValue)):
             cancelled()
         default:
-            break
+            // A download the user asked for has already failed as one.
+            if case .failed = phase, failedRequest == .install { return }
+            checkFailedAt = date
         }
     }
 
@@ -146,6 +175,8 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate, SPUUserD
     private var cancelDownload: (() -> Void)?
     private let defaults: UserDefaults
     private static let pendingKey = "pendingUpdate"
+    private static let checkFailedKey = "updateCheckFailedAt"
+    private static let lastSuccessKey = "updateLastSuccess"
     private static let currentBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
 
     init(enabled: Bool = true, defaults: UserDefaults = .standard) {
@@ -153,13 +184,18 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate, SPUUserD
         self.defaults = defaults
         let stored = defaults.data(forKey: Self.pendingKey).flatMap { try? JSONDecoder().decode(UpdateFlow.Release.self, from: $0) }
         let pending = enabled ? UpdateFlow.pending(stored, currentBuild: Self.currentBuild) : nil
-        flow = UpdateFlow(available: pending)
+        flow = UpdateFlow(available: pending, checkFailedAt: enabled ? defaults.object(forKey: Self.checkFailedKey) as? Date : nil,
+                          lastSuccess: enabled ? defaults.object(forKey: Self.lastSuccessKey) as? Date : nil)
         super.init()
         // After the update relaunches, the version it was waiting for is this one.
         if enabled, pending == nil { defaults.removeObject(forKey: Self.pendingKey) }
         guard enabled else {
             if let version = UserDefaults.standard.string(forKey: "demoUpdate") {
                 flow = UpdateFlow(available: .init(version: version, build: "0"))
+            }
+            // Demo and screenshots show the ways to get Pacer another way.
+            if UserDefaults.standard.bool(forKey: "demoUpdateCheckFailed") {
+                flow = UpdateFlow(available: flow.available, checkFailedAt: Date(), lastSuccess: Date(timeIntervalSinceNow: -3 * 86_400))
             }
             return
         }
@@ -205,6 +241,9 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate, SPUUserD
                 defaults.removeObject(forKey: Self.pendingKey)
             }
         }
+        // A failed check is remembered across restarts until one succeeds.
+        if next.checkFailedAt != flow.checkFailedAt { defaults.set(next.checkFailedAt, forKey: Self.checkFailedKey) }
+        if next.lastSuccess != flow.lastSuccess { defaults.set(next.lastSuccess, forKey: Self.lastSuccessKey) }
         flow = next
     }
 
