@@ -173,6 +173,15 @@ public struct HarnessAccountCredits: Codable, Equatable, Sendable {
             }
         }
 
+        /// The same figure for the bar on its side, its unit under the number.
+        public func stripFigure(_ figure: HarnessCreditsFigure) -> CompactStripFigure {
+            switch figure {
+            case .available: return .amount(available)
+            case .monthlyRemaining: return .amount(monthly?.remaining ?? available)
+            case .monthlyPercent: return percent.map { CompactStripFigure.percent($0) } ?? .amount(available)
+            }
+        }
+
         public struct PlanCycle: Equatable, Sendable {
             public let total: Double
             public let remaining: Double

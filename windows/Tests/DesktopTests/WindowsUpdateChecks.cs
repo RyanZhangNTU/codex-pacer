@@ -287,12 +287,22 @@ internal static class WindowsUpdateChecks
         updates.Dismiss();
         transport.Feed = key.Feed(); presenter.Events.Clear();
         Check(await updates.CheckAsync() && presenter.Events.SequenceEqual(["checking", "up-to-date"]) && updates.Status.MessageKey == "updates.no_update", "No update shows the up-to-date result");
+        var reached = updates.LastSuccess;
+        Check(!updates.CheckFailed && reached == updates.LastCheck, "A check that reads the feed records when it last succeeded");
         updates.Dismiss(); Check(!updates.Status.Busy && updates.Status.MessageKey == "updates.no_update", "Closing the result keeps its message");
         transport.Fail = true; presenter.Events.Clear();
         Check(!await updates.CheckAsync() && presenter.Events.SequenceEqual(["checking", "failed"]) && updates.Status.MessageKey == "windows.updates.failed", "A failed manual check reports it");
         updates.Dismiss();
         clock += TimeSpan.FromDays(1); presenter.Events.Clear();
-        Check(!await updates.CheckAutomaticIfDueAsync() && presenter.Events.Count == 0 && !updates.Status.Busy, "A failed automatic check stays quiet");
+        Check(!await updates.CheckAutomaticIfDueAsync() && presenter.Events.Count == 0 && !updates.Status.Busy, "A failed automatic check opens no window");
+        Check(updates.CheckFailed && updates.LastSuccess == reached && updates.LastCheck > reached,
+            "A failed check, scheduled or manual, is kept for Settings with the last successful check unchanged");
+        await using (var restarted = new WindowsUpdateService(action => action(), new UpdateFeedClient(channel, "x64", Current, Windows, "en", transport), state, () => clock))
+        {
+            await restarted.InitializeAsync(channel, identity, "en", false, () => { });
+            Check(restarted.CheckFailed && restarted.LastSuccess?.ToUnixTimeSeconds() == reached?.ToUnixTimeSeconds(),
+                "A restart still shows the failed check and the last success, as on the Mac");
+        }
         transport.Fail = false;
         Check(!await updates.CheckAutomaticIfDueAsync(), "A daily check is not due right after the last one");
         var failing = new PreferencesSession(new(), _ => Task.CompletedTask, _ => false);

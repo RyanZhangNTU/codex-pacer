@@ -60,6 +60,14 @@ internal static class ConversationApplicationChecks
             Launch: new("workbuddy-ai", "Tencent Technology (Shenzhen) Company Limited", ["WorkBuddyAI/WorkBuddyAI.exe", "../escape.exe"], "connectors"))]);
         Check(WindowsConversationApplication.CanOpenApplication("workbuddy") && WindowsConversationApplication.CanOpenConnectors("workbuddy"),
             "A registered module opens its own app and connectors");
+        // The handler may point into any local folder the user installed to; its signature is checked separately.
+        string[] names = ["WorkBuddyAI.exe"];
+        Check(WindowsConversationApplication.LocalHandlerPath(@"D:\Tools\WorkBuddy AI 自选\WorkBuddyAI.exe", names) == @"D:\Tools\WorkBuddy AI 自选\WorkBuddyAI.exe" &&
+              WindowsConversationApplication.LocalHandlerPath(@"C:\Program Files\WorkBuddyAI\workbuddyai.EXE", names) != null,
+            "WorkBuddy opens from whichever local folder it was installed to");
+        foreach (string refused in new[] { @"\\server\share\WorkBuddyAI.exe", "WorkBuddyAI.exe", @"C:\Apps\WorkBuddy.exe", @"C:\Apps\WorkBuddyAI.exe.bak",
+            @"C:\Apps\WorkBuddyAI.exe\..\cmd.exe", "C:\\Apps\\Work\nBuddyAI.exe", @"\\?\C:\Apps\WorkBuddyAI.exe" })
+            Check(WindowsConversationApplication.LocalHandlerPath(refused, names) == null, "A handler outside a local drive or naming another program was accepted: " + refused);
         var workBuddyCalls = new List<Uri>();
         var workBuddy = new WindowsConversationApplication(_ => false, signedHandler: (provider, uri) =>
         {

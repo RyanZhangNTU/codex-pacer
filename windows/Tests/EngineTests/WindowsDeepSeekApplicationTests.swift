@@ -27,6 +27,18 @@ final class WindowsDeepSeekApplicationTests: XCTestCase {
         XCTAssertFalse(WindowsDeepSeekApplication.isApplication(candidate), "Renaming another executable cannot create a desktop identity")
         XCTAssertNil(WindowsDeepSeekApplication.find(applicationURLs: [root]))
     }
+    /// 0.2.1 kept Electron's company name; 0.2.2 and later, the fixture's default, carry DeepSeek's.
+    func testDesktopIdentityStillAcceptsTheEarlierElectronCompanyName() throws {
+        let source = URL(fileURLWithPath: try XCTUnwrap(ProcessInfo.processInfo.environment["PACER_HARNESS_ELECTRON_FIXTURE"]))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("harness-electron-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let candidate = root.appendingPathComponent(WindowsDeepSeekApplication.filename)
+        try FileManager.default.copyItem(at: source, to: candidate)
+        XCTAssertTrue(WindowsDeepSeekApplication.isApplication(candidate))
+        XCTAssertTrue(WindowsDeepSeekApplication.isApplication(try fixture()))
+        XCTAssertEqual(WindowsDeepSeekApplication.find(applicationURLs: [root], registeredPaths: { [] }), candidate)
+    }
     func testAutomaticDetectionFindsAClosedDesktopWithoutCliOrSessionData() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("harness-default-" + UUID().uuidString)
         let local = root.appendingPathComponent("AppData/Local"), app = local.appendingPathComponent("Programs/DeepSeek Harness")

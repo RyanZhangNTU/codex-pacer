@@ -272,7 +272,11 @@ internal sealed partial class SettingsWindow : Window
         Identify(updateNotesButton, "settings.update.notes", ui.Text("main.update.notes")); updateNotesButton.Click += ReadUpdateNotes;
         actions.Children.Add(updateNotesButton); actions.Children.Add(update); actions.Children.Add(updateInstall); actions.Children.Add(updateCancel);
         Grid.SetColumn(actions, 2); version.Children.Add(actions);
-        var head = new Border { Child = version, Padding = new Thickness(14, 12, 14, 12) };
+        // A failed check or download shows, under the version, what to try and where else to get the installer.
+        updateRecovery = new UpdateRecoveryView(ui, guideLinkLauncher, guideCopyLink, full: true) { Margin = new Thickness(0, 14, 0, 2), Visibility = Visibility.Collapsed };
+        Identify(updateRecovery, "settings.update.recovery", ui.Text("update.failure.check_title"));
+        var headContent = new StackPanel(); headContent.Children.Add(version); headContent.Children.Add(updateRecovery);
+        var head = new Border { Child = headContent, Padding = new Thickness(14, 12, 14, 12) };
         var automatic = Toggle("updates.automatic", null, "settings.update.automatic", out var automaticSwitch); automaticUpdates = automaticSwitch;
         automaticSwitch.Checked += ChangeAutomaticUpdates; automaticSwitch.Unchecked += ChangeAutomaticUpdates;
         RefreshUpdates();

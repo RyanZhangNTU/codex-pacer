@@ -190,8 +190,10 @@ internal static class WorkBuddyAccountChecks
                 Find<Button>(settings, "panel.link.workbuddy")?.IsVisible == true,
                 "The WorkBuddy inspector should offer the same layout choices and a direct link to its account settings");
             Invoke(Require<Button>(settings, "panel.block.workbuddy.toggle"));
+            // The page finishes saving before its blocks take another edit; the engine and island can be faster.
             await PresentationWait.UntilAsync(() => engine.LatestSnapshot?.ExpandedPanel?.Sections.All(s => !s.Providers.Contains("workbuddy")) == true &&
-                Find<QuotaDial>(island, readout) == null, "The credits block should be removable");
+                Find<QuotaDial>(island, readout) == null && Find<Button>(settings, "panel.block.workbuddy.toggle") is { IsEnabled: true, Tag: "add" },
+                "The credits block should be removable");
             Invoke(Require<Button>(settings, "panel.block.workbuddy.toggle"));
             await PresentationWait.UntilAsync(() => Find<QuotaDial>(island, readout) != null,
                 "Restoring the credits block should use the current account reading without reconnecting");

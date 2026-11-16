@@ -107,7 +107,7 @@ internal sealed partial class SettingsWindow
         }
     }
 
-    private void ClearOverview() { overviewBody = historyBody = null; overviewSubtitle = null; overviewKey = historyKey = null; bannerStatus = null; bannerProgress = null; bannerNotes = bannerInstall = bannerCancel = bannerLater = null; }
+    private void ClearOverview() { overviewBody = historyBody = null; overviewSubtitle = null; overviewKey = historyKey = null; bannerStatus = null; bannerProgress = null; bannerNotes = bannerInstall = bannerCancel = bannerLater = bannerWays = null; }
 
     private void BuildOverview()
     {
@@ -149,13 +149,15 @@ internal sealed partial class SettingsWindow
         string? update = updater?.CurrentOffer?.Version;
         string key = JsonSerializer.Serialize(new { snapshot?.Presentation, snapshot?.QuotaDashboard, snapshot?.Wallet, snapshot?.Modules, snapshot?.ActivityLinks,
             credits = snapshot?.AccountCredits, creditsState = harnessAccounts?.All.Select(account => account.Provider + account.State + account.Busy),
-            attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed });
+            attention = attention.Select(value => value.Title + value.Detail + value.Action), update, dismissedUpdate, downloading = inlineDownload != null, session.Current.ExpandedQuotaStyle, session.Current.AccentColor, closed,
+            checkFailed = CheckFailureBannerShown(update) });
         if (key == overviewKey) return;
         overviewKey = key;
         editors.RemoveAll(editor => editor.IsDescendantOf(overviewBody));
         foreach (UIElement child in overviewBody.Children) PageAccessibility.Retire(child);
         overviewBody.Children.Clear();
         if (update != null && (update != (dismissedUpdate ?? updater?.DismissedBanner) || inlineDownload != null)) overviewBody.Children.Add(UpdateBanner(update));
+        else if (CheckFailureBannerShown(update)) overviewBody.Children.Add(CheckFailureBanner());
         if (attention.Count > 0) overviewBody.Children.Add(AttentionCard(attention));
         var enabled = closed ? [] : EnabledProviders();
         var harnesses = closed ? [] : (snapshot?.Modules ?? []).Where(module => module.Enabled && HarnessPane(module.Provider)).Select(module => module.Provider);
@@ -186,6 +188,10 @@ internal sealed partial class SettingsWindow
         bannerNotes = new Button { Content = ui.Text("main.update.notes"), Margin = new Thickness(0, 0, 8, 0) };
         Identify(bannerNotes, "settings.overview.update_notes", ui.Text("main.update.notes")); bannerNotes.Click += ReadUpdateNotes;
         actions.Children.Add(bannerNotes);
+        // After a failed download, the other places to get the installer, in Help & Updates.
+        bannerWays = new Button { Content = ui.Text("update.failure.show_ways"), Margin = new Thickness(0, 0, 8, 0), Visibility = Visibility.Collapsed };
+        Identify(bannerWays, "settings.overview.update_download_ways", ui.Text("update.failure.show_ways")); bannerWays.Click += (_, _) => _ = NavigateAsync("about");
+        actions.Children.Add(bannerWays);
         var install = new Button { Content = ui.Text("main.update.install"), Style = (Style)FindResource("SettingsProminentButton") };
         Identify(install, "settings.overview.update", ui.Text("main.update.install")); bannerInstall = install;
         // One click downloads, installs and restarts right here, with its progress in the banner, as on the Mac.
@@ -204,9 +210,37 @@ internal sealed partial class SettingsWindow
         card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
         RefreshBanner(); return card;
     }
+    /// Every failed check, scheduled ones included, shows until it is closed or a check succeeds.
+    private bool CheckFailureBannerShown(string? update) => update == null && updater?.CheckFailed == true && updater.Status.Available
+        && !updater.Status.Busy && (dismissedCheckFailure ?? updater.DismissedFailure)?.ToUnixTimeSeconds() != updater.LastCheck?.ToUnixTimeSeconds();
+    /// A check that could not reach GitHub, with the way to the other places to get Pacer.
+    private Border CheckFailureBanner()
+    {
+        var grid = new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var icon = GuideArt.Tile("network.slash", Color.FromRgb(0xF2, 0xA5, 0x3A), 30); icon.Margin = new Thickness(0, 0, 12, 0); icon.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(icon);
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(Label(ui.Text("update.failure.banner_check"), 13, FontWeights.SemiBold));
+        var detail = Detail(ui.Text("update.failure.banner_check_detail")); detail.FontSize = 11.5; text.Children.Add(detail);
+        Grid.SetColumn(text, 1); grid.Children.Add(text);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var ways = new Button { Content = ui.Text("update.failure.show_ways") };
+        Identify(ways, "settings.overview.update_ways", ui.Text("update.failure.show_ways"));
+        ways.Click += (_, _) => _ = NavigateAsync("about");
+        actions.Children.Add(ways);
+        var glyph = new IconGlyph { Symbol = "xmark", Width = 11, Height = 11 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        var close = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 24, Height = 24, Padding = new Thickness(0), Content = glyph, Margin = new Thickness(8, 0, 0, 0), ToolTip = ui.Text("main.update.later") };
+        Identify(close, "settings.overview.update_failure_close", ui.Text("main.update.later"));
+        close.Click += (_, _) => { dismissedCheckFailure = updater?.LastCheck; if (updater != null) updater.DismissedFailure = updater.LastCheck; RefreshOverview(); };
+        actions.Children.Add(close);
+        Grid.SetColumn(actions, 2); grid.Children.Add(actions);
+        var card = new Border { CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Padding = new Thickness(16, 12, 16, 12), Margin = new Thickness(0, 0, 0, 22), Child = grid };
+        card.SetResourceReference(Border.BackgroundProperty, "SettingsCard"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
+        Identify(card, "settings.overview.update_failure", ui.Text("update.failure.banner_check"));
+        return card;
+    }
     private TextBlock? bannerStatus;
     private ProgressBar? bannerProgress;
-    private Button? bannerNotes, bannerInstall, bannerCancel, bannerLater;
+    private Button? bannerNotes, bannerInstall, bannerCancel, bannerLater, bannerWays;
     /// The banner's line and buttons follow the same download as Help & Updates' card.
     private void RefreshBanner()
     {
@@ -219,6 +253,7 @@ internal sealed partial class SettingsWindow
         bannerProgress.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
         bannerProgress.IsIndeterminate = downloading && inlineFraction == null; if (inlineFraction is { } value) bannerProgress.Value = value;
         if (bannerNotes != null) bannerNotes.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;
+        if (bannerWays != null) bannerWays.Visibility = inlineDownloadFailed && !downloading ? Visibility.Visible : Visibility.Collapsed;
         if (bannerInstall != null)
         {
             bannerInstall.Visibility = downloading ? Visibility.Collapsed : Visibility.Visible;

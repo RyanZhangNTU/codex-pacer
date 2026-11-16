@@ -1,6 +1,7 @@
 @testable import PacerEngineSupport
 #if os(Windows)
 import Foundation
+import WinSDK
 import XCTest
 @testable import PacerCore
 
@@ -84,6 +85,49 @@ final class WindowsProviderInstallationTests: XCTestCase {
         XCTAssertTrue(WindowsPackageLocations.find(family: "").isEmpty)
         XCTAssertTrue(WindowsPackageLocations.find(family: String(repeating: "x", count: 255)).isEmpty)
         XCTAssertTrue(WindowsPackageLocations.find(family: "bad\0family").isEmpty)
+    }
+    func testWorkBuddyInstalledToAChosenFolderIsFoundThroughItsLinkHandler() throws {
+        let home = try root(); defer { try? FileManager.default.removeItem(at: home) }
+        let standard = home.appendingPathComponent("standard folders")
+        try FileManager.default.createDirectory(at: standard, withIntermediateDirectories: true)
+        let chosen = home.appendingPathComponent("Apps 自选/WorkBuddy"), app = chosen.appendingPathComponent("WorkBuddy.exe")
+        try executable(app)
+        let notAnApp = home.appendingPathComponent("Other/WorkBuddy.exe")
+        try FileManager.default.createDirectory(at: notAnApp.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("fixture, not a PE image".utf8).write(to: notAnApp)
+        let environment = ["ProgramFiles": WindowsCodexExecutableDiscovery.path(standard), "LOCALAPPDATA": WindowsCodexExecutableDiscovery.path(standard)]
+        var schemes: [String] = []
+        func found(_ handlers: [String: [String]]) -> Set<AgentProvider> {
+            WindowsProviderInstallation.detect(userHome: home, environment: environment, applicationURLs: nil, systemBinDirectories: [],
+                packageLocations: { _ in [] }, registeredHandlers: { scheme in schemes.append(scheme); return handlers[scheme] ?? [] })
+                .installed.intersection([.workbuddy, .workbuddyAI])
+        }
+        XCTAssertEqual(found([:]), [], "Nothing in the standard folders and no handler finds nothing")
+        XCTAssertEqual(found(["workbuddy": [WindowsCodexExecutableDiscovery.path(app)]]), [.workbuddy])
+        XCTAssertEqual(Set(schemes), ["workbuddy", "workbuddy-ai"], "Each edition asks for its own link scheme")
+        XCTAssertEqual(found(["workbuddy-ai": [WindowsCodexExecutableDiscovery.path(app)]]), [], "An edition's handler must name its own executable")
+        XCTAssertEqual(found(["workbuddy": [#"\\server\share\WorkBuddy.exe"#, "WorkBuddy.exe"]]), [], "Shares and relative paths are not installations")
+        XCTAssertEqual(found(["workbuddy": [WindowsCodexExecutableDiscovery.path(notAnApp)]]), [], "A file that is not a program is not an installation")
+        XCTAssertEqual(found(["workbuddy": ["X:\\absent\\WorkBuddy.exe", WindowsCodexExecutableDiscovery.path(app)]]), [.workbuddy],
+            "HKLM's handler still counts after a stale HKCU one")
+    }
+    func testLinkHandlerPathsReadOnlyTheQuotedExecutableOfAValidScheme() throws {
+        // HKEY_CURRENT_USER is a C cast macro; its value is a sign-extended LONG.
+        let user = try XCTUnwrap(HKEY(bitPattern: Int(Int32(bitPattern: 0x80000001))))
+        let scheme = "pacer-qa-" + UUID().uuidString.prefix(8).lowercased()
+        let key = Array("Software\\Classes\\\(scheme)".utf16) + [0], command = Array("Software\\Classes\\\(scheme)\\shell\\open\\command".utf16) + [0]
+        defer { _ = RegDeleteTreeW(user, key); _ = RegDeleteKeyW(user, key) }
+        func register(_ value: String) {
+            let data = Array(value.utf16) + [0]
+            XCTAssertEqual(data.withUnsafeBytes { RegSetKeyValueW(user, command, nil, DWORD(REG_SZ), $0.baseAddress, DWORD($0.count)) }, LSTATUS(ERROR_SUCCESS))
+        }
+        register(#""D:\Apps 自选\WorkBuddy\WorkBuddy.exe" "%1""#)
+        XCTAssertEqual(WindowsURLHandler.paths(scheme: scheme), [#"D:\Apps 自选\WorkBuddy\WorkBuddy.exe"#])
+        register(#"D:\Apps\WorkBuddy\WorkBuddy.exe "%1""#)
+        XCTAssertEqual(WindowsURLHandler.paths(scheme: scheme), [], "An unquoted command is ambiguous and never yields a path")
+        for invalid in ["", "Bad", "../classes", "9scheme", String(repeating: "a", count: 33)] {
+            XCTAssertEqual(WindowsURLHandler.paths(scheme: invalid), [], invalid)
+        }
     }
 }
 #endif

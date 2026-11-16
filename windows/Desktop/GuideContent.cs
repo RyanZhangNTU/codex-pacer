@@ -291,8 +291,10 @@ internal sealed class GuideContent : StackPanel
                 Children.Add(ModuleCards(shown));
                 if (folded.Length > 0)
                 {
+                    // The disclosure style lives in the guide window's own resources, not the application's.
                     var more = new Expander { Header = ui.Text("welcome.modules.more").Replace("%ld", folded.Length.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal),
-                        Style = (Style)Application.Current.FindResource("SettingsDisclosure"), IsExpanded = false, Margin = new Thickness(0, 14, 0, 0) };
+                        IsExpanded = false, Margin = new Thickness(0, 14, 0, 0) };
+                    more.SetResourceReference(FrameworkElement.StyleProperty, "SettingsDisclosure");
                     var inner = ModuleCards(folded); inner.Margin = new Thickness(0, 10, 0, 0); more.Content = inner;
                     Identify(more, "welcome.modules.more", (string)more.Header);
                     Children.Add(more);
@@ -707,11 +709,7 @@ internal sealed class GuideContent : StackPanel
         target.Children.Clear();
         if (id == "collapsed")
         {
-            // Under one accent the services are its shades, as the tiles draw them.
-            bool shades = PacerPalette.Accent != "multicolor";
-            var services = HelpRow("help.services", providers.Select(provider => (UIElement)ProviderIcon.Tile(provider, 18)).ToArray());
-            if (shades && services.Children.OfType<StackPanel>().FirstOrDefault(child => Grid.GetColumn(child) == 1)?.Children[1] is TextBlock detail) detail.Text = ui.Text("help.services.shades");
-            target.Children.Add(Group(HelpInset, services,
+            target.Children.Add(Group(HelpInset, ServicesRow(providers),
                 HelpRow("help.tasks", Tasks(1, "codex"), Tasks(2, "codex", "claude"), Tasks(3, providers)),
                 HelpRow("help.attention", Badge(1)),
                 HelpRow("help.endings", Badge(2), Badge(3)),
@@ -723,7 +721,8 @@ internal sealed class GuideContent : StackPanel
         else if (id == "expanded")
             target.Children.Add(Group(HelpInset,
                 HelpRow("help.hover", Mark("cursorarrow.rays")), HelpRow("help.open", Mark("arrow.up.forward.app")),
-                HelpRow("help.app_buttons", providers.Select(provider => (UIElement)ProviderIcon.CreateLaunch(provider, 14)).ToArray()),
+                // Three icons stand for all, as on the Mac, so the swatch stays roomy as modules are added.
+                HelpRow("help.app_buttons", providers.Take(3).Select(provider => (UIElement)ProviderIcon.CreateLaunch(provider, 14)).ToArray()),
                 HelpRow("help.read", Mark("checkmark.rectangle.stack")), HelpRow("help.pace", PaceSample())));
         else
         {
@@ -731,6 +730,49 @@ internal sealed class GuideContent : StackPanel
             target.Children.Add(Group(HelpInset, details.Children.Cast<UIElement>().ToArray().Select(child => { details.Children.Remove(child); return child; }).ToArray()));
         }
         Refresh();
+    }
+    /// The services' colors fold away behind one row with a palette; opening it
+    /// lists each service with its icon, name and color, as on the Mac.
+    private StackPanel ServicesRow(string[] providers)
+    {
+        var row = HelpRow("help.services", Mark("paintpalette"));
+        string title = ui.Text("help.services.title");
+        // The row button supplies the side padding; the row keeps only its height.
+        row.Margin = new Thickness(0, 8, 0, 8); Identify(row, "help.services.row", title);
+        // Under one accent the services are its shades, as the tiles draw them.
+        if (PacerPalette.Accent != "multicolor" && row.Children.OfType<StackPanel>().FirstOrDefault(child => Grid.GetColumn(child) == 1)?.Children[1] is TextBlock detail)
+            detail.Text = ui.Text("help.services.shades");
+        var chevron = new IconGlyph { Symbol = "chevron.right", Width = 11, Height = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
+            RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = new RotateTransform(0) };
+        chevron.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); Grid.SetColumn(chevron, 2); row.Children.Add(chevron);
+        // Each service under the title, left edge with the text, wrapping as the page narrows.
+        var colors = new WrapPanel { Margin = new Thickness(14 + 84 + 14, 0, 14, 10), Visibility = Visibility.Collapsed };
+        foreach (string provider in providers)
+        {
+            string name = provider switch
+            {
+                "codex" => "Codex", "claude" => "Claude", "deepseek" => "DeepSeek",
+                _ => snapshot()?.Modules?.FirstOrDefault(value => value.Provider == provider)?.DisplayName ?? provider
+            };
+            var item = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 16, 8) };
+            var icon = ProviderIcon.Tile(provider, 14); icon.VerticalAlignment = VerticalAlignment.Center; item.Children.Add(icon);
+            var label = Text(name, 12); label.Margin = new Thickness(6, 0, 6, 0); label.VerticalAlignment = VerticalAlignment.Center; item.Children.Add(label);
+            item.Children.Add(new Border { Width = 18, Height = 6, CornerRadius = new CornerRadius(3), Background = PacerPalette.Provider(provider), VerticalAlignment = VerticalAlignment.Center });
+            Identify(item, "help.services." + provider, name); colors.Children.Add(item);
+        }
+        var toggle = new Button { Style = (Style)FindResource("SettingsRowButton"), ContentTemplate = null, Content = row,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(0) };
+        Identify(toggle, "help.services.toggle", title);
+        AutomationProperties.SetItemStatus(toggle, ui.Text("main.info_hidden"));
+        toggle.Click += (_, _) =>
+        {
+            bool open = colors.Visibility != Visibility.Visible;
+            colors.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            ((RotateTransform)chevron.RenderTransform).Angle = open ? 90 : 0;
+            AutomationProperties.SetItemStatus(toggle, ui.Text(open ? "main.info_shown" : "main.info_hidden"));
+        };
+        var host = new StackPanel(); host.Children.Add(toggle); host.Children.Add(colors); Identify(host, "help.services", title); return host;
     }
     /// One way in: its symbol on a soft tile, a title and a sentence, with an arrow when it leaves Pacer.
     private Button QuickTile(Button button, string symbol, string title, string detail, bool external)
@@ -902,7 +944,11 @@ internal sealed class GuideContent : StackPanel
         var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         Button? copy = null; copy = Button(ui.Text("support.qq.copy"), "support.qq.copy", () => _ = Copy(copy!, number, "support.qq.copy"));
         actions.Children.Add(copy);
-        string? image = file != null && file == Path.GetFileName(file) ? Path.Combine(AppContext.BaseDirectory, "CodexPacerPortable_PacerCore.resources", file) : null;
+        // Core's resources sit beside the engine, so the code was never found next to the app.
+        string? image = file != null && file == Path.GetFileName(file)
+            ? new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "Engine") }
+                .Select(folder => Path.Combine(folder, "CodexPacerPortable_PacerCore.resources", file)).FirstOrDefault(File.Exists)
+            : null;
         if (image != null && File.Exists(image))
         {
             Popup? popup = null;

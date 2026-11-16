@@ -15,6 +15,11 @@ public enum ProjectSupport {
     }
 
     public static let repository = URL(string: "https://github.com/RyanZhangNTU/codex-pacer")!
+    /// Where a failed update check or download sends people for the full
+    /// installer: the latest GitHub Release, and a download site that needs no
+    /// GitHub access.
+    public static let latestRelease = URL(string: "https://github.com/RyanZhangNTU/codex-pacer/releases/latest")!
+    public static let downloadMirror = URL(string: "https://pacer.bhgmz.com/")!
     /// The link GitHub's own Star button uses when signed out. A signed-in browser
     /// goes straight to the project; a signed-out one signs in and then returns
     /// there, so either way the next click is Star.

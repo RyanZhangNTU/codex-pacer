@@ -169,7 +169,7 @@ struct WhatsNewItemRow: View {
                 set: { showsEmbeddedClaudeSessions = $0; showsEmbeddedCodexSessions = $0 })).labelsHidden().toggleStyle(.switch)
         case .showAppButtons:
             Toggle(L10n.text(item.titleKey), isOn: $showsAppButtons).labelsHidden().toggleStyle(.switch)
-        case .openExpandedPanel, .openCollapsedBar, .openAppearance:
+        case .openExpandedPanel, .openCollapsedBar, .openAppearance, .openModules:
             item.control?.settingsPane.map(pageLink)
         case nil:
             EmptyView()
@@ -201,6 +201,7 @@ extension WhatsNew.Item.Control {
         case .openExpandedPanel: .expandedPanel
         case .openCollapsedBar: .collapsedBar
         case .openAppearance: .appearance
+        case .openModules: .modules
         case .openAtLogin, .showEmbeddedSessions, .showAppButtons: nil
         }
     }

@@ -22,7 +22,10 @@ namespace CodexPacer.Windows;
 public sealed class AlternatingQuotaText : Grid
 {
     internal const int FadeFrameRate = 15;
-    internal readonly record struct Item(string Provider, string Text, bool Dimmed, bool Low = false);
+    /// Unit, on the strip, is drawn under its own number and moves with it.
+    internal readonly record struct Item(string Provider, string Text, bool Dimmed, bool Low = false, string? Unit = null);
+    /// A value never shrinks below this share of its size to fit the strip, as on the Mac.
+    internal const double MinimumScale = 0.6;
     private readonly List<FrameworkElement> layers = [];
     private readonly List<TranslateTransform> offsets = [];
     private Item[] items = [];
@@ -90,7 +93,8 @@ public sealed class AlternatingQuotaText : Grid
             // A live label can be measured while its ancestor is clipped or
             // hidden. Measure the layer before it joins the tree.
             layer.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            double scale = Math.Min(1, MaximumDisplayWidth / Math.Max(1, layer.DesiredSize.Width));
+            // Each value shrinks on its own to fit, down to the floor.
+            double scale = Math.Clamp(MaximumDisplayWidth / Math.Max(1, layer.DesiredSize.Width), MinimumScale, 1);
             if (scale < 1) { layer.LayoutTransform = new ScaleTransform(scale, scale); layer.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); }
             var offset = new TranslateTransform(); layer.RenderTransform = offset;
             if (Pair && Vertical) { RowDefinitions.Add(new() { Height = GridLength.Auto }); SetRow(layer, index); layer.Margin = new Thickness(0, index == 0 ? 0 : 2, 0, 0); }
@@ -128,12 +132,16 @@ public sealed class AlternatingQuotaText : Grid
                 VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Center, TextTrimming = TextTrimming.None };
             Typography.SetNumeralAlignment(value, FontNumeralAlignment.Tabular); return value;
         }
+        // On the strip a value with its own unit is two lines, the unit under the number.
+        bool stacked = Vertical && !string.IsNullOrEmpty(item.Unit);
         // In the bar a shorter value keeps its place beside its neighbour; the strip centres it.
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = Vertical ? HorizontalAlignment.Center : HorizontalAlignment.Left,
+        var panel = new StackPanel { Orientation = stacked ? Orientation.Vertical : Orientation.Horizontal,
+            HorizontalAlignment = Vertical ? HorizontalAlignment.Center : HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
         bool percent = !Vertical && item.Text.Length > 1 && item.Text.EndsWith('%');
         var number = Text(percent ? item.Text[..^1] : item.Text, FontSize, FontWeights.SemiBold, ink);
         panel.Children.Add(number);
+        if (stacked) { panel.Children.Add(Text(item.Unit!, unitSize, FontWeights.Medium, CompactInk.Unit)); return panel; }
         if (percent)
         {
             var unit = Text("%", unitSize, FontWeights.Medium, CompactInk.Unit);

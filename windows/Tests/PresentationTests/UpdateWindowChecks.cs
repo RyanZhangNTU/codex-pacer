@@ -70,10 +70,25 @@ internal static class UpdateWindowChecks
             Capture(window, Name("current"));
             window.Failed(); await Pump();
             Check(Find<Button>(window, "update.retry").IsDefault && Has(window, "update.close"), "A failure offers Try Again and Close");
+            Check(Text(window, "update.title") == ui.Text("update.failure.check_title") && Has(window, "update.route.github") && Has(window, "update.route.mirror")
+                && Has(window, "update.route.qq.copy"), "A failed check offers GitHub, the download site and the QQ group for the full installer");
             Capture(window, Name("failed"));
             window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), 0, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });
             await Pump();
             Check(!window.IsVisible && !service.Status.Busy, "Escape closes the window and ends the update operation");
+            // The same ways under their own heading and Check Again, as Help & Updates' card shows them.
+            var card = new UpdateWindow(ui, service, "4.2.2", dark) { ShowActivated = false, IsHitTestVisible = false };
+            try
+            {
+                var full = new UpdateRecoveryView(ui, null, null, full: true);
+                full.Show(UpdateRecoveryView.Kind.Check, "4.2.2", null, new DateTimeOffset(2026, 11, 13, 9, 30, 0, TimeSpan.Zero), () => { });
+                var host = new Border { Padding = new Thickness(16), Child = full }; host.SetResourceReference(Border.BackgroundProperty, "SettingsCard");
+                card.Content = host; card.Show(); await Pump();
+                Check(Has(card, "update.recovery.retry") && Text(card, "update.recovery.title") == ui.Text("update.failure.check_title")
+                    && Find<Button>(card, "update.route.github").ContentTemplate == null, "Help & Updates' panel names the failed check, offers Check Again and draws its Open buttons");
+                Capture(card, Name("recovery-card"));
+            }
+            finally { card.Close(); }
         }
         finally { if (window.IsVisible) window.Close(); }
         Console.WriteLine("PASS update window " + language + (dark ? " dark" : " light") + ": full and patch offers with rendered notes, progress, verify, ready, up to date, failure and Escape");

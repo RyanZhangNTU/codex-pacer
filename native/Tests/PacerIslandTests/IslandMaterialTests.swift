@@ -201,21 +201,27 @@ final class IslandMaterialTests: XCTestCase {
         }
     }
 
-    func testRotatingValuesShrinkToFitANarrowStripInsteadOfClipping() {
+    func testRotatingValuesShrinkOneByOneToFitANarrowStripInsteadOfClipping() {
         let font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .semibold)
-        let entries: [AlternatingQuotaText.Entry] = [.init(text: "1000%", color: .white, splitsUnit: false), .init(text: "¥86", color: .white)]
-        let narrow = AlternatingQuotaText(entries: entries, animates: false, font: font, centered: true, maxWidth: 30)
-        XCTAssertGreaterThan(AlternatingQuotaText(entries: entries, animates: false, font: font).widest, 30)
-        let fitted = narrow.fitted
-        XCTAssertLessThanOrEqual(fitted.widest, 30.01, "The longest reading fits its cell")
-        XCTAssertLessThan(fitted.font.pointSize, 11.5)
-        XCTAssertGreaterThanOrEqual(fitted.font.pointSize, 11.5 * AlternatingQuotaText.minimumScale - 0.001)
-        XCTAssertTrue(fitted.font.fontDescriptor.symbolicTraits.contains(.bold) || fitted.font.fontName == font.fontName,
-            "It keeps the same face")
-        let roomy = AlternatingQuotaText(entries: [.init(text: "58%", color: .white, splitsUnit: false)], animates: false, font: font, maxWidth: 30).fitted
-        XCTAssertEqual(roomy.font.pointSize, 11.5, "A value that fits keeps its size")
-        let tiny = AlternatingQuotaText(entries: [.init(text: "100000000%", color: .white)], animates: false, font: font, maxWidth: 10).fitted
-        XCTAssertEqual(tiny.font.pointSize, 11.5 * AlternatingQuotaText.minimumScale, accuracy: 0.001, "It stops at 60%, as the other numbers do")
+        let long = AlternatingQuotaText.Entry(text: "1000", color: .white, splitsUnit: false, unitBelow: "%")
+        let short = AlternatingQuotaText.Entry(text: "86", color: .white, splitsUnit: false, unitBelow: "¥")
+        let narrow = AlternatingQuotaText(entries: [long, short], animates: false, font: font, unitSize: 9, centered: true, maxWidth: 22)
+        XCTAssertGreaterThan(narrow.attributed(long).size().width, 22)
+        let scale = narrow.scale(for: long)
+        XCTAssertLessThan(scale, 1)
+        XCTAssertGreaterThanOrEqual(scale, AlternatingQuotaText.minimumScale)
+        XCTAssertLessThanOrEqual(narrow.attributed(long, scale: scale).size().width, 22.01, "The longest reading fits its cell")
+        XCTAssertEqual(narrow.scale(for: short), 1, "A short reading keeps its size beside a long one")
+        let shrunk = narrow.attributed(long, scale: scale).attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        XCTAssertEqual(shrunk?.fontName, font.fontName, "It keeps the same face")
+        // The unit sits on its own line under the number and makes the slot two lines tall.
+        XCTAssertEqual(narrow.attributed(short).string, "86\n¥")
+        XCTAssertGreaterThan(narrow.textHeight, ceil(font.ascender - font.descender))
+        let single = AlternatingQuotaText(entries: [.init(text: "58%", color: .white, splitsUnit: false)], animates: false, font: font, maxWidth: 30)
+        XCTAssertEqual(single.scale(for: single.entries[0]), 1, "A value that fits keeps its size")
+        XCTAssertEqual(single.textHeight, ceil(font.ascender - font.descender), "Without a unit line it stays one line")
+        let tiny = AlternatingQuotaText(entries: [.init(text: "100000000%", color: .white)], animates: false, font: font, maxWidth: 10)
+        XCTAssertEqual(tiny.scale(for: tiny.entries[0]), AlternatingQuotaText.minimumScale, accuracy: 0.001, "It stops at 60%, as the other numbers do")
     }
 
     func testPercentKeepsItsDigitsTogetherWithAGapBeforeTheUnit() {

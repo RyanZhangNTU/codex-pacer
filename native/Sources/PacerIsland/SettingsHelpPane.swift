@@ -12,9 +12,11 @@ struct SettingsHelpPane: View {
     private static let repository = "https://github.com/RyanZhangNTU/codex-pacer"
     var onShowWelcome: (() -> Void)?
     @State private var topic = HelpTopic.collapsed
+    @State private var showsServiceColors: Bool
 
-    init(onShowWelcome: (() -> Void)? = nil) {
+    init(onShowWelcome: (() -> Void)? = nil, showsServiceColors: Bool = false) {
         self.onShowWelcome = onShowWelcome
+        _showsServiceColors = State(initialValue: showsServiceColors)
     }
 
     var body: some View {
@@ -48,14 +50,7 @@ struct SettingsHelpPane: View {
     }
 
     @ViewBuilder private var collapsedRows: some View {
-        // Under one accent the services are its shades, as the tiles draw them.
-        row("help.services", detail: PacerAccent.current == .multicolor ? nil : "help.services.shades") {
-            // More than three modules tighten so every tile fits the swatch.
-            let modules = HelpTopic.modules, tight = modules.count > 3
-            HStack(spacing: tight ? 2 : 6) {
-                ForEach(modules, id: \.self) { ProviderAppIcon(provider: $0, size: tight ? 17 : 18) }
-            }
-        }
+        servicesRow
         row("help.tasks") {
             ActivityBadge(activity: .init(core: .count(1), activeCount: 1, orbit: [.codex: 1]))
             ActivityBadge(activity: .init(core: .count(2), activeCount: 2, orbit: [.codex: 1, .claude: 1]))
@@ -87,7 +82,8 @@ struct SettingsHelpPane: View {
         row("help.hover", symbol: "cursorarrow.rays")
         row("help.open", symbol: "arrow.up.forward.app")
         row("help.app_buttons") {
-            ForEach(HelpTopic.modules, id: \.self) { provider in
+            // Three stand for all, so the swatch never crowds as modules are added.
+            ForEach(HelpTopic.modules.prefix(3), id: \.self) { provider in
                 ProviderAppIcon(provider: provider, size: 14, outline: true)
                     .foregroundStyle(PacerPalette.secondary)
             }
@@ -175,6 +171,48 @@ struct SettingsHelpPane: View {
         row("help.deepseek.speed") { SpeedBarsSample() }
     }
 
+    /// The services' colors fold away behind one row; opening it lists each
+    /// service with its color.
+    private var servicesRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button { withAnimation(.easeOut(duration: 0.15)) { showsServiceColors.toggle() } } label: {
+                HStack(spacing: 14) {
+                    IslandSampleSwatch {
+                        Image(systemName: "paintpalette").font(.system(size: 13, weight: .semibold)).foregroundStyle(PacerPalette.primary)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.text("help.services.title")).font(.system(size: 13))
+                        // Under one accent the services are its shades, as the tiles draw them.
+                        Text(L10n.text(PacerAccent.current == .multicolor ? "help.services.detail" : "help.services.shades"))
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(showsServiceColors ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(L10n.text(showsServiceColors ? "main.info_shown" : "main.info_hidden"))
+            if showsServiceColors {
+                FlowRow(spacing: 16, lineSpacing: 8) {
+                    ForEach(HelpTopic.modules, id: \.self) { provider in
+                        HStack(spacing: 6) {
+                            ProviderAppIcon(provider: provider, size: 14)
+                            Text(provider.displayName).font(.system(size: 12))
+                            Capsule().fill(provider.tint).frame(width: 18, height: 6)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                .padding(.leading, 84 + 14)
+                .padding(.bottom, 4)
+            }
+        }
+    }
+
     private func quotaRow(_ key: String, provider: AgentProvider, remaining: Double) -> some View {
         row(key) {
             QuotaRingsGlyph(rings: [.init(tint: provider.tint, remaining: remaining, stale: false)])
@@ -252,7 +290,8 @@ private struct TopicChips: View {
     @Environment(\.pacerAccent) private var accent
 
     var body: some View {
-        HStack(spacing: 6) {
+        // Chips wrap instead of cutting a name short, so both WorkBuddy editions stay apart.
+        FlowRow(spacing: 6, lineSpacing: 6) {
             ForEach(HelpTopic.all, id: \.self) { topic in
                 let selected = topic == selection
                 Button { selection = topic } label: {
@@ -323,9 +362,10 @@ private struct QuickTile: View {
 private struct MoveSample: View {
     var body: some View {
         HStack(spacing: 5) {
-            Capsule().fill(Color.white.opacity(0.25)).overlay(Capsule().stroke(Color.white.opacity(0.55), lineWidth: 1))
+            // The island's own ink, so the sample reads on light glass as on dark.
+            Capsule().fill(PacerPalette.primary.opacity(0.18)).overlay(Capsule().stroke(PacerPalette.primary.opacity(0.55), lineWidth: 1))
                 .frame(width: 20, height: 8)
-            Image(systemName: "arrow.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Color.white)
+            Image(systemName: "arrow.right").font(.system(size: 9, weight: .bold)).foregroundStyle(PacerPalette.primary)
             RoundedRectangle(cornerRadius: 1.5).fill(AgentProvider.codex.tint).frame(width: 3, height: 18)
         }
     }
@@ -369,7 +409,7 @@ private struct PaceTickSample: View {
             Circle().trim(from: 0, to: 0.62)
                 .stroke(AgentProvider.codex.tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-            Capsule().fill(Color.white).frame(width: 1.5, height: 7)
+            Capsule().fill(PacerPalette.primary).frame(width: 1.5, height: 7)
                 .offset(y: -10).rotationEffect(.degrees(0.45 * 360))
         }
         .frame(width: 20, height: 20)

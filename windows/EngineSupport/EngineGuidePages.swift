@@ -56,6 +56,7 @@ enum EngineGuidePages {
                     case .openExpandedPanel: control = "openExpandedPanel"
                     case .openCollapsedBar: control = "openCollapsedBar"
                     case .openAppearance: control = "openAppearance"
+                    case .openModules: control = "openModules"
                     case nil: control = nil
                     }
                     return Item(symbol: item.symbol, title: L10n.text(item.titleKey, language: language),

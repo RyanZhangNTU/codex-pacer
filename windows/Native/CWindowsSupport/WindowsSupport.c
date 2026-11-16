@@ -118,6 +118,28 @@ int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity) {
     if (length == 0 || length >= capacity) return 0;
     memcpy(path, command + begin, length * sizeof(uint16_t)); path[length] = 0; return 1;
 }
+/* The quoted executable of a URL scheme's open command: index 0 reads HKCU, 1 HKLM. */
+int pacer_url_handler_path(const uint16_t *scheme, size_t index, uint16_t *path, size_t capacity) {
+    if (scheme == NULL || index >= 2 || path == NULL || capacity == 0 || capacity > 32768) return 0;
+    size_t scheme_length = 0;
+    while (scheme_length < 33 && scheme[scheme_length] != 0) {
+        uint16_t c = scheme[scheme_length];
+        if (!((c >= L'a' && c <= L'z') || (scheme_length > 0 && ((c >= L'0' && c <= L'9') || c == L'+' || c == L'.' || c == L'-')))) return 0;
+        scheme_length++;
+    }
+    if (scheme_length == 0 || scheme_length > 32) return 0;
+    WCHAR key[96] = {0};
+    if (swprintf(key, 96, L"Software\\Classes\\%ls\\shell\\open\\command", (LPCWSTR)scheme) < 0) return 0;
+    WCHAR command[32768] = {0}; DWORD bytes = sizeof(command);
+    if (RegGetValueW(index == 0 ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE, key, NULL, RRF_RT_REG_SZ, NULL, command, &bytes) != ERROR_SUCCESS ||
+        bytes == 0 || bytes > sizeof(command) || command[0] != L'"') return 0;
+    size_t end = 1, limit = bytes / sizeof(WCHAR);
+    while (end < limit && command[end] != 0 && command[end] != L'"') end++;
+    if (end == limit || command[end] != L'"') return 0;
+    size_t length = end - 1;
+    if (length == 0 || length >= capacity) return 0;
+    memcpy(path, command + 1, length * sizeof(uint16_t)); path[length] = 0; return 1;
+}
 int pacer_package_path(const uint16_t *family, size_t index, uint16_t *path, size_t capacity) {
     if (family == NULL || path == NULL || capacity == 0 || capacity > 32768) return 0;
     size_t family_length = 0;
@@ -155,6 +177,7 @@ int pacer_named_semaphore_exists(const uint16_t *name) { return 0; }
 int pacer_is_windows_executable(const uint16_t *path) { return 0; }
 int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company) { return 0; }
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity) { return 0; }
+int pacer_url_handler_path(const uint16_t *scheme, size_t index, uint16_t *path, size_t capacity) { return 0; }
 int pacer_codex_package_path(size_t index, uint16_t *path, size_t capacity) { return 0; }
 int pacer_package_path(const uint16_t *family, size_t index, uint16_t *path, size_t capacity) { return 0; }
 #endif

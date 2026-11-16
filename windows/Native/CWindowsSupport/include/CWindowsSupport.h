@@ -61,6 +61,7 @@ void pacer_proxy_relay_close(void *relay);
 int pacer_is_windows_executable(const uint16_t *path);
 int pacer_windows_product_matches(const uint16_t *path, const uint16_t *product, const uint16_t *company);
 int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity);
+int pacer_url_handler_path(const uint16_t *scheme, size_t index, uint16_t *path, size_t capacity);
 int pacer_codex_package_path(size_t index, uint16_t *path, size_t capacity);
 int pacer_package_path(const uint16_t *family, size_t index, uint16_t *path, size_t capacity);
 // True when a local pipe of this name exists; it neither connects nor waits.

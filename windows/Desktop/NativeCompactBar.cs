@@ -6,7 +6,8 @@ using System.Threading.Tasks;
 namespace CodexPacer.Windows;
 
 internal sealed record CompactEdit(string Kind, string? Component = null, string? Lane = null, string? Before = null, int? Offset = null);
-internal sealed record CompactEntry(string Provider, string Text, string StripText, bool Dimmed, double? Value = null, bool? Low = null);
+// StripUnit is what StripText counts (%, ¥, k¥), drawn under it on the strip.
+internal sealed record CompactEntry(string Provider, string Text, string StripText, bool Dimmed, double? Value = null, bool? Low = null, string? StripUnit = null);
 internal sealed record CompactRing(string Provider, double? Remaining, bool Dimmed, double? Time = null, bool? Low = null,
     bool? Exhausted = null, string? Window = null);
 internal sealed record CompactComponent(string Id, string Label, string ShortLabel, string Detail, string Symbol, string HideLabel,

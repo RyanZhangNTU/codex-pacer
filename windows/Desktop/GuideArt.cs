@@ -108,21 +108,20 @@ internal sealed class WelcomeIslandMap : Grid
         var left = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(18, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         task.Margin = new Thickness(0, 0, 8, 0); left.Children.Add(task); left.Children.Add(rate);
         var right = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 18, 0), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
-        quota.Margin = new Thickness(0, 0, 8, 0); right.Children.Add(quota); right.Children.Add(warning);
+        // Warnings come before the quota, as in the default collapsed bar.
+        warning.Margin = new Thickness(0, 0, 8, 0); right.Children.Add(warning); right.Children.Add(quota);
         bar.Children.Add(left); bar.Children.Add(right); Children.Add(bar);
 
         var labels = new Grid { VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(12, 0, 12, 14) };
         labels.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); labels.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         labels.ColumnDefinitions.Add(new ColumnDefinition()); labels.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); labels.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var quotaDetail = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-        quotaDetail.Children.Add(GuideArt.Dot(PacerPalette.Codex)); quotaDetail.Children.Add(Detail("Codex", new Thickness(4, 0, 8, 0)));
-        quotaDetail.Children.Add(GuideArt.Dot(PacerPalette.Claude)); quotaDetail.Children.Add(Detail("Claude", new Thickness(4, 0, 0, 0)));
+        // The quota part stands for every service's quota, balance or credits, not just the two drawn.
         var parts = new (FrameworkElement Part, string Title, UIElement Detail, int Column)[]
         {
             (task, ui.Text("welcome.part.task"), Detail(ui.Text("welcome.part.task_detail")), 0),
             (rate, ui.Text("welcome.part.rate"), Detail(ui.Text("welcome.part.rate_detail")), 1),
-            (quota, ui.Text("welcome.part.quota"), quotaDetail, 3),
-            (warning, ui.Text("welcome.part.warning"), Detail(ui.Text("welcome.part.warning_detail")), 4)
+            (warning, ui.Text("welcome.part.warning"), Detail(ui.Text("welcome.part.warning_detail")), 3),
+            (quota, ui.Text("welcome.part.quota"), Detail(ui.Text("welcome.part.quota_detail")), 4)
         };
         foreach (var part in parts)
         {
