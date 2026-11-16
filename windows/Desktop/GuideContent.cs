@@ -904,7 +904,11 @@ internal sealed class GuideContent : StackPanel
         var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         Button? copy = null; copy = Button(ui.Text("support.qq.copy"), "support.qq.copy", () => _ = Copy(copy!, number, "support.qq.copy"));
         actions.Children.Add(copy);
-        string? image = file != null && file == Path.GetFileName(file) ? Path.Combine(AppContext.BaseDirectory, "CodexPacerPortable_PacerCore.resources", file) : null;
+        // Core's resources sit beside the engine, so the code was never found next to the app.
+        string? image = file != null && file == Path.GetFileName(file)
+            ? new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "Engine") }
+                .Select(folder => Path.Combine(folder, "CodexPacerPortable_PacerCore.resources", file)).FirstOrDefault(File.Exists)
+            : null;
         if (image != null && File.Exists(image))
         {
             Popup? popup = null;

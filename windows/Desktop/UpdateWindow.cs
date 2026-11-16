@@ -81,8 +81,19 @@ internal sealed class UpdateWindow : Window, IWindowsUpdatePresenter
     public void Checking() => Show(Stage.Checking, ui.Text("updates.checking"), "", null);
     public void UpToDate() => Show(Stage.UpToDate, ui.Text("windows.updates.up_to_date_title"),
         Format("windows.updates.up_to_date_detail", currentVersion), null, ("windows.updates.ok", "update.ok", Close, true));
-    public void Failed() => Show(Stage.Failed, ui.Text("windows.updates.error_title"), ui.Text("windows.updates.error_detail"), null,
-        ("windows.updates.close", "update.close", Close, false), ("windows.updates.try_again", "update.retry", Retry, true));
+    /// A check that could not reach the feed: try again, or get the installer elsewhere.
+    public void Failed() => ShowRecovery(null);
+    /// A download or handoff that failed for the offered version, or, with no version, a failed check.
+    private void ShowRecovery(string? version)
+    {
+        bool check = version == null;
+        var ways = new UpdateRecoveryView(ui, null, null, full: false);
+        ways.Show(check ? UpdateRecoveryView.Kind.Check : UpdateRecoveryView.Kind.Download, currentVersion, version, service.LastSuccess, null);
+        Show(Stage.Failed, check ? ui.Text("update.failure.check_title") : ui.Text("update.failure.download_title").Replace("%@", version!, StringComparison.Ordinal),
+            check ? ui.Text("update.failure.check_detail").Replace("%@", currentVersion, StringComparison.Ordinal) : ui.Text("update.failure.download_detail").Replace("%@", version!, StringComparison.Ordinal),
+            ways, ("windows.updates.close", "update.close", Close, false),
+            (check ? "update.failure.retry_check" : "update.failure.retry_download", "update.retry", check ? Retry : Download, true));
+    }
     public void Offer(WindowsUpdatePackage package, bool manual)
     {
         string size = Format(package.Incremental ? "windows.updates.download_size_incremental" : "windows.updates.download_size", Size(package.Length));
@@ -108,7 +119,7 @@ internal sealed class UpdateWindow : Window, IWindowsUpdatePresenter
         {
             if (closed) return;
             if (service.CurrentOffer is { } changed && changed != package) Offer(changed, true);
-            else Failed();
+            else ShowRecovery(package.Version);
         }
     }
     internal void BeginDownload(WindowsUpdatePackage package)
@@ -131,8 +142,8 @@ internal sealed class UpdateWindow : Window, IWindowsUpdatePresenter
     private void Install()
     {
         if (closed || verified == null) return;
-        try { if (service.Install(verified)) { handedOff = true; Close(); } else Failed(); }
-        catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { Failed(); }
+        try { if (service.Install(verified)) { handedOff = true; Close(); } else ShowRecovery(service.CurrentOffer?.Version); }
+        catch (Exception error) when (WindowsUpdateService.Recoverable(error)) { ShowRecovery(service.CurrentOffer?.Version); }
     }
     private void Show(Stage stage, string title, string text, UIElement? content, params (string Key, string Id, Action Action, bool Primary)[] buttons)
     {

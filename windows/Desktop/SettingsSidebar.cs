@@ -357,12 +357,23 @@ internal sealed partial class SettingsWindow
             aboutDetail.Text = ui.Text("main.update.sidebar").Replace("%@", found, StringComparison.Ordinal);
             aboutDetail.FontWeight = FontWeights.Medium; aboutDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsLinkText");
         }
+        else if (updater?.CheckFailed == true && updater.Status.Available)
+        {
+            // A failed check, scheduled or not, says so here until one succeeds.
+            aboutDetail.Text = ui.Text("update.failure.sidebar");
+            aboutDetail.FontWeight = FontWeights.Medium; aboutDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+        }
         else
         {
             aboutDetail.Text = Version.Length > 0 ? Version : ui.Text("build.development");
             aboutDetail.FontWeight = FontWeights.Normal; aboutDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         }
         AutomationProperties.SetName(aboutDetail, aboutDetail.Text);
-        if (updateDot != null) updateDot.Visibility = found != null ? Visibility.Visible : Visibility.Collapsed;
+        bool failed = found == null && updater?.CheckFailed == true && updater.Status.Available;
+        if (updateDot != null)
+        {
+            updateDot.Visibility = found != null || failed ? Visibility.Visible : Visibility.Collapsed;
+            updateDot.SetResourceReference(Shape.FillProperty, failed ? "SettingsWarning" : "SettingsAccent");
+        }
     }
 }

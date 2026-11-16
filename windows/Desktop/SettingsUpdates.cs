@@ -15,6 +15,11 @@ internal sealed partial class SettingsWindow
     private void OnUpdateStatus(WindowsUpdateStatus value) { RefreshUpdates(); RefreshSidebar(); RefreshOverview(); RefreshBanner(); }
     // Checks, progress, cancel and failures started here show in the card, as on the Mac.
     private string? inlineUpdateText; private bool inlineUpdateFailed;
+    /// A download started here failed; the card then shows the ways to get the installer by hand.
+    private bool inlineDownloadFailed;
+    private UpdateRecoveryView? updateRecovery;
+    /// The failed check whose Overview banner was closed; the next failure shows it again.
+    private System.DateTimeOffset? dismissedCheckFailure;
     private System.Threading.CancellationTokenSource? inlineDownload;
     private double? inlineFraction;
     private ProgressBar? updateProgress;
@@ -39,7 +44,7 @@ internal sealed partial class SettingsWindow
     {
         if (updater?.CurrentOffer == null || updater.Status.Busy || inlineDownload != null || sourceClosed || busy || session.RequiresRestart) return;
         using var download = new System.Threading.CancellationTokenSource();
-        inlineDownload = download; inlineFraction = 0; inlineUpdateText = null; inlineUpdateFailed = false; RefreshUpdates();
+        inlineDownload = download; inlineFraction = 0; inlineUpdateText = null; inlineUpdateFailed = inlineDownloadFailed = false; RefreshUpdates();
         try
         {
             RefreshOverview(); RefreshBanner();
@@ -51,11 +56,11 @@ internal sealed partial class SettingsWindow
             }), download.Token);
             download.Token.ThrowIfCancellationRequested();
             inlineFraction = null; inlineUpdateText = ui.Text("main.update.installing"); RefreshUpdates();
-            if (!updater.Install(verified)) { inlineUpdateText = ui.Text("windows.updates.failed"); inlineUpdateFailed = true; }
+            if (!updater.Install(verified)) { inlineUpdateText = ui.Text("update.failure.banner_download_detail"); inlineUpdateFailed = inlineDownloadFailed = true; }
         }
         catch (System.OperationCanceledException) { inlineUpdateText = null; }
         catch (System.Exception error) when (WindowsUpdateService.Recoverable(error))
-        { inlineUpdateText = ui.Text("main.update.failed").Replace("%@", ui.Text("windows.updates.failed"), System.StringComparison.Ordinal); inlineUpdateFailed = true; }
+        { inlineUpdateText = ui.Text("update.failure.banner_download_detail"); inlineUpdateFailed = inlineDownloadFailed = true; }
         finally { inlineDownload = null; inlineFraction = null; if (!sourceClosed) { RefreshUpdates(); RefreshOverview(); RefreshBanner(); } }
     }
     /// Idle, the card says when Pacer last checked, or nothing; other states say themselves.
@@ -98,13 +103,42 @@ internal sealed partial class SettingsWindow
             if (updateCheck != null) updateCheck.Visibility = found == null && !downloading ? Visibility.Visible : Visibility.Collapsed;
             if (updateInstall != null) { updateInstall.Visibility = found != null && !downloading ? Visibility.Visible : Visibility.Collapsed; updateInstall.IsEnabled = available; }
             if (updateCancel != null) updateCancel.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
-            if (updateDownloadPage != null) updateDownloadPage.Visibility = inlineUpdateFailed && !downloading ? Visibility.Visible : Visibility.Collapsed;
+            // A failed check, scheduled or not, or a failed download here shows what to do in place of a red line.
+            var recovery = RecoveryKind(found, downloading, status);
+            if (updateRecovery != null)
+            {
+                updateRecovery.Visibility = recovery == null ? Visibility.Collapsed : Visibility.Visible;
+                if (recovery is { } kind)
+                    updateRecovery.Show(kind, Version.Length > 0 ? Version : ui.Text("build.development"), kind == UpdateRecoveryView.Kind.Download ? found : null, updater?.LastSuccess,
+                        kind == UpdateRecoveryView.Kind.Download ? () => _ = InstallInlineAsync() : () => { inlineUpdateText = null; if (updater != null) _ = updater.CheckAsync(); });
+                updateRecovery.RetryEnabled = available;
+            }
+            if (recovery != null)
+            {
+                if (updateStatus != null) updateStatus.Visibility = Visibility.Collapsed;
+                if (updateCheck != null) updateCheck.Visibility = Visibility.Collapsed;
+            }
+            else if (updateStatus != null) updateStatus.Visibility = Visibility.Visible;
+            // The ways in the recovery panel replace the single GitHub link.
+            if (updateDownloadPage != null) updateDownloadPage.Visibility = Visibility.Collapsed;
         }
         finally { synchronizing = syncing; }
+    }
+    /// What the card and Overview say went wrong: a download started here, or
+    /// the last check while no version is offered.
+    private UpdateRecoveryView.Kind? RecoveryKind(string? found, bool downloading, WindowsUpdateStatus status)
+    {
+        if (downloading || status.Busy) return null;
+        if (inlineDownloadFailed && found != null) return UpdateRecoveryView.Kind.Download;
+        return updater?.CheckFailed == true && found == null && status.Available ? UpdateRecoveryView.Kind.Check : null;
     }
     private async void ReadUpdateNotes(object sender, RoutedEventArgs args)
     {
         if (sourceClosed || updater == null || readingUpdateNotes) return;
+        // The offer already carries its signed, verified notes. Reading the feed
+        // again asked for the installed build's notes, which the feed does not
+        // list once a newer version is out, so the button never opened them.
+        if (updater.CurrentOffer is { Notes.Length: > 0 } offer) { SignedReleaseNotesRequested?.Invoke(offer.Notes); return; }
         readingUpdateNotes = true; RefreshUpdates();
         try
         {

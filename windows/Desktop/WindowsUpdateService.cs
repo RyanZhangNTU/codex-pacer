@@ -39,7 +39,13 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
     private Action? installStarted;
     private volatile bool disposed, installing;
     private bool automatic;
-    private DateTimeOffset lastCheck = DateTimeOffset.MinValue, offeredAt;
+    private DateTimeOffset lastCheck = DateTimeOffset.MinValue, lastSuccess = DateTimeOffset.MinValue, offeredAt;
+    /// When a check last reached and verified the feed, if one ever has.
+    internal DateTimeOffset? LastSuccess => lastSuccess == DateTimeOffset.MinValue ? null : lastSuccess;
+    /// The last check, scheduled or manual, could not read the feed. A check
+    /// that succeeds clears it; Settings and Overview then stop showing the ways
+    /// to get the installer by hand.
+    internal bool CheckFailed { get; private set; }
     private WindowsUpdatePackage? offer;
     private bool incremental;
     internal WindowsUpdateStatus Status { get; private set; } = new(false, false, "windows.updates.unconfigured");
@@ -71,7 +77,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             await Task.Run(() =>
             {
                 if (state?.Read(LastCheckKey) is string saved && long.TryParse(saved, NumberStyles.Integer, CultureInfo.InvariantCulture, out long seconds))
-                    lastCheck = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                    lastCheck = lastSuccess = DateTimeOffset.FromUnixTimeSeconds(seconds);
                 state?.Write(AutomaticKey, automatic ? "1" : "0");
             }).WaitAsync(TimeSpan.FromSeconds(10));
             Publish(new(true, false, "updates.policy")); ArmAutomatic();
@@ -98,6 +104,7 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             try
             {
                 found = await client.ReadOfferAsync(lifetime.Token);
+                lastSuccess = lastCheck; CheckFailed = false;
                 state?.Write(LastCheckKey, lastCheck.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
                 // A manual check can still offer a skipped build.
                 if (found != null && !manual && state?.Read(SkipKey) == found.Build.ToString()) found = null;
@@ -105,6 +112,9 @@ internal sealed class WindowsUpdateService : IAsyncDisposable
             catch (Exception error) when (Recoverable(error))
             {
                 if (disposed) return false;
+                // Scheduled checks fail as visibly as manual ones: behind a network
+                // that cannot reach GitHub, every check fails and nothing else says so.
+                CheckFailed = true;
                 Publish(Status with { MessageKey = "windows.updates.failed" });
                 if (manual) Presenter?.Failed();
                 return false;
