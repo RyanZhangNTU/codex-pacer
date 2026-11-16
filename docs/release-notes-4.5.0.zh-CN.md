@@ -4,6 +4,6 @@
 
 **SSH 主机上的 Codex 进度。**SSH 主机（Windows 上还有 WSL）里的 Codex 任务也会显示进度圆环。已经在运行的任务，会在 Codex 重新连接后开始报告进度。
 
-**修复。**睡眠唤醒或 VPN 重连后，SSH 任务会随网络恢复立即重新出现，不用再重启 Pacer。进度圆环走得更连贯；项目外开始的 Codex 对话，运行时就显示它自己的名称。Windows 上的登录窗口确认账号后会自动关闭；多个文件同时变化时，任务更新也不会再漏掉；DeepSeek Harness 0.2.2 又能从面板按钮和任务行打开了。
+**修复。**睡眠唤醒或 VPN 重连后，SSH 任务会随网络恢复立即重新出现，不用再重启 Pacer。进度圆环走得更连贯；项目外开始的 Codex 对话，运行时就显示它自己的名称；贴边竖排时，额度、余额和积分的数字和上面的速度一样清楚。Windows 上的登录窗口确认账号后会自动关闭；多个文件同时变化时，任务更新也不会再漏掉；DeepSeek Harness 0.2.2 又能从面板按钮和任务行打开了。
 
 更多信息见[使用说明](https://github.com/RyanZhangNTU/codex-pacer/blob/main/docs/guide.zh-CN.md)和[完整更新记录](https://github.com/RyanZhangNTU/codex-pacer/blob/main/CHANGELOG.md)。
