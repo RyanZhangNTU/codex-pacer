@@ -721,7 +721,8 @@ internal sealed class GuideContent : StackPanel
         else if (id == "expanded")
             target.Children.Add(Group(HelpInset,
                 HelpRow("help.hover", Mark("cursorarrow.rays")), HelpRow("help.open", Mark("arrow.up.forward.app")),
-                HelpRow("help.app_buttons", providers.Select(provider => (UIElement)ProviderIcon.CreateLaunch(provider, 14)).ToArray()),
+                // Three icons stand for all, as on the Mac, so the swatch stays roomy as modules are added.
+                HelpRow("help.app_buttons", providers.Take(3).Select(provider => (UIElement)ProviderIcon.CreateLaunch(provider, 14)).ToArray()),
                 HelpRow("help.read", Mark("checkmark.rectangle.stack")), HelpRow("help.pace", PaceSample())));
         else
         {

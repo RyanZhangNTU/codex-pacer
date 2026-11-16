@@ -99,9 +99,10 @@ internal sealed class UpdateRecoveryView : StackPanel
         title.Text = check ? ui.Text("update.failure.check_title") : ui.Text("update.failure.download_title").Replace("%@", version!, StringComparison.Ordinal);
         detail.Text = check ? ui.Text("update.failure.check_detail").Replace("%@", installed, StringComparison.Ordinal)
             : ui.Text("update.failure.download_detail").Replace("%@", version!, StringComparison.Ordinal);
-        lastCheck.Text = !check ? "" : lastSuccess is { } last
+        // Without a recorded success the line stays out, as on the Mac, rather than claim there never was one.
+        lastCheck.Text = check && lastSuccess is { } last
             ? ui.Text("update.failure.last_success").Replace("%@", last.ToLocalTime().ToString("g", System.Globalization.CultureInfo.GetCultureInfo(ui.Language == "zh-Hans" ? "zh-CN" : "en-US")), StringComparison.Ordinal)
-            : ui.Text("update.failure.never_checked");
+            : "";
         lastCheck.Visibility = lastCheck.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         githubDetail.Text = check ? ui.Text("update.route.github_latest").Replace("%@", InstallerSuffix(), StringComparison.Ordinal)
             : ui.Text("update.route.github_file").Replace("%@", InstallerName(version!), StringComparison.Ordinal);
