@@ -329,6 +329,34 @@ final class NativeDesktopTests: XCTestCase {
         session.close()
         XCTAssertEqual(session.dormantSubscriptionCount, 0)
     }
+    /// Codex Desktop 26.1111 sends thread state as version 13; reading only 11
+    /// dropped the connection on every change, losing approvals and Remote Control.
+    func testNewerThreadStateVersionsAreReadLikeVersion11() throws {
+        let client = "019a0000-0000-7000-8000-000000000010", owner = "019a0000-0000-7000-8000-000000000020"
+        func session() throws -> NativeDesktopSession {
+            var value = try NativeDesktopSession(hosts: ["local"]) { _ in }
+            try value.receive(JSONSerialization.data(withJSONObject: ["type": "response", "method": "initialize", "resultType": "success",
+                "result": ["clientId": client]]), at: epoch)
+            try value.receive(JSONSerialization.data(withJSONObject: ["type": "broadcast", "method": "thread-stream-following-status-requested",
+                "version": 1, "sourceClientId": owner, "params": ["hostId": "local", "conversationId": thread]]), at: epoch)
+            return value
+        }
+        func snapshot(_ version: Int) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["type": "broadcast", "method": "thread-stream-state-changed", "version": version,
+                "sourceClientId": owner, "targetClientIds": [client],
+                "params": ["hostId": "local", "conversationId": thread, "change": ["type": "snapshot", "revision": 0, "conversationState": state()]]])
+        }
+        for version in [11, 13, 14] {
+            var value = try session()
+            XCTAssertNoThrow(try value.receive(snapshot(version), at: epoch), "version \(version)")
+            try value.publishEvents()
+            let frames = try value.takeFrames().map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
+            XCTAssertTrue(frames.contains { $0["kind"] as? String == "runtimeBatch" && $0["hostId"] as? String == "local" }, "version \(version)")
+        }
+        var older = try session()
+        XCTAssertThrowsError(try older.receive(snapshot(10), at: epoch), "An older, unknown message still ends the connection")
+    }
+
     func testRemoteRuntimeAndRequestsAreRoutedSeparatelyFromLocalTasks() throws {
         final class Sent { var values: [[String: Any]] = [] }
         let sent = Sent(), host = "remote-ssh-discovered:test"
