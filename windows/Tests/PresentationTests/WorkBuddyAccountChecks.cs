@@ -256,7 +256,14 @@ internal static class WorkBuddyAccountChecks
             Check(account.Reading is { Remaining: 900, Total: 1200, Plan: "企业版", Cycle: { Total: 1200, Remaining: 900, Used: 300 } } enterpriseReading
                 && enterpriseReading.Cycle.ResetsAt?.ToUnixTimeSeconds() == enterpriseEnd.ToUnixTimeSeconds() + 1
                 && enterpriseReads > 0 && enterpriseHeader == "fixture-team" && reads == personalReads && writes == 0,
-                "An enterprise member reads the team's assigned quota and gift, for the chosen team, without the personal bill");
+                "An enterprise member reads the team's assigned quota and gift, for the chosen team, without the personal bill: "
+                + $"{account.State} {account.Reading?.Remaining}/{account.Reading?.Total} {account.Reading?.Plan}, {enterpriseReads} usage reads, header {enterpriseHeader ?? "none"}, {reads - personalReads} personal reads, {writes} writes");
+            // The reader page may make only those requests, each with its own method.
+            var definition = ProviderWebDefinition.WorkBuddy(true);
+            Check(definition.IsReaderRequest(Accounts, "GET") && definition.IsReaderRequest(EnterpriseUsage, "POST") && !definition.IsReaderRequest(Accounts, "POST")
+                && !definition.IsReaderRequest(EnterpriseUsage, "GET") && !definition.IsReaderRequest(Origin + "/console/accounts?all=1", "GET")
+                && !ProviderWebDefinition.WorkBuddy(false).IsReaderRequest(Accounts, "GET"),
+                "The reader admits the enterprise requests only with their own method, path and site");
             await PresentationWait.CommandSnapshotAsync(engine, "setAccountCredits", new { provider = "workbuddy", accountCredits = account.EngineCredits(), stale = false });
             await settings.NavigateAsync("workbuddy");
             await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".account_state")?.Text.EndsWith(" · 企业版", StringComparison.Ordinal) == true
