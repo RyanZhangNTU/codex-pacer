@@ -156,8 +156,9 @@ public partial class IslandWindow
             values.FontSize = column ? metrics.StripValue : metrics.Value; values.UnitSize = column ? metrics.StripUnit : metrics.Unit;
             values.Pair = data.Choices.QuotaMultiple == "pair";
             values.MaximumDisplayWidth = column ? Math.Max(16, metrics.StripWidth - 6) : double.PositiveInfinity;
+            // One unit shared by every value sits in its own line under them; mixed units travel with their values.
             values.Update(quota.Entries.Select(entry => new AlternatingQuotaText.Item(entry.Provider, column ? entry.StripText : entry.Text,
-                entry.Dimmed, entry.Low == true)).ToArray(), DecorationsAnimate);
+                entry.Dimmed, entry.Low == true, column && quota.StripUnit == null ? entry.StripUnit : null)).ToArray(), DecorationsAnimate);
             if (column)
             {
                 compactStripQuotaUnit.FontSize = metrics.StripUnit; compactStripQuotaUnit.Text = quota.StripUnit ?? "";
