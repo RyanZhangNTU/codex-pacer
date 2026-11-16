@@ -52,8 +52,19 @@ internal static class GuidePageChecks
             Check(notch.IsChecked == true && free.IsChecked == false, "Choosing the island mode saves at once");
             Select(free); await Until(() => session.Current.DisplayMode == "floating" && notch.IsEnabled && free.IsEnabled);
             Capture(window.ClientContent, Path.Combine(output, "pages-welcome-2-" + language + (dark ? "-dark" : "-light") + ".png"));
+            // A service not found on this computer folds below the others. Its disclosure style comes from the
+            // guide window's resources; looking it up in the application's crashed every such onboarding.
+            snapshot = engine.LatestSnapshot! with { Modules = new[] { new EngineModule("codex", "automatic", true, true, Prominent: true),
+                new EngineModule("claude", "automatic", true, true, Prominent: true), new EngineModule("deepseek", "automatic", true, true, Prominent: true),
+                new EngineModule("workbuddy-ai", "automatic", false, false, DisplayName: "WorkBuddy AI", Prominent: false) } };
             Invoke(Find<Button>(window, "welcome.next")); await Pump();
             Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(2), "Continue reaches the services page");
+            var more = Find<Expander>(window, "welcome.modules.more");
+            Check(!more.IsExpanded && more.Style == window.FindResource("SettingsDisclosure")
+                && (string)more.Header == ui.Text("welcome.modules.more").Replace("%ld", "1", StringComparison.Ordinal), "Services not found here fold under a styled disclosure");
+            more.IsExpanded = true; await Pump();
+            Check(Has(window, "welcome.module.workbuddy-ai"), "Opening the fold shows the services not found here");
+            more.IsExpanded = false; await Pump();
             foreach (string provider in new[] { "codex", "claude", "deepseek" })
             {
                 var toggle = Find<CheckBox>(window, "welcome.module." + provider); Toggle(toggle);

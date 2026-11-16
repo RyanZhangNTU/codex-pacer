@@ -291,8 +291,10 @@ internal sealed class GuideContent : StackPanel
                 Children.Add(ModuleCards(shown));
                 if (folded.Length > 0)
                 {
+                    // The disclosure style lives in the guide window's own resources, not the application's.
                     var more = new Expander { Header = ui.Text("welcome.modules.more").Replace("%ld", folded.Length.ToString(System.Globalization.CultureInfo.CurrentCulture), StringComparison.Ordinal),
-                        Style = (Style)Application.Current.FindResource("SettingsDisclosure"), IsExpanded = false, Margin = new Thickness(0, 14, 0, 0) };
+                        IsExpanded = false, Margin = new Thickness(0, 14, 0, 0) };
+                    more.SetResourceReference(FrameworkElement.StyleProperty, "SettingsDisclosure");
                     var inner = ModuleCards(folded); inner.Margin = new Thickness(0, 10, 0, 0); more.Content = inner;
                     Identify(more, "welcome.modules.more", (string)more.Header);
                     Children.Add(more);
