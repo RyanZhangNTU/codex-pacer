@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.5.1
+
+- Mac and Windows: Pacer stays connected to the Codex app again after its 26.1111 update. That update changed how the Codex app reports a task's state, so Pacer kept reconnecting. Settings showed the local Codex source as "Not connected, retrying", approvals for Codex app tasks raised no alert, and Remote Control tasks didn't appear. Tasks, progress and quota were not affected. Pacer also reads later versions of these reports, so a similar Codex update shouldn't cut the connection again.
+
 ## 4.5.0
 
 - Add WorkBuddy and its international edition, WorkBuddy AI, on Mac and Windows. Each is its own module with its own page, account, sign-in and data folder, and turns on once Pacer finds the app. Pacer follows their tasks and titles, shows what a task is doing and when it waits for you, and draws the progress ring, which is on by default. A small floating guide shows each click in WorkBuddy to turn the ring on, and asks to restart WorkBuddy when it needs to.
