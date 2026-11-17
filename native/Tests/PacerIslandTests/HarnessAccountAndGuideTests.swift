@@ -91,4 +91,39 @@ final class HarnessAccountAndGuideTests: XCTestCase {
         XCTAssertFalse(float.isShowing)
         XCTAssertNil(float.provider)
     }
+
+    func testGuideFloatSaysDoneOnceReadyInsteadOfItsWaitingWords() throws {
+        func guide(_ connection: LocalHarnessProgressConnection, reported: Bool = false, app: HarnessProgressGuide.AppPresence? = nil,
+                   opened: Bool = false, addedAt: Date? = nil) throws -> HarnessProgressGuide {
+            try XCTUnwrap(HarnessProgressGuide(setup: .configured, connection: connection, reported: reported, ringOn: true,
+                                               name: "WorkBuddy", addedAt: addedAt, app: app, openedConnectors: opened))
+        }
+        let added = Date()
+        let firstTrust = try guide(.trusted)
+        // A restart lands here when the tool was trusted and reported before (11/17).
+        let ready = try guide(.trusted, reported: true, app: .running(since: added.addingTimeInterval(60)), addedAt: added)
+        XCTAssertEqual(ready.stage, .ready)
+        let done = try XCTUnwrap(HarnessGuideFloat.appStep(ready, provider: .workbuddy), "Ready says it's done, not that it's still restarting")
+        XCTAssertEqual(done.title, firstTrust.floatTitle, "The same words as after a first trust")
+        XCTAssertNil(done.next)
+        XCTAssertTrue(HarnessGuideFloat.keepsPending(nil, provider: .workbuddy), "No guide yet: the float keeps waiting")
+
+        // The app's own click passes through unchanged.
+        let opening = try guide(.needsTrust, app: .running(since: added), opened: true)
+        XCTAssertEqual(HarnessGuideFloat.appStep(opening, provider: .workbuddy)?.title, opening.floatTitle)
+        XCTAssertEqual(HarnessGuideFloat.appStep(opening, provider: .workbuddy)?.next, opening.floatNext)
+
+        // The waiting words hold while the app restarts or opens, and only then.
+        let reopen = try guide(.needsTrust, app: .running(since: added.addingTimeInterval(-60)), addedAt: added)
+        XCTAssertEqual(reopen.stage, .reopen)
+        XCTAssertNil(HarnessGuideFloat.appStep(reopen, provider: .workbuddy))
+        XCTAssertTrue(HarnessGuideFloat.keepsPending(reopen, provider: .workbuddy))
+        XCTAssertTrue(HarnessGuideFloat.keepsPending(try guide(.needsTrust, app: .notRunning), provider: .workbuddy))
+        XCTAssertTrue(HarnessGuideFloat.keepsPending(try guide(.needsTrust, app: .running(since: added)), provider: .workbuddy))
+        // A problem past the restart has no click in the app: the float closes and the card says what to do.
+        let off = try guide(.disabled)
+        XCTAssertNil(HarnessGuideFloat.appStep(off, provider: .workbuddy))
+        XCTAssertFalse(HarnessGuideFloat.keepsPending(off, provider: .workbuddy))
+        XCTAssertFalse(HarnessGuideFloat.keepsPending(try guide(.unknown), provider: .workbuddy))
+    }
 }
