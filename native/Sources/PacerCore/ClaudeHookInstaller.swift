@@ -161,9 +161,14 @@ public struct ClaudeHookInstaller {
         }
         if hooks.isEmpty { value.removeValue(forKey: "hooks") } else { value["hooks"] = hooks }
         try setPlugin(&value, manifest: &manifest, wanted: false, home: home)
-        var env = value["env"] as? [String: String] ?? [:]
-        for (key, setting) in manifest["addedEnvironment"] as? [String: String] ?? [:] where env[key] == setting { env.removeValue(forKey: key) }
-        if env.isEmpty { value.removeValue(forKey: "env") } else { value["env"] = env }
+        if var env = value["env"] as? [String: Any],
+           let added = manifest["addedEnvironment"] as? [String: String] {
+            let originalCount = env.count
+            for (key, setting) in added where (env[key] as? String) == setting {
+                env.removeValue(forKey: key)
+            }
+            if env.count != originalCount { value["env"] = env.isEmpty ? nil : env }
+        }
         let lineCommand = (value["statusLine"] as? [String: Any])?["command"] as? String
         if ownsStatusLine(lineCommand, home: home) {
             if let previous = manifest["previousStatusLine"], !(previous is NSNull) { value["statusLine"] = previous } else { value.removeValue(forKey: "statusLine") }
