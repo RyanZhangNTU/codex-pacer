@@ -77,7 +77,10 @@ internal static class ExpandedPanelChecks
             window.SelectPanelBlock("tasks"); await Pump();
             Select(Find<RadioButton>(window, "panel.option.pageSize.5"));
             await Until(() => engine.LatestSnapshot?.Presentation?.PageSize == 5);
-            Select(Find<RadioButton>(window, "panel.option.rowStyle.oneLine"));
+            // The page keeps its choices disabled until the previous one has saved.
+            var oneLine = Find<RadioButton>(window, "panel.option.rowStyle.oneLine");
+            await Until(() => oneLine.IsEnabled);
+            Select(oneLine);
             await Until(() => Descendants(island).OfType<TaskRow>().Any() && Descendants(island).OfType<TaskRow>().All(row => row.Height == TaskRow.OneLineHeight));
             await island.WaitForPresentationAsync();
             int rows = Math.Min(5, engine.LatestSnapshot!.Presentation!.Rows.Count);
@@ -89,7 +92,9 @@ internal static class ExpandedPanelChecks
 
             // Unchecked buttons leave the header for the More menu.
             window.SelectPanelBlock("actions"); await Pump();
-            Toggle(Find<CheckBox>(window, "panel.option.action.pin"));
+            var pinSwitch = Find<CheckBox>(window, "panel.option.action.pin");
+            await Until(() => pinSwitch.IsEnabled);
+            Toggle(pinSwitch);
             await Until(() => ((Button)island.FindName("PinButton")).Visibility == Visibility.Collapsed);
             var menu = ((Button)island.FindName("MoreButton")).ContextMenu;
             Check(menu.Items.OfType<MenuItem>().Any(item => AutomationProperties.GetAutomationId(item) == "island.menu.pin")
@@ -104,7 +109,9 @@ internal static class ExpandedPanelChecks
                 && AutomationProperties.GetName(recenter) == recenterName && menu.Items.OfType<MenuItem>().All(item => !Equals(item.Header, recenterName)),
                 "Return to Top Center starts off and stays out of the More menu");
             island.SaveIslandPlacement = edit => session.ChangeAsync(edit);
-            Toggle(Find<CheckBox>(window, "panel.option.action.recenter"));
+            var recenterSwitch = Find<CheckBox>(window, "panel.option.action.recenter");
+            await Until(() => recenterSwitch.IsEnabled);
+            Toggle(recenterSwitch);
             await Until(() => recenter.Visibility == Visibility.Visible && session.Current.ExpandedPanelOptions?.Contains("\"recenter\"", StringComparison.Ordinal) == true);
             Check(!recenter.IsEnabled && Descendants(Find<Button>(window, "panel.editor.actions")).OfType<IconGlyph>().Any(glyph => glyph.Symbol == "arrow.up.to.line")
                 && menu.Items.OfType<MenuItem>().All(item => !Equals(item.Header, recenterName)),
