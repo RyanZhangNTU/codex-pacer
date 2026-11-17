@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "a4f38d1bb2a926f719780b8a762b749d5fe0a11f38e48c416c79d4f85746fa15",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "077fcc0ff2079c468d2af9f3982ed6367d90beca8056f661b861bfba9913e8b8",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -211,6 +211,7 @@
     "claude.quota.source_web": "Claude web sign-in",
     "claude.quota.timed_out": "Reading Claude usage timed out. Try again.",
     "claude.quota.unavailable": "Claude usage is unavailable.",
+    "claude.quota.web_blocked": "You're signed in, but claude.ai is still blocking Pacer on this network. Try another network, or turn off your VPN or proxy.",
     "claude.quota.web_challenge": "Open Claude sign-in to complete the website's verification.",
     "claude.telemetry.kept_existing": "Kept your existing telemetry settings. TPS is estimated.",
     "claude.telemetry.managed": "Telemetry is managed by your organization. TPS is estimated.",

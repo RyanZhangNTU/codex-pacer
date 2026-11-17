@@ -39,6 +39,18 @@ internal class ProviderBrowserPage : IDisposable
         }
         catch { Dispose(); throw; }
     }
+    private Uri? reader;
+    /// A kept page becomes a reader once and stays one: its request filter and
+    /// navigation lock belong to one document, and a second reader would stack them.
+    internal async Task UseReader(Func<Uri> blank, CancellationToken cancellation)
+    {
+        if (reader != null)
+        {
+            if (Core.Source == reader.AbsoluteUri) return;
+            throw new IOException("The reader page left its document.");
+        }
+        reader = blank(); await NavigateReader(reader, cancellation);
+    }
     internal async Task NavigateReader(Uri blank, CancellationToken cancellation)
     {
         Core.Settings.IsScriptEnabled = false; Core.Settings.AreDefaultContextMenusEnabled = false;

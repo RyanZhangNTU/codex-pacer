@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "1cfba9cb51d3734ebc4c2a04db0e04cd58b7c9f23bb82c776a90edb07aa6c150",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "156cd2fdbc76443dde219a37d1aa7b4dee9402419430af1b46a53e53b60bb258",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -211,6 +211,7 @@
     "claude.quota.source_web": "Claude \u7f51\u9875\u767b\u5f55",
     "claude.quota.timed_out": "\u8bfb\u53d6 Claude \u989d\u5ea6\u8d85\u65f6\uff0c\u8bf7\u91cd\u8bd5\u3002",
     "claude.quota.unavailable": "Claude \u989d\u5ea6\u6682\u4e0d\u53ef\u7528\u3002",
+    "claude.quota.web_blocked": "\u5df2\u7ecf\u767b\u5f55\uff0c\u4f46\u5f53\u524d\u7f51\u7edc\u4e0b claude.ai \u4ecd\u5728\u62e6\u622a Pacer\u3002\u53ef\u4ee5\u6362\u4e2a\u7f51\u7edc\uff0c\u6216\u5173\u95ed VPN\uff0f\u4ee3\u7406\u540e\u518d\u8bd5\u3002",
     "claude.quota.web_challenge": "\u8bf7\u6253\u5f00 Claude \u767b\u5f55\u7a97\u53e3\uff0c\u624b\u52a8\u5b8c\u6210\u7f51\u9875\u9a8c\u8bc1\u3002",
     "claude.telemetry.kept_existing": "\u5df2\u4fdd\u7559\u4f60\u73b0\u6709\u7684\u9065\u6d4b\u8bbe\u7f6e\uff0cTPS \u4e3a\u4f30\u7b97\u503c\u3002",
     "claude.telemetry.managed": "\u9065\u6d4b\u8bbe\u7f6e\u7531\u4f60\u7684\u7ec4\u7ec7\u7ba1\u7406\uff0cTPS \u4e3a\u4f30\u7b97\u503c\u3002",

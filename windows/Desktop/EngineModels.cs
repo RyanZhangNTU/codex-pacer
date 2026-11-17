@@ -61,7 +61,8 @@ internal sealed record DeepSeekConnection(string Context, string Source, string?
 internal sealed record DeepSeekBalanceStatus(string Message, string Tone, IReadOnlyList<QuotaConnectionAction> Actions);
 internal sealed record ProviderHomeReport(string Provider, string Home, string EffectiveHome, string? Issue, bool Readable, string? DefaultHome = null);
 internal sealed record DeepSeekConnectionReading(string Title, string Text, string Color, string DetectedText, bool Connected, bool KeyEditor, bool ShowDetection, string? Action, string? ActionLabel);
-internal sealed record EngineHostRequest(string RequestID, string Context, bool Cancelled);
+/// <param name="Path">A Claude page read's claude.ai path; null for a cookie or balance request.</param>
+internal sealed record EngineHostRequest(string RequestID, string Context, bool Cancelled, string? Path = null);
 internal sealed record CompactWarningItem(string Kind, string? Provider, bool Solid, string? Label, string? Symbol, string Help);
 
 internal sealed record EngineTask(

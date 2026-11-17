@@ -191,6 +191,12 @@ Writes:
 - Before showing the site, the host records the current session's one-way fingerprint. A changed fingerprint confirms sign-in and closes the window after 1.5 seconds; an unchanged session keeps its history and workspace. A browser-process failure never completes sign-in. Navigation and a one-second timer are watched only while the window is open.
 - A new session revokes old quota reads before the profile can change. Claude clears the saved organization only for a new session. DeepSeek passes an optional `webNewSession` flag; omitting it keeps the older protocol behavior.
 - Sign-out cancels reads before clearing the owned profile; a failed clear stays paused.
+- Claude's quota reads run in Claude's own profile, the browser that passed claude.ai's verification. Cloudflare had challenged the engine's WinHTTP client again after every sign-in (#243). How a read works:
+  - The host announces `webFetch` with `setClaudeWebHost`. The engine then sends each read as a `claude.fetch` host request.
+  - A blank claude.ai reader document fetches it. That document may make only the account, organizations and usage GETs.
+  - The reply (`claudeFetchResult`) carries the status, `Content-Type`, `cf-mitigated`, `Retry-After` and at most 40 KB of body. The engine decodes it as its own response.
+  - A host without `webFetch` keeps the engine's client. Cloud project reads still use it.
+- When the host reports a completed sign-in (`resetClaudeConnection` with `signedIn`) and a challenge still comes before any read succeeds, the message names the network instead of asking for another sign-in.
 - The `web` and `deepseek` presentation groups and `DeepSeekOptionPersistenceChecks` use intercepted pages and synthetic profiles.
 
 ## System notifications

@@ -24,6 +24,9 @@ struct EngineCommand: Decodable {
         var claudeHome: String?
         var claudeOrganization: String?
         var claudeSession: ClaudeWebSessionReply?
+        var claudeFetch: ClaudeWebFetchReply?
+        var webFetch: Bool?
+        var signedIn: Bool?
         var requestID: String?
         var context: String?
         var notificationAction: String?

@@ -58,7 +58,7 @@ WorkBuddy settings and Overview can show context and credits for the latest sess
 
 ## HTTP through WinHTTP
 
-On Windows, FoundationNetworking's URLSession keeps one worker thread busy for as long as a response stays open: libdispatch re-signals a libcurl socket write source each time it is armed, and `_SocketSources` cancels it only when libcurl removes the socket. Claude's cloud message streams stay open (up to four project and six thread streams) and cloud polling sends up to 16 requests every 30 seconds, so the engine uses WinHTTP's asynchronous API instead, through `WindowsHTTPStream`.
+On Windows, FoundationNetworking's URLSession keeps one worker thread busy for as long as a response stays open: libdispatch re-signals a libcurl socket write source each time it is armed, and `_SocketSources` cancels it only when libcurl removes the socket. Claude's cloud message streams stay open (up to four project and six thread streams) and cloud polling sends up to 16 requests every 30 seconds, so the engine uses WinHTTP's asynchronous API instead, through `WindowsHTTPStream`. Claude's quota reads go through the host's private browser when it offers them ([web sign-in](windows-shell.md#web-sign-in)); WinHTTP remains their fallback.
 
 | Client | Used for | Limits |
 | --- | --- | --- |
