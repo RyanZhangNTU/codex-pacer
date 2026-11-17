@@ -261,6 +261,7 @@ struct SettingsExpandedPanelPane: View {
         var symbols: [String] = showsAppButtons ? ["square.grid.2x2"] : []
         if options.headerActions.contains(.markRead) { symbols.append("checkmark.rectangle.stack") }
         if options.headerActions.contains(.pin) { symbols.append("pin") }
+        if options.headerActions.contains(.recenter) { symbols.append("arrow.up.to.line") }
         if options.headerActions.contains(.settings) { symbols.append("gearshape") }
         symbols.append("ellipsis")
         return Button { selection = .actions } label: {
@@ -427,6 +428,7 @@ struct SettingsExpandedPanelPane: View {
             switchRow(L10n.text("panel.action.apps"), isOn: $showsAppButtons)
             switchRow(L10n.text("panel.action.markRead"), isOn: action(.markRead))
             switchRow(L10n.text("panel.action.pin"), isOn: action(.pin))
+            switchRow(L10n.text("panel.action.recenter"), help: L10n.text("panel.action.recenter_help"), isOn: action(.recenter))
             switchRow(L10n.text("panel.action.settings"), isOn: action(.settings))
         }
     }
