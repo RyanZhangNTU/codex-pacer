@@ -122,7 +122,7 @@ public partial class IslandWindow : Window
         TasksTitle.Text = ui.Text("layout.group.tasks"); QuotaTitle.Text = ui.Text("layout.group.quota_balance"); DemoLabel.Text = ui.Text("demo.label");
         SetButtonName(MarkReadButton, ui.Text("activity.mark_all_read")); SetButtonName(PinButton, ui.Text("common.pin")); SetButtonName(MoreButton, ui.Text("common.more"));
         SetButtonName(PreviousPage, ui.Text("activity.previous_page")); SetButtonName(NextPage, ui.Text("activity.next_page"));
-        SetButtonName(SettingsButton, ui.Text("common.settings"));
+        SetButtonName(SettingsButton, ui.Text("common.settings")); SetButtonName(RecenterButton, ui.Text("appearance.position_reset"));
         AutomationProperties.SetName(ExpandedScroll, ui.Text("activity.task_list"));
         RefreshMenu.Header = ui.Text("common.refresh"); QuitMenu.Header = ui.Text("common.quit"); SettingsMenu.Header = ui.Text("common.settings");
         InitializeMove();
@@ -324,7 +324,7 @@ public partial class IslandWindow : Window
             deepseekPanelStyle = preferences.DeepSeekPanelStyle;
             InvalidatePanel(rebuildRows: false);
         }
-        UpdateAppButtons(); UpdateCompactBar();
+        UpdateAppButtons(); UpdateCompactBar(); ApplyHeaderActions();
         if (!MoreButton.ContextMenu.IsOpen) BuildMoreMenu();
         // Turning the memory on records the current display's place.
         if ((screenChanged || memoryTurnedOn) && PresentationSource.FromVisual(this) != null && screenGeometry == null) QueueDisplayRefresh(force: true);
@@ -404,6 +404,19 @@ public partial class IslandWindow : Window
     private void OnQuit(object sender, RoutedEventArgs e) => QuitRequested?.Invoke();
     private void OnSettings(object sender, RoutedEventArgs e)
     { DismissForSettings(); SettingsRequested?.Invoke(); }
+    /// Return to Top Center from the panel: the same change as Settings' button,
+    /// so each display's remembered place follows it too.
+    private async void OnRecenter(object sender, RoutedEventArgs e)
+    {
+        if (presentationStopped || updateInputSuspended || !expanded || move != null || displayedPlacement != null
+            || !RecenterButton.IsVisible || !RecenterButton.IsEnabled || SaveIslandPlacement is not { } save) return;
+        RecordInteraction("recenter");
+        PreferencesApplyResult result;
+        try { result = await save(previous => previous with { IslandPlacement = null, Position = "center", PositionChosen = false, DisplayMode = "floating" }); }
+        catch (Exception error) when (error is not OutOfMemoryException) { result = PreferencesApplyResult.EngineFailed; }
+        if (presentationStopped || result == PreferencesApplyResult.Applied) return;
+        SetStatus(ui.Text(result == PreferencesApplyResult.SaveFailed ? "windows.settings.save_failed" : "windows.settings.apply_failed"));
+    }
     internal void DismissForSettings()
     { CancelMove(); MoreButton.ContextMenu.IsOpen = false; SetPinned(false); SetExpanded(false); }
     private void OnMore(object sender, RoutedEventArgs e)

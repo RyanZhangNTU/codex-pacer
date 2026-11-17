@@ -203,7 +203,7 @@ internal static class AccessibilityChecks
             .Where(element => element.ToolTip != null && element != toolbar && !toolbar.IsAncestorOf(element))
             .Select(element => element.GetType().Name + ":" + AutomationProperties.GetAutomationId(element)).ToArray();
         Check(stray.Length == 0, "Only the first toolbar row shows hover tooltips (" + state + "): " + string.Join(", ", stray));
-        Check(new[] { "PreviousPage", "NextPage", "MarkReadButton", "PinButton", "SettingsButton", "MoreButton" }
+        Check(new[] { "PreviousPage", "NextPage", "MarkReadButton", "PinButton", "RecenterButton", "SettingsButton", "MoreButton" }
             .All(name => ((Button)window.FindName(name)).ToolTip is string { Length: > 0 }), "The first toolbar row keeps its button tooltips (" + state + ")");
         var row = SelfAndDescendants(window).OfType<TaskRow>().FirstOrDefault();
         Check(row == null || AutomationProperties.GetHelpText(row).Length > 0, "Task rows keep their open help for screen readers (" + state + ")");

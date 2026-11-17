@@ -279,13 +279,14 @@ internal sealed partial class SettingsWindow
         week.Children.Add(Switch("weekLine", "main.panel.week_line", "main.panel.week_line_help", value => ChoosePanel("weekLine", value)));
         panelInspectorPanels["deepseekWeek"] = week; body.Children.Add(week);
 
-        // The header's buttons; Open apps keeps its own setting. Those turned off move into ⋯.
+        // The header's buttons; Open apps keeps its own setting. Those turned off move into ⋯,
+        // except the opt-in Return to Top Center, which then stays in Settings alone.
         var actions = new StackPanel();
         actions.Children.Add(Switch("action.apps", "panel.action.apps", null, value => Change(p => p with { ShowAppButtons = value })));
-        foreach (string action in new[] { "markRead", "pin", "settings" })
-            actions.Children.Add(Switch("action." + action, "panel.action." + action, null, _ =>
+        foreach (string action in PanelOptions.Actions)
+            actions.Children.Add(Switch("action." + action, "panel.action." + action, action == "recenter" ? "panel.action.recenter_help" : null, _ =>
             {
-                var chosen = new[] { "markRead", "pin", "settings" }
+                var chosen = PanelOptions.Actions
                     .Where(name => panelSwitches.TryGetValue("action." + name, out var check) && check.IsChecked == true).ToArray();
                 return ChoosePanel("headerActions", chosen);
             }));
@@ -473,7 +474,7 @@ internal sealed partial class SettingsWindow
         Pick("dial", options.DeepseekDial); Flip("peak", options.DeepseekPeak);
         Pick("spendTasks", options.SpendTasks == 4 ? "4" : "2"); Flip("elsewhere", options.SpendElsewhere); Flip("weekLine", options.WeekLine);
         Flip("action.apps", preferences.ShowAppButtons);
-        foreach (string action in new[] { "markRead", "pin", "settings" }) Flip("action." + action, options.InHeader(action));
+        foreach (string action in PanelOptions.Actions) Flip("action." + action, options.InHeader(action));
     }
 
     private string BlockProviderName(string block) => block switch
@@ -537,6 +538,7 @@ internal sealed partial class SettingsWindow
         if (apps) Icon("square.grid.2x2");
         if (options.InHeader("markRead")) Icon("checkmark.rectangle.stack");
         if (options.InHeader("pin")) Icon("pin");
+        if (options.InHeader("recenter")) Icon("arrow.up.to.line");
         if (options.InHeader("settings")) Icon("gearshape");
         Icon("ellipsis");
         var accent = new SolidColorBrush(Color.FromRgb(10, 132, 255));
