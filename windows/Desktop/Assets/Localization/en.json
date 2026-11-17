@@ -592,7 +592,6 @@
     "harness.account.total": "Credits across packs: %@",
     "harness.account.unavailable": "Couldn’t read account credits. Try refreshing or signing in again.",
     "harness.account_row": "Account",
-    "harness.account_usage_help": "Where to check account usage",
     "harness.context": "Latest session context: %1$@ / %2$@ tokens",
     "harness.credit_unit": "credits",
     "harness.credit_unit_single": "credit",

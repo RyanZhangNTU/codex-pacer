@@ -15,7 +15,6 @@ A Harness is the app that runs a task and keeps its conversation. Codex, Claude 
 | `balance` | `quotaWindows` (Codex, Claude), `wallet` (DeepSeek) or `accountCredits` (WorkBuddy). Code asks for a kind, never for a list of IDs. |
 | `hasTaskProgress`, `hasRateDisplay`, `reportsSessionUsage`, `progressConnector` | Capabilities. |
 | `accountCredits` | Sign-in sites, the bill request and the summary script, for account credits. |
-| `usageGuide` | The service's own usage documentation. |
 
 `HarnessRegistry.ids(where:)` answers capability questions (`\.hasQuotaWindows`, `\.reportsAccountCredits`). `legacyIDs` remains only where the three original collectors need their own orchestration, such as `ApplicationLifecycleCoordinator`'s refresh order.
 
