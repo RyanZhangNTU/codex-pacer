@@ -26,6 +26,7 @@ internal sealed class EngineClient : IAsyncDisposable
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement?>> pending = new();
     private readonly TimeSpan commandTimeout;
     private Process? process;
+    private EngineChild? launched;
     private OwnedJob? job;
     private Task? reading, drainingErrors;
     private EngineCrashLog? crashLog;
@@ -49,6 +50,8 @@ internal sealed class EngineClient : IAsyncDisposable
     internal EngineSnapshot? LatestSnapshot => Volatile.Read(ref latestSnapshot);
     internal bool IsInitialized => initialized;
     internal int? ProcessId => process?.Id;
+    /// <summary>True when this engine was started with its low addresses reserved; see <see cref="EngineLaunch"/>.</summary>
+    internal bool IsAddressGuarded => launched?.Guarded == true;
     internal bool IsConnectionClosed => disposing || connectionClosed;
     internal event Action<EngineSnapshot>? Snapshot;
     internal event Action<string>? Status;
@@ -57,7 +60,7 @@ internal sealed class EngineClient : IAsyncDisposable
 
     internal EngineClient(TimeSpan? commandTimeout = null) => this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
 
-    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null, EngineCrashLog? crashLog = null)
+    internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null, EngineCrashLog? crashLog = null, bool? addressGuard = null)
     {
         if (process != null) throw new InvalidOperationException("Engine already started.");
         this.crashLog = crashLog;
@@ -107,12 +110,12 @@ internal sealed class EngineClient : IAsyncDisposable
         job = new OwnedJob();
         try
         {
-            process = Process.Start(start) ?? throw new IOException("Could not start PacerEngine.");
+            // The engine joins the job as it starts, and starts no collectors before the initialize handshake.
+            launched = EngineLaunch.Start(start, job, addressGuard);
+            process = launched.Process;
             running.Start();
-            // The engine starts no collectors before the initialize handshake.
-            job.Attach(process);
-            reading = ReadAsync(process.StandardOutput.BaseStream);
-            drainingErrors = DrainErrorsAsync(process.StandardError.BaseStream);
+            reading = ReadAsync(launched.Output);
+            drainingErrors = DrainErrorsAsync(launched.Errors);
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(10), lifetime.Token);
             await SendAsync("initialize", configuration);
             initialized = true;
@@ -147,7 +150,7 @@ internal sealed class EngineClient : IAsyncDisposable
     private async Task<JsonElement?> RequestAsync(string method, object? parameters, TimeSpan? timeout = null, CancellationToken cancellation = default)
     {
         if (!initialized && method != "initialize" && method != "shutdown") throw new IOException("Engine is initializing.");
-        if (process is not { HasExited: false } child) throw new IOException("Engine is not running.");
+        if (process is not { HasExited: false } || launched?.Input is not { } input) throw new IOException("Engine is not running.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, cancellation);
         deadline.CancelAfter(timeout ?? commandTimeout);
         string id = Interlocked.Increment(ref request).ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -177,9 +180,9 @@ internal sealed class EngineClient : IAsyncDisposable
             await writing.WaitAsync(deadline.Token).ConfigureAwait(false);
             try
             {
-                await child.StandardInput.BaseStream.WriteAsync(frame, deadline.Token).ConfigureAwait(false);
-                await child.StandardInput.BaseStream.WriteAsync(new byte[] { 10 }, deadline.Token).ConfigureAwait(false);
-                await child.StandardInput.BaseStream.FlushAsync(deadline.Token).ConfigureAwait(false);
+                await input.WriteAsync(frame, deadline.Token).ConfigureAwait(false);
+                await input.WriteAsync(new byte[] { 10 }, deadline.Token).ConfigureAwait(false);
+                await input.FlushAsync(deadline.Token).ConfigureAwait(false);
             }
             finally { writing.Release(); }
             return await response.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
@@ -369,7 +372,7 @@ internal sealed class EngineClient : IAsyncDisposable
         {
             try
             {
-                await SendAsync("shutdown"); child.StandardInput.Close();
+                await SendAsync("shutdown"); launched?.CloseInput();
                 await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2));
             }
             catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException) { }
@@ -379,7 +382,7 @@ internal sealed class EngineClient : IAsyncDisposable
         if (process is { HasExited: false } remaining) remaining.Kill();
         if (reading != null) { try { await reading; } catch (IOException) { } }
         if (drainingErrors != null) { try { await drainingErrors; } catch (IOException) { } }
-        process?.Dispose(); process = null;
+        launched?.Dispose(); launched = null; process = null;
     }
 }
 

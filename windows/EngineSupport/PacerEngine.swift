@@ -11,6 +11,7 @@ public enum PacerEngine {
         // First, so a failure anywhere below leaves a report.
         WindowsCrashReport.install()
         if WindowsCrashReport.diagnose() { return }
+        if WindowsLowAddressDiagnostic.run() { return }
         #endif
         WindowsResources.configure()
         #if os(Windows)
