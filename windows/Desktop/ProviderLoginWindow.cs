@@ -140,8 +140,9 @@ internal class ProviderLoginWindow : Window
             var runtime = await environment.WaitAsync(cancellation);
             await page.Initialize(runtime, cancellation); fixture?.Invoke(page.Core); Configure(page, this);
             RefreshBrowserTheme();
-            await page.Navigate(new Uri(provider.Origin, provider.LoginPath), cancellation);
+            // The checks start whatever the first page does, so a sign-in after Refresh still completes.
             readingSince = DateTime.UtcNow; observer.Start();
+            await page.Navigate(new Uri(provider.Origin, provider.LoginPath), cancellation);
             // A reading waits for the first interval, as on the Mac, so it doesn't race the page's own load.
             if (!provider.ConfirmByReading) await ObserveAsync();
         }
@@ -257,9 +258,12 @@ internal class ProviderLoginWindow : Window
         browser.Core.SourceChanged += (_, _) => { if (ReferenceEquals(browser, page) && browser.IsUsable) Title = TitleFor(Host(browser.Core.Source)); };
         browser.Core.NavigationCompleted += (_, e) =>
         {
-            if (ReferenceEquals(browser, page) && !e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled && phase == Phase.Prompt)
+            if (!ReferenceEquals(browser, page)) return;
+            // A navigation the page replaced is not a failure, and a page that loads afterwards clears one.
+            if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled && !browser.Loading && phase == Phase.Prompt)
                 Present(Phase.LoadFailed);
-            if (e.IsSuccess && ReferenceEquals(browser, page) && !provider.ConfirmByReading) _ = ObserveAsync();
+            else if (e.IsSuccess && phase == Phase.LoadFailed) Present(Phase.Prompt);
+            if (e.IsSuccess && !provider.ConfirmByReading) _ = ObserveAsync();
         };
         browser.Core.WindowCloseRequested += (_, _) => window.Close();
         browser.Core.ProcessFailed += (_, _) => { if (!closed && ReferenceEquals(browser, page) && phase == Phase.Prompt) Present(Phase.LoadFailed); };
