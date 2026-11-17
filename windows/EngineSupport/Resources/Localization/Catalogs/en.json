@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "400b0ba0f0bcfcf2dbc0f46747d10873b9321b7a2cebe6eb251f4a5ba798ed3c",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "77b298c94851fb43f20859441263ce7df0700ba1354777b6c69a4b419d03996b",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -1111,6 +1111,8 @@
     "panel.action.apps": "Open apps",
     "panel.action.markRead": "Mark all as read",
     "panel.action.pin": "Keep expanded",
+    "panel.action.recenter": "Return to Top Center",
+    "panel.action.recenter_help": "Shows while Free Move is on.",
     "panel.action.settings": "Settings",
     "panel.block.actions": "Buttons",
     "panel.block.claude": "Claude Quota",
