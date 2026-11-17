@@ -21,11 +21,11 @@ struct SettingsHarnessSections: View {
         MainCard(title: L10n.text("main.section.status")) {
             dataRow
             if let connection = model.harnessAccount(provider) {
-                HarnessAccountRow(connection: connection, usageGuide: descriptor.usageGuide)
+                HarnessAccountRow(connection: connection)
             }
         }
         if let connection = model.harnessAccount(provider) {
-            HarnessCreditsCard(connection: connection, settings: model.creditSettings(provider), usageGuide: descriptor.usageGuide, now: model.now)
+            HarnessCreditsCard(connection: connection, settings: model.creditSettings(provider), now: model.now)
         }
         // While the ring needs steps or has a problem, its card stands alone;
         // ready or off, it is one row like any other service's ring.
@@ -90,11 +90,10 @@ struct SettingsHarnessSections: View {
 }
 
 /// Sign-in reads as a status with the plan; a button appears only when
-/// signing in is needed. Refresh, the usage page, switching and signing
-/// out wait in the row's menu, as on Claude's page.
+/// signing in is needed. Refresh, switching and signing out wait in the
+/// row's menu, as on Claude's page.
 private struct HarnessAccountRow: View {
     @ObservedObject var connection: HarnessAccountConnection
-    let usageGuide: URL?
 
     var body: some View {
         let reading = connection.reading
@@ -114,9 +113,6 @@ private struct HarnessAccountRow: View {
                 } else {
                     Menu {
                         Button(L10n.text("common.refresh")) { connection.refresh() }
-                        if let usageGuide {
-                            Button(L10n.text("harness.account_usage_help")) { NSWorkspace.shared.open(usageGuide) }
-                        }
                         Divider()
                         Button(L10n.text("harness.account.switch")) { connection.connect(switching: true) }
                         Button(L10n.text("harness.account.sign_out")) { connection.disconnect() }
@@ -132,12 +128,12 @@ private struct HarnessAccountRow: View {
     }
 }
 
-/// The credits block: the 104 pt dial beside its lines, the breakdown by
-/// how each group behaves behind ⓘ, then where the service shows usage.
+/// The credits block: the 104 pt dial beside its lines, then the breakdown
+/// by how each group behaves behind ⓘ. The lines run to the card's edge, as
+/// the breakdown below them does.
 private struct HarnessCreditsCard: View {
     @ObservedObject var connection: HarnessAccountConnection
     let settings: HarnessCreditsSettings
-    let usageGuide: URL?
     let now: Date
     @State private var showsInfo = false
     @Environment(\.colorScheme) private var colorScheme
@@ -149,8 +145,7 @@ private struct HarnessCreditsCard: View {
             MainCard(title: L10n.text("harness.credits")) {
                 HStack(alignment: .center, spacing: 20) {
                     CreditsDial(dial: presentation.dial, tint: tint, size: 104, stale: connection.state == .unavailable, island: false)
-                    CreditsLines(presentation: presentation, tint: tint, island: false).environment(\.creditLinesCap, 340)
-                    Spacer(minLength: 0)
+                    CreditsLines(presentation: presentation, tint: tint, island: false)
                 }
                 .padding(.vertical, 12)
                 if !presentation.sections.isEmpty {
@@ -167,17 +162,7 @@ private struct HarnessCreditsCard: View {
                     }
                     .padding(.vertical, 12)
                 }
-                if let usageGuide { usageRow(usageGuide) }
             }
-        } else if let usageGuide {
-            // Signed out, where to check usage still shows.
-            MainCard(title: L10n.text("harness.credits")) { usageRow(usageGuide) }
-        }
-    }
-
-    private func usageRow(_ url: URL) -> some View {
-        CardRow(title: L10n.text("harness.account_usage_help")) {
-            Link(L10n.text("main.overview.open"), destination: url).font(.system(size: 12.5))
         }
     }
 }
