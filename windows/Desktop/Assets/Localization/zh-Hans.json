@@ -207,7 +207,7 @@
     "claude.quota.source_web": "Claude 网页登录",
     "claude.quota.timed_out": "读取 Claude 额度超时，请重试。",
     "claude.quota.unavailable": "Claude 额度暂不可用。",
-    "claude.quota.web_blocked": "已经登录，但当前网络下 claude.ai 仍在拦截 Pacer。可以换个网络，或关闭 VPN／代理后再试。",
+    "claude.quota.web_blocked": "已经登录，但当前网络下 claude.ai 仍在拦截 Pacer。可以换个网络或代理节点后再试。",
     "claude.quota.web_challenge": "请打开 Claude 登录窗口，手动完成网页验证。",
     "claude.telemetry.kept_existing": "已保留你现有的遥测设置，TPS 为估算值。",
     "claude.telemetry.managed": "遥测设置由你的组织管理，TPS 为估算值。",

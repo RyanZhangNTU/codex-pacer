@@ -207,7 +207,7 @@
     "claude.quota.source_web": "Claude web sign-in",
     "claude.quota.timed_out": "Reading Claude usage timed out. Try again.",
     "claude.quota.unavailable": "Claude usage is unavailable.",
-    "claude.quota.web_blocked": "You're signed in, but claude.ai is still blocking Pacer on this network. Try another network, or turn off your VPN or proxy.",
+    "claude.quota.web_blocked": "You're signed in, but claude.ai is still blocking Pacer on this network. Try another network or VPN server.",
     "claude.quota.web_challenge": "Open Claude sign-in to complete the website's verification.",
     "claude.telemetry.kept_existing": "Kept your existing telemetry settings. TPS is estimated.",
     "claude.telemetry.managed": "Telemetry is managed by your organization. TPS is estimated.",
