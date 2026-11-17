@@ -1108,7 +1108,6 @@
 "harness.session_credits" = "最近会话已用 %@ 积分";
 "harness.credit_unit" = "积分";
 "harness.credit_unit_single" = "积分";
-"harness.account_usage_help" = "如何查看账号用量";
 "main.history.subtitle" = "本周期";
 "main.quota.left_5h" = "5 小时剩 %@%%";
 "main.quota.left_7d" = "7 天剩 %@%%";

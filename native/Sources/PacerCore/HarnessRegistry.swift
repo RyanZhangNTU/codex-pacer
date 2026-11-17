@@ -45,7 +45,6 @@ public struct HarnessDescriptor: Sendable {
     public let hasRateDisplay: Bool
     public let hasTaskProgress: Bool
     public let reportsSessionUsage: Bool
-    public let usageGuide: URL?
     public let progressConnector: Bool
     /// The account sign-in and bill, for account credits.
     public let accountCredits: HarnessAccountCreditsDefinition?
@@ -58,7 +57,7 @@ public struct HarnessDescriptor: Sendable {
     package init(id: AgentProvider, name: String, symbol: String, defaultMode: ProviderModuleMode = .automatic,
                  brand: HarnessBrand = .neutral, website: URL? = nil, balance: HarnessBalanceKind? = nil,
                  hasRateDisplay: Bool = false, hasTaskProgress: Bool = false, reportsSessionUsage: Bool = false,
-                 usageGuide: URL? = nil, progressConnector: Bool = false, accountCredits: HarnessAccountCreditsDefinition? = nil) {
+                 progressConnector: Bool = false, accountCredits: HarnessAccountCreditsDefinition? = nil) {
         self.id = id
         self.name = name
         self.symbol = symbol
@@ -69,7 +68,6 @@ public struct HarnessDescriptor: Sendable {
         self.hasRateDisplay = hasRateDisplay
         self.hasTaskProgress = hasTaskProgress
         self.reportsSessionUsage = reportsSessionUsage
-        self.usageGuide = usageGuide
         self.progressConnector = progressConnector
         self.accountCredits = accountCredits
     }

@@ -28,7 +28,6 @@ enum WorkBuddyHarness {
                               brand: .init(dark: .init(0xC3ABF1), light: .init(0x6942A2), accentLift: 0.22, accentLuminance: 0.095),
                               website: URL(string: china ? "https://www.workbuddy.cn/" : "https://www.workbuddy.ai/"), balance: .accountCredits,
                               hasRateDisplay: true, hasTaskProgress: true, reportsSessionUsage: true,
-                              usageGuide: URL(string: china ? "https://www.codebuddy.cn/docs/workbuddy/Usage" : "https://www.workbuddy.ai/docs/workbuddy/usage"),
                               progressConnector: true, accountCredits: accountCredits(edition)),
             platforms: [.windows, .macOS], home: china ? ".workbuddy" : ".workbuddy-ai", dataFile: "workbuddy.db",
             windowsExecutables: china ? ["WorkBuddy/WorkBuddy.exe", "Programs/WorkBuddy/WorkBuddy.exe"]

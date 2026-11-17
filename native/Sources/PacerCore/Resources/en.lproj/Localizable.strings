@@ -1108,7 +1108,6 @@
 "harness.session_credits" = "Latest session: %@ credits used";
 "harness.credit_unit" = "credits";
 "harness.credit_unit_single" = "credit";
-"harness.account_usage_help" = "Where to check account usage";
 "main.history.subtitle" = "This cycle";
 "main.quota.left_5h" = "5h %@%% left";
 "main.quota.left_7d" = "7d %@%% left";

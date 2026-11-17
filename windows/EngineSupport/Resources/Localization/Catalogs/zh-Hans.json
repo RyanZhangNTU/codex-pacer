@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "1eb227ca40601cb6e3f23454a5a5971e5591d1a0a3e645e53c3c35b81e8a0749",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "4e49f6ab892481451f977f174ef0ed18909d488b97da5121eef9e64ff440028b",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -596,7 +596,6 @@
     "harness.account.total": "\u79ef\u5206\u5305\u603b\u989d\uff1a%@",
     "harness.account.unavailable": "\u6682\u65f6\u8bfb\u4e0d\u5230\u8d26\u53f7\u79ef\u5206\u3002\u8bf7\u5237\u65b0\uff0c\u6216\u91cd\u65b0\u767b\u5f55\u3002",
     "harness.account_row": "\u8d26\u53f7",
-    "harness.account_usage_help": "\u5982\u4f55\u67e5\u770b\u8d26\u53f7\u7528\u91cf",
     "harness.context": "\u6700\u8fd1\u4f1a\u8bdd\u7684\u4e0a\u4e0b\u6587\uff1a%1$@ / %2$@ \u4e2a\u8bcd\u5143",
     "harness.credit_unit": "\u79ef\u5206",
     "harness.credit_unit_single": "\u79ef\u5206",
