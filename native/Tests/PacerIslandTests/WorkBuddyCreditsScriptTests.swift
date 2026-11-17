@@ -6,7 +6,8 @@ import XCTest
 /// which endpoints it asks, and what reading comes back. The Mac runs it in
 /// WebKit and Windows in WebView2; neither changes these rules.
 final class WorkBuddyCreditsScriptTests: XCTestCase {
-    private struct Route { var status = 200; var json: Any }
+    private enum Fault: String, CaseIterable { case network, invalidJSON }
+    private struct Route { var status = 200; var json: Any = NSNull(); var fault: Fault? = nil }
     private struct Run { let result: [String: Any]; let requests: [[String: Any]] }
 
     private func run(origin: String = "https://www.workbuddy.cn", selected: String? = nil, routes: [String: Route]) throws -> Run {
@@ -14,7 +15,7 @@ final class WorkBuddyCreditsScriptTests: XCTestCase {
         func literal(_ value: Any) throws -> String {
             String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]), as: UTF8.self)
         }
-        let table = try literal(routes.mapValues { ["status": $0.status, "json": $0.json] })
+        let table = try literal(routes.mapValues { ["status": $0.status, "json": $0.json, "fault": $0.fault?.rawValue ?? ""] })
         let storage = try literal(selected.map { ["CODEBUDDY_IDE_SELECTED_ACCOUNT_ID": $0] } ?? [:])
         let context = try XCTUnwrap(JSContext())
         var failure: String?
@@ -31,7 +32,8 @@ final class WorkBuddyCreditsScriptTests: XCTestCase {
             __requests.push({ url: url.replace(__origin, ""), method: options?.method ?? "GET", headers: options?.headers ?? {} });
             const route = __routes[url.replace(__origin, "")];
             if (!route) return Promise.resolve({ status: 404, headers: { get: () => "text/html" }, body: null });
-            const text = JSON.stringify(route.json); let sent = false;
+            if (route.fault === "network") return Promise.reject(new TypeError("Network error"));
+            const text = route.fault === "invalidJSON" ? "{" : JSON.stringify(route.json); let sent = false;
             return Promise.resolve({ status: route.status, headers: { get: name => name.toLowerCase() === "content-type" ? "application/json" : null },
                 body: { getReader: () => ({ read: async () => sent ? { done: true } : (sent = true, { done: false, value: { length: text.length, text } }),
                     cancel: async () => {} }) } });
@@ -123,6 +125,20 @@ final class WorkBuddyCreditsScriptTests: XCTestCase {
         let run = try run(routes: Self.personal)
         XCTAssertEqual(run.result["state"] as? String, "ready")
         XCTAssertEqual(run.result["plan"] as? String, "Pro")
+    }
+
+    func testFailedEnterpriseUsageDoesNotReadThePersonalBalance() throws {
+        let accountsPath = "/console/accounts"
+        let usagePath = "/billing/meter/get-enterprise-user-usage"
+        var routes = Self.personal
+        routes[accountsPath] = Route(json: Self.accounts)
+        for fault in Fault.allCases {
+            routes[usagePath] = Route(fault: fault)
+            let run = try run(selected: "ent-42", routes: routes)
+            XCTAssertEqual(run.result["state"] as? String, "unavailable", fault.rawValue)
+            XCTAssertNil(try decoded(run.result).reading(), fault.rawValue)
+            XCTAssertEqual(run.requests.compactMap { $0["url"] as? String }, [accountsPath, usagePath], fault.rawValue)
+        }
     }
 
     func testAnUnlimitedQuotaOrAnExpiredSessionGivesNoBalance() throws {

@@ -101,7 +101,7 @@ WorkBuddy's task records supply the model name. Pacer shows Automatic when the r
 
 WorkBuddy stores credits by request ID in the session's usage record. Pacer matches the request in the transcript to that record and shows the credits in the task row's cost field, unless **Credits per Turn** is off (`hiddenTurnCredits`). A later usage write can update a completed row. The request IDs are UUIDv7, so History groups the week's charges by the time in each ID, falling back to the session's last update; the adapter rereads the week at most every five minutes or when a new charge lands.
 
-Account credits come from the site's billing summary after a separate sign-in. WorkBuddy reads www.workbuddy.cn and WorkBuddy AI reads www.workbuddy.ai, each in its own browser profile. Windows and Mac use the same reader (`workbuddy-account-credits.js`), described by the descriptor's `accountCredits`. The sign-in window closes once a reading arrives.
+Account credits come from the site's billing summary after a separate sign-in. WorkBuddy reads www.workbuddy.cn and WorkBuddy AI reads www.workbuddy.ai, each in its own browser profile. Windows and Mac use the same reader (`workbuddy-account-credits.js`), described by the descriptor's `accountCredits`. When the reader identifies a selected enterprise account, it reads only that account's quota. A failed request or unreadable response marks an existing reading stale on refresh. The sign-in window closes once a valid reading arrives.
 
 The reader groups the bill's packages by WorkBuddy's own package codes:
 

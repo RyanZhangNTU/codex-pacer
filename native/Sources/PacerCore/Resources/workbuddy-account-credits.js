@@ -190,8 +190,9 @@ async function enterpriseCredits() {
 }
 
 try {
-    const enterprise = await enterpriseCredits().catch(() => null);
-    if (enterprise) return enterprise;
+    // Only the absence of an identified enterprise account permits a personal reading.
+    const enterprise = await enterpriseCredits();
+    if (enterprise !== null) return enterprise;
     const response = await request("summary", {});
     if (response.status === 401) return { state: "signIn" };
     const reply = await readJSON(response);
