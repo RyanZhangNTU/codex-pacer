@@ -30,7 +30,7 @@ internal static class WorkBuddyAccountChecks
         var ui = UiText.For(false);
         CoreWebView2? login = null;
         int reads = 0, cycles = 0, writes = 0;
-        bool authenticated = false, serviceDown = false, cycleUnavailable = false, enterprise = false;
+        bool authenticated = false, serviceDown = false, cycleUnavailable = false, enterprise = false, enterpriseMalformed = false;
         int accountLists = 0, enterpriseReads = 0; string? enterpriseHeader = null;
         DateTimeOffset reset = DateTimeOffset.UtcNow.AddDays(17);
         DateTimeOffset enterpriseEnd = DateTimeOffset.UtcNow.AddDays(9);
@@ -108,7 +108,7 @@ internal static class WorkBuddyAccountChecks
                     enterpriseHeader = e.Request.Headers.Contains("X-Enterprise-Id") ? e.Request.Headers.GetHeader("X-Enterprise-Id") : null;
                     // workbuddy.cn writes its dates in China time, without an offset.
                     string China(DateTimeOffset value) => value.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
-                    body = System.Text.Json.JsonSerializer.Serialize(new { code = 0, data = new {
+                    body = enterpriseMalformed ? "{" : System.Text.Json.JsonSerializer.Serialize(new { code = 0, data = new {
                         credit = 250.0, limitNum = 1000, cycleStartTime = China(enterpriseEnd.AddDays(-30)), cycleEndTime = China(enterpriseEnd),
                         exclusiveGift = new { hasGift = true, usedCredits = 50, totalCredits = 200, remainCredits = 150, nextResetAt = China(enterpriseEnd) } } });
                 }
@@ -163,7 +163,15 @@ internal static class WorkBuddyAccountChecks
             await PresentationWait.UntilAsync(() => accountLists > signedOutReads, "The window must check the account through its own profile while it is open");
             Check(window.IsVisible && Require<TextBlock>(window, "workbuddy.login.heading").Text == ui.Text("workbuddy.login.prompt"),
                 "A signed-out reading keeps the window open");
+            enterprise = enterpriseMalformed = true;
             authenticated = true;
+            int loginEnterpriseReads = enterpriseReads, loginPersonalReads = reads;
+            await PresentationWait.UntilAsync(() => enterpriseReads >= loginEnterpriseReads + 2 || !window.IsVisible,
+                "The visible sign-in window must retry a failed enterprise read");
+            Check(window.IsVisible && Require<TextBlock>(window, "workbuddy.login.heading").Text == ui.Text("workbuddy.login.prompt")
+                && reads == loginPersonalReads && account.Reading == null,
+                "Malformed enterprise usage must not confirm sign-in with the available personal credits");
+            enterprise = enterpriseMalformed = false;
             await PresentationWait.UntilAsync(() => Find<TextBlock>(window, "workbuddy.login.heading")?.Text == ui.Text("workbuddy.login.signed_in"),
                 "The first reading with credits must confirm the sign-in, wherever the page is");
             await PresentationWait.UntilAsync(() => !window.IsVisible, "The window must close by itself after confirming");
@@ -303,6 +311,11 @@ internal static class WorkBuddyAccountChecks
             Check(Find<FrameworkElement>(settings, prefix + ".credits_line0") is { } planLine && Descendants(planLine).OfType<TextBlock>().Any(text => text.Text == "企业版")
                 && Find<FrameworkElement>(settings, prefix + ".credits_line2") == null,
                 "The enterprise plan's badge sits with the month's credits, and a team quota has no extra-credit line");
+            enterpriseMalformed = true;
+            await account.RefreshAsync();
+            Check(account.State == "unavailable" && account.Reading is { Remaining: 900, Total: 1200, Plan: "企业版" } && reads == personalReads,
+                "Malformed enterprise usage must keep the last enterprise reading marked stale");
+            enterpriseMalformed = false;
             enterprise = false;
             await account.RefreshAsync();
             Check(account.Reading is { Remaining: 520.5, Total: 600 } && account.Reading.Plan != "企业版" && reads > personalReads,
