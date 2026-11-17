@@ -144,9 +144,10 @@ internal sealed class EngineClient : IAsyncDisposable
         try { await SendAsync("setClaudeWebHost", new { webAvailable = available, webFetch = true }); }
         catch { acceptsClaudeHostMessages = previous; throw; }
     }
+    /// Only the shape of a claude.ai API path; `ClaudeWebSession.FetchAsync` and the reader page admit the quota reads themselves.
     private static string ClaudeReadPath(JsonElement root) =>
-        root.TryGetProperty("path", out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 1 and <= 256 } path &&
-        path[0] == '/' && ProviderWebDefinition.Claude.IsReaderRequest(new Uri(ProviderWebDefinition.Claude.Origin, path).AbsoluteUri, "GET")
+        root.TryGetProperty("path", out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 5 and <= 256 } path &&
+        path.StartsWith("/api/", StringComparison.Ordinal) && path.AsSpan().IndexOfAnyInRange('\u0000', ' ') < 0 && !path.Contains('\u007f')
             ? path : throw new InvalidDataException("Invalid browser read.");
 
     private async Task<JsonElement?> RequestAsync(string method, object? parameters, TimeSpan? timeout = null, CancellationToken cancellation = default)
