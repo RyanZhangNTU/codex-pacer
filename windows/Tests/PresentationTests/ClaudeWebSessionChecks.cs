@@ -58,6 +58,7 @@ internal static class ClaudeWebSessionChecks
             Check(known!.CookieHeader.Contains("sessionKey=" + Key, StringComparison.Ordinal) && !known.CookieHeader.Contains("third-party", StringComparison.Ordinal) &&
                 !known.CookieHeader.Contains("wrong-path", StringComparison.Ordinal) && !known.ToString().Contains(Key, StringComparison.Ordinal),
                 "Only API-applicable Claude cookies may cross the ephemeral bridge, and diagnostics must redact them");
+            await Reads(session, site, known.SessionHash);
             await Lifecycle(session, site, root);
             site.Mutate = core => Put(core, "lastActiveOrg", "not-a-workspace");
             var invalidChoice = await session.ReadAsync(CancellationToken.None);
@@ -129,6 +130,44 @@ internal static class ClaudeWebSessionChecks
         await using var isolated = new ClaudeWebSession(UiText.For(false), Path.Combine(root, "Isolated"), site.Bind, false);
         Check(await isolated.ReadAsync(CancellationToken.None) == null, "Another Claude private profile cannot inherit the account");
     }
+    /// #243: quota reads run in the private profile, which passed claude.ai's verification,
+    /// and return only the status, three headers and a bounded body.
+    private static async Task Reads(ClaudeWebSession session, Site site, string sessionHash)
+    {
+        string usage = "/api/organizations/" + Organization + "/usage?cedar_ember=1", reply = "{\"five_hour\":{\"utilization\":12}}";
+        string page = "<!doctype html><title>Just a moment...</title>" + new string('x', 20000);
+        string workspaces = "[" + string.Join(",", Enumerable.Repeat("{\"uuid\":\"" + Organization + "\",\"name\":\"" + new string('n', 200) + "\"}", 250)) + "]";
+        site.Api = path => path == usage ? (200, "application/json", "", reply)
+            : path == "/api/account" ? (403, "text/html; charset=utf-8", "\r\ncf-mitigated: challenge\r\nRetry-After: 30", page)
+            : path == "/api/organizations" ? (200, "application/json", "", workspaces) : null;
+        int controllers = site.Controllers;
+        var usageReply = await session.FetchAsync(usage, CancellationToken.None);
+        Check(usageReply is { State: "ok", Status: 200, ContentType: "application/json", CfMitigated: null, RetryAfter: null } && usageReply.Body == reply,
+            "A quota read returns the site's own status, type and body");
+        Check(site.Controllers == controllers && site.Requests.Contains("https://claude.ai" + usage), "The read uses the kept controller and reaches claude.ai");
+        var challenge = await session.FetchAsync("/api/account", CancellationToken.None);
+        Check(challenge is { State: "ok", Status: 403, CfMitigated: "challenge", RetryAfter: "30" } && challenge.ContentType!.StartsWith("text/html", StringComparison.Ordinal)
+            && challenge.Body!.StartsWith("<!doctype html>", StringComparison.Ordinal) && Encoding.UTF8.GetByteCount(challenge.Body) <= 4096,
+            "A verification page keeps its headers and only the start of its body, which is enough to recognize it");
+        Check((await session.FetchAsync("/api/organizations", CancellationToken.None)).State == "tooLarge", "A reply over the engine's limit is refused whole");
+        int requests = site.Requests.Count;
+        foreach (string refused in new[] { "/api/organizations/" + Organization + "/members", "/api/bootstrap" })
+        {
+            try { await session.FetchAsync(refused, CancellationToken.None); throw new InvalidOperationException("A read outside the quota reads ran: " + refused); }
+            catch (ArgumentException) { }
+        }
+        Check(site.Requests.Count == requests && site.Controllers == controllers, "A refused read never leaves the browser, and the kept controller survives it");
+        var claude = ProviderWebDefinition.Claude;
+        string organizations = "https://claude.ai/api/organizations/";
+        Check(claude.IsReaderRequest("https://claude.ai" + usage, "GET") && claude.IsReaderRequest(organizations + Organization + "/usage", "GET")
+            && claude.IsReaderRequest("https://claude.ai/api/account", "GET") && !claude.IsReaderRequest("https://claude.ai" + usage, "POST")
+            && !claude.IsReaderRequest(organizations + Organization.ToUpperInvariant() + "/usage", "GET") && !claude.IsReaderRequest(organizations + "x/usage", "GET")
+            && !claude.IsReaderRequest(organizations + Organization + "/usage/x", "GET") && !claude.IsReaderRequest(organizations + Organization + "/usage?cedar_ember=2", "GET")
+            && !claude.IsReaderRequest("https://api.claude.ai/api/account", "GET"),
+            "The reader admits only the account, its workspaces and one workspace's usage, each with GET");
+        Check((await session.ReadAsync(CancellationToken.None))?.SessionHash == sessionHash, "The reader still reads the profile's cookies");
+        site.Api = null;
+    }
     private static void SignIn(CoreWebView2 core)
     {
         Put(core, "sessionKey", Key); Put(core, "lastActiveOrg", Organization);
@@ -142,6 +181,8 @@ internal static class ClaudeWebSessionChecks
     private sealed class Site
     {
         internal CoreWebView2? Core; internal bool Ready; internal int Controllers; internal Action<CoreWebView2>? Mutate;
+        /// A synthetic claude.ai API: status, content type, extra header lines and body for a path and query.
+        internal Func<string, (int Status, string Type, string Headers, string Body)?>? Api;
         internal readonly List<string> Requests = [];
         private readonly HashSet<CoreWebView2> bound = [];
         internal void Bind(CoreWebView2 core)
@@ -154,6 +195,12 @@ internal static class ClaudeWebSessionChecks
             core.WebResourceRequested += (_, e) =>
             {
                 Requests.Add(e.Request.Uri);
+                if (Api?.Invoke(new Uri(e.Request.Uri).PathAndQuery) is { } api)
+                {
+                    e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(Encoding.UTF8.GetBytes(api.Body)), api.Status, "Fixture",
+                        "Content-Type: " + api.Type + "\r\nCache-Control: no-store" + api.Headers);
+                    return;
+                }
                 e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(Encoding.UTF8.GetBytes("<!doctype html><title>Synthetic Claude login</title><p>Offline fixture</p>")),
                     200, "Fixture", "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store");
             };

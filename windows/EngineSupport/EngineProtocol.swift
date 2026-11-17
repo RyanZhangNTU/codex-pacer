@@ -24,6 +24,9 @@ struct EngineCommand: Decodable {
         var claudeHome: String?
         var claudeOrganization: String?
         var claudeSession: ClaudeWebSessionReply?
+        var claudeFetch: ClaudeWebFetchReply?
+        var webFetch: Bool?
+        var signedIn: Bool?
         var requestID: String?
         var context: String?
         var notificationAction: String?
@@ -208,7 +211,6 @@ struct EngineModule: Codable, Equatable {
     var symbol: String? = nil
     var status: String? = nil
     var usage: HarnessUsage? = nil
-    var usageGuideURL: URL? = nil
     var progressConnector: Bool? = nil
     var hasTaskProgress: Bool? = nil
     var reportsSessionUsage: Bool? = nil

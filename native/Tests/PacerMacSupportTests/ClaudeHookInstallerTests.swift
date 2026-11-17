@@ -263,6 +263,45 @@ final class ClaudeHookInstallerTests: XCTestCase {
         XCTAssertTrue(NSDictionary(dictionary: removed["statusLine"] as? [String: Any] ?? [:]).isEqual(to: newerLine))
     }
 
+    func testUninstallRemovesOnlyUnchangedOwnedValuesFromMixedEnvironment() throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = fixture.home.appendingPathComponent("settings.json")
+        try write(["env": ["USER_OPTION": "retained"]], to: file)
+        XCTAssertTrue(try ClaudeHookInstaller.install(home: fixture.home).telemetryConfigured)
+        var changed = try read(file)
+        var env = try XCTUnwrap(changed["env"] as? [String: Any])
+        XCTAssertEqual(env["OTEL_TRACES_EXPORT_INTERVAL"] as? String, "1000")
+        env["OTEL_TRACES_EXPORT_INTERVAL"] = 1000
+        env["USER_NULL"] = NSNull()
+        env["USER_OBJECT"] = ["mode": "future"]
+        changed["env"] = env
+        try write(changed, to: file)
+
+        try ClaudeHookInstaller.uninstall(home: fixture.home)
+
+        let expected: [String: Any] = [
+            "USER_OPTION": "retained", "USER_NULL": NSNull(), "USER_OBJECT": ["mode": "future"],
+            "OTEL_TRACES_EXPORT_INTERVAL": 1000
+        ]
+        XCTAssertTrue(NSDictionary(dictionary: try read(file)).isEqual(to: ["env": expected]))
+    }
+
+    func testUninstallPreservesNonObjectAndAlreadyEmptyEnvironments() throws {
+        let environments: [Any] = [NSNull(), ["future"], [String: Any]()]
+        for env in environments {
+            let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let file = fixture.home.appendingPathComponent("settings.json")
+            _ = try ClaudeHookInstaller.install(home: fixture.home)
+            var changed = try read(file)
+            changed["env"] = env
+            try write(changed, to: file)
+
+            try ClaudeHookInstaller.uninstall(home: fixture.home)
+
+            XCTAssertTrue(NSDictionary(dictionary: try read(file)).isEqual(to: ["env": env]))
+        }
+    }
+
     func testMalformedSettingsAreNeverMutated() throws {
         for malformed in [#"{"env": "wrong-type"}"#, #"{"hooks":{"Stop":"wrong-type"}}"#,
                           #"{"statusLine":"wrong-type"}"#, #"["wrong-root"]"#, #"{"broken": }"#] {

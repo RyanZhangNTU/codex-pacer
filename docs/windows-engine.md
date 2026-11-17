@@ -58,7 +58,7 @@ WorkBuddy settings and Overview can show context and credits for the latest sess
 
 ## HTTP through WinHTTP
 
-On Windows, FoundationNetworking's URLSession keeps one worker thread busy for as long as a response stays open: libdispatch re-signals a libcurl socket write source each time it is armed, and `_SocketSources` cancels it only when libcurl removes the socket. Claude's cloud message streams stay open (up to four project and six thread streams) and cloud polling sends up to 16 requests every 30 seconds, so the engine uses WinHTTP's asynchronous API instead, through `WindowsHTTPStream`.
+On Windows, FoundationNetworking's URLSession keeps one worker thread busy for as long as a response stays open: libdispatch re-signals a libcurl socket write source each time it is armed, and `_SocketSources` cancels it only when libcurl removes the socket. Claude's cloud message streams stay open (up to four project and six thread streams) and cloud polling sends up to 16 requests every 30 seconds, so the engine uses WinHTTP's asynchronous API instead, through `WindowsHTTPStream`. Claude's quota reads go through the host's private browser when it offers them ([web sign-in](windows-shell.md#web-sign-in)); WinHTTP remains their fallback.
 
 | Client | Used for | Limits |
 | --- | --- | --- |
@@ -115,6 +115,16 @@ python scripts/windows/symbolize-crash-report.py <report> [--binaries <folder wi
 ```
 
 The symbolizer fetches Microsoft's symbols by the identities in the report and reads the engine's own modules from `--binaries`. `WindowsCrashReportTests` crashes the real engine each way; `EngineCrashLogChecks` covers the desktop's part.
+
+## Heap below 2 GB
+
+Swift 6.4.2 keeps either a string's UTF-16 length or a pointer to its breadcrumbs in one word of the string's storage, and reads any value up to `Int32.max` as a length ([swiftlang/swift#92199](https://github.com/swiftlang/swift/pull/92199)). Windows places a process's heap far above 2 GB only while both bottom-up and high-entropy address randomization apply to it. With either turned off in Exploit Protection, the heap starts a few megabytes up. The length of a non-ASCII string of 64 UTF-8 bytes or more then becomes a heap address once its breadcrumbs exist, and Foundation stops the engine with `0xC000001D` in `NSString.getCharacters` (`Foundation.dll+0x103785` in 4.5.1). The first such string is usually a path under a user folder with a non-ASCII name, while the engine looks for `codex.exe`.
+
+The desktop's `EngineLaunch` asks Windows which randomization applies (`GetProcessMitigationPolicy`), for itself and then for the engine it started. Where both forms apply, the engine starts through `Process.Start` as before. Otherwise the desktop creates the engine suspended, reserves every free region below 2 GB in it with `VirtualAllocEx(MEM_RESERVE, PAGE_NOACCESS)`, and resumes it. Windows creates the process heap when the first thread runs, so no heap block can lie below the limit. The reservation takes address space only, no memory.
+
+- The guard covers the engine the desktop starts. `PacerInstallerHooks.exe`, `PacerWindowsBridge.dll` inside the desktop and the engine's console modes (`--ssh-terminal`, `--wsl-terminal`) are not covered. The fix is on Swift's `release/6.4.x` branch and in no release up to 6.4.2; a pinned toolchain that has it covers them too.
+- `PacerEngine.exe --diagnose-low-addresses` prints `heap high` or `heap low` and checks the lengths in that process.
+- `EngineAddressSpaceChecks` clears `IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA` in a copy of the engine outside the build, which gives it the low heap on any machine, and runs it with and without the guard: `dotnet run --project windows/Tests/DesktopTests/Pacer.DesktopTests.csproj -- --address-guard-only <PacerEngine.exe>`.
 
 ## SSH sources
 

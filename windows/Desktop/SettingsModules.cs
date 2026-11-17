@@ -115,7 +115,7 @@ internal sealed partial class SettingsWindow
             var get = new Button { Content = label, Style = (Style)FindResource("SettingsLink"), HorizontalAlignment = HorizontalAlignment.Left,
                 Margin = new Thickness(44, 3, 0, 0), FontSize = 12 };
             Identify(get, "settings.modules." + provider + ".get", label);
-            get.Click += (_, _) => { if (!SettingsPagePolicy.OpenHarnessUsage(site, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
+            get.Click += (_, _) => { if (!SettingsPagePolicy.OpenWebsite(site, guideLinkLauncher)) ShowIssue("windows.pages.open_failed"); };
             cell.Children.Add(get);
         }
         return cell;

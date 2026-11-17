@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -22,6 +23,11 @@ internal class ProviderBrowserPage : IDisposable
     private readonly bool closeWindow;
     private readonly ProviderWebDefinition provider;
     private bool disposed;
+    private readonly HashSet<ulong> loading = [];
+    /// A navigation has started and not finished. One that fails meanwhile was replaced by the page itself:
+    /// workbuddy.cn's script sends its usage page to its sign-in page while the first page still loads, and
+    /// WebView2 ends that first navigation as aborted (11/17, the window called it a load failure).
+    internal bool Loading => loading.Count > 0;
     internal ProviderBrowserPage(Window window, ProviderWebDefinition provider, bool closeWindow = true)
     { this.window = window; this.provider = provider; this.closeWindow = closeWindow; }
     internal async Task Initialize(CoreWebView2Environment environment, CancellationToken cancellation)
@@ -31,13 +37,29 @@ internal class ProviderBrowserPage : IDisposable
             await View.EnsureCoreWebView2Async(environment).WaitAsync(cancellation);
             cancellation.ThrowIfCancellationRequested();
             core = View.CoreWebView2;
-            core.ProcessFailed += (_, e) => { if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited) processFailed = true; };
+            // First, so every later handler sees the finished navigation gone. A navigation cancelled while
+            // starting still completes, as OperationCanceled.
+            core.NavigationStarting += (_, e) => loading.Add(e.NavigationId);
+            core.NavigationCompleted += (_, e) => loading.Remove(e.NavigationId);
+            core.ProcessFailed +=(_, e) => { if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited) processFailed = true; };
             var settings = Core.Settings;
             settings.AreDevToolsEnabled = false; settings.AreHostObjectsAllowed = false; settings.IsWebMessageEnabled = false;
             settings.IsStatusBarEnabled = false; settings.IsPasswordAutosaveEnabled = false; settings.IsGeneralAutofillEnabled = false;
             Core.DownloadStarting += (_, e) => e.Cancel = true;
         }
         catch { Dispose(); throw; }
+    }
+    private Uri? reader;
+    /// A kept page becomes a reader once and stays one: its request filter and
+    /// navigation lock belong to one document, and a second reader would stack them.
+    internal async Task UseReader(Func<Uri> blank, CancellationToken cancellation)
+    {
+        if (reader != null)
+        {
+            if (Core.Source == reader.AbsoluteUri) return;
+            throw new IOException("The reader page left its document.");
+        }
+        reader = blank(); await NavigateReader(reader, cancellation);
     }
     internal async Task NavigateReader(Uri blank, CancellationToken cancellation)
     {
@@ -62,7 +84,8 @@ internal class ProviderBrowserPage : IDisposable
     internal async Task Navigate(Uri uri, CancellationToken cancellation)
     {
         var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        void Completed(object? sender, CoreWebView2NavigationCompletedEventArgs e) => ready.TrySetResult(e.IsSuccess);
+        // The page's own newer navigation reports instead of the one it replaced.
+        void Completed(object? sender, CoreWebView2NavigationCompletedEventArgs e) { if (e.IsSuccess || !Loading) ready.TrySetResult(e.IsSuccess); }
         Core.NavigationCompleted += Completed;
         try
         {

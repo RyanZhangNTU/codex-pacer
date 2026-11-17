@@ -19,6 +19,10 @@ internal static class WorkBuddyAccountChecks
     private const string Paid = Origin + "/billing/meter/get-user-resource-paid-packages";
     private const string Free = Origin + "/billing/meter/get-user-resource-free-packages";
     private const string Login = Origin + "/profile/plans-usage";
+    private const string SignIn = Origin + "/login/?platform=usercenter";
+    private const string Slow = Origin + "/fixture/slow.png";
+    private const string Accounts = Origin + "/console/accounts";
+    private const string EnterpriseUsage = Origin + "/billing/meter/get-enterprise-user-usage";
 
     internal static async Task Run()
     {
@@ -26,20 +30,42 @@ internal static class WorkBuddyAccountChecks
         var ui = UiText.For(false);
         CoreWebView2? login = null;
         int reads = 0, cycles = 0, writes = 0;
-        bool authenticated = false, serviceDown = false, cycleUnavailable = false;
+        bool authenticated = false, serviceDown = false, cycleUnavailable = false, enterprise = false, enterpriseMalformed = false;
+        int accountLists = 0, enterpriseReads = 0; string? enterpriseHeader = null;
         DateTimeOffset reset = DateTimeOffset.UtcNow.AddDays(17);
+        DateTimeOffset enterpriseEnd = DateTimeOffset.UtcNow.AddDays(9);
         DateTimeOffset expiration = reset.AddDays(-7);
         void Attach(CoreWebView2 core)
         {
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
-            core.NavigationCompleted += (_, e) => { if (e.IsSuccess && core.Source == Login) login = core; };
+            core.NavigationCompleted += (_, e) => { if (e.IsSuccess && core.Source == SignIn) login = core; };
             core.WebResourceRequested += (_, e) =>
             {
                 string url = e.Request.Uri;
                 string body = "";
                 string type = "text/html";
                 int status = 403;
-                if (url == Login && e.Request.Method == "GET") { status = 200; body = "<!doctype html><title>Test sign-in</title>"; }
+                // Like workbuddy.cn, the usage page sends itself to the sign-in page while it still loads, which
+                // ends its first navigation as aborted (11/17: the window called that a load failure).
+                if (url == Slow)
+                {
+                    var deferral = e.GetDeferral();
+                    async Task Later()
+                    {
+                        await Task.Delay(1500);
+                        try { e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(), 404, "Fixture", "Cache-Control: no-store"); }
+                        catch (Exception error) when (ProviderLoginWindow.Recoverable(error)) { }
+                        finally { deferral.Complete(); }
+                    }
+                    _ = Later();
+                    return;
+                }
+                if (url == Login && e.Request.Method == "GET")
+                {
+                    status = 200;
+                    body = "<!doctype html><title>Plans</title><img src=\"/fixture/slow.png\"><script>setTimeout(() => location.replace('/login/?platform=usercenter'), 50)</script>";
+                }
+                else if (url == SignIn && e.Request.Method == "GET") { status = 200; body = "<!doctype html><title>Test sign-in</title>"; }
                 else if (url == Billing && e.Request.Method == "POST")
                 {
                     reads++;
@@ -67,6 +93,24 @@ internal static class WorkBuddyAccountChecks
                 {
                     status = 200; type = "application/json";
                     body = """{"code":0,"data":{"Accounts":[]}}""";
+                }
+                // The site lists the signed-in accounts; a personal one keeps the personal bill (#241).
+                else if (url == Accounts && e.Request.Method == "GET")
+                {
+                    accountLists++; status = authenticated ? 200 : 401; type = "application/json";
+                    body = enterprise
+                        ? """{"code":0,"data":{"accounts":[{"type":"personal","uid":"fixture-user"},{"type":"enterprise","uid":"fixture-user","enterpriseId":"fixture-team","lastLogin":"2026-11-16 09:00:00"}]}}"""
+                        : """{"code":0,"data":{"accounts":[{"type":"personal","uid":"fixture-user","lastLogin":"2026-11-16 09:00:00"}]}}""";
+                }
+                else if (url == EnterpriseUsage && e.Request.Method == "POST")
+                {
+                    enterpriseReads++; status = 200; type = "application/json";
+                    enterpriseHeader = e.Request.Headers.Contains("X-Enterprise-Id") ? e.Request.Headers.GetHeader("X-Enterprise-Id") : null;
+                    // workbuddy.cn writes its dates in China time, without an offset.
+                    string China(DateTimeOffset value) => value.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+                    body = enterpriseMalformed ? "{" : System.Text.Json.JsonSerializer.Serialize(new { code = 0, data = new {
+                        credit = 250.0, limitNum = 1000, cycleStartTime = China(enterpriseEnd.AddDays(-30)), cycleEndTime = China(enterpriseEnd),
+                        exclusiveGift = new { hasGift = true, usedCredits = 50, totalCredits = 200, remainCredits = 150, nextResetAt = China(enterpriseEnd) } } });
                 }
                 else if (e.Request.Method != "GET") writes++;
                 e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(Encoding.UTF8.GetBytes(body)),
@@ -112,11 +156,22 @@ internal static class WorkBuddyAccountChecks
                 && window.Title == ui.Text("workbuddy.login.title") + " · www.workbuddy.cn"
                 && Require<Button>(window, "workbuddy.login.later").IsVisible && !Require<Button>(window, "workbuddy.login.done").IsVisible,
                 "The WorkBuddy sign-in uses the shared banner, with nothing to confirm while signed out");
-            int signedOutReads = reads;
-            await PresentationWait.UntilAsync(() => reads > signedOutReads, "The window must check the account through its own profile while it is open");
+            Check(Require<TextBlock>(window, "workbuddy.login.detail").Text == ui.Text("workbuddy.login.prompt_detail"),
+                "The site's own redirect while its first page loads is not a load failure: " + Require<TextBlock>(window, "workbuddy.login.detail").Text);
+            // Signed out, the site's account list already answers 401, so the read ends there.
+            int signedOutReads = accountLists;
+            await PresentationWait.UntilAsync(() => accountLists > signedOutReads, "The window must check the account through its own profile while it is open");
             Check(window.IsVisible && Require<TextBlock>(window, "workbuddy.login.heading").Text == ui.Text("workbuddy.login.prompt"),
                 "A signed-out reading keeps the window open");
+            enterprise = enterpriseMalformed = true;
             authenticated = true;
+            int loginEnterpriseReads = enterpriseReads, loginPersonalReads = reads;
+            await PresentationWait.UntilAsync(() => enterpriseReads >= loginEnterpriseReads + 2 || !window.IsVisible,
+                "The visible sign-in window must retry a failed enterprise read");
+            Check(window.IsVisible && Require<TextBlock>(window, "workbuddy.login.heading").Text == ui.Text("workbuddy.login.prompt")
+                && reads == loginPersonalReads && account.Reading == null,
+                "Malformed enterprise usage must not confirm sign-in with the available personal credits");
+            enterprise = enterpriseMalformed = false;
             await PresentationWait.UntilAsync(() => Find<TextBlock>(window, "workbuddy.login.heading")?.Text == ui.Text("workbuddy.login.signed_in"),
                 "The first reading with credits must confirm the sign-in, wherever the page is");
             await PresentationWait.UntilAsync(() => !window.IsVisible, "The window must close by itself after confirming");
@@ -146,6 +201,12 @@ internal static class WorkBuddyAccountChecks
             // The page's dial draws with the page's ink: the island's light figure vanished on a light page (11/16 review).
             Check(Require<QuotaDial>(settings, prefix + ".credits_dial").FigureInk.ToString() == settings.TryFindResource("SettingsPrimary")?.ToString(),
                 "The settings credits dial must draw its figure in the page's own primary ink");
+            // The month's value ends where the breakdown's dates do, as on the Mac (11/17): it sat beside its label before.
+            settings.UpdateLayout();
+            double Right(FrameworkElement element) => element.TransformToAncestor(settings).TransformBounds(new Rect(element.RenderSize)).Right;
+            var monthValue = Descendants(Require<FrameworkElement>(settings, prefix + ".credits_line0")).OfType<TextBlock>().Single(text => text.Text.Contains("420.5 / 500", StringComparison.Ordinal));
+            var baseDate = Descendants(Require<FrameworkElement>(settings, prefix + ".credits_planBase")).OfType<TextBlock>().Last();
+            Check(Math.Abs(Right(monthValue) - Right(baseDate)) < 1, $"The credit lines must end at the breakdown's right edge ({Right(monthValue):0.#} vs {Right(baseDate):0.#})");
 
             await settings.NavigateAsync("overview");
             await PresentationWait.UntilAsync(() => Find<QuotaDial>(settings, "settings.overview.workbuddy.account.remaining")?.AccessibleName.Contains(monthly, StringComparison.Ordinal) == true,
@@ -226,6 +287,41 @@ internal static class WorkBuddyAccountChecks
                     "The rendered dials must occupy two columns and two rows");
             }
 
+            // An enterprise member's credits are the quota the team assigns, plus any gift, for the account
+            // the site has chosen (#241): 1000 assigned with 250 used, and 150 of a 200 gift left.
+            int personalReads = reads;
+            enterprise = true;
+            await account.RefreshAsync();
+            Check(account.Reading is { Remaining: 900, Total: 1200, Plan: "企业版", Cycle: { Total: 1200, Remaining: 900, Used: 300 } } enterpriseReading
+                && enterpriseReading.Cycle.ResetsAt?.ToUnixTimeSeconds() == enterpriseEnd.ToUnixTimeSeconds() + 1
+                && enterpriseReads > 0 && enterpriseHeader == "fixture-team" && reads == personalReads && writes == 0,
+                "An enterprise member reads the team's assigned quota and gift, for the chosen team, without the personal bill: "
+                + $"{account.State} {account.Reading?.Remaining}/{account.Reading?.Total} {account.Reading?.Plan}, {enterpriseReads} usage reads, header {enterpriseHeader ?? "none"}, {reads - personalReads} personal reads, {writes} writes");
+            // The reader page may make only those requests, each with its own method.
+            var definition = ProviderWebDefinition.WorkBuddy(true);
+            Check(definition.IsReaderRequest(Accounts, "GET") && definition.IsReaderRequest(EnterpriseUsage, "POST") && !definition.IsReaderRequest(Accounts, "POST")
+                && !definition.IsReaderRequest(EnterpriseUsage, "GET") && !definition.IsReaderRequest(Origin + "/console/accounts?all=1", "GET")
+                && !ProviderWebDefinition.WorkBuddy(false).IsReaderRequest(Accounts, "GET"),
+                "The reader admits the enterprise requests only with their own method, path and site");
+            await PresentationWait.CommandSnapshotAsync(engine, "setAccountCredits", new { provider = "workbuddy", accountCredits = account.EngineCredits(), stale = false });
+            await settings.NavigateAsync("workbuddy");
+            await PresentationWait.UntilAsync(() => Find<TextBlock>(settings, prefix + ".account_state")?.Text.EndsWith(" · 企业版", StringComparison.Ordinal) == true
+                && Spoken("credits_line0").Contains("900 / 1,200", StringComparison.Ordinal) && Spoken("credits_line1").Contains("900", StringComparison.Ordinal),
+                "Settings must name the enterprise plan and show its remaining credits");
+            Check(Find<FrameworkElement>(settings, prefix + ".credits_line0") is { } planLine && Descendants(planLine).OfType<TextBlock>().Any(text => text.Text == "企业版")
+                && Find<FrameworkElement>(settings, prefix + ".credits_line2") == null,
+                "The enterprise plan's badge sits with the month's credits, and a team quota has no extra-credit line");
+            enterpriseMalformed = true;
+            await account.RefreshAsync();
+            Check(account.State == "unavailable" && account.Reading is { Remaining: 900, Total: 1200, Plan: "企业版" } && reads == personalReads,
+                "Malformed enterprise usage must keep the last enterprise reading marked stale");
+            enterpriseMalformed = false;
+            enterprise = false;
+            await account.RefreshAsync();
+            Check(account.Reading is { Remaining: 520.5, Total: 600 } && account.Reading.Plan != "企业版" && reads > personalReads,
+                "A personal account goes back to the personal bill");
+            await PresentationWait.CommandSnapshotAsync(engine, "setAccountCredits", new { provider = "workbuddy", accountCredits = account.EngineCredits(), stale = false });
+
             cycleUnavailable = true;
             await account.RefreshAsync();
             Check(account.Reading is { Remaining: 520.5, Cycle: { ResetsAt: null }, Expiration: null },
@@ -239,9 +335,9 @@ internal static class WorkBuddyAccountChecks
             Check(account.Reading?.Remaining == 520.5, "A later refresh must restore the reading");
             await account.DisconnectAsync();
             Check(account.Reading == null && account.State == "signIn", "Disconnect must clear the displayed reading");
-            int beforeDisconnectedRefresh = reads;
+            int beforeDisconnectedRefresh = reads + accountLists;
             await account.RefreshAsync();
-            Check(reads == beforeDisconnectedRefresh && !account.CanDisconnect, "A disconnected browser profile cannot resume account polling");
+            Check(reads + accountLists == beforeDisconnectedRefresh && !account.CanDisconnect, "A disconnected browser profile cannot resume account polling");
             Check(international.Reading == null && international.State == "signIn", "Signing out of WorkBuddy leaves WorkBuddy AI's account alone");
             Console.WriteLine("PASS WorkBuddy account credits, plan reset and pack expiry, Settings, Overview, both shared quota layouts, official icons, refresh recovery and site isolation.");
         }

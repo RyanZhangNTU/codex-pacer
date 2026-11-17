@@ -11,6 +11,7 @@ public enum PacerEngine {
         // First, so a failure anywhere below leaves a report.
         WindowsCrashReport.install()
         if WindowsCrashReport.diagnose() { return }
+        if WindowsLowAddressDiagnostic.run() { return }
         #endif
         WindowsResources.configure()
         #if os(Windows)
@@ -451,6 +452,9 @@ actor EngineRuntime {
     private var usesClaudeWeb: Bool { !demo || claudeWebReference }
     private var claudeOrganization = "", claudeWebPaused = false
     private var claudeQuotaState: ClaudeQuotaState?
+    private var claudeVerification = ClaudeVerificationAfterSignIn()
+    /// The host reads claude.ai in its own browser profile, as `ClaudeWebBridge.fetchesInBrowser`.
+    private var claudeWebFetches = false
     private var claudeHistory = EngineQuotaHistory()
     private var claudeQuotaAttention = AttentionPolicy()
     private let cloudServices: ClaudeCloudServices?
@@ -794,13 +798,18 @@ actor EngineRuntime {
             guard let available = command.params?.webAvailable, usesClaudeWeb, claudeQuotaMonitor != nil || claudeCloudMonitor != nil else {
                 failure(id: command.id, code: "unavailable"); return true
             }
-            cloudWebAvailable = available
-            await claudeWebBridge.setAvailable(available); await claudeQuotaMonitor?.setWebAvailable(available)
+            cloudWebAvailable = available; claudeWebFetches = available && command.params?.webFetch == true
+            await claudeWebBridge.setAvailable(available, fetching: claudeWebFetches); await claudeQuotaMonitor?.setWebAvailable(available)
             await bindClaudeCloudMonitor(); await claudeCloudMonitor?.startAfterPublication()
             _ = await claudeQuotaMonitor?.refreshIfDue(expanded: expanded, force: true)
         case "claudeWebResult":
             guard usesClaudeWeb, let id = command.params?.requestID, let context = command.params?.context, let reply = command.params?.claudeSession,
                   await claudeWebBridge.complete(id: id, context: context, reply: reply) else {
+                failure(id: command.id, code: "staleWebReply"); return true
+            }
+        case "claudeFetchResult":
+            guard usesClaudeWeb, let id = command.params?.requestID, let context = command.params?.context, let reply = command.params?.claudeFetch,
+                  await claudeWebBridge.complete(id: id, context: context, fetched: reply) else {
                 failure(id: command.id, code: "staleWebReply"); return true
             }
         case "inspectClaudeAccount":
@@ -821,6 +830,7 @@ actor EngineRuntime {
             let state = await monitor.currentState()
             guard state.connectionContext == expected else { failure(id: command.id, code: "staleContext"); return true }
             claudeWebPaused = command.method == "pauseClaudeConnection"
+            if !claudeWebPaused { claudeVerification.reset(signedIn: command.params?.signedIn == true) }
             await bindClaudeCloudMonitor(reset: true)
             await monitor.configure(home: claudeHome, organization: claudeOrganization,
                 enabled: usesClaudeWeb && enabled.contains(.claude) && !claudeWebPaused, context: lifecycle.version(.claude), reset: true)
@@ -1443,7 +1453,7 @@ actor EngineRuntime {
         var module = EngineModule(provider: provider.rawValue, mode: moduleSettings.mode(for: provider).rawValue,
             installed: installation?.isInstalled(provider), enabled: enabled.contains(provider),
             displayName: descriptor?.name, symbol: descriptor?.symbol, status: status,
-            usage: harnessActivities[provider]?.usage, usageGuideURL: descriptor?.usageGuide,
+            usage: harnessActivities[provider]?.usage,
             progressConnector: descriptor.map(\.progressConnector), hasTaskProgress: descriptor.map(\.hasTaskProgress),
             reportsSessionUsage: descriptor.map(\.reportsSessionUsage), reportsAccountCredits: descriptor.map(\.reportsAccountCredits),
             progressSetup: localProgressStatuses[provider]?.setup,
@@ -1963,7 +1973,7 @@ actor EngineRuntime {
         guard active, state.context == lifecycle.version(.claude), usesClaudeWeb else { return }
         let previous = claudeQuotaState?.snapshot?.capturedAt
         if claudeQuotaState?.connectionContext != state.connectionContext { claudeQuotaAttention = .init() }
-        claudeQuotaState = state
+        claudeQuotaState = state; claudeVerification.receive(state)
         claudeHistory.receive(snapshot: state.snapshot, history: state.history, warning: state.warning)
         let notices = !state.refreshing && state.error == nil && state.snapshot?.capturedAt != previous
             ? state.snapshot.map { claudeQuotaAttention.quotaNotices($0, at: now()).map {
@@ -2790,7 +2800,7 @@ actor EngineRuntime {
             snapshots[.claude] = claudeQuotaState?.snapshot
             if let state = claudeQuotaState {
                 displayedSources.append(.init(id: "claude:quota", provider: "claude", available: state.error == nil && state.snapshot?.windows.isEmpty == false,
-                    transport: "https", reason: state.error ?? state.warning))
+                    transport: claudeWebFetches ? "webview" : "https", reason: claudeVerification.error(state) ?? state.warning))
             }
         }
         if enabled.contains(.deepseek), let state = balanceState {
@@ -2815,7 +2825,7 @@ actor EngineRuntime {
             if codexQuotaRefreshing { refreshingProviders.insert(.codex) }
         }
         if usesClaudeWeb, let state = claudeQuotaState {
-                if let error = state.error { failedProviders.insert(.claude); quotaErrors[.claude] = error }
+                if let error = claudeVerification.error(state) { failedProviders.insert(.claude); quotaErrors[.claude] = error }
                 if state.refreshing { refreshingProviders.insert(.claude) }
                 if snapshots[.claude] != nil { sourceTexts[.claude] = state.source?.label }
         }
@@ -2905,7 +2915,7 @@ actor EngineRuntime {
             progressRingProviders: progressRingProviders,
             compactWarnings: compactWarnings, compactContext: compactContext, taskPresentation: taskPresentation,
             deepseekConnection: balanceState.map { EngineDeepSeekConnection($0, now: date) },
-            claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused) },
+            claudeConnection: claudeQuotaState.map { EngineClaudeConnection($0, paused: claudeWebPaused, verification: claudeVerification) },
             claudeCloudConnection: cloudState.map(EngineClaudeCloudConnection.init), activityLinks: projectionReady ? navigation.links : [],
             notificationProjections: notificationProjections,
             navigationError: navigationState.failure.map(EngineNavigationFailure.init), openingActivityIDs: navigationState.openingActivityIDs.sorted(), claudeSetup: claudeHookSetup.map { setup in

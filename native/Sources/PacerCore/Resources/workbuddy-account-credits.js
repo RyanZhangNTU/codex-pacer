@@ -141,7 +141,58 @@ async function readGroups(summary, packages) {
     return { groups, cycle, expiration };
 }
 
+// An enterprise member's credits are the cycle quota their administrator
+// assigns, read from the enterprise usage instead of the personal packages,
+// for the account the site has chosen, as WorkBuddy's own usage page does.
+async function enterpriseCredits() {
+    let list;
+    try {
+        const response = await fetch(origin + "/console/accounts", {
+            credentials: "same-origin", redirect: "error", cache: "no-store" });
+        if (response.status === 401) return { state: "signIn" };
+        list = (await readJSON(response))?.data?.accounts;
+    } catch {
+        return null;
+    }
+    if (!Array.isArray(list) || !list.length || list.length > 64) return null;
+    let chosen = null;
+    try {
+        const selected = localStorage.getItem("CODEBUDDY_IDE_SELECTED_ACCOUNT_ID");
+        if (selected) chosen = list.find(account => account?.type === "personal" ? account.uid === selected : account?.enterpriseId === selected) ?? null;
+    } catch {}
+    chosen = chosen ?? list.find(account => account?.lastLogin) ?? list[0];
+    const id = chosen?.enterpriseId;
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return null;
+    const response = await fetch(origin + "/billing/meter/get-enterprise-user-usage", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-Enterprise-Id": id }, body: "{}",
+        credentials: "same-origin", redirect: "error", cache: "no-store" });
+    if (response.status === 401) return { state: "signIn" };
+    const reply = await readJSON(response);
+    if (reply?.code === 401 || reply?.code === "401") return { state: "signIn" };
+    if (reply?.code != null && reply.code !== 0) return { state: "unavailable" };
+    const usage = reply?.data && typeof reply.data === "object" ? reply.data : reply;
+    const used = amount(usage?.credit ?? 0), limit = amount(usage?.limitNum);
+    // An unlimited quota (-1) has no balance to draw.
+    if (used === null || limit === null) return { state: "unavailable" };
+    const reset = timestamp(usage.cycleEndTime) + 1;
+    const shared = { remaining: Math.max(0, limit - used), total: limit };
+    const gift = usage.exclusiveGift?.hasGift === true ? {
+        used: amount(usage.exclusiveGift.usedCredits ?? 0), total: amount(usage.exclusiveGift.totalCredits ?? 0),
+        remaining: amount(usage.exclusiveGift.remainCredits), refresh: timestamp(usage.exclusiveGift.nextResetAt) + 1,
+    } : null;
+    if (gift && (gift.used === null || gift.total === null)) return { state: "unavailable" };
+    if (gift && gift.remaining === null) gift.remaining = Math.max(0, gift.total - gift.used);
+    const groups = [{ kind: "planBase", remaining: shared.remaining, total: shared.total, refresh: future(reset) ? reset : null }];
+    if (gift) groups.push({ kind: "planBonus", remaining: gift.remaining, total: gift.total, refresh: future(gift.refresh) ? gift.refresh : null });
+    const remaining = shared.remaining + (gift?.remaining ?? 0), total = shared.total + (gift?.total ?? 0);
+    return { state: "ready", remaining, total, reserved: 0, plan: origin.endsWith(".cn") ? "企业版" : "Enterprise",
+        cycle: { total, remaining, used: used + (gift?.used ?? 0), reset: future(reset) ? reset : null }, groups };
+}
+
 try {
+    // Only the absence of an identified enterprise account permits a personal reading.
+    const enterprise = await enterpriseCredits();
+    if (enterprise !== null) return enterprise;
     const response = await request("summary", {});
     if (response.status === 401) return { state: "signIn" };
     const reply = await readJSON(response);

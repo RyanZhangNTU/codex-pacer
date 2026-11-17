@@ -6,7 +6,7 @@ import SwiftUI
 /// the same picture the card shows, and what comes next. The card's Open
 /// and Restart open it at once, asking the user to wait while the app
 /// restarts or opens (up to two minutes); it then follows the app's steps,
-/// says it's done for eight seconds once trusted, and closes itself once
+/// says it's done for eight seconds once trusted or ready, and closes itself once
 /// there is nothing left to click, on Close or after ten minutes. It outlives Settings,
 /// checking the module itself, never takes focus and never reads the app's window.
 @MainActor final class HarnessGuideFloat: ObservableObject {
@@ -85,11 +85,11 @@ import SwiftUI
             if Date().timeIntervalSince(opened) > Self.wait { return close() }
             return resize()
         }
-        if guide?.floatTitle != nil {
+        if Self.appStep(guide, provider: provider) != nil {
             emptyChecks = 0
             if !followsApp { followsApp = true }
             // Done: it says so for a few seconds, then steps aside.
-            if guide?.stage == .firstTask {
+            if guide?.stage == .firstTask || guide?.stage == .ready {
                 if doneSince == nil { doneSince = Date() }
                 if let doneSince, Date().timeIntervalSince(doneSince) >= Self.doneShown { return close() }
             }
@@ -97,10 +97,30 @@ import SwiftUI
             // Nothing left to click once it followed the app, read twice in a row.
             emptyChecks += 1
             if emptyChecks >= 2 { return close() }
-        } else if pending == nil || Date().timeIntervalSince(opened) > Self.wait {
+        } else if pending == nil || Date().timeIntervalSince(opened) > Self.wait || !Self.keepsPending(guide, provider: provider) {
             return close()
         }
         resize()
+    }
+
+    /// What the float says from the app's side: the guide's own click, or that
+    /// it's done once the ring is ready. A restart lands straight on ready when
+    /// the user trusted the tool before, as trusting it again after a Pacer
+    /// update does; the card has no step left then, but the float still says
+    /// it's done, as after a first trust, instead of keeping its waiting words.
+    static func appStep(_ guide: HarnessProgressGuide?, provider: AgentProvider) -> (title: String, next: String?)? {
+        guard let guide else { return nil }
+        if let title = guide.floatTitle { return (title, guide.floatNext) }
+        guard guide.stage == .ready, let name = HarnessRegistry.descriptor(for: provider)?.name else { return nil }
+        return (L10n.text("progress_guide.float.done", name), nil)
+    }
+
+    /// The waiting words hold only while the app is on its way: past the
+    /// restart or the open, a stage they don't describe has no click left in
+    /// the app, and the card says what to do.
+    static func keepsPending(_ guide: HarnessProgressGuide?, provider: AgentProvider) -> Bool {
+        guard let guide, let name = HarnessRegistry.descriptor(for: provider)?.name else { return true }
+        return HarnessProgressGuide.pendingFloat(stage: guide.stage, name: name) != nil
     }
 
     /// The bottom-right of the screen Settings is on, 16 points in.
@@ -145,10 +165,11 @@ private struct GuideFloatContent: View {
 
     var body: some View {
         let guide = model.progressGuide(provider)
+        let step = HarnessGuideFloat.appStep(guide, provider: provider)
         // Until the app shows a step of its own, the float says what Pacer is doing.
-        let waiting = !float.followsApp && (guide?.floatTitle == nil || model.harnessRestartInFlight(provider))
-        let title = waiting ? float.pending?.title : guide?.floatTitle
-        let next = waiting ? float.pending?.next : guide?.floatNext
+        let waiting = !float.followsApp && (step == nil || model.harnessRestartInFlight(provider))
+        let title = waiting ? float.pending?.title : step?.title
+        let next = waiting ? float.pending?.next : step?.next
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 7) {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 16, height: 16).accessibilityHidden(true)

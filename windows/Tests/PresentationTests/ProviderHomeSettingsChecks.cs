@@ -63,8 +63,9 @@ internal static class ProviderHomeSettingsChecks
             await PresentationWait.UntilAsync(() => row.IsVisible, "A module turned on shows in the Services sidebar even when it isn't found");
             Check(Descendants(row).OfType<Image>().Any(icon => icon.Source != null && ReferenceEquals(icon.Source, ProviderIcon.Source("workbuddy"))),
                 "WorkBuddy has its official icon in the Services sidebar");
-            Check(Find<TextBlock>(window, id + ".status").IsVisible && Find<Button>(window, id + ".accountUsage").IsVisible,
-                "The enabled service has local task status and an account usage link");
+            Check(Find<TextBlock>(window, id + ".status").IsVisible
+                && !Descendants(window).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == id + ".accountUsage"),
+                "The enabled service has local task status and no account usage link");
             var detected = engine.LatestSnapshot?.Modules?.First(value => value.Provider == "workbuddy").Installed;
             string detection = ui.Text(detected switch { true => "windows.provider.detected", false => "windows.provider.not_detected", _ => "provider.state.searching" });
             Check(Descendants(window).OfType<TextBlock>().Any(value => value.Text == detection), "The header describes detection on a Windows PC");
