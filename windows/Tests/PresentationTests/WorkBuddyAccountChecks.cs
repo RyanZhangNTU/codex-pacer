@@ -19,6 +19,8 @@ internal static class WorkBuddyAccountChecks
     private const string Paid = Origin + "/billing/meter/get-user-resource-paid-packages";
     private const string Free = Origin + "/billing/meter/get-user-resource-free-packages";
     private const string Login = Origin + "/profile/plans-usage";
+    private const string SignIn = Origin + "/login/?platform=usercenter";
+    private const string Slow = Origin + "/fixture/slow.png";
     private const string Accounts = Origin + "/console/accounts";
     private const string EnterpriseUsage = Origin + "/billing/meter/get-enterprise-user-usage";
 
@@ -36,14 +38,34 @@ internal static class WorkBuddyAccountChecks
         void Attach(CoreWebView2 core)
         {
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
-            core.NavigationCompleted += (_, e) => { if (e.IsSuccess && core.Source == Login) login = core; };
+            core.NavigationCompleted += (_, e) => { if (e.IsSuccess && core.Source == SignIn) login = core; };
             core.WebResourceRequested += (_, e) =>
             {
                 string url = e.Request.Uri;
                 string body = "";
                 string type = "text/html";
                 int status = 403;
-                if (url == Login && e.Request.Method == "GET") { status = 200; body = "<!doctype html><title>Test sign-in</title>"; }
+                // Like workbuddy.cn, the usage page sends itself to the sign-in page while it still loads, which
+                // ends its first navigation as aborted (11/17: the window called that a load failure).
+                if (url == Slow)
+                {
+                    var deferral = e.GetDeferral();
+                    async Task Later()
+                    {
+                        await Task.Delay(1500);
+                        try { e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(), 404, "Fixture", "Cache-Control: no-store"); }
+                        catch (Exception error) when (ProviderLoginWindow.Recoverable(error)) { }
+                        finally { deferral.Complete(); }
+                    }
+                    _ = Later();
+                    return;
+                }
+                if (url == Login && e.Request.Method == "GET")
+                {
+                    status = 200;
+                    body = "<!doctype html><title>Plans</title><img src=\"/fixture/slow.png\"><script>setTimeout(() => location.replace('/login/?platform=usercenter'), 50)</script>";
+                }
+                else if (url == SignIn && e.Request.Method == "GET") { status = 200; body = "<!doctype html><title>Test sign-in</title>"; }
                 else if (url == Billing && e.Request.Method == "POST")
                 {
                     reads++;
@@ -134,6 +156,8 @@ internal static class WorkBuddyAccountChecks
                 && window.Title == ui.Text("workbuddy.login.title") + " · www.workbuddy.cn"
                 && Require<Button>(window, "workbuddy.login.later").IsVisible && !Require<Button>(window, "workbuddy.login.done").IsVisible,
                 "The WorkBuddy sign-in uses the shared banner, with nothing to confirm while signed out");
+            Check(Require<TextBlock>(window, "workbuddy.login.detail").Text == ui.Text("workbuddy.login.prompt_detail"),
+                "The site's own redirect while its first page loads is not a load failure: " + Require<TextBlock>(window, "workbuddy.login.detail").Text);
             // Signed out, the site's account list already answers 401, so the read ends there.
             int signedOutReads = accountLists;
             await PresentationWait.UntilAsync(() => accountLists > signedOutReads, "The window must check the account through its own profile while it is open");
