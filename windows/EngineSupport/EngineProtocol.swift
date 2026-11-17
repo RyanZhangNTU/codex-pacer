@@ -211,7 +211,6 @@ struct EngineModule: Codable, Equatable {
     var symbol: String? = nil
     var status: String? = nil
     var usage: HarnessUsage? = nil
-    var usageGuideURL: URL? = nil
     var progressConnector: Bool? = nil
     var hasTaskProgress: Bool? = nil
     var reportsSessionUsage: Bool? = nil

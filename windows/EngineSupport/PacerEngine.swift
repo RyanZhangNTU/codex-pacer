@@ -1453,7 +1453,7 @@ actor EngineRuntime {
         var module = EngineModule(provider: provider.rawValue, mode: moduleSettings.mode(for: provider).rawValue,
             installed: installation?.isInstalled(provider), enabled: enabled.contains(provider),
             displayName: descriptor?.name, symbol: descriptor?.symbol, status: status,
-            usage: harnessActivities[provider]?.usage, usageGuideURL: descriptor?.usageGuide,
+            usage: harnessActivities[provider]?.usage,
             progressConnector: descriptor.map(\.progressConnector), hasTaskProgress: descriptor.map(\.hasTaskProgress),
             reportsSessionUsage: descriptor.map(\.reportsSessionUsage), reportsAccountCredits: descriptor.map(\.reportsAccountCredits),
             progressSetup: localProgressStatuses[provider]?.setup,

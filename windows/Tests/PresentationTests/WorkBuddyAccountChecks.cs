@@ -193,6 +193,12 @@ internal static class WorkBuddyAccountChecks
             // The page's dial draws with the page's ink: the island's light figure vanished on a light page (11/16 review).
             Check(Require<QuotaDial>(settings, prefix + ".credits_dial").FigureInk.ToString() == settings.TryFindResource("SettingsPrimary")?.ToString(),
                 "The settings credits dial must draw its figure in the page's own primary ink");
+            // The month's value ends where the breakdown's dates do, as on the Mac (11/17): it sat beside its label before.
+            settings.UpdateLayout();
+            double Right(FrameworkElement element) => element.TransformToAncestor(settings).TransformBounds(new Rect(element.RenderSize)).Right;
+            var monthValue = Descendants(Require<FrameworkElement>(settings, prefix + ".credits_line0")).OfType<TextBlock>().Single(text => text.Text.Contains("420.5 / 500", StringComparison.Ordinal));
+            var baseDate = Descendants(Require<FrameworkElement>(settings, prefix + ".credits_planBase")).OfType<TextBlock>().Last();
+            Check(Math.Abs(Right(monthValue) - Right(baseDate)) < 1, $"The credit lines must end at the breakdown's right edge ({Right(monthValue):0.#} vs {Right(baseDate):0.#})");
 
             await settings.NavigateAsync("overview");
             await PresentationWait.UntilAsync(() => Find<QuotaDial>(settings, "settings.overview.workbuddy.account.remaining")?.AccessibleName.Contains(monthly, StringComparison.Ordinal) == true,

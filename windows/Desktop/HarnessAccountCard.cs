@@ -37,17 +37,7 @@ internal static class HarnessAccountCard
             : string.Join("\n", presentation.Lines.Select(line => line.Label + " " + line.Value + (line.Detail is string detail ? " · " + detail : "")));
         if (presentation != null)
         {
-            if (details)
-                for (int index = 0; index < presentation.Lines.Count; index++)
-                {
-                    if (index > 0)
-                    {
-                        var rule = new Border { Height = 1, Margin = new Thickness(0, 8, 0, 8) };
-                        if (island) rule.Background = PacerPalette.Hairline; else rule.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
-                        body.Children.Add(rule);
-                    }
-                    body.Children.Add(CreditLine(presentation.Lines[index], index == 0 ? presentation.Plan : null, provider, island, id + ".line" + index));
-                }
+            if (details) body.Children.Add(Lines(presentation, provider, island, id + ".line"));
             if (stale) Line(ui.Text("common.not_updated"), "state");
         }
         else if (details || signedIn) Line(stateText, "state");
@@ -105,10 +95,29 @@ internal static class HarnessAccountCard
         return cell;
     }
 
+    /// Core's credit lines with a hairline between them, filling their column so
+    /// each value ends at its right edge. Each line's id is the prefix and its index.
+    /// <param name="tint">The plan's color; the brand's island color by default.</param>
+    internal static StackPanel Lines(HarnessCreditsPresentation presentation, string provider, bool island, string idPrefix, Brush? tint = null)
+    {
+        var lines = new StackPanel();
+        for (int index = 0; index < presentation.Lines.Count; index++)
+        {
+            if (index > 0)
+            {
+                var rule = new Border { Height = 1, Margin = new Thickness(0, 8, 0, 8) };
+                if (island) rule.Background = PacerPalette.Hairline; else rule.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator");
+                lines.Children.Add(rule);
+            }
+            lines.Children.Add(CreditLine(presentation.Lines[index], index == 0 ? presentation.Plan : null, provider, island, idPrefix + index, tint));
+        }
+        return lines;
+    }
+
     /// One of Core's credit lines, laid out like a period of Codex's single
     /// view: the label (and the plan on the first line) at the left, the value
     /// at the right in tabular figures, and its date or expiry under it.
-    private static FrameworkElement CreditLine(HarnessCreditsLine line, string? plan, string provider, bool island, string id)
+    private static FrameworkElement CreditLine(HarnessCreditsLine line, string? plan, string provider, bool island, string id, Brush? planTint)
     {
         TextBlock Text(string text, double size, string role, bool bold = false)
         {
@@ -129,7 +138,7 @@ internal static class HarnessAccountCard
         title.Children.Add(Text(line.Label, 11, "secondary"));
         if (plan != null)
         {
-            var tint = PacerPalette.Provider(provider);
+            var tint = planTint ?? PacerPalette.Provider(provider);
             Color shade = tint is SolidColorBrush solid ? solid.Color : Colors.Gray;
             var chip = new Border { CornerRadius = new CornerRadius(7), Padding = new Thickness(6, 0, 6, 1), Margin = new Thickness(6, 0, 0, 0),
                 Background = new SolidColorBrush(Color.FromArgb(46, shade.R, shade.G, shade.B)), VerticalAlignment = VerticalAlignment.Center,

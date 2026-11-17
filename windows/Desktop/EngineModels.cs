@@ -79,7 +79,7 @@ internal sealed record EngineSource(string Id, string Provider, bool Available, 
 internal sealed record ConnectionFailure(string Kind, string? Method, int? Code);
 internal sealed record EngineModule(string Provider, string Mode, bool? Installed, bool Enabled,
     string? DisplayName = null, string? Symbol = null, string? Status = null, HarnessUsage? Usage = null,
-    string? UsageGuideUrl = null, bool? ProgressConnector = null, bool? HasTaskProgress = null, bool? ReportsSessionUsage = null,
+    bool? ProgressConnector = null, bool? HasTaskProgress = null, bool? ReportsSessionUsage = null,
     string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null,
     EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
     bool? Local = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
