@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.5.2
+
+- Mac and Windows: Pacer reads the credits of a WorkBuddy enterprise member, the cycle quota their administrator assigns ([#241](https://github.com/RyanZhangNTU/codex-pacer/issues/241)). If that read fails, Pacer keeps the last reading instead of showing the personal account's credits, and the sign-in window waits for a valid reading.
+- Mac and Windows: WorkBuddy's credits card in Settings runs its lines to the card's right edge, in line with the breakdown below them, and no longer shows "Where to check account usage".
+- Mac and Windows: When Pacer takes its own setup out of Claude's settings file, by turning Claude off on Mac or uninstalling Pacer on Windows, it no longer removes environment settings you added there.
+- Windows: Claude's quota is read through the browser Pacer signs in to Claude with, so it works on networks where Claude's site asked for a verification check again after every sign-in ([#243](https://github.com/RyanZhangNTU/codex-pacer/issues/243)). If the site still blocks Pacer after you sign in, Pacer says to try another network or proxy instead of asking you to sign in again.
+- Windows: WorkBuddy's sign-in window no longer says the page could not load when the site moves on to its own login page, and signing in there completes.
+- Windows: Pacer's background engine no longer stops right after it starts on PCs where address randomization is turned off in Exploit Protection and a folder name has non-English characters.
+- Mac: DeepSeek's balance source menu can switch to an API key again.
+- Mac: When restarting WorkBuddy finds Pacer's progress tool already trusted, the floating guide says it's done instead of waiting two minutes.
+
 ## 4.5.1
 
 - Mac and Windows: Pacer stays connected to the Codex app again after its 26.1111 update. That update changed how the Codex app reports a task's state, so Pacer kept reconnecting. Settings showed the local Codex source as "Not connected, retrying", approvals for Codex app tasks raised no alert, and Remote Control tasks didn't appear. Tasks, progress and quota were not affected. Pacer also reads later versions of these reports, so a similar Codex update shouldn't cut the connection again.
