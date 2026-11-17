@@ -79,10 +79,44 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
             return;
         }
         if (cancelled.Remove(request.RequestID) || reads.ContainsKey(request.RequestID)) return;
-        if (!Available || reads.Count >= 4 || !CurrentCookieScope(request.Context)) { _ = Reply(request, "offline", null); return; }
-        if (!session.HasProfile) { _ = Reply(request, "signedOut", null); return; }
+        // The engine keeps at most four cookie reads and four page reads waiting.
+        if (!Available || reads.Count >= 8 || !CurrentCookieScope(request.Context)) { _ = Fail(request, "offline"); return; }
+        if (!session.HasProfile) { _ = Fail(request, "signedOut"); return; }
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); reads[request.RequestID] = cancellation;
-        _ = Read(request, cancellation);
+        _ = request.Path is string path ? Fetch(request, path, cancellation) : Read(request, cancellation);
+    }
+    private Task Fail(EngineHostRequest request, string state) => request.Path == null ? Reply(request, state, null) : Reply(request, new ClaudeWebFetchValue(state));
+    /// A quota read in the private profile (#243); the engine decodes the reply as its own.
+    private async Task Fetch(EngineHostRequest request, string path, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            ClaudeWebFetchValue value;
+            try { value = await session.FetchAsync(path, cancellation.Token); }
+            catch (Exception error) when (ProviderLoginWindow.Recoverable(error) && !cancellation.IsCancellationRequested)
+            { if (CurrentCookieScope(request.Context)) await Reply(request, new ClaudeWebFetchValue("offline")); return; }
+            if (!cancellation.IsCancellationRequested && CurrentCookieScope(request.Context)) await Reply(request, value);
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            if (reads.TryGetValue(request.RequestID, out var current) && ReferenceEquals(current, cancellation)) reads.Remove(request.RequestID);
+            cancellation.Dispose();
+        }
+    }
+    private async Task Reply(EngineHostRequest request, ClaudeWebFetchValue value)
+    {
+        if (disposed || engine.IsConnectionClosed) return;
+        try
+        {
+            await engine.SendAsync("claudeFetchResult", new { requestID = request.RequestID, context = request.Context, claudeFetch = new {
+                state = value.State, status = value.Status, contentType = value.ContentType, cfMitigated = value.CfMitigated,
+                retryAfter = value.RetryAfter, body = value.Body } });
+        }
+        catch (EngineCommandException error) when (error.Code == "commandLimit" && value.Body != null)
+        { await Reply(request, new ClaudeWebFetchValue("tooLarge")); }
+        catch (EngineCommandException error) { if (error.Code != "staleWebReply") LastFailure = "windows.claude.connection_failed"; }
+        catch (Exception error) when (error is IOException or OperationCanceledException) { }
     }
     private async Task Read(EngineHostRequest request, CancellationTokenSource cancellation)
     {
@@ -143,7 +177,8 @@ internal sealed class ClaudeConnectionCoordinator : IAsyncDisposable
                 context = engine.LatestSnapshot?.ClaudeConnection?.Context ?? "";
                 if (!Current(context)) return false;
             }
-            await engine.SendAsync("resetClaudeConnection", new { context }); return signedIn;
+            // signedIn: a challenge right after a completed sign-in names the network, not another sign-in (#243).
+            await engine.SendAsync("resetClaudeConnection", new { context, signedIn }); return signedIn;
         }
         catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException)
         { LastFailure = "windows.claude.connection_failed"; return false; }

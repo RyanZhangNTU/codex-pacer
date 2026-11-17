@@ -14,6 +14,7 @@
 "claude.login.organization_number" = "工作区 %ld";
 "claude.quota.source_web" = "Claude 网页登录";
 "claude.quota.web_challenge" = "请打开 Claude 登录窗口，手动完成网页验证。";
+"claude.quota.web_blocked" = "已经登录，但当前网络下 claude.ai 仍在拦截 Pacer。可以换个网络或代理节点后再试。";
 "claude.quota.organization_required" = "请选择 Claude 工作区以读取其额度。";
 "provider.remote_configure_failed" = "无法在此主机上配置 Claude Code，请检查 SSH 连接后重试。";
 "provider.remote_source_missing" = "未发现 Claude 配置，监测已暂停。";

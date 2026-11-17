@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import PacerCore
 
 private actor ClaudeCookieProvider {
@@ -30,8 +33,30 @@ actor BridgedClaudeQuotaClient: ClaudeQuotaConnection {
             client = ClaudeWebQuotaClient(cookieProvider: { await provider.read() }, metadataProvider: metadata,
                 selectedOrganizationProvider: { organization.isEmpty ? nil : organization }, transport: transport, now: now)
         } else {
+            #if os(Windows)
+            let direct = WindowsClaudeHTTP.client(timeout: ProviderQuotaRefreshPolicy.replyTimeout)
+            client = ClaudeWebQuotaClient(cookieProvider: { await provider.read() }, metadataProvider: metadata,
+                selectedOrganizationProvider: { organization.isEmpty ? nil : organization },
+                transport: Self.browserTransport(bridge: bridge, context: context) { try await direct.data(for: $0) },
+                now: now, invalidateTransport: { direct.invalidate() })
+            #else
             client = ClaudeWebQuotaClient(cookieProvider: { await provider.read() }, home: home, userHome: userHome,
                 selectedOrganizationProvider: { organization.isEmpty ? nil : organization }, metadataProvider: metadata)
+            #endif
+        }
+    }
+    /// Reads go through Pacer's own browser profile when the host offers it: the
+    /// browser that passed claude.ai's verification is the one Cloudflare cleared,
+    /// and the engine's HTTPS client was challenged again after every sign-in (#243).
+    /// The browser sends its own cookies; the request's are not forwarded.
+    static func browserTransport(bridge: ClaudeWebBridge, context: String,
+                                 direct: @escaping ClaudeWebQuotaClient.Transport) -> ClaudeWebQuotaClient.Transport {
+        { request in
+            guard await bridge.fetchesInBrowser else { return try await direct(request) }
+            guard let url = request.url, (request.httpMethod ?? "GET") == "GET", url.scheme == "https", url.host == "claude.ai",
+                  let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw ClaudeQuotaError.invalidReply }
+            let path = parts.percentEncodedPath + (parts.percentEncodedQuery.map { "?" + $0 } ?? "")
+            return try await bridge.fetch(context: context, path: path).response(for: url)
         }
     }
     func readQuota() async throws -> QuotaSnapshot {

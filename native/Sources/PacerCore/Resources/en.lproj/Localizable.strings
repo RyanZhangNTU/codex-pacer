@@ -14,6 +14,7 @@
 "claude.login.organization_number" = "Workspace %ld";
 "claude.quota.source_web" = "Claude web sign-in";
 "claude.quota.web_challenge" = "Open Claude sign-in to complete the website's verification.";
+"claude.quota.web_blocked" = "You're signed in, but claude.ai is still blocking Pacer on this network. Try another network or VPN server.";
 "claude.quota.organization_required" = "Choose a Claude workspace to read its quota.";
 "provider.remote_configure_failed" = "Could not set up Claude Code on this host. Check SSH access and try again.";
 "provider.remote_source_missing" = "Claude configuration was not found. Monitoring is paused.";

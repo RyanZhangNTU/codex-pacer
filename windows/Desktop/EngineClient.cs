@@ -140,9 +140,15 @@ internal sealed class EngineClient : IAsyncDisposable
     internal async Task SetClaudeWebHostAsync(bool available)
     {
         bool previous = acceptsClaudeHostMessages; acceptsClaudeHostMessages = true;
-        try { await SendAsync("setClaudeWebHost", new { webAvailable = available }); }
+        // webFetch: claude.ai reads go through the private browser profile (#243).
+        try { await SendAsync("setClaudeWebHost", new { webAvailable = available, webFetch = true }); }
         catch { acceptsClaudeHostMessages = previous; throw; }
     }
+    /// Only the shape of a claude.ai API path; `ClaudeWebSession.FetchAsync` and the reader page admit the quota reads themselves.
+    private static string ClaudeReadPath(JsonElement root) =>
+        root.TryGetProperty("path", out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 5 and <= 256 } path &&
+        path.StartsWith("/api/", StringComparison.Ordinal) && path.AsSpan().IndexOfAnyInRange('\u0000', ' ') < 0 && !path.Contains('\u007f')
+            ? path : throw new InvalidDataException("Invalid browser read.");
 
     private async Task<JsonElement?> RequestAsync(string method, object? parameters, TimeSpan? timeout = null, CancellationToken cancellation = default)
     {
@@ -269,13 +275,17 @@ internal sealed class EngineClient : IAsyncDisposable
             case "hostRequest":
             case "hostCancel":
                 string? operation = root.GetProperty("operation").GetString();
-                if (!initialized || !(operation == "deepseek.balance" && acceptsWebHostMessages || operation == "claude.session" && acceptsClaudeHostMessages))
+                bool claude = operation is "claude.session" or "claude.fetch";
+                if (!initialized || !(operation == "deepseek.balance" && acceptsWebHostMessages || claude && acceptsClaudeHostMessages))
                     throw new InvalidDataException("Unexpected browser request.");
                 string? hostID = root.GetProperty("requestID").GetString(), context = root.GetProperty("context").GetString();
                 if (hostID is not { Length: 36 } || context is not { Length: 36 } || !Guid.TryParseExact(hostID, "D", out _) || !Guid.TryParseExact(context, "D", out _))
                     throw new InvalidDataException("Invalid browser request scope.");
-                var hostRequest = new EngineHostRequest(hostID!, context!, root.GetProperty("type").GetString() == "hostCancel");
-                if (operation == "claude.session") Publish(() => ClaudeHostRequest?.Invoke(hostRequest)); else Publish(() => HostRequest?.Invoke(hostRequest));
+                bool cancelled = root.GetProperty("type").GetString() == "hostCancel";
+                // A page read names its claude.ai path; the browser checks it against its own list again.
+                string? path = operation == "claude.fetch" && !cancelled ? ClaudeReadPath(root) : null;
+                var hostRequest = new EngineHostRequest(hostID!, context!, cancelled, path);
+                if (claude) Publish(() => ClaudeHostRequest?.Invoke(hostRequest)); else Publish(() => HostRequest?.Invoke(hostRequest));
                 break;
             case "hello":
                 if (root.GetProperty("engine").GetString() != "PacerEngine") throw new InvalidDataException("Unexpected engine.");
