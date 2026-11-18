@@ -1200,6 +1200,8 @@
 "panel.action.apps" = "打开应用";
 "panel.action.markRead" = "全部标为已读";
 "panel.action.pin" = "固定展开";
+"panel.action.recenter" = "回到顶部中央";
+"panel.action.recenter_help" = "只在自由拖动时显示。";
 "panel.action.settings" = "设置";
 "main.panel.subtitle" = "点区块查看设置，拖动可以换顺序。";
 "main.panel.blocks" = "区块";

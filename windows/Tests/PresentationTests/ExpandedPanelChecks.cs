@@ -77,7 +77,10 @@ internal static class ExpandedPanelChecks
             window.SelectPanelBlock("tasks"); await Pump();
             Select(Find<RadioButton>(window, "panel.option.pageSize.5"));
             await Until(() => engine.LatestSnapshot?.Presentation?.PageSize == 5);
-            Select(Find<RadioButton>(window, "panel.option.rowStyle.oneLine"));
+            // The page keeps its choices disabled until the previous one has saved.
+            var oneLine = Find<RadioButton>(window, "panel.option.rowStyle.oneLine");
+            await Until(() => oneLine.IsEnabled);
+            Select(oneLine);
             await Until(() => Descendants(island).OfType<TaskRow>().Any() && Descendants(island).OfType<TaskRow>().All(row => row.Height == TaskRow.OneLineHeight));
             await island.WaitForPresentationAsync();
             int rows = Math.Min(5, engine.LatestSnapshot!.Presentation!.Rows.Count);
@@ -89,13 +92,39 @@ internal static class ExpandedPanelChecks
 
             // Unchecked buttons leave the header for the More menu.
             window.SelectPanelBlock("actions"); await Pump();
-            Toggle(Find<CheckBox>(window, "panel.option.action.pin"));
+            var pinSwitch = Find<CheckBox>(window, "panel.option.action.pin");
+            await Until(() => pinSwitch.IsEnabled);
+            Toggle(pinSwitch);
             await Until(() => ((Button)island.FindName("PinButton")).Visibility == Visibility.Collapsed);
             var menu = ((Button)island.FindName("MoreButton")).ContextMenu;
             Check(menu.Items.OfType<MenuItem>().Any(item => AutomationProperties.GetAutomationId(item) == "island.menu.pin")
                 && menu.Items.OfType<MenuItem>().Any(item => ReferenceEquals(item, island.FindName("RefreshMenu")))
                 && !menu.Items.OfType<MenuItem>().Any(item => ReferenceEquals(item, island.FindName("SettingsMenu"))),
                 "Keep Expanded joins Refresh in the menu while Settings stays in the header");
+
+            // Return to Top Center is opt-in: off, it is in neither the header nor the menu.
+            var recenter = (Button)island.FindName("RecenterButton");
+            string recenterName = ui.Text("appearance.position_reset");
+            Check(Find<CheckBox>(window, "panel.option.action.recenter").IsChecked == false && recenter.Visibility == Visibility.Collapsed
+                && AutomationProperties.GetName(recenter) == recenterName && menu.Items.OfType<MenuItem>().All(item => !Equals(item.Header, recenterName)),
+                "Return to Top Center starts off and stays out of the More menu");
+            island.SaveIslandPlacement = edit => session.ChangeAsync(edit);
+            var recenterSwitch = Find<CheckBox>(window, "panel.option.action.recenter");
+            await Until(() => recenterSwitch.IsEnabled);
+            Toggle(recenterSwitch);
+            await Until(() => recenter.Visibility == Visibility.Visible && session.Current.ExpandedPanelOptions?.Contains("\"recenter\"", StringComparison.Ordinal) == true);
+            Check(!recenter.IsEnabled && Descendants(Find<Button>(window, "panel.editor.actions")).OfType<IconGlyph>().Any(glyph => glyph.Symbol == "arrow.up.to.line")
+                && menu.Items.OfType<MenuItem>().All(item => !Equals(item.Header, recenterName)),
+                "Turned on, it waits while the island already sits at the top center, and the outline shows it");
+            await session.ChangeAsync(p => p with { DisplayMode = "floating", IslandPlacement = new(IslandEdge.Free, .3, .4) });
+            await Until(() => recenter.IsEnabled);
+            Invoke(recenter);
+            await Until(() => session.Current is { IslandPlacement: null, Position: "center", PositionChosen: false, DisplayMode: "floating" } && !recenter.IsEnabled);
+            await session.ChangeAsync(p => p with { DisplayMode = "notch" });
+            await Until(() => recenter.Visibility == Visibility.Collapsed);
+            island.SaveIslandPlacement = null;
+            await session.ChangeAsync(p => p with { DisplayMode = preferences.DisplayMode });
+            await Until(() => recenter.Visibility == Visibility.Visible && !recenter.IsEnabled);
 
             // Removing DeepSeek's balance hides it; the automatic layout returns everything.
             window.SelectPanelBlock("deepseek"); await Pump();
@@ -124,12 +153,12 @@ internal static class ExpandedPanelChecks
             Invoke(Find<Button>(window, "panel.restore"));
             await Until(() => session.Current.ExpandedPanelLayout == null && Descendants(island).OfType<DeepSeekSoloView>().Any());
             await session.ChangeAsync(p => p with { ExpandedPanelOptions = null, ShowAppButtons = true });
-            await Until(() => ((Button)island.FindName("PinButton")).Visibility == Visibility.Visible
+            await Until(() => ((Button)island.FindName("PinButton")).Visibility == Visibility.Visible && recenter.Visibility == Visibility.Collapsed
                 && Descendants(island).OfType<TaskRow>().All(row => row.Height == TaskRow.TwoLineHeight));
             await island.WaitForPresentationAsync();
             Check(island.LogicalTarget.Height == 438 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
                 "Restoring the layout and choices returns the reference panel");
-            Console.WriteLine("PASS expanded panel " + name + ": automatic layout, block moves, arrangement, rows, header buttons, removal and restore");
+            Console.WriteLine("PASS expanded panel " + name + ": automatic layout, block moves, arrangement, rows, header buttons, Return to Top Center, removal and restore");
         }
         finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); await engine.DisposeAsync(); }
     }

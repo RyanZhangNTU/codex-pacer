@@ -32,6 +32,10 @@ internal sealed record PanelOptions
     /// Whether a task row draws the field in the chosen style, as Core's `shows`.
     internal bool Shows(string field) => RowFields.Contains(field) && (!OneLine || field is "rate" or "turnTime");
     internal bool InHeader(string action) => HeaderActions.Contains(action);
+    /// Core's header actions in order. Out of the header each waits in the More menu,
+    /// except Return to Top Center, which is opt-in, as Core's `movesToMenu`.
+    internal static IReadOnlyList<string> Actions { get; } = ["markRead", "pin", "recenter", "settings"];
+    internal bool InMenu(string action) => action != "recenter" && !InHeader(action);
     internal string Periods(string provider) => provider switch { "codex" => CodexPeriods, "claude" => ClaudePeriods, _ => "both" };
 }
 

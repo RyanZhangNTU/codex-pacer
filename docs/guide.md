@@ -47,7 +47,7 @@ Codex quota needs nothing extra.
 
 Choose what the bar shows in **Collapsed Bar**: drag items on the live preview to reorder them or move them to the other side of the camera, and click one to see its options. In the list of items, the round button at the end of each one adds it to the bar or removes it. The badge's ring can show the services that are running, the average progress, or one segment per task.
 
-To move the island, choose **Free Move** in **Appearance**, then drag the bar by its status area. Release it near a screen edge and it snaps there. **Return to Top Center** puts it back. With several displays, each one remembers its own place.
+To move the island, choose **Free Move** in **Appearance**, then drag the bar by its status area. Release it near a screen edge and it snaps there. **Return to Top Center** puts it back. If you move it often, you can add this button to the expanded island's header: in **Expanded Panel**, select **Buttons** and turn on **Return to Top Center**. With several displays, each one remembers its own place.
 
 ## The expanded island
 

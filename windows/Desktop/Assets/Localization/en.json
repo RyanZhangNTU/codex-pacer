@@ -1107,6 +1107,8 @@
     "panel.action.apps": "Open apps",
     "panel.action.markRead": "Mark all as read",
     "panel.action.pin": "Keep expanded",
+    "panel.action.recenter": "Return to Top Center",
+    "panel.action.recenter_help": "Shows while Free Move is on.",
     "panel.action.settings": "Settings",
     "panel.block.actions": "Buttons",
     "panel.block.claude": "Claude Quota",

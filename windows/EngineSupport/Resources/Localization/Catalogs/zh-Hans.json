@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "4e49f6ab892481451f977f174ef0ed18909d488b97da5121eef9e64ff440028b",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "1b811e61044d56cfe50ee6c919d6983ef2203138bf255d08596290a379ced60f",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1111,6 +1111,8 @@
     "panel.action.apps": "\u6253\u5f00\u5e94\u7528",
     "panel.action.markRead": "\u5168\u90e8\u6807\u4e3a\u5df2\u8bfb",
     "panel.action.pin": "\u56fa\u5b9a\u5c55\u5f00",
+    "panel.action.recenter": "\u56de\u5230\u9876\u90e8\u4e2d\u592e",
+    "panel.action.recenter_help": "\u53ea\u5728\u81ea\u7531\u62d6\u52a8\u65f6\u663e\u793a\u3002",
     "panel.action.settings": "\u8bbe\u7f6e",
     "panel.block.actions": "\u64cd\u4f5c\u6309\u94ae",
     "panel.block.claude": "Claude \u989d\u5ea6",

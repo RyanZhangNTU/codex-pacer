@@ -355,9 +355,13 @@ public partial class IslandWindow
         MarkReadButton.Visibility = panelOptions.InHeader("markRead") ? Visibility.Visible : Visibility.Collapsed;
         PinButton.Visibility = panelOptions.InHeader("pin") ? Visibility.Visible : Visibility.Collapsed;
         SettingsButton.Visibility = panelOptions.InHeader("settings") ? Visibility.Visible : Visibility.Collapsed;
+        // Return to Top Center is for Free Move, and waits while the island already sits there, as Settings' button.
+        RecenterButton.Visibility = panelOptions.InHeader("recenter") && compactPreferences.DisplayMode != "notch" ? Visibility.Visible : Visibility.Collapsed;
+        RecenterButton.IsEnabled = SaveIslandPlacement != null && (compactPreferences.IslandPlacement != null || compactPreferences.Position != "center");
     }
 
     /// Unchecked header buttons first, then Refresh and Quit, which always live here.
+    /// Return to Top Center has no place here: unchecked, it stays in Settings alone.
     private string? menuShape;
     private void BuildMoreMenu()
     {
@@ -377,19 +381,19 @@ public partial class IslandWindow
                 item.Click += async (_, _) => await OpenDesktopApplicationFromMenu(provider);
                 menu.Items.Add(item); hidden++;
             }
-        if (!panelOptions.InHeader("markRead"))
+        if (panelOptions.InMenu("markRead"))
         {
             var item = new MenuItem { Header = ui.Text("activity.mark_all_read"), IsEnabled = MarkReadButton.IsEnabled };
             AutomationProperties.SetAutomationId(item, "island.menu.markRead");
             item.Click += OnMarkRead; menu.Items.Add(item); hidden++;
         }
-        if (!panelOptions.InHeader("pin"))
+        if (panelOptions.InMenu("pin"))
         {
             var item = new MenuItem { Header = ui.Text(pinned ? "common.unpin" : "common.pin") };
             AutomationProperties.SetAutomationId(item, "island.menu.pin");
             item.Click += OnPin; menu.Items.Add(item); hidden++;
         }
-        if (!panelOptions.InHeader("settings")) { menu.Items.Add(SettingsMenu); hidden++; }
+        if (panelOptions.InMenu("settings")) { menu.Items.Add(SettingsMenu); hidden++; }
         if (hidden > 0) menu.Items.Add(new Separator());
         menu.Items.Add(RefreshMenu); menu.Items.Add(new Separator()); menu.Items.Add(QuitMenu);
     }

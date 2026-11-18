@@ -997,6 +997,12 @@ final class IslandModel: ObservableObject {
         if moving { closeWork?.cancel() } else { moveEndedAt = Date() }
     }
     func islandPlacementSaved() { placementRevision += 1 }
+    /// Return to Top Center has somewhere to leave: a dragged place, or a
+    /// corner other than the top center. Settings and the panel's button share it.
+    var canResetIslandPlacement: Bool {
+        _ = placementRevision
+        return IslandPlacement.load(from: defaults) != nil || islandPosition != .center
+    }
     /// Return to Top Center: forget the dragged place and the old corner.
     func resetIslandPlacement() {
         IslandPlacement.clear(from: defaults)
