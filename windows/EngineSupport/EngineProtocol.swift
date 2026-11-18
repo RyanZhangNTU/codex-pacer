@@ -37,6 +37,7 @@ struct EngineCommand: Decodable {
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
         var showPinnedConversations: Bool?
+        var pinnedView: Bool?
         var monitorRemoteControl: Bool?
         var monitorDurable: Bool?
         var monitorWSL: Bool?
@@ -373,17 +374,16 @@ struct EngineSnapshot: Codable, Equatable {
     var remoteControlDirectory: RemoteControlDirectoryStatus?
 
     /// Optional catalog rows yield to the regular snapshot at the existing protocol limit.
-    func encodedWithinWireLimit(limit: Int = EngineProtocol.maximumSnapshotBytes) -> Data? {
+    mutating func encodedWithinWireLimit(limit: Int = EngineProtocol.maximumSnapshotBytes) -> Data? {
         let encoder = JSONEncoder()
-        var snapshot = self
-        while let bytes = try? encoder.encode(snapshot) {
+        while let bytes = try? encoder.encode(self) {
             if bytes.count <= limit { return bytes }
-            guard var pins = snapshot.pinnedConversations else { return nil }
-            if pins.rows.isEmpty { snapshot.pinnedConversations = nil; continue }
+            guard var pins = pinnedConversations else { return nil }
+            if pins.rows.isEmpty { pinnedConversations = nil; continue }
             pins.rows = Array(pins.rows.prefix(pins.rows.count / 2))
             let kept = Set(pins.rows.map(\.id))
             pins.links = pins.links.filter { kept.contains($0.activityID) }
-            snapshot.pinnedConversations = pins
+            pinnedConversations = pins
         }
         return nil
     }

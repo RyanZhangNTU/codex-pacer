@@ -251,6 +251,7 @@ public actor LocalActivityReader {
                 if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
                    now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
                 if current.activity.isInternalReview || current.activity.isIgnoredCodexSession {
+                    if !pinned.isEmpty { hiddenPinIDs.insert(current.activity.canonicalized().id) }
                     if current.activity.isIgnoredCodexSession { ignoredIDs.insert(current.activity.canonicalized().id) }
                     metadata[file] = (identity, current.activity)
                     cursors.removeValue(forKey: file)
@@ -271,8 +272,12 @@ public actor LocalActivityReader {
             let directory = file.deletingLastPathComponent()
             if watchedDirectories.insert(directory.path).inserted { watchURLs.append(directory) }
         }
+        let orderedWatches = watched.sorted {
+            if !extra.isEmpty, extra.contains($0) != extra.contains($1) { return !extra.contains($0) }
+            return (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast)
+        }
         return (CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
-                watchURLs + watched.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) }, ignoredIDs,
+                watchURLs + orderedWatches, ignoredIDs,
                 cursors.values.flatMap { $0.attention.requests(for: projected($0)) }.filter { !ignoredIDs.contains($0.activity.id) })
     }
     /// Recover the latest explicit turn anchor without loading conversation history.

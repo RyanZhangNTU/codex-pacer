@@ -1,4 +1,5 @@
 {
+  "windows.conversation_groups.hidden": "分组",
   "windows.conversation_groups.setting_help": "在灵动岛上切换全部任务与 Codex 置顶会话。",
   "windows.conversation_groups.all_tasks": "全部任务",
   "windows.conversation_groups.unavailable": "暂时无法读取置顶会话。",

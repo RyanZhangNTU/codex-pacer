@@ -61,6 +61,12 @@ internal static class ConversationActivityChecks
             Check(Descendants(window).Contains(edit) && edit.Text == "Still editing" && RowIDs().First() == "a1", "Activity does not discard an inline rename");
             edit.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(edit), 0, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent }); await Pump();
             Check(RowIDs().First() == "b2" && !Descendants(window).OfType<TextBox>().Any(), "Finishing rename applies the deferred ordering");
+            window.ApplyPreferences(preferences with { HideProjects = true });
+            await Pump();
+            Check(!Descendants(window).OfType<Button>().Any(b => (b.Content as string)?.Contains("First group") == true ||
+                AutomationProperties.GetName(b).Contains("First group")), "Privacy also hides custom group names");
+            Check(Descendants(window).OfType<TaskRow>().All(r => ((TaskRowState)r.DataContext).Value.Title == UiText.For(language == "zh-Hans").Text("activity.hidden_name")),
+                "Privacy hides pinned titles immediately, including a previous snapshot");
             Check(preferences.ConversationGroups == saved, "Presentation updates do not change stored preferences");
             Console.WriteLine("PASS conversation activity " + language + ": group and row promotion, completion restore, stable controls, drag and rename protection");
         }

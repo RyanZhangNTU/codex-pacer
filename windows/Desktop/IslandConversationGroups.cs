@@ -29,8 +29,16 @@ public partial class IslandWindow
     private bool HasPinnedView => compactPreferences.ShowPinnedConversations && latest?.PinnedConversations != null;
     private bool UsesConversationGroups => viewingPinnedChats && HasPinnedView;
     private string ConversationProfile => latest?.PinnedConversations?.Profile ?? "";
-    private IReadOnlyList<EngineTaskRow> DisplayRows(EnginePresentation presentation) =>
-        UsesConversationGroups ? latest!.PinnedConversations!.Rows : presentation.Rows;
+    private IReadOnlyList<EngineTaskRow> DisplayRows(EnginePresentation presentation)
+    {
+        if (!UsesConversationGroups) return presentation.Rows;
+        var pins = latest!.PinnedConversations!.Rows;
+        if (!compactPreferences.HideProjects) return pins;
+        string hidden = ui.Text("activity.hidden_name");
+        return pins.Any(row => row.Title != hidden) ? pins.Select(row => row with { Title = hidden }).ToArray() : pins;
+    }
+    private string GroupName(ConversationGroup group) => compactPreferences.HideProjects ?
+        ui.Text("windows.conversation_groups.hidden") : group.Name;
     private void OnSwitchConversationView(object sender, RoutedEventArgs e)
     {
         if (!HasPinnedView || conversationDragging || conversationRenaming || latest == null) return;
@@ -44,6 +52,9 @@ public partial class IslandWindow
         if (!HasPinnedView) return;
         string label = ui.Text(UsesConversationGroups ? "windows.conversation_groups.all_tasks" : "windows.conversation_groups.title");
         SwitchConversationView.Content = label;
+        string? status = latest!.PinnedConversations!.Available ? null : ui.Text("windows.conversation_groups.unavailable");
+        SwitchConversationView.ToolTip = status;
+        AutomationProperties.SetHelpText(SwitchConversationView, status ?? "");
         AutomationProperties.SetName(SwitchConversationView, label);
     }
     private ConversationGroup[] SavedGroups => ConversationGroups.Read(compactPreferences.ConversationGroups).For(ConversationProfile);
@@ -164,8 +175,9 @@ public partial class IslandWindow
             if (group != null) toggle.Click += async (_, _) => await SaveGroups(groups => groups.Select(g => g.Id == group.Id ? g with { Collapsed = !g.Collapsed } : g).ToArray());
             AutomationProperties.SetAutomationId(toggle, "island.group.toggle." + (group?.Id ?? "ungrouped"));
             heading.Children.Add(toggle);
-            var name = new Button { Content = (group?.Name ?? ui.Text("windows.conversation_groups.ungrouped")) + "  " + section.Rows.Length, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0), Padding = new Thickness(5,0,5,0) };
-            AutomationProperties.SetName(name, group == null ? ui.Text("windows.conversation_groups.ungrouped") : string.Format(ui.Text("windows.conversation_groups.rename"), group.Name));
+            var name = new Button { Content = (group == null ? ui.Text("windows.conversation_groups.ungrouped") : GroupName(group)) + "  " + section.Rows.Length, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0), Padding = new Thickness(5,0,5,0) };
+            AutomationProperties.SetName(name, group == null ? ui.Text("windows.conversation_groups.ungrouped")
+                : compactPreferences.HideProjects ? GroupName(group) : string.Format(ui.Text("windows.conversation_groups.rename"), group.Name));
             var headingHost = new Grid { Height = 32, Background = Brushes.Transparent };
             var indicator = new Border { BorderBrush = SystemColors.HighlightBrush, Visibility = Visibility.Collapsed, IsHitTestVisible = false };
             conversationGroupIndicators[group?.Id ?? ""] = indicator;
@@ -177,6 +189,7 @@ public partial class IslandWindow
                 headingHost.ToolTip = ui.Text("windows.conversation_groups.drag_help");
                 ConversationDragSource(headingHost, () => group.Members, group.Id);
                 name.Click += (_, _) => {
+                    if (compactPreferences.HideProjects) return;
                     conversationRenaming = true; collapse.Stop();
                     var input = new TextBox { Text = group.Name, MaxLength = 64, Width = 200, VerticalContentAlignment = VerticalAlignment.Center };
                     heading.Children.Remove(name); heading.Children.Add(input); Activate(); input.Focus(); input.SelectAll();
@@ -198,7 +211,7 @@ public partial class IslandWindow
                 var menu = new ContextMenu();
                 menu.Opened += (_, _) => {
                     menu.Items.Clear();
-                    foreach (var destination in savedGroups.Select(g => (Id: (string?)g.Id, Name: g.Name)).Prepend((null, ui.Text("windows.conversation_groups.ungrouped"))))
+                    foreach (var destination in savedGroups.Select(g => (Id: (string?)g.Id, Name: GroupName(g))).Prepend((null, ui.Text("windows.conversation_groups.ungrouped"))))
                     {
                         var item = new MenuItem { Header = string.Format(ui.Text("windows.conversation_groups.move"), destination.Name) };
                         item.Click += async (_, _) => await SaveGroups(groups => ConversationGroups.Move(groups, [value.Id], destination.Id)); menu.Items.Add(item);

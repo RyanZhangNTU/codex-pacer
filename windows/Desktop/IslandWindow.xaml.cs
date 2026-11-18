@@ -304,7 +304,8 @@ public partial class IslandWindow : Window
             compactPreferences.Position != preferences.Position || compactPreferences.DisplayMode != preferences.DisplayMode;
         if (screenChanged || placementChanged) CancelMove();
         bool memoryTurnedOn = preferences.IslandPositionPerDisplay && !compactPreferences.IslandPositionPerDisplay;
-        bool groupsChanged = compactPreferences.ConversationGroups != preferences.ConversationGroups || compactPreferences.CodexHome != preferences.CodexHome || compactPreferences.ShowPinnedConversations != preferences.ShowPinnedConversations;
+        bool groupsChanged = compactPreferences.ConversationGroups != preferences.ConversationGroups || compactPreferences.CodexHome != preferences.CodexHome || compactPreferences.ShowPinnedConversations != preferences.ShowPinnedConversations ||
+            UsesConversationGroups && compactPreferences.HideProjects != preferences.HideProjects;
         if (compactPreferences.ShowPinnedConversations != preferences.ShowPinnedConversations) viewingPinnedChats = true;
         compactPreferences = preferences;
         if (groupsChanged && latest != null) { panelDirty = true; Render(latest); }
@@ -402,7 +403,7 @@ public partial class IslandWindow : Window
         SetButtonName(PinButton, ui.Text(value ? "common.unpin" : "common.pin"));
         UpdateMainAction();
     }
-    private async void OnMarkRead(object sender, RoutedEventArgs e) { if (latest != null) await Send("markAllRead", new { snapshotSequence = latest.Sequence }); }
+    private async void OnMarkRead(object sender, RoutedEventArgs e) { if (latest != null) await Send("markAllRead", new { snapshotSequence = latest.Sequence, pinnedView = UsesConversationGroups }); }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Send("refresh", new { discover = true });
     private void OnQuit(object sender, RoutedEventArgs e) => QuitRequested?.Invoke();
     private void OnSettings(object sender, RoutedEventArgs e)
@@ -793,7 +794,7 @@ public partial class IslandWindow : Window
         UpdateAppButtons();
         UpdateProgressHint(snapshot);
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
-        MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
+        MarkReadButton.IsEnabled = DisplayRows(presentation).Any(row => row.Unread && row.Phase is "completed" or "interrupted");
         UpdateCompactBar();
         // New row choices redraw the page even when the rows are the same.
         bool choicesChanged = ApplyPanelChoices(snapshot);

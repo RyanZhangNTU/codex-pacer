@@ -68,6 +68,25 @@ final class CodexPinnedThreadsTests: XCTestCase {
         try sql(home, "CREATE TABLE threads (id TEXT, is_pinned INTEGER); INSERT INTO threads VALUES ('\(id(2))',1)")
         XCTAssertEqual(membership(home), [id(2)])
     }
+    func testResumedRolloutUsesIndexedPathAndVerifiedHeader() throws {
+        let home = try home(); try schema(home)
+        let old = try rollout(home, thread: id(1)), resumed = try rollout(home, thread: id(1), suffix: "_" + id(2))
+        XCTAssertEqual(SessionActivity(id: resumed.lastPathComponent).threadID, id(1))
+        try sql(home, "INSERT INTO threads (id,rollout_path) VALUES ('\(id(1))','\(resumed.path.replacingOccurrences(of: "'", with: "''"))')")
+        // Even if an old rollout's mtime is newer, the current indexed path wins.
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: old.path)
+        XCTAssertEqual(CodexOriginLookup(home: home).lookup(id(1))?.url, resumed)
+        XCTAssertNil(CodexOriginLookup(home: home).lookup(id(2)), "A suffix UUID is not a thread identity")
+        let foreign = try rollout(home, thread: id(3))
+        try sql(home, "UPDATE threads SET rollout_path='\(foreign.path.replacingOccurrences(of: "'", with: "''"))'")
+        XCTAssertNil(CodexOriginLookup(home: home).lookup(id(1)))
+    }
+    func testLegacyPinsWithoutAnIndexRowSurviveButArchivedRowsDoNot() throws {
+        let root = try home()
+        try sql(root, "CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER); INSERT INTO threads VALUES ('\(id(1))','Archived',1)")
+        try JSONSerialization.data(withJSONObject: ["pinned-thread-ids": [id(1), id(2)]]).write(to: root.appendingPathComponent(".codex-global-state.json"))
+        XCTAssertEqual(membership(root), [id(2)])
+    }
     func testPinnedSlotsLeaveRoomForAnUnpinnedChildAndOtherWork() async throws {
         let root = try home(), now = Date()
         var pins: [CodexPinnedThreads.Entry] = []

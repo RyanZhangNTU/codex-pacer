@@ -118,6 +118,63 @@ final class EngineSnapshotEmissionTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(capture.snapshots().last).sequence, before.sequence)
         await runtime.stop()
     }
+    func testPinnedCatalogIsOptionalAndRetainsOnlyTheCurrentProfile() async throws {
+        let capture = IdleFrameCapture(), now = Date()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let first = root.appendingPathComponent("first", isDirectory: true)
+        let second = root.appendingPathComponent("second", isDirectory: true)
+        for home in [first, second] { try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true) }
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pin = "019a0000-0000-7000-8000-000000000001"
+        let file = first.appendingPathComponent(".codex-global-state.json")
+        try JSONSerialization.data(withJSONObject: ["pinned-thread-ids": [pin]]).write(to: file)
+        let runtime = EngineRuntime(demo: false, now: { now }, dismissalStore: nil, navigationServices: .demo,
+            output: { capture.append($0) })
+        func latest() throws -> EngineSnapshot { try XCTUnwrap(capture.snapshots().last) }
+        _ = await runtime.receive(try command("initialize", ["codexHome": EngineCodexSourceReport.path(first), "enabledProviders": ["codex"]]))
+        let ordinary = try latest()
+        XCTAssertNil(ordinary.pinnedConversations)
+        _ = await runtime.receive(try command("configure", ["showPinnedConversations": true, "hideProjects": true]))
+        await runtime.refresh(discover: true)
+        let enabled = try latest(), catalog = try XCTUnwrap(enabled.pinnedConversations)
+        XCTAssertTrue(catalog.available)
+        XCTAssertEqual(catalog.rows.map(\.title), [L10n.text("activity.hidden_name")])
+        XCTAssertEqual(catalog.rows.map(\.phase), ["idle"])
+        XCTAssertEqual(enabled.presentation, ordinary.presentation)
+        XCTAssertEqual(enabled.runningCount, ordinary.runningCount)
+        XCTAssertTrue(enabled.notices.isEmpty)
+        try Data("invalid".utf8).write(to: file)
+        await runtime.refresh(discover: true)
+        let failed = try XCTUnwrap(latest().pinnedConversations)
+        XCTAssertFalse(failed.available)
+        XCTAssertEqual(failed.rows, catalog.rows)
+        _ = await runtime.receive(try command("configure", ["codexHome": EngineCodexSourceReport.path(second)]))
+        await runtime.refresh(discover: true)
+        let switched = try XCTUnwrap(latest().pinnedConversations)
+        XCTAssertNotEqual(switched.profile, catalog.profile)
+        XCTAssertTrue(switched.rows.isEmpty)
+        _ = await runtime.receive(try command("configure", ["showPinnedConversations": false]))
+        XCTAssertNil(try latest().pinnedConversations)
+        await runtime.stop()
+    }
+
+    func testOversizedPinnedCatalogYieldsToOrdinarySnapshot() async throws {
+        let capture = IdleFrameCapture()
+        let runtime = EngineRuntime(demo: true, dismissalStore: nil, output: { capture.append($0) })
+        _ = await runtime.receive(try command("initialize"))
+        var snapshot = try XCTUnwrap(capture.snapshots().last)
+        let ordinary = snapshot.presentation
+        let limit = try JSONEncoder().encode(snapshot).count + 256
+        let rows = (1...50).map { EngineTaskRow(pinnedID: "local:fixture-" + String($0), title: String(repeating: "a", count: 220)) }
+        snapshot.pinnedConversations = .init(profile: "", available: true, rows: rows, links: [])
+        let bytes = try XCTUnwrap(snapshot.encodedWithinWireLimit(limit: limit))
+        XCTAssertLessThanOrEqual(bytes.count, limit)
+        let decoded = try JSONDecoder().decode(EngineSnapshot.self, from: bytes)
+        XCTAssertEqual(decoded.presentation, ordinary)
+        XCTAssertLessThan(decoded.pinnedConversations?.rows.count ?? 0, rows.count)
+        await runtime.stop()
+    }
+
     private func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
     }

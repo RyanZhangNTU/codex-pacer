@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "400b0ba0f0bcfcf2dbc0f46747d10873b9321b7a2cebe6eb251f4a5ba798ed3c",
-    "windows/EngineSupport/Resources/Localization/en.json": "6f9491d1d4ae78e097308057c914c7a94a368621e5c530786815d1c3bc58c336"
+    "windows/EngineSupport/Resources/Localization/en.json": "96328541a83cd5cd2c4c3856efdbc6e92c0941add528080c894ed64eab2ae750"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -1607,6 +1607,7 @@
     "windows.conversation_groups.all_tasks": "All tasks",
     "windows.conversation_groups.drag_help": "Drag to reorder. Hold Shift while dragging onto another group to merge.",
     "windows.conversation_groups.empty": "No pinned Codex chats",
+    "windows.conversation_groups.hidden": "Group",
     "windows.conversation_groups.merge_hint": "Release to merge these groups",
     "windows.conversation_groups.move": "Move to {0}",
     "windows.conversation_groups.new": "New group",

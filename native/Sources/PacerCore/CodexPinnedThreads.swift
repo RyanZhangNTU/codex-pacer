@@ -24,8 +24,9 @@ public enum CodexPinnedThreads {
         let entries = (try? FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil)) ?? []
         return entries.compactMap { url -> (Int, URL)? in
             let name = url.deletingPathExtension().lastPathComponent
-            guard url.pathExtension == "sqlite", name.hasPrefix("state_"),
-                  let version = Int(name.dropFirst(6)), version >= 0 else { return nil }
+            let digits = name.dropFirst(6)
+            guard url.pathExtension == "sqlite", name.hasPrefix("state_"), digits.utf8.allSatisfy({ (48...57).contains($0) }),
+                  let version = Int(digits) else { return nil }
             return (version, url)
         }.max { $0.0 < $1.0 }?.1
     }
@@ -53,6 +54,7 @@ public enum CodexPinnedThreads {
         sqlite3_finalize(info)
         guard step == SQLITE_DONE else { return nil }
         var predicates: [String]
+        var legacyIDs: [String] = []
         if columns.contains("thread_section_id") {
             predicates = ["thread_section_id='\(sectionID)'"]
         } else if columns.contains("is_pinned") {
@@ -61,19 +63,23 @@ public enum CodexPinnedThreads {
             guard let ids = legacy(home) else { return nil }
             guard columns.contains("id"), !ids.isEmpty else { return ids.map { Entry(id: $0, title: nil) } }
             // legacy() returns canonical UUIDs only.
+            legacyIDs = ids
             predicates = ["id IN (" + ids.map { "'\($0)'" }.joined(separator: ",") + ")"]
         }
         guard columns.contains("id") else { return nil }
-        if columns.contains("archived") { predicates.append("archived=0") }
-        if columns.contains("thread_source") { predicates.append("COALESCE(thread_source,'') NOT IN ('guardian_review','auto_review','autoreview')") }
-        if columns.contains("model") { predicates.append("COALESCE(model,'') NOT LIKE 'codex-auto-review%'") }
+        var included: [String] = []
+        if columns.contains("archived") { included.append("archived=0") }
+        if columns.contains("thread_source") { included.append("COALESCE(thread_source,'') NOT IN ('guardian_review','auto_review','autoreview')") }
+        if columns.contains("model") { included.append("COALESCE(model,'') NOT LIKE 'codex-auto-review%'") }
+        if legacyIDs.isEmpty { predicates += included }
+        let allowed = legacyIDs.isEmpty || included.isEmpty ? "1" : "(" + included.joined(separator: " AND ") + ")"
         let names = ["name", "title"].filter(columns.contains).map { "NULLIF(TRIM(\($0)), '')" }
         let title = !names.isEmpty ? "COALESCE(" + (names + ["NULL"]).joined(separator: ",") + ")" : "NULL"
         let originator = columns.contains("originator") ? "substr(originator,1,256)" : "NULL"
         let cwd = columns.contains("cwd") ? "substr(cwd,1,4096)" : "NULL"
         let path = columns.contains("rollout_path") ? "rollout_path" : "NULL"
         let sessions = home.appendingPathComponent("sessions", isDirectory: true).standardizedFileURL.path + "/"
-        let sql = "SELECT id, substr(\(title),1,240), \(originator), \(cwd), \(path) FROM threads WHERE " +
+        let sql = "SELECT id, substr(\(title),1,240), \(originator), \(cwd), \(path), \(allowed) FROM threads WHERE " +
             predicates.joined(separator: " AND ") + " ORDER BY id LIMIT \(limit + 1)"
         var query: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &query, nil) == SQLITE_OK else { return nil }
@@ -85,15 +91,18 @@ public enum CodexPinnedThreads {
         var seen: Set<String> = []
         step = sqlite3_step(query)
         while step == SQLITE_ROW {
-            guard result.count < limit, let raw = string(0), let uuid = UUID(uuidString: raw) else { return nil }
+            guard seen.count < limit, let raw = string(0), let uuid = UUID(uuidString: raw) else { return nil }
             let id = uuid.uuidString.lowercased()
             guard seen.insert(id).inserted else { return nil }
+            if sqlite3_column_int(query, 5) == 0 { step = sqlite3_step(query); continue }
             let url = string(4).map { URL(fileURLWithPath: $0).standardizedFileURL }
             let rollout = url.flatMap { $0.path.hasPrefix(sessions) && $0.pathExtension == "jsonl" ? $0 : nil }
             result.append(Entry(id: id, title: string(1), origin: CodexSessionOrigin.classify(originator: string(2), cwd: string(3)), rolloutURL: rollout))
             step = sqlite3_step(query)
         }
-        return step == SQLITE_DONE ? result : nil
+        guard step == SQLITE_DONE else { return nil }
+        result += legacyIDs.filter { !seen.contains($0) }.map { Entry(id: $0, title: nil) }
+        return result
     }
 
     /// Only the pinned view uses these placeholders. They never enter activity, notice or rate state.
@@ -116,7 +125,7 @@ public enum CodexPinnedThreads {
             let origin = observed[key]?.codexOrigin ?? origins[key] ?? entry.origin
             guard !hidden.contains(key), origin?.ignored != true, observed[key]?.isInternalReview != true,
                   showsEmbedded || origin?.embedded == false else { continue }
-            var activity = observed[key] ?? SessionActivity(id: key, sessionID: entry.id)
+            var activity = observed[key] ?? SessionActivity(id: key, project: String(entry.id.suffix(8)), sessionID: entry.id)
             if let name = entry.title { activity.updateTitle(name) }
             if let origin, activity.codexOrigin == nil { activity.setCodexOrigin(origin) }
             candidates.append(activity)

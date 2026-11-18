@@ -1,4 +1,5 @@
 {
+  "windows.conversation_groups.hidden": "Group",
   "windows.conversation_groups.setting_help": "Switch between all tasks and your pinned Codex chats on the island.",
   "windows.conversation_groups.all_tasks": "All tasks",
   "windows.conversation_groups.unavailable": "Pinned chats are unavailable.",

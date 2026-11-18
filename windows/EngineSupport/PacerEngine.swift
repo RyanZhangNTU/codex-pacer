@@ -237,6 +237,7 @@ actor EngineRuntime {
     private var pinsAvailable = false, pinsNeedRead = true
     private var pinEpoch: UInt64 = 0
     private var pinNavigation = ActivityNavigationRegistry()
+    private var publishedReadablePins: Set<String> = []
     private var monitorRemoteControl = false
     /// Dot (Durable) tasks are opt-in: off, the Desktop collector starts no
     /// catalog poll and the Durable progress plugin is removed.
@@ -1103,7 +1104,9 @@ actor EngineRuntime {
             guard command.params?.snapshotSequence == sequence else {
                 failure(id: command.id, code: "staleSnapshot"); return true
             }
-            if command.method == "markAllRead" { activityState.markAllRead(at: now()) }
+            if command.method == "markAllRead", command.params?.pinnedView == true {
+                activityState.markRead(activityID: nil, at: now(), within: publishedReadablePins)
+            } else if command.method == "markAllRead" { activityState.markAllRead(at: now()) }
             else if let id = command.params?.activityID { activityState.markRead(activityID: id, at: now()) }
             publish(notices: [])
         case "demoStage":
@@ -2600,7 +2603,7 @@ actor EngineRuntime {
     private func resetPinnedCatalog() {
         pinEpoch &+= 1
         pinEntries = []; pinOrigins = [:]; hiddenPinIDs = []; pinsAvailable = false; pinsNeedRead = true
-        pinNavigation.invalidate()
+        pinNavigation.invalidate(); publishedReadablePins = []
         #if os(Windows)
         pinWatcher.stop()
         #endif
@@ -2631,7 +2634,7 @@ actor EngineRuntime {
         let result = await codexReader.read(home: home, now: context.observedAt, phaseAwareRate: true,
             metricsOnly: !discover, pinned: pinEntries)
         guard active, generation == revision, pinEpoch == epoch, !Task.isCancelled else { return }
-        if showPinnedConversations && discover {
+        if showPinnedConversations {
             let hidden = await codexReader.hiddenPinIDs
             let origins = await codexReader.pinOrigins
             guard active, generation == revision, pinEpoch == epoch, !Task.isCancelled else { return }
@@ -3002,6 +3005,7 @@ actor EngineRuntime {
             failure(id: nil, code: "snapshotLimit"); return
         }
         guard (try? snapshotEmission.accepts(bytes, force: force)) != false else { return }
+        publishedReadablePins = Set((snapshot.pinnedConversations?.rows ?? []).filter(\.unread).map(\.id))
         sequence += 1
         output(bytes + Data([10]))
         publishedBalanceContext = snapshot.deepseekConnection?.context
