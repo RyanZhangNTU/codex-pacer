@@ -46,11 +46,7 @@ struct TaskPagerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             header
-            ForEach(model.progressGuideHints, id: \.provider) { hint in
-                ProgressGuideHint(text: hint.summary, language: language,
-                                  open: { model.openSettings(for: hint.provider) },
-                                  dismiss: { model.dismissProgressGuideHint(hint.provider) })
-            }
+            TaskProgressGuideHints(model: model, language: language)
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowSpacing) {
                     ForEach(pageRows, id: \.activity.id) { row in
@@ -161,6 +157,19 @@ private struct TaskPageWheelHandler: NSViewRepresentable {
             }
         }
         deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+    }
+}
+
+struct TaskProgressGuideHints: View {
+    @ObservedObject var model: IslandModel
+    var language: AppLanguage = L10n.language
+
+    var body: some View {
+        ForEach(model.progressGuideHints, id: \.provider) { hint in
+            ProgressGuideHint(text: hint.summary, language: language,
+                              open: { model.openSettings(for: hint.provider) },
+                              dismiss: { model.dismissProgressGuideHint(hint.provider) })
+        }
     }
 }
 

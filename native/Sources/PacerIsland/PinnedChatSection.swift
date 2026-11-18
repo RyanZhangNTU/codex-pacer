@@ -32,6 +32,7 @@ struct PinnedChatSection: View {
                 PinnedChatViewSwitch(model: model)
                 if actions { IslandPanelControls(model: model) }
             }
+            TaskProgressGuideHints(model: model)
             if rows.isEmpty {
                 Label(L10n.text(model.pinCatalog.available ? "conversation_groups.empty" : "conversation_groups.unavailable"),
                       systemImage: "moon").font(.system(size: 12)).foregroundStyle(PacerPalette.secondary)
@@ -273,6 +274,21 @@ struct PinnedChatOutline: NSViewRepresentable {
             }
             return false
         }
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField, field === editor?.field else { return }
+            let textView = field.currentEditor() as? NSTextView
+            guard textView?.hasMarkedText() != true, field.stringValue.utf16.count > 64 else { return }
+            var length = 0
+            let limited = field.stringValue.prefix { character in
+                let size = String(character).utf16.count
+                guard length + size <= 64 else { return false }
+                length += size
+                return true
+            }
+            let caret = min(textView?.selectedRange().location ?? length, length)
+            field.stringValue = String(limited)
+            textView?.setSelectedRange(NSRange(location: caret, length: 0))
+        }
         func controlTextDidEndEditing(_ obj: Notification) {
             guard let edit = editor else { return }
             let text = edit.field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -302,19 +318,23 @@ struct PinnedChatOutline: NSViewRepresentable {
             return pb
         }
         func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, willBeginAt point: NSPoint, forItems items: [Any]) {
+            beginLocalDrag()
+        }
+        func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, endedAt point: NSPoint, operation: NSDragOperation) {
+            endLocalDrag()
+        }
+        func beginLocalDrag() {
             drag = preparedDrag; preparedDrag = nil
             model.pinInteraction = drag != nil
         }
-        func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, endedAt point: NSPoint, operation: NSDragOperation) {
+        func endLocalDrag() {
             drag = nil; model.pinInteraction = false
             if let latest { update(latest) }
         }
 
         private struct Target { var group: String?; var chat: String?; var after: Bool }
-        private func target(_ info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Target? {
-            guard let drag, let source = info.draggingSource as? NSOutlineView, source === outline,
-                  drag.profile == model.pinProfile, info.draggingPasteboard.string(forType: Self.pasteboardType) == drag.token else { return nil }
-            let point = outline.convert(info.draggingLocation, from: nil)
+        private func target(at windowPoint: NSPoint) -> Target? {
+            let point = outline.convert(windowPoint, from: nil)
             let hit = outline.row(at: point)
             guard hit >= 0, let node = outline.item(atRow: hit) as? Node else {
                 return Target(group: nil, chat: nil, after: true)
@@ -328,38 +348,46 @@ struct PinnedChatOutline: NSViewRepresentable {
             }
         }
         func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
-            guard let drag, let dest = target(info, item: item, childIndex: index) else { return [] }
+            handle(info, commit: false)
+        }
+        func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+            handle(info, commit: true) == .move
+        }
+        private func handle(_ info: NSDraggingInfo, commit: Bool) -> NSDragOperation {
+            drop(from: info.draggingSource as? NSOutlineView, token: info.draggingPasteboard.string(forType: Self.pasteboardType),
+                 at: info.draggingLocation, merge: NSEvent.modifierFlags.contains(.shift), commit: commit)
+        }
+        func drop(from source: NSOutlineView?, token: String?, at point: NSPoint, merge: Bool, commit: Bool) -> NSDragOperation {
+            guard source === outline, let drag, drag.token == token, drag.profile == model.pinProfile, model.showsPinnedChats,
+                  let dest = target(at: point) else { return [] }
+            let groups = model.savedChatGroups
             switch drag.key {
-            case let .group(id):
-                let merge = NSEvent.modifierFlags.contains(.shift)
+            case let .group(id?):
                 guard dest.group != id, !merge || dest.group != nil else { return [] }
-                if merge { outline.setDropItem(nodes[.group(dest.group)], dropChildIndex: NSOutlineViewDropOnItemIndex) }
-                else {
+                if commit {
+                    model.saveChatGroups(PinnedConversationGroups.dropGroup(id, in: groups, at: dest.group, after: dest.after, merge: merge), profile: drag.profile)
+                } else if merge {
+                    outline.setDropItem(nodes[.group(dest.group)], dropChildIndex: NSOutlineViewDropOnItemIndex)
+                } else {
                     let i = roots.firstIndex { $0.key == .group(dest.group) } ?? roots.count
                     outline.setDropItem(nil, dropChildIndex: min(roots.count, i + (dest.group != nil && dest.after ? 1 : 0)))
                 }
             case let .chat(id):
                 guard dest.chat != id else { return [] }
-                outline.setDropItem(dest.chat.flatMap { nodes[.chat($0)] } ?? nodes[.group(dest.group)], dropChildIndex: NSOutlineViewDropOnItemIndex)
+                if commit {
+                    let visible = Set(model.pinnedChatRows.map(\.activity.id))
+                    guard visible.contains(id), dest.chat.map(visible.contains) ?? true else { return [] }
+                    let result: [PinnedConversationGroups.Group]
+                    if let other = dest.chat, dest.group == nil {
+                        result = PinnedConversationGroups.move([id, other], in: groups, to: UUID().uuidString, name: L10n.text("conversation_groups.new"))
+                    } else { result = PinnedConversationGroups.move([id], in: groups, to: dest.group) }
+                    model.saveChatGroups(result, profile: drag.profile)
+                } else {
+                    outline.setDropItem(dest.chat.flatMap { nodes[.chat($0)] } ?? nodes[.group(dest.group)], dropChildIndex: NSOutlineViewDropOnItemIndex)
+                }
+            default: return []
             }
             return .move
-        }
-        func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
-            guard let drag, let dest = target(info, item: item, childIndex: index) else { return false }
-            let groups = model.savedChatGroups
-            let result: [PinnedConversationGroups.Group]
-            switch drag.key {
-            case let .group(id?):
-                result = PinnedConversationGroups.dropGroup(id, in: groups, at: dest.group, after: dest.after, merge: NSEvent.modifierFlags.contains(.shift))
-            case let .chat(id):
-                guard rows[id] != nil, dest.chat != id else { return false }
-                if let other = dest.chat, dest.group == nil {
-                    result = PinnedConversationGroups.move([id, other], in: groups, to: UUID().uuidString, name: L10n.text("conversation_groups.new"))
-                } else { result = PinnedConversationGroups.move([id], in: groups, to: dest.group) }
-            default: return false
-            }
-            model.saveChatGroups(result, profile: drag.profile)
-            return true
         }
 
         func menu(for node: Node) -> NSMenu? {

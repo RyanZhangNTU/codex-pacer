@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import XCTest
 import PacerTestSupport
 @testable import PacerCore
@@ -63,6 +64,80 @@ final class PinnedChatIslandTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testColdHiddenPinIsClassifiedBeforeItsFirstCatalogPublication() async throws {
+        let (model, _, home) = try fixture(demo: false)
+        let id = CodexPinnedThreads.demoEntries[0].id
+        let localID = AgentProvider.codex.activityID(sessionID: id)
+        let date = DateFormatter(); date.dateFormat = "yyyy/MM/dd"
+        let directory = home.appendingPathComponent("sessions/" + date.string(from: Date()))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let header: [String: Any] = ["type": "session_meta", "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "payload": ["id": id, "originator": "fixture-client", "cwd": "/fixture/zotero-chat/translate"]]
+        var data = try JSONSerialization.data(withJSONObject: header); data.append(10)
+        try data.write(to: directory.appendingPathComponent("rollout-" + id + ".jsonl"))
+        try JSONSerialization.data(withJSONObject: ["pinned-thread-ids": [id]])
+            .write(to: home.appendingPathComponent(".codex-global-state.json"))
+        var published: [IslandPinnedCatalog] = []
+        let observer = model.$pinCatalog.sink { catalog in
+            if catalog.entries.contains(where: { $0.id == id }) { published.append(catalog) }
+        }
+        defer { observer.cancel() }
+        model.refreshActivity()
+        let found = try await TestWait.until { !published.isEmpty }
+        XCTAssertTrue(found)
+        XCTAssertTrue(published.allSatisfy { $0.hidden.contains(localID) })
+        XCTAssertTrue(model.pinnedChatRows.isEmpty)
+        await model.shutdown()
+    }
+
+    func testNativeOutlineDropTargetsMoveReorderMergeAndUngroup() async throws {
+        let (model, _, _) = try fixture(demo: true)
+        let ids = CodexPinnedThreads.demoEntries.map { "local:" + $0.id }
+        let owner = PinnedChatOutline.Coordinator(model), scroll = owner.makeScrollView()
+        let table = owner.outline
+        let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 400, height: 360), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = scroll
+        defer { owner.finish(); window.close() }
+        func redraw() {
+            let rows = model.pinnedChatRows
+            owner.update(.init(model: model, rows: rows, sections: PinnedConversationGroups.sections(
+                model.savedChatGroups, ids: rows.map(\.activity.id), running: [])))
+            scroll.layoutSubtreeIfNeeded()
+        }
+        func index(_ key: PinnedChatOutline.Key) throws -> Int {
+            try XCTUnwrap((0..<table.numberOfRows).first { (table.item(atRow: $0) as? PinnedChatOutline.Node)?.key == key })
+        }
+        func drag(_ source: PinnedChatOutline.Key, to target: PinnedChatOutline.Key, after: Bool = false, merge: Bool = false) throws {
+            let item = try XCTUnwrap(table.item(atRow: try index(source)))
+            let writer = try XCTUnwrap(owner.outlineView(table, pasteboardWriterForItem: item) as? NSPasteboardItem)
+            let token = try XCTUnwrap(writer.string(forType: try XCTUnwrap(writer.types.first)))
+            let rect = table.rect(ofRow: try index(target))
+            let point = table.convert(NSPoint(x: rect.midX, y: rect.midY + (after ? 3 : -3)), to: nil)
+            owner.beginLocalDrag()
+            XCTAssertTrue(model.pinInteraction)
+            XCTAssertEqual(owner.drop(from: nil, token: token, at: point, merge: merge, commit: true), [])
+            XCTAssertEqual(owner.drop(from: table, token: "foreign", at: point, merge: merge, commit: true), [])
+            XCTAssertEqual(owner.drop(from: table, token: token, at: point, merge: merge, commit: false), .move)
+            XCTAssertEqual(owner.drop(from: table, token: token, at: point, merge: merge, commit: true), .move)
+            owner.endLocalDrag(); redraw()
+        }
+        redraw()
+        try drag(.chat(ids[0]), to: .chat(ids[1]))
+        let first = try XCTUnwrap(model.savedChatGroups.first?.id)
+        XCTAssertEqual(model.savedChatGroups.first?.members, [ids[0], ids[1]])
+        try drag(.chat(ids[1]), to: .chat(ids[2]))
+        let second = try XCTUnwrap(model.savedChatGroups.last?.id)
+        XCTAssertNotEqual(first, second)
+        try drag(.group(first), to: .group(second), after: true)
+        XCTAssertEqual(model.savedChatGroups.map(\.id), [second, first])
+        try drag(.group(first), to: .group(second), merge: true)
+        XCTAssertEqual(model.savedChatGroups.map(\.members), [[ids[1], ids[2], ids[0]]])
+        try drag(.chat(ids[2]), to: .group(nil))
+        XCTAssertEqual(model.savedChatGroups.first?.members, [ids[1], ids[0]])
+        XCTAssertFalse(model.pinInteraction)
+        await model.shutdown()
+    }
+
     func testNativeOutlineDisclosureRenameAndFrozenOrder() async throws {
         let (model, defaults, _) = try fixture(demo: true)
         let pins = CodexPinnedThreads.demoEntries.map { "local:" + $0.id }
@@ -96,6 +171,10 @@ final class PinnedChatIslandTests: XCTestCase {
         XCTAssertTrue(field.isEditable); XCTAssertTrue(model.pinInteraction)
         update(running: [pins[2]])
         XCTAssertTrue((outline.item(atRow: 0) as AnyObject) === (first as AnyObject))
+        let limit = String(repeating: "a", count: 62) + "🌱"
+        field.stringValue = limit + "x"
+        coordinator.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+        XCTAssertEqual(field.stringValue, limit)
         field.stringValue = "Renamed fixture"
         coordinator.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: field))
         XCTAssertEqual(model.savedChatGroups[0].name, "Renamed fixture")

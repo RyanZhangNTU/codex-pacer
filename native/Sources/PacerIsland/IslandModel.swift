@@ -2272,22 +2272,27 @@ final class IslandModel: ObservableObject {
                 }
             }
             let epoch = self.pinEpoch
+            var catalog = self.pinCatalog
             if self.pinProfile != nil && (self.pinsNeedRead || !onlyMetrics) {
                 self.pinsNeedRead = false
-                if await self.readPinnedCatalog(home: sourceHome, epoch: epoch) { onlyMetrics = false }
-            }
-            guard !Task.isCancelled, generation == self.sourceGeneration, epoch == self.pinEpoch else { return }
-            let pins = self.pinProfile == nil ? [] : self.pinCatalog.entries
-            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true,
-                metricsOnly: onlyMetrics, pinned: pins, subagentStates: agentStates)
-            if self.pinProfile != nil {
-                let hidden = await reader.hiddenPinIDs, origins = await reader.pinOrigins
-                guard !Task.isCancelled, generation == self.sourceGeneration, epoch == self.pinEpoch else { return }
-                if self.pinCatalog.hidden != hidden || self.pinCatalog.origins != origins {
-                    var catalog = self.pinCatalog; catalog.hidden = hidden; catalog.origins = origins; self.pinCatalog = catalog
+                let entries = await self.readPinnedCatalog(home: sourceHome, epoch: epoch)
+                catalog.available = entries != nil
+                if let entries, entries != catalog.entries {
+                    catalog.entries = entries
+                    onlyMetrics = false
                 }
             }
             guard !Task.isCancelled, generation == self.sourceGeneration, epoch == self.pinEpoch else { return }
+            let pins = self.pinProfile == nil ? [] : catalog.entries
+            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true,
+                metricsOnly: onlyMetrics, pinned: pins, subagentStates: agentStates)
+            if self.pinProfile != nil {
+                catalog.hidden = await reader.hiddenPinIDs
+                catalog.origins = await reader.pinOrigins
+            }
+            guard !Task.isCancelled, generation == self.sourceGeneration, epoch == self.pinEpoch else { return }
+            // Publish membership and log-derived visibility together, including for cold pins.
+            if self.pinCatalog != catalog { self.pinCatalog = catalog }
             if !onlyMetrics {
                 self.watchedLogURLs = result.watchURLs
                 self.logWatcher.update(result.watchURLs, interval: self.activityRefreshPolicy.interval)

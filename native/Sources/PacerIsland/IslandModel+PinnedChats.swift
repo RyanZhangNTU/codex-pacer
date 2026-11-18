@@ -40,13 +40,13 @@ extension IslandModel {
         if pinCatalog != next { pinCatalog = next }
     }
 
-    func readPinnedCatalog(home: URL, epoch: UInt64) async -> Bool {
-        guard pinProfile != nil, !demo, !sleeping, !stopped, epoch == pinEpoch else { return false }
+    func readPinnedCatalog(home: URL, epoch: UInt64) async -> [CodexPinnedThreads.Entry]? {
+        guard pinProfile != nil, !demo, !sleeping, !stopped, epoch == pinEpoch else { return nil }
         let locations = await Task.detached(priority: .utility) {
             let db = CodexPinnedThreads.database(home: home)
             return (db, CodexPinnedThreads.watchURLs(home: home, database: db))
         }.value
-        guard !Task.isCancelled, epoch == pinEpoch else { return false }
+        guard !Task.isCancelled, epoch == pinEpoch else { return nil }
         if pinWatcher == nil {
             pinWatcher = ActivityLogWatcher(files: MacFileSystem(), events: MacActivityFileEvents(),
                 maximumDirectoryWatches: 1, fileExtensions: ["json", "sqlite", "sqlite-wal"]) { [weak self] _ in
@@ -60,18 +60,8 @@ extension IslandModel {
         pinWatcher?.update(locations.1, interval: 0.5)
         _ = await pinWatcher?.activeWatchCount()
         let result = await Task.detached(priority: .utility) { CodexPinnedThreads.read(home: home, database: locations.0) }.value
-        guard !Task.isCancelled, epoch == pinEpoch else { return false }
-        return setPinnedCatalog(result)
-    }
-
-    @discardableResult func setPinnedCatalog(_ entries: [CodexPinnedThreads.Entry]?) -> Bool {
-        guard pinProfile != nil else { return false }
-        var next = pinCatalog
-        if let entries { next.entries = entries }
-        next.available = entries != nil
-        let changed = next.entries != pinCatalog.entries
-        if pinCatalog != next { pinCatalog = next }
-        return changed
+        guard !Task.isCancelled, epoch == pinEpoch else { return nil }
+        return result
     }
 
     var pinnedChatRows: [CodexPinnedThreads.Row] {
