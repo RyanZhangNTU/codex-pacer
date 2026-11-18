@@ -19,7 +19,7 @@ struct IslandView: View {
             expanded: model.expanded, progress: presentation.expansion, collapsedRadius: model.collapsedCornerRadius,
             notchBlack: model.atHardwareNotch ? presentation.blackOpacity : 0))
         .onHover { model.hover($0) }
-        .onExitCommand { model.close() }
+        .onExitCommand { if !model.pinInteraction { model.close() } }
         // Light glass turns the island's system material light.
         .preferredColorScheme(model.appearance.isLight ? .light : .dark)
         .environment(\.locale, L10n.locale)
@@ -194,9 +194,12 @@ private struct IslandPanelSection: View {
     }
 
     @ViewBuilder private var tasks: some View {
-        if model.visibleActivities.isEmpty {
+        if model.showsPinnedChats {
+            PinnedChatSection(model: model, actions: section.actions)
+        } else if model.visibleActivities.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 IslandSectionHeader(title: L10n.text("layout.group.tasks"), detail: "0") {
+                    PinnedChatViewSwitch(model: model)
                     if section.actions { IslandPanelControls(model: model) }
                 }
                 HStack(spacing: 10) {

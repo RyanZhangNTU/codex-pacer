@@ -3020,12 +3020,7 @@ actor EngineRuntime {
             pinNavigation.invalidate()
             return nil
         }
-        let entries: [CodexPinnedThreads.Entry]
-        if demo {
-            let fixtures = (1...3).map { CodexPinnedThreads.Entry(id: String(format: "019a0000-0000-7000-8000-%012d", $0),
-                title: "Codex " + String($0), origin: .init(embedded: false, ignored: false)) }
-            entries = fixtures
-        } else { entries = pinEntries }
+        let entries = demo ? CodexPinnedThreads.demoEntries : pinEntries
         let rows = CodexPinnedThreads.rows(entries, activities: activities, requests: requests,
             excluding: hiddenPinIDs.union(activityState.hiddenActivityIDs(activityVisibility)), origins: pinOrigins,
             showsEmbedded: showEmbeddedCodexSessions, inbox: inbox, options: options, at: date)

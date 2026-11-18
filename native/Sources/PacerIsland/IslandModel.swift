@@ -37,6 +37,15 @@ final class IslandModel: ObservableObject {
     }
     var compactPresentationCache: [Bool: (layout: CompactIslandLayout, request: CompactBarPresentation.Request, output: CompactBarPresentation.Output)] = [:]
     var activityState = ActivityApplicationState()
+    @Published var pinProfile: String?
+    @Published var viewingPinnedChats = true
+    @Published var pinCatalog = IslandPinnedCatalog()
+    @Published var chatGroups = PinnedConversationGroups()
+    var pinInteraction = false
+    var pinEpoch: UInt64 = 0
+    var pinsNeedRead = true
+    var pinWatcher: ActivityLogWatcher?
+    private var suppliedPinCandidates = false
     var taskGroupingComputations: Int { activityState.taskGroupingComputations }
     @Published private(set) var latestFirstOutputLatency: TimeInterval?
     @Published var streamStatuses: [String: RuntimeStreamStatus] = [:]
@@ -1547,9 +1556,15 @@ final class IslandModel: ObservableObject {
     }
     func isUnreadCompletion(_ activity: SessionActivity) -> Bool { taskGroup(for: activity)?.isRunning != true && completionInbox.isUnread(activity) }
     private var readableCompletions: [SessionActivity] { taskPresentation.readableCompletions }
-    var canMarkAllRead: Bool { !readableCompletions.isEmpty }
+    private var readablePinIDs: Set<String> {
+        Set(pinnedChatRows.filter { $0.live?.unread == true }.map { $0.activity.id })
+    }
+    var canMarkAllRead: Bool {
+        guard showsPinnedChats else { return !readableCompletions.isEmpty }
+        return !readablePinIDs.isEmpty
+    }
     func markAllRead() {
-        guard activityState.markAllRead(at: now) else { return }
+        guard activityState.markRead(activityID: nil, at: now, within: showsPinnedChats ? readablePinIDs : nil) else { return }
         applyActivityUpdate(activityState.update())
         onLayoutChange?(); onStatusChange?()
     }
@@ -1660,6 +1675,7 @@ final class IslandModel: ObservableObject {
         // Demo opens pinned so its content is visible; --demo-collapsed keeps the bar.
         expanded = (demo && demoArguments?.contains("--demo-collapsed") != true) || initiallyExpanded
         pinned = expanded
+        syncPinnedChats()
         if demo { makeDemo() }
     }
 
@@ -1742,9 +1758,12 @@ final class IslandModel: ObservableObject {
     func hover(_ entered: Bool) {
         guard !interactionSuspended, !islandMoving else { return }
         closeWork?.cancel()
+        guard !pinInteraction else { return }
         if entered { setExpanded(true) }
         else if !pinned {
-            let work = DispatchWorkItem { [weak self] in self?.setExpanded(false) }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, !self.pinInteraction else { return }; self.setExpanded(false)
+            }
             closeWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
         }
@@ -1767,20 +1786,41 @@ final class IslandModel: ObservableObject {
     private func acceptsNavigation(_ activity: SessionActivity) -> Bool {
         !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo) && completionInbox.isSourceVisible(activity.sourceHostID)
     }
-    func open(_ activity: SessionActivity) {
+    func open(_ activity: SessionActivity) { open(activity, pinScope: nil) }
+
+    func canOpenPinned(_ row: CodexPinnedThreads.Row) -> Bool {
+        guard let target = pinnedOpenActivity(row) else { return false }
+        return canOpen(target)
+    }
+    private func pinnedOpenActivity(_ row: CodexPinnedThreads.Row) -> SessionActivity? {
+        let activity = row.activity
+        if visibleActivities.contains(where: { $0.id == activity.id }) { return activity }
+        guard activity.sourceHostID == nil, !activity.launchedByEmbeddingApp else { return nil }
+        return SessionActivity(id: activity.id, sessionID: activity.threadID)
+    }
+    func openPinned(_ id: String, profile: String) {
+        guard showsPinnedChats, pinProfile == profile,
+              let row = pinnedChatRows.first(where: { $0.activity.id == id }), let target = pinnedOpenActivity(row) else { return }
+        open(target, pinScope: profile)
+    }
+    private func open(_ activity: SessionActivity, pinScope: String?) {
+        func stillVisible() -> Bool {
+            guard let pinScope else { return true }
+            return showsPinnedChats && pinProfile == pinScope && pinnedChatRows.contains { $0.activity.id == activity.id }
+        }
         guard canOpen(activity), let target = conversationTarget(for: activity), let open = onOpenActivity,
               let operation = navigation.begin(activity: activity, target: target, version: UInt64(sourceGeneration(for: activity.provider)),
-                activities: activities, inbox: completionInbox, active: acceptsNavigation(activity), scope: navigationScope(for: activity)) else { return }
+                activities: activities, inbox: completionInbox, active: acceptsNavigation(activity) && stillVisible(), scope: navigationScope(for: activity)) else { return }
         clearNavigationError()
         launchOwnedWork(.init(.navigation, provider: activity.provider, identifier: operation.id.uuidString)) { [weak self] _ in
             guard let self else { return }
             defer { self.navigation.abandon(operation) }
             guard self.navigation.owns(operation), operation.isCurrent(version: UInt64(self.sourceGeneration(for: activity.provider)),
-                active: self.acceptsNavigation(activity), inbox: self.completionInbox, scope: self.navigationScope(for: activity)) else { return }
+                active: self.acceptsNavigation(activity) && stillVisible(), inbox: self.completionInbox, scope: self.navigationScope(for: activity)) else { return }
             let outcome = await open(operation.target)
             var values = self.activities, inbox = self.completionInbox
             guard let result = self.navigation.complete(operation, outcome: outcome, version: UInt64(self.sourceGeneration(for: activity.provider)),
-                active: self.acceptsNavigation(activity), activities: &values, inbox: &inbox, remoteSourceIDs: Set(self.claudeRemoteTargets.map(\.id)),
+                active: self.acceptsNavigation(activity) && stillVisible(), activities: &values, inbox: &inbox, remoteSourceIDs: Set(self.claudeRemoteTargets.map(\.id)),
                 scope: self.navigationScope(for: activity), now: self.navigationClock(), errorDuration: self.navigationErrorDuration), result.accepted else { return }
             self.completionInbox = inbox
             if !result.removed.isEmpty { self.activities = values }
@@ -2214,7 +2254,7 @@ final class IslandModel: ObservableObject {
         if !metricsOnly { localActivityNeedsDiscovery = true }
         guard localTask == nil else { localActivityDirty = true; return }
         localActivityDirty = false
-        let onlyMetrics = !localActivityNeedsDiscovery
+        var onlyMetrics = !localActivityNeedsDiscovery
         localActivityNeedsDiscovery = false
         if !onlyMetrics { lastDiscovery = Date() }
         let generation = sourceGeneration
@@ -2224,7 +2264,6 @@ final class IslandModel: ObservableObject {
         }.compactMap(\.threadID)) : []
         let agentStates = localSubagentStates(remoteActivities)
         launchOwnedWork(.init(.activity, provider: .codex)) { [weak self, reader] workTicket in
-            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true, metricsOnly: onlyMetrics, subagentStates: agentStates)
             guard let self else { return }
             defer {
                 if generation == self.sourceGeneration {
@@ -2232,13 +2271,35 @@ final class IslandModel: ObservableObject {
                     if self.localActivityDirty { self.refreshActivity(metricsOnly: !self.localActivityNeedsDiscovery) }
                 }
             }
-            guard !Task.isCancelled, generation == self.sourceGeneration else { return }
+            let epoch = self.pinEpoch
+            if self.pinProfile != nil && (self.pinsNeedRead || !onlyMetrics) {
+                self.pinsNeedRead = false
+                if await self.readPinnedCatalog(home: sourceHome, epoch: epoch) { onlyMetrics = false }
+            }
+            guard !Task.isCancelled, generation == self.sourceGeneration, epoch == self.pinEpoch else { return }
+            let pins = self.pinProfile == nil ? [] : self.pinCatalog.entries
+            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true,
+                metricsOnly: onlyMetrics, pinned: pins, subagentStates: agentStates)
+            if self.pinProfile != nil {
+                let hidden = await reader.hiddenPinIDs, origins = await reader.pinOrigins
+                guard !Task.isCancelled, generation == self.sourceGeneration, epoch == self.pinEpoch else { return }
+                if self.pinCatalog.hidden != hidden || self.pinCatalog.origins != origins {
+                    var catalog = self.pinCatalog; catalog.hidden = hidden; catalog.origins = origins; self.pinCatalog = catalog
+                }
+            }
+            guard !Task.isCancelled, generation == self.sourceGeneration, epoch == self.pinEpoch else { return }
             if !onlyMetrics {
                 self.watchedLogURLs = result.watchURLs
                 self.logWatcher.update(result.watchURLs, interval: self.activityRefreshPolicy.interval)
             }
             self.receiveLocalUpdate(result.activities, requests: result.requests, excludedIDs: result.excludedIDs)
             self.onStatusChange?()
+            if !onlyMetrics && (self.pinProfile != nil || self.suppliedPinCandidates) {
+                self.suppliedPinCandidates = self.pinProfile != nil
+                let ordinary = result.activities.compactMap(\.threadID)
+                let known = Set(ordinary)
+                await self.realtimeMonitor.discover(Array((ordinary + pins.map(\.id).filter { !known.contains($0) }).prefix(256)))
+            }
         }
     }
 
@@ -2455,6 +2516,7 @@ final class IslandModel: ObservableObject {
         // Light Liquid Glass turns the whole island light before it redraws.
         syncTone()
         enabledProviders = configuredProviders
+        let pinSettingChanged = syncPinnedChats()
         syncCodexProgressSwitch()
         syncDeepSeekProgressSwitch()
         syncLocalHarnessProgress()
@@ -2469,6 +2531,7 @@ final class IslandModel: ObservableObject {
         let plan = lifecycle.settings(lifecycleConfiguration, explicitlyDisablesClaude: modules.claudeMode == .disabled)
         for provider in plan.changedProviders { navigation.cancel(provider: provider) }
         performLifecycle(plan)
+        if pinSettingChanged && !plan.changedProviders.contains(.codex) { refreshActivity() }
         // SSH is outside the Codex source signature so the Remote Control
         // directory survives the switch; hand it to the running monitor now.
         if appliedCodexSSH != monitorsSSH {
@@ -2490,6 +2553,7 @@ final class IslandModel: ObservableObject {
         onLayoutChange?(); onStatusChange?()
     }
     private func resetCodexSource() {
+        resetPinnedReader()
         cancelHostTracking(for: .codex, clearApplications: true)
         cancelCodexRemoteProgress(clearHistory: true)
         excludedCodexActivityIDs = []; codexReceivedRequests = []; codexLogRequests = []
@@ -2715,7 +2779,7 @@ final class IslandModel: ObservableObject {
                 }
                 claudeLocalSetup = .checking
             case .retryHostTracking: for provider in AgentProvider.allCases { trackHostApplications(for: provider) }
-            case .stopWatches: logWatcher.stop()
+            case .stopWatches: logWatcher.stop(); resetPinnedReader()
             case .cancelHostTracking: cancelHostTracking()
             case .cancelRemoteSetup: cancelClaudeRemoteSetup(); cancelCodexRemoteProgress()
             case .demoSnapshot: applyDemoSnapshot()

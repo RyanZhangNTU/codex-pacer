@@ -916,7 +916,7 @@ public partial class IslandWindow : Window
     }
     private void BuildPage(bool animate, int direction, bool settled = false)
     {
-        TasksTitle.Text = ui.Text(UsesConversationGroups ? "windows.conversation_groups.title" : "layout.group.tasks");
+        TasksTitle.Text = ui.Text(UsesConversationGroups ? "conversation_groups.title" : "layout.group.tasks");
         PanelBuilds++;
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         RevealHost? outgoing = currentPage;
@@ -940,7 +940,7 @@ public partial class IslandWindow : Window
             var empty = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(9, 8, 9, 8) };
             empty.Children.Add(new IconGlyph { Symbol = "moon", Ink = PacerPalette.Secondary, Width = 28, Height = 28 });
             empty.Children.Add(new TextBlock { Text = ui.Text(UsesConversationGroups ? (latest?.PinnedConversations?.Available == true ?
-                "windows.conversation_groups.empty" : "windows.conversation_groups.unavailable") : "activity.no_tasks"), FontSize = 12, FontWeight = FontWeights.Medium,
+                "conversation_groups.empty" : "conversation_groups.unavailable") : "activity.no_tasks"), FontSize = 12, FontWeight = FontWeights.Medium,
                 Foreground = PacerPalette.Secondary, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             content.Children.Add(empty);
         }

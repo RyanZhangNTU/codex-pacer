@@ -5,6 +5,11 @@ import SQLite3
 public enum CodexPinnedThreads {
     public static let sectionID = "01984de2-8f74-7c91-a3b2-5c5e937cf318"
     public static let limit = 256
+    public static let demoEntries = (1...3).map {
+        Entry(id: String(format: "019a0000-0000-7000-8000-%012d", $0),
+              title: "Codex " + String($0), origin: .init(embedded: false, ignored: false))
+    }
+
 
     public struct Entry: Equatable, Sendable {
         public let id: String

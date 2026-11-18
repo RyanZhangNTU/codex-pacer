@@ -88,7 +88,7 @@ final class PanelController: NSObject {
             guard let self else { return event }
             // A drag takes Escape before Escape-to-close.
             if event.keyCode == 53, self.move != nil { self.cancelMove(); return nil }
-            if event.keyCode == 53, event.window === self.panel { self.model.close(); return nil }
+            if event.keyCode == 53, event.window === self.panel, !self.model.pinInteraction { self.model.close(); return nil }
             return event
         }) { monitors.append(monitor) }
         // The panel moves with the pointer, so follow AppKit's events rather

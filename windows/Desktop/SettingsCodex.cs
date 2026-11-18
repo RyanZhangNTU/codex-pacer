@@ -73,7 +73,7 @@ internal sealed partial class SettingsWindow
         var embedded = Toggle("main.embedded", "main.info.codex_embedded", "settings.codex.embedded", out var embeddedSwitch);
         codexEmbedded = embeddedSwitch; editors.Add(embeddedSwitch);
         BindToggle(embeddedSwitch, (p, value) => p with { ShowEmbeddedCodexSessions = value });
-        var pins = Toggle("windows.conversation_groups.title", "windows.conversation_groups.setting_help", "settings.codex.pinned_chats", out var pinSwitch);
+        var pins = Toggle("conversation_groups.title", "conversation_groups.setting_help", "settings.codex.pinned_chats", out var pinSwitch);
         codexPinnedChats = pinSwitch; editors.Add(pinSwitch);
         BindToggle(pinSwitch, (p, value) => p with { ShowPinnedConversations = value });
         codexProgress = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };

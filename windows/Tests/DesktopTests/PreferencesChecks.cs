@@ -3,9 +3,9 @@ using CodexPacer.Windows;
 
 internal static class PreferencesChecks
 {
-    internal static DesktopPreferences Run()
+    internal static DesktopPreferences Run(string engine)
     {
-        ConversationOrderChecks.Run();
+        ConversationOrderChecks.Run(engine);
         var fresh = new DesktopPreferences();
         Check(!fresh.ShowPinnedConversations, "Fresh and upgraded preferences retain the ordinary task list");
         var optedIn = fresh with { ShowPinnedConversations = true };

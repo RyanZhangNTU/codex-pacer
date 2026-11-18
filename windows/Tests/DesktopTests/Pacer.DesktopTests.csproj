@@ -21,6 +21,7 @@
     <Compile Include="../../Desktop/ExpandedPanelModels.cs" Link="ExpandedPanelModels.cs"/>
     <Compile Include="../../Desktop/ConnectionActions.cs" Link="ConnectionActions.cs"/>
     <Compile Include="../../Desktop/DeepSeekWebReply.cs" Link="DeepSeekWebReply.cs"/>
+    <Compile Include="../../Desktop/NativePinnedGroups.cs" Link="NativePinnedGroups.cs"/>
     <Compile Include="../../Desktop/ConversationGroups.cs" Link="ConversationGroups.cs"/>
     <Compile Include="../../Desktop/DesktopPreferences.cs" Link="DesktopPreferences.cs"/>
     <Compile Include="../../Desktop/PreferencesCodec.cs" Link="PreferencesCodec.cs"/>
