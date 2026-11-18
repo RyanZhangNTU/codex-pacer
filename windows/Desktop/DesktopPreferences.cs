@@ -79,6 +79,8 @@ internal sealed record DesktopPreferences
     internal static bool ValidAccent(string? value) => value != null && AccentChoices.Contains(value);
     public bool HideProjects { get; init; }
     public bool ShowAppButtons { get; init; } = true;
+    public bool ShowPinnedConversations { get; init; }
+    public string? ConversationGroups { get; init; }
     public bool ShowEmbeddedCodexSessions { get; init; } = true;
     public bool MonitorRemoteControl { get; init; }
     // Dot (Durable) tasks are opt-in. An upgraded profile decides once from
@@ -140,6 +142,7 @@ internal sealed record DesktopPreferences
         && LastSettingsPane is { Length: > 0 and <= 64 } && !LastSettingsPane.Any(char.IsControl)
         && AppTheme is "auto" or "light" or "dark" && ValidAccent(AccentColor)
         && RetentionMinutes is >= 0 and <= 10080
+        && (ConversationGroups == null || Encoding.UTF8.GetByteCount(ConversationGroups) <= PreferencesStore.MaximumBytes)
         && ValidPath(CodexExecutable) && ValidPath(CodexHome) && ValidPath(ClaudeHome) && ValidPath(DeepseekHome)
         && (ClaudeOrganization == "" || ClaudeOrganization is { Length: 36 } && Guid.TryParseExact(ClaudeOrganization, "D", out _))
         && ProviderModes is { Count: >= 3 and <= 128 }
@@ -175,6 +178,7 @@ internal sealed record DesktopPreferences
         return new
         {
             providerModes = ProviderModes, hideProjects = HideProjects, retentionMinutes = RetentionMinutes,
+            showPinnedConversations = ShowPinnedConversations,
             showEmbeddedCodexSessions = ShowEmbeddedCodexSessions,
             monitorRemoteControl = MonitorRemoteControl,
             monitorDurable = MonitorDurable,

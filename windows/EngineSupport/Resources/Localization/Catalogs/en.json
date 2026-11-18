@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "sources": {
     "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "400b0ba0f0bcfcf2dbc0f46747d10873b9321b7a2cebe6eb251f4a5ba798ed3c",
-    "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
+    "windows/EngineSupport/Resources/Localization/en.json": "6f9491d1d4ae78e097308057c914c7a94a368621e5c530786815d1c3bc58c336"
   },
   "strings": {
     "account.credit_balance": "Credits left: %@",
@@ -1604,6 +1604,18 @@
     "windows.connections.wsl_help": "Read Codex and Claude sessions in running distributions as their default Linux user.",
     "windows.connections.wsl_refresh": "Refresh Now",
     "windows.connections.wsl_unavailable": "No WSL distributions are installed.",
+    "windows.conversation_groups.all_tasks": "All tasks",
+    "windows.conversation_groups.drag_help": "Drag to reorder. Hold Shift while dragging onto another group to merge.",
+    "windows.conversation_groups.empty": "No pinned Codex chats",
+    "windows.conversation_groups.merge_hint": "Release to merge these groups",
+    "windows.conversation_groups.move": "Move to {0}",
+    "windows.conversation_groups.new": "New group",
+    "windows.conversation_groups.rename": "Rename group {0}",
+    "windows.conversation_groups.reorder_hint": "Release to reorder \u00b7 Shift: merge groups",
+    "windows.conversation_groups.setting_help": "Switch between all tasks and your pinned Codex chats on the island.",
+    "windows.conversation_groups.title": "Pinned chats",
+    "windows.conversation_groups.unavailable": "Pinned chats are unavailable.",
+    "windows.conversation_groups.ungrouped": "Ungrouped",
     "windows.deepseek.budget_help": "Filled in from the last 7 days' daily average plus 20%. Edit or clear either amount. Budgets only send reminders and never block requests. Account spend includes this PC's estimate and charges from elsewhere. The week starts Monday at 00:00.",
     "windows.deepseek.demo_key_help": "Demo keys stay in memory and are cleared when this demo closes.",
     "windows.deepseek.demo_web_help": "Web sign-in is unavailable in the offline demo.",

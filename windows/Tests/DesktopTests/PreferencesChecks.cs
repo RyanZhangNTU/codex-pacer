@@ -5,6 +5,11 @@ internal static class PreferencesChecks
 {
     internal static DesktopPreferences Run()
     {
+        ConversationOrderChecks.Run();
+        var fresh = new DesktopPreferences();
+        Check(!fresh.ShowPinnedConversations, "Fresh and upgraded preferences retain the ordinary task list");
+        var optedIn = fresh with { ShowPinnedConversations = true };
+        Check(PreferencesCodec.Decode(PreferencesCodec.Encode(optedIn)).ShowPinnedConversations, "The pinned view switch round trips");
         string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "pacer-prefs-" + Guid.NewGuid().ToString("N")));
         string file = Path.Combine(root, "preferences.json");
         // Maintenance's inspection mode must remain read-only, including on damage.

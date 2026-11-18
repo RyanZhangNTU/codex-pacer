@@ -50,6 +50,13 @@ public struct AgentProvider: RawRepresentable, Hashable, CaseIterable, Codable, 
         if self != .codex {
             return validatedSessionID(String(identity.split(separator: ":").last ?? ""))
         }
+        // A resumed rollout appends its own UUID after the original thread UUID.
+        if identity.hasPrefix("rollout-"), identity.hasSuffix(".jsonl"),
+           let separator = identity.lastIndex(of: "_"),
+           UUID(uuidString: String(identity[identity.index(after: separator)...].dropLast(6))) != nil,
+           let thread = UUID(uuidString: String(identity[..<separator].suffix(36))) {
+            return thread.uuidString.lowercased()
+        }
         // Dotted SSH aliases must not be interpreted as a rollout extension.
         return (UUID(uuidString: String(identity.suffix(36))) ??
             UUID(uuidString: String((identity as NSString).deletingPathExtension.suffix(36))))?.uuidString.lowercased()

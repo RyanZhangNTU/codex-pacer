@@ -16,7 +16,7 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? codexEnabled, codexEmbedded, codexProgress;
+    private CheckBox? codexEnabled, codexEmbedded, codexProgress, codexPinnedChats;
     private TextBlock? codexProgressState;
     private Button? codexProgressRetry;
     private FrameworkElement? codexProgressStatus;
@@ -41,7 +41,7 @@ internal sealed partial class SettingsWindow
     private void ClearCodex()
     {
         sourceInspectionRevision++; sourceCommitRevision++; Array.Clear(pendingSourceValidation); sourceInspectionKey = null; sourceReport = null;
-        codexEnabled = codexEmbedded = codexProgress = null; codexDetection = cliState = cliIssue = executableIssue = homeIssue = historyTitle = null; codexHistory = null;
+        codexEnabled = codexEmbedded = codexProgress = codexPinnedChats = null; codexDetection = cliState = cliIssue = executableIssue = homeIssue = historyTitle = null; codexHistory = null;
         codexProgressState = null; codexProgressRetry = null; codexProgressStatus = null;
         cliDot = null; codexAutomatic = cliRescan = cliCandidates = null; codexSections = null; codexOff = null; codexLocations = null;
         executableField = homeField = null; executablePreference = homePreference = null;
@@ -73,6 +73,9 @@ internal sealed partial class SettingsWindow
         var embedded = Toggle("main.embedded", "main.info.codex_embedded", "settings.codex.embedded", out var embeddedSwitch);
         codexEmbedded = embeddedSwitch; editors.Add(embeddedSwitch);
         BindToggle(embeddedSwitch, (p, value) => p with { ShowEmbeddedCodexSessions = value });
+        var pins = Toggle("windows.conversation_groups.title", "windows.conversation_groups.setting_help", "settings.codex.pinned_chats", out var pinSwitch);
+        codexPinnedChats = pinSwitch; editors.Add(pinSwitch);
+        BindToggle(pinSwitch, (p, value) => p with { ShowPinnedConversations = value });
         codexProgress = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };
         Identify(codexProgress, "settings.codex.progress_ring", ui.Text("main.claude.ring")); editors.Add(codexProgress);
         BindToggle(codexProgress, (p, value) => p with { CodexProgressRing = value });
@@ -90,7 +93,7 @@ internal sealed partial class SettingsWindow
         var progress = InfoRow(ui.Text("main.claude.ring"), progressEnd, ui.Text("codex.progress_ring_help"), codexProgressState, "settings.codex.progress_ring");
         codexProgressStatus = codexProgressState;
         codexSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
-        codexSections.Children.Add(Card(embedded, progress));
+        codexSections.Children.Add(Card(embedded, progress, pins));
 
         // Each location is a row of its own, as on the Mac: its name, the field, then Choose.
         var fields = new StackPanel { Margin = new Thickness(14, 0, 14, 0) };
@@ -177,6 +180,7 @@ internal sealed partial class SettingsWindow
         bool enabled = module?.Enabled ?? (mode != "disabled" && engine.LatestSnapshot?.QuotaDashboard?.Providers.Any(value => value.Provider == "codex") == true);
         codexEnabled.IsChecked = enabled;
         if (codexEmbedded != null) codexEmbedded.IsChecked = session.Current.ShowEmbeddedCodexSessions;
+        if (codexPinnedChats != null) codexPinnedChats.IsChecked = session.Current.ShowPinnedConversations;
         if (codexProgress != null) codexProgress.IsChecked = session.Current.CodexProgressRing;
         if (codexProgressStatus != null && codexProgressState != null && codexProgressRetry != null)
         {

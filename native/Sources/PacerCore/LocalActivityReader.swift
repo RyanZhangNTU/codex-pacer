@@ -21,6 +21,9 @@ public actor LocalActivityReader {
     private var titlesReadAt: Date?
     private var originSizes: [URL: UInt64] = [:]
     private var ignoredIDs: Set<String> = []
+    /// Also covers internal reviews before their cursors are discarded.
+    public private(set) var hiddenPinIDs: Set<String> = []
+    public private(set) var pinOrigins: [String: CodexSessionOrigin] = [:]
     private let maxFiles = 16
     private let maxBytes = 128 * 1024
     private let startupBytes = 512 * 1024
@@ -33,11 +36,11 @@ public actor LocalActivityReader {
               let size = (attributes[.size] as? NSNumber)?.uint64Value else { return nil }
         return (String((attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0), size)
     }
-    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll() }
+    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll(); hiddenPinIDs.removeAll(); pinOrigins.removeAll() }
 
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
                      excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false,
-                     subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL], excludedIDs: Set<String>, requests: [PendingAttentionRequest]) {
+                     pinned: [CodexPinnedThreads.Entry] = [], subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL], excludedIDs: Set<String>, requests: [PendingAttentionRequest]) {
         func retainingCompletion(_ cursor: Cursor) -> Cursor {
             var value = cursor
             if let id = value.activity.threadID, let evidence = subagentStates[id], evidence.state == "completed",
@@ -113,12 +116,16 @@ public actor LocalActivityReader {
         }
         // Reviews must not consume the user-task discovery slots.
         func covered(_ file: URL) -> Bool {
-            excludingThreads.contains(String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased())
+            AgentProvider.codex.sessionID(in: file.lastPathComponent).map(excludingThreads.contains) ?? false
         }
+        let pinPaths = Dictionary(pinned.compactMap { pin in pin.rolloutURL.map { (pin.id, $0) } },
+                                  uniquingKeysWith: { first, _ in first })
+        let extra = Set(pinPaths.values)
         var selected = metricsOnly ? Array(cursors.keys) : cursors.filter {
-            [.running, .waitingForInput].contains(projected($0.value).phase) && !covered($0.key)
+            [.running, .waitingForInput].contains(projected($0.value).phase) && !covered($0.key) && !extra.contains($0.key)
         }.map(\.key)
-        let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
+        let recent = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
+        let candidates = extra.isEmpty ? recent : recent + extra.subtracting(recent).sorted { $0.path < $1.path }
         metadata = metadata.filter { candidates.contains($0.key) }
         if !metricsOnly { for file in candidates {
             let facts = signature(file)
@@ -150,11 +157,27 @@ public actor LocalActivityReader {
                 .map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
             ignoredIDs = Set(inherited.values.filter(\.isIgnoredCodexSession).map { $0.canonicalized().id })
             selected.removeAll { file in metadata[file].flatMap { inherited[$0.activity.id] }?.isIgnoredCodexSession == true }
-            for file in candidates {
+            hiddenPinIDs = pinned.isEmpty ? [] : Set(inherited.values.filter { $0.isIgnoredCodexSession || $0.isInternalReview }.map { $0.canonicalized().id })
+            pinOrigins = pinned.isEmpty ? [:] : Dictionary(inherited.values.compactMap { activity in
+                activity.codexOrigin.map { (activity.canonicalized().id, $0) }
+            }, uniquingKeysWith: { first, _ in first })
+            func superseded(_ file: URL) -> Bool {
+                guard !pinPaths.isEmpty, let id = metadata[file]?.activity.threadID, let current = pinPaths[id] else { return false }
+                return current != file && metadata[current]?.activity.threadID == id && FileManager.default.isReadableFile(atPath: current.path)
+            }
+            if !pinPaths.isEmpty { selected.removeAll(where: superseded) }
+            for file in recent {
                 guard selected.count < maxFiles else { break }
-                guard !covered(file), let value = metadata[file]?.activity, !value.isInternalReview,
+                guard !covered(file), !superseded(file), let value = metadata[file]?.activity, !value.isInternalReview,
                       inherited[value.id]?.isIgnoredCodexSession != true, !selected.contains(file) else { continue }
                 selected.append(file)
+            }
+            // Catalog readers get additional slots after ordinary activity has its full budget.
+            for pin in pinned {
+                guard let url = pin.rolloutURL, let value = metadata[url]?.activity, value.threadID == pin.id,
+                      !value.isInternalReview, inherited[value.id]?.isIgnoredCodexSession != true,
+                      !covered(url), !selected.contains(url) else { continue }
+                selected.append(url)
             }
             originSizes = originSizes.filter { metadata[$0.key] != nil }
         }
@@ -165,8 +188,7 @@ public actor LocalActivityReader {
         }
         if !metricsOnly { cursors = cursors.filter { selected.contains($0.key) || covered($0.key) } }
         for file in selected {
-            let id = String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased()
-            if excludingThreads.contains(id), !includeCoveredMetrics { continue }
+            if covered(file), !includeCoveredMetrics { continue }
             guard let facts = signature(file) else {
                 if let cursor = cursors.removeValue(forKey: file) {
                     var activity = projected(cursor)
