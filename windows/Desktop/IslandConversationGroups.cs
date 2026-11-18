@@ -57,7 +57,31 @@ public partial class IslandWindow
         AutomationProperties.SetHelpText(SwitchConversationView, status ?? "");
         AutomationProperties.SetName(SwitchConversationView, label);
     }
-    private ConversationGroup[] SavedGroups => ConversationGroups.Read(compactPreferences.ConversationGroups).For(ConversationProfile);
+    private string? savedGroupJson;
+    private ConversationGroups savedGroupProfiles = new([]);
+    private ConversationGroup[] SavedGroups
+    {
+        get
+        {
+            if (savedGroupJson != compactPreferences.ConversationGroups)
+            {
+                savedGroupJson = compactPreferences.ConversationGroups;
+                savedGroupProfiles = ConversationGroups.Read(savedGroupJson);
+            }
+            return savedGroupProfiles.For(ConversationProfile);
+        }
+    }
+
+    private void ReleaseConversationControls()
+    {
+        ClearConversationDropFeedback();
+        conversationDropHint = null;
+        conversationControls.Clear();
+        conversationGroupIndicators.Clear();
+        conversationScroll = null;
+        conversationStructure = "";
+        conversationRenaming = false;
+    }
     private double ConversationHeight => Math.Min(360, Math.Max(44, ConversationSections().Sum(s => 32 + (s.Group?.Collapsed == true ? 0 : s.Rows.Length * (RowHeight + 2)))));
     private (ConversationGroup? Group, EngineTaskRow[] Rows)[] ConversationSections() => ConversationGroups.Sections(SavedGroups, rows);
     private async Task SaveGroups(Func<ConversationGroup[], ConversationGroup[]> edit)
@@ -82,7 +106,11 @@ public partial class IslandWindow
     {
         if (conversationDropIndicator != null) conversationDropIndicator.Visibility = Visibility.Collapsed;
         conversationDropIndicator = null;
-        if (closeHint && conversationDropHint != null) conversationDropHint.IsOpen = false;
+        if (closeHint && conversationDropHint != null)
+        {
+            conversationDropHint.IsOpen = false;
+            conversationDropHint.PlacementTarget = null;
+        }
     }
     private void ConversationDragSource(FrameworkElement control, Func<string[]> members, string? group = null)
     {

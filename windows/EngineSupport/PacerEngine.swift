@@ -3031,7 +3031,7 @@ actor EngineRuntime {
             showsEmbedded: showEmbeddedCodexSessions, inbox: inbox, options: options, at: date)
         // The main registry retains its original family and acknowledgment semantics.
         // A separate cold link only opens its own local conversation.
-        let cold = rows.filter { navigation.entries[$0.activity.id] == nil }.map { row -> SessionActivity in
+        let cold = rows.filter { $0.activity.sourceHostID == nil && navigation.entries[$0.activity.id] == nil }.map { row -> SessionActivity in
             var value = SessionActivity(id: row.activity.id, sessionID: row.activity.threadID)
             if let origin = row.activity.codexOrigin { value.setCodexOrigin(origin) }
             return value

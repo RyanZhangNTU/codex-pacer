@@ -82,7 +82,7 @@ Opaque WPF windows (Settings, sign-in windows, dialogs and non-layered popups) u
 
 Targets and measurement commands are in [idle CPU checks](windows-engine.md#idle-cpu-checks).
 
-The optional pinned chat view reads the selected local sidebar catalog. Its own database, WAL and directory watches use a separate budget from task logs. A failed catalog read retains entries for the current profile and clears them on a profile change. Catalog-only rows and their navigation links are separate optional protocol fields. The ordinary task feed still supplies notifications, counters, the Overview and the paginated task view.
+The optional pinned chat view reads the selected local sidebar catalog. Its own database, WAL and directory watches use a separate budget from task logs. Observations for the same pinned thread on an already monitored remote host use that host’s own activity and navigation. A failed catalog read retains entries for the current profile and clears them on a profile change. Catalog-only rows and their navigation links are separate optional protocol fields. The ordinary task feed still supplies notifications, counters, the Overview and the paginated task view.
 
 ## Glass and Composition backdrop
 

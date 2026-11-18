@@ -706,7 +706,7 @@ public partial class IslandWindow : Window
         if (harnessAccounts != null) harnessAccounts.Changed -= UpdateHarnessAccount;
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged; engine.Snapshot -= QueueSnapshot;
-        presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
+        presentationStopped = true; ReleaseConversationControls(); CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         if (decoration != null) { decoration.Close(); decoration = null; }
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         DisposeAppearance(); DisposePresence();
@@ -928,6 +928,7 @@ public partial class IslandWindow : Window
         measuredRowsWidth = 0;
         int index = 0;
         if (UsesConversationGroups && rows.Count > 0) BuildConversationGroups(content, settled);
+        else if (conversationScroll != null) ReleaseConversationControls();
         foreach (var value in UsesConversationGroups ? Array.Empty<EngineTaskRow>() : rows.Skip(page * PageSize).Take(PageSize))
         {
             var row = new TaskRow(value, panelOptions, settled) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };

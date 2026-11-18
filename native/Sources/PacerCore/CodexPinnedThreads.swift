@@ -115,30 +115,40 @@ public enum CodexPinnedThreads {
     public static func rows(_ entries: [Entry], activities: [SessionActivity], requests: [PendingAttentionRequest],
                             excluding hidden: Set<String>, origins: [String: CodexSessionOrigin] = [:],
                             showsEmbedded: Bool, inbox: CompletionInbox, options: TaskPresentationOptions, at date: Date) -> [Row] {
-        let local = activities.filter { $0.provider == .codex && $0.sourceHostID == nil }
-        let pending = requests.filter { $0.provider == .codex && $0.sourceHostID == nil }
-        let observed = Dictionary((local + pending.map(\.activity)).map { ($0.canonicalized().id, $0.canonicalized()) },
+        guard !entries.isEmpty else { return [] }
+        let codex = activities.filter { $0.provider == .codex }
+        let pending = requests.filter { $0.provider == .codex }
+        let observed = Dictionary((codex + pending.map(\.activity)).map { ($0.canonicalized().id, $0.canonicalized()) },
                                   uniquingKeysWith: { first, _ in first })
+        let remote = Dictionary(grouping: observed.values.filter { $0.sourceHostID != nil }, by: \.threadID)
         var candidates: [SessionActivity] = []
         for entry in entries {
             let key = AgentProvider.codex.activityID(sessionID: entry.id)
             let origin = observed[key]?.codexOrigin ?? origins[key] ?? entry.origin
-            guard !hidden.contains(key), origin?.ignored != true, observed[key]?.isInternalReview != true,
-                  showsEmbedded || origin?.embedded == false else { continue }
-            var activity = observed[key] ?? SessionActivity(id: key, project: String(entry.id.suffix(8)), sessionID: entry.id)
-            if let name = entry.title { activity.updateTitle(name) }
-            if let origin, activity.codexOrigin == nil { activity.setCodexOrigin(origin) }
-            candidates.append(activity)
+            if !hidden.contains(key), origin?.ignored != true, observed[key]?.isInternalReview != true,
+               showsEmbedded || origin?.embedded == false {
+                var activity = observed[key] ?? SessionActivity(id: key, project: String(entry.id.suffix(8)), sessionID: entry.id)
+                if let name = entry.title { activity.updateTitle(name) }
+                if let origin, activity.codexOrigin == nil { activity.setCodexOrigin(origin) }
+                candidates.append(activity)
+            }
+            // Only observations from an already monitored remote source can add a remote row.
+            // Its canonical host ID keeps its navigation, children and group membership distinct.
+            for activity in (remote[entry.id] ?? []).sorted(by: { $0.id < $1.id })
+                where !hidden.contains(activity.id) && !activity.isInternalReview && !activity.isIgnoredCodexSession &&
+                      (showsEmbedded || !activity.launchedByEmbeddingApp) {
+                candidates.append(activity)
+            }
         }
         let selected = Set(candidates.map(\.id))
-        let groups = ActivityTaskGroup.make(candidates + local.filter { !selected.contains($0.canonicalized().id) })
+        let groups = ActivityTaskGroup.make(candidates + codex.filter { !selected.contains($0.canonicalized().id) })
         let roots = Dictionary(uniqueKeysWithValues: groups.map { ($0.primary.id, $0) })
         let members = Dictionary(uniqueKeysWithValues: groups.flatMap(\.members).map { ($0.id, $0) })
         return candidates.map { candidate in
             var activity = members[candidate.id] ?? candidate
             if let name = candidate.title { activity.updateTitle(name) }
             let group = roots[candidate.id]
-            let attention = ActivityTaskPresentation.attentionKind(activity, groups: groups, requests: pending)
+            let attention = ActivityTaskPresentation.attentionKind(activity, groups: group.map { [$0] } ?? [], requests: pending)
             let live = activity.phase != .unknown || group?.isRunning == true || group?.isWaiting == true || attention != nil
             let row = live ? ActivityTaskRowPresentation(activity: activity, group: group, attention: attention,
                 unread: group?.isRunning != true && inbox.isUnread(activity), options: options, at: date) : nil
