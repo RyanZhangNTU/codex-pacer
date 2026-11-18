@@ -24,7 +24,7 @@ public func pacerPinnedGroupsProject(_ action: Int32, _ input: UnsafePointer<UIn
             .map { GroupSection(group: $0.group?.id, members: $0.members) })
     case 1:
         guard let members = request.members else { return 0 }
-        result = try? encoder.encode(PinnedConversationGroups.move(members, in: request.groups, to: request.destination, name: request.name ?? ""))
+        result = try? encoder.encode(PinnedConversationGroups.move(members, in: request.groups, to: request.destination, name: request.name))
     case 2:
         guard let source = request.source, let after = request.after, let merge = request.merge else { return 0 }
         result = try? encoder.encode(PinnedConversationGroups.dropGroup(source, in: request.groups, at: request.destination, after: after, merge: merge))

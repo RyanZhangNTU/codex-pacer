@@ -18,6 +18,7 @@ final class PinnedGroupPolicyTests: XCTestCase {
         let merged = Store.dropGroup("one", in: reordered, at: "two", after: true, merge: true)
         XCTAssertEqual(merged.map(\.members), [["c", "d", "a", "b"]]); XCTAssertTrue(merged[0].collapsed)
         XCTAssertEqual(Store.move(["c"], in: merged, to: nil)[0].members, ["d", "a", "b"])
+        XCTAssertEqual(Store.move(["a"], in: merged, to: "one"), merged, "A stale move cannot recreate a group that was merged away")
         var store = Store()
         let data = try XCTUnwrap(store.save(groups, profile: "fixture"))
         XCTAssertEqual(Store.read(data).profiles["fixture"], groups)

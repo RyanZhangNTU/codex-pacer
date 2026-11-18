@@ -52,7 +52,9 @@ final class PinnedChatIslandTests: XCTestCase {
         XCTAssertEqual(model.pinnedChatRows.map(\.activity.threadID), [next])
         let other = home.appendingPathComponent("other", isDirectory: true)
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        model.togglePinnedView()
         defaults.set(other.path, forKey: "codexHome"); model.syncPinnedChats()
+        XCTAssertFalse(model.showsPinnedChats, "Changing the Codex directory preserves the selected view")
         XCTAssertNotEqual(model.pinProfile, original)
         XCTAssertTrue(model.pinnedChatRows.isEmpty); XCTAssertTrue(model.savedChatGroups.isEmpty)
         model.saveChatGroups([], profile: original)
@@ -61,6 +63,8 @@ final class PinnedChatIslandTests: XCTestCase {
         XCTAssertEqual(model.savedChatGroups.first?.collapsed, true)
         defaults.set(false, forKey: IslandModel.pinnedChatsKey); model.syncPinnedChats()
         XCTAssertNil(model.pinWatcher); XCTAssertNil(model.pinProfile)
+        defaults.set(true, forKey: IslandModel.pinnedChatsKey); model.syncPinnedChats()
+        XCTAssertTrue(model.showsPinnedChats, "Turning the feature back on opens the pinned view")
         await model.shutdown()
     }
 

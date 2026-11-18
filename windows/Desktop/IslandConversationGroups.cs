@@ -84,15 +84,16 @@ public partial class IslandWindow
     }
     private double ConversationHeight => Math.Min(360, Math.Max(44, ConversationSections().Sum(s => 32 + (s.Group?.Collapsed == true ? 0 : s.Rows.Length * (RowHeight + 2)))));
     private (ConversationGroup? Group, EngineTaskRow[] Rows)[] ConversationSections() => NativePinnedGroups.Shared.Sections(SavedGroups, rows);
-    private async Task SaveGroups(Func<ConversationGroup[], ConversationGroup[]> edit)
+    private bool IsCurrentPin(string id) => latest?.PinnedConversations?.Rows.Any(row => row.Id == id) == true;
+
+    private async Task SaveGroups(string profile, Func<ConversationGroup[], ConversationGroup[]> edit)
     {
-        if (!UsesConversationGroups || groupSavePending || SaveIslandPlacement == null) return;
+        if (!UsesConversationGroups || profile != ConversationProfile || groupSavePending || SaveIslandPlacement == null) return;
         groupSavePending = true;
-        var profile = ConversationProfile;
         try
         {
             var result = await SaveIslandPlacement(previous => {
-                if (!previous.ShowPinnedConversations || profile != ConversationProfile) return previous;
+                if (!previous.ShowPinnedConversations || !UsesConversationGroups || profile != ConversationProfile) return previous;
                 var stored = ConversationGroups.Read(previous.ConversationGroups);
                 return previous with { ConversationGroups = stored.Update(profile, edit(stored.For(profile))) };
             });
@@ -159,18 +160,18 @@ public partial class IslandWindow
         control.Drop += async (_, e) => {
             control.Opacity = 1; ClearConversationDropFeedback();
             var value = Payload(e); e.Handled = true;
-            if (value == null || !Allowed(value, e)) return;
+            if (value == null || !Allowed(value, e) || (row != null && !IsCurrentPin(row))) return;
             if (value.Group is { } source)
             {
                 var after = After(e); var merge = Merge(e);
-                await SaveGroups(groups => NativePinnedGroups.Shared.DropGroup(groups, source, group, after, merge));
+                await SaveGroups(value.Profile, groups => NativePinnedGroups.Shared.DropGroup(groups, source, group, after, merge));
                 return;
             }
-            await SaveGroups(groups => {
-                var destination = group;
-                var members = value.Members;
-                if (row != null && destination == null) { destination = Guid.NewGuid().ToString("N"); members = members.Append(row).ToArray(); }
-                return NativePinnedGroups.Shared.Move(groups, members, destination, ui.Text("conversation_groups.new"));
+            await SaveGroups(value.Profile, groups => {
+                if (!value.Members.All(IsCurrentPin) || (row != null && !IsCurrentPin(row))) return groups;
+                if (row != null && group == null)
+                    return NativePinnedGroups.Shared.Move(groups, value.Members.Append(row).ToArray(), Guid.NewGuid().ToString("N"), ui.Text("conversation_groups.new"));
+                return NativePinnedGroups.Shared.Move(groups, value.Members, group);
             });
         };
     }
@@ -194,13 +195,14 @@ public partial class IslandWindow
         content.Children.Add(conversationScroll);
         AutomationProperties.SetAutomationId(conversationScroll, "island.conversations");
         var savedGroups = SavedGroups;
+        var profile = ConversationProfile;
         foreach (var section in NativePinnedGroups.Shared.Sections(savedGroups, rows))
         {
             var group = section.Group;
             var heading = new StackPanel { Orientation = Orientation.Horizontal, Height = 32 };
             var toggle = new Button { Content = group?.Collapsed == true ? "›" : "⌄", Width = 26, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0) };
             toggle.IsEnabled = group != null;
-            if (group != null) toggle.Click += async (_, _) => await SaveGroups(groups => groups.Select(g => g.Id == group.Id ? g with { Collapsed = !g.Collapsed } : g).ToArray());
+            if (group != null) toggle.Click += async (_, _) => await SaveGroups(profile, groups => groups.Select(g => g.Id == group.Id ? g with { Collapsed = !g.Collapsed } : g).ToArray());
             AutomationProperties.SetAutomationId(toggle, "island.group.toggle." + (group?.Id ?? "ungrouped"));
             heading.Children.Add(toggle);
             var name = new Button { Content = (group == null ? ui.Text("conversation_groups.ungrouped") : GroupName(group)) + "  " + section.Rows.Length, Background = Brushes.Transparent, Foreground = PacerPalette.Secondary, BorderThickness = new Thickness(0), Padding = new Thickness(5,0,5,0) };
@@ -217,12 +219,20 @@ public partial class IslandWindow
                 headingHost.ToolTip = ui.Text("conversation_groups.drag_help");
                 ConversationDragSource(headingHost, () => group.Members, group.Id);
                 name.Click += (_, _) => {
-                    if (compactPreferences.HideProjects) return;
+                    if (compactPreferences.HideProjects || !UsesConversationGroups || profile != ConversationProfile) return;
                     conversationRenaming = true; collapse.Stop();
                     var input = new TextBox { Text = group.Name, MaxLength = 64, Width = 200, VerticalContentAlignment = VerticalAlignment.Center };
                     heading.Children.Remove(name); heading.Children.Add(input); Activate(); input.Focus(); input.SelectAll();
                     bool finished = false;
-                    async Task Finish(bool save) { if (finished) return; finished = true; conversationRenaming = false; var text = input.Text.Trim(); if (save && text.Length > 0) await SaveGroups(groups => groups.Select(g => g.Id == group.Id ? g with { Name = text } : g).ToArray()); else InvalidatePanel(true); }
+                    async Task Finish(bool save)
+                    {
+                        if (finished) return;
+                        finished = true; conversationRenaming = false;
+                        var text = input.Text.Trim();
+                        if (save && text.Length > 0 && !compactPreferences.HideProjects)
+                            await SaveGroups(profile, groups => groups.Select(g => g.Id == group.Id ? g with { Name = text } : g).ToArray());
+                        else InvalidatePanel(true);
+                    }
                     input.KeyDown += async (_, e) => { if (e.Key is Key.Enter or Key.Escape) { e.Handled = true; await Finish(e.Key == Key.Enter); } };
                     input.LostKeyboardFocus += async (_, _) => await Finish(true);
                 };
@@ -242,7 +252,9 @@ public partial class IslandWindow
                     foreach (var destination in savedGroups.Select(g => (Id: (string?)g.Id, Name: GroupName(g))).Prepend((null, ui.Text("conversation_groups.ungrouped"))))
                     {
                         var item = new MenuItem { Header = ui.Text("conversation_groups.move").Replace("%@", destination.Name, StringComparison.Ordinal) };
-                        item.Click += async (_, _) => await SaveGroups(groups => NativePinnedGroups.Shared.Move(groups, [value.Id], destination.Id)); menu.Items.Add(item);
+                        item.Click += async (_, _) => await SaveGroups(profile, groups => IsCurrentPin(value.Id)
+                            ? NativePinnedGroups.Shared.Move(groups, [value.Id], destination.Id) : groups);
+                        menu.Items.Add(item);
                     }
                 };
                 // WPF only opens a menu that initially has an item.

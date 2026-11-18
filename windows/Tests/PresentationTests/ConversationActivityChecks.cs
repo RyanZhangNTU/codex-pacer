@@ -68,6 +68,15 @@ internal static class ConversationActivityChecks
             Check(Descendants(window).OfType<TaskRow>().All(r => ((TaskRowState)r.DataContext).Value.Title == UiText.For(language == "zh-Hans").Text("activity.hidden_name")),
                 "Privacy hides pinned titles immediately, including a previous snapshot");
             Check(preferences.ConversationGroups == saved, "Presentation updates do not change stored preferences");
+            var oldToggle = Descendants(window).OfType<Button>().Single(button => AutomationProperties.GetAutomationId(button) == "island.group.toggle.first");
+            var next = Snapshot(9);
+            window.ReceiveSnapshot(next with { PinnedConversations = next.PinnedConversations! with { Profile = "another-profile" } });
+            await Pump();
+            int saves = 0;
+            window.SaveIslandPlacement = _ => { saves++; return Task.FromResult(PreferencesApplyResult.Applied); };
+            oldToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Pump();
+            Check(saves == 0, "A control from a previous Codex directory cannot edit the new directory");
             Console.WriteLine("PASS conversation activity " + language + ": group and row promotion, completion restore, stable controls, drag and rename protection");
         }
         finally { window.StopPresentation(); window.AllowClose = true; window.Close(); }

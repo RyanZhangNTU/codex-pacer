@@ -60,7 +60,7 @@ public struct PinnedConversationGroups: Codable, Equatable, Sendable {
         return sections.filter(active) + sections.filter { !active($0) }
     }
 
-    public static func move(_ members: [String], in groups: [Group], to destination: String?, name: String = "") -> [Group] {
+    public static func move(_ members: [String], in groups: [Group], to destination: String?, name: String? = nil) -> [Group] {
         var moved: Set<String> = []
         let unique = members.filter { moved.insert($0).inserted }
         var result = groups.map { group in
@@ -70,7 +70,8 @@ public struct PinnedConversationGroups: Codable, Equatable, Sendable {
         }
         if let destination {
             if let index = result.firstIndex(where: { $0.id == destination }) { result[index].members += unique }
-            else { result.append(Group(id: destination, name: name, members: unique)) }
+            else if let name { result.append(Group(id: destination, name: name, members: unique)) }
+            else { return groups }
         }
         return result.filter { !$0.members.isEmpty }
     }

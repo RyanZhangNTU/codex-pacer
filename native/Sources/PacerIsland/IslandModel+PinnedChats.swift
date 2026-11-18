@@ -23,8 +23,8 @@ extension IslandModel {
         let profile = enabled ? (demo ? "" : CompletionDismissalStore.digest([home.path])) : nil
         guard profile != pinProfile else { return false }
         resetPinnedReader()
+        if pinProfile == nil { viewingPinnedChats = true }
         pinProfile = profile
-        viewingPinnedChats = true
         if !demo && enabled {
             chatGroups = PinnedConversationGroups.read(defaults.string(forKey: "conversationGroups").map { Data($0.utf8) })
         }
