@@ -11,6 +11,11 @@ final class EngineStartupTimeZoneTests: XCTestCase {
         XCTAssertEqual(newYork.secondsFromGMT(for: winter), -5 * 3600, "A named zone keeps its own DST rules")
         let offset = try XCTUnwrap(EngineStartupTimeZone.parse(["--time-zone-offset", "20700"]))
         XCTAssertEqual(offset.secondsFromGMT(for: winter), 20700, "A zone without an IANA name keeps the host's current offset")
+        // The host passes both, as `EngineTimeZone.Arguments` builds them: the name wins, and the offset covers a name Foundation can't load.
+        let summer = Date(timeIntervalSince1970: 1_815_724_800) // 2027-07-16
+        let both = try XCTUnwrap(EngineStartupTimeZone.parse(["--time-zone", "America/New_York", "--time-zone-offset", "-18000"]))
+        XCTAssertEqual(both.identifier, "America/New_York"); XCTAssertEqual(both.secondsFromGMT(for: summer), -4 * 3600)
+        XCTAssertEqual(EngineStartupTimeZone.parse(["--time-zone-offset", "-18000", "--time-zone", "America/New_York"])?.identifier, "America/New_York")
         XCTAssertEqual(EngineStartupTimeZone.parse(["--time-zone", "Not/AZone", "--time-zone-offset", "3600"])?.secondsFromGMT(for: winter), 3600)
         for invalid in [[String](), ["--time-zone"], ["--time-zone", "Not/AZone"], ["--time-zone-offset", "999999"], ["--time-zone-offset", "PRIVATE"]] {
             XCTAssertNil(EngineStartupTimeZone.parse(invalid), "\(invalid)")
