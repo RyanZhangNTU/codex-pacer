@@ -113,7 +113,7 @@ public actor LocalActivityReader {
         }
         // Reviews must not consume the user-task discovery slots.
         func covered(_ file: URL) -> Bool {
-            excludingThreads.contains(String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased())
+            CodexRolloutName.threadID(of: file).map(excludingThreads.contains) ?? false
         }
         var selected = metricsOnly ? Array(cursors.keys) : cursors.filter {
             [.running, .waitingForInput].contains(projected($0.value).phase) && !covered($0.key)
@@ -165,8 +165,7 @@ public actor LocalActivityReader {
         }
         if !metricsOnly { cursors = cursors.filter { selected.contains($0.key) || covered($0.key) } }
         for file in selected {
-            let id = String(file.deletingPathExtension().lastPathComponent.suffix(36)).lowercased()
-            if excludingThreads.contains(id), !includeCoveredMetrics { continue }
+            if covered(file), !includeCoveredMetrics { continue }
             guard let facts = signature(file) else {
                 if let cursor = cursors.removeValue(forKey: file) {
                     var activity = projected(cursor)

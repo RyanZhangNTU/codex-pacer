@@ -204,7 +204,7 @@ enum SessionLogProbe {
         if tid in seen or len(seen)>=64:return None
         seen.add(tid)
         for candidate in candidates():
-            if not candidate.stem.lower().endswith(tid):continue
+            if rollout_thread(candidate.stem)!=tid.lower():continue
             record=rollout_origin(candidate,tid)
             if record is None:continue
             classification={k:record[k] for k in ('embedded','ignoredSession')}
@@ -306,7 +306,7 @@ enum SessionLogProbe {
         while len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
         for p in paths:
             if len(selected)>=32: break
-            if p.stem[-36:].lower() in excluding:
+            if rollout_thread(p.stem) in excluding:
                 selected.append(p);continue
             try:
                 stat=p.stat()

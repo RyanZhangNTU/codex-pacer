@@ -63,6 +63,11 @@ public struct CodexSessionOrigin: Equatable, Sendable {
         parts=[v for v in path.split('/') if v]
         ignored=embedded and (parts[-2:]==['zotero-chat','translate'] or bool(parts and parts[-1].startswith('zotero-chat-catalog.')))
         return {'embedded':embedded,'ignoredSession':ignored}
+    def rollout_thread(stem):
+        # A reverted thread's rollout is <thread>_<rollout>; the thread comes first (CodexRolloutName).
+        s=stem.lower();parts=s[-73:].split('_')
+        if len(s)>=73 and len(parts)==2 and all(len(v)==36 and v.count('-')==4 for v in parts):return parts[0]
+        return s[-36:]
     """
 }
 

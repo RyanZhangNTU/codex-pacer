@@ -23,6 +23,44 @@ final class CodexProgressTests: XCTestCase {
         TaskProgressRing.make(value, phase: value.phase, enabled: true, at: start.addingTimeInterval(seconds), hasAttention: attention)
     }
 
+    /// After a revert, Codex writes the thread to `rollout-<time>-<thread>_<rollout>.jsonl` (#259).
+    /// The thread is the first ID: the task, its progress and its coverage by the live
+    /// connection all follow it, not the rollout ID after it.
+    func testARevertedThreadsRolloutKeepsItsTaskAndProgress() async throws {
+        let rollout = "22222222-2222-4222-8222-222222222222", stamp = "rollout-2026-11-19T06-00-00-"
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: stamp + thread + "_" + rollout + ".jsonl"), thread)
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: stamp + thread.uppercased() + "_" + rollout), thread)
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: stamp + thread + ".jsonl"), thread, "A single ID reads as before")
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: "ssh:host.example:" + thread), thread, "Dotted hosts still end in the thread")
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: stamp + "not-an-id_" + thread + ".jsonl"), thread, "Only two IDs make a revert")
+
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-reverted-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let folder = DateFormatter(); folder.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + folder.string(from: start))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent(stamp + thread + "_" + rollout + ".jsonl")
+        func line(_ type: String, _ seconds: Double, _ payload: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": ISO8601DateFormatter().string(from: start.addingTimeInterval(seconds)),
+                                                        "payload": payload]) + Data([10])
+        }
+        try (line("session_meta", 0, ["id": thread, "originator": "Codex Desktop", "cwd": "/fixture", "history_mode": "paginated"])
+            + line("event_msg", 1, ["type": "task_started", "turn_id": "turn-1"])
+            + line("event_msg", 2, ["type": "item_completed", "thread_id": thread, "turn_id": "turn-1", "item": report(70)])).write(to: file)
+        try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(2)], ofItemAtPath: file.path)
+
+        let read = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), phaseAwareRate: true)
+        XCTAssertEqual(read.activities.count, 1)
+        XCTAssertEqual(read.activities.first?.threadID, thread)
+        XCTAssertEqual(read.activities.first?.phase, .running)
+        XCTAssertEqual(read.activities.first?.currentProgress?.percent, 70)
+        let covered = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread])
+        XCTAssertTrue(covered.activities.isEmpty, "A thread the live connection follows is not read twice")
+        let metrics = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread],
+                                                       includeCoveredMetrics: true)
+        XCTAssertEqual(metrics.activities.first?.currentProgress?.percent, 70, "Its log still fills in the live task's progress")
+    }
+
     func testReportsUseCompletedOwnedItemsAndNeverAdvanceLifecycle() {
         var value = activity()
         log(&value, "task_started", at: 0, fields: ["turn_id": "turn-1"])
