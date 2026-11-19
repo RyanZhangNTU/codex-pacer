@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-import PacerCore
+@testable import PacerCore
 import PacerEngineSupport
 import WinSDK
 @testable import WindowsInstallerSupport
@@ -450,5 +450,64 @@ final class WindowsClaudeRuntimeTests: XCTestCase {
         XCTAssertEqual(stops.map { $0["agents"] as? Int }, [0, 0, 0, 0, 2, nil, nil])
         XCTAssertEqual(stops.map { $0["parentId"] as? String }, [nil, nil, nil, nil, nil, "synthetic-ring-session", nil])
         XCTAssertFalse(stops.contains { String(describing: $0).contains("PRIVATE") })
+    }
+
+    func testAppAccessDialogStillOpenAfterAMomentWaitsForApproval() async throws {
+        // Claude Desktop shows computer-use access requests in its own dialog, and
+        // Claude Code sends only the tool's start and end for them.
+        let home = try fixture().homes[0], python = try package.appendingPathComponent("python.exe"), pacer = home.appendingPathComponent("pacer")
+        try FileManager.default.createDirectory(at: pacer, withIntermediateDirectories: true)
+        let hook = pacer.appendingPathComponent("hook.py"), spool = pacer.appendingPathComponent("events.jsonl")
+        try WindowsClaudeHookRuntime.script().write(to: hook)
+        func send(_ event: [String: Any]) throws {
+            let process = Process(), input = Pipe(), output = Pipe()
+            process.executableURL = python; process.arguments = ["-S", hook.path, "hook", home.path]
+            process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+            try process.run()
+            let common: [String: Any] = ["session_id": "synthetic-access-session", "cwd": "C:/PRIVATE/fixture-project"]
+            input.fileHandleForWriting.write(try JSONSerialization.data(withJSONObject: common.merging(event) { _, new in new }))
+            try input.fileHandleForWriting.close()
+            // Claude waits for the hook's output to close, so the later check must not hold it.
+            _ = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+        }
+        func rows() -> [[String: Any]] {
+            ((try? Data(contentsOf: spool)) ?? Data()).split(separator: 10).compactMap { try? JSONSerialization.jsonObject(with: Data($0)) as? [String: Any] }
+        }
+        func approvals() -> [String] { rows().filter { $0["kind"] as? String == "approval" }.compactMap { $0["itemId"] as? String } }
+        func state() -> ClaudeActivityState {
+            var value = ClaudeActivityState()
+            for line in ((try? Data(contentsOf: spool)) ?? Data()).split(separator: 10) { value.consume(Data(line)) }
+            return value
+        }
+        let access: [String: Any] = ["tool_name": "mcp__computer-use__request_access", "tool_input": ["apps": ["PRIVATE app"], "reason": "PRIVATE reason"]]
+        func tool(_ event: String, _ id: String, _ extra: [String: Any] = [:]) -> [String: Any] {
+            let call: [String: Any] = ["hook_event_name": event, "tool_use_id": id, "prompt_id": "synthetic-prompt"]
+            return access.merging(call.merging(extra) { _, new in new }) { _, new in new }
+        }
+        try send(["hook_event_name": "UserPromptSubmit", "prompt_id": "synthetic-prompt", "prompt": "PRIVATE prompt"])
+        // Apps already allowed: the request returns at once and showed no dialog.
+        try send(tool("PreToolUse", "tool-granted"))
+        try send(tool("PostToolUse", "tool-granted", ["tool_response": "PRIVATE granted"]))
+        // A long-running tool of another kind asks nothing.
+        try send(["hook_event_name": "PreToolUse", "tool_use_id": "tool-shell", "tool_name": "Bash", "tool_input": ["command": "PRIVATE"], "prompt_id": "synthetic-prompt"])
+        try send(tool("PreToolUse", "tool-dialog"))
+        XCTAssertEqual(approvals(), [], "The hook returns before its check runs")
+        let asked = try await TestWait.until { approvals() == ["tool-dialog"] }
+        XCTAssertTrue(asked, "A request still open after the wait asks for approval: \(approvals())")
+        XCTAssertEqual(state().attention.map(\.kind), [.approval])
+        XCTAssertEqual(state().activities.first?.phase, .waitingForInput)
+        XCTAssertEqual(rows().first { $0["kind"] as? String == "approval" }?["promptId"] as? String, "synthetic-prompt")
+        try send(tool("PostToolUse", "tool-dialog", ["tool_response": "PRIVATE allowed"]))
+        XCTAssertEqual(state().attention.count, 0, "The tool's end clears the request")
+        XCTAssertEqual(state().activities.first?.phase, .running)
+        // A stop while the dialog is open ends the wait too; the later check then adds nothing.
+        try send(tool("PreToolUse", "tool-stopped"))
+        try send(["hook_event_name": "Stop", "prompt_id": "synthetic-prompt", "stop_hook_active": false, "background_tasks": []])
+        try send(tool("PreToolUse", "tool-timed"))
+        let timed = try await TestWait.until { approvals().contains("tool-timed") }
+        XCTAssertTrue(timed, "approvals: \(approvals())")
+        XCTAssertEqual(approvals(), ["tool-dialog", "tool-timed"], "Granted and stopped requests never ask")
+        XCTAssertFalse(String(decoding: (try? Data(contentsOf: spool)) ?? Data(), as: UTF8.self).contains("PRIVATE"))
     }
 }
