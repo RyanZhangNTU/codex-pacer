@@ -164,6 +164,14 @@ final class SelfReportedProgressTests: XCTestCase {
         send(["kind": "response", "origin": "transcript", "sessionId": session, "promptId": turn, "itemId": "reply", "at": start + 9])
         XCTAssertEqual(try status(at: 300), L10n.text("activity.background_wait"))
         XCTAssertEqual(TaskSymbol.symbol(for: try XCTUnwrap(state.activities.first)), .background, "A paused turn has its own glyph")
+        // The collapsed bar agrees with the row in every status choice, not "Replying".
+        func compact(at offset: Double, _ show: CompactComponentOptions.StatusShow) -> String {
+            CompactBarContext(activities: state.activities, requests: [], completions: [], sources: [], now: now.addingTimeInterval(offset))
+                .statusText(show, language: .english)
+        }
+        for show in [CompactComponentOptions.StatusShow.urgent, .stage, .count] {
+            XCTAssertEqual(compact(at: 300, show), L10n.text("activity.background_wait_compact", language: .english), "\(show)")
+        }
         // The completion notification wakes the same request in a new turn.
         send(["kind": "prompt", "origin": "hook", "sessionId": session, "promptId": nextTurn, "wake": true, "at": start + 120])
         XCTAssertEqual(state.activities.first?.turnID, nextTurn)
@@ -171,6 +179,7 @@ final class SelfReportedProgressTests: XCTestCase {
         XCTAssertNil(state.activities.first?.currentBackgroundWait)
         XCTAssertEqual(try ring(at: 125).mode, .working)
         XCTAssertNotEqual(try status(at: 125), L10n.text("activity.background_wait"))
+        XCTAssertNotEqual(compact(at: 125, .urgent), L10n.text("activity.background_wait_compact", language: .english), "A woken turn shows its stage again")
         XCTAssertNotEqual(TaskSymbol.symbol(for: try XCTUnwrap(state.activities.first)), .background)
         // Ending without background work completes the request: the ring fills from 70.
         send(["kind": "stopVerified", "origin": "transcript", "sessionId": session, "promptId": nextTurn, "itemId": "end-2", "at": start + 130])

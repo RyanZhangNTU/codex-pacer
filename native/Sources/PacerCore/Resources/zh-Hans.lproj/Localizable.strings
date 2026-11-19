@@ -399,6 +399,7 @@
 "activity.task_count_compact_singular" = "%@ 个任务";
 "activity.tool_compact" = "执行工具";
 "activity.responding_compact" = "正在回复";
+"activity.background_wait_compact" = "等待后台工作";
 
 "activity.done_compact" = "1 已完成";
 

@@ -113,8 +113,12 @@ public struct CompactBarContext: Codable, Equatable, Sendable {
         measuredTasks = running ? measured : nil
         activeCount = overview.running.count + overview.waiting.count
         attention = !requests.isEmpty || !overview.waiting.isEmpty
+        // A running task's words follow its row (`SessionActivity.detail`): a
+        // turn holding for background work says so instead of the last stage
+        // it reached, such as its reply.
         func stage(_ task: SessionActivity) -> Status {
-            .text(task.stage == .tool ? "activity.tool_compact" : task.stage == .responding ? "activity.responding_compact" : "activity." + task.stage.rawValue)
+            if task.currentBackgroundWait != nil { return .text("activity.background_wait_compact") }
+            return .text(task.stage == .tool ? "activity.tool_compact" : task.stage == .responding ? "activity.responding_compact" : "activity." + task.stage.rawValue)
         }
         let endedRoots = Set(groups.filter { !$0.isRunning }.map { $0.primary.id })
         let pending = completions.filter { endedRoots.contains($0.id) }

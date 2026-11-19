@@ -440,7 +440,7 @@ Request scope:
 
 ### Waiting for background work
 
-A turn that stops while its own background work runs keeps the request open: no completion is announced until the work ends.
+A turn that stops while its own background work runs keeps the request open: no completion is announced until the work ends. While it waits, the task row says "Waiting for background work", and the collapsed bar's status says "Background work" in every status choice (`CompactBarContext`), not the stage the turn last reached.
 
 | Provider | Evidence of background work | Ends when |
 | --- | --- | --- |
