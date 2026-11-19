@@ -64,7 +64,7 @@ TOOLING=IDLE+('shell','local_powershell','MCP task')
 # A request still open after ACCESS_WAIT seconds is waiting on the user; one
 # that returns sooner (its apps were already allowed) showed no dialog.
 ACCESS_TOOLS=('mcp__computer-use__request_access','mcp__computer-use__request_teach_access')
-ACCESS_WAIT=3
+ACCESS_WAIT=5
 def background_agents(tasks):
     # Claude Code lists every in-flight background task of the session here,
     # also agents that subagents launched; foreground agents are left out.

@@ -222,7 +222,7 @@ Claude tasks come from a bounded incremental transcript reader, optional hooks a
 - **Baselines.** Initial reads restore historical cards without replaying reminders. A baseline turn still running with evidence older than 15 minutes becomes unconfirmed.
 - **Embedded sessions.** Of the launch `entrypoint`, only whether it starts with `sdk-` (an Agent SDK embedding) is kept, as `embedded`; the latest record wins.
 - **Permission requests.** `PermissionRequest` and the `permission_prompt` notification carry no tool ID, so the adapter matches them to a waiting tool by a CRC32 of tool name and input (no text kept). A question's permission shows as a reply, not an approval.
-- **App access requests.** Claude Desktop asks for computer-use app access (`request_access`, `request_teach_access`) in a dialog of its own, and Claude Code sends only the tool's start and end. The hook starts a detached copy of itself that checks once, 3 seconds later, whether the call is still among the waiting tools; if so it records an approval request, which the tool's end clears. A call whose apps were already allowed returns sooner and shows nothing.
+- **App access requests.** Claude Desktop asks for computer-use app access (`request_access`, `request_teach_access`) in a dialog of its own, and Claude Code sends only the tool's start and end. The hook starts a detached copy of itself that checks once, 5 seconds later, whether the call is still among the waiting tools; if so it records an approval request, which the tool's end clears. A call whose apps were already allowed returns sooner and shows nothing.
 
 ### Turn endings and subagents
 
