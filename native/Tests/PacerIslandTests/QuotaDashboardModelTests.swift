@@ -207,4 +207,35 @@ final class QuotaDashboardModelTests: XCTestCase {
         XCTAssertNil(model.providerSourceText(.claude), "A synthetic snapshot without source provenance cannot invent it")
         XCTAssertEqual(model.selectedProvider, .claude)
     }
+
+    func testCodexResetsExpiringInsideTheLeadTimeWarnAndOpenHistory() throws {
+        let (model, defaults) = try fixture()
+        let reset = QuotaResetSummary(availableCount: 3, credits: [
+            QuotaResetCredit(id: "synthetic-a", status: "available", expiresAt: now.addingTimeInterval(7_200), grantedAt: now),
+            QuotaResetCredit(id: "synthetic-b", status: "available", expiresAt: now.addingTimeInterval(30 * 3_600), grantedAt: now),
+            QuotaResetCredit(id: "synthetic-c", status: "available", expiresAt: now.addingTimeInterval(10 * 86_400), grantedAt: now)])
+        publish(QuotaSnapshot(buckets: [bucket("codex", [window("codex/week", minutes: 10080)])], capturedAt: now,
+            accountScope: "synthetic-codex", resetCredits: reset), for: .codex, to: model)
+        func item() -> CompactWarningPresentation.Item? { model.compactWarningItems.first { $0.kind == .resetExpiry } }
+        XCTAssertEqual(model.resetExpiryLeadDays, ResetExpiryReminder.defaultLeadDays)
+        XCTAssertTrue(CompactIslandComponent.activeWarnings(model).contains(.resetExpiry))
+        model.setResetExpiryLeadDays(1)
+        XCTAssertEqual(item()?.help, L10n.text("warning.reset_expiry_help", 1, CompactDuration.text(7_200), L10n.date(now.addingTimeInterval(7_200), time: .standard)))
+        model.setResetExpiryLeadDays(2)
+        XCTAssertEqual(defaults.integer(forKey: ResetExpiryReminder.defaultsKey), 2, "The lead time is saved at once")
+        XCTAssertEqual(item()?.help, L10n.text("warning.reset_expiry_help", 2, CompactDuration.text(7_200), L10n.date(now.addingTimeInterval(7_200), time: .standard)))
+        model.setResetExpiryLeadDays(90)
+        XCTAssertEqual(model.resetExpiryLeadDays, ResetExpiryReminder.defaultLeadDays, "A lead time outside the range falls back to the default")
+        publish(QuotaSnapshot(buckets: [bucket("codex", [window("codex/week", minutes: 10080)])], capturedAt: now,
+            accountScope: "synthetic-codex", resetCredits: QuotaResetSummary(availableCount: 0, credits: [])), for: .codex, to: model)
+        XCTAssertNil(item(), "Nothing available, nothing to lose")
+
+        // The panel's capsule asks History for Codex's deadlines exactly once.
+        let saved = UserDefaults.standard.object(forKey: SettingsPane.defaultsKey)
+        defer { UserDefaults.standard.set(saved, forKey: SettingsPane.defaultsKey) }
+        var opened = 0; model.onSettings = { opened += 1 }
+        model.openResetExpiries()
+        XCTAssertEqual(opened, 1); XCTAssertEqual(SettingsPane.load(), .history)
+        XCTAssertTrue(model.takeResetExpiryRequest()); XCTAssertFalse(model.takeResetExpiryRequest())
+    }
 }

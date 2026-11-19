@@ -263,7 +263,8 @@ struct IslandQuotaSection: View {
                     if section.actions { IslandPanelControls(model: model) }
                 }
             }
-            QuotaDashboardView(model: model, section: section)
+            // Codex's cell adds its banked-reset capsule here, not on Overview.
+            QuotaDashboardView(model: model, section: section).environment(\.showsCodexResets, true)
         }
     }
 }

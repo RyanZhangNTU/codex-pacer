@@ -10,6 +10,47 @@ extension EnvironmentValues {
     }
 }
 
+/// The expanded panel's quota blocks show Codex's banked resets under its gauge.
+private struct ShowsCodexResetsKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var showsCodexResets: Bool {
+        get { self[ShowsCodexResetsKey.self] }
+        set { self[ShowsCodexResetsKey.self] = newValue }
+    }
+}
+
+/// Codex's banked resets and the next deadline. It opens History with every
+/// deadline showing: a popover would close the panel. Under a row of dials it
+/// keeps its full text on Codex's side of the row.
+struct CodexResetCapsule: View {
+    @ObservedObject var model: IslandModel
+    var alignment: Alignment = .center
+    @Environment(\.showsCodexResets) private var shows
+
+    var body: some View {
+        if shows, model.panelOptions.codexResets, let snapshot = model.providerQuota(.codex) {
+            let account = QuotaAccountPresentation(snapshot: snapshot, context: "", now: model.now)
+            if let text = account.panelText {
+                QuotaLinkButton(title: text, symbol: ResetExpiryReminder.symbol,
+                                tint: account.expirySoon ? PacerPalette.attention : PacerPalette.secondary) { model.openResetExpiries() }
+                    .accessibilityLabel(text)
+                    .accessibilityHint(L10n.text("account.show_expiries"))
+                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: alignment)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    /// Codex's column in a row of dials: the first column leads, the last trails.
+    static func alignment(in providers: [AgentProvider]) -> Alignment {
+        guard let index = providers.firstIndex(of: .codex) else { return .center }
+        let columns = QuotaDashboardPresentation.Layout.columns(for: providers.count) ?? providers.count
+        let column = index % max(1, columns)
+        return column == 0 ? .leading : column == columns - 1 ? .trailing : .center
+    }
+}
+
 struct QuotaDashboardSlot: Equatable, Identifiable, Sendable {
     let provider: AgentProvider
     var id: AgentProvider { provider }
@@ -95,10 +136,20 @@ struct QuotaDashboardView: View {
             }
             .padding(.horizontal, IslandMetrics.rowInset)
             QuotaProviderStatusView(model: model, provider: provider)
+            if provider == .codex { CodexResetCapsule(model: model) }
         }.padding(.bottom, 4)
     }
 
     private func rings(_ slots: [QuotaDashboardPresentation.Slot]) -> some View {
+        VStack(spacing: 8) {
+            dials(slots)
+            if slots.contains(where: { $0.provider == .codex }) {
+                CodexResetCapsule(model: model, alignment: CodexResetCapsule.alignment(in: slots.map(\.provider)))
+            }
+        }.padding(.bottom, 4)
+    }
+
+    private func dials(_ slots: [QuotaDashboardPresentation.Slot]) -> some View {
         QuotaDialRow(slots: slots) { slot in
             if slot.period == nil { accountCredits(slot, size: 104) }
             else if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 104) } else {
@@ -108,7 +159,7 @@ struct QuotaDashboardView: View {
                     QuotaProviderStatusView(model: model, provider: slot.provider)
                 }.frame(maxWidth: .infinity, alignment: .top)
             }
-        }.padding(.bottom, 4)
+        }
     }
 
     @ViewBuilder private func accountCredits(_ slot: QuotaDashboardPresentation.Slot, size: CGFloat, details: Bool = false) -> some View {
@@ -175,6 +226,7 @@ private struct LegacyCodexQuotaView: View {
                     }
             }
             QuotaProviderStatusView(model: model, provider: .codex).frame(maxWidth: .infinity)
+            CodexResetCapsule(model: model)
         }
         .padding(.horizontal, IslandMetrics.rowInset).padding(.bottom, 4)
     }
@@ -514,14 +566,20 @@ struct QuotaProviderStatusView: View {
 struct QuotaLinkButton: View {
     let title: String
     var prominent = false
+    /// A leading symbol and the ink for it and the title, e.g. Codex's reset capsule.
+    var symbol: String?
+    var tint: Color?
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
         Button(action: action) {
-            Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                .foregroundStyle(prominent ? Color.black.opacity(0.85) : PacerPalette.primary)
+            HStack(spacing: 5) {
+                if let symbol { Image(systemName: symbol).font(.system(size: 10, weight: .semibold)) }
+                Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1).monospacedDigit()
+            }
+                .foregroundStyle(prominent ? Color.black.opacity(0.85) : tint ?? PacerPalette.primary)
                 .padding(.horizontal, 9).frame(height: 22)
                 .background(prominent ? PacerPalette.primary : (hovered ? PacerPalette.hover : PacerPalette.fill), in: Capsule())
                 .contentShape(Capsule())

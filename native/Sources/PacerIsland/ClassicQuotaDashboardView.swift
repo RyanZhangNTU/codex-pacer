@@ -49,6 +49,9 @@ struct ClassicQuotaDashboardView: View {
             if providers.count == 1, let provider = providers.first, slots.first?.period != nil {
                 QuotaProviderStatusView(model: model, provider: provider)
                     .frame(maxWidth: .infinity)
+                if provider == .codex { CodexResetCapsule(model: model) }
+            } else if providers.count > 1, providers.contains(.codex) {
+                CodexResetCapsule(model: model, alignment: CodexResetCapsule.alignment(in: slots.map(\.provider)))
             }
         }.padding(.bottom, 4)
     }
