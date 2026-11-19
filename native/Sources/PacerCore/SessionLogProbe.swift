@@ -289,6 +289,9 @@ enum SessionLogProbe {
     def snapshot(excluding=()):
         rows=[]; selected=[]
         paths=candidates();parents={}
+        # A reverted thread keeps its earlier rollout beside the current one (#259);
+        # candidates are newest first, so only the current one reports the thread.
+        seen=set();paths=[p for p in paths if not (rollout_thread(p.stem) in seen or seen.add(rollout_thread(p.stem)))]
         # Classify the bounded candidate set before spending reader/watch slots,
         # including a child that sorts ahead of its excluded parent.
         for p in paths:
