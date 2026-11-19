@@ -301,16 +301,37 @@ public partial class IslandWindow
 
     /// The capsule for Codex's banked resets, as on the Mac: the count and the next deadline. It
     /// opens History with every deadline showing; a popup would close the panel.
-    private Button ResetCapsule(QuotaAccountPresentation account, Thickness margin)
+    /// Sharing a row with other services, it alternates the count with the time left, as the
+    /// collapsed bar alternates its quota values, so it stays narrow enough for one column.
+    private Button ResetCapsule(QuotaAccountPresentation account, Thickness margin, bool alternate = false)
     {
         var label = new StackPanel { Orientation = Orientation.Horizontal };
         var arrow = new IconGlyph { Symbol = "arrow.counterclockwise", Width = 11, Height = 11, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
-        var text = new TextBlock { Text = account.PanelText, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
         string ink = account.ExpirySoon ? "Island.Attention" : "Island.Secondary";
-        arrow.SetResourceReference(IconGlyph.InkProperty, ink); text.SetResourceReference(TextBlock.ForegroundProperty, ink);
-        label.Children.Add(arrow); label.Children.Add(text);
+        arrow.SetResourceReference(IconGlyph.InkProperty, ink); label.Children.Add(arrow);
+        string[] phases = alternate && account.PanelCountText is { } count && account.PanelTimeText is { } time ? [count, time]
+            : [alternate ? account.PanelCountText ?? account.PanelText ?? "" : account.PanelText ?? ""];
+        // Every phase shares one cell sized by the longest, and only opacity changes, so the
+        // alternation repaints without measuring the panel again.
+        var faces = new Grid { VerticalAlignment = VerticalAlignment.Center };
+        var texts = phases.Select((value, index) =>
+        {
+            var face = new TextBlock { Text = value, VerticalAlignment = VerticalAlignment.Center, Opacity = index == 0 ? 1 : 0 };
+            face.SetResourceReference(TextBlock.ForegroundProperty, ink); faces.Children.Add(face); return face;
+        }).ToArray();
+        label.Children.Add(faces);
         var capsule = new Button { Content = label, Style = (Style)FindResource("QuotaLinkButton"), HorizontalAlignment = HorizontalAlignment.Left,
             Margin = margin, VerticalAlignment = VerticalAlignment.Center, Tag = account.PanelText + "" + account.ExpirySoon };
+        if (texts.Length > 1)
+        {
+            // Only a visible capsule keeps a timer; a collapsed panel costs nothing.
+            int phase = 0;
+            var timer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background)
+                { Interval = TimeSpan.FromSeconds(QuotaAlternationSchedule.Slot) };
+            timer.Tick += (_, _) => { texts[phase].Opacity = 0; phase = (phase + 1) % texts.Length; texts[phase].Opacity = 1; };
+            capsule.IsVisibleChanged += (_, e) => { if (e.NewValue is true) timer.Start(); else timer.Stop(); };
+            capsule.Unloaded += (_, _) => timer.Stop();
+        }
         AutomationProperties.SetAutomationId(capsule, "island.codex.resets");
         AutomationProperties.SetName(capsule, account.PanelText ?? "");
         capsule.Click += (_, _) => { if (presentationStopped || !expanded) return; DismissForSettings(); ResetExpiriesRequested?.Invoke(); };
@@ -347,7 +368,7 @@ public partial class IslandWindow
         var resetAccount = section.Providers.Count > 1 ? ResetAccount(section, snapshot) : null;
         if (!Redraw(slots, new
         {
-            resets = resetAccount == null ? null : new { resetAccount.PanelText, resetAccount.ExpirySoon },
+            resets = resetAccount == null ? null : new { resetAccount.PanelText, resetAccount.PanelCountText, resetAccount.PanelTimeText, resetAccount.ExpirySoon },
             section, layout, style = expandedQuotaStyle, deepseekPanelStyle, options = options.Key, panelBudgetDial,
             readings = section.Providers.Select(Reading), legacy = layout?.Kind == "legacyCodex" ? dashboard?.LegacyCodex : null,
             quota = snapshot.Quota.Where(value => section.Providers.Contains(value.Provider)), help = section.Providers.Select(Help),
@@ -392,7 +413,7 @@ public partial class IslandWindow
                 QuotaCells.Add(slots, cell, index, layout?.Columns ?? providers.Length);
             }
         }
-        if (resetAccount != null) AddResetCapsule(slots, ResetCapsule(resetAccount, new Thickness(9, 8, 9, 0)), layout?.Slots.Select(value => value.Provider).ToList().IndexOf("codex") ?? 0);
+        if (resetAccount != null) AddResetCapsule(slots, ResetCapsule(resetAccount, new Thickness(9, 8, 9, 0), alternate: true), layout?.Slots.Select(value => value.Provider).ToList().IndexOf("codex") ?? 0);
         return true;
 
         FrameworkElement AccountCell(string provider, bool classic, bool details, bool showsName) =>

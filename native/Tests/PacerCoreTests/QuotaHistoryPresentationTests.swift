@@ -52,6 +52,8 @@ final class QuotaHistoryPresentationTests: XCTestCase {
         XCTAssertTrue(value.expiries[0].accessibilityLabel.hasSuffix(value.expiries[0].remainingText))
         XCTAssertEqual(value.panelText, L10n.text("account.panel_resets_expiring", 5, CompactDuration.text(60)))
         XCTAssertFalse(try XCTUnwrap(value.panelText).contains("\n"), "The capsule is one short line; History holds the list")
+        XCTAssertEqual(value.panelCountText, L10n.text("account.panel_resets", 5))
+        XCTAssertEqual(value.panelTimeText, CompactDuration.text(60), "A shared row alternates the count with the time alone")
         let later = QuotaAccountPresentation(snapshot: snapshot, context: "opaque", now: now.addingTimeInterval(3_600))
         XCTAssertEqual(later.expiries.map(\.remainingText), [L10n.text("account.expiry_remaining", CompactDuration.text(900_000 - 3_600))],
             "The countdown moves with the clock and drops a passed deadline without a new read")
@@ -61,10 +63,12 @@ final class QuotaHistoryPresentationTests: XCTestCase {
         let none = try QuotaSnapshot.decode(Data(#"{"rateLimits":null,"rateLimitResetCredits":{"availableCount":0}}"#.utf8), capturedAt: now)
         let zero = QuotaAccountPresentation(snapshot: none, context: "zero", now: now)
         XCTAssertNil(zero.panelText, "No capsule without an available reset"); XCTAssertNil(zero.nextExpiryText)
+        XCTAssertNil(zero.panelCountText); XCTAssertNil(zero.panelTimeText)
         let open = try QuotaSnapshot.decode(Data(#"{"rateLimits":null,"rateLimitResetCredits":{"availableCount":2}}"#.utf8), capturedAt: now)
         let undated = QuotaAccountPresentation(snapshot: open, context: "open", now: now)
         XCTAssertEqual(undated.panelText, L10n.text("account.panel_resets", 2), "A count without deadlines still shows the capsule")
         XCTAssertNil(undated.nextExpiryText)
+        XCTAssertEqual(undated.panelCountText, L10n.text("account.panel_resets", 2)); XCTAssertNil(undated.panelTimeText, "Without a deadline the count stays")
     }
     func testMissingMetadataAndZeroAvailabilityStayDistinctFromUnlimitedAndNoExpiry() throws {
         let raw = try QuotaSnapshot.decode(Data(#"{"rateLimits":null}"#.utf8), capturedAt: now)

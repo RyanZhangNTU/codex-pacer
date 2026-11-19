@@ -33,8 +33,11 @@ internal static class SingleQuotaChecks
                     var (capsule, extra) = PresentationWait.ResetCapsule(window);
                     Check(capsule != null && slots.Children.Count == 4 && window.LogicalTarget.Height == 438 + extra,
                         "The existing multi-provider reference layout must retain its original height, plus Codex's reset capsule");
-                    Check(System.Windows.Automation.AutomationProperties.GetName(capsule!).Length > 0 && capsule!.ToolTip == null,
-                        "The reset capsule names its count; a click, not a tooltip, leads to the deadlines");
+                    Check(System.Windows.Automation.AutomationProperties.GetName(capsule!).Contains('·') && capsule!.ToolTip == null,
+                        "The reset capsule's name keeps the count and the deadline; a click, not a tooltip, leads to the deadlines");
+                    var faces = Descendants(capsule!).OfType<TextBlock>().ToArray();
+                    var shownPart = faces.Single(face => face.Opacity == 1).Text;
+                    Check(faces.Length == 2 && shownPart.Length > 0 && !shownPart.Contains('·'), "Shared with other services, the capsule shows the count or the time, one at a time");
                     foreach (string name in new[] { "claude", "codex" })
                     {
                         var modes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled" };
