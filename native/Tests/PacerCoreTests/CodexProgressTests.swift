@@ -301,4 +301,62 @@ final class CodexProgressTests: XCTestCase {
         try FileManager.default.removeItem(at: flag)
         XCTAssertEqual(try report("63")["isError"] as? Bool, true)
     }
+
+    /// A long turn's log can outgrow the 8 MiB anchor search. Skipping an append
+    /// that starts, ends or sets no turn keeps the turn and its progress; a new
+    /// turn in the skipped part still replaces it.
+    func testSkippingALargeAppendKeepsTheTurnAndItsProgress() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-long-turn-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let folder = DateFormatter(); folder.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + folder.string(from: start))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("rollout-2026-11-19T06-00-00-" + thread + ".jsonl")
+        func line(_ type: String, _ seconds: Double, _ payload: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": ISO8601DateFormatter().string(from: start.addingTimeInterval(seconds)),
+                                                        "payload": payload]) + Data([10])
+        }
+        func progress(_ percent: Int, turn: String, at seconds: Double) throws -> Data {
+            try line("event_msg", seconds, ["type": "item_completed", "thread_id": thread, "turn_id": turn, "item": report(percent)])
+        }
+        // Large tool output, as a long research turn writes between two reads: about 1 MB, no turn of its own.
+        func output(at seconds: Double) throws -> Data {
+            try (0..<16).reduce(into: Data()) { data, _ in
+                data += try line("response_item", seconds, ["type": "function_call_output", "call_id": "call", "output": String(repeating: "x", count: 65_536)])
+            }
+        }
+        func append(_ data: Data, at seconds: Double) throws {
+            let handle = try FileHandle(forWritingTo: file); defer { try? handle.close() }
+            try handle.seekToEnd(); try handle.write(contentsOf: data)
+            try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(seconds)], ofItemAtPath: file.path)
+        }
+        try (line("session_meta", 0, ["id": thread, "originator": "codex-tui", "cwd": "/fixture"])
+            + line("event_msg", 1, ["type": "task_started", "turn_id": "turn-1"]) + progress(30, turn: "turn-1", at: 2)).write(to: file)
+        try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(2)], ofItemAtPath: file.path)
+        let reader = LocalActivityReader()
+        let first = await reader.read(home: home, now: start.addingTimeInterval(3), phaseAwareRate: true)
+        XCTAssertEqual(first.activities.first?.currentProgress?.percent, 30)
+
+        // About 10 MB in 1 MB steps, read after each, so the turn's start ends up
+        // far beyond the anchor search; the last step reports 60%.
+        var skipped = first
+        for step in 1...10 {
+            let seconds = Double(step) + 2
+            try append(output(at: seconds) + (step == 10 ? progress(60, turn: "turn-1", at: seconds) : Data()), at: seconds)
+            skipped = await reader.read(home: home, now: start.addingTimeInterval(seconds + 1), phaseAwareRate: true)
+            XCTAssertEqual(skipped.activities.map(\.turnID), ["turn-1"], "Step \(step) keeps the turn")
+        }
+        XCTAssertEqual(skipped.activities.first?.phase, .running)
+        XCTAssertEqual(skipped.activities.first?.currentProgress?.percent, 60)
+
+        // The turn ends and another starts inside the skipped part: the skip sees
+        // a turn boundary, so the reader starts over from the new turn's anchor.
+        try append(line("event_msg", 20, ["type": "task_complete", "turn_id": "turn-1"])
+            + line("event_msg", 21, ["type": "task_started", "turn_id": "turn-2"])
+            + (0..<3).reduce(into: Data()) { data, _ in data += try line("response_item", 22, ["type": "function_call_output", "call_id": "call", "output": String(repeating: "y", count: 65_536)]) }
+            + progress(20, turn: "turn-2", at: 23), at: 23)
+        let next = await reader.read(home: home, now: start.addingTimeInterval(24), phaseAwareRate: true)
+        XCTAssertEqual(next.activities.map(\.turnID), ["turn-2"])
+        XCTAssertEqual(next.activities.first?.currentProgress?.percent, 20)
+    }
 }
