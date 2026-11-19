@@ -35,6 +35,7 @@ struct ClassicQuotaDashboardView: View {
                                     period: period == .fiveHour ? .weekly : .fiveHour), now: model.now)
                             }
                             QuotaProviderStatusView(model: model, provider: slot.provider)
+                            if slot.provider == .codex, providers.count > 1 { CodexResetCapsule(model: model, alternates: true) }
                         }
                     }.frame(maxWidth: .infinity, alignment: .top)
                 } else {
@@ -49,8 +50,6 @@ struct ClassicQuotaDashboardView: View {
             if providers.count == 1, let provider = providers.first, slots.first?.period != nil {
                 QuotaProviderStatusView(model: model, provider: provider)
                     .frame(maxWidth: .infinity)
-            } else if providers.count > 1, providers.contains(.codex) {
-                CodexResetCapsule(model: model, alignment: CodexResetCapsule.alignment(in: slots.map(\.provider)))
             }
         }.padding(.bottom, 4)
     }

@@ -20,35 +20,32 @@ extension EnvironmentValues {
 }
 
 /// Codex's banked resets and the next deadline. It opens History with every
-/// deadline showing: a popover would close the panel. Codex alone shows it on
-/// its block's title row; under a row of dials it keeps its full text on
-/// Codex's side of the row.
+/// deadline showing: a popover would close the panel. Codex alone shows the
+/// whole line on its block's title row; beside other dials, under Codex's own,
+/// the count and the time left take turns in the collapsed bar's rhythm.
 struct CodexResetCapsule: View {
     @ObservedObject var model: IslandModel
-    /// Its side under a row of dials; nil on the title row.
-    let alignment: Alignment?
+    var alternates = false
     @Environment(\.showsCodexResets) private var shows
 
     var body: some View {
         if shows, model.panelOptions.codexResets, let snapshot = model.providerQuota(.codex) {
             let account = QuotaAccountPresentation(snapshot: snapshot, context: "", now: model.now)
             if let text = account.panelText {
-                let capsule = QuotaLinkButton(title: text, symbol: ResetExpiryReminder.symbol,
-                                              tint: account.expirySoon ? PacerPalette.attention : PacerPalette.secondary) { model.openResetExpiries() }
+                QuotaLinkButton(title: text, turns: Self.turns(account, alternates: alternates), symbol: ResetExpiryReminder.symbol,
+                                tint: account.expirySoon ? PacerPalette.attention : PacerPalette.secondary) { model.openResetExpiries() }
                     .accessibilityLabel(text)
                     .accessibilityHint(L10n.text("account.show_expiries"))
                     .fixedSize()
-                if let alignment { capsule.frame(maxWidth: .infinity, alignment: alignment).padding(.top, 2) } else { capsule }
             }
         }
     }
 
-    /// Codex's column in a row of dials: the first column leads, the last trails.
-    static func alignment(in providers: [AgentProvider]) -> Alignment {
-        guard let index = providers.firstIndex(of: .codex) else { return .center }
-        let columns = QuotaDashboardPresentation.Layout.columns(for: providers.count) ?? providers.count
-        let column = index % max(1, columns)
-        return column == 0 ? .leading : column == columns - 1 ? .trailing : .center
+    /// What the capsule shows in turn: the count, then the time left when a
+    /// deadline is known; on its own row, the whole line.
+    static func turns(_ account: QuotaAccountPresentation, alternates: Bool) -> [String] {
+        guard alternates, let count = account.panelCountText else { return [account.panelText].compactMap { $0 } }
+        return [count] + [account.panelTimeText].compactMap { $0 }
     }
 }
 
@@ -141,16 +138,6 @@ struct QuotaDashboardView: View {
     }
 
     private func rings(_ slots: [QuotaDashboardPresentation.Slot]) -> some View {
-        VStack(spacing: 8) {
-            dials(slots)
-            // Codex alone shows it on the title row instead.
-            if providers.count > 1, providers.contains(.codex) {
-                CodexResetCapsule(model: model, alignment: CodexResetCapsule.alignment(in: slots.map(\.provider)))
-            }
-        }.padding(.bottom, 4)
-    }
-
-    private func dials(_ slots: [QuotaDashboardPresentation.Slot]) -> some View {
         QuotaDialRow(slots: slots) { slot in
             if slot.period == nil { accountCredits(slot, size: 104) }
             else if slot.provider == .deepseek { DeepSeekDialCell(model: model, size: 104) } else {
@@ -158,9 +145,11 @@ struct QuotaDashboardView: View {
                 VStack(spacing: 6) {
                     QuotaDashboardRingView(quota: main, fiveHourQuota: fiveHour, providerHelp: providerHelp(slot.provider), now: model.now)
                     QuotaProviderStatusView(model: model, provider: slot.provider)
+                    // Codex alone shows it on the title row instead.
+                    if slot.provider == .codex, providers.count > 1 { CodexResetCapsule(model: model, alternates: true) }
                 }.frame(maxWidth: .infinity, alignment: .top)
             }
-        }
+        }.padding(.bottom, 4)
     }
 
     @ViewBuilder private func accountCredits(_ slot: QuotaDashboardPresentation.Slot, size: CGFloat, details: Bool = false) -> some View {
@@ -565,6 +554,8 @@ struct QuotaProviderStatusView: View {
 /// Small capsule actions keep recovery visible without competing with the rings.
 struct QuotaLinkButton: View {
     let title: String
+    /// Texts that take turns in the title's place, in the collapsed bar's rhythm.
+    var turns: [String] = []
     var prominent = false
     /// A leading symbol and the ink for it and the title, e.g. Codex's reset capsule.
     var symbol: String?
@@ -574,12 +565,18 @@ struct QuotaLinkButton: View {
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
+        let ink = prominent ? Color.black.opacity(0.85) : tint ?? PacerPalette.primary
         Button(action: action) {
             HStack(spacing: 5) {
                 if let symbol { Image(systemName: symbol).font(.system(size: 10, weight: .semibold)) }
-                Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1).monospacedDigit()
+                if turns.count > 1 {
+                    AlternatingQuotaText(entries: turns.map { .init(text: $0, color: NSColor(ink), splitsUnit: false) },
+                                         animates: true, font: .monospacedDigitSystemFont(ofSize: 11, weight: .medium), centered: true)
+                } else {
+                    Text(turns.first ?? title).font(.system(size: 11, weight: .medium)).lineLimit(1).monospacedDigit()
+                }
             }
-                .foregroundStyle(prominent ? Color.black.opacity(0.85) : tint ?? PacerPalette.primary)
+                .foregroundStyle(ink)
                 .padding(.horizontal, 9).frame(height: 22)
                 .background(prominent ? PacerPalette.primary : (hovered ? PacerPalette.hover : PacerPalette.fill), in: Capsule())
                 .contentShape(Capsule())

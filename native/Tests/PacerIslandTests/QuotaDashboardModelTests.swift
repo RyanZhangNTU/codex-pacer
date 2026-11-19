@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
@@ -237,5 +239,36 @@ final class QuotaDashboardModelTests: XCTestCase {
         model.openResetExpiries()
         XCTAssertEqual(opened, 1); XCTAssertEqual(SettingsPane.load(), .history)
         XCTAssertTrue(model.takeResetExpiryRequest()); XCTAssertFalse(model.takeResetExpiryRequest())
+    }
+
+    func testResetCapsuleTakesTurnsBesideOtherDialsInTheBarsRhythm() async throws {
+        func account(_ credits: [QuotaResetCredit], count: Int = 3) -> QuotaAccountPresentation {
+            QuotaAccountPresentation(snapshot: QuotaSnapshot(buckets: [], capturedAt: now, accountScope: "synthetic-codex",
+                resetCredits: QuotaResetSummary(availableCount: count, credits: credits)), context: "", now: now)
+        }
+        let dated = account([QuotaResetCredit(id: "synthetic-a", status: "available", expiresAt: now.addingTimeInterval(30 * 3_600), grantedAt: now)])
+        let text = try XCTUnwrap(dated.panelText), count = try XCTUnwrap(dated.panelCountText), time = try XCTUnwrap(dated.panelTimeText)
+        XCTAssertEqual(CodexResetCapsule.turns(dated, alternates: false), [text], "Alone on its title row it shows the whole line")
+        XCTAssertEqual(CodexResetCapsule.turns(dated, alternates: true), [count, time], "Beside other dials the count and the time left take turns")
+        let undated = account([QuotaResetCredit(id: "synthetic-b", status: "available", expiresAt: nil, grantedAt: now)])
+        XCTAssertEqual(CodexResetCapsule.turns(undated, alternates: true), [try XCTUnwrap(undated.panelCountText)],
+            "Without a known deadline the count stays")
+        XCTAssertEqual(CodexResetCapsule.turns(account([], count: 0), alternates: true), [], "No reset, no capsule")
+
+        // The turns run on the collapsed bar's own rotation and clock.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 40), styleMask: .borderless, backing: .buffered, defer: false)
+        let host = NSHostingView(rootView: QuotaLinkButton(title: text, turns: [count, time], action: {}).fixedSize())
+        host.frame = window.contentRect(forFrameRect: window.frame); window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        func find(_ view: NSView) -> AlternatingQuotaView? {
+            (view as? AlternatingQuotaView) ?? view.subviews.lazy.compactMap(find).first
+        }
+        let rotation = try XCTUnwrap(find(host))
+        let layers = try XCTUnwrap(rotation.layer?.sublayers)
+        XCTAssertEqual(layers.count, 2)
+        let turn = try XCTUnwrap(layers[0].animation(forKey: "alternate"))
+        XCTAssertEqual(turn.beginTime, AlternatingQuotaText.epoch)
+        XCTAssertEqual(turn.duration, 2 * AlternatingQuotaText.interval, accuracy: 0.001)
     }
 }

@@ -261,7 +261,7 @@ struct IslandQuotaSection: View {
                 HStack(spacing: 8) {
                     if header.provider == .deepseek { DeepSeekSectionStatus(model: model) }
                     // Codex alone keeps its banked resets on the title row, before the panel's buttons.
-                    if section.providers == [.codex] { CodexResetCapsule(model: model, alignment: nil) }
+                    if section.providers == [.codex] { CodexResetCapsule(model: model) }
                     if section.actions { IslandPanelControls(model: model) }
                 }
             }
