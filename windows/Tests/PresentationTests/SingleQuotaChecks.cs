@@ -30,13 +30,18 @@ internal static class SingleQuotaChecks
                     window.Show(); await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
                     window.Reveal(); await window.WaitForPresentationAsync();
                     var slots = (Grid)window.FindName("QuotaSlots");
-                    Check(slots.Children.Count == 3 && window.LogicalTarget.Height == 438, "The existing multi-provider reference layout must retain its original height");
+                    var (capsule, extra) = PresentationWait.ResetCapsule(window);
+                    Check(capsule != null && slots.Children.Count == 4 && window.LogicalTarget.Height == 438 + extra,
+                        "The existing multi-provider reference layout must retain its original height, plus Codex's reset capsule");
+                    Check(System.Windows.Automation.AutomationProperties.GetName(capsule!).Length > 0 && capsule!.ToolTip is string help && help.Contains('\n'),
+                        "The reset capsule names its count and lists every deadline in its tooltip");
                     foreach (string name in new[] { "claude", "codex" })
                     {
                         var modes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled" };
                         modes[name] = "enabled";
                         await engine.SendAsync("configure", new { providerModes = modes });
-                        await Until(() => slots.Children.Count == 1 && slots.Children[0] is SingleQuotaView single
+                        // Codex alone keeps its reset capsule under the single view.
+                        await Until(() => slots.Children.Count == (name == "codex" ? 2 : 1) && slots.Children[0] is SingleQuotaView single
                             && single.Dial.AccessibleName.StartsWith(name == "codex" ? "Codex" : "Claude", StringComparison.Ordinal), "The actual engine module choice must select the original single-provider layout");
                         await window.WaitForPresentationAsync();
                         var view = (SingleQuotaView)slots.Children[0];
@@ -53,9 +58,9 @@ internal static class SingleQuotaChecks
                         window.CapturePreview(Path.Combine(output, "single-" + language + "-" + name + ".png"));
                     }
                     await engine.SendAsync("configure", new { providerModes = new { codex = "enabled", claude = "enabled", deepseek = "enabled" } });
-                    await Until(() => slots.Children.Count == 3, "Restoring all modules must return to the original multi-provider rings");
+                    await Until(() => slots.Children.Count == 4, "Restoring all modules must return to the original multi-provider rings");
                     await window.WaitForPresentationAsync();
-                    Check(window.LogicalTarget.Height == 438, "Changing provider count must not leave a stale single-provider content height");
+                    Check(window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window), "Changing provider count must not leave a stale single-provider content height");
                 }
                 finally { window.StopPresentation(); window.AllowClose = true; window.Close(); }
             }
