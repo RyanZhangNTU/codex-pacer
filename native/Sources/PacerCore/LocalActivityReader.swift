@@ -195,12 +195,19 @@ public actor LocalActivityReader {
             var dropPartial = false
             let budget = current.offset == 0 ? startupBytes : maxBytes
             if size - current.offset > UInt64(budget) {
-                if current.gap == nil { current.gap = .init(previous: attaching ? nil : current.activity) }
+                // Skipping a large append need not lose the turn: within one turn every
+                // finished item carries its ID. Only another turn, or none known yet,
+                // starts over from an anchor, which a turn longer than the anchor
+                // search (8 MiB) no longer has in reach.
+                let known = attaching ? nil : current.activity.turnID
+                let sameTurn = known != nil && (latestTurn(handle: handle, from: size - UInt64(budget), to: size,
+                                                           threadID: current.activity.threadID).map { $0 == known } ?? true)
+                if !sameTurn, current.gap == nil { current.gap = .init(previous: attaching ? nil : current.activity) }
                 current.offset = size - UInt64(budget)
                 current.fragment.removeAll()
-                if !attaching {
+                if !attaching { current.attention.reset() }
+                if !attaching && !sameTurn {
                     current.activity.markDiscontinuity()
-                    current.attention.reset()
                     if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: current.activity.threadID) { current.activity.consume(anchor) }
                 }
                 if current.activity.turnID != nil { current.gap = nil }
@@ -252,6 +259,19 @@ public actor LocalActivityReader {
         return (CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
                 watchURLs + watched.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) }, ignoredIDs,
                 cursors.values.flatMap { $0.attention.requests(for: projected($0)) }.filter { !ignoredIDs.contains($0.activity.id) })
+    }
+    /// The turn named by the last record in `from..<to` that names one, or nil
+    /// when none does; another thread's records are not this rollout's turn.
+    private func latestTurn(handle: FileHandle, from: UInt64, to: UInt64, threadID: String?) -> String? {
+        guard to > from, (try? handle.seek(toOffset: from)) != nil, let data = try? handle.read(upToCount: Int(to - from)) else { return nil }
+        // The first line is cut by the window; the rest are whole records.
+        for line in data.split(separator: 10).dropFirst().reversed() where line.count <= 1024 * 1024 && line.range(of: Data("turn_id".utf8)) != nil {
+            guard let payload = (try? JSONSerialization.jsonObject(with: line) as? [String: Any])?["payload"] as? [String: Any],
+                  let turn = payload["turn_id"] as? String else { continue }
+            if let thread = payload["thread_id"] as? String, thread.lowercased() != threadID { continue }
+            return turn
+        }
+        return nil
     }
     /// Recover the latest explicit turn anchor without loading conversation history.
     /// Scan the existing 8 MiB budget; retain one anchor and numeric first-output times.

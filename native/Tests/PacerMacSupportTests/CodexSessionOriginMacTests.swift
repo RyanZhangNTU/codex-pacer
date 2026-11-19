@@ -132,4 +132,35 @@ final class CodexSessionOriginMacTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0, String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         return String(decoding: result, as: UTF8.self)
     }
+
+    /// On SSH and WSL hosts too, a long turn's log can outgrow the anchor
+    /// search. The snapshot that skips a large append keeps the turn while its
+    /// newest records still name it, so its progress carries on.
+    func testSSHSnapshotKeepsALongTurnAcrossALargeAppend() throws {
+        let root = try directory()
+        let script = #"""
+        import datetime
+        tid='019a0000-0000-7000-8000-0000000000a1'
+        folder=home/'sessions'/datetime.datetime.now().strftime('%Y/%m/%d');folder.mkdir(parents=True)
+        path=folder/('rollout-2026-11-19T06-00-00-'+tid+'.jsonl')
+        stamp=lambda:datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+        def record(kind,p):return json.dumps({'timestamp':stamp(),'type':kind,'payload':p})+'\n'
+        def progress(percent):return record('event_msg',{'type':'item_completed','thread_id':tid,'turn_id':'turn-1','item':{'type':'McpToolCall','id':'c','server':'pacer_progress','tool':'report_progress','arguments':{'percent':percent},'status':'completed','result':{'isError':False,'content':[{'type':'text','text':'pacer-progress:accepted'}]}}})
+        path.write_text(record('session_meta',{'id':tid,'originator':'codex-tui','cwd':'/fixture/project'})+record('event_msg',{'type':'task_started','turn_id':'turn-1'})+progress(30))
+        first=snapshot()
+        with path.open('a') as f:
+            for _ in range(140):f.write(record('response_item',{'type':'function_call_output','call_id':'c','output':'x'*65536}))
+            f.write(progress(60))
+        print(json.dumps([first,snapshot()]))
+        """#
+        let output = try python(SessionLogProbe.library + "\n" + script, home: root)
+        let frames = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [[String: Any]])
+        XCTAssertEqual(frames.count, 2)
+        XCTAssertEqual((frames[1]["sessions"] as? [[String: Any]])?.first?["reset"] as? Bool, false, "The same turn is not started over")
+        var state = RuntimeEventState(sourceID: "remote-ssh:fixture", sourceName: "SSH")
+        for frame in frames { state.consume(frame) }
+        XCTAssertEqual(state.activities.map(\.turnID), ["turn-1"])
+        XCTAssertEqual(state.activities.first?.phase, .running)
+        XCTAssertEqual(state.activities.first?.currentProgress?.percent, 60)
+    }
 }

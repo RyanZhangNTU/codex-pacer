@@ -229,6 +229,16 @@ enum SessionLogProbe {
             origin_by_thread[tid]=classification
             if len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
         return classification
+    def latest_turn(f,start,end,thread_id):
+        # The turn named by the last whole record in start..end that names one.
+        f.seek(start);data=f.read(max(0,end-start))
+        for line in reversed(data.split(b'\n')[1:]):
+            if len(line)>1024*1024 or b'turn_id' not in line:continue
+            v=parse(line);q=v.get('payload') if isinstance(v,dict) else None
+            if not isinstance(q,dict) or not isinstance(q.get('turn_id'),str):continue
+            if isinstance(q.get('thread_id'),str) and thread_id and q['thread_id'].lower()!=thread_id.lower():continue
+            return q['turn_id']
+        return None
     def anchor(f,size,thread_id=None):
         offset, floor, fragment = size, max(0,size-8*1024*1024), b''
         fallback=None;latest_turn=None;first_times={}
@@ -331,12 +341,18 @@ enum SessionLogProbe {
                     selected.append(p); old=cursors.get(p); reset=old is None or old[0]!=stat.st_ino or old[1]>stat.st_size
                     offset=0 if reset else old[1]; fragment=b'' if reset else old[2]
                     budget=512*1024 if reset else 128*1024; gap=stat.st_size-offset>budget
+                    thread=(meta.get('payload')or{}).get('id') if meta else None
+                    turn=None if reset else old[4]
                     records=[]
-                    if reset or gap:
+                    # Skipping a large append keeps the turn while the newest records still
+                    # name it; only another turn, or none known, restarts from an anchor (#259 follow-up).
+                    if gap and not reset and turn is not None and latest_turn(f,max(0,stat.st_size-budget),stat.st_size,thread) in (None,turn):
+                        offset=max(0,stat.st_size-budget); fragment=b''
+                    elif reset or gap:
                         if meta: records.append(meta)
-                        seed=anchor(f,stat.st_size,(meta.get('payload')or{}).get('id') if meta else None)
+                        seed=anchor(f,stat.st_size,thread)
                         if seed: records.append(seed)
-                        offset=max(0,stat.st_size-budget); fragment=b''; reset=True
+                        offset=max(0,stat.st_size-budget); fragment=b''; reset=True; turn=None
                     prelude_count=len(records)
                     f.seek(offset); data=f.read(budget); fragment+=data; offset+=len(data)
                     if gap:
@@ -346,8 +362,11 @@ enum SessionLogProbe {
                     for line in lines:
                         v=parse(line)
                         if v: records.append(v)
+                    for v in records:
+                        q=v.get('payload') if isinstance(v,dict) else None
+                        if isinstance(q,dict) and isinstance(q.get('turn_id'),str) and (not isinstance(q.get('thread_id'),str) or not thread or q['thread_id'].lower()==thread.lower()):turn=q['turn_id']
                     if len(fragment)>1024*1024: fragment=b''
-                    cursors[p]=(stat.st_ino,offset,fragment,meta)
+                    cursors[p]=(stat.st_ino,offset,fragment,meta,turn)
                     rows.append({'id':p.name,'title':titles.get(p),'reset':reset,'partial':gap,'preludeCount':prelude_count,'records':records})
             except OSError: continue
         for p in list(cursors):
