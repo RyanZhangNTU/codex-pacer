@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "ea029ca2aa94ad6dcdb440d6b94ea9be91ea994c6cb7f6d0c57d222408f28ae6",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "ffb94527e1762ceef2e53fdefff4276b03d913d7976e1c06aeac24188e5dd9dc",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -24,7 +24,7 @@
     "account.no_resets": "\u6682\u65e0\u53ef\u7528\u91cd\u7f6e\u5238",
     "account.non_expiring_count": "%ld \u6b21\u91cd\u7f6e\u4e0d\u8fc7\u671f",
     "account.panel_resets": "\u91cd\u7f6e\u5238 %ld",
-    "account.panel_resets_expiring": "\u91cd\u7f6e\u5238 %1$ld \u00b7 \u6700\u8fd1 %2$@\u540e\u8fc7\u671f",
+    "account.panel_resets_expiring": "\u91cd\u7f6e\u5238 %1$ld \u00b7 %2$@\u8fc7\u671f",
     "account.reset_count": "%ld \u6b21\u91cd\u7f6e",
     "account.resets_accessibility": "\u53ef\u7528\u91cd\u7f6e %1$@ \u6b21\u3002%2$@",
     "account.resets_unknown": "\u91cd\u7f6e \u2014",

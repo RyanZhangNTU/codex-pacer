@@ -132,7 +132,7 @@ Some older CLIs reject the rate-limit params object with `-32600` and `invalid t
 
 Available banked resets are deduplicated, grouped by exact expiry and sorted earliest first. Expired and redeemed credits are excluded; a missing detail row is unknown, while an explicit null expiry means none. The service count stays authoritative when its detail list is capped.
 
-Countdowns to those deadlines (History's summary and list, and the expanded panel's capsule under Codex, `codexResets` in the panel choices) are computed from the fixed expiry on each presentation tick, so they move without a new read. The `resetExpiry` warning and its notification cover deadlines within `codexResetExpiryDays` (1 to 30, default 1): the mark is solid in the last 3 hours, and `ResetExpiryNoticePolicy` sends one notice per deadline and account, delivered as a quota notice. Like the quota notices it keeps no record across launches. A popup would close the panel, so the capsule shows every deadline in its tooltip and opens History.
+Countdowns to those deadlines (History's summary and list, and the expanded panel's capsule under Codex, `codexResets` in the panel choices) are computed from the fixed expiry on each presentation tick, so they move without a new read. The `resetExpiry` warning and its notification cover deadlines within `codexResetExpiryDays` (1 to 30, default 3): the mark is solid in the last 3 hours, and `ResetExpiryNoticePolicy` sends one notice per deadline and account, delivered as a quota notice. Like the quota notices it keeps no record across launches. A popup would close the panel, so the capsule opens History, which lists every deadline.
 
 ### Activity sources
 

@@ -1589,8 +1589,8 @@
 "account.next_expires_in" = "Next expires in %@";
 "account.known_next_expires_in" = "Next known expiry in %@";
 "account.expiry_remaining" = "%@ left";
-"account.panel_resets" = "Banked resets: %ld";
-"account.panel_resets_expiring" = "Banked resets: %1$ld · next in %2$@";
+"account.panel_resets" = "Resets: %ld";
+"account.panel_resets_expiring" = "Resets: %1$ld · expires in %2$@";
 "warning.resetExpiry" = "Resets expiring";
 "warning.reset_expiry_help" = "Codex banked resets expiring in %2$@ (%3$@): %1$ld.";
 "notice.reset_expiry" = "Codex banked resets expire soon";

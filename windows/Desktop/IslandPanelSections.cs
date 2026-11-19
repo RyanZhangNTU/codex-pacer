@@ -172,6 +172,7 @@ public partial class IslandWindow
                     SetDetail(parts.Detail, section.Detail, section.Providers.Count == 1 ? section.Providers[0] : null);
                     headings.Add(parts.Title.Text + "\u001f" + parts.Detail.Text);
                     changed |= FillQuota(parts.Slots, section, snapshot);
+                    changed |= PlaceHeaderResets(parts.Trailing, section, snapshot);
                     AutomationProperties.SetAutomationId(parts.Section, "island.section.quota." + string.Join("-", section.Providers));
                     placed.Add((section, parts.Section, parts.Trailing, parts.Header));
                     break;
@@ -280,9 +281,27 @@ public partial class IslandWindow
     {
         if (!presentationStopped && expanded) ProviderSettingsRequested?.Invoke(provider);
     }
-    /// The capsule under Codex's quota, as on the Mac: the count and the next deadline, every
-    /// deadline in its tooltip. It opens History with them showing; a popup would close the panel.
-    private void AddResetCapsule(Grid slots, QuotaAccountPresentation account, int codexIndex)
+    /// Codex's banked resets while its block's switch is on and an account has any.
+    private QuotaAccountPresentation? ResetAccount(PanelSection section, EngineSnapshot snapshot) =>
+        panelOptions.CodexResets && section.Providers.Contains("codex")
+            && snapshot.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == "codex")?.History?.Account is { PanelText: not null } usage ? usage : null;
+
+    /// Codex alone keeps its capsule at the right of the section's header row, before any panel
+    /// buttons, so the quota row keeps its height. Returns whether the header changed.
+    private bool PlaceHeaderResets(StackPanel trailing, PanelSection section, EngineSnapshot snapshot)
+    {
+        var account = section.Providers.Count == 1 ? ResetAccount(section, snapshot) : null;
+        var existing = trailing.Children.OfType<Button>().FirstOrDefault(value => AutomationProperties.GetAutomationId(value) == "island.codex.resets");
+        string? key = account == null ? null : account.PanelText + "" + account.ExpirySoon;
+        if ((existing?.Tag as string) == key) return false;
+        if (existing != null) trailing.Children.Remove(existing);
+        if (account != null) trailing.Children.Insert(0, ResetCapsule(account, new Thickness(0, 0, 6, 0)));
+        return true;
+    }
+
+    /// The capsule for Codex's banked resets, as on the Mac: the count and the next deadline. It
+    /// opens History with every deadline showing; a popup would close the panel.
+    private Button ResetCapsule(QuotaAccountPresentation account, Thickness margin)
     {
         var label = new StackPanel { Orientation = Orientation.Horizontal };
         var arrow = new IconGlyph { Symbol = "arrow.counterclockwise", Width = 11, Height = 11, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -291,10 +310,16 @@ public partial class IslandWindow
         arrow.SetResourceReference(IconGlyph.InkProperty, ink); text.SetResourceReference(TextBlock.ForegroundProperty, ink);
         label.Children.Add(arrow); label.Children.Add(text);
         var capsule = new Button { Content = label, Style = (Style)FindResource("QuotaLinkButton"), HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(9, 8, 9, 0), ToolTip = account.PanelHelp };
+            Margin = margin, VerticalAlignment = VerticalAlignment.Center, Tag = account.PanelText + "" + account.ExpirySoon };
         AutomationProperties.SetAutomationId(capsule, "island.codex.resets");
-        AutomationProperties.SetName(capsule, account.PanelText ?? ""); AutomationProperties.SetHelpText(capsule, account.PanelHelp ?? "");
+        AutomationProperties.SetName(capsule, account.PanelText ?? "");
         capsule.Click += (_, _) => { if (presentationStopped || !expanded) return; DismissForSettings(); ResetExpiriesRequested?.Invoke(); };
+        return capsule;
+    }
+
+    /// Shared with other services, the capsule takes a row under Codex's own column.
+    private static void AddResetCapsule(Grid slots, Button capsule, int codexIndex)
+    {
         int columns = Math.Max(1, slots.ColumnDefinitions.Count);
         if (slots.RowDefinitions.Count == 0) slots.RowDefinitions.Add(new() { Height = GridLength.Auto });
         slots.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -319,10 +344,10 @@ public partial class IslandWindow
         var creditModules = section.Providers.Where(provider => ReportsCredits(snapshot, provider)).ToArray();
         bool accountCredits = creditModules.Length > 0;
         // Codex's banked resets ride under its quota while the block's switch is on.
-        var resetAccount = options.CodexResets && section.Providers.Contains("codex") && Reading("codex")?.History?.Account is { PanelText: not null } usage ? usage : null;
+        var resetAccount = section.Providers.Count > 1 ? ResetAccount(section, snapshot) : null;
         if (!Redraw(slots, new
         {
-            resets = resetAccount == null ? null : new { resetAccount.PanelText, resetAccount.PanelHelp, resetAccount.ExpirySoon },
+            resets = resetAccount == null ? null : new { resetAccount.PanelText, resetAccount.ExpirySoon },
             section, layout, style = expandedQuotaStyle, deepseekPanelStyle, options = options.Key, panelBudgetDial,
             readings = section.Providers.Select(Reading), legacy = layout?.Kind == "legacyCodex" ? dashboard?.LegacyCodex : null,
             quota = snapshot.Quota.Where(value => section.Providers.Contains(value.Provider)), help = section.Providers.Select(Help),
@@ -367,7 +392,7 @@ public partial class IslandWindow
                 QuotaCells.Add(slots, cell, index, layout?.Columns ?? providers.Length);
             }
         }
-        if (resetAccount != null) AddResetCapsule(slots, resetAccount, layout?.Slots.Select(value => value.Provider).ToList().IndexOf("codex") ?? 0);
+        if (resetAccount != null) AddResetCapsule(slots, ResetCapsule(resetAccount, new Thickness(9, 8, 9, 0)), layout?.Slots.Select(value => value.Provider).ToList().IndexOf("codex") ?? 0);
         return true;
 
         FrameworkElement AccountCell(string provider, bool classic, bool details, bool showsName) =>

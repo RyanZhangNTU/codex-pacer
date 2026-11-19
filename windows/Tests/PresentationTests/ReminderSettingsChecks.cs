@@ -74,9 +74,10 @@ internal static class ReminderSettingsChecks
             bool resetShown = session.Current.WarningKinds.Contains("resetExpiry");
             Toggle(resetSwitch); await Until(() => session.Current.WarningKinds.Contains("resetExpiry") != resetShown && resetSwitch.IsEnabled);
             Toggle(resetSwitch); await Until(() => session.Current.WarningKinds.Contains("resetExpiry") == resetShown && resetSwitch.IsEnabled);
-            resetDays.Text = "3"; Enter(window, resetDays); await Until(() => session.Current.CodexResetExpiryDays == 3 && resetDays.IsEnabled);
+            Check(resetDays.Text == "3", "Without a choice the field shows Core's three-day default");
+            resetDays.Text = "5"; Enter(window, resetDays); await Until(() => session.Current.CodexResetExpiryDays == 5 && resetDays.IsEnabled);
             int resetBefore = configurations; resetDays.Text = "31"; Enter(window, resetDays); await Pump();
-            Check(configurations == resetBefore && session.Current.CodexResetExpiryDays == 3 && resetDays.Text == "3", "Days outside 1 to 30 never reach the engine");
+            Check(configurations == resetBefore && session.Current.CodexResetExpiryDays == 5 && resetDays.Text == "5", "Days outside 1 to 30 never reach the engine");
             // Keeping ended tasks is the task list's choice; Notifications leads there, as on the Mac.
             ((IInvokeProvider)new ButtonAutomationPeer(Find<Button>(window, "settings.reminders.retention")).GetPattern(PatternInterface.Invoke)).Invoke();
             await Until(() => session.Current.LastSettingsPane == "expandedPanel"

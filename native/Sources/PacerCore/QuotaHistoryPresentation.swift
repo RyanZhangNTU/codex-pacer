@@ -63,11 +63,9 @@ public struct QuotaAccountPresentation: Codable, Equatable, Sendable {
     public let expiryDescription: String
     /// "Next expires in 1d 10h"; nil without a known deadline.
     public let nextExpiryText: String?
-    /// The expanded panel's capsule under the Codex quota, e.g. "Resets 3 · next in 1d 10h".
+    /// The expanded panel's capsule under the Codex quota, e.g. "Resets: 3 · expires in 1d 10h".
     /// Nil when no reset is available or the count is unknown.
     public let panelText: String?
-    /// Every known deadline with its countdown, for the capsule's tooltip.
-    public let panelHelp: String?
     public let resetsAccessibility: String
     public let balanceText: String
     public let balanceAccessibility: String
@@ -114,9 +112,6 @@ public struct QuotaAccountPresentation: Codable, Equatable, Sendable {
         timeZoneText = expiries.isEmpty ? nil : L10n.text("account.expiry_timezone", TimeZone.current.identifier)
         if let count, count > 0 {
             panelText = countdown.map { L10n.text("account.panel_resets_expiring", count, $0) } ?? L10n.text("account.panel_resets", count)
-            let lines = expiries.map { [$0.dateText, $0.remainingText, $0.countText].joined(separator: " · ") }
-                + [nonExpiringText, unknownText].compactMap { $0 }
-            panelHelp = ([L10n.text("account.expiry_title")] + (lines.isEmpty ? [expiryDescription] : lines)).joined(separator: "\n")
-        } else { panelText = nil; panelHelp = nil }
+        } else { panelText = nil }
     }
 }

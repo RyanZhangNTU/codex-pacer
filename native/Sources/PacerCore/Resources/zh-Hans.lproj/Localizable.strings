@@ -1590,7 +1590,7 @@
 "account.known_next_expires_in" = "已知最近一张 %@后过期";
 "account.expiry_remaining" = "还剩 %@";
 "account.panel_resets" = "重置券 %ld";
-"account.panel_resets_expiring" = "重置券 %1$ld · 最近 %2$@后过期";
+"account.panel_resets_expiring" = "重置券 %1$ld · %2$@过期";
 "warning.resetExpiry" = "重置券快到期";
 "warning.reset_expiry_help" = "%1$ld 张 Codex 重置券将在 %2$@后过期（%3$@）。";
 "notice.reset_expiry" = "Codex 重置券快过期了";

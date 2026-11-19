@@ -70,7 +70,7 @@ internal sealed record DesktopPreferences
     internal static readonly string[] WarningChoices = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits", "resetExpiry"];
     public double? DeepSeekLowBalanceLine { get; init; }
     public double? DeepSeekSpikeLimit { get; init; }
-    /// Days ahead that a Codex banked reset counts as expiring; null is Core's default (one day).
+    /// Days ahead that a Codex banked reset counts as expiring; null is Core's default (three days).
     public int? CodexResetExpiryDays { get; init; }
     public bool? PositionChosen { get; init; }
     public string LastSettingsPane { get; init; } = "overview";

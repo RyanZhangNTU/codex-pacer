@@ -3,9 +3,9 @@ import Foundation
 /// Codex banked resets that expire within the reminder's lead time. The
 /// collapsed bar's warning and the system notification read the same deadlines.
 public enum ResetExpiryReminder {
-    /// Days ahead that count as soon, like credits' expiry reminder; a day by default.
+    /// Days ahead that count as soon, like credits' expiry reminder; three by default.
     public static let leadDayRange = 1...30
-    public static let defaultLeadDays = 1
+    public static let defaultLeadDays = 3
     public static let defaultsKey = "codexResetExpiryDays"
     /// The last hours before a deadline that mark the warning as needing the user.
     public static let urgentInterval: TimeInterval = 3 * 3600

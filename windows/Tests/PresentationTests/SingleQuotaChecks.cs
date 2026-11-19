@@ -33,17 +33,19 @@ internal static class SingleQuotaChecks
                     var (capsule, extra) = PresentationWait.ResetCapsule(window);
                     Check(capsule != null && slots.Children.Count == 4 && window.LogicalTarget.Height == 438 + extra,
                         "The existing multi-provider reference layout must retain its original height, plus Codex's reset capsule");
-                    Check(System.Windows.Automation.AutomationProperties.GetName(capsule!).Length > 0 && capsule!.ToolTip is string help && help.Contains('\n'),
-                        "The reset capsule names its count and lists every deadline in its tooltip");
+                    Check(System.Windows.Automation.AutomationProperties.GetName(capsule!).Length > 0 && capsule!.ToolTip == null,
+                        "The reset capsule names its count; a click, not a tooltip, leads to the deadlines");
                     foreach (string name in new[] { "claude", "codex" })
                     {
                         var modes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled" };
                         modes[name] = "enabled";
                         await engine.SendAsync("configure", new { providerModes = modes });
-                        // Codex alone keeps its reset capsule under the single view.
-                        await Until(() => slots.Children.Count == (name == "codex" ? 2 : 1) && slots.Children[0] is SingleQuotaView single
+                        await Until(() => slots.Children.Count == 1 && slots.Children[0] is SingleQuotaView single
                             && single.Dial.AccessibleName.StartsWith(name == "codex" ? "Codex" : "Claude", StringComparison.Ordinal), "The actual engine module choice must select the original single-provider layout");
                         await window.WaitForPresentationAsync();
+                        // Codex alone carries its reset capsule at the right of the section's header row, not under the ring.
+                        var (headerCapsule, _) = PresentationWait.ResetCapsule((StackPanel)window.FindName("QuotaHeaderTrailing"));
+                        Check(name == "codex" ? headerCapsule != null : headerCapsule == null, "A lone Codex keeps its reset capsule in the header row, Claude has none");
                         var view = (SingleQuotaView)slots.Children[0];
                         var projected = latest!.QuotaDashboard!.Providers.Single();
                         Check(view.Dial.ActualWidth == 104 && view.Dial.ActualHeight == 104 && view.ActualHeight == 110

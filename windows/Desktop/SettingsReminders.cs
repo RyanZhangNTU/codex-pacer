@@ -252,7 +252,7 @@ internal sealed partial class SettingsWindow
         return InfoRow(ui.Text("main.notify.reset_lead"), row, ui.Text("main.notify.reset_lead_info"), id: "settings.reminders.reset_lead");
     }
     /// Core's `ResetExpiryReminder.defaultLeadDays`, shown while no choice is saved.
-    private const int ResetExpiryDefaultDays = 1;
+    private const int ResetExpiryDefaultDays = 3;
 
     private FrameworkElement ReminderAmount(bool low)
     {
