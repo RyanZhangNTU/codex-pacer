@@ -229,16 +229,19 @@ enum SessionLogProbe {
             origin_by_thread[tid]=classification
             if len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
         return classification
-    def latest_turn(f,start,end,thread_id):
-        # The turn named by the last whole record in start..end that names one.
-        f.seek(start);data=f.read(max(0,end-start))
-        for line in reversed(data.split(b'\n')[1:]):
-            if len(line)>1024*1024 or b'turn_id' not in line:continue
-            v=parse(line);q=v.get('payload') if isinstance(v,dict) else None
-            if not isinstance(q,dict) or not isinstance(q.get('turn_id'),str):continue
-            if isinstance(q.get('thread_id'),str) and thread_id and q['thread_id'].lower()!=thread_id.lower():continue
-            return q['turn_id']
-        return None
+    TURN_BOUNDARIES=(b'task_started',b'task_complete',b'turn_aborted',b'turn_context')
+    def turn_boundary(f,fragment,start,end):
+        # Whether the unread fragment and start..end hold a turn start, ending or
+        # context; bytes only, in 1 MiB steps. More than 8 MiB counts as one (LocalActivityReader).
+        if end-start>8*1024*1024 or any(m in fragment for m in TURN_BOUNDARIES):return True
+        carry=fragment[-15:];f.seek(start)
+        while start<end:
+            chunk=f.read(min(1<<20,end-start))
+            if not chunk:return True
+            data=carry+chunk
+            if any(m in data for m in TURN_BOUNDARIES):return True
+            carry=data[-15:];start+=len(chunk)
+        return False
     def anchor(f,size,thread_id=None):
         offset, floor, fragment = size, max(0,size-8*1024*1024), b''
         fallback=None;latest_turn=None;first_times={}
@@ -344,9 +347,9 @@ enum SessionLogProbe {
                     thread=(meta.get('payload')or{}).get('id') if meta else None
                     turn=None if reset else old[4]
                     records=[]
-                    # Skipping a large append keeps the turn while the newest records still
-                    # name it; only another turn, or none known, restarts from an anchor (#259 follow-up).
-                    if gap and not reset and turn is not None and latest_turn(f,max(0,stat.st_size-budget),stat.st_size,thread) in (None,turn):
+                    # Skipping a large append keeps the known turn when nothing appended
+                    # since starts, ends or sets a turn; otherwise it restarts from an anchor.
+                    if gap and not reset and turn is not None and not turn_boundary(f,fragment,offset,stat.st_size):
                         offset=max(0,stat.st_size-budget); fragment=b''
                     elif reset or gap:
                         if meta: records.append(meta)

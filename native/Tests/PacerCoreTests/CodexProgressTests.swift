@@ -243,9 +243,9 @@ final class CodexProgressTests: XCTestCase {
         XCTAssertEqual(try report("63")["isError"] as? Bool, true)
     }
 
-    /// A long turn's log can outgrow the 8 MiB anchor search. Skipping a large
-    /// append keeps the turn and its progress while the newest records still
-    /// name it; another turn in the skipped part still replaces it.
+    /// A long turn's log can outgrow the 8 MiB anchor search. Skipping an append
+    /// that starts, ends or sets no turn keeps the turn and its progress; a new
+    /// turn in the skipped part still replaces it.
     func testSkippingALargeAppendKeepsTheTurnAndItsProgress() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-long-turn-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -260,9 +260,9 @@ final class CodexProgressTests: XCTestCase {
         func progress(_ percent: Int, turn: String, at seconds: Double) throws -> Data {
             try line("event_msg", seconds, ["type": "item_completed", "thread_id": thread, "turn_id": turn, "item": report(percent)])
         }
-        // Large tool output, as a long research turn writes: about 9 MB, no turn ID of its own.
+        // Large tool output, as a long research turn writes between two reads: about 1 MB, no turn of its own.
         func output(at seconds: Double) throws -> Data {
-            try (0..<140).reduce(into: Data()) { data, _ in
+            try (0..<16).reduce(into: Data()) { data, _ in
                 data += try line("response_item", seconds, ["type": "function_call_output", "call_id": "call", "output": String(repeating: "x", count: 65_536)])
             }
         }
@@ -278,14 +278,20 @@ final class CodexProgressTests: XCTestCase {
         let first = await reader.read(home: home, now: start.addingTimeInterval(3), phaseAwareRate: true)
         XCTAssertEqual(first.activities.first?.currentProgress?.percent, 30)
 
-        try append(output(at: 10) + progress(60, turn: "turn-1", at: 11), at: 11)
-        let skipped = await reader.read(home: home, now: start.addingTimeInterval(12), phaseAwareRate: true)
-        XCTAssertEqual(skipped.activities.map(\.turnID), ["turn-1"], "The turn outlives an append beyond the anchor search")
+        // About 10 MB in 1 MB steps, read after each, so the turn's start ends up
+        // far beyond the anchor search; the last step reports 60%.
+        var skipped = first
+        for step in 1...10 {
+            let seconds = Double(step) + 2
+            try append(output(at: seconds) + (step == 10 ? progress(60, turn: "turn-1", at: seconds) : Data()), at: seconds)
+            skipped = await reader.read(home: home, now: start.addingTimeInterval(seconds + 1), phaseAwareRate: true)
+            XCTAssertEqual(skipped.activities.map(\.turnID), ["turn-1"], "Step \(step) keeps the turn")
+        }
         XCTAssertEqual(skipped.activities.first?.phase, .running)
         XCTAssertEqual(skipped.activities.first?.currentProgress?.percent, 60)
 
-        // The turn ends and another starts inside the skipped part: the newest
-        // records name the new turn, so the reader starts over from its anchor.
+        // The turn ends and another starts inside the skipped part: the skip sees
+        // a turn boundary, so the reader starts over from the new turn's anchor.
         try append(line("event_msg", 20, ["type": "task_complete", "turn_id": "turn-1"])
             + line("event_msg", 21, ["type": "task_started", "turn_id": "turn-2"])
             + (0..<3).reduce(into: Data()) { data, _ in data += try line("response_item", 22, ["type": "function_call_output", "call_id": "call", "output": String(repeating: "y", count: 65_536)]) }
