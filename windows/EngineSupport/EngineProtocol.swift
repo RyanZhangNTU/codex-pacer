@@ -34,6 +34,7 @@ struct EngineCommand: Decodable {
         var deepseekHome: String?
         var sourceHome: String?
         var sourceID: String?
+        var displayTimeZone: String?
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
         var monitorRemoteControl: Bool?

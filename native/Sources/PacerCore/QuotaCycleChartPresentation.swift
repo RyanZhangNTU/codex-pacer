@@ -46,9 +46,11 @@ public struct QuotaCycleChartPresentation: Codable, Equatable, Sendable {
         self.language = language.rawValue
         startedAt = data.startedAt.timeIntervalSince1970; resetsAt = data.resetsAt.timeIntervalSince1970
         let span = data.resetsAt.timeIntervalSince(data.startedAt)
-        let short = Date.FormatStyle.dateTime.month(.defaultDigits).day(.defaultDigits).locale(language.locale)
-        let detail = Date.FormatStyle.dateTime.month(.twoDigits).day(.twoDigits).hour().minute().locale(language.locale)
-        let spoken = Date.FormatStyle(date: .abbreviated, time: .shortened).locale(language.locale)
+        var short = Date.FormatStyle.dateTime.month(.defaultDigits).day(.defaultDigits).locale(language.locale)
+        var detail = Date.FormatStyle.dateTime.month(.twoDigits).day(.twoDigits).hour().minute().locale(language.locale)
+        var spoken = Date.FormatStyle(date: .abbreviated, time: .shortened).locale(language.locale)
+        let zone = DisplayTimeZone.current
+        short.timeZone = zone; detail.timeZone = zone; spoken.timeZone = zone
         startText = data.startedAt.formatted(short); endText = data.resetsAt.formatted(short)
         points = data.points.map { point in
             let date = point.timestamp.formatted(detail), value = "\(Int(point.remaining.rounded()))%"

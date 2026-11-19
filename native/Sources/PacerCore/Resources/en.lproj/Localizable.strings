@@ -90,7 +90,7 @@
 "account.expiries_collapsed" = "Collapsed";
 "account.non_expiring_count" = "Non-expiring resets: %ld";
 "account.unknown_expiry_count" = "Resets with unknown expiry: %ld";
-"account.expiry_timezone" = "Local time (%@)";
+"account.expiry_timezone" = "Time zone (%@)";
 "activity.header_open" = "%@. Click to open chat";
 "activity.header_pin" = "%@. Click to keep expanded";
 "activity.hidden_local_name" = "Local task";
@@ -299,6 +299,7 @@
 "settings.four_hours" = "4 hours";
 "settings.fullscreen" = "Show in Full Screen";
 "settings.glass_requirement" = "Liquid Glass requires macOS 26 or later";
+"settings.display_time_zone" = "Display time zone";
 "settings.hide_projects" = "Hide Project Names";
 "appearance.style" = "Style";
 "appearance.position" = "Position";

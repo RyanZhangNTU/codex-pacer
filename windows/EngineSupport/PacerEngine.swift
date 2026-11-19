@@ -1132,6 +1132,8 @@ actor EngineRuntime {
         }
         let explicitProviders = try parameters.enabledProviders.map { Set(try moduleIDs($0)) }
         if let minutes = parameters.retentionMinutes, !(0...10080).contains(minutes) { throw EngineCommand.Failure.invalid }
+        if let value = parameters.displayTimeZone, value != "system",
+           (value.utf8.count > 128 || TimeZone(identifier: value) == nil) { throw EngineCommand.Failure.invalid }
         if let value = parameters.deepseekSettings, !value.isValid { throw EngineCommand.Failure.invalid }
         if let value = parameters.reminderSettings, !value.isValid { throw EngineCommand.Failure.invalid }
         if let value = parameters.expandedPanel, !value.isValid { throw EngineCommand.Failure.invalid }
@@ -1230,6 +1232,11 @@ actor EngineRuntime {
             if enabled.contains(.claude), !selectedProviders.contains(.claude) { resetClaudeLocalSource() }
             for provider in enabled.subtracting(selectedProviders) { inbox.remove(provider: provider) }
             enabled = selectedProviders
+        }
+        if let value = parameters.displayTimeZone {
+            var arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+            arguments[DisplayTimeZone.defaultsKey] = value
+            UserDefaults.standard.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
         }
         if let hidden = parameters.hideProjects { hideProjects = hidden }
         if let shown = parameters.showEmbeddedCodexSessions { showEmbeddedCodexSessions = shown }

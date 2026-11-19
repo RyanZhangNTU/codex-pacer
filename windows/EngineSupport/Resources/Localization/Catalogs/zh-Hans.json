@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "1b811e61044d56cfe50ee6c919d6983ef2203138bf255d08596290a379ced60f",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "85e2c4e52bf67685d7b93cbd785945cb06d0d71e097a250c2b753d4b96fb1b4b",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -11,7 +11,7 @@
     "account.credits_help": "\u8d26\u6237\u5269\u4f59\u79ef\u5206",
     "account.expiries_collapsed": "\u5df2\u6536\u8d77",
     "account.expiries_expanded": "\u5df2\u5c55\u5f00",
-    "account.expiry_timezone": "\u672c\u5730\u65f6\u95f4\uff08%@\uff09",
+    "account.expiry_timezone": "\u65f6\u533a\uff08%@\uff09",
     "account.expiry_title": "\u91cd\u7f6e\u5230\u671f\u65f6\u95f4",
     "account.expiry_unknown": "\u91cd\u7f6e\u5238\u5230\u671f\u65f6\u95f4\u672a\u77e5",
     "account.hide_expiries": "\u6536\u8d77\u91cd\u7f6e\u5230\u671f\u65f6\u95f4",
@@ -1319,6 +1319,7 @@
     "settings.codex_home": "Codex \u76ee\u5f55",
     "settings.compact_metric": "\u663e\u793a\u4e3a",
     "settings.display_picker": "\u663e\u793a\u5668",
+    "settings.display_time_zone": "\u663e\u793a\u65f6\u533a",
     "settings.durable_help": "\u663e\u793a\u5206\u914d\u7ed9\u8fd9\u53f0\u7535\u8111\u7684 Dot \u4efb\u52a1\uff0c\u5373\u4f7f\u5bf9\u8bdd\u5df2\u5173\u95ed\u3002Pacer \u901a\u8fc7 Codex \u684c\u9762\u7aef\u68c0\u67e5\u8fd9\u4e9b\u4efb\u52a1\uff0c\u4f1a\u589e\u52a0\u8017\u7535\u3002",
     "settings.fifteen_minutes": "15 \u5206\u949f",
     "settings.five_minutes": "5 \u5206\u949f",

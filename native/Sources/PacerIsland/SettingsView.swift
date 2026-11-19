@@ -58,6 +58,7 @@ struct SettingsView: View {
     @AppStorage(IslandModel.codexProgressRingKey) private var codexProgressRing = true
     @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekProgressRing = true
     @AppStorage(IslandModel.showsAppButtonsKey) private var showsAppButtons = true
+    @State private var displayTimeZone = UserDefaults.standard.string(forKey: DisplayTimeZone.defaultsKey) ?? "system"
     @State private var language = LanguagePreference.load()
     @State private var languageError: String?
     /// Text settings commit on Return, focus loss, a chooser or window close;
@@ -142,6 +143,10 @@ struct SettingsView: View {
         .onChange(of: focusedText) { previous, _ in if let previous { commit(previous) } }
         .onChange(of: automaticUpdateChecks) { _, value in updater.setAutomaticallyChecks(value) }
         .onChange(of: language) { _, value in value.save(to: .standard); languageError = nil }
+        .onChange(of: displayTimeZone) { _, value in
+            UserDefaults.standard.set(value, forKey: DisplayTimeZone.defaultsKey)
+            model.applySettings(sourceChanged: false)
+        }
         .onChange(of: dockIcon) { _, value in value.save(); onDockIconChange(value) }
         .onChange(of: panelLayout) { _, value in
             if let value { value.save() } else { ExpandedPanelLayout.clear() }
@@ -301,6 +306,9 @@ struct SettingsView: View {
             MainCard(title: L10n.text("main.section.language")) {
                 CardPicker(title: L10n.text("language.label"), selection: $language,
                            options: LanguagePreference.allCases.map { ($0, $0.label) })
+                CardPicker(title: L10n.text("settings.display_time_zone"), selection: $displayTimeZone,
+                           options: [("system", L10n.text("language.system"))]
+                               + TimeZone.knownTimeZoneIdentifiers.sorted().map { ($0, $0) })
                 if languageChanges {
                     CardRow(title: L10n.text("language.restart_hint")) {
                         Button(L10n.text("language.restart_now")) { relaunchForLanguage() }.buttonStyle(.mainProminent)
