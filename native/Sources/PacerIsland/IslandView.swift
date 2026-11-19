@@ -260,12 +260,15 @@ struct IslandQuotaSection: View {
                 detailColor: header.provider?.tint ?? PacerPalette.tertiary) {
                 HStack(spacing: 8) {
                     if header.provider == .deepseek { DeepSeekSectionStatus(model: model) }
+                    // Codex alone keeps its banked resets on the title row, before the panel's buttons.
+                    if section.providers == [.codex] { CodexResetCapsule(model: model, alignment: nil) }
                     if section.actions { IslandPanelControls(model: model) }
                 }
             }
-            // Codex's cell adds its banked-reset capsule here, not on Overview.
-            QuotaDashboardView(model: model, section: section).environment(\.showsCodexResets, true)
+            QuotaDashboardView(model: model, section: section)
         }
+        // The panel shows Codex's banked resets, not Overview.
+        .environment(\.showsCodexResets, true)
     }
 }
 

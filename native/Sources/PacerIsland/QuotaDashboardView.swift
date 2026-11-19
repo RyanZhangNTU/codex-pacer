@@ -20,24 +20,25 @@ extension EnvironmentValues {
 }
 
 /// Codex's banked resets and the next deadline. It opens History with every
-/// deadline showing: a popover would close the panel. Under a row of dials it
-/// keeps its full text on Codex's side of the row.
+/// deadline showing: a popover would close the panel. Codex alone shows it on
+/// its block's title row; under a row of dials it keeps its full text on
+/// Codex's side of the row.
 struct CodexResetCapsule: View {
     @ObservedObject var model: IslandModel
-    var alignment: Alignment = .center
+    /// Its side under a row of dials; nil on the title row.
+    let alignment: Alignment?
     @Environment(\.showsCodexResets) private var shows
 
     var body: some View {
         if shows, model.panelOptions.codexResets, let snapshot = model.providerQuota(.codex) {
             let account = QuotaAccountPresentation(snapshot: snapshot, context: "", now: model.now)
             if let text = account.panelText {
-                QuotaLinkButton(title: text, symbol: ResetExpiryReminder.symbol,
-                                tint: account.expirySoon ? PacerPalette.attention : PacerPalette.secondary) { model.openResetExpiries() }
+                let capsule = QuotaLinkButton(title: text, symbol: ResetExpiryReminder.symbol,
+                                              tint: account.expirySoon ? PacerPalette.attention : PacerPalette.secondary) { model.openResetExpiries() }
                     .accessibilityLabel(text)
                     .accessibilityHint(L10n.text("account.show_expiries"))
                     .fixedSize()
-                    .frame(maxWidth: .infinity, alignment: alignment)
-                    .padding(.top, 2)
+                if let alignment { capsule.frame(maxWidth: .infinity, alignment: alignment).padding(.top, 2) } else { capsule }
             }
         }
     }
@@ -136,14 +137,14 @@ struct QuotaDashboardView: View {
             }
             .padding(.horizontal, IslandMetrics.rowInset)
             QuotaProviderStatusView(model: model, provider: provider)
-            if provider == .codex { CodexResetCapsule(model: model) }
         }.padding(.bottom, 4)
     }
 
     private func rings(_ slots: [QuotaDashboardPresentation.Slot]) -> some View {
         VStack(spacing: 8) {
             dials(slots)
-            if slots.contains(where: { $0.provider == .codex }) {
+            // Codex alone shows it on the title row instead.
+            if providers.count > 1, providers.contains(.codex) {
                 CodexResetCapsule(model: model, alignment: CodexResetCapsule.alignment(in: slots.map(\.provider)))
             }
         }.padding(.bottom, 4)
@@ -226,7 +227,6 @@ private struct LegacyCodexQuotaView: View {
                     }
             }
             QuotaProviderStatusView(model: model, provider: .codex).frame(maxWidth: .infinity)
-            CodexResetCapsule(model: model)
         }
         .padding(.horizontal, IslandMetrics.rowInset).padding(.bottom, 4)
     }
