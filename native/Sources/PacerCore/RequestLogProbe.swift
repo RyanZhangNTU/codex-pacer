@@ -19,7 +19,7 @@ enum RequestLogProbe {
                 if expiry<now or not valid_id(tid) or not isinstance(raw,str) or len(raw)>4096:continue
                 try:
                     path=pathlib.Path(raw).resolve();path.relative_to((home/'sessions').resolve())
-                    if path.suffix!='.jsonl' or path.stem[-36:].lower()!=tid.lower():continue
+                    if path.suffix!='.jsonl' or rollout_thread(path.stem)!=tid.lower():continue
                     desired[tid]=path
                 except (ValueError,OSError):continue
             for tid in list(self.entries):
