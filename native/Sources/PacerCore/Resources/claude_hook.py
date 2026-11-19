@@ -59,6 +59,12 @@ IDLE=('monitor','dream','auto-mode scan','memory import','memory save')
 # Kinds that never run an agent Pacer shows. Any other kind, new or unlabelled
 # ones included, may, so it keeps the main thread's children open.
 TOOLING=IDLE+('shell','local_powershell','MCP task')
+# Claude Desktop's computer-use tools ask for app access in a dialog of the
+# app's own, and Claude Code sends no permission or notification hook for it.
+# A request still open after ACCESS_WAIT seconds is waiting on the user; one
+# that returns sooner (its apps were already allowed) showed no dialog.
+ACCESS_TOOLS=('mcp__computer-use__request_access','mcp__computer-use__request_teach_access')
+ACCESS_WAIT=3
 def background_agents(tasks):
     # Claude Code lists every in-flight background task of the session here,
     # also agents that subagents launched; foreground agents are left out.
@@ -138,6 +144,30 @@ def progress_stop(home,value):
     row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'waiting','background':waited,'wakeups':wakeups}
     if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
     spool(home,[row])
+def watch_access(home,thread,session,item):
+    # A detached copy of this program checks the request once, after this
+    # hook has returned, so Claude never waits for the check.
+    import subprocess
+    command=[sys.executable]+(['-S'] if sys.flags.no_site else [])+[os.path.abspath(sys.argv[0]),'access',str(home),thread,session,item,str(ACCESS_WAIT)]
+    options={'stdin':subprocess.DEVNULL,'stdout':subprocess.DEVNULL,'stderr':subprocess.DEVNULL,'close_fds':True}
+    if os.name=='nt':options['creationflags']=0x08000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    else:options['start_new_session']=True
+    subprocess.Popen(command,**options)
+def access_wait(home,thread,session,item,delay):
+    # The tool's end, a new prompt or a stop removes it from the waiting tools,
+    # so a request found there after the delay is still showing its dialog.
+    time.sleep(delay)
+    folder=home/'pacer';lockfd=private_open(folder/'events.lock',os.O_CREAT|os.O_RDWR)
+    try:
+        fcntl.flock(lockfd,fcntl.LOCK_EX);state=read_object(folder/'hook-state.json').get(thread)
+        if not isinstance(state,dict) or not any(isinstance(entry,list) and entry[:1]==[item] for entry in state.get('pendingTools',[])):return
+        row={'origin':'hook','sessionId':thread,'at':time.time(),'itemId':item,'kind':'approval'}
+        if ident(state.get('promptId')):row['promptId']=ident(state.get('promptId'))
+        if thread!=session:row['parentId']=session
+        fd=private_open(folder/'events.jsonl',os.O_CREAT|os.O_APPEND|os.O_WRONLY)
+        try:os.write(fd,json.dumps(row,separators=(',',':'),ensure_ascii=True).encode()+b'\n')
+        finally:os.close(fd)
+    finally:os.close(lockfd)
 def statusline(home,value,raw):
     import math
     rates=value.get('rate_limits');payload={}
@@ -248,6 +278,7 @@ def hook(home,value):
         if pending:state['pendingTools']=pending
         else:state.pop('pendingTools',None)
         if event=='PreToolUse':state['lastToolId']=item
+        watch=(thread,session,item) if event=='PreToolUse' and item!='attention' and value.get('tool_name') in ACCESS_TOOLS else None
         if event=='PermissionRequest':state['permissionToolId']=item
         if event=='Elicitation':state['elicitationId']=item
         if event=='Notification':
@@ -305,9 +336,15 @@ def hook(home,value):
             fd=private_open(path,os.O_CREAT|os.O_APPEND|os.O_WRONLY)
             try:os.write(fd,b''.join(json.dumps(row,separators=(',',':'),ensure_ascii=True).encode()+b'\n' for row in rows))
             finally:os.close(fd)
+        return watch
     finally:os.close(lockfd)
 def main():
     if len(sys.argv)<3:return
+    if sys.argv[1]=='access':
+        # watch_access's detached check; it reads no input.
+        if len(sys.argv)==7 and all(ident(part)==part for part in sys.argv[3:6]):
+            access_wait(pathlib.Path(sys.argv[2]).expanduser(),sys.argv[3],sys.argv[4],sys.argv[5],min(max(float(sys.argv[6]),0.0),10.0))
+        return
     raw=sys.stdin.buffer.read(1024*1024+1)
     if len(raw)>1024*1024:return
     home=pathlib.Path(sys.argv[2]).expanduser();value=json.loads(raw)
@@ -316,11 +353,13 @@ def main():
     elif sys.argv[1]=='hook':
         # The spool and the progress paths are independent: a busy spool lock
         # or a full disk must not drop the progress instruction or estimate.
-        try:hook(home,value)
+        watch=None
+        try:watch=hook(home,value)
         finally:
             for extra in (progress_context,progress_display,progress_stop):
                 try:extra(home,value)
                 except OSError:pass
+        if watch:watch_access(home,*watch)
 if __name__=='__main__':
     try:main()
     except (OSError,ValueError,ImportError):pass
