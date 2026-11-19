@@ -18,6 +18,8 @@ internal sealed record PanelOptions
     public string QuotaArrange { get; init; } = "pair";
     public bool QuotaDetails { get; init; } = true;
     public bool PaceTick { get; init; } = true;
+    /// The capsule under Codex's quota with its banked resets, as Core's `codexResets`.
+    public bool CodexResets { get; init; } = true;
     public string DeepseekDial { get; init; } = "budget";
     public bool DeepseekPeak { get; init; } = true;
     public int SpendTasks { get; init; } = 2;
@@ -28,7 +30,7 @@ internal sealed record PanelOptions
     internal bool OneLine => RowStyle == "oneLine";
     /// Compares choices by value; the lists make record equality compare references.
     internal string Key => string.Join(";", PageSize, RowStyle, string.Join(",", RowFields), CodexPeriods, ClaudePeriods, QuotaArrange,
-        QuotaDetails, PaceTick, DeepseekDial, DeepseekPeak, SpendTasks, SpendElsewhere, WeekLine, string.Join(",", HeaderActions));
+        QuotaDetails, PaceTick, CodexResets, DeepseekDial, DeepseekPeak, SpendTasks, SpendElsewhere, WeekLine, string.Join(",", HeaderActions));
     /// Whether a task row draws the field in the chosen style, as Core's `shows`.
     internal bool Shows(string field) => RowFields.Contains(field) && (!OneLine || field is "rate" or "turnTime");
     internal bool InHeader(string action) => HeaderActions.Contains(action);

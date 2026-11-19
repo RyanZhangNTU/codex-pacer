@@ -13,7 +13,7 @@ public enum CompactWarningPresentation {
     }
     public struct Item: Codable, Equatable, Sendable {
         public enum Kind: String, Codable, CaseIterable, Sendable {
-            case fiveHour, ssh, quotaDelay, exhausted, lowBalance, spike, overBudget, nearingBudget, lowCredits
+            case fiveHour, ssh, quotaDelay, exhausted, lowBalance, spike, overBudget, nearingBudget, lowCredits, resetExpiry
 
             init(_ wallet: DeepSeekAlertPresentation.Kind) {
                 switch wallet {
@@ -38,7 +38,7 @@ public enum CompactWarningPresentation {
         for item in items {
             switch item.kind {
             case .fiveHour: fiveHour.append(item.help)
-            case .ssh, .quotaDelay, .exhausted, .lowBalance, .spike, .overBudget, .nearingBudget, .lowCredits: other.append(item.help)
+            case .ssh, .quotaDelay, .exhausted, .lowBalance, .spike, .overBudget, .nearingBudget, .lowCredits, .resetExpiry: other.append(item.help)
             }
         }
         return ([fiveHour.joined(separator: " · ")] + other).filter { !$0.isEmpty }.joined(separator: "\n")
@@ -48,7 +48,8 @@ public enum CompactWarningPresentation {
                              selections: [AgentProvider: QuotaWindowSelection] = [:], sshIssue: Bool = false,
                              wallet: DeepSeekAlertPresentation? = nil,
                              credits: [AgentProvider: HarnessAccountCredits] = [:],
-                             creditSettings: [AgentProvider: HarnessCreditsSettings] = [:], now: Date) -> [Item] {
+                             creditSettings: [AgentProvider: HarnessCreditsSettings] = [:],
+                             resetLeadDays: Int = ResetExpiryReminder.defaultLeadDays, now: Date) -> [Item] {
         let ordered = HarnessRegistry.ids(where: \.hasQuotaWindows).filter(enabled.contains)
         func windows(_ provider: AgentProvider) -> [QuotaWindow] {
             guard let snapshot = snapshots[provider] else { return [] }
@@ -92,6 +93,10 @@ public enum CompactWarningPresentation {
                     symbol: "exclamationmark.circle",
                     help: L10n.text("warning.low_credits_help", provider.displayName, HarnessAccountCredits.compactAmount(reading.remaining))))
             }
+        }
+        if warnings.contains(.resetExpiry), enabled.contains(.codex),
+           let item = ResetExpiryReminder.warning(snapshots[.codex], leadDays: resetLeadDays, now: now) {
+            result.append(item)
         }
         if enabled.contains(.deepseek), let wallet {
             let label = wallet.kind == .spike ? L10n.text("warning.label.spike") : wallet.label

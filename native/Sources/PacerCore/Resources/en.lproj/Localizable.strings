@@ -1586,3 +1586,17 @@
 "progress_guide.restart.confirm" = "%@ has a task running. Restarting stops it. Restart anyway?";
 "progress_guide.restart.confirm_action" = "Restart Anyway";
 "progress_guide.restart.failed" = "%@ didn’t quit. Quit it yourself, and Pacer opens it again.";
+"account.next_expires_in" = "Next expires in %@";
+"account.known_next_expires_in" = "Next known expiry in %@";
+"account.expiry_remaining" = "%@ left";
+"account.panel_resets" = "Banked resets: %ld";
+"account.panel_resets_expiring" = "Banked resets: %1$ld · next in %2$@";
+"warning.resetExpiry" = "Resets expiring";
+"warning.reset_expiry_help" = "Codex banked resets expiring in %2$@ (%3$@): %1$ld.";
+"notice.reset_expiry" = "Codex banked resets expire soon";
+"main.notify.reset_expiry" = "Resets expiring";
+"main.notify.reset_expiry_note" = "When Codex banked resets expire within the lead time";
+"main.notify.reset_lead" = "Remind ahead of reset expiry";
+"main.notify.reset_lead_info" = "Resets expiring within this many days show the collapsed bar warning and, as set in the row above, a notification.";
+"main.panel.codex_resets" = "Banked resets";
+"main.panel.codex_resets_help" = "Shows the available banked resets and a countdown to the next expiry under the Codex quota.";

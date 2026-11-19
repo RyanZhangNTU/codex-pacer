@@ -280,6 +280,29 @@ public partial class IslandWindow
     {
         if (!presentationStopped && expanded) ProviderSettingsRequested?.Invoke(provider);
     }
+    /// The capsule under Codex's quota, as on the Mac: the count and the next deadline, every
+    /// deadline in its tooltip. It opens History with them showing; a popup would close the panel.
+    private void AddResetCapsule(Grid slots, QuotaAccountPresentation account, int codexIndex)
+    {
+        var label = new StackPanel { Orientation = Orientation.Horizontal };
+        var arrow = new IconGlyph { Symbol = "arrow.counterclockwise", Width = 11, Height = 11, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
+        var text = new TextBlock { Text = account.PanelText, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        string ink = account.ExpirySoon ? "Island.Attention" : "Island.Secondary";
+        arrow.SetResourceReference(IconGlyph.InkProperty, ink); text.SetResourceReference(TextBlock.ForegroundProperty, ink);
+        label.Children.Add(arrow); label.Children.Add(text);
+        var capsule = new Button { Content = label, Style = (Style)FindResource("QuotaLinkButton"), HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(9, 8, 9, 0), ToolTip = account.PanelHelp };
+        AutomationProperties.SetAutomationId(capsule, "island.codex.resets");
+        AutomationProperties.SetName(capsule, account.PanelText ?? ""); AutomationProperties.SetHelpText(capsule, account.PanelHelp ?? "");
+        capsule.Click += (_, _) => { if (presentationStopped || !expanded) return; DismissForSettings(); ResetExpiriesRequested?.Invoke(); };
+        int columns = Math.Max(1, slots.ColumnDefinitions.Count);
+        if (slots.RowDefinitions.Count == 0) slots.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        slots.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        Grid.SetRow(capsule, slots.RowDefinitions.Count - 1);
+        // Paired with Claude it stays under Codex's own column; alone it spans the section.
+        if (columns > 1 && codexIndex >= 0) Grid.SetColumn(capsule, codexIndex % columns); else Grid.SetColumnSpan(capsule, columns);
+        slots.Children.Add(capsule);
+    }
     private bool ReportsCredits(EngineSnapshot snapshot, string provider) =>
         snapshot.Modules?.Any(module => module.Provider == provider && module.ReportsAccountCredits == true) == true;
 
@@ -295,8 +318,11 @@ public partial class IslandWindow
         bool deepseek = section.Providers.Contains("deepseek") || layout?.Slots.Any(slot => slot.Provider == "deepseek") == true;
         var creditModules = section.Providers.Where(provider => ReportsCredits(snapshot, provider)).ToArray();
         bool accountCredits = creditModules.Length > 0;
+        // Codex's banked resets ride under its quota while the block's switch is on.
+        var resetAccount = options.CodexResets && section.Providers.Contains("codex") && Reading("codex")?.History?.Account is { PanelText: not null } usage ? usage : null;
         if (!Redraw(slots, new
         {
+            resets = resetAccount == null ? null : new { resetAccount.PanelText, resetAccount.PanelHelp, resetAccount.ExpirySoon },
             section, layout, style = expandedQuotaStyle, deepseekPanelStyle, options = options.Key, panelBudgetDial,
             readings = section.Providers.Select(Reading), legacy = layout?.Kind == "legacyCodex" ? dashboard?.LegacyCodex : null,
             quota = snapshot.Quota.Where(value => section.Providers.Contains(value.Provider)), help = section.Providers.Select(Help),
@@ -341,6 +367,7 @@ public partial class IslandWindow
                 QuotaCells.Add(slots, cell, index, layout?.Columns ?? providers.Length);
             }
         }
+        if (resetAccount != null) AddResetCapsule(slots, resetAccount, layout?.Slots.Select(value => value.Provider).ToList().IndexOf("codex") ?? 0);
         return true;
 
         FrameworkElement AccountCell(string provider, bool classic, bool details, bool showsName) =>

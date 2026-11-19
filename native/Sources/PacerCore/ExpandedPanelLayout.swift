@@ -225,6 +225,8 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
     public var quotaDetails = true
     /// The white tick that marks how much of each window's time remains.
     public var paceTick = true
+    /// The capsule under Codex's quota with its banked resets and the next deadline.
+    public var codexResets = true
     public var deepseekDial: DeepSeekDial = .budget
     /// The chip under DeepSeek's dial during peak-price hours.
     public var deepseekPeak = true
@@ -264,7 +266,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case version, pageSize, rowStyle, rowFields, codexPeriods, claudePeriods, quotaArrange, quotaDetails, paceTick,
-             deepseekDial, deepseekPeak, spendTasks, spendElsewhere, weekLine, headerActions
+             codexResets, deepseekDial, deepseekPeak, spendTasks, spendElsewhere, weekLine, headerActions
     }
 
     public init(from decoder: Decoder) throws {
@@ -286,6 +288,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         quotaArrange = field(.quotaArrange, defaults.quotaArrange)
         quotaDetails = field(.quotaDetails, defaults.quotaDetails)
         paceTick = field(.paceTick, defaults.paceTick)
+        codexResets = field(.codexResets, defaults.codexResets)
         deepseekDial = field(.deepseekDial, defaults.deepseekDial)
         deepseekPeak = field(.deepseekPeak, defaults.deepseekPeak)
         let tasks = field(.spendTasks, defaults.spendTasks)
@@ -306,6 +309,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         try values.encode(quotaArrange, forKey: .quotaArrange)
         try values.encode(quotaDetails, forKey: .quotaDetails)
         try values.encode(paceTick, forKey: .paceTick)
+        try values.encode(codexResets, forKey: .codexResets)
         try values.encode(deepseekDial, forKey: .deepseekDial)
         try values.encode(deepseekPeak, forKey: .deepseekPeak)
         try values.encode(spendTasks, forKey: .spendTasks)

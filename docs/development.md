@@ -132,6 +132,8 @@ Some older CLIs reject the rate-limit params object with `-32600` and `invalid t
 
 Available banked resets are deduplicated, grouped by exact expiry and sorted earliest first. Expired and redeemed credits are excluded; a missing detail row is unknown, while an explicit null expiry means none. The service count stays authoritative when its detail list is capped.
 
+Countdowns to those deadlines (History's summary and list, and the expanded panel's capsule under Codex, `codexResets` in the panel choices) are computed from the fixed expiry on each presentation tick, so they move without a new read. The `resetExpiry` warning and its notification cover deadlines within `codexResetExpiryDays` (1 to 30, default 1): the mark is solid in the last 3 hours, and `ResetExpiryNoticePolicy` sends one notice per deadline and account, delivered as a quota notice. Like the quota notices it keeps no record across launches. A popup would close the panel, so the capsule shows every deadline in its tooltip and opens History.
+
 ### Activity sources
 
 `RealtimeActivityMonitor` merges local, SSH and Remote Control results. All of them project only lifecycle, timestamps, bounded display metadata and output counters.
@@ -503,7 +505,7 @@ Both renderers share these values; keep them in step (`TaskStatusIconView.swift`
 
 ### Collapsed bar
 
-- `compactIslandLayout` is schema 9: left and right lanes and the enabled warning kinds. Migrations, which run without writing during load: schema 9 adds DeepSeek's spike and budget kinds, removes the ×2 kind and adds the price clock; 8 adds low balance; 7 merges the 5h, delayed-update and SSH components into one warnings slot; 6 maps former Codex/Claude values to the rings plus the value; 5 replaces the status icon and task count with the activity badge; 1–3 read the old combined quota component as both providers. Unknown names are ignored, unsupported schemas use defaults, and an intentionally empty layout stays empty.
+- `compactIslandLayout` is schema 11: left and right lanes and the enabled warning kinds. Migrations, which run without writing during load: schema 11 adds Codex reset expiry and 10 low account credits, both on; 9 adds DeepSeek's spike and budget kinds, removes the ×2 kind and adds the price clock; 8 adds low balance; 7 merges the 5h, delayed-update and SSH components into one warnings slot; 6 maps former Codex/Claude values to the rings plus the value; 5 replaces the status icon and task count with the activity badge; 1–3 read the old combined quota component as both providers. Unknown names are ignored, unsupported schemas use defaults, and an intentionally empty layout stays empty.
 - `compactComponentOptions` holds every component's choices as versioned JSON whose fields decode independently; a missing or unknown field falls back alone, and data over 4 KB reads as defaults. Settings edits one field at a time and leaves fields it cannot read untouched. `CompactBarPresentation` applies them so both platforms draw the same text.
 - The warnings slot shows enabled warnings whose condition holds, solid marks before outlined ones. The activity badge's orbit is a render-server animation that pauses while occluded.
 - `compactBarSize` (`small`, `standard`, `large`, `extraLarge`) scales every length through `CompactBarMetrics`.

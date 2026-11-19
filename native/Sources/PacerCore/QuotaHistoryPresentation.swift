@@ -50,11 +50,24 @@ public struct QuotaAccountPresentation: Codable, Equatable, Sendable {
         public let dateText: String
         public let countText: String
         public let accessibilityLabel: String
+        /// "1d 10h left", counted down from the fixed deadline.
+        public let remainingText: String
+        /// Under three days, the same rule as `expirySoon`.
+        public let soon: Bool
     }
+    /// Deadlines closer than this are drawn in the attention color.
+    public static let soonInterval: TimeInterval = 3 * 86400
     public let context: String
     public let resetText: String
     public let expirySoon: Bool
     public let expiryDescription: String
+    /// "Next expires in 1d 10h"; nil without a known deadline.
+    public let nextExpiryText: String?
+    /// The expanded panel's capsule under the Codex quota, e.g. "Resets 3 · next in 1d 10h".
+    /// Nil when no reset is available or the count is unknown.
+    public let panelText: String?
+    /// Every known deadline with its countdown, for the capsule's tooltip.
+    public let panelHelp: String?
     public let resetsAccessibility: String
     public let balanceText: String
     public let balanceAccessibility: String
@@ -70,7 +83,11 @@ public struct QuotaAccountPresentation: Codable, Equatable, Sendable {
         let count = summary?.remainingCount(at: now, capturedAt: snapshot.capturedAt)
         let expiry = summary?.nextExpiry(at: now)
         resetText = count.map { L10n.text("account.reset_count", $0) } ?? L10n.text("account.resets_unknown")
-        expirySoon = expiry.map { $0.timeIntervalSince(now) < 3 * 86400 } ?? false
+        expirySoon = expiry.map { $0.timeIntervalSince(now) < Self.soonInterval } ?? false
+        let countdown = expiry.map { CompactDuration.text($0.timeIntervalSince(now)) }
+        nextExpiryText = count == 0 ? nil : countdown.map {
+            L10n.text(summary?.hasCompleteDetails == false ? "account.known_next_expires_in" : "account.next_expires_in", $0)
+        }
         if count == 0 { expiryDescription = L10n.text("account.no_resets") }
         else if let expiry {
             expiryDescription = L10n.text(summary?.hasCompleteDetails == false ? "account.known_expiry" : "account.next_expiry", L10n.date(expiry, date: .complete))
@@ -85,12 +102,21 @@ public struct QuotaAccountPresentation: Codable, Equatable, Sendable {
         let details = summary?.expiryDetails(at: now, capturedAt: snapshot.capturedAt)
         detailMessage = count == 0 ? L10n.text("account.no_resets") : details == nil ? L10n.text("account.expiry_unknown") : nil
         expiries = count == 0 ? [] : (details?.expiries ?? []).map { expiry in
-            let date = L10n.date(expiry.date, time: .standard)
+            let date = L10n.date(expiry.date, time: .standard), left = expiry.date.timeIntervalSince(now)
+            let remaining = L10n.text("account.expiry_remaining", CompactDuration.text(left))
             return Expiry(timestamp: expiry.date.timeIntervalSince1970, dateText: date,
-                countText: L10n.text("chart.expiry_count", expiry.count), accessibilityLabel: L10n.text("chart.expiry_item", expiry.count, date))
+                countText: L10n.text("chart.expiry_count", expiry.count),
+                accessibilityLabel: L10n.text("chart.expiry_item", expiry.count, date) + L10n.text("chart.detail_separator") + remaining,
+                remainingText: remaining, soon: left < Self.soonInterval)
         }
         nonExpiringText = count != 0 && (details?.nonExpiringCount ?? 0) > 0 ? L10n.text("account.non_expiring_count", details!.nonExpiringCount) : nil
         unknownText = count != 0 && (details?.unknownCount ?? 0) > 0 ? L10n.text("account.unknown_expiry_count", details!.unknownCount) : nil
         timeZoneText = expiries.isEmpty ? nil : L10n.text("account.expiry_timezone", TimeZone.current.identifier)
+        if let count, count > 0 {
+            panelText = countdown.map { L10n.text("account.panel_resets_expiring", count, $0) } ?? L10n.text("account.panel_resets", count)
+            let lines = expiries.map { [$0.dateText, $0.remainingText, $0.countText].joined(separator: " · ") }
+                + [nonExpiringText, unknownText].compactMap { $0 }
+            panelHelp = ([L10n.text("account.expiry_title")] + (lines.isEmpty ? [expiryDescription] : lines)).joined(separator: "\n")
+        } else { panelText = nil; panelHelp = nil }
     }
 }

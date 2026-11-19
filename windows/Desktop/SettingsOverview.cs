@@ -481,6 +481,14 @@ internal sealed partial class SettingsWindow
         historyView?.SetInteractionEnabled(!closed && !busy && !session.RequiresRestart);
     }
 
+    /// The island's reset capsule: Codex's History with the deadlines showing.
+    internal async Task ShowResetExpiriesAsync()
+    {
+        historyProvider = "codex";
+        await NavigateAsync("history");
+        RefreshHistory(); historyView?.ShowExpiries();
+    }
+
     private QuotaHistoryView? historyView;
 
     /// The chosen service's cycle, with chips to switch when both read quota.
