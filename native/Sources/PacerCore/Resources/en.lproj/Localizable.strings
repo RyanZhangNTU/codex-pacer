@@ -399,6 +399,7 @@
 "activity.task_count_compact_singular" = "%@ task";
 "activity.tool_compact" = "Using tools";
 "activity.responding_compact" = "Replying";
+"activity.background_wait_compact" = "Background work";
 
 "activity.done_compact" = "1 done";
 
