@@ -48,17 +48,38 @@ final class CodexProgressTests: XCTestCase {
             + line("event_msg", 1, ["type": "task_started", "turn_id": "turn-1"])
             + line("event_msg", 2, ["type": "item_completed", "thread_id": thread, "turn_id": "turn-1", "item": report(70)])).write(to: file)
         try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(2)], ofItemAtPath: file.path)
+        // The rollout before the revert stays beside it, its turn finished earlier.
+        let original = day.appendingPathComponent("rollout-2026-11-19T05-00-00-" + thread + ".jsonl")
+        try (line("session_meta", -60, ["id": thread, "originator": "Codex Desktop", "cwd": "/fixture", "history_mode": "paginated"])
+            + line("event_msg", -59, ["type": "task_started", "turn_id": "turn-0"])
+            + line("event_msg", -58, ["type": "item_completed", "thread_id": thread, "turn_id": "turn-0", "item": report(100)])
+            + line("event_msg", -57, ["type": "task_complete", "turn_id": "turn-0"])).write(to: original)
+        try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(-57)], ofItemAtPath: original.path)
 
         let read = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), phaseAwareRate: true)
-        XCTAssertEqual(read.activities.count, 1)
+        XCTAssertEqual(read.activities.count, 1, "Both rollouts are one thread")
         XCTAssertEqual(read.activities.first?.threadID, thread)
+        XCTAssertEqual(read.activities.first?.turnID, "turn-1", "The newest rollout is the thread's current turn")
         XCTAssertEqual(read.activities.first?.phase, .running)
         XCTAssertEqual(read.activities.first?.currentProgress?.percent, 70)
         let covered = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread])
         XCTAssertTrue(covered.activities.isEmpty, "A thread the live connection follows is not read twice")
         let metrics = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread],
                                                        includeCoveredMetrics: true)
+        XCTAssertEqual(metrics.activities.map(\.turnID), ["turn-1"])
         XCTAssertEqual(metrics.activities.first?.currentProgress?.percent, 70, "Its log still fills in the live task's progress")
+    }
+
+    /// Several rollouts of one thread resolve to the most recently observed one,
+    /// once, whatever order they arrive in.
+    func testOneThreadsRolloutsResolveToTheNewestOnce() {
+        var old = SessionActivity(id: "rollout-old-" + thread + ".jsonl"), new = SessionActivity(id: "rollout-new-" + thread + "_22222222-2222-4222-8222-222222222222.jsonl")
+        log(&old, "task_started", at: 0, fields: ["turn_id": "turn-0"])
+        log(&new, "task_started", at: 9, fields: ["turn_id": "turn-1"])
+        XCTAssertEqual(old.threadID, new.threadID)
+        for values in [[old, new], [new, old]] {
+            XCTAssertEqual(CodexSessionOrigin.inheriting(values).map(\.turnID), ["turn-1"])
+        }
     }
 
     func testReportsUseCompletedOwnedItemsAndNeverAdvanceLifecycle() {

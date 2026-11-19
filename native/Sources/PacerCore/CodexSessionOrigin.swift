@@ -35,8 +35,12 @@ public struct CodexSessionOrigin: Equatable, Sendable {
 
     /// Resolve descendants against their current parent, without changing the
     /// reader's baseline. Provider and host-qualified IDs prevent cross-talk.
+    /// One thread can have several rollouts, such as before and after a revert
+    /// (#259): the most recently observed one is the thread, once.
     public static func inheriting(_ values: [SessionActivity]) -> [SessionActivity] {
-        var result = Dictionary(values.map { ($0.canonicalized().id, $0) }, uniquingKeysWith: { _, latest in latest })
+        var result = Dictionary(values.map { ($0.canonicalized().id, $0) }, uniquingKeysWith: { old, new in
+            (new.lastObserved ?? .distantPast) >= (old.lastObserved ?? .distantPast) ? new : old
+        })
         for _ in 0..<64 {
             var changed = false
             for (id, value) in result where value.provider == .codex {
@@ -47,7 +51,11 @@ public struct CodexSessionOrigin: Equatable, Sendable {
             }
             if !changed { break }
         }
-        return values.compactMap { result[$0.canonicalized().id] }
+        var seen = Set<String>()
+        return values.compactMap { value in
+            let id = value.canonicalized().id
+            return seen.insert(id).inserted ? result[id] : nil
+        }
     }
 
     /// Generated from the same client list as the native policy. Both SSH
