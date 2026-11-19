@@ -105,11 +105,25 @@ internal sealed class CompactStatusText : Decorator
     /// Repaints the shown words in the island's current tone.
     internal void Repaint() => current.Foreground = CompactInk.Tone(shown.Tone);
     internal bool Fades => current.OpacityMask != null;
+    /// The shown words' distance below their resting place, and whether a slide still runs.
+    internal double Offset => current.RenderTransform is TranslateTransform shift ? shift.Y : 0;
+    internal bool Sliding => clocks.Any(clock => clock.IsActive);
+    internal double ShownOpacity => current.Opacity;
+    internal int Lines => stage.Children.Count;
     internal CompactStatusText()
     {
         IsHitTestVisible = false; VerticalAlignment = VerticalAlignment.Center; HorizontalAlignment = HorizontalAlignment.Left;
         current.HorizontalAlignment = HorizontalAlignment.Left; stage.Children.Add(current); Child = stage;
-        Unloaded += (_, _) => { foreach (var clock in clocks) clock.Dispose(); clocks.Clear(); };
+        Unloaded += (_, _) => Rest();
+    }
+    /// Ends a slide at once: only the words now shown stay, upright and opaque.
+    /// Removing a clock returns its property to the base value, so the resting
+    /// values are set here rather than left to the clocks.
+    internal void Rest()
+    {
+        foreach (var clock in clocks) clock.Dispose(); clocks.Clear();
+        foreach (var stale in stage.Children.OfType<TextBlock>().Where(child => !ReferenceEquals(child, current)).ToArray()) stage.Children.Remove(stale);
+        current.BeginAnimation(OpacityProperty, null); current.Opacity = 1; current.RenderTransform = null;
     }
     internal void Update(string? text, string? tone, double maxWidth, double size, bool animations)
     {
@@ -127,10 +141,8 @@ internal sealed class CompactStatusText : Decorator
         var measured = CompactInk.MeasureSize(value.Text.Length > 0 ? value.Text : " ", value.Size, FontWeights.Medium);
         double natural = Math.Ceiling(measured.Width);
         Width = Math.Min(natural, value.MaxWidth); Height = Math.Ceiling(Math.Max(measured.Height, value.Size * 1.35));
-        foreach (var clock in clocks) clock.Dispose(); clocks.Clear();
         // An interrupted change leaves only the words now shown, at rest.
-        foreach (var stale in stage.Children.OfType<TextBlock>().Where(child => !ReferenceEquals(child, current)).ToArray()) stage.Children.Remove(stale);
-        current.BeginAnimation(OpacityProperty, null); current.Opacity = 1; current.RenderTransform = null;
+        Rest();
         var outgoing = current;
         var incoming = slide && changed ? CompactInk.Text(value.Size, FontWeights.Medium, PacerPalette.Primary) : current;
         incoming.HorizontalAlignment = HorizontalAlignment.Left;
@@ -143,7 +155,9 @@ internal sealed class CompactStatusText : Decorator
         }, new Point(0, 0), new Point(1, 0)) : null;
         if (ReferenceEquals(incoming, outgoing)) return;
         current = incoming; stage.Children.Add(incoming);
-        var rise = new TranslateTransform(0, 6); incoming.RenderTransform = rise; incoming.Opacity = 0;
+        // The rise starts 6 below and rests at 0: a finished clock returns Y to
+        // this base value, so a base of 6 left every slid-in status 6 low and clipped.
+        var rise = new TranslateTransform(0, 0); incoming.RenderTransform = rise; incoming.Opacity = 0;
         var fall = new TranslateTransform(0, 0); outgoing.RenderTransform = fall;
         TimeSpan duration = TimeSpan.FromSeconds(0.25);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
