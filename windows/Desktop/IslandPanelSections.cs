@@ -318,7 +318,7 @@ public partial class IslandWindow
             // turn repaints without measuring the panel again. It runs only while it shows, on the
             // shared clock, since the quota redraws with every reading and rebuilds the capsule.
             var turns = new AlternatingQuotaText { FontSize = 11, ValueWeight = FontWeights.Medium, Centered = true, SharedPhase = true, VerticalAlignment = VerticalAlignment.Center };
-            turns.Update(phases.Select(value => new AlternatingQuotaText.Item("codex", value, false, Ink: ink)).ToArray(), true);
+            turns.Update(phases.Select(value => new AlternatingQuotaText.Item("codex", value, false, Ink: ink)).ToArray(), PanelRotationsRun);
             label.Children.Add(turns);
         }
         else
@@ -332,6 +332,23 @@ public partial class IslandWindow
         AutomationProperties.SetName(capsule, account.PanelText ?? "");
         capsule.Click += (_, _) => { if (presentationStopped || !expanded) return; DismissForSettings(); ResetExpiriesRequested?.Invoke(); };
         return capsule;
+    }
+
+    /// The panel's own rotations, like the reset capsule's, pause while the island is covered or the
+    /// display is dark, as the bar's do. Unlike the bar's, they keep turning with reduced motion, as on
+    /// the Mac, or the time left would never show.
+    private bool PanelRotationsRun => !decorationsOccluded && presence.Present;
+    /// Called when the island is covered or uncovered, or the display goes dark or lights.
+    private void RefreshPanelRotations()
+    {
+        bool run = PanelRotationsRun;
+        var pending = new Stack<DependencyObject>(); pending.Push(this);
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+            if (node is AlternatingQuotaText { SharedPhase: true } turns) { turns.SetAnimates(run); continue; }
+            for (int index = 0; index < VisualTreeHelper.GetChildrenCount(node); index++) pending.Push(VisualTreeHelper.GetChild(node, index));
+        }
     }
 
     /// Shared with other services, the capsule sits in Codex's own column under its status, as on
