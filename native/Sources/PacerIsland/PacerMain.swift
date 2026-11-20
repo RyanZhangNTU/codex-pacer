@@ -135,7 +135,7 @@ enum PacerMain {
                 // Per source in key order, labelled by kind only so host aliases stay out of the output.
                 "sources": statuses.keys.sorted().map { key -> [String: Any] in
                     let status = statuses[key]!, own = values.filter { ($0.sourceHostID ?? "local") == key }
-                    return ["kind": key == "local" ? "local" : key.hasPrefix("remote-ssh-discovered:") ? "ssh" : "other",
+                    return ["kind": key == "local" ? "local" : ConnectionSource.isSSHSourceID(key) ? "ssh" : "other",
                         "connected": status.connected, "claudeHome": status.sourceAvailable.map { $0 ? 1 : 0 } ?? -1,
                         "exactSpans": status.exactRequestSpans ? 1 : 0,
                         "running": own.filter { [.running, .waitingForInput].contains($0.phase) }.count,
