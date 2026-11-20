@@ -72,7 +72,6 @@ jobs:
         run: ./scripts/windows/build-desktop.ps1 -Configuration Release -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-build.log"
       # Packaging keeps its own smoke test.
       - name: Package unsigned Windows application
-        id: preview
         run: ./scripts/windows/package-preview.ps1 -SkipBuild *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-package.log"
       - name: Package unsigned Windows installer
         run: |
@@ -94,7 +93,7 @@ jobs:
             output/windows/installer-artifact/*.json.sha256
           retention-days: 7
       - name: Upload unsigned Windows application
-        if: (failure() || inputs.keep_previews) && steps.preview.outcome == 'success'
+        if: (failure() || inputs.keep_previews) && hashFiles('output/windows/*-windows-x64-preview-*.zip.sha256') != ''
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: windows-app-x64-unsigned
@@ -142,7 +141,6 @@ jobs:
           ./scripts/windows/build-desktop.ps1 -Configuration Release -Architecture arm64 -SkipEngine *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-arm64-desktop.log"
           if (Select-String -Path "$env:RUNNER_TEMP/pacer-arm64-desktop.log" -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'ARM64 dependency compiler warning.' }
       - name: Package unsigned ARM64 application without runtime tests
-        id: preview
         run: ./scripts/windows/package-preview.ps1 -SkipBuild -Architecture arm64 -BuildOnly
       - name: Package unsigned ARM64 installer without installing
         run: |
@@ -165,7 +163,7 @@ jobs:
             output/windows/installer-artifact/*-windows-arm64-patch-*
           retention-days: 7
       - name: Upload unsigned ARM64 application
-        if: (failure() || inputs.keep_previews) && steps.preview.outcome == 'success'
+        if: (failure() || inputs.keep_previews) && hashFiles('output/windows/*-windows-arm64-preview-*.zip.sha256') != ''
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: windows-app-arm64-unsigned

@@ -1,5 +1,7 @@
 param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [ValidateSet('all','island','settings','collapsed','panel','quota','web','connection','host','harness','conversation','responsive','idle','quotaIdle','recovery','persistence','deepseek','display','displaySettings','position','pages','accessibility','ssh','updates','progress')][string[]]$Group = @('all'),
-    [switch]$SkipCommon, [switch]$RepresentativeConnections)
+    [switch]$SkipCommon, [switch]$RepresentativeConnections,
+    [ValidateSet('ClaudeConnectionChecks','DeepSeekConnectionChecks','DeepSeekWebConnectionChecks','SlowEngineChecks')][string]$Case,
+    [ValidateSet('en','zh-Hans')][string]$Language = 'en', [switch]$Dark)
 . (Join-Path $PSScriptRoot 'environment.ps1')
 . (Join-Path $PSScriptRoot 'version.ps1')
 . (Join-Path $PSScriptRoot 'harness-fixture.ps1')
@@ -13,6 +15,7 @@ try {
     $taskOutput = Join-Path $taskRoot 'output/windows/presentation'
     $taskDesktop = Join-Path $taskRoot ('windows/Desktop/bin/' + $Configuration + '/net10.0-windows/CodexPacer.exe')
     $taskArguments = @($taskOutput, ($Group -join ','), $taskDesktop)
+    if ($Case) { $taskArguments = @($taskOutput, 'diagnostic', $taskDesktop, '--case', $Case, $Language, $Dark.IsPresent.ToString()) }
     if ($RepresentativeConnections) { $taskArguments += '--representative-connections' }
     if ($SkipCommon) { $taskArguments += '--skip-common' }
     dotnet run --no-build --project windows/Tests/PresentationTests/Pacer.PresentationTests.csproj --configuration $Configuration -- @taskArguments

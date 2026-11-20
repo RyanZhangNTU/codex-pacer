@@ -265,6 +265,15 @@ def release_boundary(release):
             raise ValueError(f"release.yml must build {artifact} in its {name} job")
         if re.search(r"^    environment:", body, re.M) or "secrets." in body:
             raise ValueError(f"The {name} release job must hold no secrets")
+        arch = name.removeprefix("windows-")
+        uploads = [step for step in body.split("      - ") if "uses: actions/upload-artifact@" in step]
+        preview = next((step for step in uploads if f"name: windows-app-{arch}-unsigned" in step), "")
+        if not all(token in preview for token in ("failure()", "inputs.keep_previews", "preview-*.zip.sha256') != ''")):
+            raise ValueError(f"The {arch} preview must be an available QA or failure artifact")
+        installer = next((step for step in uploads if "name: " + artifact in step), "")
+        publisher = workflow_job(release, "publish") or ""
+        if not installer or "\n        if:" in installer or "name: " + artifact not in publisher:
+            raise ValueError(f"The publisher must receive {artifact} on every successful release")
     if not re.search(r"^  cancel-in-progress: false\s*$", release, re.M):
         raise ValueError("A release run must never be cancelled")
 

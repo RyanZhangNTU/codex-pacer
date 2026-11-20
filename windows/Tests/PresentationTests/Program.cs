@@ -81,6 +81,24 @@ internal static class Program
                 }
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
+                int caseIndex = Array.IndexOf(args, "--case");
+                if (caseIndex >= 0)
+                {
+                    string name = args[caseIndex + 1], language = args[caseIndex + 2];
+                    bool dark = bool.Parse(args[caseIndex + 3]);
+                    scenario = language + "/dark=" + dark;
+                    Func<Task> check = name switch
+                    {
+                        nameof(ClaudeConnectionChecks) => () => ClaudeConnectionChecks.Run(language, dark, output),
+                        nameof(DeepSeekConnectionChecks) => () => DeepSeekConnectionChecks.Run(language, dark, output),
+                        nameof(DeepSeekWebConnectionChecks) => () => DeepSeekWebConnectionChecks.Run(language, dark, output),
+                        nameof(SlowEngineChecks) => SlowEngineChecks.Run,
+                        _ => throw new ArgumentException("Unknown diagnostic case: " + name)
+                    };
+                    await Attempt(name, check);
+                    Check(Errors.Count == 0 && caseFailures.Count == 0, "WPF case errors: " + string.Join("\n", Errors.Concat(caseFailures)));
+                    Console.WriteLine($"PASS {name} [{scenario}]"); result = 0; return;
+                }
                 if (All("recovery") || Has("persistence")) await Attempt(nameof(StorageRecoveryChecks), () => StorageRecoveryChecks.Run());
                 if (!args.Contains("--skip-common"))
                 {

@@ -15,7 +15,19 @@ internal static class SlowEngineChecks
 {
     // A blocking stdin read belongs to this headless synthetic engine process,
     // never to the WPF dispatcher being tested.
+    private static string TraceFile(int processId) => Path.Combine(Path.GetTempPath(), $"pacer-presentation-engine-{processId}.trace");
     internal static int Fixture(string mode)
+    {
+        if (!mode.StartsWith("probe-", StringComparison.Ordinal)) return Respond(mode, _ => { });
+        string path = TraceFile(Environment.ProcessId);
+        File.WriteAllText(path, "started");
+        void Trace(string phase) => File.AppendAllText(path, " " + phase);
+        try { return Respond(mode[6..], Trace); }
+        catch (JsonException error) { Trace($"invalid-json-at-{error.BytePositionInLine}"); return 2; }
+        catch (Exception error) { Trace(error.GetType().Name); return 3; }
+    }
+
+    private static int Respond(string mode, Action<string> trace)
     {
         Console.InputEncoding = new UTF8Encoding(false); Console.OutputEncoding = new UTF8Encoding(false);
         void Reply(object data) { Console.WriteLine(JsonSerializer.Serialize(data)); Console.Out.Flush(); }
@@ -26,8 +38,10 @@ internal static class SlowEngineChecks
             value = new { requests, replies } });
         while (Console.ReadLine() is { } line)
         {
+            trace($"frame-{line.Length}");
             using var json = JsonDocument.Parse(line); string id = json.RootElement.GetProperty("id").GetString()!;
             string method = json.RootElement.GetProperty("method").GetString()!;
+            trace(method is "initialize" or "inspectRequests" or "releaseLateReplies" or "shutdown" or "projectCompactBar" or "layoutQuotaChart" or "validatePreferences" ? method : "other-command");
             if (method is "projectCompactBar" or "layoutQuotaChart" or "validatePreferences")
             {
                 requests++;
@@ -51,7 +65,7 @@ internal static class SlowEngineChecks
                 if (method == "shutdown") return 0;
             }
         }
-        return 0;
+        trace("eof"); return 0;
     }
     internal static async Task Run()
     {
@@ -64,7 +78,12 @@ internal static class SlowEngineChecks
                 // Initialization uses the normal engine budget. Presentation
                 // queries still use the artificial 250 ms deadline above.
                 await using var engine = new EngineClient();
-                await engine.StartAsync(Environment.ProcessPath!, true, mode);
+                string status = "starting";
+                engine.Status += value => status = value;
+                await engine.StartAsync(Environment.ProcessPath!, true, "probe-" + mode);
+                using var child = Process.GetProcessById(engine.ProcessId!.Value);
+                _ = child.Handle;
+                string trace = TraceFile(child.Id);
                 var handshake = await engine.QueryAsync<JsonElement>("inspectRequests", timeout: TimeSpan.FromSeconds(8));
                 Check(handshake.GetProperty("requests").GetInt32() == 0, "The fixture must acknowledge initialization before the first projection");
                 ShellProjection.Client = engine;
@@ -108,12 +127,18 @@ internal static class SlowEngineChecks
                 }
                 catch
                 {
-                    Console.Error.WriteLine($"Slow engine fixture: mode={mode}, initialized={engine.IsInitialized}, closed={engine.IsConnectionClosed}, beats={beats}, projectionFailed={ShellProjection.LastFailure != null}");
+                    Console.Error.WriteLine($"Slow engine fixture: mode={mode}, initialized={engine.IsInitialized}, closed={engine.IsConnectionClosed}, beats={beats}, projectionFailed={ShellProjection.LastFailure != null}, lastStatus={status}, exit={(child.HasExited ? child.ExitCode.ToString() : "running")}");
+                    if (File.Exists(trace)) Console.Error.WriteLine("Child protocol events: " + File.ReadAllText(trace));
                     throw;
                 }
-                finally { pulse.Stop(); window.StopPresentation(); window.AllowClose = true; window.Close(); }
-                if (mode != "exit") await engine.SendAsync("shutdown");
-                await PresentationWait.UntilAsync(() => engine.IsConnectionClosed, "The fixture must close its output and exit");
+                finally
+                {
+                    pulse.Stop(); window.StopPresentation(); window.AllowClose = true; window.Close();
+                    await engine.DisposeAsync();
+                    await child.WaitForExitAsync().WaitAsync(PresentationWait.Limit);
+                    File.Delete(trace);
+                }
+                Check(child.ExitCode == 0, "The fixture must exit cleanly after its protocol completes");
             }
         }
         finally { ShellProjection.RequestTimeout = timeout; ShellProjection.Client = previous; }

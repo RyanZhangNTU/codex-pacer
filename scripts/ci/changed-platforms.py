@@ -20,6 +20,7 @@ INSTALLER = ("windows/Installer/", "windows/InstallerHooks/", "windows/Installer
              "scripts/windows/test-patch.ps1", "scripts/windows/test-preview.ps1", "scripts/windows/setup-installer.ps1",
              "scripts/release/prepare-windows-update.py", "scripts/release/windows-release.json",
              "scripts/release/sign-updates.sh", "scripts/release/publish-github-release.sh",
+             "scripts/release/sparkle_key.py", "scripts/release/sparkle-public-key.swift",
              "scripts/windows/fetch-update-base.", "scripts/windows/build-adapters.ps1", "scripts/windows/build-maintenance.ps1",
              "scripts/windows/prune-arm64-runtime.py", "scripts/windows/setup-swift.ps1", "scripts/windows/build-engine.ps1",
              "scripts/windows/build-desktop.ps1", ".github/", "scripts/ci/",

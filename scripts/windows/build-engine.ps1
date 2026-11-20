@@ -10,12 +10,12 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Could not check Windows engine products.' }
     }
     $taskPrebuilt = [bool]$taskBinary
-    $taskStage = $null
+    # The packager records this checkout's full snapshot even when the binaries came from cache.
+    $taskStage = python -S scripts/windows/stage-engine.py
+    if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the Windows source snapshot.' }
     if ($taskPrebuilt) {
         Write-Output 'Using verified cached engine and adapter products.'
     } else {
-        $taskStage = python -S scripts/windows/stage-engine.py
-        if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the Windows source snapshot.' }
         $taskBinary = Join-Path $taskScratchPath ($taskArchitecture.Triple + '/' + $Configuration)
         swift build --build-system native @taskSwiftFlags @taskSwiftTargetFlags --package-path $taskStage --scratch-path $taskScratchPath --configuration $Configuration --product PacerEngine
         if ($LASTEXITCODE -ne 0) { throw 'Windows engine build failed.' }

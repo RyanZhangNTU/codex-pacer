@@ -101,7 +101,8 @@ class ChangedPlatformsTests(unittest.TestCase):
             self.assertEqual((selected["full_connections"], selected["measure_idle"]), (variants, idle))
         self.assertEqual(platforms.plan()["jobs"], sorted(platforms.ALL_JOBS))
         self.assertTrue(platforms.plan()["full_connections"] and platforms.plan()["measure_idle"])
-        self.assertIn("installer", platforms.classify(["scripts/release/prepare-windows-update.py"]))
+        for name in ("prepare-windows-update.py", "sparkle_key.py", "sparkle-public-key.swift", "sign-updates.sh"):
+            self.assertEqual(platforms.classify(["scripts/release/" + name]), platforms.ALL_JOBS)
 
     def test_the_workflow_ci_scripts_and_unknown_files_run_everything(self):
         for path in (".github/workflows/platforms.yml", "scripts/ci/changed-platforms.py", "scripts/performance/benchmark-events.py"):

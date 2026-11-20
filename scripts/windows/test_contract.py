@@ -184,6 +184,8 @@ class CoreBoundaryTests(unittest.TestCase):
                        release.replace(x64, x64 + "    environment: release\n", 1),
                        release.replace("      PACER_ARCHITECTURE: arm64\n",
                                        "      PACER_ARCHITECTURE: arm64\n      TOKEN: ${{ secrets.SPARKLE_PRIVATE_KEY }}\n", 1),
+                       release.replace("failure() || inputs.keep_previews", "true", 1),
+                       release.replace("-windows-x64-preview-*.zip.sha256') != ''", "-wrong') != ''", 1),
                        release.replace("cancel-in-progress: false", "cancel-in-progress: true", 1)):
             self.assertNotEqual(broken, release)
             with self.assertRaises(ValueError):

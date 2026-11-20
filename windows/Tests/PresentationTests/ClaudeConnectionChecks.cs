@@ -47,12 +47,9 @@ internal static class ClaudeConnectionChecks
             var signIn = Find<Button>(window, "settings.claude.sign_in");
             await Until(() => signIn.IsEnabled);
             Check(engine.LatestSnapshot!.Quota.Count == 0, "No cookie must leave the native Claude quota unavailable");
-            if (controlsOnly)
-            {
-                Check(signIn.IsVisible && Equals(signIn.Content, UiText.For(language == "zh-Hans").Text("claude.quota.connect")),
-                    "The signed-out Claude pane must show the localized connection action");
-                return;
-            }
+            Check(signIn.IsVisible && Equals(signIn.Content, UiText.For(language == "zh-Hans").Text("claude.quota.connect")),
+                "The signed-out Claude pane must show the localized connection action");
+            if (controlsOnly) return;
             Invoke(signIn); await Until(() => site.LoginCore != null);
             var login = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); login.IsHitTestVisible = false;
             await Put(site.LoginCore!, "sessionKey", "fixture-claude-account-a");
