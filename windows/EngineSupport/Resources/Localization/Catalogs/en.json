@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "8d9e5197f528c66ecdcc63b334795f2a8de7721b2f6c18e0a87eeb1a03ae093e",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "4e59c824db5de9ddc0367ea4f23a9be2ed8265785a159f8a965d6c352c7d95b1",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -1452,6 +1452,7 @@
     "warning.quotaDelay": "Quota update delayed",
     "warning.resetExpiry": "Resets expiring",
     "warning.reset_expiry_help": "Codex banked resets expiring in %2$@ (%3$@): %1$ld.",
+    "warning.reset_expiry_more": " More expiring later: %ld.",
     "warning.spendSpike": "DeepSeek spend spike",
     "warning.ssh": "SSH host disconnected",
     "welcome.all_marks": "All Marks",

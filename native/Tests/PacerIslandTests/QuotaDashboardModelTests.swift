@@ -225,7 +225,8 @@ final class QuotaDashboardModelTests: XCTestCase {
         XCTAssertEqual(item()?.help, L10n.text("warning.reset_expiry_help", 1, CompactDuration.text(7_200), L10n.date(now.addingTimeInterval(7_200), time: .standard)))
         model.setResetExpiryLeadDays(2)
         XCTAssertEqual(defaults.integer(forKey: ResetExpiryReminder.defaultsKey), 2, "The lead time is saved at once")
-        XCTAssertEqual(item()?.help, L10n.text("warning.reset_expiry_help", 2, CompactDuration.text(7_200), L10n.date(now.addingTimeInterval(7_200), time: .standard)))
+        XCTAssertEqual(item()?.help, L10n.text("warning.reset_expiry_help", 1, CompactDuration.text(7_200), L10n.date(now.addingTimeInterval(7_200), time: .standard))
+            + L10n.text("warning.reset_expiry_more", 1))
         model.setResetExpiryLeadDays(90)
         XCTAssertEqual(model.resetExpiryLeadDays, ResetExpiryReminder.defaultLeadDays, "A lead time outside the range falls back to the default")
         publish(QuotaSnapshot(buckets: [bucket("codex", [window("codex/week", minutes: 10080)])], capturedAt: now,

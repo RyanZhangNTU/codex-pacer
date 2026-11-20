@@ -24,12 +24,15 @@ public enum ResetExpiryReminder {
         }
     }
 
-    /// "2 Codex resets expire in 23h 10m (Nov 21, 08:00)." for these deadlines.
+    /// "2 Codex resets expire in 23h 10m (Nov 21, 08:00)." for the nearest of
+    /// these deadlines, then how many of the others expire later.
     public static func help(_ expiries: [QuotaResetExpiryDetails.Expiry], now: Date) -> String? {
         guard let first = expiries.min(by: { $0.date < $1.date }) else { return nil }
-        let count = expiries.reduce(0) { $0 + $1.count }
-        return L10n.text("warning.reset_expiry_help", count, CompactDuration.text(first.date.timeIntervalSince(now)),
+        let nearest = expiries.filter { $0.date == first.date }.reduce(0) { $0 + $1.count }
+        let later = expiries.filter { $0.date != first.date }.reduce(0) { $0 + $1.count }
+        let text = L10n.text("warning.reset_expiry_help", nearest, CompactDuration.text(first.date.timeIntervalSince(now)),
             L10n.date(first.date, time: .standard))
+        return later > 0 ? text + L10n.text("warning.reset_expiry_more", later) : text
     }
 
     /// The collapsed bar's mark for the nearest deadline inside the lead time.

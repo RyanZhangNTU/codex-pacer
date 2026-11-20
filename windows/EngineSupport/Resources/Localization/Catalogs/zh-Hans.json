@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "5d4ebda263f57f493698fe8cb2a64e1a68b771cb3fedf37b1d49561484e08b64",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "b55a18872e612b313f9341518eb35760454a56ce9313b23480778bcff0bc5259",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1452,6 +1452,7 @@
     "warning.quotaDelay": "\u989d\u5ea6\u66f4\u65b0\u5ef6\u8fdf",
     "warning.resetExpiry": "\u91cd\u7f6e\u5238\u5feb\u5230\u671f",
     "warning.reset_expiry_help": "%1$ld \u5f20 Codex \u91cd\u7f6e\u5238\u5c06\u5728 %2$@\u540e\u8fc7\u671f\uff08%3$@\uff09\u3002",
+    "warning.reset_expiry_more": "\u968f\u540e\u8fd8\u6709 %ld \u5f20\u8fc7\u671f\u3002",
     "warning.spendSpike": "DeepSeek \u82b1\u8d39\u5f02\u5e38",
     "warning.ssh": "SSH \u4e3b\u673a\u672a\u8fde\u63a5",
     "welcome.all_marks": "\u5168\u90e8\u6807\u8bc6",

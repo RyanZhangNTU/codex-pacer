@@ -1448,6 +1448,7 @@
     "warning.quotaDelay": "额度更新延迟",
     "warning.resetExpiry": "重置券快到期",
     "warning.reset_expiry_help": "%1$ld 张 Codex 重置券将在 %2$@后过期（%3$@）。",
+    "warning.reset_expiry_more": "随后还有 %ld 张过期。",
     "warning.spendSpike": "DeepSeek 花费异常",
     "warning.ssh": "SSH 主机未连接",
     "welcome.all_marks": "全部标识",

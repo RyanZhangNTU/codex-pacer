@@ -30,7 +30,8 @@ final class ResetExpiryReminderTests: XCTestCase {
         XCTAssertTrue(item.solid, "The last three hours need the user")
         XCTAssertEqual(item.help, L10n.text("warning.reset_expiry_help", 2, CompactDuration.text(7_200), L10n.date(now.addingTimeInterval(7_200), time: .standard)))
         XCTAssertEqual(ResetExpiryReminder.warning(snapshot, leadDays: 2, now: now)?.help,
-            L10n.text("warning.reset_expiry_help", 3, CompactDuration.text(7_200), L10n.date(now.addingTimeInterval(7_200), time: .standard)))
+            L10n.text("warning.reset_expiry_help", 2, CompactDuration.text(7_200), L10n.date(now.addingTimeInterval(7_200), time: .standard))
+                + L10n.text("warning.reset_expiry_more", 1), "Only the nearest deadline's resets expire then; the later one is counted apart")
         let calm = try XCTUnwrap(ResetExpiryReminder.warning(snapshot, leadDays: 2, now: now.addingTimeInterval(7_300)))
         XCTAssertFalse(calm.solid, "A deadline a day away is noticed, not urgent")
         XCTAssertNil(ResetExpiryReminder.warning(try self.snapshot(available: 0), leadDays: 30, now: now), "Nothing is available to lose")

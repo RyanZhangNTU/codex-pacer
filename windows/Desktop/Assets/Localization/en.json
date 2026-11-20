@@ -1448,6 +1448,7 @@
     "warning.quotaDelay": "Quota update delayed",
     "warning.resetExpiry": "Resets expiring",
     "warning.reset_expiry_help": "Codex banked resets expiring in %2$@ (%3$@): %1$ld.",
+    "warning.reset_expiry_more": " More expiring later: %ld.",
     "warning.spendSpike": "DeepSeek spend spike",
     "warning.ssh": "SSH host disconnected",
     "welcome.all_marks": "All Marks",

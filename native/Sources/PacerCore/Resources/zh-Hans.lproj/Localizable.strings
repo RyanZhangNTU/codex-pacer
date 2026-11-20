@@ -1593,6 +1593,7 @@
 "account.panel_resets_expiring" = "重置券 %1$ld · %2$@过期";
 "warning.resetExpiry" = "重置券快到期";
 "warning.reset_expiry_help" = "%1$ld 张 Codex 重置券将在 %2$@后过期（%3$@）。";
+"warning.reset_expiry_more" = "随后还有 %ld 张过期。";
 "notice.reset_expiry" = "Codex 重置券快过期了";
 "main.notify.reset_expiry" = "重置券快到期";
 "main.notify.reset_expiry_note" = "Codex 重置券在提前时间内到期时";
