@@ -91,6 +91,6 @@ public struct QuotaAccountPresentation: Codable, Equatable, Sendable {
         }
         nonExpiringText = count != 0 && (details?.nonExpiringCount ?? 0) > 0 ? L10n.text("account.non_expiring_count", details!.nonExpiringCount) : nil
         unknownText = count != 0 && (details?.unknownCount ?? 0) > 0 ? L10n.text("account.unknown_expiry_count", details!.unknownCount) : nil
-        timeZoneText = expiries.isEmpty ? nil : L10n.text("account.expiry_timezone", DisplayTimeZone.current.identifier)
+        timeZoneText = expiries.isEmpty ? nil : L10n.text("account.expiry_timezone", TimeZone.current.identifier)
     }
 }

@@ -25,7 +25,6 @@ internal sealed record DesktopPreferences
     public int WelcomeGuideVersion { get; init; }
     public string? WhatsNewVersion { get; init; }
     public string Language { get; init; } = "system";
-    public string DisplayTimeZone { get; init; } = "system";
     public string Position { get; init; } = "center";
     public IslandPlacement? IslandPlacement { get; init; }
     public string DisplayMode { get; init; } = "automatic";
@@ -114,7 +113,6 @@ internal sealed record DesktopPreferences
 
     internal bool IsValid => SchemaVersion == 1 && WelcomeGuideVersion >= 0 && (WhatsNewVersion == null || WhatsNewVersion.Length <= 64)
         && Language is "system" or "en" or "zh-Hans"
-        && (DisplayTimeZone == "system" || DisplayTimeZone != null && TimeZoneInfo.TryFindSystemTimeZoneById(DisplayTimeZone, out _))
         && Position is "center" or "topLeft" or "bottomLeft" or "topRight" or "bottomRight"
         && (IslandPlacement == null || IslandPlacement.IsValid)
         && DisplayMode is "automatic" or "notch" or "floating"
@@ -176,7 +174,7 @@ internal sealed record DesktopPreferences
         if (!IsValid) throw new ArgumentException("Invalid Windows settings.");
         return new
         {
-            providerModes = ProviderModes, hideProjects = HideProjects, displayTimeZone = DisplayTimeZone, retentionMinutes = RetentionMinutes,
+            providerModes = ProviderModes, hideProjects = HideProjects, retentionMinutes = RetentionMinutes,
             showEmbeddedCodexSessions = ShowEmbeddedCodexSessions,
             monitorRemoteControl = MonitorRemoteControl,
             monitorDurable = MonitorDurable,

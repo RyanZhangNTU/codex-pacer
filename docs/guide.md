@@ -142,7 +142,7 @@ Click the gear in the expanded island to open the main window.
 | **Collapsed Bar** | What the bar shows and each item's options. |
 | **Expanded Panel** | The panel's blocks, their order and each block's options, including how long finished tasks stay. |
 | **Notifications** | Which events show on the bar or as system notifications, DeepSeek alerts, and for WorkBuddy the credits that count as low and how many days before credits expire you're reminded. |
-| **General** | Open at Login, the Dock icon, language, display time zone and **Hide Project Names** for screen sharing. |
+| **General** | Open at Login, the Dock icon, language and **Hide Project Names** for screen sharing. |
 | **Help & Updates** | Updates, What's New and help. |
 
 Changes apply right away. When an update is available, it shows in the sidebar and on Overview; **Update and Restart** installs it.

@@ -92,13 +92,6 @@ final class LocalizationTests: XCTestCase {
         }
     }
 
-    func testDisplayTimeZoneDefaultsToSystemAndResolvesIdentifiers() throws {
-        let system = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
-        XCTAssertEqual(DisplayTimeZone.resolve(nil, system: system), system)
-        XCTAssertEqual(DisplayTimeZone.resolve("system", system: system), system)
-        XCTAssertEqual(DisplayTimeZone.resolve("Asia/Singapore", system: system).identifier, "Asia/Singapore")
-    }
-
     func testResetMomentNamesTheTimeTodayTheWeekdayThisWeekAndOtherwiseTheDate() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Singapore"))

@@ -6,7 +6,6 @@ struct QuotaCycleChart: View, Equatable {
     let data: QuotaChartData
     let accent: Color
     var referenceColor: Color = PacerPalette.tick
-    let displayTimeZone = DisplayTimeZone.current.identifier
     @State private var selectedDate: Date?
     @State private var selectedExpiryID: Date?
     @StateObject private var presentationCache = QuotaCyclePresentationCache()
@@ -17,7 +16,6 @@ struct QuotaCycleChart: View, Equatable {
     }
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.data == rhs.data && lhs.accent == rhs.accent && lhs.referenceColor == rhs.referenceColor
-            && lhs.displayTimeZone == rhs.displayTimeZone
     }
     private var points: [QuotaPoint] { data.points }
     private var selected: QuotaPoint? {
@@ -214,12 +212,11 @@ private struct ExpiryMarker: Identifiable {
 
 /// Hover changes selection, so it can reuse the cycle's formatted readings.
 private final class QuotaCyclePresentationCache: ObservableObject {
-    private var cached: (data: QuotaChartData, language: AppLanguage, timeZone: String, presentation: QuotaCycleChartPresentation)?
+    private var cached: (data: QuotaChartData, language: AppLanguage, presentation: QuotaCycleChartPresentation)?
     func value(for data: QuotaChartData) -> QuotaCycleChartPresentation {
-        let timeZone = DisplayTimeZone.current.identifier
-        if let cached, cached.data == data, cached.language == L10n.language, cached.timeZone == timeZone { return cached.presentation }
+        if let cached, cached.data == data, cached.language == L10n.language { return cached.presentation }
         let value = QuotaCycleChartPresentation(data: data)
-        cached = (data, L10n.language, timeZone, value)
+        cached = (data, L10n.language, value)
         return value
     }
 }

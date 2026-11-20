@@ -53,16 +53,6 @@ public enum LanguagePreference: String, CaseIterable, Sendable {
     }
 }
 
-public enum DisplayTimeZone {
-    public static let defaultsKey = "displayTimeZone"
-    public static func resolve(_ identifier: String?, system: TimeZone = .current) -> TimeZone {
-        identifier.flatMap(TimeZone.init(identifier:)) ?? system
-    }
-    public static var current: TimeZone {
-        resolve(UserDefaults.standard.string(forKey: defaultsKey))
-    }
-}
-
 public enum L10n {
     /// A language is fixed for one launch, including stored notices and errors.
     public static let language = LanguagePreference.load().resolved()
@@ -109,23 +99,19 @@ public enum L10n {
 
     public static func date(_ value: Date, date dateStyle: Date.FormatStyle.DateStyle = .abbreviated,
                             time timeStyle: Date.FormatStyle.TimeStyle = .shortened) -> String {
-        var style = Date.FormatStyle(date: dateStyle, time: timeStyle).locale(locale)
-        style.timeZone = DisplayTimeZone.current
-        return value.formatted(style)
+        value.formatted(Date.FormatStyle(date: dateStyle, time: timeStyle).locale(locale))
     }
 
     /// A reset short enough for one row: the time today, the weekday within the
     /// coming six days, otherwise the date.
-    public static func moment(_ value: Date, relativeTo now: Date, calendar: Calendar? = nil,
+    public static func moment(_ value: Date, relativeTo now: Date, calendar: Calendar = .current,
                               locale: Locale? = nil) -> String {
-        var effectiveCalendar = calendar ?? .current
-        if calendar == nil { effectiveCalendar.timeZone = DisplayTimeZone.current }
-        let days = effectiveCalendar.dateComponents([.day], from: effectiveCalendar.startOfDay(for: now), to: effectiveCalendar.startOfDay(for: value)).day ?? 0
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: value)).day ?? 0
         var style = days == 0 ? Date.FormatStyle(date: .omitted, time: .shortened)
             : (1...6).contains(days) ? Date.FormatStyle().weekday(.abbreviated).hour().minute()
             : Date.FormatStyle().month(.abbreviated).day().hour().minute()
-        style.calendar = effectiveCalendar
-        style.timeZone = effectiveCalendar.timeZone
+        style.calendar = calendar
+        style.timeZone = calendar.timeZone
         return value.formatted(style.locale(locale ?? Self.locale))
     }
 }

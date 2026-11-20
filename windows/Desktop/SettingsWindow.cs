@@ -60,7 +60,7 @@ internal sealed partial class SettingsWindow : Window
     private CheckBox? login, hideProjects, appButtons, monitorSSH;
     private TextBlock? startupStatus;
     private Grid? startupRow;
-    private ComboBox? language, displayTimeZone;
+    private ComboBox? language;
     private Border? restart;
     private TextBlock? restartHint;
     private bool synchronizing, busy, composing;
@@ -310,26 +310,12 @@ internal sealed partial class SettingsWindow : Window
         Identify(language, "settings.language", ui.Text("language.label"));
         language.SelectionChanged += async (_, _) => { if (!synchronizing && language.SelectedValue is string value) await Change(p => p with { Language = value }); };
         editors.Add(language);
-        displayTimeZone = new ComboBox { VerticalAlignment = VerticalAlignment.Center, MaxWidth = 240, SelectedValuePath = "Tag" };
-        displayTimeZone.Items.Add(new ComboBoxItem { Content = ui.Text("windows.language.system"), Tag = "system" });
-        var identifiers = TimeZoneInfo.GetSystemTimeZones()
-            .Select(zone => zone.HasIanaId ? zone.Id : TimeZoneInfo.TryConvertWindowsIdToIanaId(zone.Id, out var id) ? id : null)
-            .OfType<string>().Append("UTC").Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal);
-        foreach (string id in identifiers) displayTimeZone.Items.Add(new ComboBoxItem { Content = id, Tag = id });
-        Identify(displayTimeZone, "settings.display_time_zone", ui.Text("settings.display_time_zone"));
-        displayTimeZone.SelectionChanged += async (_, _) => {
-            if (!synchronizing && displayTimeZone.SelectedValue is string value)
-                await Change(p => p with { DisplayTimeZone = value });
-        };
-        editors.Add(displayTimeZone);
         // A row titled with the hint and the accent button, as on the Mac.
         var restartButton = new Button { Content = ui.Text("language.restart_now"), VerticalAlignment = VerticalAlignment.Center, Style = (Style)FindResource("SettingsProminentButton") };
         Identify(restartButton, "settings.restart", ui.Text("language.restart_now")); restartButton.Click += (_, _) => RestartRequested?.Invoke(); editors.Add(restartButton);
         restartHint = Label(ui.Text("language.restart_hint")); restartHint.TextWrapping = TextWrapping.Wrap;
         restart = new Border { Child = Row(restartHint, restartButton), Visibility = Visibility.Collapsed };
-        form.Children.Add(SectionTitle(ui.Text("main.section.language"))); form.Children.Add(Card(
-            Row(Label(ui.Text("language.label")), language),
-            Row(Label(ui.Text("settings.display_time_zone")), displayTimeZone), restart));
+        form.Children.Add(SectionTitle(ui.Text("main.section.language"))); form.Children.Add(Card(Row(Label(ui.Text("language.label")), language), restart));
         var privacy = Toggle("settings.hide_projects", "settings.hide_projects_help", "settings.hide_projects", out var privacySwitch); hideProjects = privacySwitch;
         BindToggle(hideProjects, (p, value) => p with { HideProjects = value }); editors.Add(hideProjects);
         form.Children.Add(SectionTitle(ui.Text("main.privacy"))); form.Children.Add(Card(privacy));
@@ -456,7 +442,7 @@ internal sealed partial class SettingsWindow : Window
             form.Children.Clear(); editors.Clear(); form.Children.Add(issue); form.Children.Add(recoveryRestart);
             login = hideProjects = appButtons = monitorSSH = null; startupStatus = null; startupRow = null;
             SetPaneHeader(defaultHeader); paneSubtitle.Text = ""; paneSubtitle.Visibility = Visibility.Collapsed;
-            quotaRows.Clear(); ClearOverview(); form.MaxWidth = headerColumn.MaxWidth = ColumnWidth; language = displayTimeZone = null; restart = null; restartHint = null;
+            quotaRows.Clear(); ClearOverview(); form.MaxWidth = headerColumn.MaxWidth = ColumnWidth; language = null; restart = null; restartHint = null;
             automaticUpdates = null; updateCheck = updateNotesButton = updateInstall = updateCancel = updateDownloadPage = null; updateStatus = null; updateProgress = null;
             ClearAppearance();
             ClearCodex();
@@ -529,7 +515,6 @@ internal sealed partial class SettingsWindow : Window
             if (monitorSSH != null) monitorSSH.IsChecked = session.Current.MonitorSSH;
             RefreshUpdates();
             if (language != null) language.SelectedValue = session.Current.Language;
-            if (displayTimeZone != null) displayTimeZone.SelectedValue = session.Current.DisplayTimeZone;
             string desired = session.Current.Language == "system" ? (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en") : session.Current.Language;
             if (restart != null)
             {
