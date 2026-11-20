@@ -15,7 +15,7 @@ internal sealed class EngineClient : IAsyncDisposable
     private const int Version = 1, MaximumFrame = 1024 * 1024;
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
     private readonly CancellationTokenSource lifetime = new();
-    private readonly SemaphoreSlim writing = new(1, 1);
+    private readonly EngineCommandWriter writer;
     private SynchronizationContext? callbacks;
     private void Publish(Action action)
     {
@@ -58,7 +58,11 @@ internal sealed class EngineClient : IAsyncDisposable
     internal event Action<EngineHostRequest>? HostRequest;
     internal event Action<EngineHostRequest>? ClaudeHostRequest;
 
-    internal EngineClient(TimeSpan? commandTimeout = null) => this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
+    internal EngineClient(TimeSpan? commandTimeout = null)
+    {
+        this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
+        writer = new(this.commandTimeout, lifetime.Token, () => { connectionClosed = true; job?.Dispose(); });
+    }
 
     internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null, EngineCrashLog? crashLog = null, bool? addressGuard = null)
     {
@@ -181,14 +185,7 @@ internal sealed class EngineClient : IAsyncDisposable
         if (!pending.TryAdd(id, response)) throw new InvalidOperationException("Duplicate engine command.");
         try
         {
-            await writing.WaitAsync(deadline.Token).ConfigureAwait(false);
-            try
-            {
-                await input.WriteAsync(frame, deadline.Token).ConfigureAwait(false);
-                await input.WriteAsync(new byte[] { 10 }, deadline.Token).ConfigureAwait(false);
-                await input.FlushAsync(deadline.Token).ConfigureAwait(false);
-            }
-            finally { writing.Release(); }
+            await writer.WriteAsync(input, frame, deadline.Token).ConfigureAwait(false);
             return await response.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!lifetime.IsCancellationRequested && !cancellation.IsCancellationRequested) { throw new IOException("The engine did not acknowledge the command within its deadline."); }

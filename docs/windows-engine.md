@@ -21,7 +21,7 @@ python scripts/windows/test_contract.py
 
 ## Protocol
 
-The engine speaks bounded newline-delimited JSON on stdin and stdout. Requests carry `protocolVersion: 1`, an `id` and a `method`. `initialize` supplies the enabled providers and source roots; `shutdown` closes owned work. New fields must be optional so existing DTOs stay compatible.
+The engine speaks bounded newline-delimited JSON on stdin and stdout. Requests carry `protocolVersion: 1`, an `id` and a `method`. `initialize` supplies the enabled providers and source roots; `shutdown` closes owned work. New fields must be optional so existing DTOs stay compatible. The host serializes stdin writes. Once a frame starts, its writer keeps the pipe until the newline is delivered. A caller's timeout can abandon the reply immediately. A transport failure closes the engine before another command can use a partial frame.
 
 - Never save live protocol bodies: they carry task display metadata. Diagnostics and acceptance records exclude credentials, account identity and private task content.
 - The optional `hello.harnessModules` lists extra module IDs supported by the engine. A host that understands them sets `supportsHarnessModules` on `initialize`. Without that exchange, both sides keep the original three modules on protocol 1.

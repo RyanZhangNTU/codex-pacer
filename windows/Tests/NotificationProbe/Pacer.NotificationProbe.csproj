@@ -18,6 +18,7 @@
     <Compile Include="../../Desktop/WindowsPlatformPolicy.cs" Link="WindowsPlatformPolicy.cs"/>
     <Compile Include="../../Desktop/NotificationActions.cs" Link="NotificationActions.cs"/>
     <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
+    <Compile Include="../../Desktop/EngineCommandWriter.cs" Link="EngineCommandWriter.cs"/>
     <Compile Include="../../Desktop/EngineLaunch.cs" Link="EngineLaunch.cs"/>
     <Compile Include="../../Desktop/ModuleIds.cs" Link="ModuleIds.cs"/>
     <Compile Include="../../Desktop/EngineCrashLog.cs" Link="EngineCrashLog.cs"/>
