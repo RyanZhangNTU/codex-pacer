@@ -74,8 +74,9 @@ def select_slow_form(home,python):
     (home/'settings.json').write_text(json.dumps(value),encoding='utf-8')
 
 def run(arguments, raw=None, shell=None, expected=0):
+    # Only a hang guard: a cold PowerShell on a hosted runner has taken over 15 s to start.
     result = subprocess.run(arguments, executable=shell, input=raw, env=environment,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
                             creationflags=subprocess.CREATE_NO_WINDOW)
     assert result.returncode == expected, 'A synthetic runtime command failed; provider contents were not logged'
     assert not result.stderr, 'A runtime command returned diagnostics'
