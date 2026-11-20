@@ -40,7 +40,7 @@ public actor ClaudeSSHDiscovery {
         let signature = sshSignature(userHome: userHome)
         var result: [RemoteActivityTarget] = [], keys: [String: Int] = [:]
         for target in codex {
-            let key = await routeKey(host: target.alias, port: nil, userHome: userHome, signature: signature)
+            let key = await routeKey(host: target.effectiveSSHHost, port: target.sshPort, userHome: userHome, signature: signature)
             guard !Task.isCancelled else { return [] }
             if keys[key] == nil { keys[key] = result.count; result.append(target) }
         }
@@ -116,13 +116,16 @@ public actor ClaudeSSHDiscovery {
         SHA256.hash(data: Data(value.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
     }
     /// Uses the same canonical route keys while retaining Codex's remote home.
+    /// An SSH config alias and a host added in Desktop can reach the same
+    /// account; the first entry keeps the helper and lists the others.
     public func configuredCodex(home: URL, userHome: URL) async -> [RemoteActivityTarget] {
         let signature = sshSignature(userHome: userHome)
-        var seen = Set<String>(), result: [RemoteActivityTarget] = []
+        var keys: [String: Int] = [:], result: [RemoteActivityTarget] = []
         for target in RemoteActivityTarget.configured(home: home) {
-            let key = await routeKey(host: target.alias, port: nil, userHome: userHome, signature: signature)
+            let key = await routeKey(host: target.effectiveSSHHost, port: target.sshPort, userHome: userHome, signature: signature)
             guard !Task.isCancelled else { return [] }
-            if seen.insert(key).inserted { result.append(target) }
+            if let index = keys[key] { result[index].sameMachineIDs.append(target.id); continue }
+            keys[key] = result.count; result.append(target)
         }
         return result
     }

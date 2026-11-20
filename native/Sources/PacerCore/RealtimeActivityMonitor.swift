@@ -69,6 +69,9 @@ public actor RealtimeActivityMonitor {
     }
     private var primaryLocalIsDesktop = false
     private var attentionRequests: [String: PendingAttentionRequest] = [:]
+    /// Desktop entries that reach a machine another entry already follows,
+    /// mapped to that entry, so its threads show once under one host.
+    private var sameMachineHosts: [String: String] = [:]
     private var failed: [String: Source] = [:]
     private var retryAfter: [String: Date] = [:]
     private var callback: (@Sendable (RealtimeActivitySnapshot) async -> Void)?
@@ -329,6 +332,8 @@ public actor RealtimeActivityMonitor {
         if includeSSH, let discover = services.sshTargets { targets = await discover(home) }
         else { targets = includeSSH ? RemoteActivityTarget.readConfiguration(home: home) ?? [] : [] }
         guard generation == startGeneration else { return }
+        sameMachineHosts = Dictionary(targets.flatMap { target in target.sameMachineIDs.map { ($0, target.id) } },
+                                      uniquingKeysWith: { first, _ in first })
         if includeSSH && useSSHFallback {
             sources += targets.map { Source(id: $0.id, name: $0.name, alias: $0.alias, home: $0.home, target: $0, refreshPolicy: refreshPolicy) }
         }
@@ -338,7 +343,9 @@ public actor RealtimeActivityMonitor {
                                       accountScope: scope, isRevalidating: revalidating)
         let controlTargets = verifiedCatalog.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }) }
         knownControls = controlTargets
-        var names = Dictionary(targets.map { ($0.id, $0.name) } + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
+        // Desktop forwards only listed hosts; same-machine entries are folded in on arrival.
+        let sameMachineNames = targets.flatMap { target in target.sameMachineIDs.map { ($0, target.name) } }
+        var names = Dictionary(targets.map { ($0.id, $0.name) } + sameMachineNames + controls.map { ($0.id, $0.name) }, uniquingKeysWith: { _, name in name })
         if services.supportsDurable, configuration?.includeDurable != false { names[DurableActivityCatalog.hostID] = "" }
         else { durableAccountScope = nil }
         let desktopAvailable = services.desktopAvailable(home)
@@ -408,6 +415,9 @@ public actor RealtimeActivityMonitor {
     }
     public func statuses() -> [String: RuntimeStreamStatus] {
         var result = connections.mapValues { $0.state.status }
+        for (host, connection) in connections where ConnectionSource.isManagedSSHSourceID(host) {
+            result[host]?.sourceName = connection.source.name
+        }
         if let desktop {
             for (host, state) in desktop.states where host != DurableActivityCatalog.hostID && (state.status.connected || result[host] == nil) {
                 // Saved routes are fallback discovery hints, not device entries.
@@ -423,6 +433,11 @@ public actor RealtimeActivityMonitor {
         for (host, target) in knownControls ?? [:] where result[host] == nil {
             var status = RuntimeStreamStatus()
             status.sourceName = target.name; status.remoteHostOnline = target.online
+            result[host] = status
+        }
+        for (host, source) in failed where result[host] == nil && ConnectionSource.isManagedSSHSourceID(host) {
+            var status = RuntimeStreamStatus()
+            status.sourceName = source.name
             result[host] = status
         }
         if localUnavailable || (primaryLocalIsDesktop && desktop == nil) { result["local"] = RuntimeStreamStatus() }
@@ -500,8 +515,9 @@ public actor RealtimeActivityMonitor {
     }
     private func receiveDesktop(_ bytes: Data, id: UUID) async {
         guard var current = desktop, current.id == id,
-              let frame = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return }
-        let host = frame["hostId"] as? String ?? "local"
+              var frame = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return }
+        var host = frame["hostId"] as? String ?? "local"
+        if let kept = sameMachineHosts[host] { host = kept; frame["hostId"] = kept }
         if host.hasPrefix(ConnectionSource.controlPrefix) {
             guard let config = configuration, config.includeRemoteControl else { return }
             let authorization = controlAuthorization(home: config.home)
@@ -632,6 +648,7 @@ public actor RealtimeActivityMonitor {
                 guard let route = build(target) else { failed[source.id] = source; return }
                 arguments = route + [command]
             } else {
+                guard !ConnectionSource.isManagedSSHSourceID(source.id) else { failed[source.id] = source; return }
                 arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
                     "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
             }

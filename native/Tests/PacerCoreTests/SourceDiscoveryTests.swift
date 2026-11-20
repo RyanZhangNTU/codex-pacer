@@ -188,6 +188,52 @@ final class SourceDiscoveryTests: XCTestCase {
         try write(ownerValue: "signed-out")
         XCTAssertTrue(RemoteActivityTarget.configured(home: home).isEmpty)
     }
+
+    func testCodexManagedSSHUsesTheSavedRouteAndCurrentAccount() throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        let owner = String(repeating: "a", count: 64)
+        let legacy = "remote-ssh-discovered:alias"
+        let id = "remote-ssh-codex-managed:019a0000-0000-7000-8000-000000000001"
+        let off = "remote-ssh-codex-managed:off"
+        let malformed = "remote-ssh-codex-managed:malformed"
+        let noOptions = "remote-ssh-codex-managed:defaults"
+        let flags = "remote-connection-auto-connect-by-host-id"
+        let routes = "app-server-migrated-pinned-thread-ids-by-host"
+        let managed: [String: Any] = ["hostId": id, "source": "codex-managed", "alias": NSNull(),
+            "displayName": "Build server", "hostname": "fixture@build.example.test", "sshPort": 2222, "identity": "~/fixture key"]
+        let other: [[String: Any]] = [
+            ["hostId": off, "source": "codex-managed", "hostname": "off.example.test"],
+            ["hostId": malformed, "source": "codex-managed", "hostname": "bad.example.test", "sshPort": 65536],
+            ["hostId": noOptions, "source": "codex-managed", "hostname": "default.example.test", "sshPort": NSNull(), "identity": NSNull()],
+            ["hostId": legacy, "source": "discovered", "alias": "alias"]]
+        let state: [String: Any] = [
+            "codex-managed-remote-connections": [managed, managed] + other,
+            "electron-renderer-content-owner": owner,
+            flags: [id: false, off: true],
+            "electron-account-remote-preference:\(flags):\(owner)": [legacy: true, id: true, malformed: true, noOptions: true],
+            "electron-owner-value:\(routes):\(owner)": [id + ":/srv/codex": [] as [String]]]
+        try JSONSerialization.data(withJSONObject: state).write(to: home.appendingPathComponent(".codex-global-state.json"))
+
+        let targets = RemoteActivityTarget.configured(home: home)
+        XCTAssertEqual(targets.map(\.id), [legacy, id, noOptions])
+        let routed = try XCTUnwrap(targets.first { $0.id == id })
+        XCTAssertEqual(routed.name, "Build server")
+        XCTAssertEqual(routed.home, "/srv/codex")
+        XCTAssertEqual(routed.sshIdentityFile, "~/fixture key")
+        let arguments = try XCTUnwrap(routed.sshArguments())
+        XCTAssertEqual(Array(arguments.suffix(6)), ["-p", "2222", "-i", ("~/fixture key" as NSString).expandingTildeInPath,
+                                                   "--", "fixture@build.example.test"])
+        let defaults = try XCTUnwrap(targets.first { $0.id == noOptions })
+        XCTAssertNil(defaults.sshPort)
+        XCTAssertNil(defaults.sshIdentityFile)
+        XCTAssertEqual(defaults.home, "~/.codex")
+        let claude = RemoteActivityTarget.claudeCodexTargets(home: home)
+        XCTAssertEqual(claude.map(\.id), [legacy, id, noOptions], "Claude follows hosts added in Desktop too")
+        let claudeRoute = try XCTUnwrap(claude.first { $0.id == id })
+        XCTAssertEqual(claudeRoute.home, "~/.claude")
+        XCTAssertEqual(claudeRoute.sshArguments(), routed.sshArguments(), "Claude reaches the host by the same saved route")
+    }
+
     func testSshAndRemoteControlDiscoveryShareOneScanAndFollowEachRewrite() throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
         let file = home.appendingPathComponent(".codex-global-state.json")

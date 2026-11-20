@@ -83,7 +83,7 @@ Codex, Claude Code, DeepSeek Harness and WorkBuddy each report how much of your 
 
 Estimates are the agent's own guess, so a ring can move back. Rings are on by default; turn them off for each service with **Progress Ring** on its page in the main window. Start a new session after turning a ring on.
 
-Codex tasks on SSH hosts, and in WSL on Windows, report too: Pacer sets reporting up on each connected host that runs Codex. Tasks that were already running pick it up once Codex reconnects to the host.
+Codex tasks on SSH hosts, and in WSL on Windows, report too: Pacer sets reporting up on each connected host that runs Codex, including hosts added directly in Codex Desktop. Tasks that were already running pick it up once Codex reconnects to the host.
 
 Turn on **Include Codex Dot Tasks** on the Remote page to see Dot Durable tasks. It is off by default because checking them uses more power; after an upgrade it stays on if Dot tasks already reported progress on this computer. Pacer labels Dot tasks assigned to this computer with `Dot`, even when their chats are closed. On Windows this works with the Microsoft Store version of Codex Desktop and its default profile. The Codex **Progress Ring** switch sets up percentage reporting. Restart Codex Desktop after turning the ring on so Dot tasks pick it up. Turning the ring off stops new reports right away. Pacer still shows whether the task is running or has finished.
 
@@ -123,7 +123,7 @@ Once you trust it, the steps fold away into one line: it works in new WorkBuddy 
 
 After you click **Open** or **Restart**, a small floating guide shows in the corner of your screen. WorkBuddy takes some seconds to start and show its connectors, so the guide first asks you to wait, then shows steps 4 and 5, each with a picture of what to click. It follows along as you click, even with Settings closed, and needs no permission. It closes by itself when you're done, or with its close button. If you turn the tool off or remove it in WorkBuddy and then turn the ring off and on, Pacer asks you to restart WorkBuddy so it reads the tool again. If a Pacer update changes the tool, WorkBuddy asks you to trust it again, and the sidebar, Overview and the expanded panel say so. Turning the ring off removes the tool. If WorkBuddy keeps its data elsewhere, choose the folder under **Custom Locations**.
 
-**SSH hosts.** Pacer follows the hosts you already use in Codex and Claude. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.
+**SSH hosts.** Pacer follows the hosts you already use in Codex and Claude, including hosts added directly in Codex Desktop. A machine you reach through more than one entry is followed once. A host needs SSH access without a password prompt and Python 3. If a host disconnects, use **Retry** on the **Remote** page.
 
 **WSL on Windows.** Turn on WSL monitoring in **Settings → Remote** when you need it. At least one distribution must be installed. Monitoring increases power use. Use **Refresh Now** after installing a distribution or to check which ones are running.
 

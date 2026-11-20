@@ -2298,7 +2298,8 @@ final class IslandModel: ObservableObject {
                     if self.remoteControlDirectory != snapshot.remoteControlDirectory {
                         self.remoteControlDirectory = snapshot.remoteControlDirectory
                     }
-                    self.receiveRemoteUpdate(snapshot.activities, statuses: snapshot.statuses, unavailable: snapshot.unavailable,
+                    self.receiveRemoteUpdate(snapshot.activities, statuses: snapshot.statuses,
+                        unavailable: snapshot.unavailableSources.filter(ConnectionSource.isSSHSourceID),
                         requests: snapshot.attention, names: snapshot.names, performance: snapshot.performance,
                         remoteControlBindings: snapshot.bindings, durableAccountScope: snapshot.durableAccountScope)
                 }

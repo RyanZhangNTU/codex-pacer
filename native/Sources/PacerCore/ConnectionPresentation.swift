@@ -17,15 +17,42 @@ public struct ConnectionSource: Equatable, Identifiable {
     public var id: String { provider.rawValue + ":" + key }
 
     public static let sshPrefix = "remote-ssh-discovered:", controlPrefix = "remote-control:"
+    public static let managedSSHPrefix = "remote-ssh-codex-managed:"
     public static let wslPrefix = "wsl:"
+
+    public static func isManagedSSHSourceID(_ id: String) -> Bool {
+        isValidSSHSourceID(id, prefix: managedSSHPrefix)
+    }
+
+    public static func isSSHSourceID(_ id: String) -> Bool {
+        id.hasPrefix(sshPrefix) || isManagedSSHSourceID(id)
+    }
+
+    static func isValidSSHSourceID(_ id: String, prefix: String) -> Bool {
+        guard id.hasPrefix(prefix) else { return false }
+        return String(id.dropFirst(prefix.count)).range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#,
+            options: .regularExpression) != nil
+    }
+
+    // Failed helpers can be identified by a legacy alias or by their Desktop source ID.
+    static func unavailableSSHSourceID(_ value: String) -> String {
+        isSSHSourceID(value) ? value : sshPrefix + value
+    }
+
+    static func sshName(_ id: String, displayName: String?) -> String {
+        if let displayName { return displayName }
+        if id.hasPrefix(sshPrefix) { return String(id.dropFirst(sshPrefix.count)) }
+        let suffix = id.dropFirst(managedSSHPrefix.count)
+        return L10n.text("connections.kind.ssh") + " (" + String(suffix.suffix(8)) + ")"
+    }
 
     /// True when an SSH source's stream failed while its host is reachable
     /// and the provider is available there, or when a monitored SSH source
     /// failed outright (its helper exited, so it has no stream status left):
     /// the compact bar's SSH reminder.
     public static func hasSSHFailure(in statuses: [[String: RuntimeStreamStatus]], unavailable: [String] = []) -> Bool {
-        unavailable.contains { $0.hasPrefix(sshPrefix) } ||
-            statuses.contains { $0.contains { $0.key.hasPrefix(sshPrefix) && $0.value.hasConnectionFailure } }
+        unavailable.contains(where: isSSHSourceID) ||
+            statuses.contains { $0.contains { isSSHSourceID($0.key) && $0.value.hasConnectionFailure } }
     }
 
     /// Connected sources report their subscribed sessions; a reachable host
@@ -45,8 +72,9 @@ public struct ConnectionSource: Equatable, Identifiable {
                     name = L10n.text("common.local"); kind = provider.displayName
                 } else if key == ClaudeCloudProjectState.sourceID {
                     name = L10n.text("connections.kind.claude_cloud"); kind = provider.displayName
-                } else if key.hasPrefix(sshPrefix) {
-                    name = String(key.dropFirst(sshPrefix.count)); kind = L10n.text("connections.kind.ssh")
+                } else if isSSHSourceID(key) {
+                    name = sshName(key, displayName: key.hasPrefix(sshPrefix) ? nil : status.sourceName ?? names[key])
+                    kind = L10n.text("connections.kind.ssh")
                 } else if key.hasPrefix(controlPrefix) {
                     name = status.sourceName ?? names[key] ?? L10n.text("connections.kind.remote_control") + " (" + String(key.suffix(8)) + ")"
                     kind = L10n.text("connections.kind.remote_control")
@@ -59,10 +87,10 @@ public struct ConnectionSource: Equatable, Identifiable {
                     sessions: state == .connected ? status.attachedThreads : 0))
             }
         }
-        let listed = Set(result.filter { $0.provider == .codex }.map(\.name))
-        for name in unavailableSSH where !listed.contains(name) {
-            result.append(.init(provider: .codex, key: sshPrefix + name, name: name, kind: L10n.text("connections.kind.ssh"),
-                state: .retrying, sessions: 0))
+        let listed = Set(result.filter { $0.provider == .codex }.map(\.key))
+        for key in Set(unavailableSSH.map(unavailableSSHSourceID)).subtracting(listed) {
+            result.append(.init(provider: .codex, key: key, name: sshName(key, displayName: names[key]),
+                kind: L10n.text("connections.kind.ssh"), state: .retrying, sessions: 0))
         }
         let providerOrder = AgentProvider.allCases
         return result.sorted {
@@ -91,46 +119,54 @@ public struct SSHHost: Equatable, Identifiable {
         public let state: State
         public let sessions: Int
     }
+    public let id: String
     public let alias: String
     public let name: String
     public let modules: [Module]
     /// Why Claude's request speeds on this host are estimated, while connected
     /// and no exact span has arrived; `.none` hides the note.
     public var claudeTelemetryNote: ClaudeTelemetryConflict = .none
-    public var id: String { alias }
     public var claudeSetupFailed: Bool { modules.contains { $0.provider == .claude && $0.state == .setupFailed } }
 
     /// `codex`/`claude` are nil for a disabled module. Claude setup runs by
     /// itself, so a connected host is only "connected" once its hooks are current.
     public static func hosts(codex: [String: RuntimeStreamStatus]?, unavailableCodex: [String],
-                      claude: [String: RuntimeStreamStatus]?, claudeAliases: [String], configured: Set<String>,
+                      claude: [String: RuntimeStreamStatus]?, claudeAliases: [String], claudeIDs: [String: String] = [:],
+                      configured: Set<String>,
                       configuring: Set<String>, failed: Set<String>, names: [String: String] = [:],
                       telemetryConflicts: [String: ClaudeTelemetryConflict] = [:]) -> [SSHHost] {
         let prefix = ConnectionSource.sshPrefix
         var modules: [String: [Module]] = [:], notes: [String: ClaudeTelemetryConflict] = [:]
         if let codex {
-            let aliases = codex.keys.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) } + unavailableCodex
-            for alias in Set(aliases) {
-                let status = codex[prefix + alias]
+            let ids = Set(codex.keys.filter(ConnectionSource.isSSHSourceID) + unavailableCodex.map(ConnectionSource.unavailableSSHSourceID))
+            for id in ids {
+                let status = codex[id]
                 let state: State = status?.connected == true ? .connected : status?.sourceAvailable == false ? .paused : .retrying
-                modules[alias, default: []].append(.init(provider: .codex, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
+                modules[id, default: []].append(.init(provider: .codex, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
             }
         }
         if let claude {
             for alias in Set(claudeAliases) {
-                let status = claude[prefix + alias]
+                // A host added in Desktop keeps its Desktop ID, so Claude joins the Codex row.
+                let id = claudeIDs[alias] ?? prefix + alias
+                let status = claude[id]
                 let state: State = configuring.contains(alias) ? .configuring :
                     status?.sourceAvailable == false ? .paused :
                     status?.hasConnectionFailure == true ? .retrying :
                     failed.contains(alias) ? .setupFailed :
                     status?.connected == true ? (configured.contains(alias) ? .connected : .configuring) : .waiting
-                modules[alias, default: []].append(.init(provider: .claude, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
-                if state == .connected, status?.exactRequestSpans != true, let note = telemetryConflicts[alias] { notes[alias] = note }
+                modules[id, default: []].append(.init(provider: .claude, state: state, sessions: state == .connected ? status?.attachedThreads ?? 0 : 0))
+                if state == .connected, status?.exactRequestSpans != true, let note = telemetryConflicts[alias] { notes[id] = note }
             }
         }
-        return modules.map {
-            var host = SSHHost(alias: $0.key, name: names[$0.key] ?? $0.key, modules: $0.value.sorted { $0.provider == .codex && $1.provider != .codex })
-            host.claudeTelemetryNote = notes[$0.key] ?? .none
+        let claudeAlias = Dictionary(claudeIDs.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
+        return modules.map { id, values in
+            let discovered = id.hasPrefix(prefix)
+            let alias = discovered ? String(id.dropFirst(prefix.count)) : claudeAlias[id] ?? String(id.dropFirst(ConnectionSource.managedSSHPrefix.count))
+            let displayName = discovered ? names[alias] : codex?[id]?.sourceName ?? names[id] ?? claudeAlias[id].flatMap { names[$0] }
+            var host = SSHHost(id: id, alias: alias, name: ConnectionSource.sshName(id, displayName: displayName),
+                modules: values.sorted { $0.provider == .codex && $1.provider != .codex })
+            host.claudeTelemetryNote = notes[id] ?? .none
             return host
         }
             .sorted {
@@ -169,7 +205,7 @@ public struct ConnectionSummary: Equatable {
         }
         for host in hosts {
             for module in host.modules where enabled.contains(module.provider) {
-                let id = module.provider.rawValue + ":" + ConnectionSource.sshPrefix + host.alias
+                let id = module.provider.rawValue + ":" + host.id
                 let state: EntryState = switch module.state {
                 case .setupFailed, .retrying: .retrying
                 case .configuring, .waiting: .connecting

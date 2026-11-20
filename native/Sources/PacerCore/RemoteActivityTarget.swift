@@ -1,15 +1,19 @@
 import Foundation
+import CryptoKit
 
 public struct RemoteActivityTarget: Equatable, Sendable {
     public let id: String
     public let name: String
     public let alias: String
     public let home: String
-    /// Claude may store a destination directly instead of an SSH config alias.
+    /// Desktop can store a destination directly instead of an SSH config alias.
     /// `alias` remains the stable, bounded source key used by existing state.
     public var sshDestination: String? = nil
     public var sshPort: Int? = nil
     public var sshIdentityFile: String? = nil
+    /// Other Desktop entries that reach the same account on the same machine.
+    /// One helper reads that machine for all of them.
+    public var sameMachineIDs: [String] = []
 
     public init(id: String, name: String, alias: String, home: String,
                 sshDestination: String? = nil, sshPort: Int? = nil, sshIdentityFile: String? = nil) {
@@ -45,8 +49,13 @@ public struct RemoteActivityTarget: Equatable, Sendable {
         await discovery.configured(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome)
     }
     /// Initial Codex routes are available without suspended SSH route reads.
+    /// Claude follows every Codex host the same way, keeping its Desktop ID
+    /// so both modules share one host row, and its saved route.
     public static func claudeCodexTargets(home: URL) -> [RemoteActivityTarget] {
-        configured(home: home).map { .init(id: $0.id, name: $0.name, alias: $0.alias, home: "~/.claude") }
+        configured(home: home).map {
+            .init(id: $0.id, name: $0.name, alias: $0.alias, home: "~/.claude",
+                  sshDestination: $0.sshDestination, sshPort: $0.sshPort, sshIdentityFile: $0.sshIdentityFile)
+        }
     }
     /// Codex's global state can exceed a megabyte; reparse it only when it changes.
     static func readConfiguration(home: URL) -> [RemoteActivityTarget]? { CodexGlobalStateSummary.read(home: home).sshTargets }
@@ -86,16 +95,53 @@ public struct RemoteActivityTarget: Equatable, Sendable {
                 try value.forEachField(maximumCount: 4096) { route, _ in routes.append(route) }
             }
         } catch { routes = [] }
-        var targets: [RemoteActivityTarget] = []
-        for row in rows where targets.count < 8 {
-            guard let c = try? row.fields(["source", "hostId", "alias", "displayName"]),
-                  c["source"]?.string() == "discovered", let id = c["hostId"]?.string(limit: 4096),
-                  id.hasPrefix("remote-ssh-discovered:"), flags[id] == true,
-                  let alias = c["alias"]?.string(),
-                  alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$"#, options: .regularExpression) != nil else { continue }
-            let path = routes.first { $0.hasPrefix(id + ":/") }.map { String($0.dropFirst(id.count + 1)) } ?? "~/.codex"
-            targets.append(RemoteActivityTarget(id: id, name: c["displayName"]?.string(limit: 4096) ?? alias, alias: alias, home: path))
+        let maximumTargets = 8
+        var discovered: [RemoteActivityTarget] = [], managed: [RemoteActivityTarget] = []
+        var seen = Set<String>()
+        for row in rows {
+            if discovered.count == maximumTargets { break }
+            guard let c = try? row.fields(["source", "hostId", "alias", "displayName", "hostname", "sshPort", "identity"]),
+                  let id = c["hostId"]?.string(limit: 4096), flags[id] == true, !seen.contains(id) else { continue }
+            var path: String {
+                routes.first { $0.hasPrefix(id + ":/") }.map { String($0.dropFirst(id.count + 1)) } ?? "~/.codex"
+            }
+            switch c["source"]?.string() {
+            case "discovered":
+                guard id.hasPrefix(ConnectionSource.sshPrefix), let alias = c["alias"]?.string(),
+                      alias.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil else { continue }
+                discovered.append(.init(id: id, name: c["displayName"]?.string(limit: 4096) ?? alias, alias: alias, home: path))
+            case "codex-managed":
+                guard managed.count < maximumTargets, ConnectionSource.isManagedSSHSourceID(id),
+                      let target = managedTarget(c, id: id, home: path) else { continue }
+                managed.append(target)
+            default:
+                continue
+            }
+            seen.insert(id)
         }
-        return targets
+        // Keep existing SSH aliases eligible for Codex and Claude within the shared cap.
+        return discovered + managed.prefix(maximumTargets - discovered.count)
+    }
+
+    private static func managedTarget(_ fields: [String: JSONFieldView], id: String, home: String) -> RemoteActivityTarget? {
+        guard let host = fields["hostname"]?.string(limit: 513), !host.isEmpty, host.utf8.count <= 512 else { return nil }
+        let port: Int?
+        if let value = fields["sshPort"], !value.isNull {
+            guard let number = value.integer(), (1...65535).contains(number) else { return nil }
+            port = number
+        } else { port = nil }
+        let identity: String?
+        if let value = fields["identity"], !value.isNull {
+            guard let path = value.string(limit: 4097), !path.isEmpty, path.utf8.count <= 4096 else { return nil }
+            identity = path
+        } else { identity = nil }
+        let name = fields["displayName"]?.string()?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = name.flatMap { value in
+            !value.isEmpty && !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) ? value : nil
+        }
+        // The app uses the original ID for thread links. The helper needs a bounded key.
+        let alias = "codex-" + SHA256.hash(data: Data(id.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+        return .init(id: id, name: ConnectionSource.sshName(id, displayName: displayName), alias: alias, home: home,
+                     sshDestination: host, sshPort: port, sshIdentityFile: identity)
     }
 }

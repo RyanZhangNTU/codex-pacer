@@ -49,13 +49,15 @@ struct SettingsConnectionsPane: View {
 
     static func hosts(_ model: IslandModel) -> [SSHHost] {
         guard model.monitorsSSH else { return [] }
-        let prefix = ConnectionSource.sshPrefix, targets = model.claudeRemoteTargets
+        let targets = model.claudeRemoteTargets
         func aliases<S: Sequence>(_ ids: S) -> Set<String> where S.Element == String {
-            Set(ids.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
+            let ids = Set(ids)
+            return Set(targets.filter { ids.contains($0.id) }.map(\.alias))
         }
         return SSHHost.hosts(
             codex: model.isModuleEnabled(.codex) ? model.providerStreamStatuses(.codex) : nil, unavailableCodex: model.unavailableSSH,
             claude: model.isModuleEnabled(.claude) ? model.providerStreamStatuses(.claude) : nil, claudeAliases: targets.map(\.alias),
+            claudeIDs: Dictionary(targets.map { ($0.alias, $0.id) }, uniquingKeysWith: { first, _ in first }),
             configured: Set(targets.filter { model.claudeRemoteConfigured($0) }.map(\.alias)),
             configuring: aliases(model.configuringClaudeHosts), failed: aliases(model.claudeRemoteSetupFailures.keys),
             names: Dictionary(targets.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }),
@@ -103,11 +105,12 @@ struct SettingsConnectionsPane: View {
             CardToggle(title: L10n.text("settings.monitor_durable"), info: L10n.text("settings.durable_help"), isOn: $monitorDurable)
                 .disabled(!codexEnabled)
         }
-        let others = sources.filter { !$0.key.hasPrefix(ConnectionSource.sshPrefix) && !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
-        if !others.isEmpty {
+        let others = sources.filter { !ConnectionSource.isSSHSourceID($0.key) && !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
+        let canRetry = sources.contains(where: { $0.state == .retrying }) || hosts.contains(where: \.claudeSetupFailed)
+        if !others.isEmpty || canRetry {
             MainCard(title: L10n.text("connections.section.tasks")) {
                 ForEach(others) { source in sourceRow(source) }
-                if sources.contains(where: { $0.state == .retrying }) || hosts.contains(where: \.claudeSetupFailed) {
+                if canRetry {
                     CardRow(title: L10n.text("main.remote.retry_all")) {
                         Button(L10n.text("connections.retry")) { retryAll() }.buttonStyle(.main)
                     }
@@ -121,7 +124,7 @@ struct SettingsConnectionsPane: View {
         for host in hosts where host.claudeSetupFailed { retrySetup(host) }
     }
     private func retrySetup(_ host: SSHHost) {
-        Task { _ = await model.configureClaudeRemote(targetID: ConnectionSource.sshPrefix + host.alias) }
+        Task { _ = await model.configureClaudeRemote(targetID: host.id) }
     }
 
     private func sourceRow(_ source: ConnectionSource) -> some View {
@@ -170,7 +173,7 @@ struct SettingsConnectionsPane: View {
             Spacer(minLength: 8)
             if host.claudeSetupFailed {
                 Button(L10n.text("connections.retry")) { retrySetup(host) }.buttonStyle(.main)
-                    .help(model.claudeRemoteSetupFailures[ConnectionSource.sshPrefix + host.alias] ?? "")
+                    .help(model.claudeRemoteSetupFailures[host.id] ?? "")
             }
         }
         .accessibilityElement(children: .combine)

@@ -2433,7 +2433,7 @@ actor EngineRuntime {
             streams[provider] = streams[provider]?.filter { source, _ in
                 if source == "local" { return true }
                 if !demo { return allowsRemoteSource(source, provider: provider) }
-                if source.hasPrefix(ConnectionSource.sshPrefix) { return monitorSSH }
+                if ConnectionSource.isSSHSourceID(source) { return monitorSSH }
                 if source.hasPrefix(ConnectionSource.controlPrefix) { return monitorRemoteControl }
                 if source.hasPrefix(ConnectionSource.wslPrefix) { return monitorWSL }
                 return source == ClaudeCloudProjectState.sourceID && showClaudeCloudProjects
@@ -2685,7 +2685,7 @@ actor EngineRuntime {
                 }
         }
         if !demo, monitorSSH {
-            status += claudeRemoteStatuses.filter { $0.key.hasPrefix(ConnectionSource.sshPrefix) }.map { id, value in
+            status += claudeRemoteStatuses.filter { ConnectionSource.isSSHSourceID($0.key) }.map { id, value in
                 EngineSource(id: "claude:" + id, provider: "claude", available: value.connected && value.sourceAvailable != false,
                     transport: "ssh", reason: nil)
             }
@@ -2699,7 +2699,7 @@ actor EngineRuntime {
             status.append(.init(id: "codex:desktop-runtime", provider: "codex",
                 available: desktop.status.connected && desktop.status.sourceAvailable == true, transport: "desktop-ipc", reason: nil))
             if monitorSSH {
-                status += desktop.remoteStatuses.filter { $0.key.hasPrefix(ConnectionSource.sshPrefix) }.map { id, value in
+                status += desktop.remoteStatuses.filter { ConnectionSource.isSSHSourceID($0.key) }.map { id, value in
                     EngineSource(id: "codex:" + id, provider: "codex", available: value.connected && value.sourceAvailable != false, transport: "ssh", reason: nil)
                 }
             }
@@ -2888,7 +2888,7 @@ actor EngineRuntime {
                         return allowsRemoteSource(host, provider: activity.provider) && activity.threadURL != nil
                     }
                     if monitorWSL, wslServices?.registry.profile(id: host, provider: activity.provider) != nil { return true }
-                    if host.hasPrefix(ConnectionSource.sshPrefix) { return allowsRemoteSource(host, provider: activity.provider) && activity.threadID.flatMap(UUID.init(uuidString:)) != nil }
+                    if ConnectionSource.isSSHSourceID(host) { return allowsRemoteSource(host, provider: activity.provider) && activity.threadID.flatMap(UUID.init(uuidString:)) != nil }
                     return activity.provider == .codex && allowedRemoteControlHosts.contains(host) && activity.threadURL != nil
                 }
                 #if os(Windows)

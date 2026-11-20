@@ -25,6 +25,44 @@ final class ConnectionPagePresentationTests: XCTestCase {
         let encoded = try JSONEncoder().encode(page), roundTrip = try JSONDecoder().decode(ConnectionPagePresentation.self, from: encoded)
         XCTAssertEqual(roundTrip, page)
     }
+    func testClaudeJoinsTheCodexRowOfAHostAddedInDesktop() throws {
+        let managed = ConnectionSource.managedSSHPrefix + "build"
+        let page = ConnectionPagePresentation(enabledProviders: [.codex, .claude], statuses: [
+            .codex: [managed: status(sessions: 2, name: "Build host")], .claude: [managed: status(sessions: 1)]],
+            claudeAliases: ["codex-build"], claudeIDs: ["codex-build": managed], configured: ["codex-build"],
+            names: ["codex-build": "Build host"])
+        XCTAssertEqual(page.hosts.map(\.id), [managed], "One machine is one row")
+        let host = try XCTUnwrap(page.hosts.first)
+        XCTAssertEqual(host.name, "Build host")
+        XCTAssertEqual(host.modules.map(\.provider), ["codex", "claude"])
+        XCTAssertEqual(host.modules.map(\.state), ["connected", "connected"])
+        XCTAssertEqual(page.sessionCount, 3)
+    }
+
+    func testManagedSSHHostsKeepTheirIDsAndNamesAcrossConnectionFailures() throws {
+        let connected = ConnectionSource.managedSSHPrefix + "build", unavailable = ConnectionSource.managedSSHPrefix + "other"
+        let discovered = ConnectionSource.sshPrefix + "build"
+        let page = ConnectionPagePresentation(enabledProviders: [.codex], statuses: [.codex: [
+            "local": status(sessions: 1), connected: status(sessions: 2, name: "Build host"), discovered: status(sessions: 3)
+        ]], unavailableSSH: [connected, unavailable, unavailable, "build"], names: [unavailable: "Build host"])
+
+        XCTAssertEqual(page.state, "retrying")
+        XCTAssertTrue(page.retry)
+        XCTAssertEqual(page.sources.map(\.key), ["local"])
+        XCTAssertEqual(Set(page.hosts.map(\.id)), [connected, unavailable, discovered])
+        XCTAssertEqual(page.sourceCount, 4)
+        XCTAssertEqual(page.sessionCount, 6)
+        let connectedHost = try XCTUnwrap(page.hosts.first { $0.id == connected })
+        XCTAssertEqual(connectedHost.name, "Build host")
+        XCTAssertEqual(connectedHost.modules.first?.key, connected)
+        XCTAssertEqual(connectedHost.modules.first?.state, "connected")
+        let failedHost = try XCTUnwrap(page.hosts.first { $0.id == unavailable })
+        XCTAssertEqual(failedHost.name, "Build host")
+        XCTAssertEqual(failedHost.modules.first?.key, unavailable)
+        XCTAssertEqual(failedHost.modules.first?.state, "retrying")
+        XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [], unavailable: [unavailable]))
+    }
+
     func testOfflineWaitingAndPausedSourcesRemainDistinctAndOptionalCloudDoesNotFailSummary() {
         let prefix = ConnectionSource.controlPrefix
         let page = ConnectionPagePresentation(enabledProviders: [.codex, .claude], statuses: [

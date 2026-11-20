@@ -66,9 +66,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         var url = URLComponents()
         url.scheme = "codex"; url.host = "threads"; url.path = "/" + threadID
         if let sourceHostID {
-            let sshPrefix = "remote-ssh-discovered:", controlPrefix = "remote-control:"
-            let validSSH = sourceHostID.hasPrefix(sshPrefix) &&
-                String(sourceHostID.dropFirst(sshPrefix.count)).range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\z"#, options: .regularExpression) != nil
+            let controlPrefix = ConnectionSource.controlPrefix
+            let validSSH = ConnectionSource.isValidSSHSourceID(sourceHostID, prefix: ConnectionSource.sshPrefix) ||
+                ConnectionSource.isManagedSSHSourceID(sourceHostID)
             let validControl = sourceHostID.hasPrefix(controlPrefix) &&
                 String(sourceHostID.dropFirst(controlPrefix.count)).range(of: #"^[A-Za-z0-9_-]{1,128}\z"#, options: .regularExpression) != nil
             guard validSSH || validControl || sourceHostID == DurableActivityCatalog.hostID else { return nil }
