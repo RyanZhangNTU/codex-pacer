@@ -43,7 +43,12 @@ internal static class ClaudeConnectionChecks
             window.Show();
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language,
                 configuration: preferences.EngineConfiguration(), referenceFixture: true, claudeWebFixture: true);
-            ready.SetResult(); await coordinator.StartAsync(); await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "signedOut");
+            await Until(() => engine.LatestSnapshot?.ClaudeConnection is { Context.Length: > 0 });
+            Check(!web.HasProfile, "The fresh fixture must begin without a private Claude browser profile");
+            ready.SetResult(); await coordinator.StartAsync();
+            await Until(() => engine.LatestSnapshot?.ClaudeConnection is { State: "signedOut", WebAvailable: true, Refreshing: false });
+            Check(!web.HasProfile && !web.Prepared && web.LastReadState == "none",
+                "An absent profile must reach signed out without starting WebView2 or probing for cookies");
             var signIn = Find<Button>(window, "settings.claude.sign_in");
             await Until(() => signIn.IsEnabled);
             Check(engine.LatestSnapshot!.Quota.Count == 0, "No cookie must leave the native Claude quota unavailable");
@@ -127,7 +132,7 @@ internal static class ClaudeConnectionChecks
         catch
         {
             var state = engine.LatestSnapshot?.ClaudeConnection;
-            Console.WriteLine($"Claude fixture diagnostics {scenario}: state={state?.State}, refreshing={state?.Refreshing}, paused={state?.Paused}, runtime={state?.WebAvailable}, coordinator={coordinator.LastFailure}, cookieRead={web.LastReadState}, loginWindows={Application.Current.Windows.OfType<ClaudeLoginWindow>().Count()}, organizationSelected={session.Current.ClaudeOrganization.Length > 0}, webview2={PresentationWait.WebViewProcesses()}");
+            Console.WriteLine($"Claude fixture diagnostics {scenario}: state={state?.State}, refreshing={state?.Refreshing}, paused={state?.Paused}, runtime={state?.WebAvailable}, coordinator={coordinator.LastFailure}, profile={web.HasProfile}, prepared={web.Prepared}, cookieRead={web.LastReadState}, loginWindows={Application.Current.Windows.OfType<ClaudeLoginWindow>().Count()}, organizationSelected={session.Current.ClaudeOrganization.Length > 0}, webview2={PresentationWait.WebViewProcesses()}");
             throw;
         }
         finally
@@ -175,9 +180,24 @@ internal static class ClaudeConnectionChecks
         internal bool FailClear, RuntimeAvailable = true;
         internal string LastReadState = "none";
         public bool Available => RuntimeAvailable && inner.Available;
-        public Task PrepareAsync(CancellationToken cancellation) => inner.PrepareAsync(cancellation);
+        public bool HasProfile => inner.HasProfile;
+        internal bool Prepared { get; private set; }
+        public Task PrepareAsync(CancellationToken cancellation)
+        {
+            Prepared = true;
+            return inner.PrepareAsync(cancellation);
+        }
         public async Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation)
-        { var value = await inner.ReadAsync(cancellation); LastReadState = value == null ? "absent" : "present"; return value; }
+        {
+            LastReadState = "reading";
+            try
+            {
+                var value = await inner.ReadAsync(cancellation);
+                LastReadState = value == null ? "absent" : "present";
+                return value;
+            }
+            catch (Exception error) { LastReadState = error.GetType().Name; throw; }
+        }
         public Task<bool> SignInAsync() => inner.SignInAsync();
         public bool SignInWasNew => inner.SignInWasNew;
         public Task ClearAsync(CancellationToken cancellation) { if (FailClear) { FailClear = false; throw new IOException("Synthetic clear failure"); } return inner.ClearAsync(cancellation); }
