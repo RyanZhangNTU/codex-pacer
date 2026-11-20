@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -66,10 +67,41 @@ class ChangedPlatformsTests(unittest.TestCase):
             git("mv", str(source), "docs/moved case.md")
             git("commit", "-qm", "move")
             output = root / "job-output"
-            env = dict(os.environ, GITHUB_EVENT_NAME="pull_request", GITHUB_OUTPUT=str(output))
+            event = root / "event.json"
+            event.write_text(json.dumps({"pull_request": {"draft": False}}))
+            env = dict(os.environ, GITHUB_EVENT_NAME="pull_request", GITHUB_EVENT_PATH=str(event),
+                       GITHUB_STEP_SUMMARY="", GITHUB_OUTPUT=str(output))
             subprocess.run([sys.executable, platforms.__file__], cwd=root, env=env, check=True, capture_output=True)
-            self.assertEqual(dict(line.split("=") for line in output.read_text().splitlines()),
+            lines = dict(line.split("=", 1) for line in output.read_text().splitlines())
+            self.assertEqual({key: lines[key] for key in platforms.ALL_JOBS},
                              {job: str(job == "windows_engine").lower() for job in platforms.ALL_JOBS})
+
+    def test_wpf_file_owners_and_conservative_fallback(self):
+        def shards(*files):
+            return [row["shard"] for row in platforms.plan([platforms.PRESENTATION + file for file in files])["shards"]]
+        self.assertEqual(shards("ExpandedPanelChecks.cs"), ["settings"])
+        self.assertEqual(shards("ClaudeConnectionChecks.cs", "SlowEngineChecks.cs"), ["connections", "providers"])
+        for file in ("Program.cs", "PresentationWait.cs", "DeepSeekWebSessionChecks.cs", "NewFixture.cs"):
+            self.assertEqual(shards(file), list(platforms.SHARDS))
+        # A leaf reused by another fixture must leave the allowlist or gain its other owner.
+        root = Path(platforms.__file__).resolve().parents[2] / platforms.PRESENTATION
+        sources = {file.name: file.read_text(encoding="utf-8-sig") for file in root.glob("*.cs")}
+        for shard in platforms.SHARDS.values():
+            for file in shard["files"]:
+                self.assertIn(file, sources)
+                stem = Path(file).stem
+                self.assertFalse([name for name, code in sources.items() if name not in (file, "Program.cs") and stem in code], file)
+
+    def test_connections_and_idle_only_narrow_for_audited_paths(self):
+        for path, variants, idle in (("windows/Desktop/SettingsPalette.cs", True, False),
+                                     ("windows/Desktop/WindowsStartupRegistration.cs", False, False),
+                                     ("windows/Engine/EngineMain.swift", True, True),
+                                     ("windows/Desktop/NewInput.cs", True, True)):
+            selected = platforms.plan([path])
+            self.assertEqual((selected["full_connections"], selected["measure_idle"]), (variants, idle))
+        self.assertEqual(platforms.plan()["jobs"], sorted(platforms.ALL_JOBS))
+        self.assertTrue(platforms.plan()["full_connections"] and platforms.plan()["measure_idle"])
+        self.assertIn("installer", platforms.classify(["scripts/release/prepare-windows-update.py"]))
 
     def test_the_workflow_ci_scripts_and_unknown_files_run_everything(self):
         for path in (".github/workflows/platforms.yml", "scripts/ci/changed-platforms.py", "scripts/performance/benchmark-events.py"):

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,11 +17,12 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using CodexPacer.Windows;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 
 internal static class ClaudeConnectionChecks
 {
-    private const string First = "11111111-1111-4111-8111-111111111111", Second = "22222222-2222-4222-8222-222222222222";
-    internal static async Task Run(string language, bool dark, string output)
+    private const string First = "11111111-1111-4111-8111-111111111111", Second = "22222222-2222-4222-8222-222222222222", Third = "33333333-3333-4333-8333-333333333333";
+    internal static async Task Run(string language, bool dark, string output, bool controlsOnly = false)
     {
         var previous = CultureInfo.CurrentUICulture; CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(language);
         string root = Path.Combine(Path.GetTempPath(), "pacer-claude-connection-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
@@ -45,15 +47,21 @@ internal static class ClaudeConnectionChecks
             var signIn = Find<Button>(window, "settings.claude.sign_in");
             await Until(() => signIn.IsEnabled);
             Check(engine.LatestSnapshot!.Quota.Count == 0, "No cookie must leave the native Claude quota unavailable");
-            Invoke(signIn); await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.MainReady);
+            if (controlsOnly)
+            {
+                Check(signIn.IsVisible && Equals(signIn.Content, UiText.For(language == "zh-Hans").Text("claude.quota.connect")),
+                    "The signed-out Claude pane must show the localized connection action");
+                return;
+            }
+            Invoke(signIn); await Until(() => site.LoginCore != null);
             var login = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); login.IsHitTestVisible = false;
-            Put(site.Main!, "sessionKey", "fixture-claude-account-a");
+            await Put(site.LoginCore!, "sessionKey", "fixture-claude-account-a");
             await login.FinishNow(); await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
             Check(session.Current.ClaudeOrganization == "" && engine.LatestSnapshot!.Quota.Count == 0, "A successful login cannot silently choose the first workspace");
             Check(newSignIns == 1, "A new Claude session must clear its persisted organization through the normal preference transaction");
             Invoke(signIn); var picker = await Picker();
             Check(!Find<Button>(picker, "claude.organization.continue").IsEnabled, "The native workspace dialog must require an explicit choice");
-            SelectWorkspace(picker, 1);
+            SelectWorkspace(picker, First);
             await Until(() => session.Current.ClaudeOrganization == First && engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && signIn.IsEnabled);
             Check(engine.LatestSnapshot!.QuotaDashboard!.Providers.Single().Weekly.RemainingPercent == 65, "The real original client must decode the chosen workspace's quota");
             Check(engine.LatestSnapshot.QuotaDashboard.Providers.Single().History?.Chart?.Points.Count > 0, "A verified account must feed the real quota history");
@@ -69,33 +77,32 @@ internal static class ClaudeConnectionChecks
             window.CapturePreview(Path.Combine(output, "claude-connected-" + scenario + ".png"));
             var options = Find<Button>(window, "settings.claude.account_options");
             var oldRefresh = await Menu(options, "settings.claude.refresh"); options.ContextMenu!.IsOpen = false;
-            var choose = await Menu(options, "settings.claude.choose_organization"); Invoke(choose); picker = await Picker(); rejectSave = true; SelectWorkspace(picker, 2);
+            var choose = await Menu(options, "settings.claude.choose_organization"); Invoke(choose); picker = await Picker(); rejectSave = true; SelectWorkspace(picker, Second);
             await Until(() => !rejectSave && session.Current.ClaudeOrganization == First && engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
             Check(engine.LatestSnapshot!.QuotaDashboard!.Providers.Single().Weekly.RemainingPercent == 65, "A rejected workspace write must restore the engine and quota, not only preferences");
-            choose = await Menu(options, "settings.claude.choose_organization"); Invoke(choose); picker = await Picker(); SelectWorkspace(picker, 2);
+            choose = await Menu(options, "settings.claude.choose_organization"); Invoke(choose); picker = await Picker(); SelectWorkspace(picker, Second);
             await Until(() => session.Current.ClaudeOrganization == Second && engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
             Check(engine.LatestSnapshot!.QuotaDashboard!.Providers.Single().Weekly.RemainingPercent == 35, "Changing workspaces must display the new source's real reading");
             string context = engine.LatestSnapshot.ClaudeConnection!.Context; Invoke(oldRefresh); await Pump();
             Check(engine.LatestSnapshot.ClaudeConnection!.Context == context && session.Current.ClaudeOrganization == Second, "An old account menu cannot act on the new source");
             int points = engine.LatestSnapshot.QuotaDashboard!.Providers.Single().History!.Chart!.Points.Count;
-            site.MainReady = false; var existing = coordinator.ConnectAsync(context);
-            await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.MainReady);
+            var existing = coordinator.ConnectAsync(context);
+            await Until(() => site.LoginCore != null);
             Application.Current.Windows.OfType<ClaudeLoginWindow>().Single().Close();
             Check(await existing && newSignIns == 1 && session.Current.ClaudeOrganization == Second, "A same-session challenge retains the saved workspace");
             await Until(() => engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
             Check(engine.LatestSnapshot!.QuotaDashboard!.Providers.Single().History!.Chart!.Points.Count >= points, "A same-session challenge retains the verified quota history");
             context = engine.LatestSnapshot.ClaudeConnection!.Context;
-            site.MainReady = false;
             var switchAccount = await Menu(options, "settings.claude.switch_account"); Invoke(switchAccount);
-            await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.MainReady);
+            await Until(() => site.LoginCore != null);
             login = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); login.IsHitTestVisible = false;
-            Put(site.Main!, "sessionKey", "fixture-claude-account-b"); await login.FinishNow();
+            await Put(site.LoginCore!, "sessionKey", "fixture-claude-account-b"); await login.FinishNow();
             await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
             Check(session.Current.ClaudeOrganization == "" && engine.LatestSnapshot!.Quota.Count == 0, "A different account cannot inherit the old workspace or quota");
             Check(newSignIns == 2, "An account switch must clear the persisted organization exactly once");
             Check(engine.LatestSnapshot.Tasks.All(task => task.SourceId != "claude-cloud"), "Account switching must remove the previous cloud graph before selecting the new workspace");
-            Invoke(signIn); picker = await Picker(); SelectWorkspace(picker, 1);
-            await Until(() => session.Current.ClaudeOrganization == "33333333-3333-4333-8333-333333333333" && engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
+            Invoke(signIn); picker = await Picker(); SelectWorkspace(picker, Third);
+            await Until(() => session.Current.ClaudeOrganization == Third && engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
             Check(engine.LatestSnapshot!.ClaudeConnection!.Context != context && engine.LatestSnapshot.QuotaDashboard!.Providers.Single().History?.Chart?.Points.Count == 1,
                 "An account switch must revoke the old binding and start a fresh account chart");
             await Until(() => engine.LatestSnapshot!.Tasks.Any(task => task.SourceId == "claude-cloud" && task.SessionId == "cmsg_thread3"));
@@ -145,10 +152,27 @@ internal static class ClaudeConnectionChecks
         await Until(() => Application.Current.Windows.OfType<Window>().Any(window => SelfAndDescendants(window).OfType<ComboBox>().Any(value => AutomationProperties.GetAutomationId(value) == "claude.organization.picker")));
         return Application.Current.Windows.OfType<Window>().Single(window => SelfAndDescendants(window).OfType<ComboBox>().Any(value => AutomationProperties.GetAutomationId(value) == "claude.organization.picker"));
     }
-    private static void SelectWorkspace(Window window, int index)
-    { Find<ComboBox>(window, "claude.organization.picker").SelectedIndex = index; Invoke(Find<Button>(window, "claude.organization.continue")); }
-    private static void Put(CoreWebView2 core, string name, string value)
-    { var cookie = core.CookieManager.CreateCookie(name, value, ".claude.ai", "/"); cookie.IsHttpOnly = true; cookie.IsSecure = true; cookie.Expires = DateTime.UtcNow.AddHours(1); core.CookieManager.AddOrUpdateCookie(cookie); }
+    private static void SelectWorkspace(Window window, string organization)
+    {
+        var picker = Find<ComboBox>(window, "claude.organization.picker");
+        picker.SelectedItem = picker.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, organization));
+        var proceed = Find<Button>(window, "claude.organization.continue");
+        Check(proceed.IsEnabled, "The chosen workspace must enable Continue");
+        Invoke(proceed);
+    }
+    private static async Task Put(CoreWebView2 core, string name, string value)
+    {
+        var cookies = core.CookieManager;
+        var cookie = cookies.CreateCookie(name, value, ".claude.ai", "/");
+        cookie.IsHttpOnly = true; cookie.IsSecure = true; cookie.Expires = DateTime.UtcNow.AddHours(1);
+        cookies.AddOrUpdateCookie(cookie);
+        var deadline = Stopwatch.StartNew();
+        while (!(await cookies.GetCookiesAsync("https://claude.ai/api/")).Any(item => item.Name == name && item.Value == value))
+        {
+            Check(deadline.Elapsed < PresentationWait.Limit, "The login profile did not acknowledge the synthetic session cookie");
+            await Pump();
+        }
+    }
     private sealed class Web(ClaudeWebSession inner) : IClaudeWebSession
     {
         internal bool FailClear, RuntimeAvailable = true;
@@ -164,12 +188,17 @@ internal static class ClaudeConnectionChecks
     }
     private sealed class Site
     {
-        internal CoreWebView2? Main; internal bool MainReady; internal readonly List<string> Requests = [];
+        private readonly HashSet<CoreWebView2> ready = [];
+        internal CoreWebView2? LoginCore => Application.Current.Windows.OfType<ClaudeLoginWindow>()
+            .SelectMany(SelfAndDescendants).OfType<WebView2>().Select(view => view.CoreWebView2)
+            .FirstOrDefault(core => core != null && ready.Contains(core));
+        internal readonly List<string> Requests = [];
         private readonly HashSet<CoreWebView2> bound = [];
         internal void Bind(CoreWebView2 core)
         {
             if (!bound.Add(core)) return;
-            core.NavigationCompleted += (_, _) => { if (core.Source.StartsWith("https://claude.ai/", StringComparison.Ordinal)) { Main = core; MainReady = true; } };
+            core.NavigationStarting += (_, _) => ready.Remove(core);
+            core.NavigationCompleted += (_, e) => { if (e.IsSuccess && core.Source.StartsWith("https://claude.ai/", StringComparison.Ordinal)) ready.Add(core); };
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
             core.WebResourceRequested += (_, e) => { Requests.Add(e.Request.Uri); e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(Encoding.UTF8.GetBytes("<!doctype html><title>Synthetic Claude</title><p>Offline fixture</p>")), 200, "Fixture", "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store"); };
         }
@@ -178,7 +207,7 @@ internal static class ClaudeConnectionChecks
     private static void Invoke(MenuItem value) => ((IInvokeProvider)new MenuItemAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static T Find<T>(DependencyObject root, string id) where T : DependencyObject => SelfAndDescendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
-    private static async Task Until(Func<bool> condition) { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), "The bounded Claude connection action did not finish"); await Pump(); }
+    private static async Task Until(Func<bool> condition, [CallerArgumentExpression(nameof(condition))] string expected = "") { var watch = Stopwatch.StartNew(); while (!condition() && watch.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), $"Claude timed out after {watch.Elapsed.TotalSeconds:F1}s waiting for {expected}"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool value) => true; }
 }

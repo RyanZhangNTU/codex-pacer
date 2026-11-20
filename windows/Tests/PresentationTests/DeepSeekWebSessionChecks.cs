@@ -135,7 +135,7 @@ internal static class DeepSeekWebSessionChecks
         internal void Install(CoreWebView2 core)
         {
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
-            core.NavigationCompleted += (_, e) => { if (e.IsSuccess && core.Source == "https://platform.deepseek.com/usage") Ready = true; };
+            core.NavigationCompleted += (_, e) => { if (e.IsSuccess && ReferenceEquals(Main, core) && core.Source == "https://platform.deepseek.com/usage") Ready = true; };
             core.WebResourceRequested += (_, e) =>
             {
                 string url = e.Request.Uri;

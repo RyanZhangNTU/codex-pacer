@@ -16,7 +16,7 @@ python scripts/windows/build-localization.py --check
 python scripts/windows/build-shell-resources.py --check
 ```
 
-- `test-presentation.ps1 -Group` takes one or more groups. `all` runs the groups in `AllGroups` (`windows/Tests/PresentationTests/Program.cs`); CI splits them across three jobs, and the platform contract checks that each group sits in exactly one job. Add a new group to both places.
+- `test-presentation.ps1 -Group` takes one or more groups. `all` runs the groups in `AllGroups` (`windows/Tests/PresentationTests/Program.cs`); CI splits them across three jobs, and the platform contract checks that each group sits in exactly one job. Add a new group to both places. Local runs cover every language and theme by default. `-RepresentativeConnections` keeps the complete English/light connection sequence and exercises localized controls under the other three variants.
 - Groups outside `all` run only when named: `deepseek`, `displaySettings`, `persistence`, `position`, `progress`, `quotaIdle` and `ssh`. `position` moves the real pointer and restores it afterwards.
 - Screen tests use offline engines and synthetic data, never real accounts. Close other screen tests first; captures go to the ignored `output/windows` and are not committed.
 - `package-preview.ps1` writes the unsigned ZIP and its SHA-256 under `output/windows` and, unless `-BuildOnly`, checks the extracted app with a restricted environment, Unicode paths, a demo capture and single-instance activation. The portable ZIP is for development only; keep the whole folder (Engine, Maintenance, resources and runtimes) together.

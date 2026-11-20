@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,7 +19,7 @@ using Microsoft.Web.WebView2.Wpf;
 
 internal static class DeepSeekWebConnectionChecks
 {
-    internal static async Task Run(string language, bool dark, string output)
+    internal static async Task Run(string language, bool dark, string output, bool controlsOnly = false)
     {
         string directory = Path.Combine(Path.GetTempPath(), "pacer-web-fixture-" + Guid.NewGuid().ToString("N"));
         var site = new DeepSeekWebSessionChecks.Site(); var ui = UiText.For(language == "zh-Hans");
@@ -62,6 +63,7 @@ internal static class DeepSeekWebConnectionChecks
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             var connect = Find<Button>(island, "deepseek.balance.connect");
             Check(connect.IsEnabled && (string)connect.Content == ui.Text("deepseek.sign_in"), "The real web dial must open the original sign-in action");
+            if (controlsOnly) return;
             Invoke(connect);
             var login = await Login(site); await site.Main!.ExecuteScriptAsync("document.getElementById('signin').click()");
             await Continue(login);
@@ -95,6 +97,8 @@ internal static class DeepSeekWebConnectionChecks
             await Source(window, settings, "apiKey");
             Check(engine.LatestSnapshot!.DeepseekConnection?.HasKey == false, "The original disconnect action removes the independent API key too");
             await Source(window, settings, "web");
+            await Until(() => Find<Button>(window, "settings.deepseek.sign_in") is { IsVisible: true, IsEnabled: true } &&
+                engine.LatestSnapshot?.DeepseekConnection is { Source: "web", WebAvailable: true, Refreshing: false });
             Invoke(Find<Button>(window, "settings.deepseek.sign_in")); login = await Login(site);
             await site.Main!.ExecuteScriptAsync("document.getElementById('signin').click()"); await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
@@ -111,6 +115,8 @@ internal static class DeepSeekWebConnectionChecks
             Check(site.Reads == reads && engine.LatestSnapshot?.Wallet?.Balance == null,
                 "Rediscovering the browser runtime cannot reconnect an account whose sign-out failed");
             session.FailClear = false;
+            await Until(() => Find<Button>(window, "settings.deepseek.sign_in") is { IsVisible: true, IsEnabled: true } &&
+                engine.LatestSnapshot?.DeepseekConnection is { Source: "web", WebAvailable: true, Refreshing: false });
             Invoke(Find<Button>(window, "settings.deepseek.sign_in")); login = await Login(site); await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
             await Menu(window, "settings.deepseek.account.sign_out");
@@ -133,9 +139,8 @@ internal static class DeepSeekWebConnectionChecks
         }
         catch
         {
-            Console.WriteLine("Web connection state: " + JsonSerializer.Serialize(engine.LatestSnapshot?.DeepseekConnection));
-            Console.WriteLine("Web dial state: " + JsonSerializer.Serialize(new { engine.LatestSnapshot?.Wallet?.Balance, engine.LatestSnapshot?.Wallet?.Dial }));
-            Console.WriteLine("Web host failure: " + connection.LastFailure);
+            var state = engine.LatestSnapshot?.DeepseekConnection;
+            Console.WriteLine($"Web fixture: source={state?.Source}, mode={state?.Mode}, refreshing={state?.Refreshing}, connected={state?.Reading.Connected}, available={state?.WebAvailable}, pageReady={site.Ready}, reads={site.Reads}, deferred={site.Deferred != null}, engineClosed={engine.IsConnectionClosed}, hostFailure={connection.LastFailure != null}");
             Console.WriteLine("WebView2 processes: " + PresentationWait.WebViewProcesses());
             throw;
         }
@@ -217,7 +222,7 @@ internal static class DeepSeekWebConnectionChecks
     private static async Task<DeepSeekLoginWindow> Login(DeepSeekWebSessionChecks.Site site)
     {
         await Until(() => Application.Current.Windows.OfType<DeepSeekLoginWindow>().Any(value =>
-            SelfAndDescendants(value).OfType<WebView2>().Any(view => view.CoreWebView2 != null && view.CoreWebView2.Source == "https://platform.deepseek.com/usage")) && site.Ready);
+            SelfAndDescendants(value).OfType<WebView2>().Any(view => view.CoreWebView2 != null && ReferenceEquals(view.CoreWebView2, site.Main) && view.CoreWebView2.Source == "https://platform.deepseek.com/usage")) && site.Ready);
         return Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
     }
     private static async Task Continue(DeepSeekLoginWindow window)
@@ -241,11 +246,11 @@ internal static class DeepSeekWebConnectionChecks
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
     // Matches ProviderQuotaRefreshPolicy.replyTimeout, the engine's bound on one web read.
     private const double EngineReplySeconds = 30;
-    private static async Task Until(Func<bool> condition, TimeSpan? limit = null)
+    private static async Task Until(Func<bool> condition, TimeSpan? limit = null, [CallerArgumentExpression(nameof(condition))] string expected = "")
     {
         var start = Stopwatch.StartNew(); var bound = limit ?? PresentationWait.Limit;
         while (!condition() && start.Elapsed < bound) await Pump();
-        Check(condition(), "The web connection did not settle"); await Pump();
+        Check(condition(), $"Web connection timed out after {start.Elapsed.TotalSeconds:F1}s waiting for {expected}"); await Pump();
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }

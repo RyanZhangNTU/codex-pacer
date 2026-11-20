@@ -1,10 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -18,13 +18,12 @@ internal static class SlowEngineChecks
     internal static int Fixture(string mode)
     {
         Console.InputEncoding = new UTF8Encoding(false); Console.OutputEncoding = new UTF8Encoding(false);
-        void Reply(object data) { lock (Console.Out) { Console.WriteLine(JsonSerializer.Serialize(data)); Console.Out.Flush(); } }
+        void Reply(object data) { Console.WriteLine(JsonSerializer.Serialize(data)); Console.Out.Flush(); }
         Reply(new { protocolVersion = 1, type = "hello", engine = "PacerEngine" });
         int requests = 0, replies = 0;
-        var releaseLateReplies = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var sentLateReply = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delayed = new List<string>();
         void ReplyCounts(string id) => Reply(new { protocolVersion = 1, type = "result", id, ok = true,
-            value = new { requests = Volatile.Read(ref requests), replies = Volatile.Read(ref replies) } });
+            value = new { requests, replies } });
         while (Console.ReadLine() is { } line)
         {
             using var json = JsonDocument.Parse(line); string id = json.RootElement.GetProperty("id").GetString()!;
@@ -33,33 +32,18 @@ internal static class SlowEngineChecks
             {
                 requests++;
                 if (mode == "exit") return 0;
-                if (mode == "slow") _ = Task.Run(async () =>
-                {
-                    await releaseLateReplies.Task;
-                    try
-                    {
-                        Reply(new { protocolVersion = 1, type = "result", id, ok = true, value = new { version = 1 } });
-                        Interlocked.Increment(ref replies); sentLateReply.TrySetResult(true);
-                    }
-                    catch (IOException) { }
-                });
+                if (mode == "slow") delayed.Add(id);
             }
             else if (method == "releaseLateReplies")
             {
-                releaseLateReplies.TrySetResult(true);
-                _ = Task.Run(async () =>
+                // The real stdout pipe delivers these complete frames before the barrier acknowledgment.
+                foreach (var request in delayed)
                 {
-                    try
-                    {
-                        await sentLateReply.Task.WaitAsync(TimeSpan.FromSeconds(8));
-                        ReplyCounts(id);
-                    }
-                    catch (TimeoutException)
-                    {
-                        Reply(new { protocolVersion = 1, type = "result", id, ok = false, error = "The synthetic delayed reply was not sent" });
-                    }
-                    catch (IOException) { }
-                });
+                    Reply(new { protocolVersion = 1, type = "result", id = request, ok = true, value = new { version = 1 } });
+                    replies++;
+                }
+                delayed.Clear();
+                ReplyCounts(id);
             }
             else
             {
@@ -81,6 +65,8 @@ internal static class SlowEngineChecks
                 // queries still use the artificial 250 ms deadline above.
                 await using var engine = new EngineClient();
                 await engine.StartAsync(Environment.ProcessPath!, true, mode);
+                var handshake = await engine.QueryAsync<JsonElement>("inspectRequests", timeout: TimeSpan.FromSeconds(8));
+                Check(handshake.GetProperty("requests").GetInt32() == 0, "The fixture must acknowledge initialization before the first projection");
                 ShellProjection.Client = engine;
                 var window = new IslandWindow(engine, true, false, animationOverride: false) { ShowActivated = false, IsHitTestVisible = false };
                 int beats = 0; var pulse = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
@@ -91,8 +77,7 @@ internal static class SlowEngineChecks
                     var watch = Stopwatch.StartNew();
                     _ = NativeCompactBar.Shared.Read(new(), "en", []);
                     Check(watch.Elapsed < TimeSpan.FromMilliseconds(125), "A cache read must return before the request deadline, without waiting on the UI thread");
-                    await Task.Delay(450); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
-                    await PresentationWait.UntilAsync(() => ShellProjection.LastFailure != null && beats >= 5,
+                    await PresentationWait.UntilAsync(() => ShellProjection.LastFailure != null && beats >= 5 && (mode != "exit" || engine.IsConnectionClosed),
                         "The timed-out projection must publish its failure while the dispatcher continues its heartbeat");
                     await window.WaitForPresentationAsync();
                     Check(beats >= 5, "The UI dispatcher must keep processing input/heartbeat callbacks while the engine does not answer");
@@ -104,7 +89,7 @@ internal static class SlowEngineChecks
                     if (mode != "exit")
                     {
                         var count = await engine.QueryAsync<JsonElement>("inspectRequests", timeout: TimeSpan.FromSeconds(8));
-                        Check(count.GetProperty("requests").GetInt32() <= 2, "Repeated renders must coalesce requests and must not retry a failed input in a busy loop");
+                        Check(count.GetProperty("requests").GetInt32() is >= 1 and <= 2, "Repeated renders must coalesce requests and must not retry a failed input in a busy loop");
                     }
                     if (mode == "slow")
                     {
@@ -121,7 +106,14 @@ internal static class SlowEngineChecks
                     Check(window.LogicalTarget.Height > 36, "The panel must remain interactive after an engine timeout or exit");
                     Console.WriteLine("PASS UI responsiveness: " + mode + ", dispatcher heartbeat, bounded deadline, placeholder, coalescing and input");
                 }
+                catch
+                {
+                    Console.Error.WriteLine($"Slow engine fixture: mode={mode}, initialized={engine.IsInitialized}, closed={engine.IsConnectionClosed}, beats={beats}, projectionFailed={ShellProjection.LastFailure != null}");
+                    throw;
+                }
                 finally { pulse.Stop(); window.StopPresentation(); window.AllowClose = true; window.Close(); }
+                if (mode != "exit") await engine.SendAsync("shutdown");
+                await PresentationWait.UntilAsync(() => engine.IsConnectionClosed, "The fixture must close its output and exit");
             }
         }
         finally { ShellProjection.RequestTimeout = timeout; ShellProjection.Client = previous; }

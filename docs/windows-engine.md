@@ -14,7 +14,7 @@ python scripts/windows/test_contract.py
 ./scripts/windows/build-engine.ps1 -Configuration release
 ```
 
-- Builds stage an immutable source snapshot outside OneDrive and reuse an isolated SwiftPM cache under the temporary directory. `output/windows/engine-location.json` records the snapshot, cache and configuration; the executable is `<scratch>/x86_64-unknown-windows-msvc/<configuration>/PacerEngine.exe`.
+- Builds stage an immutable source snapshot outside OneDrive and reuse an isolated SwiftPM cache under the temporary directory. `output/windows/engine-location.json` records the snapshot, cache and configuration; the executable is under the receipt’s `binary` directory (a SwiftPM build directory or verified CI cache payload).
 - Parallel worktrees should set `PACER_WINDOWS_SCRATCH_PATH` so one build cannot replace another worktree's test executable or resources.
 - Toolchains outside the worktree are named with `PACER_SWIFT_ROOT`, `PACER_WINDOWS_SDK_ROOT` and `PACER_DOTNET_ROOT`.
 - SwiftPM's native build system prints deprecation and `debug` symlink notices; those are build-tool notices, not compiler warnings. CI fails on compiler warnings in both the test and build logs.

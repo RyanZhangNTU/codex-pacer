@@ -1,6 +1,6 @@
 # Windows installation
 
-Pacer for Windows ships as a per-user Inno Setup installer. The Release workflow builds an unsigned installer (`windows-installer-<arch>-unsigned`) and a portable ZIP (`windows-app-<arch>-unsigned`) for x64 and ARM64; a tag run signs the Windows feed and publishes the installers with the Mac DMG ([release workflow](releasing.md)). The Release workflow only packages. Lifecycle tests run in the Platforms workflow on manual runs and on pull requests that touch the installer, maintenance, updates, packaging, the toolchain or the app code these checks start ([continuous integration](development.md#continuous-integration)).
+Pacer for Windows ships as a per-user Inno Setup installer. The Release workflow builds an unsigned installer (`windows-installer-<arch>-unsigned`) and a portable ZIP for x64 and ARM64. Manual QA or packaging failures retain the ZIP as `windows-app-<arch>-unsigned`. A tag run signs the Windows feed and publishes the installers with the Mac DMG ([release workflow](releasing.md)). The Release workflow only packages. Lifecycle tests run in the Platforms workflow on manual runs and on pull requests that touch the installer, maintenance, updates, packaging, the toolchain or the app code these checks start ([continuous integration](development.md#continuous-integration)).
 
 ## Installer identity and requirements
 

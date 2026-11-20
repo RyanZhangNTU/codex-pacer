@@ -21,10 +21,12 @@ def cpu_seconds(process):
     return sum((value.dwHighDateTime << 32) + value.dwLowDateTime for value in values[2:]) / 10_000_000
 
 
-def check(engine, seconds, output, real_data=False, quota=False, read_only=False):
+def check(engine, seconds, output, real_data=False, quota=False, read_only=False, protocol_only=False):
     if quota and not real_data:
         raise ValueError("Quota diagnostics require read-only real-data mode")
-    if os.name != "nt" or seconds < 120:
+    if protocol_only and real_data:
+        raise ValueError("Protocol-only checks require isolated homes")
+    if os.name != "nt" or (not protocol_only and seconds < 120):
         raise ValueError("Run on Windows for at least 120 seconds")
     with tempfile.TemporaryDirectory(prefix="pacer-idle-") as temporary:
         root = Path(temporary)
@@ -43,6 +45,7 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
         process = subprocess.Popen([str(engine)] + (["--read-only-diagnostics"] if real_data or read_only else []) + (["--quota-diagnostics"] if quota else []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         hello, ready = threading.Event(), threading.Event()
+        configured = threading.Event()
         counts = {"frames": 0, "stderrBytes": 0, "protocolErrors": 0, "shutdownReplies": 0}
         quota_counts = {}
         measuring = threading.Event()
@@ -68,6 +71,8 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
                             if message.get("rateIsFresh") is True and type(rate) in (int, float) and rate > 0:
                                 sample["streamingSnapshots"] += 1
                         ready.set()
+                    if message.get("type") == "result" and message.get("id") == "configure" and message.get("ok") is True:
+                        configured.set()
                     if message.get("type") == "error":
                         counts["protocolErrors"] += 1
                     if message.get("type") == "result" and message.get("id") == "shutdown" and message.get("ok") is True:
@@ -113,38 +118,41 @@ def check(engine, seconds, output, real_data=False, quota=False, read_only=False
                 # Make the injected passive-only Claude client available. It has
                 # no browser bridge, credential provider or HTTP transport.
                 send("setClaudeWebHost", {"webAvailable": True})
-            time.sleep(5)
-            started, cpu_started = time.monotonic(), cpu_seconds(process)
-            sample["runningMin"] = sample["runningMax"] = last_running
-            measuring.set()
-            print(f"Measuring initialized engine for {seconds} seconds; protocol bodies are discarded.", flush=True)
-            until = time.monotonic() + seconds
-            while time.monotonic() < until:
-                time.sleep(min(10, max(0, until - time.monotonic())))
-            elapsed, cpu = time.monotonic() - started, cpu_seconds(process) - cpu_started
-            measuring.clear()
-            if process.poll() is not None:
-                raise RuntimeError("Engine exited during idle measurement")
+            measurement = {}
+            if not protocol_only:
+                time.sleep(5)
+                started, cpu_started = time.monotonic(), cpu_seconds(process)
+                sample["runningMin"] = sample["runningMax"] = last_running
+                measuring.set()
+                print(f"Measuring initialized engine for {seconds} seconds; protocol bodies are discarded.", flush=True)
+                until = time.monotonic() + seconds
+                while time.monotonic() < until:
+                    time.sleep(min(10, max(0, until - time.monotonic())))
+                elapsed, cpu = time.monotonic() - started, cpu_seconds(process) - cpu_started
+                measuring.clear()
+                measurement = {"wallSeconds": round(elapsed, 3), "cpuSeconds": round(cpu, 4),
+                    "oneCorePercent": round(cpu / elapsed * 100, 3),
+                    "hostPercent": round(cpu / elapsed / (os.cpu_count() or 1) * 100, 3),
+                    "logicalProcessors": os.cpu_count(), "measured": dict(sample)}
+                if process.poll() is not None:
+                    raise RuntimeError("Engine exited during idle measurement")
             if not real_data:
                 # Only the isolated empty-home check changes a source.
                 replacement = root / "codex-replacement"
                 (replacement / "sessions").mkdir(parents=True)
                 send("configure", {"codexHome": str(replacement)})
-                time.sleep(1)
+                if not configured.wait(15):
+                    raise RuntimeError("Engine reconfiguration acknowledgment timed out")
             shutdown = time.monotonic()
             send("shutdown")
             process.wait(timeout=3)
             shutdown = time.monotonic() - shutdown
             for reader in readers:
                 reader.join(timeout=2)
-            result = {"wallSeconds": round(elapsed, 3), "cpuSeconds": round(cpu, 4),
-                "oneCorePercent": round(cpu / elapsed * 100, 3),
-                "hostPercent": round(cpu / elapsed / (os.cpu_count() or 1) * 100, 3),
-                "logicalProcessors": os.cpu_count(), "shutdownSeconds": round(shutdown, 4),
+            result = {**measurement, "protocolOnly": protocol_only, "shutdownSeconds": round(shutdown, 4),
                 "exitCode": process.returncode, "isolatedEmptyHomes": not real_data, "readOnlyRealData": real_data,
                 "sourceMutationsRequested": not real_data, **counts}
             result["readOnlyDiagnostics"] = real_data or read_only
-            result["measured"] = dict(sample)
             if quota:
                 result["quotaReads"] = quota_counts
                 if not quota_counts:
@@ -167,9 +175,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", required=True, type=Path)
     parser.add_argument("--seconds", type=int, default=120)
+    parser.add_argument("--protocol-only", action="store_true", help="Verify the isolated protocol without collecting an idle CPU sample")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--real-data", action="store_true", help="Read actual provider homes; disable persistence and, unless --quota is set, quota clients")
     parser.add_argument("--quota", action="store_true", help="Include read-only quota/balance clients, no history or credential writes; record numeric refresh counts")
     parser.add_argument("--read-only", action="store_true", help="Disable persistence and quota clients for isolated source fixtures too")
     args = parser.parse_args()
-    check(args.engine.resolve(), args.seconds, args.output, args.real_data, args.quota, args.read_only)
+    check(args.engine.resolve(), args.seconds, args.output, args.real_data, args.quota, args.read_only, args.protocol_only)

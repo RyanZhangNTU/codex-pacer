@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
@@ -17,7 +18,7 @@ using CodexPacer.Windows;
 
 internal static class DeepSeekConnectionChecks
 {
-    internal static async Task Run(string language, bool dark, string output)
+    internal static async Task Run(string language, bool dark, string output, bool controlsOnly = false)
     {
         await using var engine = new EngineClient(); bool reject = false; string? requestedPane = null;
         var ui = UiText.For(language == "zh-Hans");
@@ -46,6 +47,7 @@ internal static class DeepSeekConnectionChecks
             Check(Find<TextBlock>(window, "settings.deepseek.local_state").Text == ui.Text("provider.state.found"),
                 "Balance availability cannot replace the independent local-session status");
             Check(UIElementAutomationPeer.CreatePeerForElement(field)?.IsPassword() == true, "Assistive clients must see a password field");
+            if (controlsOnly) return;
             Button? oldConnect = null;
             foreach (string layout in new[] { "solo", "classic", "split" })
             {
@@ -113,8 +115,8 @@ internal static class DeepSeekConnectionChecks
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static async Task Pump() { await Task.Delay(30); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
-    private static async Task Until(Func<bool> condition)
-    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), "The DeepSeek connection did not settle in time"); await Pump(); }
+    private static async Task Until(Func<bool> condition, [CallerArgumentExpression(nameof(condition))] string expected = "")
+    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), $"DeepSeek timed out after {clock.Elapsed.TotalSeconds:F1}s waiting for {expected}"); await Pump(); }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }
 }

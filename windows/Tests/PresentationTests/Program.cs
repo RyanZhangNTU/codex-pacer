@@ -60,11 +60,14 @@ internal static class Program
             var caseFailures = new List<string>();
             async Task Attempt(string name, Func<Task> check)
             {
+                var elapsed = Stopwatch.StartNew();
                 try { await check(); }
-                catch (Exception error) when (many)
+                catch (Exception error)
                 {
-                    string failure = name + " [" + scenario + "]: " + error.Message;
-                    caseFailures.Add(failure); Console.Error.WriteLine("FAIL " + failure); Console.Error.WriteLine(error);
+                    string failure = $"{name} [{scenario}; {string.Join(',', groups)}; {elapsed.Elapsed.TotalSeconds:F1}s]: {error.Message}";
+                    Console.Error.WriteLine("FAIL " + failure);
+                    if (!many) throw;
+                    caseFailures.Add(failure); Console.Error.WriteLine(error);
                 }
             }
             await using var projections = new EngineClient();
@@ -154,8 +157,9 @@ internal static class Program
                         if (All("quota")) { await Attempt(nameof(QuotaHistoryChecks), () => QuotaHistoryChecks.Run(language, dark, output)); await Attempt(nameof(ProviderHistoryChecks), () => ProviderHistoryChecks.Run(language, dark, output)); }
                         if (All("connection"))
                         {
-                            await Attempt(nameof(ClaudeConnectionChecks), () => ClaudeConnectionChecks.Run(language, dark, output)); await Attempt(nameof(DeepSeekConnectionChecks), () => DeepSeekConnectionChecks.Run(language, dark, output));
-                            await Attempt(nameof(DeepSeekWebConnectionChecks), () => DeepSeekWebConnectionChecks.Run(language, dark, output));
+                            bool controlsOnly = args.Contains("--representative-connections") && (language != "en" || dark);
+                            await Attempt(nameof(ClaudeConnectionChecks), () => ClaudeConnectionChecks.Run(language, dark, output, controlsOnly)); await Attempt(nameof(DeepSeekConnectionChecks), () => DeepSeekConnectionChecks.Run(language, dark, output, controlsOnly));
+                            await Attempt(nameof(DeepSeekWebConnectionChecks), () => DeepSeekWebConnectionChecks.Run(language, dark, output, controlsOnly));
                         }
                     }
                 }

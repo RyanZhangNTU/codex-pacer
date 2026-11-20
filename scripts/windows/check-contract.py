@@ -269,25 +269,21 @@ def release_boundary(release):
         raise ValueError("A release run must never be cancelled")
 
 
-def engine_cache(platforms, cache, stage):
-    """The release engine caches share one key, and the develop warm-up runs whenever its inputs change."""
-    keys = {re.sub(r"\$\{\{ matrix\.architecture \}\}|x64|arm64", "ARCH", key)
-            for key in re.findall(r"^\s+key: (windows-engine-.+?)\s*$", platforms + cache, re.M)}
-    if len(keys) != 1:
-        raise ValueError("The engine caches in platforms.yml and engine-cache.yml must share one key")
-    directories = re.search(r"DIRECTORIES = \((.*?)\)", stage, re.S)
-    if not directories:
-        raise ValueError("stage-engine.py must list the directories of the engine source snapshot")
-    inputs = {name + "/**" for name in re.findall(r'"([^"]+)"', directories.group(1))}
-    inputs |= {"Package.swift", "Package.resolved", "native/Info.plist"}
-    inputs |= set(re.findall(r"'([^']+)'", re.search(r"hashFiles\((.*?)\)", next(iter(keys))).group(1)))
-    missing = inputs - set(re.findall(r"^\s+- '([^']+)'\s*$", cache, re.M))
-    if missing:
-        raise ValueError("engine-cache.yml must run when the engine cache key changes: " + ", ".join(sorted(missing)))
+def engine_cache(platforms, cache, action):
+    use = "uses: ./.github/actions/windows-engine"
+    for job, flow in (("windows-build", platforms), ("windows-arm64", platforms), ("engine", cache)):
+        if use not in (workflow_job(flow, job) or ""):
+            raise ValueError(f"{job} must share the engine cache action")
+    if "  push:" in cache or "  workflow_dispatch:" not in cache or "warm-only: 'true'" not in cache:
+        raise ValueError("Engine cache warming must be an explicit dispatch")
+    if "stage-engine.py --product-key" not in action or action.count("key: " + "$" + "{{ steps.key.outputs.key }}") != 2:
+        raise ValueError("Restore and save must use the exact production fingerprint")
+    if "lookup-only:" not in action or "build-desktop.ps1" in action or "setup-dotnet" in action:
+        raise ValueError("Warming builds only engine products after a cache miss")
 
 
-def presentation_shards(workflow, program):
-    """Each group the presentation suite runs for "all" is in exactly one CI test job."""
+def presentation_shards(workflow, program, shards):
+    """Every group in the full suite belongs to one selected matrix entry."""
     match = re.search(r"AllGroups = \[(.*?)\];", program, re.S)
     if not match:
         raise ValueError("The presentation runner must list the groups it runs for all")
@@ -295,9 +291,15 @@ def presentation_shards(workflow, program):
     body = workflow_job(workflow, "windows-tests")
     if body is None:
         raise ValueError("CI must run the presentation tests in a windows-tests job")
-    sharded = [name for line in re.findall(r"^\s+groups:\s*(\S+)\s*$", body, re.M) for name in line.split(",")]
-    if sorted(sharded) != sorted(groups):
+    if "fromJSON(needs.changes.outputs.windows_shards)" not in body:
+        raise ValueError("The presentation matrix must use the selected shards")
+    sharded = [name for shard in shards.values() for name in shard["groups"]]
+    if sorted(sharded) != sorted(groups) or len(sharded) != len(set(sharded)):
         raise ValueError("Each presentation group must run in exactly one CI test job")
+    files = [file for shard in shards.values() for file in shard["files"]]
+    if len(files) != len(set(files)):
+        raise ValueError("Each allowlisted test file must have exactly one owner")
+
 
 
 def check(root=ROOT):
@@ -330,8 +332,8 @@ def check(root=ROOT):
                                  for name in ("platforms.yml", "release.yml", "engine-cache.yml"))
     workflow_boundary(platforms)
     release_boundary(release)
-    presentation_shards(platforms, (root / "windows/Tests/PresentationTests/Program.cs").read_text(encoding="utf-8-sig"))
-    engine_cache(platforms, cache, (root / "scripts/windows/stage-engine.py").read_text(encoding="utf-8"))
+    presentation_shards(platforms, (root / "windows/Tests/PresentationTests/Program.cs").read_text(encoding="utf-8-sig"), read("scripts/ci/presentation-shards.json"))
+    engine_cache(platforms, cache, (root / ".github/actions/windows-engine/action.yml").read_text(encoding="utf-8"))
     toolchain_pins(root, platforms + release + cache)
     print(f"Platform contract passed: {len(all_sources)} shared Core sources, {availability} canImport availability branches")
 

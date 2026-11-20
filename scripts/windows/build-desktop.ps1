@@ -13,22 +13,14 @@ try {
     if (!$SkipEngine) { & (Join-Path $PSScriptRoot 'build-engine.ps1') -Configuration $Configuration.ToLowerInvariant() -Architecture $Architecture }
     $taskReceipt = Get-Content (Join-Path 'output/windows' $taskArchitecture.Receipt) -Raw | ConvertFrom-Json
     if ($taskReceipt.architecture -and $taskReceipt.architecture -ne $Architecture) { throw 'The engine receipt architecture differs from the desktop target.' }
-    $taskBinary = Join-Path $taskReceipt.scratch ($taskArchitecture.Triple + '/' + $Configuration.ToLowerInvariant())
-    # Prebuilt engine products already hold both adapters of the same source snapshot.
-    if (!$taskReceipt.prebuilt) {
-        foreach ($taskProduct in @('PacerWindowsBridge','PacerInstallerHooks')) {
-            swift build --build-system native @taskSwiftFlags @taskSwiftTargetFlags --package-path $taskReceipt.source --scratch-path $taskReceipt.scratch --configuration $Configuration.ToLowerInvariant() --product $taskProduct
-            if ($LASTEXITCODE -ne 0) { throw ('Windows adapter build failed: ' + $taskProduct) }
-        }
-        if ($SaveEngineProducts) {
-            New-Item -ItemType Directory -Path $SaveEngineProducts -Force | Out-Null
-            foreach ($taskFile in @('PacerEngine.exe','PacerWindowsBridge.dll','PacerInstallerHooks.exe')) {
-                Copy-Item -LiteralPath (Join-Path $taskBinary $taskFile) -Destination $SaveEngineProducts -Force
-            }
-            Get-ChildItem -LiteralPath $taskBinary -Directory -Filter '*.resources' | Copy-Item -Destination $SaveEngineProducts -Recurse -Force
-            @{source = (Split-Path $taskReceipt.source -Leaf); configuration = $Configuration.ToLowerInvariant(); architecture = $Architecture} | ConvertTo-Json |
-                Set-Content -LiteralPath (Join-Path $SaveEngineProducts 'products.json') -Encoding utf8
-        }
+    if ($taskReceipt.configuration -ne $Configuration) { throw 'The engine receipt configuration differs from the desktop target.' }
+    $taskBinary = if ($taskReceipt.binary) { $taskReceipt.binary } else { Join-Path $taskReceipt.scratch ($taskArchitecture.Triple + '/' + $Configuration.ToLowerInvariant()) }
+    if (!$taskReceipt.adapters -and !$taskReceipt.prebuilt) {
+        & (Join-Path $PSScriptRoot 'build-adapters.ps1') -SourcePath $taskReceipt.source -ScratchPath $taskReceipt.scratch -Configuration $Configuration.ToLowerInvariant()
+    }
+    if ($SaveEngineProducts) {
+        python -S scripts/windows/stage-engine.py --save $SaveEngineProducts --binary $taskBinary --configuration $Configuration.ToLowerInvariant() --architecture $Architecture
+        if ($LASTEXITCODE -ne 0) { throw 'Could not save Windows engine products.' }
     }
     $taskVersion = Get-PacerVersion
     dotnet build windows/Desktop/Pacer.Windows.csproj --configuration $Configuration -warnaserror "-p:PacerArchitecture=$Architecture" "-p:Version=$($taskVersion.version)" "-p:FileVersion=$($taskVersion.version).$($taskVersion.build)"

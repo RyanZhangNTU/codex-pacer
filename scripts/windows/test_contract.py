@@ -151,30 +151,29 @@ class CoreBoundaryTests(unittest.TestCase):
             with self.subTest(gate=gate), self.assertRaises(ValueError):
                 contract.workflow_boundary(workflow.replace(name, name + gate, 1))
 
-    def test_engine_caches_share_one_key_and_the_warm_up_follows_its_inputs(self):
-        workflows = contract.ROOT / ".github/workflows"
-        platforms, cache = ((workflows / name).read_text(encoding="utf-8") for name in ("platforms.yml", "engine-cache.yml"))
-        stage = (contract.ROOT / "scripts/windows/stage-engine.py").read_text(encoding="utf-8")
-        contract.engine_cache(platforms, cache, stage)
-        for broken in ((platforms.replace("'scripts/windows/setup-swift.ps1') }}", "'scripts/windows/setup-swift.ps1', 'global.json') }}", 1), cache, stage),
-                       (platforms, cache.replace("      - 'windows/Bridge/**'\n", "", 1), stage),
-                       (platforms, cache.replace("      - 'scripts/windows/environment.ps1'\n", "", 1), stage),
-                       (platforms, cache, stage.replace('"windows/Bridge",', '"windows/Bridge", "windows/Shared",', 1))):
-            self.assertNotEqual(broken, (platforms, cache, stage))
+    def test_engine_cache_is_manual_and_shares_the_product_key(self):
+        root = contract.ROOT
+        platforms, cache = ((root / ".github/workflows" / name).read_text() for name in ("platforms.yml", "engine-cache.yml"))
+        action = (root / ".github/actions/windows-engine/action.yml").read_text()
+        contract.engine_cache(platforms, cache, action)
+        for broken in ((platforms.replace("uses: ./.github/actions/windows-engine", "uses: other", 1), cache, action),
+                       (platforms, cache.replace("  workflow_dispatch:", "  push:"), action),
+                       (platforms, cache, action.replace("key: " + "$" + "{{ steps.key.outputs.key }}", "key: wrong", 1))):
             with self.assertRaises(ValueError):
                 contract.engine_cache(*broken)
 
-    def test_ci_runs_each_presentation_group_in_exactly_one_job(self):
-        workflow = (contract.ROOT / ".github/workflows/platforms.yml").read_text(encoding="utf-8")
-        program = (contract.ROOT / "windows/Tests/PresentationTests/Program.cs").read_text(encoding="utf-8-sig")
-        contract.presentation_shards(workflow, program)
-        for broken_workflow, broken_program in ((workflow.replace("groups: connection\n", "groups: connection,pages\n", 1), program),
-                                                (workflow.replace(",recovery\n", "\n", 1), program),
-                                                (workflow, program.replace('"connection"];', '"connection", "unsharded"];', 1)),
-                                                (workflow.replace("\n  windows-tests:\n", "\n  windows-shards:\n", 1), program)):
-            self.assertNotEqual((broken_workflow, broken_program), (workflow, program))
+    def test_full_presentation_shards_cover_groups_once(self):
+        root = contract.ROOT
+        workflow = (root / ".github/workflows/platforms.yml").read_text()
+        program = (root / "windows/Tests/PresentationTests/Program.cs").read_text(encoding="utf-8-sig")
+        shards = json.loads((root / "scripts/ci/presentation-shards.json").read_text())
+        contract.presentation_shards(workflow, program, shards)
+        for groups in (["settings"], ["connection", "pages"], []):
+            broken = {**shards, "connections": {**shards["connections"], "groups": groups}}
             with self.assertRaises(ValueError):
-                contract.presentation_shards(broken_workflow, broken_program)
+                contract.presentation_shards(workflow, program, broken)
+        with self.assertRaises(ValueError):
+            contract.presentation_shards(workflow.replace("fromJSON(needs.changes.outputs.windows_shards)", "fromJSON('[]')"), program, shards)
 
     def test_release_windows_jobs_build_the_installers_without_secrets(self):
         release = (contract.ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")

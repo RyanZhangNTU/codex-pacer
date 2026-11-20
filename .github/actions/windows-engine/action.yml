@@ -1,0 +1,41 @@
+name: Windows engine and adapters
+description: Restore or build the release Swift products for one native architecture
+inputs:
+  architecture:
+    required: true
+    description: x64 or arm64
+  warm-only:
+    default: 'false'
+    description: Finish after the lookup on a hit
+runs:
+  using: composite
+  steps:
+    - id: key
+      shell: pwsh
+      env:
+        PACER_ARCHITECTURE: ${{ inputs.architecture }}
+      run: |
+        $key = python -S scripts/windows/stage-engine.py --product-key --architecture $env:PACER_ARCHITECTURE
+        if ($LASTEXITCODE -ne 0) { throw 'Could not fingerprint engine inputs.' }
+        "key=$key" >> $env:GITHUB_OUTPUT
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: cached
+      with:
+        key: ${{ steps.key.outputs.key }}
+        path: output/windows/engine-products-${{ inputs.architecture }}
+        lookup-only: ${{ inputs.warm-only == 'true' }}
+    - name: Prepare Swift and engine products
+      if: inputs.warm-only != 'true' || steps.cached.outputs.cache-hit != 'true'
+      shell: pwsh
+      env:
+        PACER_ARCHITECTURE: ${{ inputs.architecture }}
+      run: |
+        ./scripts/windows/setup-swift.ps1 -Architecture $env:PACER_ARCHITECTURE
+        $log = "$env:RUNNER_TEMP/pacer-engine-build.log"
+        ./scripts/windows/build-engine.ps1 -Configuration release -Architecture $env:PACER_ARCHITECTURE -Products "output/windows/engine-products-$env:PACER_ARCHITECTURE" *>&1 | Tee-Object $log
+        if (Select-String -Path $log -Pattern '^.+(?::\d+(?::\d+)?:|\(\d+,\d+\):)\s+warning:') { throw 'Windows engine compiler warning.' }
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: steps.cached.outputs.cache-hit != 'true'
+      with:
+        key: ${{ steps.key.outputs.key }}
+        path: output/windows/engine-products-${{ inputs.architecture }}

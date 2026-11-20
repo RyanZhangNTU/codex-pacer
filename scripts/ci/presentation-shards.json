@@ -1,0 +1,14 @@
+{
+  "settings": {
+    "groups": ["settings", "island", "accessibility", "panel"],
+    "files": ["ExpandedPanelChecks.cs", "SettingsPresentationChecks.cs", "CodexSettingsChecks.cs", "ProviderHomeSettingsChecks.cs", "ReminderSettingsChecks.cs", "PersistentSettingsChecks.cs"]
+  },
+  "connections": {
+    "groups": ["connection"],
+    "files": ["ClaudeConnectionChecks.cs", "DeepSeekConnectionChecks.cs", "DeepSeekWebConnectionChecks.cs"]
+  },
+  "providers": {
+    "groups": ["web", "quota", "harness", "conversation", "idle", "display", "host", "responsive", "pages", "updates", "collapsed", "recovery"],
+    "files": ["UpdateFailureSettingsChecks.cs", "UpdateWindowChecks.cs", "GuidePageChecks.cs", "SlowEngineChecks.cs", "QuotaHistoryChecks.cs", "ProviderHistoryChecks.cs", "StorageRecoveryChecks.cs", "PreferencesResponsivenessChecks.cs", "CollapsedLayoutChecks.cs", "ConversationNavigationChecks.cs", "HarnessNavigationChecks.cs", "WorkBuddyAccountChecks.cs"]
+  }
+}
