@@ -17,10 +17,10 @@ public enum HarnessWeekPresentation {
         let top = max(0.01, totals.max() ?? 0, (average ?? 0) * 1.15)
         let bars = zip(days, totals).enumerated().map { index, pair -> DeepSeekSoloPresentation.Day in
             let (day, total) = pair, isToday = index == days.count - 1
-            let help = day.formatted(Date.FormatStyle().weekday(.abbreviated).month(.defaultDigits).day().locale(L10n.locale))
+            let help = L10n.format(day, Date.FormatStyle().weekday(.abbreviated).month(.defaultDigits).day(), calendar: calendar)
                 + " · " + L10n.text("harness.credits_amount", amount(total))
             return .init(timestamp: day.timeIntervalSince1970,
-                label: isToday ? L10n.text("deepseek.today_label") : day.formatted(Date.FormatStyle().weekday(.narrow).locale(L10n.locale)),
+                label: isToday ? L10n.text("deepseek.today_label") : L10n.format(day, Date.FormatStyle().weekday(.narrow), calendar: calendar),
                 today: isToday, withinFraction: total / top, overFraction: 0, help: help)
         }
         // The card above names the module; the chart's own title matches DeepSeek's.

@@ -32,7 +32,7 @@ struct EngineQuotaHistory {
         let cycle = snapshot?.accountScope != nil && history.accountScope == snapshot?.accountScope
             ? history.currentCycle(for: window, at: now) : nil
         let data = cycle.map { QuotaChartData(cycle: $0, resetCredits: snapshot?.resetCredits, now: now) }
-        let context = [L10n.language.rawValue, L10n.locale.identifier, TimeZone.current.identifier].joined(separator: "|")
+        let context = [L10n.language.rawValue, L10n.locale.identifier, L10n.timeZone.identifier].joined(separator: "|")
         if data != chartData || context != formattingContext {
             chartData = data; formattingContext = context
             chart = data.map { QuotaCycleChartPresentation(data: $0) }; chartRevision += 1

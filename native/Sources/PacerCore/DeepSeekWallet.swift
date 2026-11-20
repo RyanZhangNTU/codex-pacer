@@ -110,7 +110,7 @@ public struct DeepSeekWallet: Equatable, Sendable {
         // from the first reading (or midnight) to the latest reading.
         func elsewhere(_ start: Date) -> Double {
             guard let interval = calendar.dateInterval(of: .day, for: start), let seen = history.coverage(of: interval) else { return 0 }
-            return max(0, history.charged(onDayStarting: interval.start) - ledger.total(in: seen).total)
+            return max(0, history.charged(in: interval) - ledger.total(in: seen).total)
         }
         elsewhereToday = elsewhere(day.start)
         dayTotals = days.map { $0.total + elsewhere($0.start) }
