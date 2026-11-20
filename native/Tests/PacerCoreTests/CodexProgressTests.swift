@@ -320,9 +320,11 @@ final class CodexProgressTests: XCTestCase {
             try line("event_msg", seconds, ["type": "item_completed", "thread_id": thread, "turn_id": turn, "item": report(percent)])
         }
         // Large tool output, as a long research turn writes between two reads: about 1 MB, no turn of its own.
+        // It mentions the turn records, as reading Codex logs or this reader's source would.
         func output(at seconds: Double) throws -> Data {
             try (0..<16).reduce(into: Data()) { data, _ in
-                data += try line("response_item", seconds, ["type": "function_call_output", "call_id": "call", "output": String(repeating: "x", count: 65_536)])
+                data += try line("response_item", seconds, ["type": "function_call_output", "call_id": "call",
+                    "output": #"task_complete turn_context {"type":"task_started"} "# + String(repeating: "x", count: 65_536)])
             }
         }
         func append(_ data: Data, at seconds: Double) throws {

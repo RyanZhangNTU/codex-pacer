@@ -261,7 +261,11 @@ public actor LocalActivityReader {
     }
     /// The most unread log a skip still checks for turn boundaries; more falls back to an anchor.
     static let boundaryScanLimit: UInt64 = 8 * 1024 * 1024
-    private static let turnBoundaries = ["task_started", "task_complete", "turn_aborted", "turn_context"].map { Data($0.utf8) }
+    /// The records' own type fields. Inside a tool's output the same words
+    /// appear with escaped quotes, so text that mentions them is no boundary.
+    private static let turnBoundaries = ["task_started", "task_complete", "turn_aborted", "turn_context"].flatMap { kind in
+        [#""type":"\#(kind)""#, #""type": "\#(kind)""#].map { Data($0.utf8) }
+    }
     /// Whether the unread `fragment` and the file's `from..<to` hold a turn start,
     /// ending or context. Compares bytes in 1 MiB steps without parsing; an
     /// unreadable step counts as a boundary.

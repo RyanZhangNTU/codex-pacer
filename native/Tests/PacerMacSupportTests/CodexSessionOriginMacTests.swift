@@ -206,7 +206,7 @@ final class CodexSessionOriginMacTests: XCTestCase {
         # About 10 MB in 1 MB steps, a snapshot after each; the last step reports 60%.
         for step in range(10):
             with path.open('a') as f:
-                for _ in range(16):f.write(record('response_item',{'type':'function_call_output','call_id':'c','output':'x'*65536}))
+                for _ in range(16):f.write(record('response_item',{'type':'function_call_output','call_id':'c','output':'task_complete turn_context {"type": "task_started"} '+'x'*65536}))
                 if step==9:f.write(progress(60))
             frames.append(snapshot())
         same=len(frames)
