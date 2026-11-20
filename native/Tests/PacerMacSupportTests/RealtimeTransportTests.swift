@@ -9,8 +9,7 @@ final class RealtimeTransportTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
         var prefix = server ? Self.fixture.replacingOccurrences(of: "BAD_ACCEPT", with: badAccept ? "True" : "False") : ""
         if closeAfterTerminal {
-            prefix = prefix.replacingOccurrences(of: "send({'method':'turn/completed'", with: "time.sleep(.05);send({'method':'turn/completed'")
-            prefix = prefix.replacingOccurrences(of: "'PRIVATE final'}]}}})", with: "'PRIVATE final'}]}}});time.sleep(.01);break")
+            prefix = prefix.replacingOccurrences(of: "fixture_close_after_terminal=False", with: "fixture_close_after_terminal=True")
         }
         if hintOnly || indexOnly {
             prefix = prefix.replacingOccurrences(of: "result={'data':[fixture_active,fixture_idle,fixture_review]}", with: indexOnly ? "result={'data':[fixture_active] if fixture_ready.is_set() else []}" : "result={'data':[]}")
@@ -34,9 +33,9 @@ final class RealtimeTransportTests: XCTestCase {
         }
         let child = Process(), stdout = Pipe(), stdin = Pipe(), stderr = Pipe()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        child.arguments = ["-u", "-c", prefix + "\n" + RealtimeProbe.script, Data(home.path.utf8).base64EncodedString(), hintOnly || indexOnly ? "ssh-lifetime" : "once"]
+        child.arguments = ["-u", "-c", prefix + "\n" + RealtimeProbe.script, Data(home.path.utf8).base64EncodedString(), (hintOnly || indexOnly || closeAfterTerminal) ? "ssh-lifetime" : "once"]
         child.standardOutput = stdout; child.standardError = stderr
-        if hintOnly || indexOnly { child.standardInput = stdin }
+        if hintOnly || indexOnly || closeAfterTerminal { child.standardInput = stdin }
         try child.run()
         if hintOnly {
             let hint = try JSONSerialization.data(withJSONObject: ["kind": "discover", "threadIds": [active]]) + Data([10])
@@ -45,11 +44,38 @@ final class RealtimeTransportTests: XCTestCase {
         if hintOnly || indexOnly {
             DispatchQueue.global().asyncAfter(deadline: .now() + (indexOnly ? 3.5 : 1.5)) { try? stdin.fileHandleForWriting.close() }
         }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        let data = closeAfterTerminal ? readThroughRemoteDisconnect(stdout, control: stdin) : stdout.fileHandleForReading.readDataToEndOfFile()
         child.waitUntilExit()
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
         return String(decoding: data, as: UTF8.self)
     }
+    private func readThroughRemoteDisconnect(_ output: Pipe, control: Pipe) -> Data {
+        // Keep the real helper in lifetime mode until it reports the peer's EOF.
+        // The watchdog also releases stdin if the expected status never arrives.
+        let finished = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            _ = finished.wait(timeout: .now() + TestWait.limit)
+            try? control.fileHandleForWriting.close()
+        }
+        var outputData = Data(), pending = Data(), observedSession = false, disconnected = false
+        while true {
+            let chunk = output.fileHandleForReading.availableData
+            if chunk.isEmpty { break }
+            outputData.append(chunk); pending.append(chunk)
+            while let newline = pending.firstIndex(of: 10) {
+                let frame = try? JSONSerialization.jsonObject(with: Data(pending[..<newline])) as? [String: Any]
+                pending.removeSubrange(...newline)
+                if frame?["connected"] as? Bool == true || frame?["events"] != nil { observedSession = true }
+                if !disconnected, observedSession, frame?["kind"] as? String == "status", frame?["connected"] as? Bool == false {
+                    disconnected = true; finished.signal()
+                }
+            }
+        }
+        if !disconnected { finished.signal() }
+        XCTAssertTrue(disconnected, "The live helper must publish the remote disconnect before shutdown")
+        return outputData
+    }
+
     func testAutomaticCadenceUsesFiveSecondsAndExpandingFlushesWithoutResubscribe() async throws {
         final class Capture: @unchecked Sendable {
             let lock = NSLock()
@@ -373,6 +399,7 @@ final class RealtimeTransportTests: XCTestCase {
     fixture_socket=fixture_dir/'app-server-control.sock'
     fixture_server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);fixture_server.bind(str(fixture_socket));os.chmod(fixture_socket,0o600);fixture_server.listen(1)
     fixture_requests=[]
+    fixture_close_after_terminal=False
     fixture_active='019a0000-0000-7000-8000-000000000001'
     fixture_idle='019a0000-0000-7000-8000-000000000002'
     fixture_review='019a0000-0000-7000-8000-000000000003'
@@ -424,6 +451,12 @@ final class RealtimeTransportTests: XCTestCase {
                     send({'method':'item/completed','params':dict(common,item={'type':'commandExecution','id':'tool','aggregatedOutput':'PRIVATE tool output'},completedAtMs=time.time()*1000)})
                     send({'method':'thread/tokenUsage/updated','params':dict(common,tokenUsage={'total':{'outputTokens':100,'inputTokens':12345},'last':{'outputTokens':100}})})
                     send({'method':'turn/completed','params':{'threadId':fixture_active,'turn':{'id':'test-turn','status':'completed','items':[{'text':'PRIVATE final'}]}}})
+                    if fixture_close_after_terminal:
+                        # Send a real FIN after the final frame. Keep reading outstanding
+                        # client requests so a reset cannot replace the EOF under test.
+                        client.shutdown(socket.SHUT_WR)
+                        while client.recv(65536):pass
+                        break
         except (EOFError,ConnectionResetError,BrokenPipeError):pass
         finally:client.close();fixture_server.close()
     fixture_thread=threading.Thread(target=fixture_worker,daemon=True);fixture_thread.start()
