@@ -497,6 +497,7 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     .write(to: home.appendingPathComponent(".codex-global-state.json"))
             }
             try configuration(directory)
+            defaults.synchronize()
             let file = directory.appendingPathComponent("dismissals.json")
             let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
                 installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
@@ -534,9 +535,17 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                 let replacement = directory.appendingPathComponent("replacement-owner")
                 try configuration(replacement)
                 defaults.set(replacement.path, forKey: "codexHome")
+                defaults.synchronize()
+                let visible = try await TestWait.until { model.home.path == replacement.standardizedFileURL.path }
+                XCTAssertTrue(visible, "The replacement owner home must reach the model before it applies the source change")
                 model.applySettings(sourceChanged: true)
             default:
                 defaults.set(false, forKey: "monitorRemoteControl")
+                defaults.synchronize()
+                let visible = try await TestWait.until {
+                    defaults.object(forKey: "monitorRemoteControl") as? Bool == false && !model.monitorsRemoteControl
+                }
+                XCTAssertTrue(visible, "The disabled Remote Control preference must reach the model before it applies the source change")
                 model.applySettings(sourceChanged: true)
                 XCTAssertFalse(model.monitorsRemoteControl)
             }

@@ -238,8 +238,9 @@ jobs:
           MEASURE_IDLE: ${{ needs.changes.outputs.measure_idle }}
         run: |
           $taskEngine = 'windows/Desktop/bin/Release/net10.0-windows/Engine/PacerEngine.exe'
-          $mode = if ($env:MEASURE_IDLE -eq 'true') { @() } else { @('--protocol-only') }
-          python scripts/windows/check-engine-idle.py @mode --engine $taskEngine --output "$env:RUNNER_TEMP/pacer-windows-idle.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
+          $arguments = @('--engine', $taskEngine, '--output', "$env:RUNNER_TEMP/pacer-windows-idle.json")
+          if ($env:MEASURE_IDLE -ne 'true') { $arguments += '--protocol-only' }
+          python scripts/windows/check-engine-idle.py @arguments *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
           if ($LASTEXITCODE -ne 0) { throw 'Engine idle/protocol check failed.' }
       - name: Upload validation logs
         if: failure()
