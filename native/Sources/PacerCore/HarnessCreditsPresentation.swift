@@ -56,11 +56,7 @@ public struct HarnessCreditsPresentation: Codable, Equatable, Sendable {
         guard let reading = credits?.reading(at: now) else { return nil }
         let text = { (key: String, arguments: [CVarArg]) in L10n.text(key, arguments: arguments, language: language) }
         let locale = (language ?? L10n.language).locale
-        func day(_ date: Date) -> String {
-            var style = Date.FormatStyle().month(.abbreviated).day()
-            style.calendar = calendar; style.timeZone = calendar.timeZone
-            return date.formatted(style.locale(locale))
-        }
+        func day(_ date: Date) -> String { L10n.format(date, Date.FormatStyle().month(.abbreviated).day(), calendar: calendar, locale: locale) }
         func days(_ date: Date) -> Int {
             max(0, calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0)
         }

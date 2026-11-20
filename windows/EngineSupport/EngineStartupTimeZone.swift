@@ -1,8 +1,9 @@
 import Foundation
 
 /// Foundation on Windows reports GMT as the current zone. The host passes the
-/// user's IANA zone (or, without one, its current UTC offset) at launch, so
-/// local days and times match the Mac engine.
+/// user's IANA zone, when it has one, and its current UTC offset at launch, so
+/// local days and times match the Mac engine. The name wins, for its daylight
+/// saving rules; the offset covers a name Foundation can't load.
 enum EngineStartupTimeZone {
     static func parse(_ arguments: [String]) -> TimeZone? {
         func value(_ flag: String) -> String? {
