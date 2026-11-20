@@ -16,6 +16,11 @@ internal sealed class EngineClient : IAsyncDisposable
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
     private readonly CancellationTokenSource lifetime = new();
     private readonly EngineCommandWriter writer;
+    // How long a command frame may wait on a full stdin pipe before the engine
+    // counts as stuck. Longer than a command's deadline: a caller gives up
+    // waiting at its deadline, but the engine is stopped only when its input
+    // stays blocked, because an engine that stops early is not restarted.
+    private static readonly TimeSpan StalledInput = TimeSpan.FromSeconds(60);
     private SynchronizationContext? callbacks;
     private void Publish(Action action)
     {
@@ -61,7 +66,8 @@ internal sealed class EngineClient : IAsyncDisposable
     internal EngineClient(TimeSpan? commandTimeout = null)
     {
         this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
-        writer = new(this.commandTimeout, lifetime.Token, () => { connectionClosed = true; job?.Dispose(); });
+        writer = new(this.commandTimeout > StalledInput ? this.commandTimeout : StalledInput, lifetime.Token,
+            () => { connectionClosed = true; job?.Dispose(); });
     }
 
     internal async Task StartAsync(string executable, bool demo, string language, object? configuration = null, bool referenceFixture = false, bool claudeWebFixture = false, bool readOnlyDiagnostics = false, Guid? notificationQa = null, string? claudeRuntimeRoot = null, string? codexProgressRuntimeRoot = null, EngineCrashLog? crashLog = null, bool? addressGuard = null)

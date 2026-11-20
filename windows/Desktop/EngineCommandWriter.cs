@@ -33,9 +33,10 @@ internal sealed class EngineCommandWriter(TimeSpan writeTimeout, CancellationTok
             await input.FlushAsync(budget.Token).ConfigureAwait(false);
             return null;
         }
-        catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException)
+        catch (Exception error)
         {
             // A partially delivered command cannot safely be followed by another.
+            // Every failure is caught: a caller that stopped waiting never observes this task.
             failed = true;
             stopEngine();
             return error;
