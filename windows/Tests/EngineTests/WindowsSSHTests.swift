@@ -280,12 +280,21 @@ final class WindowsSSHTests: XCTestCase {
             ((try? String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)) ?? "")
                 .split(separator: "\n").filter { !$0.contains("\"lookup\":true") }.count
         }
-        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": WindowsCodexExecutableDiscovery.path(codex)]))
-        try await wait { attempts() >= 1 }
+        let sourceID = "codex:" + id
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": WindowsCodexExecutableDiscovery.path(codex),
+            "reminderSettings": ["warnings": ["ssh"], "lowLine": NSNull(), "spikeLine": NSNull()]]))
+        // The fixture records its call before it reads the disconnect marker. Wait
+        // for the engine to publish the failed host after its helper has exited.
+        try await wait {
+            guard attempts() >= 1, let snapshot = capture.snapshot() else { return false }
+            return snapshot.compactWarnings?.contains { $0.kind == .ssh } == true
+                && !snapshot.sources.contains { $0.id == sourceID }
+        }
+        let failedAttempts = attempts()
         try FileManager.default.removeItem(at: disconnect)
         _ = await runtime.receive(try command("reconnectSSH"))
-        try await wait { capture.snapshot()?.sources.contains { $0.transport == "ssh" && $0.available } == true }
-        XCTAssertGreaterThanOrEqual(attempts(), 2)
+        try await wait { capture.snapshot()?.sources.contains { $0.id == sourceID && $0.available } == true }
+        XCTAssertGreaterThan(attempts(), failedAttempts, "The network change starts a fresh SSH helper during backoff")
         await runtime.stop()
     }
 }

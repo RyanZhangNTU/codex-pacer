@@ -32,14 +32,25 @@ final class ShutdownDeadlineTests: XCTestCase {
         func terminateImmediately() { lock.lock(); forced = true; lock.unlock(); exited.finish() }
     }
 
+    func testDefaultShutdownBudgetIs650Milliseconds() {
+        let earliest = DispatchTime.now() + .milliseconds(650)
+        let deadline = ShutdownDeadline()
+        XCTAssertGreaterThanOrEqual(deadline.time, earliest)
+        XCTAssertLessThanOrEqual(deadline.time, DispatchTime.now() + .milliseconds(650))
+    }
+
     func testShutdownReturnsWhenReaderAndSeveralChildrenIgnoreCancellation() async {
-        let gate = Gate(), finished = ShutdownSignal(), children = [StubbornChild(), StubbornChild(), StubbornChild()]
+        let gate = Gate(), finished = ShutdownSignal()
+        // A separate 50 ms budget per child would already take at least 1.2 s.
+        let children = (0..<24).map { _ in StubbornChild() }
         let reader = Task { await gate.wait(); finished.finish() }
         reader.cancel()
         for child in children { child.close() }
-        let started = Date()
-        await ShutdownDeadline().finish(readers: [finished], children: children)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 0.9, "Every reader and child shares the 650 ms budget")
+        let latestReturn = DispatchTime.now() + .milliseconds(900)
+        let deadline = ShutdownDeadline(timeout: 0.05)
+        await deadline.finish(readers: [finished], children: children)
+        XCTAssertTrue(deadline.hasExpired, "A stalled reader gets its grace period before escalation")
+        XCTAssertLessThan(DispatchTime.now(), latestReturn, "Every reader and child shares a single deadline")
         XCTAssertFalse(finished.isFinished, "Cancellation alone must not make this reader finish")
         XCTAssertTrue(children.allSatisfy { !$0.isRunning })
         gate.release(); await reader.value
