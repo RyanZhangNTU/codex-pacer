@@ -104,6 +104,8 @@ def diagnostic_plan(value):
             or fields[1] not in ("en", "zh-Hans") or fields[2] not in ("light", "dark")):
         raise ValueError("Expected a supported connection or slow-engine case, language and theme")
     result = plan([PRESENTATION + fields[0] + ".cs"])
+    result["shards"][0]["groups"] = "responsive" if fields[0] == "SlowEngineChecks" else "connection"
+    result["full_connections"] = False
     result["reason"] = "diagnostic " + value
     return result
 
@@ -141,7 +143,9 @@ def main():
             print("Platform jobs:", ", ".join(selected["jobs"]) or "Linux checks only", file=handle)
             for row in selected["shards"]:
                 print(f"- {row['shard']}: {row['groups']}", file=handle)
-            if selected["shards"]:
+            if diagnostic:
+                print(f"Named case: `{diagnostic}`. The shard also runs the isolated engine protocol smoke.", file=handle)
+            elif selected["shards"]:
                 print(f"Selection: {selected['reason']}. Full connection variants: {selected['full_connections']}. Idle measurement: {selected['measure_idle']}.", file=handle)
     lines = [f"{key}={value}" for key, value in values.items()]
     print("\n".join(lines))

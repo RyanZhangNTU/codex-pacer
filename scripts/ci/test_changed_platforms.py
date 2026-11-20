@@ -110,7 +110,8 @@ class ChangedPlatformsTests(unittest.TestCase):
             plan = platforms.diagnostic_plan(name + "/zh-Hans/dark")
             self.assertEqual(plan["jobs"], ["windows_desktop"])
             self.assertEqual([row["shard"] for row in plan["shards"]], [shard])
-            self.assertFalse(plan["measure_idle"])
+            self.assertEqual(plan["shards"][0]["groups"], "responsive" if name == "SlowEngineChecks" else "connection")
+            self.assertFalse(plan["full_connections"] or plan["measure_idle"])
         for invalid in ("all", "NewCase/en/light", "SlowEngineChecks/en/other"):
             with self.assertRaises(ValueError):
                 platforms.diagnostic_plan(invalid)
