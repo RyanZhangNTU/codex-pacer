@@ -69,6 +69,8 @@ The panel is a column of blocks: the task list, a quota block for each service, 
 - **Quota:** each service can show both windows, only the week or only 5 hours. Quotas next to each other share a row; choose **One row each** to give every service its own row with its pace, reset and forecast beside it. The style and the pace tick are here too.
 - **DeepSeek:** the budget or today's dial, the peak-price chip, how many tasks the spend bar names, whether spend from elsewhere shows, and the 7-day reference line.
 
+On macOS and Windows, turn on **Settings → Codex → Pinned chats** to add the pinned view to the island. Its header switches between **All tasks** and **Pinned chats**. The pinned view follows the selected local Codex sidebar, including idle chats. Drag a chat onto another ungrouped chat to create a group, then click its name to rename it. Drag to a group or to **Ungrouped** to move a chat. Drag group headers to reorder them, or hold Shift to merge. Running chats and groups rise temporarily. Group names, order and collapse state are saved per Codex profile in Pacer.
+
 ## Progress rings
 
 Codex, Claude Code, DeepSeek Harness and WorkBuddy each report how much of your request is done. Pacer draws it as a ring around the task's icon.

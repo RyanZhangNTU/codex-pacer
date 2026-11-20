@@ -24,7 +24,7 @@ internal static class Program
         if (args is ["--update-installer-only", var installerScope, var installerBuild, var installerPath])
         { WindowsUpdateChecks.CheckInstallerFile(installerPath, installerScope, installerBuild); return 0; }
         if (args is ["--preferences-only", var preferencesEngine])
-        { PreferencesChecks.Run(); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
+        { PreferencesChecks.Run(preferencesEngine); await PreferencesPersistenceChecks.Run(preferencesEngine); Console.WriteLine("PASS preferences persistence, acknowledgement, recovery and forward-version protection"); return 0; }
         if (args is ["--deepseek-only", var budgetEngine]) { await DeepSeekOptionPersistenceChecks.Run(budgetEngine); return 0; }
         if (args is ["--crash-log-only", var crashEngine])
         { await EngineCrashLogChecks.Run(Path.GetFullPath(crashEngine)); Console.WriteLine("PASS engine crash reports: allowed fields, retention, the engine's report, and engines ended from outside or in the middle of a frame"); return 0; }
@@ -66,7 +66,7 @@ internal static class Program
         if (args is ["--platform-only"])
         { WindowsPlatformChecks.Run(); Console.WriteLine("PASS Windows 10 minimum, notification capability failures and glass fallback"); return 0; }
         if (args is ["--pages-only", var pagesEngine])
-        { PreferencesChecks.Run(); await PreferencesSessionChecks.Run(); await GuideControlChecks.Run(); await GuideSessionChecks.Run(Path.GetFullPath(pagesEngine)); Console.WriteLine("PASS preferences, guide versions, restart, quiet runs and public links"); return 0; }
+        { PreferencesChecks.Run(pagesEngine); await PreferencesSessionChecks.Run(); await GuideControlChecks.Run(); await GuideSessionChecks.Run(Path.GetFullPath(pagesEngine)); Console.WriteLine("PASS preferences, guide versions, restart, quiet runs and public links"); return 0; }
         if (args is ["--startup-only"])
         { SettingsServiceChecks.Run(); StartupRegistrationChecks.Run(); Console.WriteLine("PASS startup ownership, OS disablement, policy, rollback and cleanup"); return 0; }
         if (args is ["--ssh-only"])
@@ -185,7 +185,7 @@ internal static class Program
         await Test("backdrop policy, restoration, device ownership and idle scheduling", () => { BackdropChecks.Run(); return Task.CompletedTask; });
         await Test("preferences round trip, bounded corrupt files and rejected updates", () =>
         {
-            saved = PreferencesChecks.Run(); return Task.CompletedTask;
+            saved = PreferencesChecks.Run(engine); return Task.CompletedTask;
         });
         await Test("isolated login registration and allowlisted desktop activation", () =>
         {

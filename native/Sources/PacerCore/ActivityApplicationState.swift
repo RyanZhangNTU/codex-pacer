@@ -298,10 +298,12 @@ public struct ActivityApplicationState: Sendable {
     @discardableResult public mutating func markAllRead(at now: Date) -> Bool {
         markRead(activityID: nil, at: now)
     }
-    @discardableResult public mutating func markRead(activityID: String?, at now: Date) -> Bool {
+    @discardableResult public mutating func markRead(activityID: String?, at now: Date, within scope: Set<String>? = nil) -> Bool {
         let value = presentation(at: now)
         let family = activityID.flatMap { id in value.groups.first { $0.primary.id == id } }.map { Set($0.members.map(\.id)) }
-        let readable = value.readableCompletions.filter { activityID == nil || family?.contains($0.id) == true }
+        let readable = value.readableCompletions.filter {
+            (activityID == nil || family?.contains($0.id) == true) && (scope?.contains($0.id) ?? true)
+        }
         let removed = Set(readable.filter { inbox.dismiss($0) }.map(\.id))
         guard !removed.isEmpty else { return false }
         removeActivities(removed, at: now); return true

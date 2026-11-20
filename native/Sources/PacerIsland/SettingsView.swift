@@ -52,6 +52,7 @@ struct SettingsView: View {
     @State private var monitorDurable = UserDefaults.standard.bool(forKey: IslandModel.monitorsDurableKey)
     /// Shared with the update note, which can change them while this is open.
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
+    @AppStorage(IslandModel.pinnedChatsKey) private var showPinnedConversations = false
     @AppStorage(IslandModel.showsEmbeddedCodexSessionsKey) private var showEmbeddedCodexSessions = true
     @AppStorage(IslandModel.showsClaudeCloudProjectsKey) private var showClaudeCloudProjects = true
     @AppStorage(IslandModel.claudeProgressRingKey) private var claudeProgressRing = true
@@ -403,6 +404,8 @@ struct SettingsView: View {
                         status: setup.map { L10n.text("codex.progress_setup." + $0.rawValue) },
                         canRetry: setup == .failed || setup == .missingCLI || setup == .conflict,
                         retry: { model.syncCodexProgressSwitch(force: true) })
+                    CardToggle(title: L10n.text("conversation_groups.title"), info: L10n.text("conversation_groups.setting_help"), isOn: $showPinnedConversations)
+                        .accessibilityIdentifier("settings.codex.pinned_chats")
                 } else {
                     CardToggle(title: L10n.text("main.claude.cloud"), info: L10n.text("main.info.claude_cloud"), isOn: $showClaudeCloudProjects)
                     CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.claude_embedded"), isOn: $showEmbeddedClaudeSessions)
@@ -592,7 +595,7 @@ struct SettingsView: View {
             quotaStyle: quotaStyle, fullscreen: fullscreen, displayID: displayID, positionPerDisplay: positionPerDisplay, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
             monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, monitorDurable: monitorDurable, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
-            showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
+            showEmbeddedCodexSessions: showEmbeddedCodexSessions, showPinnedConversations: showPinnedConversations, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
             codexProgressRing: codexProgressRing, deepseekProgressRing: deepseekProgressRing,
             showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
             quotaRings: quotaRings)
@@ -649,6 +652,7 @@ struct SettingsView: View {
             let value = quotaRings[slot.rawValue]
             if value.isEmpty { defaults.removeObject(forKey: slot.defaultsKey) } else { defaults.set(value, forKey: slot.defaultsKey) }
         }
+        defaults.set(showPinnedConversations, forKey: IslandModel.pinnedChatsKey)
         model.applySettings(sourceChanged: false)
     }
 
@@ -732,6 +736,7 @@ private struct LiveSettings: Equatable {
     var monitorDurable: Bool
     var showEmbeddedClaudeSessions: Bool
     var showEmbeddedCodexSessions: Bool
+    var showPinnedConversations: Bool
     var showClaudeCloudProjects: Bool
     var claudeProgressRing: Bool
     var deepseekSource: DeepSeekBalanceSource

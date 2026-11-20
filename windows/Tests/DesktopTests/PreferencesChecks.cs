@@ -3,8 +3,13 @@ using CodexPacer.Windows;
 
 internal static class PreferencesChecks
 {
-    internal static DesktopPreferences Run()
+    internal static DesktopPreferences Run(string engine)
     {
+        ConversationOrderChecks.Run(engine);
+        var fresh = new DesktopPreferences();
+        Check(!fresh.ShowPinnedConversations, "Fresh and upgraded preferences retain the ordinary task list");
+        var optedIn = fresh with { ShowPinnedConversations = true };
+        Check(PreferencesCodec.Decode(PreferencesCodec.Encode(optedIn)).ShowPinnedConversations, "The pinned view switch round trips");
         string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "pacer-prefs-" + Guid.NewGuid().ToString("N")));
         string file = Path.Combine(root, "preferences.json");
         // Maintenance's inspection mode must remain read-only, including on damage.
@@ -15,8 +20,11 @@ internal static class PreferencesChecks
             Check(!missing.Unavailable && missing.Value.IsValid && !Directory.Exists(root), "Missing settings must use defaults without creating files");
             Check(missing.Value.IslandAppearance == "liquidGlass", "The appearance default matches the Mac preference");
             Check(missing.Value.ShowEmbeddedCodexSessions && missing.Value.ShowEmbeddedClaudeSessions, "Both independent embedding preferences default to visible");
+            var savedGroups = ConversationGroups.Read(null).Update("profile-a",
+                [new ConversationGroup("g", "Fixture group", ["local:fixture"], true)]);
             var original = new DesktopPreferences
             {
+                ShowPinnedConversations = true, ConversationGroups = savedGroups,
                 Language = "zh-Hans", Position = "topRight", DisplayMode = "notch", IslandAppearance = "classic", ExpandedQuotaStyle = "classic", PositionChosen = true, LastSettingsPane = "appearance", HideProjects = true, ShowAppButtons = false, ShowEmbeddedCodexSessions = false, RetentionMinutes = 60,
                 CodexHome = @"C:\中文 space\.codex", CodexExecutable = @"C:\tools 中文\codex.exe",
                 DeepSeekPanelStyle = "simple", DeepSeekMode = "budget", DeepSeekDailyBudget = 12.5, DeepSeekWeeklyBudget = 70,
@@ -27,6 +35,12 @@ internal static class PreferencesChecks
             };
             Check(store.Save(original), "Valid preferences must save");
             var restored = store.Load();
+            var restarted = new PreferencesStore(file).Load().Value;
+            var groups = ConversationGroups.Read(restarted.ConversationGroups);
+            Check(restarted.ShowPinnedConversations && groups.For("profile-a").Single() is { Name: "Fixture group", Collapsed: true } &&
+                groups.For("profile-a")[0].Members.SequenceEqual(new[] { "local:fixture" }) && groups.For("profile-b").Length == 0,
+                "Restart restores only the chosen profile's groups, members and collapse state");
+
             Check(!restored.Unavailable && restored.Value.Language == "zh-Hans" && restored.Value.Position == "topRight"
                 && restored.Value.DisplayMode == "notch" && restored.Value.ExpandedQuotaStyle == "classic" && restored.Value.PositionChosen == true && restored.Value.LastSettingsPane == "appearance"
                 && restored.Value.CodexHome == original.CodexHome && restored.Value.CodexExecutable == original.CodexExecutable

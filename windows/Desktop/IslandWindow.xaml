@@ -95,6 +95,8 @@
        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <TextBlock x:Name="TasksTitle" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Island.Secondary}"/>
         <TextBlock x:Name="TasksCount" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Tertiary}" Margin="6,0,0,0"/>
+        <Button x:Name="SwitchConversationView" Visibility="Collapsed" Style="{StaticResource QuotaLinkButton}" Margin="6,0,0,0"
+                Click="OnSwitchConversationView" AutomationProperties.AutomationId="island.switch_pinned_chats"/>
        </StackPanel>
        <StackPanel x:Name="TaskHeaderTrailing" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,-2,0,-2">
         <StackPanel x:Name="PageControls" Orientation="Horizontal" VerticalAlignment="Center">

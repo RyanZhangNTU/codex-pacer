@@ -133,7 +133,7 @@ public partial class IslandWindow : Window
         InitializeCompactBar(); PaceBadges();
         TasksCount.Text = "0"; MarkReadButton.IsEnabled = false;
         // Closing under the pointer can still raise a leave that starts the timer.
-        collapse.Tick += (_, _) => { collapse.Stop(); if (!presentationStopped && !pinned) SetExpanded(false); };
+        collapse.Tick += (_, _) => { collapse.Stop(); if (!presentationStopped && !pinned && !conversationDragging && !conversationRenaming) SetExpanded(false); };
         // The open menu holds the pointer, so leaving the island meanwhile raised no leave event.
         MoreButton.ContextMenu.Closed += (_, _) => Dispatcher.BeginInvoke(() =>
         { if (!presentationStopped && move == null && IsVisible && !pinned && expanded && !IsMouseOver) collapse.Start(); }, DispatcherPriority.Input);
@@ -306,7 +306,11 @@ public partial class IslandWindow : Window
             compactPreferences.Position != preferences.Position || compactPreferences.DisplayMode != preferences.DisplayMode;
         if (screenChanged || placementChanged) CancelMove();
         bool memoryTurnedOn = preferences.IslandPositionPerDisplay && !compactPreferences.IslandPositionPerDisplay;
+        bool groupsChanged = compactPreferences.ConversationGroups != preferences.ConversationGroups || compactPreferences.CodexHome != preferences.CodexHome || compactPreferences.ShowPinnedConversations != preferences.ShowPinnedConversations ||
+            UsesConversationGroups && compactPreferences.HideProjects != preferences.HideProjects;
+        if (compactPreferences.ShowPinnedConversations != preferences.ShowPinnedConversations) viewingPinnedChats = true;
         compactPreferences = preferences;
+        if (groupsChanged && latest != null) { panelDirty = true; Render(latest); }
         RememberDisplayPlace(preferences);
         // Light Liquid Glass turns the whole island light before its surface changes.
         bool toneChanged = PacerPalette.ApplyTone(preferences.IslandAppearance == "liquidGlassLight");
@@ -389,7 +393,7 @@ public partial class IslandWindow : Window
         else ShowNavigationError(ui.Text("windows.app.open_failed"));
     }
     private void OnMouseEnter(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-in"); collapse.Stop(); SetExpanded(true); }
-    private void OnMouseLeave(object sender, MouseEventArgs e) { if (move != null) return; RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
+    private void OnMouseLeave(object sender, MouseEventArgs e) { if (move != null || conversationDragging || conversationRenaming) return; RecordInteraction("hover-out"); if (!pinned && !MoreButton.ContextMenu.IsOpen) collapse.Start(); }
     private void OnPin(object sender, RoutedEventArgs e) => SetPinned(!pinned);
     private void SetPinned(bool value)
     {
@@ -401,7 +405,7 @@ public partial class IslandWindow : Window
         SetButtonName(PinButton, ui.Text(value ? "common.unpin" : "common.pin"));
         UpdateMainAction();
     }
-    private async void OnMarkRead(object sender, RoutedEventArgs e) { if (latest != null) await Send("markAllRead", new { snapshotSequence = latest.Sequence }); }
+    private async void OnMarkRead(object sender, RoutedEventArgs e) { if (latest != null) await Send("markAllRead", new { snapshotSequence = latest.Sequence, pinnedView = UsesConversationGroups }); }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Send("refresh", new { discover = true });
     private void OnQuit(object sender, RoutedEventArgs e) => QuitRequested?.Invoke();
     private void OnSettings(object sender, RoutedEventArgs e)
@@ -717,7 +721,7 @@ public partial class IslandWindow : Window
         if (harnessAccounts != null) harnessAccounts.Changed -= UpdateHarnessAccount;
         if (presentationStopped) return;
         ShellProjection.Changed -= OnShellProjectionChanged; engine.Snapshot -= QueueSnapshot;
-        presentationStopped = true; CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
+        presentationStopped = true; ReleaseConversationControls(); CancelMove(); StopRendering(); DisposeOcclusion(); DisposeBackdrop(); motion.Dispose(); collapse.Stop(); QuotaLabel.Stop(); StripQuota.Stop();
         if (decoration != null) { decoration.Close(); decoration = null; }
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         DisposeAppearance(); DisposePresence();
@@ -790,23 +794,30 @@ public partial class IslandWindow : Window
     {
         if (presentationStopped) return;
         SnapshotRenders++;
-        bool linksChanged = !(latest?.ActivityLinks ?? []).SequenceEqual(snapshot.ActivityLinks ?? []);
+        bool wasPinned = UsesConversationGroups;
+        bool pinStateChanged = latest?.PinnedConversations?.Profile != snapshot.PinnedConversations?.Profile ||
+            latest?.PinnedConversations?.Available != snapshot.PinnedConversations?.Available;
+        bool linksChanged = !(latest?.ActivityLinks ?? []).SequenceEqual(snapshot.ActivityLinks ?? []) ||
+            !(latest?.PinnedConversations?.Links ?? []).SequenceEqual(snapshot.PinnedConversations?.Links ?? []);
         bool openingChanged = !(latest?.OpeningActivityIDs ?? []).SequenceEqual(snapshot.OpeningActivityIDs ?? []);
         bool first = latest == null;
         latest = snapshot;
-        openingActivityContexts.IntersectWith((snapshot.ActivityLinks ?? []).Select(link => link.Context));
+        UpdateConversationSwitch();
+        if (wasPinned != UsesConversationGroups || (UsesConversationGroups && pinStateChanged)) panelDirty = true;
+        openingActivityContexts.IntersectWith((snapshot.ActivityLinks ?? []).Concat(snapshot.PinnedConversations?.Links ?? []).Select(link => link.Context));
         ApplyNavigationFailure(snapshot.NavigationError);
         UpdateAppButtons();
         UpdateProgressHint(snapshot);
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
-        MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
+        MarkReadButton.IsEnabled = DisplayRows(presentation).Any(row => row.Unread && row.Phase is "completed" or "interrupted");
         UpdateCompactBar();
         // New row choices redraw the page even when the rows are the same.
         bool choicesChanged = ApplyPanelChoices(snapshot);
-        bool rowsChanged = !rows.SequenceEqual(presentation.Rows);
-        if (rowsChanged || choicesChanged) { rows = presentation.Rows; page = Math.Clamp(page, 0, PageCount - 1); }
+        var displayRows = DisplayRows(presentation);
+        bool rowsChanged = !rows.SequenceEqual(displayRows);
+        if (rowsChanged || choicesChanged) { rows = displayRows; page = Math.Clamp(page, 0, PageCount - 1); }
         string countShown = TasksCount.Text, pageShown = PageNumber.Text; var pagerShown = PageControls.Visibility;
-        TasksCount.Text = presentation.TaskCountText ?? "—";
+        TasksCount.Text = UsesConversationGroups ? rows.Count.ToString() : presentation.TaskCountText ?? "—";
         UpdatePager();
         // A new count or page label can widen the task header.
         bool panelChanged = first || countShown != TasksCount.Text || pageShown != PageNumber.Text || pagerShown != PageControls.Visibility;
@@ -833,7 +844,7 @@ public partial class IslandWindow : Window
         if (!panelDirty || latest?.Presentation is not EnginePresentation presentation) return;
         panelDirty = false;
         ApplyPanelChoices(latest);
-        rows = presentation.Rows; page = Math.Clamp(page, 0, PageCount - 1);
+        rows = DisplayRows(presentation); page = Math.Clamp(page, 0, PageCount - 1);
         // Rows that changed meanwhile draw their final state, as rows built while hidden did.
         BuildPage(false, 0, settled: true); UpdatePager();
         RenderPanel(latest);
@@ -850,6 +861,7 @@ public partial class IslandWindow : Window
     /// values in place, keeping its control and motion. Otherwise it is rebuilt.
     private bool UpdatePageInPlace()
     {
+        if (UsesConversationGroups) return UpdateConversationRows();
         if (currentPage is not { } shown || shown.Children.Count != 1 || shown.Children[0] is not StackPanel content) return false;
         var values = rows.Skip(page * PageSize).Take(PageSize).ToArray();
         var controls = content.Children.OfType<TaskRow>().ToArray();
@@ -919,6 +931,7 @@ public partial class IslandWindow : Window
     }
     private void BuildPage(bool animate, int direction, bool settled = false)
     {
+        TasksTitle.Text = ui.Text(UsesConversationGroups ? "conversation_groups.title" : "layout.group.tasks");
         PanelBuilds++;
         foreach (var clock in pageClocks) clock.Dispose(); pageClocks.Clear();
         RevealHost? outgoing = currentPage;
@@ -929,7 +942,9 @@ public partial class IslandWindow : Window
         TaskPages.Height = RowsHeight(rows.Count);
         measuredRowsWidth = 0;
         int index = 0;
-        foreach (var value in rows.Skip(page * PageSize).Take(PageSize))
+        if (UsesConversationGroups && rows.Count > 0) BuildConversationGroups(content, settled);
+        else if (conversationScroll != null) ReleaseConversationControls();
+        foreach (var value in UsesConversationGroups ? Array.Empty<EngineTaskRow>() : rows.Skip(page * PageSize).Take(PageSize))
         {
             var row = new TaskRow(value, panelOptions, settled) { Language = Language, Margin = new Thickness(0, index++ == 0 ? 0 : 2, 0, 0) };
             BindTaskAction(row);
@@ -939,7 +954,8 @@ public partial class IslandWindow : Window
         {
             var empty = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(9, 8, 9, 8) };
             empty.Children.Add(new IconGlyph { Symbol = "moon", Ink = PacerPalette.Secondary, Width = 28, Height = 28 });
-            empty.Children.Add(new TextBlock { Text = ui.Text("activity.no_tasks"), FontSize = 12, FontWeight = FontWeights.Medium,
+            empty.Children.Add(new TextBlock { Text = ui.Text(UsesConversationGroups ? (latest?.PinnedConversations?.Available == true ?
+                "conversation_groups.empty" : "conversation_groups.unavailable") : "activity.no_tasks"), FontSize = 12, FontWeight = FontWeights.Medium,
                 Foreground = PacerPalette.Secondary, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             content.Children.Add(empty);
         }
@@ -974,12 +990,14 @@ public partial class IslandWindow : Window
     private void BindTaskAction(TaskRow row)
     {
         var state = (TaskRowState)row.DataContext;
-        var link = latest?.ActivityLinks?.FirstOrDefault(value => value.ActivityID == state.Value.Id && value.Provider == state.Value.Provider);
+        var link = latest?.ActivityLinks?.FirstOrDefault(value => value.ActivityID == state.Value.Id && value.Provider == state.Value.Provider)
+            ?? (UsesConversationGroups ? latest?.PinnedConversations?.Links.FirstOrDefault(value => value.ActivityID == state.Value.Id && value.Provider == state.Value.Provider) : null);
         bool harness = state.Value.Provider == "deepseek" && harnessAvailable;
         bool available = link != null && (state.Value.Provider != "deepseek" || harness) &&
             !openingActivityContexts.Contains(link.Context) && latest?.OpeningActivityIDs?.Contains(state.Value.Id) != true;
         row.SetOpenAction(available ? () => _ = OpenConversationTaskAsync(row, link!) : null,
             available ? state.AccessibleName + "\n" + ui.Text("common.open_chat") : ui.Text("activity.no_link"), DecorationsAnimate);
+        if (UsesConversationGroups) { row.IsEnabled = true; row.Focusable = true; }
     }
     /// The main window's Overview lists the same rows; a click there opens the
     /// task through the same prepared navigation as a row on the island.
@@ -1023,10 +1041,11 @@ public partial class IslandWindow : Window
         }
     }
     private bool CurrentConversationAction(TaskRow control, EngineActivityLink link) => !presentationStopped && expanded && Expanded.IsAccessible &&
-        currentPage?.IsAccessible == true && currentPage.IsAncestorOf(control) && latest?.ActivityLinks?.Contains(link) == true;
-    private bool CurrentConversationLink(EngineActivityLink link) => !presentationStopped && latest?.ActivityLinks?.Contains(link) == true;
+        currentPage?.IsAccessible == true && currentPage.IsAncestorOf(control) && CurrentConversationLink(link);
+    private bool CurrentConversationLink(EngineActivityLink link) => !presentationStopped &&
+        (latest?.ActivityLinks?.Contains(link) == true || UsesConversationGroups && latest?.PinnedConversations?.Links.Contains(link) == true);
     private bool CurrentConversationPanel(EngineActivityLink link) => CurrentConversationLink(link) && expanded && Expanded.IsAccessible &&
-        currentPage?.IsAccessible == true && rows.Skip(page * PageSize).Take(PageSize).Any(row => row.Id == link.ActivityID);
+        currentPage?.IsAccessible == true && (UsesConversationGroups ? rows : rows.Skip(page * PageSize).Take(PageSize)).Any(row => row.Id == link.ActivityID);
     private async Task OpenConversationTaskAsync(TaskRow control, EngineActivityLink link)
     {
         if (!CurrentConversationAction(control, link) || !openingActivityContexts.Add(link.Context)) return;

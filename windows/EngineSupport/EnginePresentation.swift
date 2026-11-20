@@ -25,6 +25,13 @@ struct EnginePresentation: Codable, Equatable {
 
 }
 
+struct EnginePinnedConversations: Codable, Equatable {
+    let profile: String
+    let available: Bool
+    var rows: [EngineTaskRow]
+    var links: [EngineActivityLink]
+}
+
 struct EngineTaskRow: Codable, Equatable {
     let id: String
     let provider: String
@@ -59,6 +66,15 @@ struct EngineTaskRow: Codable, Equatable {
     let progressStale: Bool?
     let progressText: String?
 
+    init(pinnedID: String, title: String) {
+        id = pinnedID; provider = "codex"; self.title = title
+        status = L10n.text("activity.idle"); phase = "idle"; symbol = "moon"
+        source = nil; sourceLabel = nil; sourceKind = nil; attention = nil
+        model = ""; effort = nil; tokensPerSecond = nil; rateText = nil
+        subagentText = ""; rateIsFresh = false; ratePlaceholder = nil; turnTime = nil
+        subagents = 0; unread = false; failed = false; dimmed = false; cost = nil; peakCost = false
+        progressState = nil; progressMode = nil; progressFraction = nil; progressStale = nil; progressText = nil
+    }
     init(group: ActivityTaskGroup, attention: PendingAttentionRequest.Kind?, inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
         self.init(ActivityTaskRowPresentation(activity: group.primary, group: group, attention: attention,

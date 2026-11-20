@@ -70,6 +70,10 @@ final class ActivityApplicationStateTests: XCTestCase {
         state.localActivities = endings + [root, child]; state.remoteActivities = [remote]
         state.codexReceivedRequests = [request(endings[0])]
         state.reconcile(at: now, retention: 300, visibility: visible)
+        let pinned = endings[1].id, other = endings[2].id
+        XCTAssertTrue(state.markRead(activityID: nil, at: now, within: [pinned]))
+        XCTAssertFalse(state.inbox.unreadActivities.contains { $0.id == pinned })
+        XCTAssertTrue(state.inbox.unreadActivities.contains { $0.id == other })
         XCTAssertGreaterThan(state.presentation(at: now).pagination.pageCount, 1)
         XCTAssertTrue(state.markAllRead(at: now))
         XCTAssertEqual(Set(state.inbox.unreadActivities.map(\.id)), Set([endings[0].id, root.id]))

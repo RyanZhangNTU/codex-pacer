@@ -139,18 +139,21 @@ public struct CodexRolloutMetadata: Sendable {
 public final class CodexOriginLookup {
     private let home: URL
     private var files: [URL] = []
+    private var indexed: [String: URL] = [:]
     private var scannedAt = Date.distantPast
-    private var cache: [URL: (inode: UInt64, size: UInt64, modified: Date, value: CodexRolloutMetadata?)] = [:]
+    private var cache: [URL: (thread: String, inode: UInt64, size: UInt64, modified: Date, value: CodexRolloutMetadata?)] = [:]
     public init(home: URL) { self.home = home }
     public func lookup(_ threadID: String) -> CodexRolloutMetadata? {
-        lookup(threadID, visited: [])
+        lookup(threadID.lowercased(), visited: [])
     }
     private func lookup(_ threadID: String, visited: Set<String>) -> CodexRolloutMetadata? {
         guard UUID(uuidString: threadID) != nil, !visited.contains(threadID), visited.count < 64 else { return nil }
         let now = Date()
         if now.timeIntervalSince(scannedAt) >= 2 {
             let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"; formatter.locale = Locale(identifier: "en_US_POSIX")
-            var candidates = SessionIndex.files(home: home, limit: 256)
+            let entries = SessionIndex.entries(home: home, limit: 256)
+            indexed = Dictionary(entries.compactMap { entry in entry.threadID.map { ($0, entry.url) } }, uniquingKeysWith: { first, _ in first })
+            var candidates = entries.map(\.url)
             for day in [now, now.addingTimeInterval(-86400)] {
                 let directory = home.appendingPathComponent("sessions/" + formatter.string(from: day))
                 candidates += ((try? FileManager.default.contentsOfDirectory(at: directory,
@@ -162,13 +165,14 @@ public final class CodexOriginLookup {
             files = dated.sorted { $0.1 == $1.1 ? $0.0.path < $1.0.path : $0.1 > $1.1 }.prefix(512).map(\.0)
             scannedAt = now; cache = cache.filter { files.contains($0.key) }
         }
-        guard let file = files.first(where: { $0.deletingPathExtension().lastPathComponent.lowercased().hasSuffix(threadID.lowercased()) }),
+        guard let file = indexed[threadID] ?? files.first(where: { AgentProvider.codex.sessionID(in: $0.lastPathComponent) == threadID }),
+              AgentProvider.codex.sessionID(in: file.lastPathComponent).map({ $0 == threadID }) ?? true,
               let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
               let size = (attributes[.size] as? NSNumber)?.uint64Value, let modified = attributes[.modificationDate] as? Date else { return nil }
         let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
         let value: CodexRolloutMetadata?
-        if let old = cache[file], old.inode == inode, old.size == size, old.modified == modified { value = old.value }
-        else { value = CodexRolloutMetadata.read(file, threadID: threadID); cache[file] = (inode, size, modified, value) }
+        if let old = cache[file], old.thread == threadID, old.inode == inode, old.size == size, old.modified == modified { value = old.value }
+        else { value = CodexRolloutMetadata.read(file, threadID: threadID); cache[file] = (threadID, inode, size, modified, value) }
         if let value, let parent = value.parentThreadID, let owner = lookup(parent, visited: visited.union([threadID])) {
             return CodexRolloutMetadata(origin: owner.origin, url: value.url,
                 observedAt: owner.observedAt ?? value.observedAt, parentThreadID: parent)

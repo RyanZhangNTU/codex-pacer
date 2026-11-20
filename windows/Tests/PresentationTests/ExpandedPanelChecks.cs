@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
@@ -160,12 +161,73 @@ internal static class ExpandedPanelChecks
             await island.WaitForPresentationAsync();
             Check(island.LogicalTarget.Height == PresentationWait.ReferenceHeight(island) && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
                 "Restoring the layout and choices returns the reference panel");
+            // The pinned catalog uses a scrollable grouped list; classic demo remains the legacy fixture.
+            await session.ChangeAsync(p => p with { ShowPinnedConversations = true });
+            await Until(() => engine.LatestSnapshot?.PinnedConversations?.Rows.Count >= 3);
+            await Until(() => Present<ScrollViewer>(island, "island.conversations"));
+            island.SaveIslandPlacement = edit => session.ChangeAsync(edit);
+            var pinnedRows = engine.LatestSnapshot!.PinnedConversations!.Rows;
+            var groupedIDs = pinnedRows.Take(2).Select(row => row.Id).ToArray();
+            var groupJson = ConversationGroups.Read(null).Update("", [new ConversationGroup("fixture", "Development", groupedIDs)]);
+            await session.ChangeAsync(p => p with { ConversationGroups = groupJson });
+            await Until(() => Present<ScrollViewer>(island, "island.conversations"));
+            Check(Descendants(island).OfType<TaskRow>().Count() == pinnedRows.Count, "Every pinned row is reachable in the grouped list");
+            Invoke(Find<Button>(island, "island.group.toggle.fixture"));
+            await Until(() => ConversationGroups.Read(session.Current.ConversationGroups).For("")[0].Collapsed);
+            Check(Descendants(island).OfType<TaskRow>().Count() == pinnedRows.Count - groupedIDs.Length, "Collapsing hides only that group's rows and saves the choice");
+            Invoke(Find<Button>(island, "island.group.toggle.fixture"));
+            await Until(() => !ConversationGroups.Read(session.Current.ConversationGroups).For("")[0].Collapsed);
+            Check(Descendants(island).OfType<TaskRow>().Count() == pinnedRows.Count, "Expanding restores every member");
+            island.CapturePreview(Path.Combine(output, "panel-" + name + "-groups.png"));
+            var twoGroups = new[] { new ConversationGroup("fixture", "Development", groupedIDs), new ConversationGroup("notes", "Notes", pinnedRows.Skip(2).Take(1).Select(row => row.Id).ToArray(), true) };
+            Check(twoGroups[1].Members.Length == 1, "The group drag fixture includes a second group");
+            await session.ChangeAsync(p => p with { ConversationGroups = ConversationGroups.Read(null).Update("", twoGroups) });
+            await Until(() => Present<Grid>(island, "island.group.header.notes"));
+            GroupDrop(island, "fixture", groupedIDs, "notes", shift: false, after: true, Path.Combine(output, "panel-" + name + "-group-reorder.png"));
+            await Until(() => ConversationGroups.Read(session.Current.ConversationGroups).For("")[0].Id == "notes");
+            var reordered = ConversationGroups.Read(session.Current.ConversationGroups).For("");
+            Check(reordered.Length == 2 && reordered[0].Collapsed && reordered[1].Members.SequenceEqual(groupedIDs), "A normal native group drop changes only order, preserving the collapsed group and chats");
+            GroupDrop(island, "fixture", groupedIDs, "notes", shift: false, after: false);
+            await Until(() => ConversationGroups.Read(session.Current.ConversationGroups).For("")[0].Id == "fixture");
+            GroupDrop(island, "fixture", groupedIDs, "notes", shift: true, after: false, Path.Combine(output, "panel-" + name + "-group-merge.png"));
+            await Until(() => ConversationGroups.Read(session.Current.ConversationGroups).For("").Length == 1);
+            Check(ConversationGroups.Read(session.Current.ConversationGroups).For("")[0] is { Id: "notes", Members.Length: 3 }, "Only a Shift drop merges groups through the native drop handler");
             Console.WriteLine("PASS expanded panel " + name + ": automatic layout, block moves, arrangement, rows, header buttons, Return to Top Center, removal and restore");
+            await ConversationActivityChecks.Run(language, output);
         }
         finally { window.AllowClose = true; window.Close(); island.StopPresentation(); island.AllowClose = true; island.Close(); await engine.DisposeAsync(); }
     }
     private static bool Present<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().Any(value => AutomationProperties.GetAutomationId(value) == id);
+    // Exercise the actual WPF routed handlers with synthetic input; this does not claim physical mouse coverage.
+    private static void GroupDrop(IslandWindow island, string source, string[] members, string target, bool shift, bool after, string? capture = null)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var payloadField = typeof(IslandWindow).GetField("activeConversationDrag", flags)!;
+        var tokenField = typeof(IslandWindow).GetField("conversationDragToken", flags)!;
+        const string token = "group-drop-fixture";
+        payloadField.SetValue(island, Activator.CreateInstance(payloadField.FieldType, flags | BindingFlags.Public, null, new object?[] { "", members, source }, null));
+        tokenField.SetValue(island, token);
+        try
+        {
+            var heading = Find<Grid>(island, "island.group.header." + target);
+            var keys = DragDropKeyStates.LeftMouseButton | (shift ? DragDropKeyStates.ShiftKey : DragDropKeyStates.None);
+            var point = new Point(10, after ? heading.ActualHeight - 2 : 2);
+            DragEventArgs Event(RoutedEvent routed)
+            {
+                var value = (DragEventArgs)Activator.CreateInstance(typeof(DragEventArgs), flags, null,
+                    new object[] { new DataObject("PacerConversationGroup", token), keys, DragDropEffects.Move, heading, point }, null)!;
+                value.RoutedEvent = routed; return value;
+            }
+            var over = Event(DragDrop.DragOverEvent); heading.RaiseEvent(over);
+            Check(over.Effects == DragDropEffects.Move, "The native drag handler accepts the group gesture");
+            var indicator = heading.Children.OfType<Border>().Single();
+            Check(indicator.Visibility == Visibility.Visible && indicator.BorderThickness == (shift ? new Thickness(1) : after ? new Thickness(0,0,0,2) : new Thickness(0,2,0,0)), "Reorder uses an insertion line and explicit merge uses a group outline");
+            if (capture != null) island.CapturePreview(capture);
+            heading.RaiseEvent(Event(DragDrop.DropEvent));
+        }
+        finally { payloadField.SetValue(island, null); tokenField.SetValue(island, null); }
+    }
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().SingleOrDefault(value => AutomationProperties.GetAutomationId(value) == id)
             ?? throw new InvalidOperationException("Missing " + id);

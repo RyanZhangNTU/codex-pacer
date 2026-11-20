@@ -230,6 +230,14 @@ actor EngineRuntime {
     private var snapshotEmission = EngineSnapshotEmission()
     private var hideProjects = false
     private var showEmbeddedCodexSessions = true
+    private var showPinnedConversations = false
+    private var pinEntries: [CodexPinnedThreads.Entry] = []
+    private var pinOrigins: [String: CodexSessionOrigin] = [:]
+    private var hiddenPinIDs: Set<String> = []
+    private var pinsAvailable = false, pinsNeedRead = true
+    private var pinEpoch: UInt64 = 0
+    private var pinNavigation = ActivityNavigationRegistry()
+    private var publishedReadablePins: Set<String> = []
     private var monitorRemoteControl = false
     /// Dot (Durable) tasks are opt-in: off, the Desktop collector starts no
     /// catalog poll and the Durable progress plugin is removed.
@@ -501,6 +509,10 @@ actor EngineRuntime {
     private let codexMetricsWork = ApplicationWorkRegistry.Key(.presentation, provider: .codex, identifier: "log-metrics")
     #if os(Windows)
     private var watchedCodexLogURLs: [URL] = []
+    private lazy var pinWatcher = ActivityLogWatcher(files: WindowsFileSystem(), events: WindowsActivityLogWatcher(),
+        maximumDirectoryWatches: 1, fileExtensions: ["json", "sqlite", "sqlite-wal"]) { [weak self] _ in
+        Task { await self?.pinnedCatalogChanged() }
+    }
     // Give a burst of writes time to land before reading lifecycle evidence.
     private static let codexFileEventCoalescing: TimeInterval = 0.1
     private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
@@ -950,7 +962,12 @@ actor EngineRuntime {
                 await performLifecycle(start)
                 startWSLMonitoring()
                 await refresh(discover: true)
-            } else { await performLifecycle(plan) }
+            } else {
+                await performLifecycle(plan)
+                if showPinnedConversations && pinsNeedRead && !demo && enabled.contains(.codex) {
+                    await refresh(discover: false, refreshActivityMonitors: false)
+                }
+            }
             startMaintenance()
             // The host must see the new account context before its browser
             // can answer a quota request for an organization selected here.
@@ -1088,7 +1105,9 @@ actor EngineRuntime {
             guard command.params?.snapshotSequence == sequence else {
                 failure(id: command.id, code: "staleSnapshot"); return true
             }
-            if command.method == "markAllRead" { activityState.markAllRead(at: now()) }
+            if command.method == "markAllRead", command.params?.pinnedView == true {
+                activityState.markRead(activityID: nil, at: now(), within: publishedReadablePins)
+            } else if command.method == "markAllRead" { activityState.markAllRead(at: now()) }
             else if let id = command.params?.activityID { activityState.markRead(activityID: id, at: now()) }
             publish(notices: [])
         case "demoStage":
@@ -1232,6 +1251,10 @@ actor EngineRuntime {
             for provider in enabled.subtracting(selectedProviders) { inbox.remove(provider: provider) }
             enabled = selectedProviders
         }
+        if changesCodex || parameters.showPinnedConversations.map({ $0 != showPinnedConversations }) == true {
+            resetPinnedCatalog()
+        }
+        if let show = parameters.showPinnedConversations { showPinnedConversations = show }
         if let hidden = parameters.hideProjects { hideProjects = hidden }
         if let shown = parameters.showEmbeddedCodexSessions { showEmbeddedCodexSessions = shown }
         if let value = parameters.monitorRemoteControl, value != monitorRemoteControl {
@@ -1863,6 +1886,7 @@ actor EngineRuntime {
         activityState.removeHarness(provider)
         switch provider {
         case .codex:
+            resetPinnedCatalog()
             clearCodexMetricsBatch()
             #if os(Windows)
             watchedCodexLogURLs = []
@@ -2507,6 +2531,7 @@ actor EngineRuntime {
         let previousDeepSeekTurns = Set(activities.filter {
             $0.provider == .deepseek && $0.phase == .running
         }.map { $0.id + "|" + ($0.turnID ?? "") })
+        let previousPins = pinEntries, previousAvailability = pinsAvailable, previousHidden = hiddenPinIDs, previousOrigins = pinOrigins
         let previousCodex = harnessActivities[.codex]
         if demo {
             var rows = DemoScenario.tasks(stage: stage, at: date)
@@ -2553,6 +2578,8 @@ actor EngineRuntime {
         collectHandoff.readLocalSnapshots()
         let codex = harnessActivities[.codex]
         let publishNow = demo || collectHandoff.takePublication() || !batchCodexMetrics || !projectionReady ||
+            (showPinnedConversations && (previousPins != pinEntries || previousAvailability != pinsAvailable ||
+                previousHidden != hiddenPinIDs || previousOrigins != pinOrigins)) ||
             codex?.status != previousCodex?.status || codexLifecycleChanged(from: previousCodex, to: codex)
         // A Claude, DeepSeek or WorkBuddy ending read during this collect can be
         // newer than its start, so project at the time of publication.
@@ -2564,17 +2591,58 @@ actor EngineRuntime {
             if left != right { return left }
             return ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast)
         }.prefix(256).compactMap(\.threadID)
-        if discover || publishNow { await desktopMonitor?.discover(candidates) }
+        if discover || publishNow {
+            if showPinnedConversations, !demo, !pinEntries.isEmpty {
+                let ordinary = Set(candidates)
+                await desktopMonitor?.discover(Array((candidates + pinEntries.map(\.id).filter { !ordinary.contains($0) }).prefix(256)))
+            } else { await desktopMonitor?.discover(candidates) }
+        }
         guard active, generation == revision, !Task.isCancelled else { return }
         await claudeCloudMonitor?.startAfterPublication()
     }
 
-    private func collectCodexLogs(_ context: ActivityAdapters.Adapter.SnapshotContext) async {
-        let revision = generation, home = codexHome
-        let result = await codexReader.read(home: home, now: context.observedAt, phaseAwareRate: true, metricsOnly: !context.discover)
-        guard active, generation == revision, !Task.isCancelled else { return }
+    private func resetPinnedCatalog() {
+        pinEpoch &+= 1
+        pinEntries = []; pinOrigins = [:]; hiddenPinIDs = []; pinsAvailable = false; pinsNeedRead = true
+        pinNavigation.invalidate(); publishedReadablePins = []
         #if os(Windows)
-        if context.discover {
+        pinWatcher.stop()
+        #endif
+    }
+
+    private func pinnedCatalogChanged() async {
+        guard active, !demo, showPinnedConversations, enabled.contains(.codex), lifecycle.acceptsObservedWork else { return }
+        pinsNeedRead = true
+        await refresh(discover: false, refreshActivityMonitors: false, fileEvent: true)
+    }
+
+    private func collectCodexLogs(_ context: ActivityAdapters.Adapter.SnapshotContext) async {
+        let revision = generation, home = codexHome, epoch = pinEpoch
+        var changedPins = false
+        if showPinnedConversations && (pinsNeedRead || context.discover) {
+            pinsNeedRead = false
+            let database = CodexPinnedThreads.database(home: home)
+            #if os(Windows)
+            pinWatcher.update(CodexPinnedThreads.watchURLs(home: home, database: database), interval: 0.5)
+            _ = await pinWatcher.activeWatchCount()
+            #endif
+            let entries = await Task.detached(priority: .utility) { CodexPinnedThreads.read(home: home, database: database) }.value
+            guard active, generation == revision, pinEpoch == epoch, !Task.isCancelled else { return }
+            pinsAvailable = entries != nil
+            if let entries { changedPins = entries != pinEntries; pinEntries = entries }
+        }
+        let discover = context.discover || changedPins
+        let result = await codexReader.read(home: home, now: context.observedAt, phaseAwareRate: true,
+            metricsOnly: !discover, pinned: pinEntries)
+        guard active, generation == revision, pinEpoch == epoch, !Task.isCancelled else { return }
+        if showPinnedConversations {
+            let hidden = await codexReader.hiddenPinIDs
+            let origins = await codexReader.pinOrigins
+            guard active, generation == revision, pinEpoch == epoch, !Task.isCancelled else { return }
+            hiddenPinIDs = hidden; pinOrigins = origins
+        }
+        #if os(Windows)
+        if discover {
             watchedCodexLogURLs = result.watchURLs
             await updateCodexLogWatches()
             guard active, generation == revision, !Task.isCancelled else { return }
@@ -2913,6 +2981,7 @@ actor EngineRuntime {
                 navigationHosts.removeValue(forKey: operation.id)
             }
         }
+        let pinPresentation = pinnedPresentation(activities: visibleActivities, requests: visibleRequests, options: presentationOptions, at: date)
         let notificationProjections = visibleNotices.map { notificationProjection($0, requests: visibleRequests, at: date) }
         var snapshot = EngineSnapshot(sequence: sequence + 1, demo: demo, activities: visibleActivities, requests: visibleRequests,
             sources: displayedSources, quota: displayedQuota,
@@ -2930,6 +2999,7 @@ actor EngineRuntime {
             },
             claudeRemoteSetups: claudeRemoteSetups, connections: connectionPresentation(), codexProgressSetup: codexProgressSetup,
             deepseekProgressSetup: deepseekProgressSetup)
+        snapshot.pinnedConversations = pinPresentation
         snapshot.expandedPanel = EngineExpandedPanel(settings: panelSettings, enabled: enabled, snapshots: snapshots,
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
@@ -2938,16 +3008,48 @@ actor EngineRuntime {
                                           presentation: HarnessCreditsPresentation(credits: $0, settings: creditSettings[provider] ?? .default, now: date)) }
         }
         snapshot.remoteControlDirectory = monitorRemoteControl ? desktopState?.remoteControlDirectory : nil
-        guard let bytes = try? JSONEncoder().encode(snapshot), bytes.count <= EngineProtocol.maximumSnapshotBytes else {
+        guard let bytes = snapshot.encodedWithinWireLimit() else {
             failure(id: nil, code: "snapshotLimit"); return
         }
         guard (try? snapshotEmission.accepts(bytes, force: force)) != false else { return }
+        publishedReadablePins = Set((snapshot.pinnedConversations?.rows ?? []).filter(\.unread).map(\.id))
         sequence += 1
         output(bytes + Data([10]))
         publishedBalanceContext = snapshot.deepseekConnection?.context
         if projectionReady && lifecycle.acceptsObservedWork {
             for message in webHostPublication.published(context: publishedBalanceContext) { outputWebHostMessage(message) }
         }
+    }
+
+    private func pinnedPresentation(activities: [SessionActivity], requests: [PendingAttentionRequest],
+                                    options: TaskPresentationOptions, at date: Date) -> EnginePinnedConversations? {
+        guard showPinnedConversations, enabled.contains(.codex), projectionReady else {
+            pinNavigation.invalidate()
+            return nil
+        }
+        let entries = demo ? CodexPinnedThreads.demoEntries : pinEntries
+        let rows = CodexPinnedThreads.rows(entries, activities: activities, requests: requests,
+            excluding: hiddenPinIDs.union(activityState.hiddenActivityIDs(activityVisibility)), origins: pinOrigins,
+            showsEmbedded: showEmbeddedCodexSessions, inbox: inbox, options: options, at: date)
+        // The main registry retains its original family and acknowledgment semantics.
+        // A separate cold link only opens its own local conversation.
+        let cold = rows.filter { $0.activity.sourceHostID == nil && navigation.entries[$0.activity.id] == nil }.map { row -> SessionActivity in
+            var value = SessionActivity(id: row.activity.id, sessionID: row.activity.threadID)
+            if let origin = row.activity.codexOrigin { value.setCodexOrigin(origin) }
+            return value
+        }
+        #if os(Windows)
+        let canOpen = demo || WindowsActivityNavigation.isDefaultProfile(codexHome, provider: .codex)
+        #else
+        let canOpen = true
+        #endif
+        pinNavigation.update(activities: cold, requests: [], inbox: inbox, cloudContext: nil) {
+            canOpen && !$0.launchedByEmbeddingApp
+        }
+        let profile = demo ? "" : CompletionDismissalStore.digest([codexHome.standardizedFileURL.path.lowercased()])
+        return EnginePinnedConversations(profile: profile, available: demo || pinsAvailable,
+            rows: rows.map { $0.live.map(EngineTaskRow.init) ?? EngineTaskRow(pinnedID: $0.activity.id, title: $0.title) },
+            links: pinNavigation.links)
     }
 
     func prepareForSleep() async {
@@ -3012,6 +3114,7 @@ actor EngineRuntime {
         refreshRequested = false; discoveryRequested = false; refreshActivityMonitorsRequested = false
         immediateRefreshRequested = false; collectHandoff = EngineCollectHandoff()
         clearCodexMetricsBatch()
+        resetPinnedCatalog()
         forceBalanceRequested = false
         #if os(Windows)
         watchedCodexLogURLs = []
@@ -3035,8 +3138,13 @@ actor EngineRuntime {
             operations[.claudeWeb] = { await claudeWeb.setAvailable(false) }
         }
         #if os(Windows)
-        let watcher = logWatcher, stopWatching = !demo
-        operations[.watches] = { if stopWatching { watcher.stop(); _ = await watcher.activeWatchCount() } }
+        let watcher = logWatcher, catalogWatcher = pinWatcher, stopWatching = !demo
+        operations[.watches] = {
+            if stopWatching {
+                watcher.stop(); catalogWatcher.stop()
+                _ = await watcher.activeWatchCount(); _ = await catalogWatcher.activeWatchCount()
+            }
+        }
         #endif
         let completed = await ApplicationLifecycleCoordinator.cleanup(operations,
             activity: activityAdapters.cleanup(sleeping ? .sleep : .shutdown, deadline: deadline, detached: harnesses), deadline: deadline)
@@ -3044,7 +3152,7 @@ actor EngineRuntime {
     }
     private func invalidateNavigation() {
         navigation.invalidate(); navigationState.cancel(); navigationOpens.removeAll(); navigationHosts.removeAll()
-        notificationNavigation.invalidate(); notificationActivities = []
+        pinNavigation.invalidate(); notificationNavigation.invalidate(); notificationActivities = []
         navigationFailureTask?.cancel(); navigationFailureTask = nil
     }
     private func cancelHostTracking() {
@@ -3189,7 +3297,7 @@ actor EngineRuntime {
         return value
     }
     private func navigationEntry(context: String) -> ActivityNavigationRegistry.Entry? {
-        navigation.entry(context: context) ?? notificationNavigation.entry(context: context)
+        navigation.entry(context: context) ?? pinNavigation.entry(context: context) ?? notificationNavigation.entry(context: context)
     }
     private func navigationIsCurrent(_ entry: ActivityNavigationRegistry.Entry) -> Bool {
         let sourceIsCurrent: Bool

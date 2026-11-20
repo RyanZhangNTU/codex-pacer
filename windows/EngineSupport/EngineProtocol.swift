@@ -36,6 +36,8 @@ struct EngineCommand: Decodable {
         var sourceID: String?
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
+        var showPinnedConversations: Bool?
+        var pinnedView: Bool?
         var monitorRemoteControl: Bool?
         var monitorDurable: Bool?
         var monitorWSL: Bool?
@@ -365,10 +367,26 @@ struct EngineSnapshot: Codable, Equatable {
     let connections: ConnectionPagePresentation?
     let navigationError: EngineNavigationFailure?
     let openingActivityIDs: [String]?
+    var pinnedConversations: EnginePinnedConversations?
     var expandedPanel: EngineExpandedPanel? = nil
     var accountCredits: [EngineAccountCredits]? = nil
     var wslAvailability: WindowsWSLAvailability?
     var remoteControlDirectory: RemoteControlDirectoryStatus?
+
+    /// Optional catalog rows yield to the regular snapshot at the existing protocol limit.
+    mutating func encodedWithinWireLimit(limit: Int = EngineProtocol.maximumSnapshotBytes) -> Data? {
+        let encoder = JSONEncoder()
+        while let bytes = try? encoder.encode(self) {
+            if bytes.count <= limit { return bytes }
+            guard var pins = pinnedConversations else { return nil }
+            if pins.rows.isEmpty { pinnedConversations = nil; continue }
+            pins.rows = Array(pins.rows.prefix(pins.rows.count / 2))
+            let kept = Set(pins.rows.map(\.id))
+            pins.links = pins.links.filter { kept.contains($0.activityID) }
+            pinnedConversations = pins
+        }
+        return nil
+    }
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,
