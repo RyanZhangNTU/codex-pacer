@@ -91,7 +91,7 @@ internal static class DeepSeekWebConnectionChecks
                 engine.LatestSnapshot.DeepseekConnection.Context == apiContext && engine.LatestSnapshot.Wallet?.Balance == 86.4,
                 "A stale login and cancelled read cannot clear or overwrite the new API connection");
             await Source(window, settings, "web"); await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
-            await Menu(window, "settings.deepseek.account.sign_out");
+            await SignOut(window, session);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == null && engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Reading.Connected: false });
             Check((await browser.ReadAsync(CancellationToken.None)).State == "signedOut", "The real profile must be empty after the menu sign-out");
             await Source(window, settings, "apiKey");
@@ -102,7 +102,7 @@ internal static class DeepSeekWebConnectionChecks
             Invoke(Find<Button>(window, "settings.deepseek.sign_in")); login = await Login(site);
             await site.Main!.ExecuteScriptAsync("document.getElementById('signin').click()"); await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
-            session.FailClear = true; await Menu(window, "settings.deepseek.account.sign_out");
+            session.FailClear = true; await SignOut(window, session, expectClear: false);
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Reading.Color: "orange" } &&
                 SelfAndDescendants(window).OfType<TextBlock>().Any(value => value.IsVisible && value.Text == ui.Text("windows.connection.refresh_failed")));
             int reads = site.Reads; await engine.SendAsync("configure", settings.Current.EngineConfiguration()); await Pump();
@@ -119,7 +119,7 @@ internal static class DeepSeekWebConnectionChecks
                 engine.LatestSnapshot?.DeepseekConnection is { Source: "web", WebAvailable: true, Refreshing: false });
             Invoke(Find<Button>(window, "settings.deepseek.sign_in")); login = await Login(site); await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
-            await Menu(window, "settings.deepseek.account.sign_out");
+            await SignOut(window, session);
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Reading.Connected: false });
             session.Unavailable = true; await connection.StartAsync();
             await Until(() => engine.LatestSnapshot?.DeepseekConnection?.WebAvailable == false);
@@ -140,7 +140,7 @@ internal static class DeepSeekWebConnectionChecks
         catch
         {
             var state = engine.LatestSnapshot?.DeepseekConnection;
-            Console.WriteLine($"Web fixture: source={state?.Source}, mode={state?.Mode}, refreshing={state?.Refreshing}, connected={state?.Reading.Connected}, available={state?.WebAvailable}, pageReady={site.Ready}, reads={site.Reads}, deferred={site.Deferred != null}, engineClosed={engine.IsConnectionClosed}, hostFailure={connection.LastFailure != null}");
+            Console.WriteLine($"Web fixture: source={state?.Source}, mode={state?.Mode}, refreshing={state?.Refreshing}, connected={state?.Reading.Connected}, available={state?.WebAvailable}, pageReady={site.Ready}, reads={site.Reads}, deferred={site.Deferred != null}, clear={session.ClearPhase}, engineClosed={engine.IsConnectionClosed}, hostFailure={connection.LastFailure != null}");
             Console.WriteLine("WebView2 processes: " + PresentationWait.WebViewProcesses());
             throw;
         }
@@ -233,6 +233,17 @@ internal static class DeepSeekWebConnectionChecks
         var item = button.ContextMenu!.Items.OfType<MenuItem>().Single(value => (string?)value.Tag == source);
         Invoke(item); await Until(() => settings.Current.DeepSeekBalanceSource == source && Find<Button>(window, "settings.deepseek.account_options").IsEnabled);
     }
+    private static async Task SignOut(SettingsWindow window, Faults session, bool expectClear = true)
+    {
+        int started = session.ClearsStarted;
+        Task<bool> cleared = session.ObserveNextClear();
+        await Menu(window, "settings.deepseek.account.sign_out");
+        await Until(() => session.ClearsStarted > started);
+        // The real WebView2 clear opens a controller and erases the private profile.
+        // Wait for that operation before checking the engine's separate completion snapshot.
+        bool success = await cleared.WaitAsync(ProviderWebSession.StartupTimeout + ProviderWebSession.ReadTimeout);
+        Check(success == expectClear, "The real sign-out must report the expected profile-clear outcome");
+    }
     private static async Task Menu(SettingsWindow window, string id)
     {
         var button = Find<Button>(window, "settings.deepseek.account_options"); Invoke(button); await Until(() => button.ContextMenu?.IsOpen == true);
@@ -262,7 +273,28 @@ internal static class DeepSeekWebConnectionChecks
         public bool SignInWasNew => session.SignInWasNew;
         public Task<DeepSeekWebReply> ReadAsync(CancellationToken cancellation) => session.ReadAsync(cancellation);
         public Task<bool> SignInAsync() => session.SignInAsync();
-        public Task ClearAsync(CancellationToken cancellation) => FailClear ? Task.FromException(new IOException("Synthetic profile clear failure")) : session.ClearAsync(cancellation);
+        private TaskCompletionSource<bool>? nextClear;
+        internal int ClearsStarted { get; private set; }
+        internal string ClearPhase { get; private set; } = "idle";
+        internal Task<bool> ObserveNextClear()
+        {
+            if (nextClear != null) throw new InvalidOperationException("A profile clear is already expected");
+            nextClear = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            return nextClear.Task;
+        }
+        public async Task ClearAsync(CancellationToken cancellation)
+        {
+            var observed = nextClear; nextClear = null;
+            ClearsStarted++; ClearPhase = "clearing";
+            try
+            {
+                if (FailClear) throw new IOException("Synthetic profile clear failure");
+                await session.ClearAsync(cancellation);
+                ClearPhase = "cleared";
+            }
+            catch (Exception error) { ClearPhase = error.GetType().Name; throw; }
+            finally { observed?.TrySetResult(ClearPhase == "cleared"); }
+        }
         public ValueTask DisposeAsync() => session.DisposeAsync();
     }
 }
