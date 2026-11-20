@@ -14,7 +14,7 @@ internal static class PreferencesSessionChecks
         Task<PreferencesApplyResult> privacy = session.ChangeAsync(p => p with { HideProjects = true });
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Task<PreferencesApplyResult> language = session.ChangeAsync(p => p with { Language = "zh-Hans", ShowAppButtons = false, DisplayMode = "notch", ExpandedQuotaStyle = "classic", LastSettingsPane = "appearance",
-            CompactSingleTask = "count", CompactMetric = "pace", QuotaRingOuter = "claude", CodexQuotaWindow = "5h", CompactLayout = "{\"version\":9,\"leading\":[\"firstOutput\"],\"trailing\":[]}" });
+            CompactSingleTask = "count", CompactMetric = "pace", QuotaRingOuter = "claude", CodexQuotaWindow = "5h", CompactLayout = "{\"version\":9,\"leading\":[\"firstOutput\"],\"trailing\":[\"warnings\"]}" });
         Check(saved.Count == 0 && changes == 0 && !session.Current.HideProjects, "No state is committed before the engine acknowledgement");
         release.SetResult();
         Check((await privacy) == PreferencesApplyResult.Applied && (await language) == PreferencesApplyResult.Applied,
@@ -26,6 +26,22 @@ internal static class PreferencesSessionChecks
         Check(await session.ChangeAsync(p => p with { IslandAppearance = "classic" }) == PreferencesApplyResult.Applied
             && session.Current.IslandAppearance == "classic" && commands == 1 && changes == 3,
             "Appearance selection is saved without reconfiguring or restarting collectors");
+
+        // The reminders that follow the bar's warnings need its warnings component, so taking it off
+        // or putting it back is the one layout edit the engine hears about; any other stays presentation-only.
+        var onBar = new List<bool>();
+        var layouts = new PreferencesSession(new(), value =>
+        {
+            onBar.Add(JsonSerializer.SerializeToElement(value).GetProperty("reminderSettings").GetProperty("warningsOnBar").GetBoolean()); return Task.CompletedTask;
+        }, _ => true);
+        Check(await layouts.ChangeAsync(p => p with { CompactLayout = "{\"version\":11,\"leading\":[\"tps\",\"activity\"],\"trailing\":[\"warnings\",\"quota\"]}" }) == PreferencesApplyResult.Applied
+            && onBar.Count == 0, "Reordering a bar that keeps its warnings never configures the engine");
+        Check(await layouts.ChangeAsync(p => p with { CompactLayout = "{\"version\":11,\"leading\":[\"tps\",\"activity\"],\"trailing\":[\"quota\"]}" }) == PreferencesApplyResult.Applied
+            && onBar.SequenceEqual(new[] { false }), "Removing the warnings component configures the engine exactly once, with warningsOnBar off");
+        Check(await layouts.ChangeAsync(p => p with { CompactLayout = "{\"version\":11,\"leading\":[\"activity\",\"tps\"],\"trailing\":[\"quota\"]}" }) == PreferencesApplyResult.Applied
+            && onBar.SequenceEqual(new[] { false }), "Reordering a bar without warnings stays presentation-only");
+        Check(await layouts.ChangeAsync(p => p with { CompactLayout = null }) == PreferencesApplyResult.Applied
+            && onBar.SequenceEqual(new[] { false, true }), "Restoring the standard bar configures the engine once, with warningsOnBar on");
 
         var configured = new List<bool>();
         var rejectedSave = new PreferencesSession(new(), value =>
