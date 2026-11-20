@@ -285,6 +285,7 @@ actor EngineRuntime {
     private var localStreamStatuses: [AgentProvider: RuntimeStreamStatus] = [:]
     private var deepseekSettings = EngineDeepSeekSettings()
     private var reminderSettings = EngineReminderSettings()
+    private func notifies(_ kind: CompactIslandLayout.Warning) -> Bool { reminderSettings.notifies(kind) }
     private var panelSettings = EngineExpandedPanelSettings()
     /// Claude's self-reported progress ring; off until the desktop turns it on.
     private var claudeProgressRing = false
@@ -2773,17 +2774,17 @@ actor EngineRuntime {
             wallet = source.presentation(wallet: reading, at: date, hideProjects: hideProjects, configuration: deepseekSettings,
                 compactUsesBudget: enabled.intersection([.codex, .claude]).count < 2, reminders: reminderSettings, connection: balanceState,
                 panel: panelOptions)
-            walletNotices = deepseekNoticePolicy.balanceNotices(reading, low: reminderSettings.contains(.lowBalance))
-                + deepseekNoticePolicy.spendNotices(reading, spike: reminderSettings.contains(.spendSpike), budget: reminderSettings.contains(.budget),
+            walletNotices = deepseekNoticePolicy.balanceNotices(reading, low: notifies(.lowBalance))
+                + deepseekNoticePolicy.spendNotices(reading, spike: notifies(.spendSpike), budget: notifies(.budget),
                     snoozedUntil: spikeSnoozedUntil, now: date)
         }
         let creditModules = HarnessRegistry.ids(where: \.reportsAccountCredits).filter(enabled.contains)
         let credits: [AgentProvider: HarnessAccountCredits] = Dictionary(uniqueKeysWithValues: creditModules.compactMap { provider in
             (demo ? DemoScenario.workbuddyCredits(at: date) : accountCredits[provider]?.credits).map { (provider, $0) }
         })
-        walletNotices += creditsNoticePolicy.notices(credits, settings: creditSettings, low: reminderSettings.contains(.lowCredits), now: date)
+        walletNotices += creditsNoticePolicy.notices(credits, settings: creditSettings, low: notifies(.lowCredits), now: date)
         // Deadlines are fixed, so the presentation clock's publishes find a reset entering its lead time.
-        if enabled.contains(.codex), reminderSettings.contains(.resetExpiry) {
+        if enabled.contains(.codex), notifies(.resetExpiry) {
             walletNotices += resetExpiryNoticePolicy.notices(demo ? quota[.codex] : codexQuota,
                 leadDays: ResetExpiryReminder.leadDays(reminderSettings.resetDays), now: date)
         }
