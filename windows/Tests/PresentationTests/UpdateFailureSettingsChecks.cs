@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -50,7 +49,7 @@ internal static class UpdateFailureSettingsChecks
                 && updates.DismissedFailure?.ToUnixTimeSeconds() == updates.LastCheck?.ToUnixTimeSeconds(),
                 "Closing the banner hides this failure, and keeps that across launches as on the Mac");
             await window.NavigateAsync("about"); await Pump();
-            await Until(() => Find<FrameworkElement>(window, "settings.update.recovery") is { IsVisible: true } && Has(window, "update.recovery.retry"),
+            await Until(() => Has(window, "settings.update.recovery", visible: true) && Has(window, "update.recovery.retry"),
                 "Help & Updates shows what to try and where else to get Pacer");
             Capture(window, Path.Combine(output, "update-failure-about-" + name + ".png"));
         }
@@ -81,14 +80,8 @@ internal static class UpdateFailureSettingsChecks
         var bitmap = new RenderTargetBitmap((int)Math.Ceiling(value.ActualWidth), (int)Math.Ceiling(value.ActualHeight), 96, 96, PixelFormats.Pbgra32); bitmap.Render(value);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); using var stream = File.Create(file); encoder.Save(stream);
     }
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
-    {
-        yield return root;
-        foreach (object child in LogicalTreeHelper.GetChildren(root)) if (child is DependencyObject node) foreach (var value in Descendants(node)) yield return value;
-        if (root is Visual or System.Windows.Media.Media3D.Visual3D)
-            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var value in Descendants(VisualTreeHelper.GetChild(root, i))) yield return value;
-    }
-    private static bool Has(DependencyObject root, string id) => Descendants(root).OfType<FrameworkElement>().Any(value => AutomationProperties.GetAutomationId(value) == id);
+    private static bool Has(DependencyObject root, string id, bool visible = false) =>
+        LogicalAndVisualTree(root).OfType<FrameworkElement>().Any(value => AutomationProperties.GetAutomationId(value) == id && (!visible || value.IsVisible));
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement =>
-        Descendants(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
+        LogicalAndVisualTree(root).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
 }

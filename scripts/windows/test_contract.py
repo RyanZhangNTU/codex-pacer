@@ -146,7 +146,7 @@ class CoreBoundaryTests(unittest.TestCase):
             contract.workflow_boundary(workflow.replace("\n  contract:\n", "\n  checks:\n", 1))
         name = "    name: Platform contract\n"
         self.assertIn(name, workflow)
-        for gate in ("    needs: changes\n    if: needs.changes.outputs.windows == 'true'\n",
+        for gate in ("    needs: changes\n    if: needs.changes.outputs.windows_desktop == 'true'\n",
                      "    if: github.event_name == 'pull_request'\n"):
             with self.subTest(gate=gate), self.assertRaises(ValueError):
                 contract.workflow_boundary(workflow.replace(name, name + gate, 1))

@@ -1,11 +1,4 @@
-"""Which platforms a pull request touches, so CI runs only their jobs.
-
-A pull request runs a platform's jobs only when it changes files that
-platform builds or tests; documentation alone runs nothing. Its Windows
-installer and patch checks run only when it changes what the installers are
-built from or what those checks start in the app. A manual run tests every
-platform, so every flag is set for it.
-"""
+"""Select the platform jobs that build or test the changed inputs."""
 import os
 import subprocess
 import sys
@@ -14,7 +7,7 @@ import sys
 DOCUMENTATION = ("docs/", ".github/ISSUE_TEMPLATE/", "LICENSE")
 # Built on both platforms; the Windows engine compiles these (see scripts/windows/stage-engine.py).
 SHARED = ("native/Sources/PacerCore/", "native/Sources/CZstd/", "native/Sources/CGzip/",
-          "native/Tests/PacerCoreTests/", "native/Tests/PresentationTables/", "native/Info.plist",
+          "native/Tests/PresentationTables/", "native/Info.plist",
           "Package.swift", "Package.resolved", ".github/workflows/", "scripts/ci/")
 MAC = ("native/", "scripts/native/", "scripts/release/", "Makefile")
 WINDOWS = ("windows/", "scripts/windows/", "global.json")
@@ -33,35 +26,53 @@ INSTALLER = ("windows/Installer/", "windows/InstallerHooks/", "windows/Installer
              "windows/Desktop/WindowsNotificationCleanup.cs", "windows/Desktop/WindowsStartupRegistration.cs",
              "windows/Desktop/Pacer.Windows.csproj", "windows/desktop-platform.props")
 
+MAC_JOBS = {"mac", "mac_bundle"}
+WINDOWS_JOBS = {"windows_engine", "windows_desktop", "windows_integration", "windows_arm64"}
+PRODUCT_JOBS = MAC_JOBS | WINDOWS_JOBS
+ALL_JOBS = PRODUCT_JOBS | {"installer"}
+
+# The narrower test targets must precede the native/ and windows/ defaults.
+ROUTES = (
+    (("native/Tests/PacerCoreTests/",), {"mac", "windows_engine"}),
+    (("native/Tests/PacerMacSupportTests/", "native/Tests/PacerIslandTests/", "native/Tests/PacerTestSupport/"), {"mac"}),
+    (("windows/Tests/EngineTests/",), {"windows_engine"}),
+    (("windows/Tests/PresentationTests/",), {"windows_desktop"}),
+    (SHARED, PRODUCT_JOBS),
+    (MAC, MAC_JOBS),
+    (WINDOWS, WINDOWS_JOBS),
+)
+
 
 def classify(paths):
-    """Returns (mac, windows, installer): whether each set of jobs must run."""
-    mac = windows = installer = False
+    jobs = set()
     for path in paths:
         if path.endswith(".md") or path.startswith(DOCUMENTATION):
             continue
         if path.startswith(INSTALLER):
-            windows = installer = True
-        if path.startswith(SHARED):
-            mac = windows = True
-        elif path.startswith(MAC):
-            mac = True
-        elif path.startswith(WINDOWS):
-            windows = True
-        else:  # Anything unknown runs everything.
-            mac = windows = installer = True
-    return mac, windows, installer
+            jobs.update(WINDOWS_JOBS | {"installer"})
+        for prefixes, affected in ROUTES:
+            if path.startswith(prefixes):
+                jobs.update(affected)
+                break
+        else:
+            jobs.update(ALL_JOBS)
+    return jobs
+
+
+def changed_paths():
+    # The merge commit's first parent is the PR base. A move affects both paths.
+    data = subprocess.check_output(["git", "diff", "--no-renames", "--name-only", "-z", "HEAD^1", "HEAD", "--"])
+    return [os.fsdecode(path) for path in data.split(b"\0") if path]
 
 
 def main():
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
-        # The pull request checkout is its merge commit; its first parent is the base.
-        names = subprocess.check_output(["git", "diff", "--name-only", "HEAD^1", "HEAD"], text=True).split()
-        mac, windows, installer = classify(names)
+        names = changed_paths()
+        jobs = classify(names)
         print(f"{len(names)} changed files")
     else:
-        mac = windows = installer = True
-    lines = [f"mac={str(mac).lower()}", f"windows={str(windows).lower()}", f"installer={str(installer).lower()}"]
+        jobs = ALL_JOBS
+    lines = [f"{job}={str(job in jobs).lower()}" for job in sorted(ALL_JOBS)]
     print("\n".join(lines))
     output = os.environ.get("GITHUB_OUTPUT")
     if output:

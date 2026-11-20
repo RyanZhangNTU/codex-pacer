@@ -533,16 +533,17 @@ Both renderers share these values; keep them in step (`TaskStatusIconView.swift`
 
 ## Continuous integration
 
-`.github/workflows/platforms.yml` tests each change once, on its pull request into develop. `.github/workflows/release.yml` builds, signs and publishes a tagged release.
+`.github/workflows/platforms.yml` validates pull requests into develop. `.github/workflows/release.yml` builds, signs and publishes a tagged release.
 
-- **Pull request into develop.** Only the platforms the change touches run. `scripts/ci/changed-platforms.py` decides this from the changed files:
+- **Pull request into develop.** Drafts run the path-selection tests and platform contract on Linux. Marking a PR ready runs the jobs selected by `scripts/ci/changed-platforms.py`. Moving it back to draft cancels the active platform run. A rename counts both its old and new paths.
   - Shared Core, the root package, `native/Info.plist`, the workflow and unknown files run both platforms.
   - Mac-only and Windows-only paths run only their platform.
-  - Documentation runs nothing.
+  - Documentation-only changes run the Linux checks.
   - The platform contract, its tests, the shared localization check and the DeepSeek web identity check run once on Linux for every run.
-  - The Mac suite runs on Apple silicon.
+  - The Mac suite runs on Apple silicon. Changes confined to the Mac test targets run the tests and skip the release app build and reporter smoke check. Shared Core test changes run both the Mac suite and Windows x64 engine tests.
   - Windows x64 compiles the shared engine and runs its tests in one job. Another job builds the release engine and desktop once. Three jobs then share that build for the desktop, Claude runtime, presentation and idle checks; none of them installs the Swift toolchain. ARM64 compiles only.
-  - `test-presentation.ps1 -Group` takes a list of groups. Each group that `all` runs is in exactly one of the three test jobs, and `scripts/windows/check-contract.py` checks this against the runner's `AllGroups`.
+  - A change confined to Windows engine tests runs the x64 engine job. Windows presentation-test changes build the x64 desktop and run all three WPF shards. Changes to multiple targets run their combined checks.
+  - `test-presentation.ps1 -Group` takes a list of groups. Each group that `all` runs is in exactly one of the three test jobs, and `scripts/windows/check-contract.py` checks this against the runner's `AllGroups`. The first shard runs the common presentation checks once. Local runs include them by default.
   - The release engine and its two adapters are cached per architecture. The key is the engine source snapshot from `stage-engine.py`, plus the toolchain lock and the build scripts. On a hit, `build-engine.ps1 -Products` copies them instead of compiling. GitHub limits a pull request's caches to that pull request and its base branch, so a pull request hits either an earlier run of its own with the same engine sources, or what the develop warm-up saved.
   - The Windows package smoke test and the installer and patch lifecycle run in their own job when the change touches what the installers are built from or what those checks start: the installer, maintenance, update and hook projects, the packaging scripts, the toolchain pins, the workflow, and the app's launch, single-instance, installation identity, notification and startup registration code.
   - A newer push cancels the pull request's older run.

@@ -7,6 +7,7 @@ private actor DesktopTestConnection: CodexDesktopConnection {
     let frame: @Sendable (Data) async -> Void
     let closed: @Sendable () async -> Void
     var stopped = false
+    private(set) var hosts: Set<String> = []
     var interval: TimeInterval = 5
     var flushes = 0
     init(frame: @escaping @Sendable (Data) async -> Void, closed: @escaping @Sendable () async -> Void) {
@@ -14,7 +15,7 @@ private actor DesktopTestConnection: CodexDesktopConnection {
     }
     func start() {}
     func discover(_ threads: [String]) {}
-    func setHosts(_ hosts: Set<String>) {}
+    func setHosts(_ hosts: Set<String>) { self.hosts = hosts }
     func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) { interval = seconds; if flushPending { flushes += 1 } }
     func stop() { stopped = true }
     // Deliberately permits callbacks after stop to exercise generation guards.
@@ -113,20 +114,22 @@ final class CodexDesktopMonitorTests: XCTestCase {
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"],
             "codexHome": EngineCodexSourceReport.path(root), "monitorRemoteControl": false]))
         let host = DurableActivityCatalog.hostID
-        let first = try XCTUnwrap(factory.all().first)
-        try await first.send(frame("durableScope", ["scope": String(repeating: "a", count: 64)], host: host))
-        await first.send(try frame("runtimeBatch", ["events": [event("turn/started", at: date)]], host: host))
+        let connection = try XCTUnwrap(factory.all().first)
+        try await connection.send(frame("durableScope", ["scope": String(repeating: "a", count: 64)], host: host))
+        await connection.send(try frame("runtimeBatch", ["events": [event("turn/started", at: date)]], host: host))
         XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Dot is off by default: no Durable host, no rows")
 
         _ = await runtime.receive(try command("configure", ["monitorDurable": true]))
-        let deadline = Date().addingTimeInterval(TestWait.limit)
-        while factory.all().count < 2 && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-        let connection = try XCTUnwrap(factory.all().last, "Turning Dot on rebinds the Desktop source with the Durable host")
+        let enabledHosts = await connection.hosts
+        XCTAssertTrue(enabledHosts.contains(host))
+        XCTAssertEqual(factory.all().count, 1, "Changing the host subscription reuses the desktop connection")
         try await connection.send(frame("durableScope", ["scope": String(repeating: "a", count: 64)], host: host))
         await connection.send(try frame("runtimeBatch", ["events": [event("turn/started", at: date)]], host: host))
         XCTAssertEqual(snapshots.all().last?.presentation.rows.first?.sourceLabel, "Dot")
 
         _ = await runtime.receive(try command("configure", ["monitorDurable": false]))
+        let disabledHosts = await connection.hosts
+        XCTAssertFalse(disabledHosts.contains(host))
         XCTAssertTrue(snapshots.all().last?.tasks.isEmpty == true, "Turning Dot off hides its rows at once")
         await runtime.stop()
     }

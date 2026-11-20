@@ -1,13 +1,12 @@
 name: Platforms
 
-# Each change is tested once: on its pull request into develop, running only the
-# platforms it touches. main pushes and promotion pull requests run nothing; a
-# develop push only refreshes the engine cache (engine-cache.yml), and
-# release.yml builds and publishes a tagged release. A manual run tests every
-# platform.
+# Drafts run Linux checks. Ready pull requests run the affected test targets.
+# A manual run tests every platform. Develop pushes can warm the engine cache
+# (engine-cache.yml), and release.yml builds and publishes a tagged release.
 on:
   pull_request:
     branches: [develop]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
   workflow_dispatch:
 
 permissions:
@@ -15,7 +14,7 @@ permissions:
 
 # A newer push replaces an older pull request run; a manual run finishes.
 concurrency:
-  group: platforms-${{ github.ref }}
+  group: platforms-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -25,17 +24,22 @@ jobs:
     timeout-minutes: 5
     outputs:
       mac: ${{ steps.platforms.outputs.mac }}
-      windows: ${{ steps.platforms.outputs.windows }}
+      mac_bundle: ${{ steps.platforms.outputs.mac_bundle }}
+      windows_engine: ${{ steps.platforms.outputs.windows_engine }}
+      windows_desktop: ${{ steps.platforms.outputs.windows_desktop }}
+      windows_integration: ${{ steps.platforms.outputs.windows_integration }}
+      windows_arm64: ${{ steps.platforms.outputs.windows_arm64 }}
       installer: ${{ steps.platforms.outputs.installer }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 2
-      - name: Classify changed files
+      - name: Test path selection
+        run: python3 scripts/ci/test_changed_platforms.py
+      - name: Select platform jobs
         id: platforms
-        run: |
-          python3 scripts/ci/test_changed_platforms.py
-          python3 scripts/ci/changed-platforms.py
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        run: python3 scripts/ci/changed-platforms.py
 
   # Every run, whatever it touches. These checks need no platform, so they run
   # once, on Linux.
@@ -72,6 +76,7 @@ jobs:
           set -o pipefail
           python3 -u scripts/native/ci-test.py --timeout-seconds 1200 --diagnostics-prefix "$RUNNER_TEMP/pacer-test" 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
       - name: Build the Mac app and smoke-test its reporter
+        if: needs.changes.outputs.mac_bundle == 'true'
         run: |
           set -o pipefail
           make build 2>&1 | tee "$RUNNER_TEMP/pacer-build.log"
@@ -92,7 +97,7 @@ jobs:
   windows-engine:
     name: Windows engine (x86_64)
     needs: changes
-    if: needs.changes.outputs.windows == 'true'
+    if: needs.changes.outputs.windows_engine == 'true'
     runs-on: windows-2025
     timeout-minutes: 40
     defaults:
@@ -132,7 +137,7 @@ jobs:
   windows-build:
     name: Windows build (x86_64)
     needs: changes
-    if: needs.changes.outputs.windows == 'true'
+    if: needs.changes.outputs.windows_desktop == 'true'
     runs-on: windows-2025
     timeout-minutes: 40
     defaults:
@@ -186,7 +191,7 @@ jobs:
 
   # The desktop, Claude runtime, presentation and idle checks, in three jobs of
   # about the same length. They use the build job's desktop, so none of them
-  # needs the Swift toolchain. Each presentation group is in exactly one job.
+  # needs the Swift toolchain. The first matrix job owns the common checks.
   windows-tests:
     name: Windows tests (${{ matrix.shard }})
     needs: [changes, windows-build]
@@ -196,12 +201,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: connections
-            groups: connection
-            desktop: true
           - shard: settings
             groups: settings,island,accessibility,panel
             idle: true
+          - shard: connections
+            groups: connection
+            desktop: true
           - shard: providers
             groups: web,quota,harness,conversation,idle,display,host,responsive,pages,updates,collapsed,recovery
     defaults:
@@ -216,22 +221,22 @@ jobs:
         with:
           name: windows-desktop-x64-build
       - name: Build notification acceptance probe
-        if: matrix.desktop
+        if: matrix.desktop && needs.changes.outputs.windows_integration == 'true'
         run: |
           dotnet publish windows/Tests/NotificationProbe/Pacer.NotificationProbe.csproj --configuration Release --runtime win-x64 --self-contained true --output output/windows/notification-probe -warnaserror -p:PacerArchitecture=x64 -p:RestoreLockedMode=true *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-notification-probe-build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Notification acceptance probe build failed.' }
       - name: Desktop integration tests
-        if: matrix.desktop
+        if: matrix.desktop && needs.changes.outputs.windows_integration == 'true'
         run: ./scripts/windows/test-desktop.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-desktop-tests.log"
       - name: Claude runtime without user Python
-        if: matrix.desktop
+        if: matrix.desktop && needs.changes.outputs.windows_integration == 'true'
         run: ./scripts/windows/test-claude-runtime.ps1 -Configuration Release *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-claude-runtime.log"
       - name: Functional presentation tests
         env:
           PACER_GROUPS: ${{ matrix.groups }}
-        run: ./scripts/windows/test-presentation.ps1 -Configuration Release -Group ($env:PACER_GROUPS -split ',') *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
+        run: ./scripts/windows/test-presentation.ps1 -Configuration Release -Group ($env:PACER_GROUPS -split ',') -SkipCommon:(${{ strategy.job-index }} -gt 0) *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
       - name: Engine idle and shutdown protocol
-        if: matrix.idle
+        if: matrix.idle && needs.changes.outputs.windows_integration == 'true'
         run: |
           $taskEngine = 'windows/Desktop/bin/Release/net10.0-windows/Engine/PacerEngine.exe'
           python scripts/windows/check-engine-idle.py --engine $taskEngine --output "$env:RUNNER_TEMP/pacer-windows-idle.json" *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-windows-idle.log"
@@ -298,7 +303,7 @@ jobs:
   windows-arm64:
     name: Windows (arm64 build)
     needs: changes
-    if: needs.changes.outputs.windows == 'true'
+    if: needs.changes.outputs.windows_arm64 == 'true'
     runs-on: windows-11-arm
     timeout-minutes: 60
     env:

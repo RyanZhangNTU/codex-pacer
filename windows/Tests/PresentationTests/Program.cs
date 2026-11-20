@@ -79,7 +79,17 @@ internal static class Program
                 await projections.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, "en", referenceFixture: true);
                 ShellProjection.Client = projections;
                 if (All("recovery") || Has("persistence")) await Attempt(nameof(StorageRecoveryChecks), () => StorageRecoveryChecks.Run());
-                SystemAppearanceUnitChecks.Run(); await Attempt(nameof(QuotaCycleCompletionChecks), () => QuotaCycleCompletionChecks.Run()); SettingsPageUnitChecks.Run(); TypographyChecks.Run(); PopupThemeChecks.Run(); TimingBindingChecks.Run(); await ProgressRingMotionChecks.Run(); await Attempt(nameof(QuotaChartBridgeChecks), () => QuotaChartBridgeChecks.Run());
+                if (!args.Contains("--skip-common"))
+                {
+                    SystemAppearanceUnitChecks.Run();
+                    await Attempt(nameof(QuotaCycleCompletionChecks), QuotaCycleCompletionChecks.Run);
+                    SettingsPageUnitChecks.Run();
+                    TypographyChecks.Run();
+                    PopupThemeChecks.Run();
+                    TimingBindingChecks.Run();
+                    await ProgressRingMotionChecks.Run();
+                    await Attempt(nameof(QuotaChartBridgeChecks), QuotaChartBridgeChecks.Run);
+                }
                 if (All("responsive")) { await Attempt(nameof(SlowEngineChecks), () => SlowEngineChecks.Run()); await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run()); }
                 if (Has("persistence")) await Attempt(nameof(PreferencesResponsivenessChecks), () => PreferencesResponsivenessChecks.Run());
                 if (All("quota"))

@@ -180,11 +180,25 @@ final class CompletionDismissalStoreTests: XCTestCase {
 
     func testStoreEvictsOldestAcknowledgmentAtBoundAndKeepsNewestAfterRecreation() throws {
         let file = try fixture()
+        let store = CompletionDismissalStore(fileURL: file, files: TestFileSystem())
+        let firstEnding = completion(turn: "synthetic-0")
+        var initial = inbox(file)
+        initial.observe([firstEnding], at: epoch.addingTimeInterval(1), retention: 0)
+        initial.dismiss(firstEnding)
+        let oldestDigest = try XCTUnwrap(store.load().digests.first)
+        let filler = (1..<511).map { CompletionDismissalStore.digest(["fixture-\($0)"]) }
+        XCTAssertTrue(store.saveDigests([oldestDigest] + filler))
+
         var value = inbox(file)
-        for index in 0...512 {
+        for index in 511...512 {
             let ended = completion(turn: "synthetic-\(index)", offset: Double(index) * 2)
             value.observe([ended], at: epoch.addingTimeInterval(Double(index) * 2 + 1), retention: 0)
             value.dismiss(ended)
+            if index == 511 {
+                let atCapacity = store.load().digests
+                XCTAssertEqual(atCapacity.count, 512)
+                XCTAssertEqual(atCapacity.first, oldestDigest)
+            }
         }
         let data = try Data(contentsOf: file)
         XCTAssertLessThanOrEqual(data.count, 64 * 1024)
@@ -194,7 +208,7 @@ final class CompletionDismissalStoreTests: XCTestCase {
         newest.observe([completion(turn: "synthetic-512", offset: 1024)], at: epoch.addingTimeInterval(1026), retention: 0)
         XCTAssertTrue(newest.activities.isEmpty)
         var oldest = inbox(file)
-        oldest.observe([completion(turn: "synthetic-0")], at: epoch.addingTimeInterval(1026), retention: 0)
+        oldest.observe([firstEnding], at: epoch.addingTimeInterval(1026), retention: 0)
         XCTAssertEqual(oldest.activities.count, 1, "Bound eviction fails open for old cards")
     }
 
