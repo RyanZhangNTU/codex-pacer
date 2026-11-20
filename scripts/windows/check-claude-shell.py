@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 
 parser=argparse.ArgumentParser()
@@ -27,6 +28,7 @@ probe=r'''
 import ctypes,importlib.util,json,os,subprocess,sys
 from pathlib import Path
 home=Path(sys.argv[1]); output=Path(sys.argv[2])
+output.with_suffix('.started').touch()
 facts={'defaultShellIsCmd':subprocess.run('exit /b 23',shell=True,input=b'',capture_output=True,timeout=2).returncode==23}
 spec=importlib.util.spec_from_file_location('pacer_shell_check',home/'pacer/hook.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -74,6 +76,37 @@ finally:
 
 def quote_ps(value):return "'"+str(value).replace("'","''")+"'"
 
+def run_contract(command, payload, env, report, executor):
+    # A cold shell and its Python interpreter must start before the renderer is exercised.
+    # The hook still grants its renderer ten seconds; the fixture checks that separately.
+    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          env=env, creationflags=subprocess.CREATE_NO_WINDOW) as child:
+        phase = "shell startup"
+        try:
+            child.stdin.write(payload)
+            child.stdin.close()
+            child.stdin = None
+            deadline = time.monotonic() + 45
+            marker = report.with_suffix('.started')
+            while not marker.exists() and child.poll() is None:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError()
+                time.sleep(.05)
+            phase = "synthetic hook and renderer"
+            stdout, stderr = child.communicate(timeout=15)
+        except (TimeoutError, subprocess.TimeoutExpired):
+            if child.poll() is None:
+                try:
+                    subprocess.run([str(system/'taskkill.exe'), '/PID', str(child.pid), '/T', '/F'], timeout=5,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                if child.poll() is None:
+                    child.kill()
+            raise RuntimeError(f"{executor} fixture timed out during {phase}") from None
+        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+
+
 try:
     (home/'pacer').mkdir(parents=True)
     shared=(root/'native/Sources/PacerCore/Resources/claude_hook.py').read_bytes()
@@ -96,7 +129,7 @@ try:
             env['CLAUDE_CODE_GIT_BASH_PATH']=str(fixture/'missing-bash.exe')
             command=[str(powershell),'-NoProfile','-NonInteractive','-Command','& '+' '.join(quote_ps(value) for value in values)]
         payload=b'{"rate_limits":{"five_hour":{"used_percentage":45,"resets_at":1890000000}}}'
-        result=subprocess.run(command,input=payload,env=env,capture_output=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
+        result=run_contract(command,payload,env,report,executor)
         facts=json.loads(report.read_bytes()) if report.exists() else {'reportMissing':True}
         facts.update(executor=executor,exit=result.returncode,outputBytes=len(result.stdout),errorBytes=len(result.stderr),rendererMatches=result.stdout.strip()==b'SYNTHETIC_RENDERER')
         print(json.dumps(facts,sort_keys=True),flush=True)
