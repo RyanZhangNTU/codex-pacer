@@ -493,10 +493,13 @@ final class ClaudeHookInstallerTests: XCTestCase {
         // A stop while the dialog is open ends the wait too; the later check then adds nothing.
         try send(tool("PreToolUse", "tool-stopped"))
         try send(["hook_event_name": "Stop", "stop_hook_active": false, "background_tasks": []])
+        // So does closing the session: a closed session never comes back as waiting.
+        try send(tool("PreToolUse", "tool-closed"))
+        try send(["hook_event_name": "SessionEnd", "reason": "prompt_input_exit"])
         try send(tool("PreToolUse", "tool-timed"))
         let timed = try await TestWait.until { approvals().contains("tool-timed") }
         XCTAssertTrue(timed, "approvals: \(approvals())")
-        XCTAssertEqual(approvals(), ["tool-dialog", "tool-timed"], "Granted and stopped requests never ask")
+        XCTAssertEqual(approvals(), ["tool-dialog", "tool-timed"], "Granted, stopped and closed requests never ask")
         XCTAssertFalse(String(decoding: (try? Data(contentsOf: spool)) ?? Data(), as: UTF8.self).contains("PRIVATE"))
     }
 

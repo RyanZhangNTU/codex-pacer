@@ -154,8 +154,8 @@ def watch_access(home,thread,session,item):
     else:options['start_new_session']=True
     subprocess.Popen(command,**options)
 def access_wait(home,thread,session,item,delay):
-    # The tool's end, a new prompt or a stop removes it from the waiting tools,
-    # so a request found there after the delay is still showing its dialog.
+    # The tool's end, a new prompt, a stop or the session's end removes it from
+    # the waiting tools, so a request found there after the delay is still showing its dialog.
     time.sleep(delay)
     folder=home/'pacer';lockfd=private_open(folder/'events.lock',os.O_CREAT|os.O_RDWR)
     try:
@@ -273,7 +273,7 @@ def hook(home,value):
             state['permissionKind']=match[-1][3] if match else 'approval'
         elif event=='PermissionRequest':state['permissionKind']=next((entry[3] for entry in pending if entry[0]==item),'approval')
         if event in ('PostToolUse','PostToolUseFailure','PermissionDenied'):pending=[entry for entry in pending if entry[0]!=item]
-        if event in ('UserPromptSubmit','Stop','StopFailure'):
+        if event in ('UserPromptSubmit','Stop','StopFailure','SessionEnd'):
             pending=[];state.pop('permissionToolId',None);state.pop('permissionKind',None)
         if pending:state['pendingTools']=pending
         else:state.pop('pendingTools',None)
