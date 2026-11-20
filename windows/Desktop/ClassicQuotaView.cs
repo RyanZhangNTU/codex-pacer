@@ -13,9 +13,10 @@ internal sealed class ClassicQuotaView : StackPanel
 {
     /// <param name="layout">One panel section's classic drawing from Core, its slots in block order.</param>
     /// <param name="providers">That section's services' readings.</param>
+    /// <param name="codexResets">Codex's reset capsule, under the status of the column that names Codex.</param>
     internal ClassicQuotaView(DashboardLayout layout, IReadOnlyList<DashboardProvider> providers, IReadOnlyList<EngineQuota> raw, EngineWallet? wallet, UiText ui,
         Func<DashboardProvider?, FrameworkElement?> status, Action? connectDeepSeek = null, string? connectUnavailable = null, FrameworkElement? deepseekStatus = null,
-        PanelOptions? options = null, bool budgetDial = true, Func<string, bool, bool, FrameworkElement>? account = null)
+        PanelOptions? options = null, bool budgetDial = true, Func<string, bool, bool, FrameworkElement>? account = null, FrameworkElement? codexResets = null)
     {
         options ??= PanelOptions.Default;
         var row = new Grid(); Children.Add(row);
@@ -40,6 +41,7 @@ internal sealed class ClassicQuotaView : StackPanel
                 {
                     var recovery = status(provider) ?? new Border { Height = 0 };
                     recovery.Margin = new Thickness(0, 6, 0, 0); classic.Children.Add(recovery);
+                    if (slot.Provider == "codex" && codexResets is { Parent: null }) classic.Children.Add(codexResets);
                 }
                 cell = classic;
             }

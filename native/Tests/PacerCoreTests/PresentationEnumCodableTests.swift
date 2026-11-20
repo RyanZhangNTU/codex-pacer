@@ -25,7 +25,7 @@ final class PresentationEnumCodableTests: XCTestCase {
 
     func testEveryCaseKeepsItsOriginalJSONStringAndRejectsUnknownStrings() throws {
         try check(CompactWarningPresentation.Item.Kind.allCases,
-            ["fiveHour", "ssh", "quotaDelay", "exhausted", "lowBalance", "spike", "overBudget", "nearingBudget", "lowCredits"])
+            ["fiveHour", "ssh", "quotaDelay", "exhausted", "lowBalance", "spike", "overBudget", "nearingBudget", "lowCredits", "resetExpiry"])
         try check(DeepSeekAlertPresentation.Kind.allCases, ["exhausted", "lowBalance", "spike", "overBudget", "nearingBudget"])
         try check(DeepSeekConnectionPresentation.Action.allCases, ["signIn", "refresh"])
         try check(DeepSeekConnectionPresentation.Color.allCases, ["green", "secondary", "orange"])

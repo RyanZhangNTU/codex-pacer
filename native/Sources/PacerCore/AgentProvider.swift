@@ -51,7 +51,24 @@ public struct AgentProvider: RawRepresentable, Hashable, CaseIterable, Codable, 
             return validatedSessionID(String(identity.split(separator: ":").last ?? ""))
         }
         // Dotted SSH aliases must not be interpreted as a rollout extension.
-        return (UUID(uuidString: String(identity.suffix(36))) ??
-            UUID(uuidString: String((identity as NSString).deletingPathExtension.suffix(36))))?.uuidString.lowercased()
+        return CodexRolloutName.threadID(in: identity) ?? CodexRolloutName.threadID(in: (identity as NSString).deletingPathExtension)
     }
+}
+
+/// Codex names a rollout `rollout-<time>-<thread>.jsonl`. A reverted thread
+/// keeps its ID and gets a new file with a distinct rollout ID after it,
+/// `rollout-<time>-<thread>_<rollout>.jsonl`; the thread is always the first.
+enum CodexRolloutName {
+    /// The thread ID that ends `name`, which has no extension.
+    static func threadID(in name: String) -> String? {
+        let tail = name.suffix(73)
+        if tail.count == 73, tail.dropFirst(36).first == "_", UUID(uuidString: String(tail.suffix(36))) != nil,
+           let thread = UUID(uuidString: String(tail.prefix(36))) {
+            return thread.uuidString.lowercased()
+        }
+        return UUID(uuidString: String(name.suffix(36)))?.uuidString.lowercased()
+    }
+
+    /// The thread ID of a rollout file.
+    static func threadID(of file: URL) -> String? { threadID(in: file.deletingPathExtension().lastPathComponent) }
 }

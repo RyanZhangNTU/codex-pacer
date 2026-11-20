@@ -56,7 +56,7 @@ extension IslandModel {
             lowBalance: warnings.contains(.lowBalance), spike: warnings.contains(.spendSpike), budget: warnings.contains(.budget)) }
         return CompactWarningPresentation.items(enabled: enabled, warnings: warnings, snapshots: snapshots,
             failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, wallet: alert, credits: harnessCredits,
-            creditSettings: creditSettings, now: now)
+            creditSettings: creditSettings, resetLeadDays: resetExpiryLeadDays, now: now)
     }
 
     /// Each enabled module's account credits, dimmed while a refresh fails.

@@ -22,8 +22,9 @@ namespace CodexPacer.Windows;
 public sealed class AlternatingQuotaText : Grid
 {
     internal const int FadeFrameRate = 15;
-    /// Unit, on the strip, is drawn under its own number and moves with it.
-    internal readonly record struct Item(string Provider, string Text, bool Dimmed, bool Low = false, string? Unit = null);
+    /// Unit, on the strip, is drawn under its own number and moves with it. Ink names a theme
+    /// brush that replaces the service's colour, e.g. the panel's reset capsule.
+    internal readonly record struct Item(string Provider, string Text, bool Dimmed, bool Low = false, string? Unit = null, string? Ink = null);
     /// A value never shrinks below this share of its size to fit the strip, as on the Mac.
     internal const double MinimumScale = 0.6;
     private readonly List<FrameworkElement> layers = [];
@@ -41,6 +42,21 @@ public sealed class AlternatingQuotaText : Grid
     internal bool Pair { get; set; }
     /// The strip stacks a pair and leaves units to its own cell.
     internal bool Vertical { get; set; }
+    /// Centers a shorter value in the slot, as the strip does, without the strip's units.
+    internal bool Centered { get; set; }
+    /// The values' weight; the panel's capsules use the capsule title's.
+    internal FontWeight ValueWeight { get; set; } = FontWeights.SemiBold;
+    /// Takes turns on one clock shared by every rotation that opts in, as the Mac's all share one
+    /// start, so a rotation rebuilt with its panel picks up the turn in progress instead of
+    /// starting over. The panel redraws its quota with each reading, often within four seconds.
+    internal bool SharedPhase { get; set; }
+    private static readonly Stopwatch SharedEpoch = Stopwatch.StartNew();
+    /// The value a rotation shows between turns, or before it runs: the shared turn, else the first.
+    private int RestingIndex => SharedPhase && animates && !Pair && layers.Count > 1
+        ? QuotaAlternationSchedule.At(SharedEpoch.Elapsed.TotalSeconds, layers.Count).Current : 0;
+    internal string? ShownText => items.Length == 0 ? null : items[Math.Clamp(ShownIndex, 0, items.Length - 1)].Text;
+    /// Starts or stops the turns with the same values, e.g. while the island is covered.
+    internal void SetAnimates(bool animate) { if (animate != animates) Update(items.ToArray(), animate); }
     internal string[] ShownTexts => items.Select(item => item.Text).ToArray();
     /// Builds the values again on the next update, in the island's current tone.
     internal void Repaint() => items = [];
@@ -50,6 +66,7 @@ public sealed class AlternatingQuotaText : Grid
     private Stopwatch? cycle;
     private double lastSize, lastMaximum;
     private string? lastFamily;
+    private FontWeight lastWeight = FontWeights.SemiBold;
     private long wakeups;
     private long completedCycles, settledSlot;
     private double nextFade;
@@ -76,13 +93,13 @@ public sealed class AlternatingQuotaText : Grid
     internal void Update(IReadOnlyList<Item> entries, bool animate)
     {
         if (items.SequenceEqual(entries) && animate == animates && Pair == lastPair && Vertical == lastVertical && UnitSize.Equals(lastUnit)
-            && FontSize == lastSize && MaximumDisplayWidth == lastMaximum && FontFamily.Source == lastFamily) return;
+            && FontSize == lastSize && MaximumDisplayWidth == lastMaximum && FontFamily.Source == lastFamily && ValueWeight == lastWeight) return;
         bool restart = layers.Count != entries.Count || animate != animates || Pair != lastPair
             || !items.Select(value => value.Provider).SequenceEqual(entries.Select(value => value.Provider));
         if (restart) Stop();
         animates = animate;
         items = entries.ToArray(); lastPair = Pair; lastVertical = Vertical; lastUnit = UnitSize;
-        lastSize = FontSize; lastMaximum = MaximumDisplayWidth; lastFamily = FontFamily.Source;
+        lastSize = FontSize; lastMaximum = MaximumDisplayWidth; lastFamily = FontFamily.Source; lastWeight = ValueWeight;
         AutomationProperties.SetName(this, string.Join(", ", entries.Select(entry => entry.Provider + " " + entry.Text)));
         UIElementAutomationPeer.FromElement(this)?.InvalidatePeer();
         Children.Clear(); layers.Clear(); offsets.Clear(); ColumnDefinitions.Clear(); RowDefinitions.Clear();
@@ -108,7 +125,8 @@ public sealed class AlternatingQuotaText : Grid
         Width = Pair ? Math.Ceiling(width) : Math.Min(MaximumDisplayWidth, Math.Ceiling(width)); Height = Math.Ceiling(height);
         // Taking turns, the values move a whole line inside this slot, so two never overlap.
         ClipToBounds = !Pair;
-        for (int index = 0; index < layers.Count; index++) layers[index].Opacity = Pair || index == 0 ? 1 : 0;
+        int resting = RestingIndex;
+        for (int index = 0; index < layers.Count; index++) layers[index].Opacity = Pair || index == resting ? 1 : 0;
         // Rebuilt values take the running rotation's frame at once, mid-slide
         // included; left to the next turn, a new reading would show two values
         // in one place until then.
@@ -136,10 +154,12 @@ public sealed class AlternatingQuotaText : Grid
         bool stacked = Vertical && !string.IsNullOrEmpty(item.Unit);
         // In the bar a shorter value keeps its place beside its neighbour; the strip centres it.
         var panel = new StackPanel { Orientation = stacked ? Orientation.Vertical : Orientation.Horizontal,
-            HorizontalAlignment = Vertical ? HorizontalAlignment.Center : HorizontalAlignment.Left,
+            HorizontalAlignment = Vertical || Centered ? HorizontalAlignment.Center : HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
         bool percent = !Vertical && item.Text.Length > 1 && item.Text.EndsWith('%');
-        var number = Text(percent ? item.Text[..^1] : item.Text, FontSize, FontWeights.SemiBold, ink);
+        var number = Text(percent ? item.Text[..^1] : item.Text, FontSize, ValueWeight, ink);
+        // A named theme brush follows light and dark like the rest of the panel.
+        if (item.Ink != null && !item.Low && !item.Dimmed) number.SetResourceReference(TextBlock.ForegroundProperty, item.Ink);
         panel.Children.Add(number);
         if (stacked) { panel.Children.Add(Text(item.Unit!, unitSize, FontWeights.Medium, CompactInk.Unit)); return panel; }
         if (percent)
@@ -153,19 +173,20 @@ public sealed class AlternatingQuotaText : Grid
     internal void Stop()
     {
         wake.Stop(); cycle = null; settledSlot = 0; ClearFades();
+        int resting = RestingIndex;
         for (int index = 0; index < layers.Count; index++)
         {
             layers[index].BeginAnimation(OpacityProperty, null);
-            layers[index].Opacity = Pair || index == 0 ? 1 : 0;
+            layers[index].Opacity = Pair || index == resting ? 1 : 0;
             offsets[index].BeginAnimation(TranslateTransform.YProperty, null); offsets[index].Y = 0;
         }
-        if (!Pair && items.Length > 0) Report(items[0].Provider);
+        if (!Pair && items.Length > 0) Report(items[Math.Clamp(resting, 0, items.Length - 1)].Provider);
     }
     private void Refresh()
     {
         if (!IsVisible || !animates || layers.Count < 2 || Pair) { Stop(); return; }
         if (cycle != null) return;
-        cycle = Stopwatch.StartNew(); Step();
+        cycle = SharedPhase ? SharedEpoch : Stopwatch.StartNew(); Step();
     }
     private void ClearFades()
     {

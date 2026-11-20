@@ -107,15 +107,24 @@ final class ExpandedPanelTests: XCTestCase {
         XCTAssertEqual(Options.decode(String(repeating: " ", count: Options.byteLimit + 1)), defaults)
         XCTAssertEqual(defaults.pageSize, 3); XCTAssertEqual(defaults.rowStyle, .twoLine)
         XCTAssertEqual(defaults.rowFields, Set(Options.RowField.allCases)); XCTAssertEqual(defaults.spendTasks, 2)
-        XCTAssertEqual(defaults.headerActions, Set(Options.HeaderAction.allCases))
+        XCTAssertEqual(defaults.headerActions, [.markRead, .pin, .settings], "Return to Top Center is opt-in")
+        XCTAssertEqual(defaults.menuActions, [], "The opt-in button does not fall into the More menu")
+        XCTAssertEqual(Options.HeaderAction.allCases.filter(\.movesToMenu), [.markRead, .pin, .settings])
+        let recenter = Options.decode(#"{"headerActions":["recenter","pin","future"]}"#)
+        XCTAssertEqual(recenter.headerActions, [.recenter, .pin]); XCTAssertEqual(recenter.menuActions, [.markRead, .settings])
+        XCTAssertTrue(recenter.json.contains(#""headerActions":["pin","recenter"]"#))
         let mixed = Options.decode(#"{"version":9,"pageSize":9,"rowStyle":"oneLine","rowFields":["rate","future"],"codexPeriods":"monthly","claudePeriods":"weekly","spendTasks":3,"weekLine":"no","headerActions":["pin"]}"#)
         XCTAssertEqual(mixed.pageSize, 3); XCTAssertEqual(mixed.rowStyle, .oneLine); XCTAssertEqual(mixed.rowFields, [.rate])
         XCTAssertEqual(mixed.codexPeriods, .both); XCTAssertEqual(mixed.claudePeriods, .weekly)
         XCTAssertEqual(mixed.spendTasks, 2); XCTAssertTrue(mixed.weekLine); XCTAssertEqual(mixed.headerActions, [.pin])
         XCTAssertEqual(Options.decode(#"{"rowFields":[]}"#).rowFields, [], "An empty choice stays empty")
+        XCTAssertTrue(defaults.codexResets, "Codex's banked resets show under its quota by default")
+        XCTAssertFalse(Options.decode(#"{"codexResets":false}"#).codexResets)
+        XCTAssertTrue(Options.decode(#"{"codexResets":"no"}"#).codexResets, "A damaged choice falls back to its default")
 
         var chosen = defaults
         chosen.pageSize = 6; chosen.rowFields = [.model, .rate]; chosen.quotaArrange = .stack; chosen.headerActions = [.settings, .markRead]
+        chosen.codexResets = false
         XCTAssertEqual(Options.decode(chosen.json), chosen)
         XCTAssertTrue(chosen.json.contains(#""rowFields":["rate","model"]"#), "Sets save in a fixed order")
         XCTAssertTrue(chosen.json.contains(#""headerActions":["markRead","settings"]"#))

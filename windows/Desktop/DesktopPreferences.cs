@@ -66,10 +66,12 @@ internal sealed record DesktopPreferences
     // Progress rings are on until the user turns one off, as on the Mac; a saved choice is kept.
     public bool DeepSeekProgressRing { get; init; } = true;
     public bool SystemNotifications { get; init; }
-    public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits"];
-    internal static readonly string[] WarningChoices = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits"];
+    public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits", "resetExpiry"];
+    internal static readonly string[] WarningChoices = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits", "resetExpiry"];
     public double? DeepSeekLowBalanceLine { get; init; }
     public double? DeepSeekSpikeLimit { get; init; }
+    /// Days ahead that a Codex banked reset counts as expiring; null is Core's default (three days).
+    public int? CodexResetExpiryDays { get; init; }
     public bool? PositionChosen { get; init; }
     public string LastSettingsPane { get; init; } = "overview";
     // The Mac's window theme and accent keys and values.
@@ -135,8 +137,8 @@ internal sealed record DesktopPreferences
         && DeepSeekRingPeriod is "day" or "week" && DeepSeekSpeedSource is "local" or "account"
         && ValidAmount(DeepSeekDailyBudget) && ValidAmount(DeepSeekWeeklyBudget)
         && ValidAmount(DeepSeekLowBalanceLine) && ValidAmount(DeepSeekSpikeLimit)
-        && WarningKinds is { Length: <= 7 } && WarningKinds.Distinct().Count() == WarningKinds.Length
-        && WarningKinds.All(WarningChoices.Contains)
+        && WarningKinds is { Length: <= 8 } && WarningKinds.Distinct().Count() == WarningKinds.Length
+        && WarningKinds.All(WarningChoices.Contains) && CodexResetExpiryDays is null or (>= 1 and <= 30)
         && LastSettingsPane is { Length: > 0 and <= 64 } && !LastSettingsPane.Any(char.IsControl)
         && AppTheme is "auto" or "light" or "dark" && ValidAccent(AccentColor)
         && RetentionMinutes is >= 0 and <= 10080
@@ -169,6 +171,41 @@ internal sealed record DesktopPreferences
     // Older profiles stored a corner without the explicit-choice marker.
     internal bool HasChosenPosition => PositionChosen ?? Position != "center";
 
+    // Lane names that Core's CompactIslandLayout reads as its warnings component: the component
+    // and the separate warnings and earlier names that schema 7 merged into it.
+    private static readonly HashSet<string> WarningLaneNames = ["warnings", "lowQuotaWarning", "sshWarning", "quotaDelayWarning", "quotaWarning", "freshness"];
+    /// Whether the saved collapsed bar places its warnings component, read as Core reads the
+    /// layout: none saved, or one it cannot read, is the standard bar, which does.
+    internal static bool WarningsOnBar(string? layout)
+    {
+        if (layout == null) return true;
+        try
+        {
+            using var document = JsonDocument.Parse(layout);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("version", out var version) || !version.TryGetInt32(out int schema) || schema < 1)
+                return true;
+            var lanes = new List<JsonElement>();
+            foreach (string lane in schema == 1 ? new[] { "leading", "trailing", "center" } : ["leading", "trailing"])
+            {
+                if (root.TryGetProperty(lane, out var names)) lanes.Add(names);
+                else if (lane != "center") return true;
+            }
+            bool placed = false;
+            foreach (var names in lanes)
+            {
+                if (names.ValueKind != JsonValueKind.Array) return true;
+                foreach (var name in names.EnumerateArray())
+                {
+                    if (name.ValueKind != JsonValueKind.String) return true;
+                    placed |= WarningLaneNames.Contains(name.GetString()!);
+                }
+            }
+            return placed;
+        }
+        catch (JsonException) { return true; }
+    }
+
     internal object EngineConfiguration()
     {
         if (!IsValid) throw new ArgumentException("Invalid Windows settings.");
@@ -195,7 +232,10 @@ internal sealed record DesktopPreferences
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
-            reminderSettings = new { warnings = WarningKinds, lowLine = DeepSeekLowBalanceLine, spikeLine = DeepSeekSpikeLimit },
+            // The reminders that follow the bar's warnings notify only while it shows them. Only this
+            // flag reaches the engine, so reordering the bar stays a presentation edit.
+            reminderSettings = new { warnings = WarningKinds, lowLine = DeepSeekLowBalanceLine, spikeLine = DeepSeekSpikeLimit, resetDays = CodexResetExpiryDays,
+                warningsOnBar = WarningsOnBar(CompactLayout) },
             expandedPanel = new { layout = ExpandedPanelLayout, options = ExpandedPanelOptions, deepseekDetailed = DeepSeekPanelStyle != "simple" },
             codexExecutable = CodexExecutable,
             codexHome = CodexHome,

@@ -119,6 +119,9 @@
         <Button x:Name="PinButton" Style="{StaticResource IconButton}" Click="OnPin">
          <local:IconGlyph Symbol="pin" Width="14" Height="14" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
         </Button>
+        <Button x:Name="RecenterButton" Style="{StaticResource IconButton}" Click="OnRecenter" Visibility="Collapsed">
+         <local:IconGlyph Symbol="arrow.up.to.line" Width="14" Height="14" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+        </Button>
         <Button x:Name="SettingsButton" Style="{StaticResource IconButton}" Click="OnSettings">
          <local:IconGlyph Symbol="gearshape" Width="14" Height="14" Ink="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
         </Button>

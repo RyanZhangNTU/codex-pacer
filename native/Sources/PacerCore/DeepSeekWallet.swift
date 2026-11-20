@@ -109,8 +109,8 @@ public struct DeepSeekWallet: Equatable, Sendable {
         // The account is compared with the local estimate over the same span:
         // from the first reading (or midnight) to the latest reading.
         func elsewhere(_ start: Date) -> Double {
-            guard let interval = calendar.dateInterval(of: .day, for: start), let seen = history.coverage(of: interval) else { return 0 }
-            return max(0, history.charged(onDayStarting: interval.start) - ledger.total(in: seen).total)
+            guard let interval = calendar.dateInterval(of: .day, for: start) else { return 0 }
+            return history.beyond({ ledger.total(in: $0).total }, in: interval, calendar: calendar)
         }
         elsewhereToday = elsewhere(day.start)
         dayTotals = days.map { $0.total + elsewhere($0.start) }

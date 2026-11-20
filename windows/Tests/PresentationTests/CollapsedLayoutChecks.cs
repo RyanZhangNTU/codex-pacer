@@ -219,8 +219,21 @@ internal static class CollapsedLayoutChecks
             var fiveHour = Find<CheckBox>(window, "settings.reminders.fiveHour");
             await Until(() => fiveHour.IsEnabled);
             Check(!fiveHour.IsChecked.GetValueOrDefault(), "Removing the warnings slot must make its reminder switches read off");
+            // The reminders that follow the bar's warnings notify only while it shows them. The engine
+            // learns only that, read from the layout as Core reads it, including earlier schemas.
+            foreach (string? saved in new[] { session.Current.CompactLayout, null, "{", "{\"version\":99}",
+                "{\"version\":6,\"leading\":[\"statusIcon\"],\"trailing\":[\"quotaWarning\",\"quota\"]}",
+                "{\"version\":1,\"leading\":[\"activity\"],\"center\":[\"freshness\"],\"trailing\":[\"quota\"]}",
+                "{\"version\":11,\"leading\":[\"activity\"],\"trailing\":[\"quota\"],\"warnings\":[\"fiveHour\"]}" })
+            {
+                var read = await NativeCompactBar.Shared.ReadAsync(session.Current with { CompactLayout = saved }, language, ["codex", "claude", "deepseek"]);
+                Check(DesktopPreferences.WarningsOnBar(saved) == read.Components.Single(value => value.Id == "warnings").Shown,
+                    "The engine's warnings flag must match the bar's own reading of " + (saved ?? "no saved layout"));
+            }
+            Check(!DesktopPreferences.WarningsOnBar(session.Current.CompactLayout), "Without the warnings slot the engine is told the bar shows none");
             Toggle(fiveHour);
             await Until(() => session.Current.WarningKinds.SequenceEqual(new[] { "fiveHour" }));
+            Check(DesktopPreferences.WarningsOnBar(session.Current.CompactLayout), "Choosing a reminder restores the slot, and with it the notifications");
             Check((await NativeCompactBar.Shared.ReadAsync(session.Current, language, ["codex", "claude", "deepseek"])).EditorTrailing.First() == "warnings",
                 "Choosing one reminder must restore the slot at the start with only that kind");
             await window.NavigateAsync("collapsed"); await Pump();

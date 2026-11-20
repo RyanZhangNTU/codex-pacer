@@ -172,6 +172,7 @@ final class IslandModel: ObservableObject {
     }
     var deepseekBalanceAttention = DeepSeekBalanceAttention()
     var harnessCreditsAttention = HarnessCreditsNoticePolicy()
+    var resetExpiryAttention = ResetExpiryNoticePolicy()
     /// Successive balance readings, for what the account was charged beyond this Mac.
     var deepseekHistory = DeepSeekBalanceHistory()
     /// Spend-spike notices stay quiet until this moment after "Not for an hour".
@@ -997,6 +998,12 @@ final class IslandModel: ObservableObject {
         if moving { closeWork?.cancel() } else { moveEndedAt = Date() }
     }
     func islandPlacementSaved() { placementRevision += 1 }
+    /// Return to Top Center has somewhere to leave: a dragged place, or a
+    /// corner other than the top center. Settings and the panel's button share it.
+    var canResetIslandPlacement: Bool {
+        _ = placementRevision
+        return IslandPlacement.load(from: defaults) != nil || islandPosition != .center
+    }
     /// Return to Top Center: forget the dragged place and the old corner.
     func resetIslandPlacement() {
         IslandPlacement.clear(from: defaults)
@@ -1064,6 +1071,15 @@ final class IslandModel: ObservableObject {
         UserDefaults.standard.set(SettingsPane(provider: provider).rawValue, forKey: SettingsPane.defaultsKey)
         onSettings?()
     }
+    /// The panel's reset capsule asks History to open on Codex with the deadlines showing.
+    private(set) var opensResetExpiries = false
+    func openResetExpiries() {
+        opensResetExpiries = true
+        UserDefaults.standard.set(SettingsPane.history.rawValue, forKey: SettingsPane.defaultsKey)
+        onSettings?()
+    }
+    /// History takes the request once, when it appears.
+    func takeResetExpiryRequest() -> Bool { defer { opensResetExpiries = false }; return opensResetExpiries }
     var onQuit: (() -> Void)?
     var onRelaunch: (() -> String?)?
     var onOpenActivity: ((SessionActivity) async -> ActivityOpenOutcome)?
@@ -1915,8 +1931,23 @@ final class IslandModel: ObservableObject {
         codexErrorMessage = state.error; codexHistoryWarning = state.warning; codexRefreshing = state.refreshing || codexQuotaStarting; quotaCLI = state.executable
         if successful, let snapshot = state.snapshot {
             now = Date(); present(attention.quotaNotices(snapshot, at: now))
+            remindResetExpiry()
         }
         onStatusChange?()
+    }
+    /// How many days ahead Codex's banked resets count as expiring, for the
+    /// collapsed bar's warning and its notification.
+    var resetExpiryLeadDays: Int { ResetExpiryReminder.leadDays(defaults.object(forKey: ResetExpiryReminder.defaultsKey) as? Int) }
+    func setResetExpiryLeadDays(_ days: Int) {
+        defaults.set(ResetExpiryReminder.leadDays(days), forKey: ResetExpiryReminder.defaultsKey)
+        objectWillChange.send(); remindResetExpiry()
+        onLayoutChange?(); onStatusChange?()
+    }
+    /// One notification when banked resets enter the lead time, only while the
+    /// bar's warning is chosen, like the other reminders that follow it.
+    private func remindResetExpiry() {
+        guard !demo, !sleeping, !stopped, isModuleEnabled(.codex), compactLayout.shownWarnings.contains(.resetExpiry) else { return }
+        present(resetExpiryAttention.notices(codexQuota, leadDays: resetExpiryLeadDays, now: Date()))
     }
     @discardableResult private func detachCodexQuota(preservingCadence: Bool = true) -> CodexQuotaCoordinator? {
         let previous = codexQuotaCoordinator; previous?.invalidateSource()
@@ -2391,7 +2422,7 @@ final class IslandModel: ObservableObject {
         objectWillChange.send()
         if !demo, !sleeping, !stopped {
             present(harnessCreditsAttention.notices(harnessCredits, settings: creditSettings,
-                                                    low: compactLayout.warnings.contains(.lowCredits), now: Date()))
+                                                    low: compactLayout.shownWarnings.contains(.lowCredits), now: Date()))
         }
         onLayoutChange?(); onStatusChange?()
     }
@@ -2639,8 +2670,10 @@ final class IslandModel: ObservableObject {
         harnessMaintenanceAt = now
         if !harnessCredits.isEmpty {
             present(harnessCreditsAttention.notices(harnessCredits, settings: creditSettings,
-                                                    low: compactLayout.warnings.contains(.lowCredits), now: Date()))
+                                                    low: compactLayout.shownWarnings.contains(.lowCredits), now: Date()))
         }
+        // Reset deadlines also follow the calendar between quota readings.
+        remindResetExpiry()
         for definition in localHarnesses.definitions where progressGuide(definition.descriptor.id)?.waiting == true {
             recheckLocalHarnessProgress(definition.descriptor.id)
         }

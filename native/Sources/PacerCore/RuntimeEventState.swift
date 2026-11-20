@@ -251,7 +251,10 @@ struct RuntimeEventState: Sendable {
                 value.updateTitle(row["title"] as? String)
                 if fallback[seeded.id] == nil, [.running, .waitingForInput].contains(value.phase),
                    Date().timeIntervalSince(value.lastObserved ?? .distantPast) > 900 { value.markUnconfirmed() }
-                current[value.canonicalized().id] = value.canonicalized()
+                // Two rollouts of one thread never let the older replace the newer (#259).
+                let id = value.canonicalized().id
+                if let kept = current[id], (kept.lastObserved ?? .distantPast) > (value.lastObserved ?? .distantPast) { continue }
+                current[id] = value.canonicalized()
             }
             if chunked {
                 guard current.count <= 32 else { snapshotID = nil; stagedFallback = [:]; return }

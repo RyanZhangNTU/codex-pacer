@@ -18,6 +18,8 @@ internal sealed record PanelOptions
     public string QuotaArrange { get; init; } = "pair";
     public bool QuotaDetails { get; init; } = true;
     public bool PaceTick { get; init; } = true;
+    /// The capsule under Codex's quota with its banked resets, as Core's `codexResets`.
+    public bool CodexResets { get; init; } = true;
     public string DeepseekDial { get; init; } = "budget";
     public bool DeepseekPeak { get; init; } = true;
     public int SpendTasks { get; init; } = 2;
@@ -28,10 +30,14 @@ internal sealed record PanelOptions
     internal bool OneLine => RowStyle == "oneLine";
     /// Compares choices by value; the lists make record equality compare references.
     internal string Key => string.Join(";", PageSize, RowStyle, string.Join(",", RowFields), CodexPeriods, ClaudePeriods, QuotaArrange,
-        QuotaDetails, PaceTick, DeepseekDial, DeepseekPeak, SpendTasks, SpendElsewhere, WeekLine, string.Join(",", HeaderActions));
+        QuotaDetails, PaceTick, CodexResets, DeepseekDial, DeepseekPeak, SpendTasks, SpendElsewhere, WeekLine, string.Join(",", HeaderActions));
     /// Whether a task row draws the field in the chosen style, as Core's `shows`.
     internal bool Shows(string field) => RowFields.Contains(field) && (!OneLine || field is "rate" or "turnTime");
     internal bool InHeader(string action) => HeaderActions.Contains(action);
+    /// Core's header actions in order. Out of the header each waits in the More menu,
+    /// except Return to Top Center, which is opt-in, as Core's `movesToMenu`.
+    internal static IReadOnlyList<string> Actions { get; } = ["markRead", "pin", "recenter", "settings"];
+    internal bool InMenu(string action) => action != "recenter" && !InHeader(action);
     internal string Periods(string provider) => provider switch { "codex" => CodexPeriods, "claude" => ClaudePeriods, _ => "both" };
 }
 

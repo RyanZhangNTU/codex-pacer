@@ -68,6 +68,29 @@ final class EngineReminderTests: XCTestCase {
         XCTAssertTrue(capture.last()?.notices.allSatisfy { $0.kind == "lowQuota" || $0.body == $0.privateBody } == true)
         await runtime.stop()
     }
+    func testRemindersThatFollowTheBarNotifyOnlyWhileItShowsWarnings() async throws {
+        XCTAssertTrue(EngineReminderSettings().notifies(.lowBalance), "An earlier shell sends no flag; the bar shows its warnings")
+        XCTAssertFalse(EngineReminderSettings(warningsOnBar: false).notifies(.resetExpiry))
+        XCTAssertFalse(EngineReminderSettings(warnings: [], warningsOnBar: true).notifies(.lowCredits), "The kind must still be chosen")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func command(_ method: String, _ params: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
+        }
+        func reminders(_ onBar: Bool, low: Double?) -> [String: Any] {
+            ["warnings": ["lowBalance", "spendSpike", "budget"], "lowLine": low.map { $0 as Any } ?? NSNull(), "spikeLine": NSNull(), "warningsOnBar": onBar]
+        }
+        for (onBar, notifies) in [(false, false), (true, true)] {
+            let capture = ReminderCapture()
+            let runtime = EngineRuntime(demo: true, now: { now }, output: { capture.append($0) })
+            _ = await runtime.receive(try command("initialize", ["enabledProviders": ["deepseek"], "reminderSettings": reminders(onBar, low: nil)]))
+            _ = await runtime.receive(try command("configure", ["reminderSettings": reminders(onBar, low: 1000)]))
+            let last = try XCTUnwrap(capture.last())
+            XCTAssertEqual(last.notices.first?.category == DeepSeekNoticePolicy.balanceCategory, notifies,
+                "The low-balance reminder notifies only while the bar places its warnings")
+            XCTAssertNotNil(last.wallet?.alert, "Only the notification follows the bar; the panel keeps its balance alert")
+            await runtime.stop()
+        }
+    }
 }
 private final class ReminderCapture: @unchecked Sendable {
     private let lock = NSLock()

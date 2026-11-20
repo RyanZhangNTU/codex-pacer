@@ -399,6 +399,7 @@
 "activity.task_count_compact_singular" = "%@ 个任务";
 "activity.tool_compact" = "执行工具";
 "activity.responding_compact" = "正在回复";
+"activity.background_wait_compact" = "等待后台工作";
 
 "activity.done_compact" = "1 已完成";
 
@@ -1200,6 +1201,8 @@
 "panel.action.apps" = "打开应用";
 "panel.action.markRead" = "全部标为已读";
 "panel.action.pin" = "固定展开";
+"panel.action.recenter" = "回到顶部中央";
+"panel.action.recenter_help" = "只在自由拖动时显示。";
 "panel.action.settings" = "设置";
 "main.panel.subtitle" = "点区块查看设置，拖动可以换顺序。";
 "main.panel.blocks" = "区块";
@@ -1583,3 +1586,24 @@
 "progress_guide.restart.confirm" = "%@ 有任务正在进行，重启会中断它。仍要重启？";
 "progress_guide.restart.confirm_action" = "仍要重启";
 "progress_guide.restart.failed" = "%@ 没有退出。请自己退出它，Pacer 会接着打开它。";
+"account.next_expires_in" = "最近一张 %@后过期";
+"account.known_next_expires_in" = "已知最近一张 %@后过期";
+"account.expiry_remaining" = "还剩 %@";
+"account.panel_resets" = "重置券 %ld";
+"account.panel_resets_expiring" = "重置券 %1$ld · %2$@过期";
+"warning.resetExpiry" = "重置券快到期";
+"warning.reset_expiry_help" = "%1$ld 张 Codex 重置券将在 %2$@后过期（%3$@）。";
+"warning.reset_expiry_more" = "随后还有 %ld 张过期。";
+"notice.reset_expiry" = "Codex 重置券快过期了";
+"main.notify.reset_expiry" = "重置券快到期";
+"main.notify.reset_expiry_note" = "Codex 重置券在提前时间内到期时";
+"main.notify.reset_lead" = "重置券提前提醒";
+"main.notify.reset_lead_info" = "重置券在这么多天内到期时，折叠栏显示警告，并按上一行的设置发系统通知。";
+"main.panel.codex_resets" = "重置券";
+"main.panel.codex_resets_help" = "在 Codex 额度下方显示可用的重置券和最近一张的到期倒计时。";
+"whats_new.banked_resets" = "Codex 重置券一目了然";
+"whats_new.banked_resets_detail" = "在历史页和 Codex 额度下方，查看还有几张重置券、最近一张多久后过期。快过期时 Pacer 会提醒你，提前几天可以在通知里设置。";
+"whats_new.return_top_center" = "从面板一键回到顶部居中";
+"whats_new.return_top_center_detail" = "常拖动灵动岛的话，可以在展开面板的标题栏加一个按钮，一键放回顶部居中。";
+"whats_new.claude_app_access" = "Claude 请求使用应用时提醒你";
+"whats_new.claude_app_access_detail" = "Claude Desktop 请求使用电脑上的应用时，Pacer 会提示这个任务在等你。";

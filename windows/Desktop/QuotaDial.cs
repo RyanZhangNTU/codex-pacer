@@ -326,8 +326,9 @@ internal sealed class QuotaDial : FrameworkElement
 
 internal sealed class QuotaCell : StackPanel
 {
+    /// <param name="below">Shown under the caption and status, centered in the column, e.g. Codex's reset capsule.</param>
     internal QuotaCell(string provider, EngineQuota? quota, EngineWallet? wallet, string? help = null, DashboardProvider? dashboard = null, FrameworkElement? status = null,
-        PanelGauge? gauge = null, bool paceTick = true)
+        PanelGauge? gauge = null, bool paceTick = true, FrameworkElement? below = null)
     {
         HorizontalAlignment = HorizontalAlignment.Stretch;
         var dial = new QuotaDial(provider, quota, wallet, dashboard: dashboard, gauge: gauge, paceTick: paceTick) { Width = 104, Height = 104, HorizontalAlignment = HorizontalAlignment.Center };
@@ -348,6 +349,7 @@ internal sealed class QuotaCell : StackPanel
         }
         Children.Add(caption);
         if (status != null) Children.Add(status);
+        if (below != null) Children.Add(below);
         string details = string.Join("\n\n", new[] { provider != "deepseek" && dial.Split ? dashboard?.FiveHour.SplitHelp : null,
             provider != "deepseek" ? dial.GaugeReading?.SplitHelp : null, provider != "deepseek" ? dashboard?.Weekly.SourceText : null, help }.Where(value => !string.IsNullOrWhiteSpace(value)));
         if (!string.IsNullOrWhiteSpace(details)) AutomationProperties.SetHelpText(this, details);

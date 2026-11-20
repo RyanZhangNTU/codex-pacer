@@ -305,6 +305,7 @@ public partial class App : Application
         island.QuitRequested += Quit;
         island.SettingsRequested += OpenSettings;
         island.ProviderSettingsRequested += OpenProviderSettings;
+        island.ResetExpiriesRequested += async () => { OpenSettings(); if (settings != null) await settings.ShowResetExpiriesAsync(); };
         island.DeepSeekWebSignInRequested += async context =>
         {
             try { if (webConnection != null) await webConnection.ConnectAsync(context); }

@@ -285,6 +285,7 @@ actor EngineRuntime {
     private var localStreamStatuses: [AgentProvider: RuntimeStreamStatus] = [:]
     private var deepseekSettings = EngineDeepSeekSettings()
     private var reminderSettings = EngineReminderSettings()
+    private func notifies(_ kind: CompactIslandLayout.Warning) -> Bool { reminderSettings.notifies(kind) }
     private var panelSettings = EngineExpandedPanelSettings()
     /// Claude's self-reported progress ring; off until the desktop turns it on.
     private var claudeProgressRing = false
@@ -294,6 +295,7 @@ actor EngineRuntime {
     /// Account credits the host read after its own sign-in, by module.
     private var accountCredits: [AgentProvider: (credits: HarnessAccountCredits, stale: Bool)] = [:]
     private var creditsNoticePolicy = HarnessCreditsNoticePolicy()
+    private var resetExpiryNoticePolicy = ResetExpiryNoticePolicy()
     private var hiddenTurnCredits: Set<AgentProvider> = []
     private var creditSettings: [AgentProvider: HarnessCreditsSettings] = [:]
     /// Data folders chosen in Settings for local modules.
@@ -2772,15 +2774,20 @@ actor EngineRuntime {
             wallet = source.presentation(wallet: reading, at: date, hideProjects: hideProjects, configuration: deepseekSettings,
                 compactUsesBudget: enabled.intersection([.codex, .claude]).count < 2, reminders: reminderSettings, connection: balanceState,
                 panel: panelOptions)
-            walletNotices = deepseekNoticePolicy.balanceNotices(reading, low: reminderSettings.contains(.lowBalance))
-                + deepseekNoticePolicy.spendNotices(reading, spike: reminderSettings.contains(.spendSpike), budget: reminderSettings.contains(.budget),
+            walletNotices = deepseekNoticePolicy.balanceNotices(reading, low: notifies(.lowBalance))
+                + deepseekNoticePolicy.spendNotices(reading, spike: notifies(.spendSpike), budget: notifies(.budget),
                     snoozedUntil: spikeSnoozedUntil, now: date)
         }
         let creditModules = HarnessRegistry.ids(where: \.reportsAccountCredits).filter(enabled.contains)
         let credits: [AgentProvider: HarnessAccountCredits] = Dictionary(uniqueKeysWithValues: creditModules.compactMap { provider in
             (demo ? DemoScenario.workbuddyCredits(at: date) : accountCredits[provider]?.credits).map { (provider, $0) }
         })
-        walletNotices += creditsNoticePolicy.notices(credits, settings: creditSettings, low: reminderSettings.contains(.lowCredits), now: date)
+        walletNotices += creditsNoticePolicy.notices(credits, settings: creditSettings, low: notifies(.lowCredits), now: date)
+        // Deadlines are fixed, so the presentation clock's publishes find a reset entering its lead time.
+        if enabled.contains(.codex), notifies(.resetExpiry) {
+            walletNotices += resetExpiryNoticePolicy.notices(demo ? quota[.codex] : codexQuota,
+                leadDays: ResetExpiryReminder.leadDays(reminderSettings.resetDays), now: date)
+        }
         let legacy = HarnessRegistry.legacyIDSet
         let selected: Set<String>?
         if activities.count > 256, !enabled.isSubset(of: legacy) {
@@ -2837,7 +2844,8 @@ actor EngineRuntime {
             }
         let compactWarnings = CompactWarningPresentation.items(enabled: enabled,
             warnings: Set(reminderSettings.warnings.compactMap(CompactIslandLayout.Warning.init(rawValue:))), snapshots: snapshots,
-            failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, credits: credits, creditSettings: creditSettings, now: date)
+            failed: failedProviders, sshIssue: sshIssue, wallet: wallet?.alert, credits: credits, creditSettings: creditSettings,
+            resetLeadDays: ResetExpiryReminder.leadDays(reminderSettings.resetDays), now: date)
         let compactContext = CompactBarContext(activities: visibleActivities, requests: visibleRequests, completions: inbox.unreadActivities,
             sources: HarnessRegistry.descriptors.filter { $0.hasQuotaDisplay && enabled.contains($0.id) }.map(\.id).map { provider in
                 .init(provider: provider, snapshot: snapshots[provider], failed: failedProviders.contains(provider))

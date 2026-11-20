@@ -132,8 +132,9 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
         } else { return nil }
     }
     /// Without `line` the dashed reference and its label are left out; the
-    /// part of a day over its budget still turns red.
-    public static func week(_ wallet: DeepSeekWallet, line showsLine: Bool = true) -> Week? {
+    /// part of a day over its budget still turns red. `calendar` is the one the
+    /// wallet's days were counted in.
+    public static func week(_ wallet: DeepSeekWallet, line showsLine: Bool = true, calendar: Calendar = .current) -> Week? {
         func amount(_ value: Double) -> String { DeepSeekDialPresentation.amount(value) }
 
         if wallet.dayTotals.dropLast().filter({ $0 >= 0.005 }).count >= 2 {
@@ -143,10 +144,11 @@ public struct DeepSeekSoloPresentation: Codable, Equatable, Sendable {
             let days = zip(wallet.days, wallet.dayTotals).enumerated().map { index, pair -> Day in
                 let day = pair.0, total = pair.1, today = index == wallet.days.count - 1
                 let within = budget.map { min(total, $0) } ?? total, over = budget.map { max(0, total - $0) } ?? 0
-                var help = day.start.formatted(Date.FormatStyle().weekday(.abbreviated).month(.defaultDigits).day().locale(L10n.locale)) + " · " + amount(total)
+                var help = L10n.format(day.start, Date.FormatStyle().weekday(.abbreviated).month(.defaultDigits).day(), calendar: calendar)
+                    + " · " + amount(total)
                 if over >= 0.005 { help += "\n" + L10n.text("deepseek.day_over", amount(over)) }
                 return Day(timestamp: day.start.timeIntervalSince1970,
-                    label: today ? L10n.text("deepseek.today_label") : day.start.formatted(Date.FormatStyle().weekday(.narrow).locale(L10n.locale)),
+                    label: today ? L10n.text("deepseek.today_label") : L10n.format(day.start, Date.FormatStyle().weekday(.narrow), calendar: calendar),
                     today: today, withinFraction: within / top, overFraction: over / top, help: help)
             }
             return Week(title: L10n.text("deepseek.week_title"), lineText: line.map { L10n.text(budget != nil ? "deepseek.daily_budget_line" : "deepseek.daily_average", amount($0)) },

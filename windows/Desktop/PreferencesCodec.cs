@@ -82,10 +82,12 @@ internal static class PreferencesCodec
                 var layoutObject = JsonNode.Parse(data) as JsonObject;
                 if (layoutObject?["warnings"] is JsonArray warnings)
                 {
-                    // Layout schema 10 turns low account credits on, as Core's decoder does.
+                    // Layout schemas 10 and 11 turn low account credits and Codex reset expiry on, as Core's decoder does.
                     var kinds = warnings.DeepClone().AsArray();
                     if (layoutObject["version"] is JsonValue schema && schema.TryGetValue<int>(out int saved) && saved < 10
                         && !kinds.Any(kind => kind?.GetValue<string>() == "lowCredits")) kinds.Add("lowCredits");
+                    if (layoutObject["version"] is JsonValue current && current.TryGetValue<int>(out int layoutVersion) && layoutVersion < 11
+                        && !kinds.Any(kind => kind?.GetValue<string>() == "resetExpiry")) kinds.Add("resetExpiry");
                     properties["warningKinds"] = kinds;
                 }
             }

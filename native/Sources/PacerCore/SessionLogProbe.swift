@@ -204,7 +204,7 @@ enum SessionLogProbe {
         if tid in seen or len(seen)>=64:return None
         seen.add(tid)
         for candidate in candidates():
-            if not candidate.stem.lower().endswith(tid):continue
+            if rollout_thread(candidate.stem)!=tid.lower():continue
             record=rollout_origin(candidate,tid)
             if record is None:continue
             classification={k:record[k] for k in ('embedded','ignoredSession')}
@@ -229,6 +229,21 @@ enum SessionLogProbe {
             origin_by_thread[tid]=classification
             if len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
         return classification
+    # The records' own type fields; a tool's output quotes the same words with escapes.
+    TURN_BOUNDARIES=tuple(b'"type":'+space+b'"'+m+b'"' for m in (b'task_started',b'task_complete',b'turn_aborted',b'turn_context') for space in (b'',b' '))
+    BOUNDARY_OVERLAP=max(map(len,TURN_BOUNDARIES))-1
+    def turn_boundary(f,fragment,start,end):
+        # Whether the unread fragment and start..end hold a turn start, ending or
+        # context; bytes only, in 1 MiB steps. More than 8 MiB counts as one (LocalActivityReader).
+        if end-start>8*1024*1024 or any(m in fragment for m in TURN_BOUNDARIES):return True
+        carry=fragment[-BOUNDARY_OVERLAP:];f.seek(start)
+        while start<end:
+            chunk=f.read(min(1<<20,end-start))
+            if not chunk:return True
+            data=carry+chunk
+            if any(m in data for m in TURN_BOUNDARIES):return True
+            carry=data[-BOUNDARY_OVERLAP:];start+=len(chunk)
+        return False
     def anchor(f,size,thread_id=None):
         offset, floor, fragment = size, max(0,size-8*1024*1024), b''
         fallback=None;latest_turn=None;first_times={}
@@ -289,6 +304,9 @@ enum SessionLogProbe {
     def snapshot(excluding=()):
         rows=[]; selected=[]
         paths=candidates();parents={}
+        # A reverted thread keeps its earlier rollout beside the current one (#259);
+        # candidates are newest first, so only the current one reports the thread.
+        seen=set();paths=[p for p in paths if not (rollout_thread(p.stem) in seen or seen.add(rollout_thread(p.stem)))]
         # Classify the bounded candidate set before spending reader/watch slots,
         # including a child that sorts ahead of its excluded parent.
         for p in paths:
@@ -306,7 +324,7 @@ enum SessionLogProbe {
         while len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
         for p in paths:
             if len(selected)>=32: break
-            if p.stem[-36:].lower() in excluding:
+            if rollout_thread(p.stem) in excluding:
                 selected.append(p);continue
             try:
                 stat=p.stat()
@@ -331,12 +349,18 @@ enum SessionLogProbe {
                     selected.append(p); old=cursors.get(p); reset=old is None or old[0]!=stat.st_ino or old[1]>stat.st_size
                     offset=0 if reset else old[1]; fragment=b'' if reset else old[2]
                     budget=512*1024 if reset else 128*1024; gap=stat.st_size-offset>budget
+                    thread=(meta.get('payload')or{}).get('id') if meta else None
+                    turn=None if reset else old[4]
                     records=[]
-                    if reset or gap:
+                    # Skipping a large append keeps the known turn when nothing appended
+                    # since starts, ends or sets a turn; otherwise it restarts from an anchor.
+                    if gap and not reset and turn is not None and not turn_boundary(f,fragment,offset,stat.st_size):
+                        offset=max(0,stat.st_size-budget); fragment=b''
+                    elif reset or gap:
                         if meta: records.append(meta)
-                        seed=anchor(f,stat.st_size,(meta.get('payload')or{}).get('id') if meta else None)
+                        seed=anchor(f,stat.st_size,thread)
                         if seed: records.append(seed)
-                        offset=max(0,stat.st_size-budget); fragment=b''; reset=True
+                        offset=max(0,stat.st_size-budget); fragment=b''; reset=True; turn=None
                     prelude_count=len(records)
                     f.seek(offset); data=f.read(budget); fragment+=data; offset+=len(data)
                     if gap:
@@ -346,8 +370,11 @@ enum SessionLogProbe {
                     for line in lines:
                         v=parse(line)
                         if v: records.append(v)
+                    for v in records:
+                        q=v.get('payload') if isinstance(v,dict) else None
+                        if isinstance(q,dict) and isinstance(q.get('turn_id'),str) and (not isinstance(q.get('thread_id'),str) or not thread or q['thread_id'].lower()==thread.lower()):turn=q['turn_id']
                     if len(fragment)>1024*1024: fragment=b''
-                    cursors[p]=(stat.st_ino,offset,fragment,meta)
+                    cursors[p]=(stat.st_ino,offset,fragment,meta,turn)
                     rows.append({'id':p.name,'title':titles.get(p),'reset':reset,'partial':gap,'preludeCount':prelude_count,'records':records})
             except OSError: continue
         for p in list(cursors):
