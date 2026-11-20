@@ -15,7 +15,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using CodexPacer.Windows;
-using Microsoft.Web.WebView2.Wpf;
+using Microsoft.Web.WebView2.Core;
 
 internal static class DeepSeekWebConnectionChecks
 {
@@ -65,7 +65,7 @@ internal static class DeepSeekWebConnectionChecks
             Check(connect.IsEnabled && (string)connect.Content == ui.Text("deepseek.sign_in"), "The real web dial must open the original sign-in action");
             if (controlsOnly) return;
             Invoke(connect);
-            var login = await Login(site); await site.Main!.ExecuteScriptAsync("document.getElementById('signin').click()");
+            var (login, page) = await Login(site); await page.ExecuteScriptAsync("document.getElementById('signin').click()");
             await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 86.4 && engine.LatestSnapshot.DeepseekConnection!.Reading.Connected);
             Check(!JsonSerializer.Serialize(engine.LatestSnapshot).Contains(DeepSeekWebSessionChecks.Site.Key, StringComparison.Ordinal) &&
@@ -74,13 +74,13 @@ internal static class DeepSeekWebConnectionChecks
             if (language == "en" && !dark) await SlowReply(engine, island, site);
             await Recovery(engine, island, site, preferences, ui, language + (dark ? "-dark" : "-light"), output);
             await Menu(window, "settings.deepseek.account.switch");
-            login = await Login(site); site.NormalBalance = "35.60"; await Continue(login);
+            (login, _) = await Login(site); site.NormalBalance = "35.60"; await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
             site.Hold = true;
             await engine.SendAsync("retryDeepSeekBalance", new { balanceContext = engine.LatestSnapshot!.DeepseekConnection!.Context });
             await Until(() => site.Deferred != null);
             // The old-account read must begin before login revokes profile reads.
-            await Menu(window, "settings.deepseek.account.switch"); login = await Login(site);
+            await Menu(window, "settings.deepseek.account.switch"); (login, _) = await Login(site);
             await Source(window, settings, "apiKey");
             var key = Find<PasswordBox>(window, "settings.deepseek.key.input"); key.Password = "sk-synthetic-web-switch-key-0000";
             Invoke(Find<Button>(window, "settings.deepseek.key.save"));
@@ -99,8 +99,8 @@ internal static class DeepSeekWebConnectionChecks
             await Source(window, settings, "web");
             await Until(() => Find<Button>(window, "settings.deepseek.sign_in") is { IsVisible: true, IsEnabled: true } &&
                 engine.LatestSnapshot?.DeepseekConnection is { Source: "web", WebAvailable: true, Refreshing: false });
-            Invoke(Find<Button>(window, "settings.deepseek.sign_in")); login = await Login(site);
-            await site.Main!.ExecuteScriptAsync("document.getElementById('signin').click()"); await Continue(login);
+            Invoke(Find<Button>(window, "settings.deepseek.sign_in")); (login, page) = await Login(site);
+            await page.ExecuteScriptAsync("document.getElementById('signin').click()"); await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
             session.FailClear = true; await SignOut(window, session, expectClear: false);
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Reading.Color: "orange" } &&
@@ -117,7 +117,7 @@ internal static class DeepSeekWebConnectionChecks
             session.FailClear = false;
             await Until(() => Find<Button>(window, "settings.deepseek.sign_in") is { IsVisible: true, IsEnabled: true } &&
                 engine.LatestSnapshot?.DeepseekConnection is { Source: "web", WebAvailable: true, Refreshing: false });
-            Invoke(Find<Button>(window, "settings.deepseek.sign_in")); login = await Login(site); await Continue(login);
+            Invoke(Find<Button>(window, "settings.deepseek.sign_in")); (login, _) = await Login(site); await Continue(login);
             await Until(() => engine.LatestSnapshot?.Wallet?.Balance == 42);
             await SignOut(window, session);
             await Until(() => engine.LatestSnapshot?.DeepseekConnection is { Refreshing: false, Reading.Connected: false });
@@ -219,12 +219,8 @@ internal static class DeepSeekWebConnectionChecks
             await island.WaitForPresentationAsync();
         }
     }
-    private static async Task<DeepSeekLoginWindow> Login(DeepSeekWebSessionChecks.Site site)
-    {
-        await Until(() => Application.Current.Windows.OfType<DeepSeekLoginWindow>().Any(value =>
-            SelfAndDescendants(value).OfType<WebView2>().Any(view => view.CoreWebView2 != null && ReferenceEquals(view.CoreWebView2, site.Main) && view.CoreWebView2.Source == "https://platform.deepseek.com/usage")) && site.Ready);
-        return Application.Current.Windows.OfType<DeepSeekLoginWindow>().Single();
-    }
+    private static Task<(DeepSeekLoginWindow Window, CoreWebView2 Page)> Login(DeepSeekWebSessionChecks.Site site) =>
+        PresentationWait.LoginPageAsync<DeepSeekLoginWindow>(page => ReferenceEquals(page, site.Main) && site.Ready && page.Source == "https://platform.deepseek.com/usage");
     private static async Task Continue(DeepSeekLoginWindow window)
     { await window.FinishNow(); await Pump(); await Until(() => !window.IsVisible); }
     private static async Task Source(SettingsWindow window, PreferencesSession settings, string source)

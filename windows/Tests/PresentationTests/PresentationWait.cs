@@ -1,9 +1,13 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Windows;
 using System.Threading.Tasks;
 using System.Windows.Threading;
 using CodexPacer.Windows;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 
 internal static class PresentationWait
 {
@@ -74,14 +78,29 @@ internal static class PresentationWait
         return processes.Length;
     }
 
-    internal static async Task UntilAsync(Func<bool> condition, string message)
+    internal static async Task UntilAsync(Func<bool> condition, string message, TimeSpan? timeout = null)
     {
         var clock = Stopwatch.StartNew();
-        while (!condition() && clock.Elapsed < Limit) await Task.Delay(20);
+        while (!condition() && clock.Elapsed < (timeout ?? Limit)) await Task.Delay(20);
         if (!condition()) throw new TimeoutException(message);
         // EngineClient publishes snapshots before IslandWindow queues its render.
         // Drain both callbacks before inspecting the resulting visual tree.
         await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+    }
+
+    internal static async Task<(TWindow Window, CoreWebView2 Page)> LoginPageAsync<TWindow>(Func<CoreWebView2, bool> loaded) where TWindow : Window
+    {
+        // The app may start a private reader and capture its baseline before showing the login window.
+        TWindow? window = null;
+        await UntilAsync(() => (window = Application.Current.Windows.OfType<TWindow>().SingleOrDefault(value => value.IsVisible)) != null,
+            typeof(TWindow).Name + " did not open after preparing the private profile",
+            ProviderWebSession.StartupTimeout + ProviderWebSession.ReadTimeout);
+        CoreWebView2? page = null;
+        await UntilAsync(() => (page = SelfAndDescendants(window!).OfType<WebView2>()
+                .Select(view => view.CoreWebView2).SingleOrDefault(core => core != null)) != null,
+            typeof(TWindow).Name + " did not initialize its browser controller", ProviderWebSession.StartupTimeout);
+        await UntilAsync(() => loaded(page!), typeof(TWindow).Name + " did not finish loading the intercepted login document");
+        return (window!, page!);
     }
 
     internal static async Task CommandSnapshotAsync(EngineClient engine, string method, object parameters, bool waitForSnapshot = true)

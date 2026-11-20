@@ -17,7 +17,6 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using CodexPacer.Windows;
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.Wpf;
 
 internal static class ClaudeConnectionChecks
 {
@@ -55,9 +54,10 @@ internal static class ClaudeConnectionChecks
             Check(signIn.IsVisible && Equals(signIn.Content, UiText.For(language == "zh-Hans").Text("claude.quota.connect")),
                 "The signed-out Claude pane must show the localized connection action");
             if (controlsOnly) return;
-            Invoke(signIn); await Until(() => site.LoginCore != null);
-            var login = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); login.IsHitTestVisible = false;
-            await Put(site.LoginCore!, "sessionKey", "fixture-claude-account-a");
+            Invoke(signIn);
+            var (login, page) = await PresentationWait.LoginPageAsync<ClaudeLoginWindow>(site.IsReady);
+            login.IsHitTestVisible = false;
+            await Put(page, "sessionKey", "fixture-claude-account-a");
             await login.FinishNow(); await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
             Check(session.Current.ClaudeOrganization == "" && engine.LatestSnapshot!.Quota.Count == 0, "A successful login cannot silently choose the first workspace");
             Check(newSignIns == 1, "A new Claude session must clear its persisted organization through the normal preference transaction");
@@ -89,16 +89,16 @@ internal static class ClaudeConnectionChecks
             Check(engine.LatestSnapshot.ClaudeConnection!.Context == context && session.Current.ClaudeOrganization == Second, "An old account menu cannot act on the new source");
             int points = engine.LatestSnapshot.QuotaDashboard!.Providers.Single().History!.Chart!.Points.Count;
             var existing = coordinator.ConnectAsync(context);
-            await Until(() => site.LoginCore != null);
-            Application.Current.Windows.OfType<ClaudeLoginWindow>().Single().Close();
+            var (challenge, _) = await PresentationWait.LoginPageAsync<ClaudeLoginWindow>(site.IsReady);
+            challenge.Close();
             Check(await existing && newSignIns == 1 && session.Current.ClaudeOrganization == Second, "A same-session challenge retains the saved workspace");
             await Until(() => engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
             Check(engine.LatestSnapshot!.QuotaDashboard!.Providers.Single().History!.Chart!.Points.Count >= points, "A same-session challenge retains the verified quota history");
             context = engine.LatestSnapshot.ClaudeConnection!.Context;
             var switchAccount = await Menu(options, "settings.claude.switch_account"); Invoke(switchAccount);
-            await Until(() => site.LoginCore != null);
-            login = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); login.IsHitTestVisible = false;
-            await Put(site.LoginCore!, "sessionKey", "fixture-claude-account-b"); await login.FinishNow();
+            (login, page) = await PresentationWait.LoginPageAsync<ClaudeLoginWindow>(site.IsReady);
+            login.IsHitTestVisible = false;
+            await Put(page, "sessionKey", "fixture-claude-account-b"); await login.FinishNow();
             await Until(() => engine.LatestSnapshot?.ClaudeConnection?.State == "workspaceNeeded" && signIn.IsEnabled);
             Check(session.Current.ClaudeOrganization == "" && engine.LatestSnapshot!.Quota.Count == 0, "A different account cannot inherit the old workspace or quota");
             Check(newSignIns == 2, "An account switch must clear the persisted organization exactly once");
@@ -132,7 +132,7 @@ internal static class ClaudeConnectionChecks
         catch
         {
             var state = engine.LatestSnapshot?.ClaudeConnection;
-            Console.WriteLine($"Claude fixture diagnostics {scenario}: state={state?.State}, refreshing={state?.Refreshing}, paused={state?.Paused}, runtime={state?.WebAvailable}, coordinator={coordinator.LastFailure}, profile={web.HasProfile}, prepared={web.Prepared}, cookieRead={web.LastReadState}, loginWindows={Application.Current.Windows.OfType<ClaudeLoginWindow>().Count()}, organizationSelected={session.Current.ClaudeOrganization.Length > 0}, webview2={PresentationWait.WebViewProcesses()}");
+            Console.WriteLine($"Claude fixture diagnostics {scenario}: state={state?.State}, refreshing={state?.Refreshing}, paused={state?.Paused}, runtime={state?.WebAvailable}, coordinator={coordinator.LastFailure}, navigation={site.LastNavigation}, fixtureRequests={site.Requests.Count}, profile={web.HasProfile}, prepared={web.Prepared}, cookieRead={web.LastReadState}, loginWindows={Application.Current.Windows.OfType<ClaudeLoginWindow>().Count()}, organizationSelected={session.Current.ClaudeOrganization.Length > 0}, webview2={PresentationWait.WebViewProcesses()}");
             throw;
         }
         finally
@@ -206,16 +206,19 @@ internal static class ClaudeConnectionChecks
     private sealed class Site
     {
         private readonly HashSet<CoreWebView2> ready = [];
-        internal CoreWebView2? LoginCore => Application.Current.Windows.OfType<ClaudeLoginWindow>()
-            .SelectMany(SelfAndDescendants).OfType<WebView2>().Select(view => view.CoreWebView2)
-            .FirstOrDefault(core => core != null && ready.Contains(core));
+        internal bool IsReady(CoreWebView2 page) => ready.Contains(page);
+        internal string LastNavigation { get; private set; } = "none";
         internal readonly List<string> Requests = [];
         private readonly HashSet<CoreWebView2> bound = [];
         internal void Bind(CoreWebView2 core)
         {
             if (!bound.Add(core)) return;
-            core.NavigationStarting += (_, _) => ready.Remove(core);
-            core.NavigationCompleted += (_, e) => { if (e.IsSuccess && core.Source.StartsWith("https://claude.ai/", StringComparison.Ordinal)) ready.Add(core); };
+            core.NavigationStarting += (_, _) => { LastNavigation = "started"; ready.Remove(core); };
+            core.NavigationCompleted += (_, e) =>
+            {
+                LastNavigation = e.IsSuccess ? "completed" : e.WebErrorStatus.ToString();
+                if (e.IsSuccess && core.Source.StartsWith("https://claude.ai/", StringComparison.Ordinal)) ready.Add(core);
+            };
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
             core.WebResourceRequested += (_, e) => { Requests.Add(e.Request.Uri); e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(Encoding.UTF8.GetBytes("<!doctype html><title>Synthetic Claude</title><p>Offline fixture</p>")), 200, "Fixture", "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store"); };
         }
