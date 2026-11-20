@@ -98,6 +98,16 @@ def plan(paths=None):
                 full_connections=full_connections, reason=", ".join(sorted(set(reasons))) if paths is not None else "manual full suite")
 
 
+def diagnostic_plan(value):
+    fields = value.split("/")
+    if (len(fields) != 3 or fields[0] not in ("SlowEngineChecks", "ClaudeConnectionChecks", "DeepSeekConnectionChecks", "DeepSeekWebConnectionChecks")
+            or fields[1] not in ("en", "zh-Hans") or fields[2] not in ("light", "dark")):
+        raise ValueError("Expected a supported connection or slow-engine case, language and theme")
+    result = plan([PRESENTATION + fields[0] + ".cs"])
+    result["reason"] = "diagnostic " + value
+    return result
+
+
 def changed_paths():
     # The merge commit's first parent is the PR base. A move affects both paths.
     data = subprocess.check_output(["git", "diff", "--no-renames", "--name-only", "-z", "HEAD^1", "HEAD", "--"])
@@ -110,7 +120,8 @@ def main():
     pr = event.get("pull_request", {})
     is_pr = os.environ.get("GITHUB_EVENT_NAME") == "pull_request"
     names = changed_paths() if is_pr else None
-    selected = plan([] if pr.get("draft") else names)
+    diagnostic = os.environ.get("DIAGNOSTIC_CASE", "") if not is_pr else ""
+    selected = diagnostic_plan(diagnostic) if diagnostic else plan([] if pr.get("draft") else names)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
     expected = os.environ.get("EXPECTED_SHA")

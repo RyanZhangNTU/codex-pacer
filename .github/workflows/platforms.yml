@@ -1,7 +1,7 @@
 name: Platforms
 
 # Drafts run Linux checks. Ready pull requests run the affected test targets.
-# A manual run tests every platform. Engine cache warming is an optional dispatch.
+# Manual runs default to the full suite. A named diagnostic runs one Windows case.
 on:
   pull_request:
     branches: [develop]
@@ -11,13 +11,16 @@ on:
       expected_sha:
         description: Optional full commit SHA for a release candidate
         type: string
+      diagnostic_case:
+        description: Optional single WPF case, e.g. SlowEngineChecks/en/light
+        type: string
 
 permissions:
   contents: read
 
 # A newer push replaces an older pull request run; a manual run finishes.
 concurrency:
-  group: platforms-${{ github.event_name }}-${{ github.ref }}
+  group: platforms-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -47,6 +50,7 @@ jobs:
         id: platforms
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          DIAGNOSTIC_CASE: ${{ inputs.diagnostic_case }}
         run: python3 scripts/ci/changed-platforms.py
 
   # Every run, whatever it touches. These checks need no platform, so they run
@@ -220,7 +224,14 @@ jobs:
         env:
           PACER_GROUPS: ${{ matrix.groups }}
           FULL_CONNECTIONS: ${{ needs.changes.outputs.full_connections }}
-        run: ./scripts/windows/test-presentation.ps1 -Configuration Release -Group ($env:PACER_GROUPS -split ',') -SkipCommon:(${{ strategy.job-index }} -gt 0) -RepresentativeConnections:($env:FULL_CONNECTIONS -ne 'true') *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
+          PACER_CASE: ${{ inputs.diagnostic_case }}
+        run: |
+          $options = @{ Configuration = 'Release'; Group = ($env:PACER_GROUPS -split ','); SkipCommon = (${{ strategy.job-index }} -gt 0); RepresentativeConnections = ($env:FULL_CONNECTIONS -ne 'true') }
+          if ($env:PACER_CASE) {
+            $caseName, $language, $theme = $env:PACER_CASE.Split('/')
+            $options = @{ Configuration = 'Release'; Case = $caseName; Language = $language; Dark = ($theme -eq 'dark') }
+          }
+          ./scripts/windows/test-presentation.ps1 @options *>&1 | Tee-Object "$env:RUNNER_TEMP/pacer-presentation-tests.log"
       - name: Engine idle and shutdown protocol
         if: strategy.job-index == 0
         env:
@@ -323,7 +334,7 @@ jobs:
           retention-days: 7
 
   result:
-    name: ${{ github.event_name == 'workflow_dispatch' && 'Full platform checks' || github.event.pull_request.draft && 'Draft checks' || 'CI ready' }}
+    name: ${{ inputs.diagnostic_case && 'Presentation diagnostic' || github.event_name == 'workflow_dispatch' && 'Full platform checks' || github.event.pull_request.draft && 'Draft checks' || 'CI ready' }}
     if: always()
     needs: [changes, contract, macos, windows-engine, windows-build, windows-tests, windows-installer, windows-arm64]
     runs-on: ubuntu-latest

@@ -104,6 +104,17 @@ class ChangedPlatformsTests(unittest.TestCase):
         for name in ("prepare-windows-update.py", "sparkle_key.py", "sparkle-public-key.swift", "sign-updates.sh"):
             self.assertEqual(platforms.classify(["scripts/release/" + name]), platforms.ALL_JOBS)
 
+    def test_diagnostic_only_selects_its_own_case_on_x64(self):
+        for name, shard in (("SlowEngineChecks", "providers"), ("ClaudeConnectionChecks", "connections"),
+                            ("DeepSeekConnectionChecks", "connections"), ("DeepSeekWebConnectionChecks", "connections")):
+            plan = platforms.diagnostic_plan(name + "/zh-Hans/dark")
+            self.assertEqual(plan["jobs"], ["windows_desktop"])
+            self.assertEqual([row["shard"] for row in plan["shards"]], [shard])
+            self.assertFalse(plan["measure_idle"])
+        for invalid in ("all", "NewCase/en/light", "SlowEngineChecks/en/other"):
+            with self.assertRaises(ValueError):
+                platforms.diagnostic_plan(invalid)
+
     def test_the_workflow_ci_scripts_and_unknown_files_run_everything(self):
         for path in (".github/workflows/platforms.yml", "scripts/ci/changed-platforms.py", "scripts/performance/benchmark-events.py"):
             self.assertEqual(platforms.classify([path]), platforms.ALL_JOBS, path)
