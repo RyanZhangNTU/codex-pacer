@@ -207,7 +207,7 @@ extension IslandModel {
     /// Spend spikes and budget lines, after either the local estimate or the balance moves.
     func presentDeepSeekSpendNotices() {
         guard isModuleEnabled(.deepseek), !demo else { return }
-        let kinds = compactLayout.warnings
+        let kinds = compactLayout.shownWarnings
         present(deepseekBalanceAttention.spendNotices(deepseekWallet, spike: kinds.contains(.spendSpike), budget: kinds.contains(.budget),
             snoozedUntil: deepseekSpikeSnoozedUntil, now: now))
     }
@@ -354,7 +354,7 @@ extension IslandModel {
         lastDeepSeekBalanceAttempt = state.lastAttempt ?? .distantPast
         if successful {
             now = Date()
-            present(deepseekBalanceAttention.balanceNotices(deepseekWallet, low: compactLayout.warnings.contains(.lowBalance)))
+            present(deepseekBalanceAttention.balanceNotices(deepseekWallet, low: compactLayout.shownWarnings.contains(.lowBalance)))
             presentDeepSeekSpendNotices()
         }
         onLayoutChange?(); onStatusChange?()

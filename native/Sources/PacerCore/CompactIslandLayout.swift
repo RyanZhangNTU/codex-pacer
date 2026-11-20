@@ -128,6 +128,9 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         set { if lane == .leading { leading = newValue } else { trailing = newValue } }
     }
     public var components: Set<Component> { Set(leading + trailing) }
+    /// The warnings the bar shows: none once its warnings item is removed.
+    /// Notifications that follow the bar's warnings go by these, as Settings does.
+    public var shownWarnings: Set<Warning> { components.contains(.warnings) ? warnings : [] }
     public func visibleComponents(in lane: Lane, providers: Set<AgentProvider>) -> [Component] {
         self[lane].filter { $0.isAvailable(for: providers) }
     }
