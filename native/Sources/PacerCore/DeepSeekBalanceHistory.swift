@@ -78,6 +78,21 @@ public struct DeepSeekBalanceHistory: Codable, Equatable, Sendable {
         charged.reduce(0) { day.start <= $1.key && $1.key < day.end ? $0 + $1.value : $0 }
     }
 
+    /// What the account charged beyond this computer's own spend (`local`),
+    /// shared into a local day. Each recorded day is compared with `local`
+    /// over the part of it the account side has seen, and only the excess is
+    /// shared by time, so a day recorded before a time zone change neither
+    /// counts a charge twice nor drops it.
+    public func beyond(_ local: (DateInterval) -> Double, in day: DateInterval, calendar: Calendar) -> Double {
+        charged.reduce(0) { sum, entry in
+            let recorded = calendar.dateInterval(of: .day, for: entry.key).flatMap { $0.start == entry.key ? $0 : nil }
+                ?? DateInterval(start: entry.key, duration: 86_400)
+            guard let seen = coverage(of: recorded), seen.duration > 0,
+                  let shared = seen.intersection(with: day), shared.duration > 0 else { return sum }
+            return sum + max(0, entry.value - local(seen)) * shared.duration / seen.duration
+        }
+    }
+
     /// The interval the account side has seen of a local day: nil before the first reading.
     public func coverage(of day: DateInterval) -> DateInterval? {
         guard let since, let last, since < day.end, last.at > day.start else { return nil }
