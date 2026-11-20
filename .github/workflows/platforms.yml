@@ -27,6 +27,7 @@ jobs:
       mac: ${{ steps.platforms.outputs.mac }}
       windows: ${{ steps.platforms.outputs.windows }}
       installer: ${{ steps.platforms.outputs.installer }}
+      arm64: ${{ steps.platforms.outputs.arm64 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -53,7 +54,7 @@ jobs:
       - name: DeepSeek web identity contract
         run: node scripts/windows/check-deepseek-web-identity.mjs
 
-  # The full Mac suite on Apple silicon.
+  # The full Mac suite on Apple silicon. The app bundle builds beside it.
   macos:
     name: macOS (arm64)
     needs: changes
@@ -71,12 +72,6 @@ jobs:
         run: |
           set -o pipefail
           python3 -u scripts/native/ci-test.py --timeout-seconds 1200 --diagnostics-prefix "$RUNNER_TEMP/pacer-test" 2>&1 | tee "$RUNNER_TEMP/pacer-tests.log"
-      - name: Build the Mac app and smoke-test its reporter
-        run: |
-          set -o pipefail
-          make build 2>&1 | tee "$RUNNER_TEMP/pacer-build.log"
-          app="$(sed -n 's/^App: //p' "$RUNNER_TEMP/pacer-build.log")"
-          python3 -u scripts/diagnostics/test-codex-progress.py --mac-reporter "$app/Contents/MacOS/CodexPacerIsland" --output "$RUNNER_TEMP/pacer-progress"
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -84,8 +79,31 @@ jobs:
           name: macos-arm64-tests
           path: |
             ${{ runner.temp }}/pacer-tests.log
-            ${{ runner.temp }}/pacer-build.log
             ${{ runner.temp }}/pacer-test-sample-*.txt
+          retention-days: 7
+
+  # The release-configuration app bundle and its progress reporter. It shares
+  # nothing with the test job, so it runs at the same time.
+  macos-app:
+    name: macOS app (arm64)
+    needs: changes
+    if: needs.changes.outputs.mac == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Build the Mac app and smoke-test its reporter
+        run: |
+          set -o pipefail
+          make build 2>&1 | tee "$RUNNER_TEMP/pacer-build.log"
+          app="$(sed -n 's/^App: //p' "$RUNNER_TEMP/pacer-build.log")"
+          python3 -u scripts/diagnostics/test-codex-progress.py --mac-reporter "$app/Contents/MacOS/CodexPacerIsland" --output "$RUNNER_TEMP/pacer-progress"
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: macos-arm64-app
+          path: ${{ runner.temp }}/pacer-build.log
           retention-days: 7
 
   # The shared engine's compilation and tests, in parallel with the build job.
@@ -185,8 +203,9 @@ jobs:
           retention-days: 7
 
   # The desktop, Claude runtime, presentation and idle checks, in three jobs of
-  # about the same length. They use the build job's desktop, so none of them
-  # needs the Swift toolchain. Each presentation group is in exactly one job.
+  # about the same length, five to six minutes of checks each. They use the
+  # build job's desktop, so none of them needs the Swift toolchain. Each
+  # presentation group is in exactly one job.
   windows-tests:
     name: Windows tests (${{ matrix.shard }})
     needs: [changes, windows-build]
@@ -200,10 +219,10 @@ jobs:
             groups: connection
             desktop: true
           - shard: settings
-            groups: settings,island,accessibility,panel
+            groups: settings,island,accessibility,panel,updates
             idle: true
           - shard: providers
-            groups: web,quota,harness,conversation,idle,display,host,responsive,pages,updates,collapsed,recovery
+            groups: web,quota,harness,conversation,idle,display,host,responsive,pages,collapsed,recovery
     defaults:
       run:
         shell: pwsh
@@ -293,12 +312,15 @@ jobs:
             output/windows/patch-tests.json
           retention-days: 7
 
-  # ARM64 compiles only; release.yml packages it. No tests run on it: the x64
-  # jobs test the same sources. The engine comes from the cache like x64's.
+  # ARM64 compiles only, and only when a change touches what compiles
+  # differently for it (see scripts/ci/changed-platforms.py); Swift and C#
+  # compile alike for both. No tests run on it: the x64 jobs test the same
+  # sources. After a merge, engine-cache.yml compiles the ARM64 engine, and
+  # release.yml packages ARM64. The engine comes from the cache like x64's.
   windows-arm64:
     name: Windows (arm64 build)
     needs: changes
-    if: needs.changes.outputs.windows == 'true'
+    if: needs.changes.outputs.arm64 == 'true'
     runs-on: windows-11-arm
     timeout-minutes: 60
     env:

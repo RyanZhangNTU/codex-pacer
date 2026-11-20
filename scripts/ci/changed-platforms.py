@@ -3,7 +3,8 @@
 A pull request runs a platform's jobs only when it changes files that
 platform builds or tests; documentation alone runs nothing. Its Windows
 installer and patch checks run only when it changes what the installers are
-built from or what those checks start in the app. A manual run tests every
+built from or what those checks start in the app. Its ARM64 build runs only
+when it changes what compiles differently for ARM64. A manual run tests every
 platform, so every flag is set for it.
 """
 import os
@@ -32,16 +33,28 @@ INSTALLER = ("windows/Installer/", "windows/InstallerHooks/", "windows/Installer
              "windows/Desktop/WindowsInstallationIdentity.cs", "windows/Desktop/WindowsSystemNotifications.cs",
              "windows/Desktop/WindowsNotificationCleanup.cs", "windows/Desktop/WindowsStartupRegistration.cs",
              "windows/Desktop/Pacer.Windows.csproj", "windows/desktop-platform.props")
+# What compiles differently for ARM64: C and C++ code, the toolchain, the per-architecture
+# project settings and runtime pins, and the build scripts that choose them. Swift and C#
+# compile alike for both; the develop engine cache and release.yml build ARM64 from them.
+ARM64 = ("native/Sources/CZstd/", "native/Sources/CGzip/", "windows/Native/", "windows/toolchain-lock.json",
+         "windows/desktop-platform.props", "windows/Desktop/Pacer.Windows.csproj", "windows/Desktop/packages.lock.json",
+         "windows/InstallerSupport/Resources/python-runtime-lock-arm64.json", "global.json", "Package.swift",
+         "Package.resolved", "scripts/windows/architecture.ps1", "scripts/windows/environment.ps1",
+         "scripts/windows/setup-swift.ps1", "scripts/windows/build-engine.ps1", "scripts/windows/build-desktop.ps1",
+         "scripts/windows/stage-engine.py", "scripts/windows/setup-claude-python.ps1",
+         "scripts/windows/prune-arm64-runtime.py", ".github/workflows/", "scripts/ci/")
 
 
 def classify(paths):
-    """Returns (mac, windows, installer): whether each set of jobs must run."""
-    mac = windows = installer = False
+    """Returns (mac, windows, installer, arm64): whether each set of jobs must run."""
+    mac = windows = installer = arm64 = False
     for path in paths:
         if path.endswith(".md") or path.startswith(DOCUMENTATION):
             continue
         if path.startswith(INSTALLER):
             windows = installer = True
+        if path.startswith(ARM64):
+            windows = arm64 = True
         if path.startswith(SHARED):
             mac = windows = True
         elif path.startswith(MAC):
@@ -49,19 +62,20 @@ def classify(paths):
         elif path.startswith(WINDOWS):
             windows = True
         else:  # Anything unknown runs everything.
-            mac = windows = installer = True
-    return mac, windows, installer
+            mac = windows = installer = arm64 = True
+    return mac, windows, installer, arm64
 
 
 def main():
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
         # The pull request checkout is its merge commit; its first parent is the base.
         names = subprocess.check_output(["git", "diff", "--name-only", "HEAD^1", "HEAD"], text=True).split()
-        mac, windows, installer = classify(names)
+        mac, windows, installer, arm64 = classify(names)
         print(f"{len(names)} changed files")
     else:
-        mac = windows = installer = True
-    lines = [f"mac={str(mac).lower()}", f"windows={str(windows).lower()}", f"installer={str(installer).lower()}"]
+        mac = windows = installer = arm64 = True
+    lines = [f"mac={str(mac).lower()}", f"windows={str(windows).lower()}", f"installer={str(installer).lower()}",
+             f"arm64={str(arm64).lower()}"]
     print("\n".join(lines))
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
