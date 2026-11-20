@@ -2335,7 +2335,9 @@ actor EngineRuntime {
         let ring = codexProgressRing && enabled.contains(.codex)
         let on = active && managesCodexProgress && (monitorSSH || monitorWSL) && enabled.contains(.codex)
         let configured = on && !ring ? services.loadDigests() : [:]
-        let targets = on ? monitoredRemoteTargets(.codex).filter { ring || configured[$0.alias] != nil } : []
+        let targets = on ? monitoredRemoteTargets(.codex).filter {
+            !ConnectionSource.isManagedSSHSourceID($0.id) && (ring || configured[$0.alias] != nil)
+        } : []
         let statuses = (desktopState?.statuses ?? [:]).filter { id, _ in targets.contains { $0.id == id } }
         let input = [String(on), String(ring), String(lifecycle.version(.codex))] + targets.map { target in
             target.id + "=" + target.alias + "@" + target.home + ":" + String(statuses[target.id].map { $0.connected && $0.sourceAvailable != false } ?? false)
@@ -2433,7 +2435,7 @@ actor EngineRuntime {
             streams[provider] = streams[provider]?.filter { source, _ in
                 if source == "local" { return true }
                 if !demo { return allowsRemoteSource(source, provider: provider) }
-                if source.hasPrefix(ConnectionSource.sshPrefix) { return monitorSSH }
+                if ConnectionSource.isSSHSourceID(source) { return monitorSSH }
                 if source.hasPrefix(ConnectionSource.controlPrefix) { return monitorRemoteControl }
                 if source.hasPrefix(ConnectionSource.wslPrefix) { return monitorWSL }
                 return source == ClaudeCloudProjectState.sourceID && showClaudeCloudProjects
@@ -2699,7 +2701,7 @@ actor EngineRuntime {
             status.append(.init(id: "codex:desktop-runtime", provider: "codex",
                 available: desktop.status.connected && desktop.status.sourceAvailable == true, transport: "desktop-ipc", reason: nil))
             if monitorSSH {
-                status += desktop.remoteStatuses.filter { $0.key.hasPrefix(ConnectionSource.sshPrefix) }.map { id, value in
+                status += desktop.remoteStatuses.filter { ConnectionSource.isSSHSourceID($0.key) }.map { id, value in
                     EngineSource(id: "codex:" + id, provider: "codex", available: value.connected && value.sourceAvailable != false, transport: "ssh", reason: nil)
                 }
             }
@@ -2888,7 +2890,7 @@ actor EngineRuntime {
                         return allowsRemoteSource(host, provider: activity.provider) && activity.threadURL != nil
                     }
                     if monitorWSL, wslServices?.registry.profile(id: host, provider: activity.provider) != nil { return true }
-                    if host.hasPrefix(ConnectionSource.sshPrefix) { return allowsRemoteSource(host, provider: activity.provider) && activity.threadID.flatMap(UUID.init(uuidString:)) != nil }
+                    if ConnectionSource.isSSHSourceID(host) { return allowsRemoteSource(host, provider: activity.provider) && activity.threadID.flatMap(UUID.init(uuidString:)) != nil }
                     return activity.provider == .codex && allowedRemoteControlHosts.contains(host) && activity.threadURL != nil
                 }
                 #if os(Windows)

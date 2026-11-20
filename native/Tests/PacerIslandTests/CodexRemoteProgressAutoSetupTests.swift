@@ -82,16 +82,19 @@ final class CodexRemoteProgressAutoSetupTests: XCTestCase {
 
     func testOnlyConnectedHostsRunAndTheRingOffVisitsOnlyHostsThisMacSetUp() throws {
         let on = try CodexRemoteProgressSetup.digest(enabled: true), off = try CodexRemoteProgressSetup.digest(enabled: false)
-        let targets = ["a", "b", "c"].map { RemoteActivityTarget(id: "remote-ssh-discovered:" + $0, name: $0, alias: $0, home: "~/.codex") }
+        let managed = RemoteActivityTarget(id: "remote-ssh-codex-managed:fixture", name: "Build server",
+            alias: "codex-fixture", home: "~/.codex", sshDestination: "fixture@build.example.test")
+        let targets = ["a", "b", "c"].map { RemoteActivityTarget(id: "remote-ssh-discovered:" + $0, name: $0, alias: $0, home: "~/.codex") } + [managed]
         var connected = RuntimeStreamStatus(); connected.connected = true
         var missing = connected; missing.sourceAvailable = false
-        let statuses = ["remote-ssh-discovered:a": connected, "remote-ssh-discovered:b": connected, "remote-ssh-discovered:c": missing]
+        let statuses = ["remote-ssh-discovered:a": connected, "remote-ssh-discovered:b": connected,
+                        "remote-ssh-discovered:c": missing, managed.id: connected]
         let now = Date()
         func pending(ring: Bool, configured: [String: String], failures: [String: Date] = [:], checkedAt: [String: Date] = [:]) -> [String] {
             IslandModel.codexRemoteProgressPending(targets: targets, statuses: statuses, configured: configured, ring: ring,
                 digest: ring ? on : off, failures: failures, inFlight: [], checkedAt: checkedAt, now: now).map(\.alias)
         }
-        XCTAssertEqual(pending(ring: true, configured: [:]), ["a", "b"], "A host without a Codex source is skipped")
+        XCTAssertEqual(pending(ring: true, configured: [:]), ["a", "b"], "Managed hosts are read-only and hosts without a Codex source are skipped")
         XCTAssertEqual(pending(ring: true, configured: ["a": on], checkedAt: ["remote-ssh-discovered:a": now]), ["b"],
                        "A host checked this launch stays quiet until the recheck interval")
         XCTAssertEqual(pending(ring: true, configured: ["a": on]), ["a", "b"], "A host set up by an earlier launch is checked once again")

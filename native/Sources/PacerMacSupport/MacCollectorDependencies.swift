@@ -29,7 +29,14 @@ extension RealtimeActivityMonitor {
             makeDesktop: { home, hosts, local, interval, frame, closed in
                 MacDesktopActivityChannel(home: home, hosts: hosts, localRuntime: local, interval: interval, frame: frame, closed: closed)
             }, processes: MacHelperProcessLauncher(), python: URL(fileURLWithPath: "/usr/bin/python3"),
-            ssh: URL(fileURLWithPath: "/usr/bin/ssh"), diagnostics: RuntimeDiagnostics.observer, supportsDurable: true))
+            ssh: URL(fileURLWithPath: "/usr/bin/ssh"), diagnostics: RuntimeDiagnostics.observer,
+            sshArguments: { target in
+                guard let route = target.sshArguments() else { return nil }
+                guard ConnectionSource.isManagedSSHSourceID(target.id) else { return route }
+                // This helper owns its transport and can close it independently of Desktop.
+                return ["-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ControlPersist=no",
+                        "-o", "UpdateHostKeys=no", "-o", "PermitLocalCommand=no"] + route
+            }, supportsDurable: true))
     }
     public static func localEndpointAvailable(home: URL) -> Bool {
         controlEndpointAvailable(home: home) || desktopEndpointAvailable(home: home)

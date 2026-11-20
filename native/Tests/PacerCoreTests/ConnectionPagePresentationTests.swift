@@ -25,6 +25,30 @@ final class ConnectionPagePresentationTests: XCTestCase {
         let encoded = try JSONEncoder().encode(page), roundTrip = try JSONDecoder().decode(ConnectionPagePresentation.self, from: encoded)
         XCTAssertEqual(roundTrip, page)
     }
+    func testManagedSSHHostsKeepTheirIDsAndNamesAcrossConnectionFailures() throws {
+        let connected = ConnectionSource.managedSSHPrefix + "build", unavailable = ConnectionSource.managedSSHPrefix + "other"
+        let discovered = ConnectionSource.sshPrefix + "build"
+        let page = ConnectionPagePresentation(enabledProviders: [.codex], statuses: [.codex: [
+            "local": status(sessions: 1), connected: status(sessions: 2, name: "Build host"), discovered: status(sessions: 3)
+        ]], unavailableSSH: [connected, unavailable, unavailable, "build"], names: [unavailable: "Build host"])
+
+        XCTAssertEqual(page.state, "retrying")
+        XCTAssertTrue(page.retry)
+        XCTAssertEqual(page.sources.map(\.key), ["local"])
+        XCTAssertEqual(Set(page.hosts.map(\.id)), [connected, unavailable, discovered])
+        XCTAssertEqual(page.sourceCount, 4)
+        XCTAssertEqual(page.sessionCount, 6)
+        let connectedHost = try XCTUnwrap(page.hosts.first { $0.id == connected })
+        XCTAssertEqual(connectedHost.name, "Build host")
+        XCTAssertEqual(connectedHost.modules.first?.key, connected)
+        XCTAssertEqual(connectedHost.modules.first?.state, "connected")
+        let failedHost = try XCTUnwrap(page.hosts.first { $0.id == unavailable })
+        XCTAssertEqual(failedHost.name, "Build host")
+        XCTAssertEqual(failedHost.modules.first?.key, unavailable)
+        XCTAssertEqual(failedHost.modules.first?.state, "retrying")
+        XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [], unavailable: [unavailable]))
+    }
+
     func testOfflineWaitingAndPausedSourcesRemainDistinctAndOptionalCloudDoesNotFailSummary() {
         let prefix = ConnectionSource.controlPrefix
         let page = ConnectionPagePresentation(enabledProviders: [.codex, .claude], statuses: [

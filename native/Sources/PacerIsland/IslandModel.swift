@@ -524,7 +524,9 @@ final class IslandModel: ObservableObject {
     static func codexRemoteProgressPending(targets: [RemoteActivityTarget], statuses: [String: RuntimeStreamStatus],
                                            configured: [String: String], ring: Bool, digest: String, failures: [String: Date],
                                            inFlight: Set<String>, checkedAt: [String: Date], now: Date) -> [RemoteActivityTarget] {
-        ClaudeRemoteAutoSetup.pending(targets: targets.filter { ring || configured[$0.alias] != nil }, statuses: statuses,
+        ClaudeRemoteAutoSetup.pending(targets: targets.filter {
+            $0.id.hasPrefix(ConnectionSource.sshPrefix) && (ring || configured[$0.alias] != nil)
+        }, statuses: statuses,
             configured: configured, digest: digest, failures: failures, inFlight: inFlight, now: now, checkedAt: checkedAt)
     }
 
@@ -547,6 +549,7 @@ final class IslandModel: ObservableObject {
     @discardableResult
     func configureCodexRemoteProgress(target: RemoteActivityTarget) async -> CodexRemoteProgressSetup.Status? {
         guard isModuleEnabled(.codex), monitorsSSH, !sleeping, !stopped, !Task.isCancelled,
+              target.id.hasPrefix(ConnectionSource.sshPrefix),
               codexRemoteProgressRequests[target.id] == nil, let digest = codexRemoteProgressDigest else { return nil }
         let generation = sourceGeneration, requestID = UUID(), ring = codexRemoteProgressRing, transport = claudeRemoteSetup
         codexRemoteProgressRequests[target.id] = requestID
@@ -2298,7 +2301,8 @@ final class IslandModel: ObservableObject {
                     if self.remoteControlDirectory != snapshot.remoteControlDirectory {
                         self.remoteControlDirectory = snapshot.remoteControlDirectory
                     }
-                    self.receiveRemoteUpdate(snapshot.activities, statuses: snapshot.statuses, unavailable: snapshot.unavailable,
+                    self.receiveRemoteUpdate(snapshot.activities, statuses: snapshot.statuses,
+                        unavailable: snapshot.unavailableSources.filter(ConnectionSource.isSSHSourceID),
                         requests: snapshot.attention, names: snapshot.names, performance: snapshot.performance,
                         remoteControlBindings: snapshot.bindings, durableAccountScope: snapshot.durableAccountScope)
                 }

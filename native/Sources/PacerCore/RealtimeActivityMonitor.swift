@@ -408,6 +408,9 @@ public actor RealtimeActivityMonitor {
     }
     public func statuses() -> [String: RuntimeStreamStatus] {
         var result = connections.mapValues { $0.state.status }
+        for (host, connection) in connections where ConnectionSource.isManagedSSHSourceID(host) {
+            result[host]?.sourceName = connection.source.name
+        }
         if let desktop {
             for (host, state) in desktop.states where host != DurableActivityCatalog.hostID && (state.status.connected || result[host] == nil) {
                 // Saved routes are fallback discovery hints, not device entries.
@@ -423,6 +426,11 @@ public actor RealtimeActivityMonitor {
         for (host, target) in knownControls ?? [:] where result[host] == nil {
             var status = RuntimeStreamStatus()
             status.sourceName = target.name; status.remoteHostOnline = target.online
+            result[host] = status
+        }
+        for (host, source) in failed where result[host] == nil && ConnectionSource.isManagedSSHSourceID(host) {
+            var status = RuntimeStreamStatus()
+            status.sourceName = source.name
             result[host] = status
         }
         if localUnavailable || (primaryLocalIsDesktop && desktop == nil) { result["local"] = RuntimeStreamStatus() }
@@ -632,6 +640,7 @@ public actor RealtimeActivityMonitor {
                 guard let route = build(target) else { failed[source.id] = source; return }
                 arguments = route + [command]
             } else {
+                guard !ConnectionSource.isManagedSSHSourceID(source.id) else { failed[source.id] = source; return }
                 arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",
                     "-o", "ClearAllForwardings=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", alias, command]
             }

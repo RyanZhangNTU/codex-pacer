@@ -89,6 +89,33 @@ final class SSHReconnectTests: XCTestCase {
         await monitor.shutdown()
     }
 
+    func testManagedSSHUsesItsDestinationAndKeepsItsDesktopIDAfterFailure() async throws {
+        let launcher = Launcher()
+        let managed = RemoteActivityTarget(id: "remote-ssh-codex-managed:fixture", name: "Build server",
+            alias: "codex-fixture", home: "~/.codex", sshDestination: "fixture@build.example.test")
+        let monitor = RealtimeActivityMonitor(controlCatalog: RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse },
+            files: TestFileSystem(), makeClient: { _ in nil }), services: .init(
+            desktopAvailable: { _ in false }, controlAvailable: { _ in false },
+            makeDesktop: { _, _, _, _, _, _ in fatalError("no Desktop in this test") }, processes: launcher,
+            python: URL(fileURLWithPath: "/fixture/python"), ssh: URL(fileURLWithPath: "/fixture/ssh"),
+            sshTargets: { _ in [managed] }, sshArguments: { $0.sshArguments(validDestination: { $0 == "fixture@build.example.test" }) }))
+        await monitor.startAsync(home: home(), includeRemoteControl: false) { _ in }
+        let child = try XCTUnwrap(launcher.launches("fixture@build.example.test").first)
+        XCTAssertTrue(launcher.launches(managed.alias).isEmpty)
+        await child.output(try line(["kind": "status", "connected": true, "attached": 1]))
+        let connected = await monitor.statuses()[managed.id]
+        XCTAssertEqual(connected?.sourceName, managed.name)
+        XCTAssertEqual(connected?.attachedThreads, 1)
+
+        await child.ended()
+        let failed = await monitor.statuses()[managed.id]
+        XCTAssertEqual(failed?.sourceName, managed.name)
+        XCTAssertEqual(failed?.hasConnectionFailure, true)
+        await monitor.reconnectUnreachableSSH()
+        XCTAssertEqual(launcher.launches("fixture@build.example.test").count, 2)
+        await monitor.shutdown()
+    }
+
     func testClaudeReconnectsOnlyFailedSSHHostsAndKeepsParkedHostsAndWSL() async throws {
         let launcher = Launcher()
         let targets = [target("down"), target("up"), target("nohome"), target("distro", id: ConnectionSource.wslPrefix + "distro")]

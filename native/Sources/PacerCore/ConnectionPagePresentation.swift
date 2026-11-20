@@ -76,11 +76,11 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
             return module(provider: source.provider, key: source.key, state: state,
                 sessions: overrides[source.id] == nil ? source.sessions : 0, label: label)
         }
-        sources = sourceValues.filter { !$0.key.hasPrefix(ConnectionSource.sshPrefix) && !$0.key.hasPrefix(ConnectionSource.wslPrefix) }.map {
+        sources = sourceValues.filter { !ConnectionSource.isSSHSourceID($0.key) && !$0.key.hasPrefix(ConnectionSource.wslPrefix) }.map {
             .init(id: $0.id, key: $0.key, provider: $0.provider.rawValue, name: $0.name, kind: $0.kind, module: sourceModule($0))
         }
         var hostValues = ssh.map { host in
-            Host(id: ConnectionSource.sshPrefix + host.alias, name: host.name, kind: "SSH", modules: host.modules.map { value in
+            Host(id: host.id, name: host.name, kind: "SSH", modules: host.modules.map { value in
                 let key: String = switch value.state {
                 case .connected: "connected"
                 case .configuring: "configuring"
@@ -89,7 +89,7 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
                 case .retrying: "retrying"
                 case .setupFailed: "setup_failed"
                 }
-                return module(provider: value.provider, key: ConnectionSource.sshPrefix + host.alias,
+                return module(provider: value.provider, key: host.id,
                     state: String(describing: value.state), sessions: value.sessions, label: L10n.text("connections.host." + key))
             })
         }

@@ -120,6 +120,8 @@ public actor ClaudeSSHDiscovery {
         let signature = sshSignature(userHome: userHome)
         var seen = Set<String>(), result: [RemoteActivityTarget] = []
         for target in RemoteActivityTarget.configured(home: home) {
+            // Desktop assigns threads to these exact IDs, even when two entries share a route.
+            if ConnectionSource.isManagedSSHSourceID(target.id) { result.append(target); continue }
             let key = await routeKey(host: target.alias, port: nil, userHome: userHome, signature: signature)
             guard !Task.isCancelled else { return [] }
             if seen.insert(key).inserted { result.append(target) }
