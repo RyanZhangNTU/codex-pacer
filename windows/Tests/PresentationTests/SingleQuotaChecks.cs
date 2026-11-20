@@ -44,6 +44,14 @@ internal static class SingleQuotaChecks
                     var turns = Descendants(capsule).OfType<AlternatingQuotaText>().Single();
                     Check(turns.ShownTexts.Length == 2 && turns.ShownTexts.All(part => part.Length > 0 && !part.Contains('·')) && turns.Scheduling is { Scheduled: true } or { Clocks: > 0 },
                         "Shared with other services, the capsule takes turns between the count and the time in the collapsed bar's rotation");
+                    // The panel redraws its quota with each reading, often sooner than a turn. A rebuilt
+                    // capsule must pick up the turn in progress, or the time would never show.
+                    for (int turn = 0; turn < 3 && turns.ShownText != turns.ShownTexts[1]; turn++)
+                        await turns.WaitForNextCycleAsync(PresentationWait.Limit);
+                    Check(turns.ShownText == turns.ShownTexts[1], "The shared capsule must reach the time left on its own");
+                    var rebuilt = new AlternatingQuotaText { SharedPhase = true };
+                    rebuilt.Update(turns.ShownTexts.Select(text => new AlternatingQuotaText.Item("codex", text, false)).ToArray(), true);
+                    Check(rebuilt.ShownText == turns.ShownTexts[1], "A capsule rebuilt mid-rotation must keep the time left instead of starting over at the count");
                     foreach (string name in new[] { "claude", "codex" })
                     {
                         var modes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled" };

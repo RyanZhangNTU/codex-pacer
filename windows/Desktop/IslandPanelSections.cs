@@ -315,8 +315,9 @@ public partial class IslandWindow
         {
             // The collapsed bar's own rotation, as the Mac reuses its own: four-second turns, the
             // old text leaving upward as the next fades in, in one cell sized by the longest, so a
-            // turn repaints without measuring the panel again. It runs only while it shows.
-            var turns = new AlternatingQuotaText { FontSize = 11, ValueWeight = FontWeights.Medium, Centered = true, VerticalAlignment = VerticalAlignment.Center };
+            // turn repaints without measuring the panel again. It runs only while it shows, on the
+            // shared clock, since the quota redraws with every reading and rebuilds the capsule.
+            var turns = new AlternatingQuotaText { FontSize = 11, ValueWeight = FontWeights.Medium, Centered = true, SharedPhase = true, VerticalAlignment = VerticalAlignment.Center };
             turns.Update(phases.Select(value => new AlternatingQuotaText.Item("codex", value, false, Ink: ink)).ToArray(), true);
             label.Children.Add(turns);
         }
