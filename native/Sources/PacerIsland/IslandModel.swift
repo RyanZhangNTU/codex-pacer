@@ -1946,7 +1946,7 @@ final class IslandModel: ObservableObject {
     /// One notification when banked resets enter the lead time, only while the
     /// bar's warning is chosen, like the other reminders that follow it.
     private func remindResetExpiry() {
-        guard !demo, !sleeping, !stopped, isModuleEnabled(.codex), compactLayout.warnings.contains(.resetExpiry) else { return }
+        guard !demo, !sleeping, !stopped, isModuleEnabled(.codex), compactLayout.shownWarnings.contains(.resetExpiry) else { return }
         present(resetExpiryAttention.notices(codexQuota, leadDays: resetExpiryLeadDays, now: Date()))
     }
     @discardableResult private func detachCodexQuota(preservingCadence: Bool = true) -> CodexQuotaCoordinator? {
@@ -2422,7 +2422,7 @@ final class IslandModel: ObservableObject {
         objectWillChange.send()
         if !demo, !sleeping, !stopped {
             present(harnessCreditsAttention.notices(harnessCredits, settings: creditSettings,
-                                                    low: compactLayout.warnings.contains(.lowCredits), now: Date()))
+                                                    low: compactLayout.shownWarnings.contains(.lowCredits), now: Date()))
         }
         onLayoutChange?(); onStatusChange?()
     }
@@ -2670,7 +2670,7 @@ final class IslandModel: ObservableObject {
         harnessMaintenanceAt = now
         if !harnessCredits.isEmpty {
             present(harnessCreditsAttention.notices(harnessCredits, settings: creditSettings,
-                                                    low: compactLayout.warnings.contains(.lowCredits), now: Date()))
+                                                    low: compactLayout.shownWarnings.contains(.lowCredits), now: Date()))
         }
         // Reset deadlines also follow the calendar between quota readings.
         remindResetExpiry()

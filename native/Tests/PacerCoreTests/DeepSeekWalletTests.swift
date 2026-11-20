@@ -114,6 +114,26 @@ final class DeepSeekWalletTests: XCTestCase {
         XCTAssertEqual(history.charged(in: beijing.dateInterval(of: .day, for: date(27, 15))!), 0)
     }
 
+    func testAChargeRecordedInAnotherZoneCountsOnceBesideTheLocalLedger() {
+        // Recorded in UTC, a charge at 02:00 in Beijing falls in the UTC day that began at 08:00 the day before.
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        var history = DeepSeekBalanceHistory()
+        history.record(total: 100, at: date(27, 12), calendar: utc)
+        history.record(total: 100, at: date(28, 2), calendar: utc)
+        history.record(total: 90, at: date(28, 3), calendar: utc)
+        func wallet(_ ledger: DeepSeekSpendLedger) -> DeepSeekWallet {
+            DeepSeekWallet(balance: DeepSeekBalance(total: 90, capturedAt: date(28, 3), source: .web), connected: true,
+                ledger: ledger, now: date(28, 15), history: history, calendar: beijing)
+        }
+        var ledger = DeepSeekSpendLedger()
+        ledger.record(id: "night", at: date(28, 2, 30), cost: 10)
+        let local = wallet(ledger)
+        XCTAssertEqual(local.dayTotals.reduce(0, +), 10, accuracy: 1e-9, "The local task and the account drop are one charge")
+        XCTAssertEqual(local.elsewhereToday, 0, accuracy: 1e-9)
+        let away = wallet(DeepSeekSpendLedger())
+        XCTAssertEqual(away.dayTotals.reduce(0, +), 10, accuracy: 1e-9, "A charge from elsewhere still counts once")
+    }
+
     func testAccountChargesBeyondThisMacBudgetsAndTheMostUrgentAlert() throws {
         let calendar = beijing, now = date(28, 15) // A Wednesday afternoon.
         var ledger = DeepSeekSpendLedger()

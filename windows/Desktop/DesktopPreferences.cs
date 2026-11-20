@@ -171,6 +171,41 @@ internal sealed record DesktopPreferences
     // Older profiles stored a corner without the explicit-choice marker.
     internal bool HasChosenPosition => PositionChosen ?? Position != "center";
 
+    // Lane names that Core's CompactIslandLayout reads as its warnings component: the component
+    // and the separate warnings and earlier names that schema 7 merged into it.
+    private static readonly HashSet<string> WarningLaneNames = ["warnings", "lowQuotaWarning", "sshWarning", "quotaDelayWarning", "quotaWarning", "freshness"];
+    /// Whether the saved collapsed bar places its warnings component, read as Core reads the
+    /// layout: none saved, or one it cannot read, is the standard bar, which does.
+    internal static bool WarningsOnBar(string? layout)
+    {
+        if (layout == null) return true;
+        try
+        {
+            using var document = JsonDocument.Parse(layout);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("version", out var version) || !version.TryGetInt32(out int schema) || schema < 1)
+                return true;
+            var lanes = new List<JsonElement>();
+            foreach (string lane in schema == 1 ? new[] { "leading", "trailing", "center" } : ["leading", "trailing"])
+            {
+                if (root.TryGetProperty(lane, out var names)) lanes.Add(names);
+                else if (lane != "center") return true;
+            }
+            bool placed = false;
+            foreach (var names in lanes)
+            {
+                if (names.ValueKind != JsonValueKind.Array) return true;
+                foreach (var name in names.EnumerateArray())
+                {
+                    if (name.ValueKind != JsonValueKind.String) return true;
+                    placed |= WarningLaneNames.Contains(name.GetString()!);
+                }
+            }
+            return placed;
+        }
+        catch (JsonException) { return true; }
+    }
+
     internal object EngineConfiguration()
     {
         if (!IsValid) throw new ArgumentException("Invalid Windows settings.");
@@ -197,7 +232,10 @@ internal sealed record DesktopPreferences
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
-            reminderSettings = new { warnings = WarningKinds, lowLine = DeepSeekLowBalanceLine, spikeLine = DeepSeekSpikeLimit, resetDays = CodexResetExpiryDays },
+            // The reminders that follow the bar's warnings notify only while it shows them. Only this
+            // flag reaches the engine, so reordering the bar stays a presentation edit.
+            reminderSettings = new { warnings = WarningKinds, lowLine = DeepSeekLowBalanceLine, spikeLine = DeepSeekSpikeLimit, resetDays = CodexResetExpiryDays,
+                warningsOnBar = WarningsOnBar(CompactLayout) },
             expandedPanel = new { layout = ExpandedPanelLayout, options = ExpandedPanelOptions, deepseekDetailed = DeepSeekPanelStyle != "simple" },
             codexExecutable = CodexExecutable,
             codexHome = CodexHome,

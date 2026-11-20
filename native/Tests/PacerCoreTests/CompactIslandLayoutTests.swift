@@ -217,4 +217,12 @@ final class CompactIslandLayoutTests: XCTestCase {
         layout.shift(.quotaGauge, by: 1, providers: [])
         XCTAssertEqual(layout, previous, "An inactive component cannot be moved by keyboard")
     }
+
+    func testNotificationsFollowTheWarningsTheBarShows() {
+        var layout = CompactIslandLayout.standard
+        XCTAssertEqual(layout.shownWarnings, layout.warnings)
+        layout.trailing.removeAll { $0 == .warnings }
+        XCTAssertFalse(layout.warnings.isEmpty, "Removing the item keeps the chosen kinds for when it returns")
+        XCTAssertEqual(layout.shownWarnings, [], "but nothing shows, and Settings shows every warning off")
+    }
 }

@@ -229,18 +229,20 @@ enum SessionLogProbe {
             origin_by_thread[tid]=classification
             if len(origin_by_thread)>1024:origin_by_thread.pop(next(iter(origin_by_thread)))
         return classification
-    TURN_BOUNDARIES=(b'task_started',b'task_complete',b'turn_aborted',b'turn_context')
+    # The records' own type fields; a tool's output quotes the same words with escapes.
+    TURN_BOUNDARIES=tuple(b'"type":'+space+b'"'+m+b'"' for m in (b'task_started',b'task_complete',b'turn_aborted',b'turn_context') for space in (b'',b' '))
+    BOUNDARY_OVERLAP=max(map(len,TURN_BOUNDARIES))-1
     def turn_boundary(f,fragment,start,end):
         # Whether the unread fragment and start..end hold a turn start, ending or
         # context; bytes only, in 1 MiB steps. More than 8 MiB counts as one (LocalActivityReader).
         if end-start>8*1024*1024 or any(m in fragment for m in TURN_BOUNDARIES):return True
-        carry=fragment[-15:];f.seek(start)
+        carry=fragment[-BOUNDARY_OVERLAP:];f.seek(start)
         while start<end:
             chunk=f.read(min(1<<20,end-start))
             if not chunk:return True
             data=carry+chunk
             if any(m in data for m in TURN_BOUNDARIES):return True
-            carry=data[-15:];start+=len(chunk)
+            carry=data[-BOUNDARY_OVERLAP:];start+=len(chunk)
         return False
     def anchor(f,size,thread_id=None):
         offset, floor, fragment = size, max(0,size-8*1024*1024), b''

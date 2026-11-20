@@ -7,12 +7,18 @@ struct EngineReminderSettings: Codable, Equatable, Sendable {
     var spikeLine: Double?
     /// Days ahead that a Codex banked reset's deadline counts as soon; nil is the default.
     var resetDays: Int?
+    /// Whether the collapsed bar places its warnings component; nil, as from an earlier shell, means it does.
+    /// The shell sends only this, so reordering the bar stays a presentation edit.
+    var warningsOnBar: Bool?
     var isValid: Bool {
         Set(warnings).count == warnings.count && Set(warnings).isSubset(of: Set(CompactIslandLayout.Warning.allCases.map(\.rawValue)))
             && [lowLine, spikeLine].compactMap { $0 }.allSatisfy { $0.isFinite && $0 > 0 }
             && resetDays.map(ResetExpiryReminder.leadDayRange.contains) ?? true
     }
     func contains(_ kind: CompactIslandLayout.Warning) -> Bool { warnings.contains(kind.rawValue) }
+    /// A reminder that follows the bar's warning notifies only while that warning can show there,
+    /// as on the Mac. The bar and the panel still read `contains` for their own marks.
+    func notifies(_ kind: CompactIslandLayout.Warning) -> Bool { warningsOnBar != false && contains(kind) }
 }
 
 struct EngineReminderReading: Codable, Equatable {

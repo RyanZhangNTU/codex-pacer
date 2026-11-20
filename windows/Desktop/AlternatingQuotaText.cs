@@ -55,6 +55,8 @@ public sealed class AlternatingQuotaText : Grid
     private int RestingIndex => SharedPhase && animates && !Pair && layers.Count > 1
         ? QuotaAlternationSchedule.At(SharedEpoch.Elapsed.TotalSeconds, layers.Count).Current : 0;
     internal string? ShownText => items.Length == 0 ? null : items[Math.Clamp(ShownIndex, 0, items.Length - 1)].Text;
+    /// Starts or stops the turns with the same values, e.g. while the island is covered.
+    internal void SetAnimates(bool animate) { if (animate != animates) Update(items.ToArray(), animate); }
     internal string[] ShownTexts => items.Select(item => item.Text).ToArray();
     /// Builds the values again on the next update, in the island's current tone.
     internal void Repaint() => items = [];

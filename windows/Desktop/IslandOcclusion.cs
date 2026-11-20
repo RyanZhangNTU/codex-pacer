@@ -31,7 +31,7 @@ public partial class IslandWindow
     {
         if (presentationStopped) return;
         if (!presence.Present) FinishPageTransition();
-        UpdateCompactBar(); RefreshRowMotion();
+        UpdateCompactBar(); RefreshRowMotion(); RefreshPanelRotations();
         Badge.SetAnimations(DecorationsAnimate); StripBadge.SetAnimations(DecorationsAnimate);
     }
     /// The badge's loops run at full rate only while the panel is open.
@@ -57,7 +57,7 @@ public partial class IslandWindow
             {
                 fullscreen = value; decorationsOccluded = value.Occluded;
                 if (value.Occluded) FinishPageTransition();
-                ApplyFullscreenVisibility(); UpdateCompactBar(); RefreshRowMotion();
+                ApplyFullscreenVisibility(); UpdateCompactBar(); RefreshRowMotion(); RefreshPanelRotations();
             }, Dispatcher);
             occlusionSource = HwndSource.FromHwnd(hwnd); occlusionSource?.AddHook(OcclusionMessage);
         };
