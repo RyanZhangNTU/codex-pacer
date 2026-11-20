@@ -31,13 +31,19 @@ internal static class SingleQuotaChecks
                     window.Reveal(); await window.WaitForPresentationAsync();
                     var slots = (Grid)window.FindName("QuotaSlots");
                     var (capsule, extra) = PresentationWait.ResetCapsule(window);
-                    Check(capsule != null && slots.Children.Count == 4 && window.LogicalTarget.Height == 438 + extra,
+                    Check(capsule != null && slots.Children.Count == 3 && window.LogicalTarget.Height == 438 + extra,
                         "The existing multi-provider reference layout must retain its original height, plus Codex's reset capsule");
-                    Check(System.Windows.Automation.AutomationProperties.GetName(capsule!).Contains('·') && capsule!.ToolTip == null,
+                    // As on the Mac, the capsule sits in Codex's own column under its caption, centered on the ring.
+                    var column = capsule!.Parent as QuotaCell;
+                    double middle = column == null ? double.NaN : capsule.TransformToAncestor(column).TransformBounds(new Rect(capsule.RenderSize)) is var bounds
+                        ? bounds.Left + bounds.Width / 2 : double.NaN;
+                    Check(column != null && column.Children.OfType<QuotaDial>().First().AccessibleName.StartsWith("Codex", StringComparison.Ordinal) && Math.Abs(middle - column.ActualWidth / 2) <= 0.5,
+                        "Shared with other services, the reset capsule is centered under Codex's own ring");
+                    Check(System.Windows.Automation.AutomationProperties.GetName(capsule).Contains('·') && capsule.ToolTip == null,
                         "The reset capsule's name keeps the count and the deadline; a click, not a tooltip, leads to the deadlines");
-                    var faces = Descendants(capsule!).OfType<TextBlock>().ToArray();
-                    var shownPart = faces.Single(face => face.Opacity == 1).Text;
-                    Check(faces.Length == 2 && shownPart.Length > 0 && !shownPart.Contains('·'), "Shared with other services, the capsule shows the count or the time, one at a time");
+                    var turns = Descendants(capsule).OfType<AlternatingQuotaText>().Single();
+                    Check(turns.ShownTexts.Length == 2 && turns.ShownTexts.All(part => part.Length > 0 && !part.Contains('·')) && turns.Scheduling is { Scheduled: true } or { Clocks: > 0 },
+                        "Shared with other services, the capsule takes turns between the count and the time in the collapsed bar's rotation");
                     foreach (string name in new[] { "claude", "codex" })
                     {
                         var modes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled" };
@@ -63,7 +69,7 @@ internal static class SingleQuotaChecks
                         window.CapturePreview(Path.Combine(output, "single-" + language + "-" + name + ".png"));
                     }
                     await engine.SendAsync("configure", new { providerModes = new { codex = "enabled", claude = "enabled", deepseek = "enabled" } });
-                    await Until(() => slots.Children.Count == 4, "Restoring all modules must return to the original multi-provider rings");
+                    await Until(() => slots.Children.Count == 3, "Restoring all modules must return to the original multi-provider rings");
                     await window.WaitForPresentationAsync();
                     Check(window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window), "Changing provider count must not leave a stale single-provider content height");
                 }
