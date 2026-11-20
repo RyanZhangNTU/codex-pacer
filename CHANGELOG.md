@@ -11,7 +11,7 @@
 - Mac and Windows: A Codex chat in which you edited an earlier message keeps its task and progress ring. Codex writes such a chat to a new file, which Pacer took for another chat's history, so on Windows the task disappeared and on Mac its ring stayed empty ([#259](https://github.com/RyanZhangNTU/codex-pacer/issues/259)).
 - Mac and Windows: A long Codex task keeps its progress ring to the end after writing a lot of output at once.
 - Windows: The collapsed bar's status words sit on its center line again instead of slightly lower and cut off ([#258](https://github.com/RyanZhangNTU/codex-pacer/issues/258)).
-- Windows: Dates and times follow your time zone instead of GMT, including reset and expiry times in History, chart labels and the week labels for DeepSeek and WorkBuddy. Thanks to @teddyli18000 for reporting it ([#264](https://github.com/RyanZhangNTU/codex-pacer/issues/264)).
+- Windows: Dates and times follow your time zone instead of GMT, including reset and expiry times in History, chart labels and the week labels for DeepSeek and WorkBuddy ([#264](https://github.com/RyanZhangNTU/codex-pacer/issues/264)).
 
 ## 4.5.2
 
