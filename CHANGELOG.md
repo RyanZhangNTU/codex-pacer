@@ -8,6 +8,7 @@
 - Mac and Windows: The expanded panel's header can show a **Return to Top Center** button while the island is moved freely. It is off by default; turn it on under **Expanded Panel → Buttons**.
 - Mac and Windows: When Claude Desktop asks for access to an app on your computer, the task shows that it waits for you instead of still running.
 - Mac and Windows: While a task waits for its own background work, the collapsed bar's status says so, as the task row does.
+- Mac and Windows: With the warnings item removed from the collapsed bar, the reminders that follow it, such as low credits, DeepSeek's alerts and expiring resets, no longer send notifications, as the Notifications page shows.
 - Mac and Windows: A Codex chat in which you edited an earlier message keeps its task and progress ring. Codex writes such a chat to a new file, which Pacer took for another chat's history, so on Windows the task disappeared and on Mac its ring stayed empty ([#259](https://github.com/RyanZhangNTU/codex-pacer/issues/259)).
 - Mac and Windows: A long Codex task keeps its progress ring to the end after writing a lot of output at once.
 - Windows: The collapsed bar's status words sit on its center line again instead of slightly lower and cut off ([#258](https://github.com/RyanZhangNTU/codex-pacer/issues/258)).
