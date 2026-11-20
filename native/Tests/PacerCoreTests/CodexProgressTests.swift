@@ -23,6 +23,65 @@ final class CodexProgressTests: XCTestCase {
         TaskProgressRing.make(value, phase: value.phase, enabled: true, at: start.addingTimeInterval(seconds), hasAttention: attention)
     }
 
+    /// After a revert, Codex writes the thread to `rollout-<time>-<thread>_<rollout>.jsonl` (#259).
+    /// The thread is the first ID: the task, its progress and its coverage by the live
+    /// connection all follow it, not the rollout ID after it.
+    func testARevertedThreadsRolloutKeepsItsTaskAndProgress() async throws {
+        let rollout = "22222222-2222-4222-8222-222222222222", stamp = "rollout-2026-11-19T06-00-00-"
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: stamp + thread + "_" + rollout + ".jsonl"), thread)
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: stamp + thread.uppercased() + "_" + rollout), thread)
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: stamp + thread + ".jsonl"), thread, "A single ID reads as before")
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: "ssh:host.example:" + thread), thread, "Dotted hosts still end in the thread")
+        XCTAssertEqual(AgentProvider.codex.sessionID(in: stamp + "not-an-id_" + thread + ".jsonl"), thread, "Only two IDs make a revert")
+
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-reverted-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let folder = DateFormatter(); folder.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + folder.string(from: start))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent(stamp + thread + "_" + rollout + ".jsonl")
+        func line(_ type: String, _ seconds: Double, _ payload: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": ISO8601DateFormatter().string(from: start.addingTimeInterval(seconds)),
+                                                        "payload": payload]) + Data([10])
+        }
+        try (line("session_meta", 0, ["id": thread, "originator": "Codex Desktop", "cwd": "/fixture", "history_mode": "paginated"])
+            + line("event_msg", 1, ["type": "task_started", "turn_id": "turn-1"])
+            + line("event_msg", 2, ["type": "item_completed", "thread_id": thread, "turn_id": "turn-1", "item": report(70)])).write(to: file)
+        try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(2)], ofItemAtPath: file.path)
+        // The rollout before the revert stays beside it, its turn finished earlier.
+        let original = day.appendingPathComponent("rollout-2026-11-19T05-00-00-" + thread + ".jsonl")
+        try (line("session_meta", -60, ["id": thread, "originator": "Codex Desktop", "cwd": "/fixture", "history_mode": "paginated"])
+            + line("event_msg", -59, ["type": "task_started", "turn_id": "turn-0"])
+            + line("event_msg", -58, ["type": "item_completed", "thread_id": thread, "turn_id": "turn-0", "item": report(100)])
+            + line("event_msg", -57, ["type": "task_complete", "turn_id": "turn-0"])).write(to: original)
+        try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(-57)], ofItemAtPath: original.path)
+
+        let read = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), phaseAwareRate: true)
+        XCTAssertEqual(read.activities.count, 1, "Both rollouts are one thread")
+        XCTAssertEqual(read.activities.first?.threadID, thread)
+        XCTAssertEqual(read.activities.first?.turnID, "turn-1", "The newest rollout is the thread's current turn")
+        XCTAssertEqual(read.activities.first?.phase, .running)
+        XCTAssertEqual(read.activities.first?.currentProgress?.percent, 70)
+        let covered = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread])
+        XCTAssertTrue(covered.activities.isEmpty, "A thread the live connection follows is not read twice")
+        let metrics = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread],
+                                                       includeCoveredMetrics: true)
+        XCTAssertEqual(metrics.activities.map(\.turnID), ["turn-1"])
+        XCTAssertEqual(metrics.activities.first?.currentProgress?.percent, 70, "Its log still fills in the live task's progress")
+    }
+
+    /// Several rollouts of one thread resolve to the most recently observed one,
+    /// once, whatever order they arrive in.
+    func testOneThreadsRolloutsResolveToTheNewestOnce() {
+        var old = SessionActivity(id: "rollout-old-" + thread + ".jsonl"), new = SessionActivity(id: "rollout-new-" + thread + "_22222222-2222-4222-8222-222222222222.jsonl")
+        log(&old, "task_started", at: 0, fields: ["turn_id": "turn-0"])
+        log(&new, "task_started", at: 9, fields: ["turn_id": "turn-1"])
+        XCTAssertEqual(old.threadID, new.threadID)
+        for values in [[old, new], [new, old]] {
+            XCTAssertEqual(CodexSessionOrigin.inheriting(values).map(\.turnID), ["turn-1"])
+        }
+    }
+
     func testReportsUseCompletedOwnedItemsAndNeverAdvanceLifecycle() {
         var value = activity()
         log(&value, "task_started", at: 0, fields: ["turn_id": "turn-1"])
@@ -241,5 +300,63 @@ final class CodexProgressTests: XCTestCase {
         XCTAssertEqual(try report("101")["isError"] as? Bool, true)
         try FileManager.default.removeItem(at: flag)
         XCTAssertEqual(try report("63")["isError"] as? Bool, true)
+    }
+
+    /// A long turn's log can outgrow the 8 MiB anchor search. Skipping an append
+    /// that starts, ends or sets no turn keeps the turn and its progress; a new
+    /// turn in the skipped part still replaces it.
+    func testSkippingALargeAppendKeepsTheTurnAndItsProgress() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-long-turn-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let folder = DateFormatter(); folder.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + folder.string(from: start))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("rollout-2026-11-19T06-00-00-" + thread + ".jsonl")
+        func line(_ type: String, _ seconds: Double, _ payload: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": ISO8601DateFormatter().string(from: start.addingTimeInterval(seconds)),
+                                                        "payload": payload]) + Data([10])
+        }
+        func progress(_ percent: Int, turn: String, at seconds: Double) throws -> Data {
+            try line("event_msg", seconds, ["type": "item_completed", "thread_id": thread, "turn_id": turn, "item": report(percent)])
+        }
+        // Large tool output, as a long research turn writes between two reads: about 1 MB, no turn of its own.
+        func output(at seconds: Double) throws -> Data {
+            try (0..<16).reduce(into: Data()) { data, _ in
+                data += try line("response_item", seconds, ["type": "function_call_output", "call_id": "call", "output": String(repeating: "x", count: 65_536)])
+            }
+        }
+        func append(_ data: Data, at seconds: Double) throws {
+            let handle = try FileHandle(forWritingTo: file); defer { try? handle.close() }
+            try handle.seekToEnd(); try handle.write(contentsOf: data)
+            try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(seconds)], ofItemAtPath: file.path)
+        }
+        try (line("session_meta", 0, ["id": thread, "originator": "codex-tui", "cwd": "/fixture"])
+            + line("event_msg", 1, ["type": "task_started", "turn_id": "turn-1"]) + progress(30, turn: "turn-1", at: 2)).write(to: file)
+        try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(2)], ofItemAtPath: file.path)
+        let reader = LocalActivityReader()
+        let first = await reader.read(home: home, now: start.addingTimeInterval(3), phaseAwareRate: true)
+        XCTAssertEqual(first.activities.first?.currentProgress?.percent, 30)
+
+        // About 10 MB in 1 MB steps, read after each, so the turn's start ends up
+        // far beyond the anchor search; the last step reports 60%.
+        var skipped = first
+        for step in 1...10 {
+            let seconds = Double(step) + 2
+            try append(output(at: seconds) + (step == 10 ? progress(60, turn: "turn-1", at: seconds) : Data()), at: seconds)
+            skipped = await reader.read(home: home, now: start.addingTimeInterval(seconds + 1), phaseAwareRate: true)
+            XCTAssertEqual(skipped.activities.map(\.turnID), ["turn-1"], "Step \(step) keeps the turn")
+        }
+        XCTAssertEqual(skipped.activities.first?.phase, .running)
+        XCTAssertEqual(skipped.activities.first?.currentProgress?.percent, 60)
+
+        // The turn ends and another starts inside the skipped part: the skip sees
+        // a turn boundary, so the reader starts over from the new turn's anchor.
+        try append(line("event_msg", 20, ["type": "task_complete", "turn_id": "turn-1"])
+            + line("event_msg", 21, ["type": "task_started", "turn_id": "turn-2"])
+            + (0..<3).reduce(into: Data()) { data, _ in data += try line("response_item", 22, ["type": "function_call_output", "call_id": "call", "output": String(repeating: "y", count: 65_536)]) }
+            + progress(20, turn: "turn-2", at: 23), at: 23)
+        let next = await reader.read(home: home, now: start.addingTimeInterval(24), phaseAwareRate: true)
+        XCTAssertEqual(next.activities.map(\.turnID), ["turn-2"])
+        XCTAssertEqual(next.activities.first?.currentProgress?.percent, 20)
     }
 }

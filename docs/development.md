@@ -52,6 +52,7 @@ Rules that hold across the codebase:
 - **Late work cannot publish.** Every source, read, scan and connection has its own identity or generation. A source change revokes publication before awaiting cleanup, so a late result cannot publish or release a replacement's slot.
 - **Helpers are owned.** Helper stdout has one ordered consumer with backpressure, and closing stdin ends a helper. Pacer stops only what it started and never touches shared Codex or Claude processes.
 - **File metadata does not follow symbolic links**, except DeepSeek cursor reads, which need the target's size and date.
+- **Local time.** Core formats dates only through `L10n.format` and `L10n.date`, in a calendar's zone, and names the user's zone with `L10n.timeZone`. On Windows, `TimeZone.current` and a `Date.FormatStyle`'s own zone stay GMT ([time zone](windows-engine.md#time-zone)); `LocalTimeZoneFormattingTests` rejects a bare `.formatted(` or `TimeZone.current` in Core.
 - **Stable wire values.** Shared presentation enums keep their string values and reject unknown JSON strings. Reading Mac preferences falls back to defaults without rewriting saved values.
 - **Browser scripts** for DeepSeek ship once in Core resources and run in an isolated script world; their contract test checks origin and script names, not hashes.
 
@@ -222,6 +223,7 @@ Claude tasks come from a bounded incremental transcript reader, optional hooks a
 - **Baselines.** Initial reads restore historical cards without replaying reminders. A baseline turn still running with evidence older than 15 minutes becomes unconfirmed.
 - **Embedded sessions.** Of the launch `entrypoint`, only whether it starts with `sdk-` (an Agent SDK embedding) is kept, as `embedded`; the latest record wins.
 - **Permission requests.** `PermissionRequest` and the `permission_prompt` notification carry no tool ID, so the adapter matches them to a waiting tool by a CRC32 of tool name and input (no text kept). A question's permission shows as a reply, not an approval.
+- **App access requests.** Claude Desktop asks for computer-use app access (`request_access`, `request_teach_access`) in a dialog of its own, and Claude Code sends only the tool's start and end. The hook starts a detached copy of itself that checks once, 5 seconds later, whether the call is still among the waiting tools; if so it records an approval request, which the tool's end clears. A call whose apps were already allowed returns sooner and shows nothing.
 
 ### Turn endings and subagents
 
@@ -360,7 +362,7 @@ Cost is estimated locally from tokens and `DeepSeekPricing` (CNY per million tok
 - **Cadence.** Every 60 s while expanded or a DeepSeek turn runs, 300 s otherwise, about 20 s after a turn ends; failures back off. A sign-in or key problem stops periodic reads. A balance older than 10 minutes is stale.
 - **Slow replies.** A read waits up to 30 seconds: the key request through its own timeout, the web read through the Mac reader or the Windows engine bridge, because the page's fetch has no limit. A timeout (`timedOut`) while a balance is shown keeps it, the error state and the cadence; without one it is shown. An unreachable service (`connectionFailed`, including the page's `offline`) keeps its visible error and backoff.
 - **Thresholds.** Low means below `deepseekLowBalanceLine`, else the platform's alert line, else ¥10; exhausted means zero or unavailable. The 4.0 key `deepseekLowBalance` carries over as a set line unless it holds the old default ¥10.
-- **History.** `deepseekBalanceHistory` keeps amounts and times for eight days. A drop is spend wherever it happened; a rise is a top-up. "Not on this Mac" is a day's charges minus the local estimate, reliable per day, not per minute. Changing the billing source, sign-in or key starts a new history.
+- **History.** `deepseekBalanceHistory` keeps amounts and times for eight days. A drop is spend wherever it happened; a rise is a top-up. "Not on this Mac" is a day's charges minus the local estimate, reliable per day, not per minute. Charges recorded before a time zone change count toward the local day their old midnight falls in. Changing the billing source, sign-in or key starts a new history.
 - **Credential binding.** History stores a 128-bit HMAC-SHA256 tag of the credential, with a local 32-byte salt kept beside it. The same credential keeps history across restarts. Legacy untagged history adopts the first successful credential. A salt failure keeps the live balance but withholds history; a malformed tag rejects it.
 - **Budgets.** `deepseekMode` is `balance` (default) or `budget`; `deepseekDailyBudget` and `deepseekWeeklyBudget` count only in budget mode, from local midnight and Monday 00:00. Pacer only reminds; it never blocks a request.
 - **Speed and spikes.** `deepseekSpeedSource` is `local` (default) or `account` (balance drops). A spike is the last 10 minutes' spend reaching `deepseekSpikeLimit`, or else three times the 90th percentile of local 10-minute spans over the previous seven days, at least ¥5.
@@ -439,7 +441,7 @@ Request scope:
 
 ### Waiting for background work
 
-A turn that stops while its own background work runs keeps the request open: no completion is announced until the work ends.
+A turn that stops while its own background work runs keeps the request open: no completion is announced until the work ends. While it waits, the task row says "Waiting for background work", and the collapsed bar's status says "Background work" in every status choice (`CompactBarContext`), not the stage the turn last reached.
 
 | Provider | Evidence of background work | Ends when |
 | --- | --- | --- |

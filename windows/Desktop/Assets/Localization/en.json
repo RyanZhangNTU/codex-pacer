@@ -23,6 +23,7 @@
     "account.unknown_expiry_count": "Resets with unknown expiry: %ld",
     "activity.app_missing": "Codex could not be found. Check that the Codex app is installed.",
     "activity.background_wait": "Waiting for background work",
+    "activity.background_wait_compact": "Background work",
     "activity.claude_host_missing": "Pacer doesn’t know which app started this Claude task. It can only see the app while the task is running.",
     "activity.codex_host_missing": "Pacer doesn’t know which app started this Codex task. It can only see the app while the task is running.",
     "activity.coordinating": "Coordinating",

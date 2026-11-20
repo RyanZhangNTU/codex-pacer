@@ -10,6 +10,15 @@ final class CodexSessionOriginTests: XCTestCase {
     private let session = "019a0000-0000-7000-8000-0000000000a1"
     private let child = "019a0000-0000-7000-8000-0000000000a2"
 
+    /// The probes read a reverted thread's `<thread>_<rollout>` name as Swift does (#259).
+    func testProbesNameTheThreadOfARevertedRollout() throws {
+        let stamp = "rollout-2026-11-19T06-00-00-", names = [stamp + session + "_" + child, stamp + session.uppercased(), stamp + "not-an-id_" + session]
+        let input = try JSONSerialization.data(withJSONObject: names).base64EncodedString()
+        let output = try python("import json,base64\n" + CodexSessionOrigin.python + "\nnames=json.loads(base64.b64decode('" + input + "').decode())\nprint(json.dumps([rollout_thread(n) for n in names]))")
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String], [session, session, session])
+        for name in names { XCTAssertEqual(CodexRolloutName.threadID(in: name), session) }
+    }
+
     func testPathSyntaxDeterminesCaseAndSeparatorsOnEveryHost() throws {
         let paths = [#"C:\Fixture\ZOTERO-CHAT\TRANSLATE"#, "C:/Fixture/Zotero-Chat/Translate",
             #"\\server\share\ZOTERO-CHAT-CATALOG.fixture"#, "/fixture/zotero-chat/translate",
