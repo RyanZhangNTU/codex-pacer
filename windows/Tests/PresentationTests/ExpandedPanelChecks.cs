@@ -115,7 +115,8 @@ internal static class ExpandedPanelChecks
             await Until(() => recenterSwitch.IsEnabled);
             Toggle(recenterSwitch);
             await Until(() => recenter.Visibility == Visibility.Visible && session.Current.ExpandedPanelOptions?.Contains("\"recenter\"", StringComparison.Ordinal) == true);
-            Check(!recenter.IsEnabled && Descendants(Find<Button>(window, "panel.editor.actions")).OfType<IconGlyph>().Any(glyph => glyph.Symbol == "arrow.up.to.line")
+            // The island's button and the editor's outline follow the saved choice a frame or so later.
+            await Until(() => !recenter.IsEnabled && Descendants(Find<Button>(window, "panel.editor.actions")).OfType<IconGlyph>().Any(glyph => glyph.Symbol == "arrow.up.to.line")
                 && menu.Items.OfType<MenuItem>().All(item => !Equals(item.Header, recenterName)),
                 "Turned on, it waits while the island already sits at the top center, and the outline shows it");
             await session.ChangeAsync(p => p with { DisplayMode = "floating", IslandPlacement = new(IslandEdge.Free, .3, .4) });
@@ -173,11 +174,11 @@ internal static class ExpandedPanelChecks
     private static void Toggle(CheckBox value) => ((IToggleProvider)new CheckBoxAutomationPeer(value).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Invoke(Button value) => ((IInvokeProvider)new ButtonAutomationPeer(value).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Pump() => await Dispatcher.Yield(DispatcherPriority.ContextIdle);
-    private static async Task Until(Func<bool> condition)
+    private static async Task Until(Func<bool> condition, string message = "The expanded panel action must finish")
     {
         var watch = Stopwatch.StartNew();
         while (!condition() && watch.Elapsed < PresentationWait.Limit) await Task.Delay(20);
-        Check(condition(), "The expanded panel action must finish"); await Pump();
+        Check(condition(), message); await Pump();
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }
