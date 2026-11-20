@@ -547,8 +547,10 @@ final class IslandModel: ObservableObject {
     @discardableResult
     func configureCodexRemoteProgress(target: RemoteActivityTarget) async -> CodexRemoteProgressSetup.Status? {
         guard isModuleEnabled(.codex), monitorsSSH, !sleeping, !stopped, !Task.isCancelled,
-              codexRemoteProgressRequests[target.id] == nil, let digest = codexRemoteProgressDigest else { return nil }
-        let generation = sourceGeneration, requestID = UUID(), ring = codexRemoteProgressRing, transport = claudeRemoteSetup
+              codexRemoteProgressRequests[target.id] == nil, let digests = codexRemoteProgressDigests else { return nil }
+        // One read of the switch, so the recorded digest always describes the request sent.
+        let ring = codexRemoteProgressRing, digest = ring ? digests.on : digests.off
+        let generation = sourceGeneration, requestID = UUID(), transport = claudeRemoteSetup
         codexRemoteProgressRequests[target.id] = requestID
         // Runs after the defer below has cleared this host's in-flight state.
         var outdated = false

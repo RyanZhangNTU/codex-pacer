@@ -63,6 +63,9 @@ final class CodexRemoteProgressAutoSetupTests: XCTestCase {
                        try CodexRemoteProgressSetup.digest(enabled: true))
 
         fixture.defaults.set(false, forKey: IslandModel.codexProgressRingKey)
+        // CI has read the earlier value right after this write; act once the model sees it.
+        let ringOff = try await TestWait.until { !model.showsCodexProgressRing }
+        XCTAssertTrue(ringOff, "The model must see the ring switched off before the run")
         let off = await model.configureCodexRemoteProgress(target: fixture.target)
         XCTAssertNotNil(off)
         request = try fixture.request()
