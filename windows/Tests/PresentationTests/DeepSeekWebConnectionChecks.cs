@@ -40,7 +40,17 @@ internal static class DeepSeekWebConnectionChecks
         {
             window.Show(); island.Show(); await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, preferences.EngineConfiguration(), true);
             await connection.StartAsync();
-            await Until(() => engine.LatestSnapshot?.DeepseekConnection is { WebAvailable: true, Refreshing: false, Reading.Connected: false } &&
+            // A fresh profile's first browser start can outlast the engine's 30-second reply deadline on a slow
+            // runner. That reply takes the shared slow-reply path instead of sign-in, so read again with the browser warm.
+            await Until(() => engine.LatestSnapshot?.DeepseekConnection is { WebAvailable: true, Refreshing: false, Reading.Connected: false },
+                PresentationWait.Limit + TimeSpan.FromSeconds(EngineReplySeconds));
+            if (engine.LatestSnapshot!.Wallet?.Dial?.ConnectTitle == null)
+            {
+                Console.WriteLine("DeepSeek web fixture: the first read missed the engine's reply deadline; reading again");
+                await engine.SendAsync("retryDeepSeekBalance", new { balanceContext = engine.LatestSnapshot.DeepseekConnection!.Context });
+            }
+            await Until(() => engine.LatestSnapshot?.Wallet?.Dial?.ConnectTitle != null &&
+                engine.LatestSnapshot.DeepseekConnection is { WebAvailable: true, Refreshing: false, Reading.Connected: false } &&
                 Find<Button>(window, "settings.deepseek.sign_in").IsEnabled);
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             browserActions = false; island.ApplyPreferences(preferences with { DeepSeekPanelStyle = "simple" });
@@ -229,8 +239,14 @@ internal static class DeepSeekWebConnectionChecks
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Invoke(MenuItem item) => ((IInvokeProvider)new MenuItemAutomationPeer(item).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Pump() { await Task.Delay(40); await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle); }
-    private static async Task Until(Func<bool> condition)
-    { var start = Stopwatch.StartNew(); while (!condition() && start.Elapsed.TotalSeconds < PresentationWait.Limit.TotalSeconds) await Pump(); Check(condition(), "The web connection did not settle"); await Pump(); }
+    // Matches ProviderQuotaRefreshPolicy.replyTimeout, the engine's bound on one web read.
+    private const double EngineReplySeconds = 30;
+    private static async Task Until(Func<bool> condition, TimeSpan? limit = null)
+    {
+        var start = Stopwatch.StartNew(); var bound = limit ?? PresentationWait.Limit;
+        while (!condition() && start.Elapsed < bound) await Pump();
+        Check(condition(), "The web connection did not settle"); await Pump();
+    }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Startup : IStartupRegistration { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }
     private sealed class Faults(IDeepSeekWebSession session) : IDeepSeekWebSession

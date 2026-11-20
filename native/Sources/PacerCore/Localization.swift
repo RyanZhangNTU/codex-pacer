@@ -97,9 +97,26 @@ public enum L10n {
         current.resources.text(key, arguments: arguments, language: selected ?? language)
     }
 
+    /// The user's time zone, which local days and date text use. On the Mac it
+    /// is the system zone. On Windows, Foundation's `TimeZone.current` stays GMT;
+    /// the engine sets the host's zone as `NSTimeZone.default`, which
+    /// `Calendar.current` follows.
+    public static var timeZone: TimeZone { Calendar.current.timeZone }
+
+    /// Date text in `calendar`'s calendar and zone, in the app's locale unless
+    /// another is given. Core formats dates only here: a `Date.FormatStyle`'s
+    /// own default zone is GMT on Windows, even after the engine sets the host's.
+    public static func format(_ value: Date, _ style: Date.FormatStyle, calendar: Calendar = .current,
+                              locale: Locale? = nil) -> String {
+        var style = style.locale(locale ?? Self.locale)
+        style.calendar = calendar
+        style.timeZone = calendar.timeZone
+        return value.formatted(style)
+    }
+
     public static func date(_ value: Date, date dateStyle: Date.FormatStyle.DateStyle = .abbreviated,
-                            time timeStyle: Date.FormatStyle.TimeStyle = .shortened) -> String {
-        value.formatted(Date.FormatStyle(date: dateStyle, time: timeStyle).locale(locale))
+                            time timeStyle: Date.FormatStyle.TimeStyle = .shortened, calendar: Calendar = .current) -> String {
+        format(value, Date.FormatStyle(date: dateStyle, time: timeStyle), calendar: calendar)
     }
 
     /// A reset short enough for one row: the time today, the weekday within the
@@ -107,11 +124,9 @@ public enum L10n {
     public static func moment(_ value: Date, relativeTo now: Date, calendar: Calendar = .current,
                               locale: Locale? = nil) -> String {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: value)).day ?? 0
-        var style = days == 0 ? Date.FormatStyle(date: .omitted, time: .shortened)
+        let style = days == 0 ? Date.FormatStyle(date: .omitted, time: .shortened)
             : (1...6).contains(days) ? Date.FormatStyle().weekday(.abbreviated).hour().minute()
             : Date.FormatStyle().month(.abbreviated).day().hour().minute()
-        style.calendar = calendar
-        style.timeZone = calendar.timeZone
-        return value.formatted(style.locale(locale ?? Self.locale))
+        return format(value, style, calendar: calendar, locale: locale)
     }
 }

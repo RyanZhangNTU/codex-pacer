@@ -12,6 +12,26 @@ internal static class PresentationWait
     // limit. A check that bounds how long something may take keeps its own.
     internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30);
 
+    /// The reset capsule under Codex's quota and the height it adds to the panel; the
+    /// reference fixture's Codex account has banked resets, so a default panel shows one.
+    /// The reference panel's height: 438 points, plus the reset capsule when it shows.
+    internal static double ReferenceHeight(System.Windows.DependencyObject root) => 438 + ResetCapsule(root).Height;
+
+    internal static (System.Windows.Controls.Button? Capsule, double Height) ResetCapsule(System.Windows.DependencyObject root)
+    {
+        var pending = new System.Collections.Generic.Stack<System.Windows.DependencyObject>(); pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+            if (node is System.Windows.Controls.Button button && System.Windows.Automation.AutomationProperties.GetAutomationId(button) == "island.codex.resets"
+                && button.IsVisible)
+                return (button, button.ActualHeight + button.Margin.Top + button.Margin.Bottom);
+            for (int index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(node); index++)
+                pending.Push(System.Windows.Media.VisualTreeHelper.GetChild(node, index));
+        }
+        return (null, 0);
+    }
+
     // Whether a saved panel layout places the block. The saved text also lists
     // every block it knows, so searching the text for a name says nothing.
     internal static bool Places(string? layout, string block)

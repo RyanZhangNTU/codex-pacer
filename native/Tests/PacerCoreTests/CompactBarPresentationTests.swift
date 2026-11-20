@@ -32,7 +32,7 @@ final class CompactBarPresentationTests: XCTestCase {
         var request = CompactBarPresentation.Request(layout: legacy, language: "en", providers: [])
         let initial = try XCTUnwrap(CompactBarPresentation.project(request))
         XCTAssertEqual(initial.editorLeading, ["firstOutput", "tps"])
-        XCTAssertEqual(initial.warnings, ["ssh", "lowBalance", "spendSpike", "budget", "lowCredits"])
+        XCTAssertEqual(initial.warnings, ["ssh", "lowBalance", "spendSpike", "budget", "lowCredits", "resetExpiry"])
         request.action = .init(kind: "shift", component: "tps", offset: -1)
         let moved = try XCTUnwrap(CompactBarPresentation.project(request))
         let saved = try JSONDecoder().decode(CompactIslandLayout.self, from: Data(moved.layoutJSON.utf8))

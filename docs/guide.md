@@ -47,7 +47,7 @@ Codex quota needs nothing extra.
 
 Choose what the bar shows in **Collapsed Bar**: drag items on the live preview to reorder them or move them to the other side of the camera, and click one to see its options. In the list of items, the round button at the end of each one adds it to the bar or removes it. The badge's ring can show the services that are running, the average progress, or one segment per task.
 
-To move the island, choose **Free Move** in **Appearance**, then drag the bar by its status area. Release it near a screen edge and it snaps there. **Return to Top Center** puts it back. With several displays, each one remembers its own place.
+To move the island, choose **Free Move** in **Appearance**, then drag the bar by its status area. Release it near a screen edge and it snaps there. **Return to Top Center** puts it back. If you move it often, you can add this button to the expanded island's header: in **Expanded Panel**, select **Buttons** and turn on **Return to Top Center**. With several displays, each one remembers its own place.
 
 ## The expanded island
 
@@ -92,6 +92,8 @@ Turn on **Include Codex Dot Tasks** on the Remote page to see Dot Durable tasks.
 ## Quota and balance
 
 **Codex and Claude.** Each service has one ring: the upper arc is the 5-hour quota and the lower arc the weekly quota, each with its percentage left and a reset countdown. A white tick marks how much of the time is left: if the arc reaches past the tick, you're ahead of an even pace. Values turn amber when they run low or fast. With only one service on, Pacer also shows its pace and a forecast for the reset.
+
+**Codex banked resets.** A small capsule under the Codex quota shows your available banked resets and when the next one expires; click it to open every expiry in **History**. When a reset is about to expire, the collapsed bar warns you and a system notification follows; set how many days ahead on the **Notifications** page (three days by default). To hide the capsule, select the Codex block on the **Expanded Panel** page and turn off **Banked resets**.
 
 **DeepSeek.** DeepSeek uses a balance instead of quota. Its dial shows today on a 24-hour face, with what each hour cost and the peak hours, when prices double. The balance sits in the middle. Switch to **Budget** on the DeepSeek page to set daily and weekly budgets, which the dial then paces like quota. Budgets only remind you; Pacer never blocks a request. Each DeepSeek task also shows an estimated cost for its turn.
 
@@ -143,7 +145,7 @@ Click the gear in the expanded island to open the main window.
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
 | **Collapsed Bar** | What the bar shows and each item's options. |
 | **Expanded Panel** | The panel's blocks, their order and each block's options, including how long finished tasks stay. |
-| **Notifications** | Which events show on the bar or as system notifications, DeepSeek alerts, and for WorkBuddy the credits that count as low and how many days before credits expire you're reminded. |
+| **Notifications** | Which events show on the bar or as system notifications, DeepSeek alerts, and for WorkBuddy the credits that count as low how many days before credits expire you're reminded, and how many days before a Codex banked reset expires. |
 | **General** | Open at Login, the Dock icon, language and **Hide Project Names** for screen sharing. |
 | **Help & Updates** | Updates, What's New and help. |
 

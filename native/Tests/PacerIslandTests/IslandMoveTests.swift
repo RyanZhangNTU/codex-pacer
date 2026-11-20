@@ -58,8 +58,14 @@ final class IslandMoveTests: XCTestCase {
         XCTAssertFalse(model.canMoveIsland, "The notch island stays put")
         model.isAttached = false
         XCTAssertTrue(model.canMoveIsland)
+        // Settings' button and the panel's share one rule: there must be a place to leave.
+        XCTAssertFalse(model.canResetIslandPlacement, "Already at the top center")
+        IslandPosition.topRight.save(to: defaults)
+        XCTAssertTrue(model.canResetIslandPlacement, "A corner returns to the center")
+        IslandPosition.center.save(to: defaults)
 
         IslandPlacement(edge: .right, x: 1, y: 0.4).save(to: defaults)
+        XCTAssertTrue(model.canResetIslandPlacement, "A dragged place returns to the center")
         IslandPosition.bottomLeft.save(to: defaults)
         IslandDisplayMode.automatic.save(to: defaults)
         var layouts = 0
@@ -71,6 +77,7 @@ final class IslandMoveTests: XCTestCase {
         XCTAssertEqual(IslandDisplayMode.load(from: defaults), .floating)
         XCTAssertEqual(model.placementRevision, revision + 1, "An open Settings window rereads the place")
         XCTAssertEqual(layouts, 1)
+        XCTAssertFalse(model.canResetIslandPlacement, "Nothing left to return from")
         await model.shutdown()
     }
 

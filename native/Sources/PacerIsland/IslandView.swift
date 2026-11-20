@@ -263,11 +263,15 @@ struct IslandQuotaSection: View {
                 detailColor: header.provider?.tint ?? PacerPalette.tertiary) {
                 HStack(spacing: 8) {
                     if header.provider == .deepseek { DeepSeekSectionStatus(model: model) }
+                    // Codex alone keeps its banked resets on the title row, before the panel's buttons.
+                    if section.providers == [.codex] { CodexResetCapsule(model: model) }
                     if section.actions { IslandPanelControls(model: model) }
                 }
             }
             QuotaDashboardView(model: model, section: section)
         }
+        // The panel shows Codex's banked resets, not Overview.
+        .environment(\.showsCodexResets, true)
     }
 }
 
@@ -305,6 +309,13 @@ struct IslandPanelControls: View {
             if actions.contains(.pin) {
                 IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin", title: pinTitle, active: model.pinned) { model.togglePin() }
             }
+            // A Free Move shortcut: the notch island has no place to return from.
+            if actions.contains(.recenter), !model.isAttached {
+                IslandIconButton(symbol: "arrow.up.to.line", title: L10n.text("appearance.position_reset", language: language)) {
+                    model.resetIslandPlacement()
+                }
+                .disabled(!model.canResetIslandPlacement)
+            }
             if actions.contains(.settings) {
                 IslandIconButton(symbol: "gearshape", title: L10n.text("common.settings", language: language)) { model.onSettings?() }
             }
@@ -341,7 +352,7 @@ struct IslandPanelControls: View {
         }
         if !actions.contains(.pin) { Button(pinTitle) { model.togglePin() } }
         if !actions.contains(.settings) { Button(L10n.text("common.settings", language: language)) { model.onSettings?() } }
-        if !apps.isEmpty || actions.count < ExpandedPanelOptions.HeaderAction.allCases.count { Divider() }
+        if !apps.isEmpty || !model.panelOptions.menuActions.isEmpty { Divider() }
         Button(L10n.text("common.refresh", language: language)) { model.refreshQuota(); model.refreshTaskSources() }
             .disabled(model.enabledProviders.allSatisfy { model.providerRefreshing($0) })
         Divider()

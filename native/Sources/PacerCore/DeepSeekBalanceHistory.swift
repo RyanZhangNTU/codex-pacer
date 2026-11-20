@@ -71,8 +71,12 @@ public struct DeepSeekBalanceHistory: Codable, Equatable, Sendable {
         }
     }
 
-    /// Charges in the local day starting at `day`, from `since` to the last reading.
-    public func charged(onDayStarting day: Date) -> Double { charged[day] ?? 0 }
+    /// Charges in a local day, from `since` to the last reading. A day recorded
+    /// before a time zone change starts at another midnight and counts toward
+    /// the local day it starts in.
+    public func charged(in day: DateInterval) -> Double {
+        charged.reduce(0) { day.start <= $1.key && $1.key < day.end ? $0 + $1.value : $0 }
+    }
 
     /// The interval the account side has seen of a local day: nil before the first reading.
     public func coverage(of day: DateInterval) -> DateInterval? {

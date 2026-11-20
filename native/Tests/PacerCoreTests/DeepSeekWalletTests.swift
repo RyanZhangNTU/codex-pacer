@@ -104,6 +104,16 @@ final class DeepSeekWalletTests: XCTestCase {
         XCTAssertFalse(saturday.spendingFast)
     }
 
+    func testChargesRecordedInAnotherZoneCountTowardTheLocalDay() {
+        // Recorded before a time zone change, the day starts at midnight UTC: 08:00 in Beijing.
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        var history = DeepSeekBalanceHistory()
+        history.record(total: 100, at: date(28, 9), calendar: utc)
+        history.record(total: 90, at: date(28, 12), calendar: utc)
+        XCTAssertEqual(history.charged(in: beijing.dateInterval(of: .day, for: date(28, 15))!), 10, accuracy: 1e-9)
+        XCTAssertEqual(history.charged(in: beijing.dateInterval(of: .day, for: date(27, 15))!), 0)
+    }
+
     func testAccountChargesBeyondThisMacBudgetsAndTheMostUrgentAlert() throws {
         let calendar = beijing, now = date(28, 15) // A Wednesday afternoon.
         var ledger = DeepSeekSpendLedger()
@@ -117,7 +127,7 @@ final class DeepSeekWalletTests: XCTestCase {
         history.record(total: 95, at: date(28, 12), calendar: calendar)
         history.record(total: 120, at: date(28, 13), calendar: calendar)
         history.record(total: 110, at: date(28, 14, 58), calendar: calendar)
-        XCTAssertEqual(history.charged(onDayStarting: calendar.startOfDay(for: now)), 15, accuracy: 1e-9, "A top-up is not spend")
+        XCTAssertEqual(history.charged(in: calendar.dateInterval(of: .day, for: now)!), 15, accuracy: 1e-9, "A top-up is not spend")
         func wallet(_ budgets: DeepSeekBudgets, balance: Double = 110) -> DeepSeekWallet {
             DeepSeekWallet(balance: DeepSeekBalance(total: balance, capturedAt: date(28, 14, 58), source: .web), connected: true,
                 ledger: ledger, now: now, history: history, budgets: budgets, spikeLimit: 5, calendar: calendar)
@@ -180,10 +190,10 @@ final class DeepSeekWalletTests: XCTestCase {
         var night = DeepSeekBalanceHistory()
         night.record(total: 10, at: date(27, 23), calendar: calendar)
         night.record(total: 6, at: date(28, 1), calendar: calendar)
-        XCTAssertEqual(night.charged(onDayStarting: calendar.startOfDay(for: date(27, 12))), 2, accuracy: 1e-9)
-        XCTAssertEqual(night.charged(onDayStarting: calendar.startOfDay(for: now)), 2, accuracy: 1e-9, "A gap over midnight is shared by time")
+        XCTAssertEqual(night.charged(in: calendar.dateInterval(of: .day, for: date(27, 12))!), 2, accuracy: 1e-9)
+        XCTAssertEqual(night.charged(in: calendar.dateInterval(of: .day, for: now)!), 2, accuracy: 1e-9, "A gap over midnight is shared by time")
         night.record(total: 50, at: date(28, 2), source: "web", calendar: calendar)
-        XCTAssertEqual(night.charged(onDayStarting: calendar.startOfDay(for: now)), 0, "Another source may be another account")
+        XCTAssertEqual(night.charged(in: calendar.dateInterval(of: .day, for: now)!), 0, "Another source may be another account")
         XCTAssertEqual(night.since, date(28, 2))
         let restored = try JSONDecoder().decode(DeepSeekBalanceHistory.self, from: JSONEncoder().encode(history))
         XCTAssertEqual(restored, history)
@@ -233,11 +243,11 @@ final class DeepSeekWalletTests: XCTestCase {
             history.record(total: 10 - Double(minute) * 0.0004, at: start.addingTimeInterval(Double(minute) * 60),
                 source: "web", calendar: calendar)
         }
-        XCTAssertEqual(history.charged(onDayStarting: calendar.startOfDay(for: start)), 0.048, accuracy: 1e-9)
+        XCTAssertEqual(history.charged(in: calendar.dateInterval(of: .day, for: start)!), 0.048, accuracy: 1e-9)
         XCTAssertEqual(history.spent(12, of: 600, endingAt: date(28, 17)).reduce(0, +), 0.048, accuracy: 1e-9)
         history.record(total: 20, at: date(28, 17, 1), source: "web", calendar: calendar)
         history.record(total: 19.9996, at: date(28, 17, 2), source: "web", calendar: calendar)
-        XCTAssertEqual(history.charged(onDayStarting: calendar.startOfDay(for: start)), 0.0484, accuracy: 1e-9,
+        XCTAssertEqual(history.charged(in: calendar.dateInterval(of: .day, for: start)!), 0.0484, accuracy: 1e-9,
             "Top-ups remain excluded without discarding the following small charge")
     }
 

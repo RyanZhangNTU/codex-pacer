@@ -30,7 +30,28 @@ internal static class SingleQuotaChecks
                     window.Show(); await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, referenceFixture: true);
                     window.Reveal(); await window.WaitForPresentationAsync();
                     var slots = (Grid)window.FindName("QuotaSlots");
-                    Check(slots.Children.Count == 3 && window.LogicalTarget.Height == 438, "The existing multi-provider reference layout must retain its original height");
+                    var (capsule, extra) = PresentationWait.ResetCapsule(window);
+                    Check(capsule != null && slots.Children.Count == 3 && window.LogicalTarget.Height == 438 + extra,
+                        "The existing multi-provider reference layout must retain its original height, plus Codex's reset capsule");
+                    // As on the Mac, the capsule sits in Codex's own column under its caption, centered on the ring.
+                    var column = capsule!.Parent as QuotaCell;
+                    double middle = column == null ? double.NaN : capsule.TransformToAncestor(column).TransformBounds(new Rect(capsule.RenderSize)) is var bounds
+                        ? bounds.Left + bounds.Width / 2 : double.NaN;
+                    Check(column != null && column.Children.OfType<QuotaDial>().First().AccessibleName.StartsWith("Codex", StringComparison.Ordinal) && Math.Abs(middle - column.ActualWidth / 2) <= 0.5,
+                        "Shared with other services, the reset capsule is centered under Codex's own ring");
+                    Check(System.Windows.Automation.AutomationProperties.GetName(capsule).Contains('·') && capsule.ToolTip == null,
+                        "The reset capsule's name keeps the count and the deadline; a click, not a tooltip, leads to the deadlines");
+                    var turns = Descendants(capsule).OfType<AlternatingQuotaText>().Single();
+                    Check(turns.ShownTexts.Length == 2 && turns.ShownTexts.All(part => part.Length > 0 && !part.Contains('·')) && turns.Scheduling is { Scheduled: true } or { Clocks: > 0 },
+                        "Shared with other services, the capsule takes turns between the count and the time in the collapsed bar's rotation");
+                    // The panel redraws its quota with each reading, often sooner than a turn. A rebuilt
+                    // capsule must pick up the turn in progress, or the time would never show.
+                    for (int turn = 0; turn < 3 && turns.ShownText != turns.ShownTexts[1]; turn++)
+                        await turns.WaitForNextCycleAsync(PresentationWait.Limit);
+                    Check(turns.ShownText == turns.ShownTexts[1], "The shared capsule must reach the time left on its own");
+                    var rebuilt = new AlternatingQuotaText { SharedPhase = true };
+                    rebuilt.Update(turns.ShownTexts.Select(text => new AlternatingQuotaText.Item("codex", text, false)).ToArray(), true);
+                    Check(rebuilt.ShownText == turns.ShownTexts[1], "A capsule rebuilt mid-rotation must keep the time left instead of starting over at the count");
                     foreach (string name in new[] { "claude", "codex" })
                     {
                         var modes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled", ["deepseek"] = "disabled" };
@@ -39,6 +60,9 @@ internal static class SingleQuotaChecks
                         await Until(() => slots.Children.Count == 1 && slots.Children[0] is SingleQuotaView single
                             && single.Dial.AccessibleName.StartsWith(name == "codex" ? "Codex" : "Claude", StringComparison.Ordinal), "The actual engine module choice must select the original single-provider layout");
                         await window.WaitForPresentationAsync();
+                        // Codex alone carries its reset capsule at the right of the section's header row, not under the ring.
+                        var (headerCapsule, _) = PresentationWait.ResetCapsule((StackPanel)window.FindName("QuotaHeaderTrailing"));
+                        Check(name == "codex" ? headerCapsule != null : headerCapsule == null, "A lone Codex keeps its reset capsule in the header row, Claude has none");
                         var view = (SingleQuotaView)slots.Children[0];
                         var projected = latest!.QuotaDashboard!.Providers.Single();
                         Check(view.Dial.ActualWidth == 104 && view.Dial.ActualHeight == 104 && view.ActualHeight == 110
@@ -55,7 +79,7 @@ internal static class SingleQuotaChecks
                     await engine.SendAsync("configure", new { providerModes = new { codex = "enabled", claude = "enabled", deepseek = "enabled" } });
                     await Until(() => slots.Children.Count == 3, "Restoring all modules must return to the original multi-provider rings");
                     await window.WaitForPresentationAsync();
-                    Check(window.LogicalTarget.Height == 438, "Changing provider count must not leave a stale single-provider content height");
+                    Check(window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window), "Changing provider count must not leave a stale single-provider content height");
                 }
                 finally { window.StopPresentation(); window.AllowClose = true; window.Close(); }
             }

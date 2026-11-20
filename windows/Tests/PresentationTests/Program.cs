@@ -96,6 +96,7 @@ internal static class Program
                 if (All("idle")) foreach (bool motion in new[] { false, true }) await Attempt(nameof(ShellWorkChecks), () => ShellWorkChecks.Run(motion));
                 if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (!All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
                 if (All("collapsed")) await Attempt("Compact TPS geometry", () => CollapsedLayoutChecks.CheckRateGeometry(projections));
+                if (All("collapsed")) await Attempt(nameof(CompactStatusMotionChecks), () => CompactStatusMotionChecks.Run());
                 // Native mouse and keyboard input on an owned synthetic island; the cursor is restored afterwards.
                 // Hosted CI desktops do not deliver synthesized input, so this stays an explicit local group.
                 if (Has("position"))
@@ -230,7 +231,7 @@ internal static class Program
                 Check(actual.SequenceEqual(expected), $"Stage {stage} rows must match the shared engine projection: {string.Join(",", actual)}");
                 Check(Errors.Count == 0, "Every task stage must bind without runtime errors");
             }
-            Check(latest?.CapturedAt == 1_800_000_000 && window.LogicalTarget.Width == 404 && window.LogicalTarget.Height == 438 && window.VisibleSizeMatches(404, 438),
+            Check(latest?.CapturedAt == 1_800_000_000 && window.LogicalTarget.Width == 404 && window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window) && window.VisibleSizeMatches(404, PresentationWait.ReferenceHeight(window)),
                 "The original synthetic clock and settled 404×438 geometry");
             await IslandSurfaceChecks.Run(window);
             Console.WriteLine("PASS " + scenario + ": shared row order, four states, bindings and reveal accessibility");
@@ -255,7 +256,7 @@ internal static class Program
             double anchor = reversalFrames[0].Window.X + reversalFrames[0].Window.Width / 2;
             Check(reversalFrames.All(frame => Math.Abs(frame.Window.X + frame.Window.Width / 2 - anchor) < 0.51 && Math.Abs(frame.Window.Y - 10) < 0.01),
                 "Rapid reversals must keep the top-centre anchor fixed");
-            Check(window.LogicalTarget.Height == 438 && window.VisibleSizeMatches(404, 438) && host.Opacity == 1 && peer.GetChildren()?.Count > 0,
+            Check(window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window) && window.VisibleSizeMatches(404, PresentationWait.ReferenceHeight(window)) && host.Opacity == 1 && peer.GetChildren()?.Count > 0,
                 "The actual window must settle and restore accessibility after rapid reversals");
             Console.WriteLine("PASS " + scenario + ": frame callbacks, motion policy, fixed anchor and convergence");
 
@@ -333,7 +334,7 @@ internal static class Program
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed, "Escape must publish the collapsed UIA state");
             window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
             await window.WaitForPresentationAsync();
-            Check(window.LogicalTarget.Height == 438 && window.VisibleSizeMatches(404, 438) && peer.GetChildren()?.Count > 0, "Hover must reopen an unpinned panel after Escape");
+            Check(window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window) && window.VisibleSizeMatches(404, PresentationWait.ReferenceHeight(window)) && peer.GetChildren()?.Count > 0, "Hover must reopen an unpinned panel after Escape");
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Expanded, "Hover must publish the expanded UIA state");
             var hoverExit = Stopwatch.StartNew();
             window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseLeaveEvent });
@@ -348,12 +349,12 @@ internal static class Program
             moreMenu.IsOpen = true; await Pump();
             window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseLeaveEvent });
             await Task.Delay(600); await Pump();
-            Check(window.LogicalTarget.Height == 438, "An open menu must keep the panel open after the pointer leaves");
+            Check(window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window), "An open menu must keep the panel open after the pointer leaves");
             moreMenu.IsOpen = false;
             await Until(() => window.LogicalTarget.Height == 36, "Closing the menu away from the panel must start the delayed close");
             await window.WaitForPresentationAsync();
             expansion.Expand(); await window.WaitForPresentationAsync();
-            Check(expansion.ExpandCollapseState == ExpandCollapseState.Expanded && window.LogicalTarget.Height == 438, "The UIA Expand action must reveal the panel");
+            Check(expansion.ExpandCollapseState == ExpandCollapseState.Expanded && window.LogicalTarget.Height == PresentationWait.ReferenceHeight(window), "The UIA Expand action must reveal the panel");
             expansion.Collapse(); await window.WaitForPresentationAsync();
             Check(expansion.ExpandCollapseState == ExpandCollapseState.Collapsed && window.LogicalTarget.Height == 36, "The UIA Collapse action must clear the pin and close the panel");
             Console.WriteLine("PASS " + scenario + ": read action, Escape, hover reopening/exit and accessibility cleanup");

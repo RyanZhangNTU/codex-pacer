@@ -116,7 +116,7 @@ public actor LocalActivityReader {
         }
         // Reviews must not consume the user-task discovery slots.
         func covered(_ file: URL) -> Bool {
-            AgentProvider.codex.sessionID(in: file.lastPathComponent).map(excludingThreads.contains) ?? false
+            CodexRolloutName.threadID(of: file).map(excludingThreads.contains) ?? false
         }
         let pinPaths = Dictionary(pinned.compactMap { pin in pin.rolloutURL.map { (pin.id, $0) } },
                                   uniquingKeysWith: { first, _ in first })
@@ -217,12 +217,19 @@ public actor LocalActivityReader {
             var dropPartial = false
             let budget = current.offset == 0 ? startupBytes : maxBytes
             if size - current.offset > UInt64(budget) {
-                if current.gap == nil { current.gap = .init(previous: attaching ? nil : current.activity) }
+                // Skipping a large append need not lose the turn. When nothing appended
+                // since the last read starts, ends or sets a turn, the known turn is
+                // still current: keep it and read on. Otherwise, or with no turn known,
+                // start over from an anchor, which a turn longer than the anchor search
+                // (8 MiB) no longer has in reach.
+                let sameTurn = !attaching && current.activity.turnID != nil && size - current.offset <= Self.boundaryScanLimit
+                    && !holdsTurnBoundary(handle: handle, fragment: current.fragment, from: current.offset, to: size)
+                if !sameTurn, current.gap == nil { current.gap = .init(previous: attaching ? nil : current.activity) }
                 current.offset = size - UInt64(budget)
                 current.fragment.removeAll()
-                if !attaching {
+                if !attaching { current.attention.reset() }
+                if !attaching && !sameTurn {
                     current.activity.markDiscontinuity()
-                    current.attention.reset()
                     if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: current.activity.threadID) { current.activity.consume(anchor) }
                 }
                 if current.activity.turnID != nil { current.gap = nil }
@@ -279,6 +286,26 @@ public actor LocalActivityReader {
         return (CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
                 watchURLs + orderedWatches, ignoredIDs,
                 cursors.values.flatMap { $0.attention.requests(for: projected($0)) }.filter { !ignoredIDs.contains($0.activity.id) })
+    }
+    /// The most unread log a skip still checks for turn boundaries; more falls back to an anchor.
+    static let boundaryScanLimit: UInt64 = 8 * 1024 * 1024
+    private static let turnBoundaries = ["task_started", "task_complete", "turn_aborted", "turn_context"].map { Data($0.utf8) }
+    /// Whether the unread `fragment` and the file's `from..<to` hold a turn start,
+    /// ending or context. Compares bytes in 1 MiB steps without parsing; an
+    /// unreadable step counts as a boundary.
+    private func holdsTurnBoundary(handle: FileHandle, fragment: Data, from: UInt64, to: UInt64) -> Bool {
+        let overlap = (Self.turnBoundaries.map(\.count).max() ?? 1) - 1
+        func found(_ data: Data) -> Bool { Self.turnBoundaries.contains { data.range(of: $0) != nil } }
+        if found(fragment) { return true }
+        var carry = Data(fragment.suffix(overlap)), offset = from
+        while offset < to {
+            guard (try? handle.seek(toOffset: offset)) != nil,
+                  let chunk = try? handle.read(upToCount: Int(min(1 << 20, to - offset))), !chunk.isEmpty else { return true }
+            let data = carry + chunk
+            if found(data) { return true }
+            carry = Data(data.suffix(overlap)); offset += UInt64(chunk.count)
+        }
+        return false
     }
     /// Recover the latest explicit turn anchor without loading conversation history.
     /// Scan the existing 8 MiB budget; retain one anchor and numeric first-output times.

@@ -38,7 +38,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         for component in layout.components { layout.hide(component) }
         layout.save(to: defaults)
         XCTAssertTrue(CompactIslandLayout.load(from: defaults).components.isEmpty, "Hiding everything is intentional")
-        for invalid in [Data("broken".utf8), Data(#"{"version":11,"leading":[],"trailing":[]}"#.utf8), Data(repeating: 0, count: 8193)] {
+        for invalid in [Data("broken".utf8), Data(#"{"version":12,"leading":[],"trailing":[]}"#.utf8), Data(repeating: 0, count: 8193)] {
             defaults.set(invalid, forKey: CompactIslandLayout.defaultsKey)
             XCTAssertEqual(CompactIslandLayout.load(from: defaults), .standard)
         }
@@ -57,7 +57,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         layout.save(to: defaults)
         let saved = try XCTUnwrap(defaults.data(forKey: CompactIslandLayout.defaultsKey))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
-        XCTAssertEqual(object["version"] as? Int, 10)
+        XCTAssertEqual(object["version"] as? Int, 11)
         XCTAssertNil(object["center"])
         XCTAssertEqual(CompactIslandLayout.load(from: defaults), layout)
     }
@@ -74,7 +74,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         let layout = try JSONDecoder().decode(CompactIslandLayout.self, from: data).normalized
         XCTAssertEqual(layout.leading, [.activity], "The merged badge replaces both former task components once")
         XCTAssertEqual(layout.trailing, [.quotaGauge, .quota, .timeRemaining, .warnings], "The retired quota label drops")
-        XCTAssertEqual(layout.warnings, [.fiveHour, .quotaDelay, .lowBalance, .spendSpike, .budget, .lowCredits],
+        XCTAssertEqual(layout.warnings, [.fiveHour, .quotaDelay, .lowBalance, .spendSpike, .budget, .lowCredits, .resetExpiry],
             "Only the warnings that were shown stay enabled, plus DeepSeek's kinds, which no earlier schema offered")
         let standard = Data(#"{"version":2,"leading":["statusIcon","status","tps"],"trailing":["quotaWarning","quotaMetric","quotaWindow","freshness"]}"#.utf8)
         XCTAssertEqual(try JSONDecoder().decode(CompactIslandLayout.self, from: standard), .standard)
@@ -108,7 +108,7 @@ final class CompactIslandLayoutTests: XCTestCase {
             XCTAssertEqual(layout.trailing, [.timeRemaining, .warnings], "Duplicated legacy quota must not create extra values")
             let hidden = try JSONSerialization.data(withJSONObject: ["version": version, "leading": ["tps"], "trailing": ["sshWarning"]])
             XCTAssertEqual(try JSONDecoder().decode(CompactIslandLayout.self, from: hidden),
-                CompactIslandLayout(leading: [.tps], trailing: [.warnings], warnings: [.ssh, .lowBalance, .spendSpike, .budget, .lowCredits]))
+                CompactIslandLayout(leading: [.tps], trailing: [.warnings], warnings: [.ssh, .lowBalance, .spendSpike, .budget, .lowCredits, .resetExpiry]))
         }
     }
     func testProviderQuotaValuesMergeIntoRingsAndOneAlternatingValue() throws {
@@ -122,7 +122,7 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertEqual(try decode(["activity", "tps"], ["lowQuotaWarning", "codexQuota", "claudeQuota", "quotaLabel", "quotaDelayWarning", "sshWarning"], version: 5),
             .standard, "The untouched former default adopts the new default without the label")
         XCTAssertEqual(try decode(["activity"], ["claudeQuota", "sshWarning"], version: 5),
-            CompactIslandLayout(leading: [.activity], trailing: [.quota, .warnings], warnings: [.ssh, .lowBalance, .spendSpike, .budget, .lowCredits]),
+            CompactIslandLayout(leading: [.activity], trailing: [.quota, .warnings], warnings: [.ssh, .lowBalance, .spendSpike, .budget, .lowCredits, .resetExpiry]),
             "A single provider value becomes the value alone")
         XCTAssertEqual(try decode(["codexQuota", "tps"], ["claudeQuota"], version: 5),
             CompactIslandLayout(leading: [.quotaGauge, .quota, .tps]), "Values split across lanes merge at the first position")
@@ -144,7 +144,7 @@ final class CompactIslandLayoutTests: XCTestCase {
             try JSONDecoder().decode(CompactIslandLayout.self, from: JSONSerialization.data(withJSONObject: object))
         }
         XCTAssertEqual(try decode(["version": 6, "leading": ["activity"], "trailing": ["quotaGauge", "sshWarning", "quota", "lowQuotaWarning"]]),
-            CompactIslandLayout(leading: [.activity], trailing: [.quotaGauge, .warnings, .quota], warnings: [.ssh, .fiveHour, .lowBalance, .spendSpike, .budget, .lowCredits]),
+            CompactIslandLayout(leading: [.activity], trailing: [.quotaGauge, .warnings, .quota], warnings: [.ssh, .fiveHour, .lowBalance, .spendSpike, .budget, .lowCredits, .resetExpiry]),
             "The slot takes the first warning's position; hidden kinds stay off and DeepSeek's kinds start on")
         XCTAssertEqual(try decode(["version": 6, "leading": ["activity", "tps"],
             "trailing": ["lowQuotaWarning", "quotaGauge", "quota", "quotaDelayWarning", "sshWarning"]]), .standard,
@@ -160,15 +160,19 @@ final class CompactIslandLayoutTests: XCTestCase {
         XCTAssertEqual(try decode(["version": 7, "leading": [], "trailing": ["warnings"]]).warnings,
             CompactIslandLayout.Warning.defaults)
         XCTAssertEqual(try decode(["version": 7, "leading": [], "trailing": ["warnings"], "warnings": ["ssh"]]).warnings,
-            [.ssh, .lowBalance, .spendSpike, .budget, .lowCredits], "Schemas 8 to 10 add DeepSeek's and account reminders to a saved choice")
+            [.ssh, .lowBalance, .spendSpike, .budget, .lowCredits, .resetExpiry], "Schemas 8 to 11 add DeepSeek's, account and reset reminders to a saved choice")
         XCTAssertEqual(try decode(["version": 8, "leading": [], "trailing": ["warnings"], "warnings": ["peakPrice", "ssh"]]).warnings,
-            [.ssh, .spendSpike, .budget, .lowCredits], "Schema 9 drops the doubled-price kind and keeps a low balance that was turned off off")
-        XCTAssertEqual(try decode(["version": 9, "leading": [], "trailing": ["warnings"], "warnings": ["ssh"]]).warnings, [.ssh, .lowCredits],
-            "Schema 10 turns low credits on in a saved choice")
-        XCTAssertEqual(try decode(["version": 10, "leading": [], "trailing": ["warnings"], "warnings": ["ssh"]]).warnings, [.ssh],
+            [.ssh, .spendSpike, .budget, .lowCredits, .resetExpiry], "Schema 9 drops the doubled-price kind and keeps a low balance that was turned off off")
+        XCTAssertEqual(try decode(["version": 9, "leading": [], "trailing": ["warnings"], "warnings": ["ssh"]]).warnings, [.ssh, .lowCredits, .resetExpiry],
+            "Schemas 10 and 11 turn low credits and reset expiry on in a saved choice")
+        XCTAssertEqual(try decode(["version": 10, "leading": [], "trailing": ["warnings"], "warnings": ["ssh"]]).warnings, [.ssh, .resetExpiry],
+            "Schema 11 turns reset expiry on in a saved choice")
+        XCTAssertEqual(try decode(["version": 11, "leading": [], "trailing": ["warnings"], "warnings": ["ssh"]]).warnings, [.ssh],
             "A current choice is kept as saved")
         XCTAssertFalse(CompactIslandLayout.Warning.lowCredits.isAvailable(for: [.codex, .claude, .deepseek]))
         XCTAssertTrue(CompactIslandLayout.Warning.lowCredits.isAvailable(for: [.workbuddy]))
+        XCTAssertFalse(CompactIslandLayout.Warning.resetExpiry.isAvailable(for: [.claude, .deepseek, .workbuddy]), "Only Codex has banked resets")
+        XCTAssertTrue(CompactIslandLayout.Warning.resetExpiry.isAvailable(for: [.codex]))
         for kind in CompactIslandLayout.Warning.deepseek {
             XCTAssertFalse(kind.isAvailable(for: [.codex, .claude]))
             XCTAssertTrue(kind.isAvailable(for: [.deepseek]))

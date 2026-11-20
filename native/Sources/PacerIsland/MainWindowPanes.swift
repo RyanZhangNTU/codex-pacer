@@ -218,6 +218,10 @@ struct HistoryPane: View {
                 MainCard { CardRow(title: L10n.text("provider.none_enabled")) }
             }
         }
+        .onAppear {
+            // The panel's reset capsule: Codex with its deadlines showing.
+            if model.takeResetExpiryRequest(), quotaProviders.contains(.codex) { chosen = .codex; showsResetExpiryDetails = true }
+        }
     }
 
     private func chip(_ provider: AgentProvider, selected: Bool) -> some View {
@@ -409,6 +413,14 @@ struct SettingsNotificationsPane: View {
                     bar: choice(.fiveHour), system: .follows(system, CompactIslandLayout.Warning.fiveHour.label))
                 row(CompactIslandLayout.Warning.quotaDelay.label, bar: choice(.quotaDelay), system: .none)
             }
+            // Codex's banked resets: the bar warning, the notification that follows it and how many days ahead count.
+            if providers.contains(.codex) {
+                MainCard {
+                    row(L10n.text("main.notify.reset_expiry"), note: L10n.text("main.notify.reset_expiry_note"),
+                        bar: choice(.resetExpiry), system: follows(.resetExpiry))
+                    CardRow(title: L10n.text("main.notify.reset_lead"), info: L10n.text("main.notify.reset_lead_info")) { resetLeadField }
+                }
+            }
             MainCard(title: L10n.text("main.pane.remote")) {
                 row(CompactIslandLayout.Warning.ssh.label, bar: choice(.ssh), system: .none)
             }
@@ -542,6 +554,18 @@ struct SettingsNotificationsPane: View {
             Text(L10n.text("credits.reminder.days_within")).foregroundStyle(.secondary)
             Toggle(L10n.text("credits.reminder.expiry_title"), isOn: Binding(get: { settings.wrappedValue.expiryReminder },
                 set: { settings.wrappedValue.expiryReminder = $0 })).labelsHidden().toggleStyle(.switch)
+        }
+        .font(.system(size: 12))
+    }
+
+    private var resetLeadField: some View {
+        let range = ResetExpiryReminder.leadDayRange
+        return HStack(spacing: 6) {
+            TextField(L10n.text("main.notify.reset_lead"), value: Binding(get: { model.resetExpiryLeadDays }, set: { value in
+                model.setResetExpiryLeadDays(min(range.upperBound, max(range.lowerBound, value)))
+            }), format: .number)
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 44).labelsHidden()
+            Text(L10n.text("credits.reminder.days_within")).foregroundStyle(.secondary)
         }
         .font(.system(size: 12))
     }

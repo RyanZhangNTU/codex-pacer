@@ -113,8 +113,9 @@ internal sealed record QuotaHistoryPresentation(string Title, string? SourceText
     QuotaChartPresentation? Chart, IReadOnlyList<LegacyQuotaBucket> Buckets, QuotaAccountPresentation? Account, string? Warning, string RefreshTitle, bool Refreshing);
 internal sealed record QuotaAccountPresentation(string Context, string ResetText, bool ExpirySoon, string ExpiryDescription,
     string ResetsAccessibility, string BalanceText, string BalanceAccessibility, string? DetailMessage, IReadOnlyList<QuotaAccountExpiry> Expiries,
-    string? NonExpiringText, string? UnknownText, string? TimeZoneText);
-internal sealed record QuotaAccountExpiry(double Timestamp, string DateText, string CountText, string AccessibilityLabel);
+    string? NonExpiringText, string? UnknownText, string? TimeZoneText, string? NextExpiryText = null, string? PanelText = null,
+    string? PanelCountText = null, string? PanelTimeText = null);
+internal sealed record QuotaAccountExpiry(double Timestamp, string DateText, string CountText, string AccessibilityLabel, string RemainingText = "", bool Soon = false);
 internal sealed record QuotaConnectionStatus(string State, string? Message, IReadOnlyList<QuotaConnectionAction> Actions);
 internal sealed record QuotaConnectionAction(string Kind, string Title, bool Enabled);
 internal sealed record QuotaChartPresentation(string Language, double StartedAt, double ResetsAt, string StartText, string EndText,

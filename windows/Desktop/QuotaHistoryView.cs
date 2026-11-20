@@ -19,7 +19,7 @@ internal sealed class QuotaHistoryView : StackPanel
     private readonly Expander details;
     private readonly Grid accountRow;
     private readonly Button resets, refresh;
-    private readonly TextBlock resetText = Text("", 13), balance = Text("", 13);
+    private readonly TextBlock resetText = Text("", 13), nextExpiry = Text("", 13), balance = Text("", 13);
     private readonly IconGlyph resetArrow, resetChevron;
     private readonly StackPanel account = new();
     private QuotaHistoryChart? chart;
@@ -54,7 +54,8 @@ internal sealed class QuotaHistoryView : StackPanel
         var resetLabel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
         resetArrow = new IconGlyph { Symbol = "arrow.counterclockwise", Width = 13, Height = 13, Margin = new Thickness(0, 0, 6, 0) };
         resetChevron = new IconGlyph { Symbol = "chevron.down", Width = 9, Height = 9, Margin = new Thickness(6, 0, 0, 0) };
-        resetLabel.Children.Add(resetArrow); resetLabel.Children.Add(resetText); resetLabel.Children.Add(resetChevron); resets.Content = resetLabel;
+        nextExpiry.Margin = new Thickness(6, 0, 0, 0); nextExpiry.TextTrimming = TextTrimming.CharacterEllipsis;
+        resetLabel.Children.Add(resetArrow); resetLabel.Children.Add(resetText); resetLabel.Children.Add(nextExpiry); resetLabel.Children.Add(resetChevron); resets.Content = resetLabel;
         resets.Click += (_, _) => { showExpiries = !showExpiries; UpdateDisclosure(); };
         Identify(resets, "quota.history.resets", ""); accountRow.Children.Add(resets);
         var credits = new QuotaReadingHost { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), ToolTip = ui.Text("account.credits_help") };
@@ -82,6 +83,8 @@ internal sealed class QuotaHistoryView : StackPanel
         Update(null);
     }
     internal void SetInteractionEnabled(bool value) { interactionEnabled = value; RefreshButton(); }
+    /// The expanded panel's reset capsule opens History with the deadlines showing.
+    internal void ShowExpiries() { showExpiries = true; UpdateDisclosure(); }
     internal void Update(QuotaHistoryPresentation? next)
     {
         sourceAvailable = true;
@@ -105,8 +108,12 @@ internal sealed class QuotaHistoryView : StackPanel
         {
             if (accountContext != usage.Context) { accountContext = usage.Context; showExpiries = false; }
             resetText.Text = usage.ResetText; resets.ToolTip = usage.ExpiryDescription;
+            // "· Next expires in 1d 10h" counts down from the fixed deadline, as on the Mac.
+            nextExpiry.Text = usage.NextExpiryText is { } countdown ? "· " + countdown : "";
+            nextExpiry.Visibility = usage.NextExpiryText != null ? Visibility.Visible : Visibility.Collapsed;
             string ink = usage.ExpirySoon ? "SettingsWarning" : "SettingsSecondary";
-            resetText.SetResourceReference(TextBlock.ForegroundProperty, ink); resetArrow.SetResourceReference(IconGlyph.InkProperty, ink); resetChevron.SetResourceReference(IconGlyph.InkProperty, ink);
+            foreach (var label in new[] { resetText, nextExpiry }) label.SetResourceReference(TextBlock.ForegroundProperty, ink);
+            resetArrow.SetResourceReference(IconGlyph.InkProperty, ink); resetChevron.SetResourceReference(IconGlyph.InkProperty, ink);
             AutomationProperties.SetName(resets, usage.ResetsAccessibility);
             balance.Text = usage.BalanceText;
             AutomationProperties.SetName(accountRow.Children[1], usage.BalanceAccessibility);
@@ -114,7 +121,7 @@ internal sealed class QuotaHistoryView : StackPanel
         }
         else
         {
-            accountContext = null; showExpiries = false; expiryDetails.Children.Clear(); resetText.Text = balance.Text = "";
+            accountContext = null; showExpiries = false; expiryDetails.Children.Clear(); resetText.Text = nextExpiry.Text = balance.Text = "";
             resets.ToolTip = null; AutomationProperties.SetName(resets, ""); AutomationProperties.SetName(accountRow.Children[1], "");
         }
         UpdateDisclosure(); RefreshButton();
@@ -156,9 +163,11 @@ internal sealed class QuotaHistoryView : StackPanel
         if (value.DetailMessage != null) Add(Text(value.DetailMessage, 12));
         foreach (var expiry in value.Expiries)
         {
-            var row = new Grid(); row.ColumnDefinitions.Add(new()); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            var row = new Grid(); row.ColumnDefinitions.Add(new()); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             var date = Text(expiry.DateText, 12); date.SetResourceReference(TextBlock.ForegroundProperty, "SettingsPrimary"); date.TextWrapping = TextWrapping.Wrap; date.Margin = new Thickness(0, 0, 12, 0); row.Children.Add(date);
-            var count = Text(expiry.CountText, 12); Grid.SetColumn(count, 1); row.Children.Add(count);
+            var remaining = Text(expiry.RemainingText, 12); remaining.Margin = new Thickness(0, 0, 12, 0);
+            remaining.SetResourceReference(TextBlock.ForegroundProperty, expiry.Soon ? "SettingsWarning" : "SettingsPrimary"); Grid.SetColumn(remaining, 1); row.Children.Add(remaining);
+            var count = Text(expiry.CountText, 12); Grid.SetColumn(count, 2); row.Children.Add(count);
             var reading = new QuotaReadingHost(); reading.Children.Add(row); AutomationProperties.SetName(reading, expiry.AccessibilityLabel); Add(reading);
         }
         if (value.NonExpiringText != null) Add(Text(value.NonExpiringText, 12));

@@ -31,11 +31,6 @@ struct SettingsAppearancePane: View {
     /// Before a choice, the island attaches only around a notch, so the tile
     /// that matches what the island shows here is the selected one.
     private var customPosition: IslandPosition { .custom(saved: position, attached: attachesHere) }
-    /// Reread after each drag; Settings does not hold the dragged place itself.
-    private var placement: IslandPlacement? {
-        _ = model.placementRevision
-        return IslandPlacement.load(from: model.defaults)
-    }
     var customBinding: Binding<IslandPosition> {
         Binding(get: { customPosition }, set: {
             position = $0
@@ -106,7 +101,7 @@ struct SettingsAppearancePane: View {
             if !attachesHere {
                 CardRow(title: L10n.text("appearance.free_move_detail")) {
                     Button(L10n.text("appearance.position_reset")) { model.resetIslandPlacement() }
-                        .buttonStyle(.main).disabled(placement == nil && customPosition == .center)
+                        .buttonStyle(.main).disabled(!model.canResetIslandPlacement)
                 }
             }
             CardPicker(title: L10n.text("settings.display_picker"), selection: $displayID,

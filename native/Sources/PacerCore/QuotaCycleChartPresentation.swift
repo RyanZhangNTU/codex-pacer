@@ -42,16 +42,22 @@ public struct QuotaCycleChartPresentation: Codable, Equatable, Sendable {
     public let accessibilityLabel: String
     public let lineHelp: String
 
-    public init(data: QuotaChartData, language: AppLanguage = L10n.language) {
+    public init(data: QuotaChartData, language: AppLanguage = L10n.language, calendar: Calendar = .current) {
         self.language = language.rawValue
         startedAt = data.startedAt.timeIntervalSince1970; resetsAt = data.resetsAt.timeIntervalSince1970
         let span = data.resetsAt.timeIntervalSince(data.startedAt)
-        let short = Date.FormatStyle.dateTime.month(.defaultDigits).day(.defaultDigits).locale(language.locale)
-        let detail = Date.FormatStyle.dateTime.month(.twoDigits).day(.twoDigits).hour().minute().locale(language.locale)
-        let spoken = Date.FormatStyle(date: .abbreviated, time: .shortened).locale(language.locale)
-        startText = data.startedAt.formatted(short); endText = data.resetsAt.formatted(short)
+        func short(_ date: Date) -> String {
+            L10n.format(date, .dateTime.month(.defaultDigits).day(.defaultDigits), calendar: calendar, locale: language.locale)
+        }
+        func detail(_ date: Date) -> String {
+            L10n.format(date, .dateTime.month(.twoDigits).day(.twoDigits).hour().minute(), calendar: calendar, locale: language.locale)
+        }
+        func spoken(_ date: Date) -> String {
+            L10n.format(date, Date.FormatStyle(date: .abbreviated, time: .shortened), calendar: calendar, locale: language.locale)
+        }
+        startText = short(data.startedAt); endText = short(data.resetsAt)
         points = data.points.map { point in
-            let date = point.timestamp.formatted(detail), value = "\(Int(point.remaining.rounded()))%"
+            let date = detail(point.timestamp), value = "\(Int(point.remaining.rounded()))%"
             return Point(timestamp: point.timestamp.timeIntervalSince1970,
                 fraction: span > 0 ? point.timestamp.timeIntervalSince(data.startedAt) / span : 0,
                 remaining: point.remaining, dateText: date, valueText: value,
@@ -60,9 +66,9 @@ public struct QuotaCycleChartPresentation: Codable, Equatable, Sendable {
         expiries = data.expiries.map { expiry in
             Expiry(timestamp: expiry.date.timeIntervalSince1970,
                 fraction: span > 0 ? expiry.date.timeIntervalSince(data.startedAt) / span : 0,
-                count: expiry.count, dateText: expiry.date.formatted(detail),
+                count: expiry.count, dateText: detail(expiry.date),
                 countText: L10n.text("chart.expiry_count", expiry.count, language: language),
-                accessibilityLabel: L10n.text("chart.expiry_item", expiry.count, expiry.date.formatted(spoken), language: language))
+                accessibilityLabel: L10n.text("chart.expiry_item", expiry.count, spoken(expiry.date), language: language))
         }
         hasPartialExpiryDetails = data.hasPartialExpiryDetails
         accessibilityLabel = L10n.text("chart.accessibility", points.count, language: language)

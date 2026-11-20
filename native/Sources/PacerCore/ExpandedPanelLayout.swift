@@ -196,8 +196,16 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
     /// The budget dial needs a budget; without one the day dial shows either way.
     public enum DeepSeekDial: String, Codable, CaseIterable, Sendable { case budget, day }
     /// Header buttons besides the app buttons, whose switch keeps its own key.
-    /// An unchecked action moves into the More menu.
-    public enum HeaderAction: String, Codable, CaseIterable, Sendable { case markRead, pin, settings }
+    /// An unchecked action moves into the More menu, except Return to Top
+    /// Center: a Free Move shortcut whose original stays in Settings, so
+    /// unchecked it is nowhere in the panel.
+    public enum HeaderAction: String, Codable, CaseIterable, Sendable {
+        case markRead, pin, recenter, settings
+        /// Whether the action waits in the More menu while out of the header.
+        public var movesToMenu: Bool { self != .recenter }
+    }
+    /// A new panel shows every button but Return to Top Center, which is opt-in.
+    public static let defaultHeaderActions: Set<HeaderAction> = [.markRead, .pin, .settings]
 
     public static let defaultsKey = "expandedPanelOptions"
     public static let version = 1
@@ -217,6 +225,8 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
     public var quotaDetails = true
     /// The white tick that marks how much of each window's time remains.
     public var paceTick = true
+    /// The capsule under Codex's quota with its banked resets and the next deadline.
+    public var codexResets = true
     public var deepseekDial: DeepSeekDial = .budget
     /// The chip under DeepSeek's dial during peak-price hours.
     public var deepseekPeak = true
@@ -225,9 +235,14 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
     public var spendElsewhere = true
     /// The week chart's dashed line: the daily budget, or the daily average.
     public var weekLine = true
-    public var headerActions: Set<HeaderAction> = Set(HeaderAction.allCases)
+    public var headerActions: Set<HeaderAction> = ExpandedPanelOptions.defaultHeaderActions
 
     public init() {}
+
+    /// The actions out of the header that the More menu offers, in order.
+    public var menuActions: [HeaderAction] {
+        HeaderAction.allCases.filter { $0.movesToMenu && !headerActions.contains($0) }
+    }
 
     public func periods(for provider: AgentProvider) -> Periods {
         switch provider {
@@ -251,7 +266,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case version, pageSize, rowStyle, rowFields, codexPeriods, claudePeriods, quotaArrange, quotaDetails, paceTick,
-             deepseekDial, deepseekPeak, spendTasks, spendElsewhere, weekLine, headerActions
+             codexResets, deepseekDial, deepseekPeak, spendTasks, spendElsewhere, weekLine, headerActions
     }
 
     public init(from decoder: Decoder) throws {
@@ -273,6 +288,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         quotaArrange = field(.quotaArrange, defaults.quotaArrange)
         quotaDetails = field(.quotaDetails, defaults.quotaDetails)
         paceTick = field(.paceTick, defaults.paceTick)
+        codexResets = field(.codexResets, defaults.codexResets)
         deepseekDial = field(.deepseekDial, defaults.deepseekDial)
         deepseekPeak = field(.deepseekPeak, defaults.deepseekPeak)
         let tasks = field(.spendTasks, defaults.spendTasks)
@@ -293,6 +309,7 @@ public struct ExpandedPanelOptions: Codable, Equatable, Sendable {
         try values.encode(quotaArrange, forKey: .quotaArrange)
         try values.encode(quotaDetails, forKey: .quotaDetails)
         try values.encode(paceTick, forKey: .paceTick)
+        try values.encode(codexResets, forKey: .codexResets)
         try values.encode(deepseekDial, forKey: .deepseekDial)
         try values.encode(deepseekPeak, forKey: .deepseekPeak)
         try values.encode(spendTasks, forKey: .spendTasks)
