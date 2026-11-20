@@ -131,7 +131,8 @@ public struct SSHHost: Equatable, Identifiable {
     /// `codex`/`claude` are nil for a disabled module. Claude setup runs by
     /// itself, so a connected host is only "connected" once its hooks are current.
     public static func hosts(codex: [String: RuntimeStreamStatus]?, unavailableCodex: [String],
-                      claude: [String: RuntimeStreamStatus]?, claudeAliases: [String], configured: Set<String>,
+                      claude: [String: RuntimeStreamStatus]?, claudeAliases: [String], claudeIDs: [String: String] = [:],
+                      configured: Set<String>,
                       configuring: Set<String>, failed: Set<String>, names: [String: String] = [:],
                       telemetryConflicts: [String: ClaudeTelemetryConflict] = [:]) -> [SSHHost] {
         let prefix = ConnectionSource.sshPrefix
@@ -146,7 +147,8 @@ public struct SSHHost: Equatable, Identifiable {
         }
         if let claude {
             for alias in Set(claudeAliases) {
-                let id = prefix + alias
+                // A host added in Desktop keeps its Desktop ID, so Claude joins the Codex row.
+                let id = claudeIDs[alias] ?? prefix + alias
                 let status = claude[id]
                 let state: State = configuring.contains(alias) ? .configuring :
                     status?.sourceAvailable == false ? .paused :
@@ -157,10 +159,11 @@ public struct SSHHost: Equatable, Identifiable {
                 if state == .connected, status?.exactRequestSpans != true, let note = telemetryConflicts[alias] { notes[id] = note }
             }
         }
+        let claudeAlias = Dictionary(claudeIDs.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
         return modules.map { id, values in
             let discovered = id.hasPrefix(prefix)
-            let alias = String(id.dropFirst(discovered ? prefix.count : ConnectionSource.managedSSHPrefix.count))
-            let displayName = discovered ? names[alias] : codex?[id]?.sourceName ?? names[id]
+            let alias = discovered ? String(id.dropFirst(prefix.count)) : claudeAlias[id] ?? String(id.dropFirst(ConnectionSource.managedSSHPrefix.count))
+            let displayName = discovered ? names[alias] : codex?[id]?.sourceName ?? names[id] ?? claudeAlias[id].flatMap { names[$0] }
             var host = SSHHost(id: id, alias: alias, name: ConnectionSource.sshName(id, displayName: displayName),
                 modules: values.sorted { $0.provider == .codex && $1.provider != .codex })
             host.claudeTelemetryNote = notes[id] ?? .none

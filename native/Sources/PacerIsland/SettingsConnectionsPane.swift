@@ -49,13 +49,15 @@ struct SettingsConnectionsPane: View {
 
     static func hosts(_ model: IslandModel) -> [SSHHost] {
         guard model.monitorsSSH else { return [] }
-        let prefix = ConnectionSource.sshPrefix, targets = model.claudeRemoteTargets
+        let targets = model.claudeRemoteTargets
         func aliases<S: Sequence>(_ ids: S) -> Set<String> where S.Element == String {
-            Set(ids.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
+            let ids = Set(ids)
+            return Set(targets.filter { ids.contains($0.id) }.map(\.alias))
         }
         return SSHHost.hosts(
             codex: model.isModuleEnabled(.codex) ? model.providerStreamStatuses(.codex) : nil, unavailableCodex: model.unavailableSSH,
             claude: model.isModuleEnabled(.claude) ? model.providerStreamStatuses(.claude) : nil, claudeAliases: targets.map(\.alias),
+            claudeIDs: Dictionary(targets.map { ($0.alias, $0.id) }, uniquingKeysWith: { first, _ in first }),
             configured: Set(targets.filter { model.claudeRemoteConfigured($0) }.map(\.alias)),
             configuring: aliases(model.configuringClaudeHosts), failed: aliases(model.claudeRemoteSetupFailures.keys),
             names: Dictionary(targets.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }),

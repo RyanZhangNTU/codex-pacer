@@ -2335,9 +2335,7 @@ actor EngineRuntime {
         let ring = codexProgressRing && enabled.contains(.codex)
         let on = active && managesCodexProgress && (monitorSSH || monitorWSL) && enabled.contains(.codex)
         let configured = on && !ring ? services.loadDigests() : [:]
-        let targets = on ? monitoredRemoteTargets(.codex).filter {
-            !ConnectionSource.isManagedSSHSourceID($0.id) && (ring || configured[$0.alias] != nil)
-        } : []
+        let targets = on ? monitoredRemoteTargets(.codex).filter { ring || configured[$0.alias] != nil } : []
         let statuses = (desktopState?.statuses ?? [:]).filter { id, _ in targets.contains { $0.id == id } }
         let input = [String(on), String(ring), String(lifecycle.version(.codex))] + targets.map { target in
             target.id + "=" + target.alias + "@" + target.home + ":" + String(statuses[target.id].map { $0.connected && $0.sourceAvailable != false } ?? false)
@@ -2687,7 +2685,7 @@ actor EngineRuntime {
                 }
         }
         if !demo, monitorSSH {
-            status += claudeRemoteStatuses.filter { $0.key.hasPrefix(ConnectionSource.sshPrefix) }.map { id, value in
+            status += claudeRemoteStatuses.filter { ConnectionSource.isSSHSourceID($0.key) }.map { id, value in
                 EngineSource(id: "claude:" + id, provider: "claude", available: value.connected && value.sourceAvailable != false,
                     transport: "ssh", reason: nil)
             }

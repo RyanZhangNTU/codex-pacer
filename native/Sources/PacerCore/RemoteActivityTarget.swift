@@ -11,6 +11,9 @@ public struct RemoteActivityTarget: Equatable, Sendable {
     public var sshDestination: String? = nil
     public var sshPort: Int? = nil
     public var sshIdentityFile: String? = nil
+    /// Other Desktop entries that reach the same account on the same machine.
+    /// One helper reads that machine for all of them.
+    public var sameMachineIDs: [String] = []
 
     public init(id: String, name: String, alias: String, home: String,
                 sshDestination: String? = nil, sshPort: Int? = nil, sshIdentityFile: String? = nil) {
@@ -46,9 +49,13 @@ public struct RemoteActivityTarget: Equatable, Sendable {
         await discovery.configured(codexHome: codexHome, claudeHome: claudeHome, userHome: userHome)
     }
     /// Initial Codex routes are available without suspended SSH route reads.
+    /// Claude follows every Codex host the same way, keeping its Desktop ID
+    /// so both modules share one host row, and its saved route.
     public static func claudeCodexTargets(home: URL) -> [RemoteActivityTarget] {
-        configured(home: home).filter { $0.id.hasPrefix(ConnectionSource.sshPrefix) }
-            .map { .init(id: $0.id, name: $0.name, alias: $0.alias, home: "~/.claude") }
+        configured(home: home).map {
+            .init(id: $0.id, name: $0.name, alias: $0.alias, home: "~/.claude",
+                  sshDestination: $0.sshDestination, sshPort: $0.sshPort, sshIdentityFile: $0.sshIdentityFile)
+        }
     }
     /// Codex's global state can exceed a megabyte; reparse it only when it changes.
     static func readConfiguration(home: URL) -> [RemoteActivityTarget]? { CodexGlobalStateSummary.read(home: home).sshTargets }

@@ -227,7 +227,11 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertNil(defaults.sshPort)
         XCTAssertNil(defaults.sshIdentityFile)
         XCTAssertEqual(defaults.home, "~/.codex")
-        XCTAssertEqual(RemoteActivityTarget.claudeCodexTargets(home: home).map(\.id), [legacy])
+        let claude = RemoteActivityTarget.claudeCodexTargets(home: home)
+        XCTAssertEqual(claude.map(\.id), [legacy, id, noOptions], "Claude follows hosts added in Desktop too")
+        let claudeRoute = try XCTUnwrap(claude.first { $0.id == id })
+        XCTAssertEqual(claudeRoute.home, "~/.claude")
+        XCTAssertEqual(claudeRoute.sshArguments(), routed.sshArguments(), "Claude reaches the host by the same saved route")
     }
 
     func testSshAndRemoteControlDiscoveryShareOneScanAndFollowEachRewrite() throws {

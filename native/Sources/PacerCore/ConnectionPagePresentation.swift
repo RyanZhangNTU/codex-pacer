@@ -25,7 +25,7 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
     public let hosts: [Host]
 
     public init(enabledProviders: [AgentProvider], statuses: [AgentProvider: [String: RuntimeStreamStatus]],
-                unavailableSSH: [String] = [], claudeAliases: [String] = [], configured: Set<String> = [],
+                unavailableSSH: [String] = [], claudeAliases: [String] = [], claudeIDs: [String: String] = [:], configured: Set<String> = [],
                 configuring: Set<String> = [], failed: Set<String> = [], names: [String: String] = [:],
                 setup: [String: Setup] = [:], canRetrySetup: Bool = false, quotaSources: Set<String> = [],
                 transportProblemsFirst: Bool = false) {
@@ -34,7 +34,7 @@ public struct ConnectionPagePresentation: Codable, Equatable, Sendable {
         let sourceValues = ConnectionSource.sources(statuses: streams, unavailableSSH: unavailableSSH, names: names)
         let ssh = SSHHost.hosts(codex: enabled.contains(.codex) ? streams[.codex] ?? [:] : nil,
             unavailableCodex: enabled.contains(.codex) ? unavailableSSH : [],
-            claude: enabled.contains(.claude) ? streams[.claude] ?? [:] : nil, claudeAliases: claudeAliases,
+            claude: enabled.contains(.claude) ? streams[.claude] ?? [:] : nil, claudeAliases: claudeAliases, claudeIDs: claudeIDs,
             configured: configured, configuring: configuring, failed: failed, names: names)
         var overrides: [String: SSHHost.State] = [:]
         for source in sourceValues where source.provider == .claude && source.key.hasPrefix(ConnectionSource.wslPrefix) && source.state != .paused {

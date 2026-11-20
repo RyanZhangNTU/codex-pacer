@@ -30,6 +30,8 @@ extension RealtimeActivityMonitor {
                 MacDesktopActivityChannel(home: home, hosts: hosts, localRuntime: local, interval: interval, frame: frame, closed: closed)
             }, processes: MacHelperProcessLauncher(), python: URL(fileURLWithPath: "/usr/bin/python3"),
             ssh: URL(fileURLWithPath: "/usr/bin/ssh"), diagnostics: RuntimeDiagnostics.observer,
+            // One helper per machine, as on Windows, however many Desktop entries reach it.
+            sshTargets: { await ClaudeSSHDiscovery.shared.configuredCodex(home: $0, userHome: FileManager.default.homeDirectoryForCurrentUser) },
             sshArguments: { target in
                 guard let route = target.sshArguments() else { return nil }
                 guard ConnectionSource.isManagedSSHSourceID(target.id) else { return route }

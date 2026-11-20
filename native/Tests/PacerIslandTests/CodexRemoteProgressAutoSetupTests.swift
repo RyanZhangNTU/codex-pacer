@@ -94,13 +94,14 @@ final class CodexRemoteProgressAutoSetupTests: XCTestCase {
             IslandModel.codexRemoteProgressPending(targets: targets, statuses: statuses, configured: configured, ring: ring,
                 digest: ring ? on : off, failures: failures, inFlight: [], checkedAt: checkedAt, now: now).map(\.alias)
         }
-        XCTAssertEqual(pending(ring: true, configured: [:]), ["a", "b"], "Managed hosts are read-only and hosts without a Codex source are skipped")
-        XCTAssertEqual(pending(ring: true, configured: ["a": on], checkedAt: ["remote-ssh-discovered:a": now]), ["b"],
+        XCTAssertEqual(pending(ring: true, configured: [:]), ["a", "b", "codex-fixture"],
+                       "Hosts added in Desktop are set up like SSH config aliases; a host without a Codex source is skipped")
+        XCTAssertEqual(pending(ring: true, configured: ["a": on], checkedAt: ["remote-ssh-discovered:a": now]), ["b", "codex-fixture"],
                        "A host checked this launch stays quiet until the recheck interval")
-        XCTAssertEqual(pending(ring: true, configured: ["a": on]), ["a", "b"], "A host set up by an earlier launch is checked once again")
-        XCTAssertEqual(pending(ring: true, configured: [:], failures: ["remote-ssh-discovered:a": now.addingTimeInterval(-60)]), ["b"],
+        XCTAssertEqual(pending(ring: true, configured: ["a": on]), ["a", "b", "codex-fixture"], "A host set up by an earlier launch is checked once again")
+        XCTAssertEqual(pending(ring: true, configured: [:], failures: ["remote-ssh-discovered:a": now.addingTimeInterval(-60)]), ["b", "codex-fixture"],
                        "A failed host backs off")
-        XCTAssertEqual(pending(ring: true, configured: [:], failures: ["remote-ssh-discovered:a": now.addingTimeInterval(-31 * 60)]), ["a", "b"])
+        XCTAssertEqual(pending(ring: true, configured: [:], failures: ["remote-ssh-discovered:a": now.addingTimeInterval(-31 * 60)]), ["a", "b", "codex-fixture"])
         XCTAssertEqual(pending(ring: false, configured: ["a": on]), ["a"], "Off removes the tool only where this Mac installed it")
         XCTAssertEqual(pending(ring: false, configured: ["a": off], checkedAt: ["remote-ssh-discovered:a": now]), [])
     }

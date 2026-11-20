@@ -99,6 +99,63 @@ final class SharedRealtimeMonitorTests: XCTestCase {
     private func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
     }
+    func testDesktopEntriesForOneMachineShareOneHelperAndItsHintsAndRequests() async throws {
+        final class Child: ChildProcessConnection, @unchecked Sendable {
+            let exited = ShutdownSignal(), ioClosed = ShutdownSignal()
+            private let lock = NSLock()
+            private var lines: [Data] = []
+            var isRunning: Bool { true }
+            var terminationStatus: Int32? { nil }
+            var written: [Data] { lock.lock(); defer { lock.unlock() }; return lines }
+            func errorMessage() -> String { "" }
+            func write(_ data: Data) throws { lock.lock(); lines.append(data); lock.unlock() }
+            func close() { exited.finish(); ioClosed.finish() }
+            func terminateImmediately() { close() }
+        }
+        final class Launcher: HelperProcessLauncher, @unchecked Sendable {
+            private let lock = NSLock()
+            private var values: [(host: String, child: Child)] = []
+            func launch(_ request: ChildProcessRequest, output: @escaping @Sendable (Data) async -> Void,
+                        ended: @escaping @Sendable () async -> Void) throws -> any ChildProcessConnection {
+                let child = Child()
+                lock.lock(); values.append((request.arguments[request.arguments.count - 2], child)); lock.unlock()
+                return child
+            }
+            var launches: [(host: String, child: Child)] { lock.lock(); defer { lock.unlock() }; return values }
+        }
+        actor Snapshots {
+            var last: RealtimeActivitySnapshot?
+            func append(_ value: RealtimeActivitySnapshot) { last = value }
+        }
+        let factory = DesktopTestFactory(), capture = Snapshots(), services = factory.services, launcher = Launcher()
+        let kept = "remote-ssh-discovered:gpu", same = "remote-ssh-codex-managed:019a0000-0000-7000-8000-0000000000a1"
+        var target = RemoteActivityTarget(id: kept, name: "GPU", alias: "gpu", home: "~/.codex")
+        target.sameMachineIDs = [same]
+        let catalog = RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse }, files: TestFileSystem(), makeClient: { _ in nil })
+        let monitor = RealtimeActivityMonitor(controlCatalog: catalog, services: .init(
+            desktopAvailable: { _ in true }, controlAvailable: { _ in false },
+            makeDesktop: { home, _, _, interval, frame, closed in services.makeConnection(home, interval, frame, closed) },
+            processes: launcher, python: URL(fileURLWithPath: "/unused/python"), ssh: URL(fileURLWithPath: "/unused/ssh"),
+            sshTargets: { [target] _ in [target] }, sshArguments: { ["-T", "--", $0.alias] }))
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("desktop-monitor-same-machine")
+        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await capture.append($0) }
+        XCTAssertEqual(launcher.launches.map(\.host), ["gpu"], "One helper reads the machine for both Desktop entries")
+        let desktop = try XCTUnwrap(factory.all().first)
+        func remote(_ kind: String, _ extra: [String: Any]) throws -> Data {
+            var row = extra; row["kind"] = kind; row["hostId"] = same
+            return try JSONSerialization.data(withJSONObject: row)
+        }
+        try await desktop.send(remote("discovery", ["threadIds": [thread]]))
+        let hint = try XCTUnwrap(launcher.launches.first?.child.written.last)
+        XCTAssertTrue(String(decoding: hint, as: UTF8.self).contains(thread), "A thread opened from the other entry is followed by that helper")
+        try await desktop.send(remote("attention", ["threadId": thread, "requests": [["id": "permission", "kind": "approval"]]]))
+        let snapshot = await capture.last
+        let latest = try XCTUnwrap(snapshot)
+        XCTAssertEqual(latest.attention.map(\.sourceHostID), [kept], "Its request joins the row the helper reports")
+        XCTAssertNil(latest.statuses[same])
+        await monitor.shutdown()
+    }
+
     func testTransportReadinessDoesNotSupplyActivityAndOldSourceCallbacksAreRevoked() async throws {
         let factory = DesktopTestFactory(), capture = DesktopMonitorStates()
         let monitor = RealtimeMonitorFixture(services: factory.services) { await capture.append($0) }

@@ -25,6 +25,20 @@ final class ConnectionPagePresentationTests: XCTestCase {
         let encoded = try JSONEncoder().encode(page), roundTrip = try JSONDecoder().decode(ConnectionPagePresentation.self, from: encoded)
         XCTAssertEqual(roundTrip, page)
     }
+    func testClaudeJoinsTheCodexRowOfAHostAddedInDesktop() throws {
+        let managed = ConnectionSource.managedSSHPrefix + "build"
+        let page = ConnectionPagePresentation(enabledProviders: [.codex, .claude], statuses: [
+            .codex: [managed: status(sessions: 2, name: "Build host")], .claude: [managed: status(sessions: 1)]],
+            claudeAliases: ["codex-build"], claudeIDs: ["codex-build": managed], configured: ["codex-build"],
+            names: ["codex-build": "Build host"])
+        XCTAssertEqual(page.hosts.map(\.id), [managed], "One machine is one row")
+        let host = try XCTUnwrap(page.hosts.first)
+        XCTAssertEqual(host.name, "Build host")
+        XCTAssertEqual(host.modules.map(\.provider), ["codex", "claude"])
+        XCTAssertEqual(host.modules.map(\.state), ["connected", "connected"])
+        XCTAssertEqual(page.sessionCount, 3)
+    }
+
     func testManagedSSHHostsKeepTheirIDsAndNamesAcrossConnectionFailures() throws {
         let connected = ConnectionSource.managedSSHPrefix + "build", unavailable = ConnectionSource.managedSSHPrefix + "other"
         let discovered = ConnectionSource.sshPrefix + "build"
