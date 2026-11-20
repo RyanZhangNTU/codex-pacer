@@ -440,6 +440,9 @@ struct SettingsExpandedPanelPane: View {
                            (.fiveHour, L10n.text("main.panel.periods_five"))])
         quotaLayout(detailsHelp: L10n.text("main.panel.details_help"))
         switchRow(L10n.text("main.panel.pace_tick"), help: L10n.text("main.panel.pace_tick_help"), isOn: $options.paceTick)
+        if provider == .codex {
+            switchRow(L10n.text("main.panel.codex_resets"), help: L10n.text("main.panel.codex_resets_help"), isOn: $options.codexResets)
+        }
     }
 
     @ViewBuilder private func quotaLayout(detailsHelp: String) -> some View {

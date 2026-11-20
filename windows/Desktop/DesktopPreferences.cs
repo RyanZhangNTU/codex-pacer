@@ -66,10 +66,12 @@ internal sealed record DesktopPreferences
     // Progress rings are on until the user turns one off, as on the Mac; a saved choice is kept.
     public bool DeepSeekProgressRing { get; init; } = true;
     public bool SystemNotifications { get; init; }
-    public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits"];
-    internal static readonly string[] WarningChoices = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits"];
+    public string[] WarningKinds { get; init; } = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits", "resetExpiry"];
+    internal static readonly string[] WarningChoices = ["fiveHour", "ssh", "quotaDelay", "lowBalance", "spendSpike", "budget", "lowCredits", "resetExpiry"];
     public double? DeepSeekLowBalanceLine { get; init; }
     public double? DeepSeekSpikeLimit { get; init; }
+    /// Days ahead that a Codex banked reset counts as expiring; null is Core's default (three days).
+    public int? CodexResetExpiryDays { get; init; }
     public bool? PositionChosen { get; init; }
     public string LastSettingsPane { get; init; } = "overview";
     // The Mac's window theme and accent keys and values.
@@ -135,8 +137,8 @@ internal sealed record DesktopPreferences
         && DeepSeekRingPeriod is "day" or "week" && DeepSeekSpeedSource is "local" or "account"
         && ValidAmount(DeepSeekDailyBudget) && ValidAmount(DeepSeekWeeklyBudget)
         && ValidAmount(DeepSeekLowBalanceLine) && ValidAmount(DeepSeekSpikeLimit)
-        && WarningKinds is { Length: <= 7 } && WarningKinds.Distinct().Count() == WarningKinds.Length
-        && WarningKinds.All(WarningChoices.Contains)
+        && WarningKinds is { Length: <= 8 } && WarningKinds.Distinct().Count() == WarningKinds.Length
+        && WarningKinds.All(WarningChoices.Contains) && CodexResetExpiryDays is null or (>= 1 and <= 30)
         && LastSettingsPane is { Length: > 0 and <= 64 } && !LastSettingsPane.Any(char.IsControl)
         && AppTheme is "auto" or "light" or "dark" && ValidAccent(AccentColor)
         && RetentionMinutes is >= 0 and <= 10080
@@ -195,7 +197,7 @@ internal sealed record DesktopPreferences
             monitorSSH = MonitorSSH,
             deepseekSettings = new { mode = DeepSeekMode, daily = DeepSeekDailyBudget, weekly = DeepSeekWeeklyBudget,
                 ringPeriod = DeepSeekRingPeriod, speedSource = DeepSeekSpeedSource, showsTurnCost = DeepSeekShowsTurnCost, balanceSource = DeepSeekBalanceSource },
-            reminderSettings = new { warnings = WarningKinds, lowLine = DeepSeekLowBalanceLine, spikeLine = DeepSeekSpikeLimit },
+            reminderSettings = new { warnings = WarningKinds, lowLine = DeepSeekLowBalanceLine, spikeLine = DeepSeekSpikeLimit, resetDays = CodexResetExpiryDays },
             expandedPanel = new { layout = ExpandedPanelLayout, options = ExpandedPanelOptions, deepseekDetailed = DeepSeekPanelStyle != "simple" },
             codexExecutable = CodexExecutable,
             codexHome = CodexHome,

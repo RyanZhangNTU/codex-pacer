@@ -20,6 +20,8 @@ struct AccountUsageView: View {
             Button { showsExpiryDetails.toggle() } label: {
                 HStack(spacing: 6) {
                     Label(presentation.resetText, systemImage: "arrow.counterclockwise")
+                    // "· Next expires in 1d 10h", counted down from the fixed deadline.
+                    if let countdown = presentation.nextExpiryText { Text("· " + countdown).monospacedDigit() }
                     Image(systemName: showsExpiryDetails ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .semibold))
                 }
                 .padding(.vertical, 3).contentShape(Rectangle())
@@ -54,6 +56,9 @@ struct AccountUsageView: View {
                         Text(expiry.dateText).monospacedDigit()
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 4)
+                        Text(expiry.remainingText).monospacedDigit()
+                            .foregroundStyle(expiry.soon ? Color.orange : .primary)
+                            .fixedSize()
                         Text(expiry.countText).foregroundStyle(.secondary)
                             .fixedSize()
                     }

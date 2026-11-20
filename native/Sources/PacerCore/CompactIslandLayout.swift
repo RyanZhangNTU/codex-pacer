@@ -88,15 +88,16 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     /// What the warnings component can show, in display order. DeepSeek's
     /// kinds share one capsule that shows the most urgent of them.
     public enum Warning: String, CaseIterable, Codable, Sendable {
-        case fiveHour, ssh, quotaDelay, lowBalance, spendSpike, budget, lowCredits
+        case fiveHour, ssh, quotaDelay, lowBalance, spendSpike, budget, lowCredits, resetExpiry
         public var label: String { L10n.text("warning." + rawValue) }
         public static let defaults: Set<Self> = Set(allCases)
         public static let deepseek: Set<Self> = [.lowBalance, .spendSpike, .budget]
-        /// DeepSeek's wallet warnings need its module, and low credits a module
-        /// with account credits; the others need nothing.
+        /// DeepSeek's wallet warnings need its module, low credits a module with
+        /// account credits and reset expiry Codex; the others need nothing.
         public func isAvailable(for providers: Set<AgentProvider>) -> Bool {
             if Self.deepseek.contains(self) { return providers.contains(.deepseek) }
             if self == .lowCredits { return providers.contains { HarnessRegistry.descriptor(for: $0)?.reportsAccountCredits == true } }
+            if self == .resetExpiry { return providers.contains(.codex) }
             return true
         }
         /// Schemas before 7 had one component per warning.
@@ -114,7 +115,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         public var label: String { L10n.text("layout.lane." + rawValue) }
     }
     public static let defaultsKey = "compactIslandLayout"
-    public let version = 10
+    public let version = 11
     public var leading: [Component]
     public var trailing: [Component]
     public var warnings: Set<Warning>
@@ -168,7 +169,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let schema = try values.decode(Int.self, forKey: .version)
-        guard (1...10).contains(schema) else {
+        guard (1...11).contains(schema) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values, debugDescription: "Unsupported compact layout")
         }
         var leadingNames = try values.decode([String].self, forKey: .leading)
@@ -192,7 +193,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         // one's position; the kinds that were shown stay enabled. Schema 8
         // adds DeepSeek's low balance and schema 9 its spend and budget
         // reminders, all on; the former doubled-price kind is dropped. Schema 10
-        // adds low account credits, on.
+        // adds low account credits and schema 11 Codex reset expiry, both on.
         var enabled: Set<Warning>
         if schema < 7 {
             let shown = Set((leadingNames + trailingNames).compactMap(Warning.init(legacyComponent:)))
@@ -204,6 +205,7 @@ public struct CompactIslandLayout: Equatable, Codable, Sendable {
         if schema < 8 { enabled.insert(.lowBalance) }
         if schema < 9 { enabled.formUnion([.spendSpike, .budget]) }
         if schema < 10 { enabled.insert(.lowCredits) }
+        if schema < 11 { enabled.insert(.resetExpiry) }
         let decoded = Self(leading: leadingNames.flatMap(Component.saved), trailing: trailingNames.flatMap(Component.saved),
             warnings: enabled).normalized
         leading = decoded.leading; trailing = decoded.trailing; warnings = decoded.warnings

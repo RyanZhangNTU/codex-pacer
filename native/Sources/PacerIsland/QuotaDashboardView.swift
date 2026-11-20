@@ -10,6 +10,45 @@ extension EnvironmentValues {
     }
 }
 
+/// The expanded panel's quota blocks show Codex's banked resets under its gauge.
+private struct ShowsCodexResetsKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var showsCodexResets: Bool {
+        get { self[ShowsCodexResetsKey.self] }
+        set { self[ShowsCodexResetsKey.self] = newValue }
+    }
+}
+
+/// Codex's banked resets and the next deadline. It opens History with every
+/// deadline showing: a popover would close the panel. Codex alone shows the
+/// whole line on its block's title row; beside other dials, under Codex's own,
+/// the count and the time left take turns in the collapsed bar's rhythm.
+struct CodexResetCapsule: View {
+    @ObservedObject var model: IslandModel
+    var alternates = false
+    @Environment(\.showsCodexResets) private var shows
+
+    var body: some View {
+        if shows, model.panelOptions.codexResets, let snapshot = model.providerQuota(.codex) {
+            let account = QuotaAccountPresentation(snapshot: snapshot, context: "", now: model.now)
+            if let text = account.panelText {
+                QuotaLinkButton(title: text, turns: Self.turns(account, alternates: alternates), symbol: ResetExpiryReminder.symbol,
+                                tint: account.expirySoon ? PacerPalette.attention : PacerPalette.secondary) { model.openResetExpiries() }
+                    .accessibilityLabel(text)
+                    .accessibilityHint(L10n.text("account.show_expiries"))
+                    .fixedSize()
+            }
+        }
+    }
+
+    /// What the capsule shows in turn: the count, then the time left when a
+    /// deadline is known; on its own row, the whole line.
+    static func turns(_ account: QuotaAccountPresentation, alternates: Bool) -> [String] {
+        guard alternates, let count = account.panelCountText else { return [account.panelText].compactMap { $0 } }
+        return [count] + [account.panelTimeText].compactMap { $0 }
+    }
+}
+
 struct QuotaDashboardSlot: Equatable, Identifiable, Sendable {
     let provider: AgentProvider
     var id: AgentProvider { provider }
@@ -106,6 +145,8 @@ struct QuotaDashboardView: View {
                 VStack(spacing: 6) {
                     QuotaDashboardRingView(quota: main, fiveHourQuota: fiveHour, providerHelp: providerHelp(slot.provider), now: model.now)
                     QuotaProviderStatusView(model: model, provider: slot.provider)
+                    // Codex alone shows it on the title row instead.
+                    if slot.provider == .codex, providers.count > 1 { CodexResetCapsule(model: model, alternates: true) }
                 }.frame(maxWidth: .infinity, alignment: .top)
             }
         }.padding(.bottom, 4)
@@ -513,15 +554,29 @@ struct QuotaProviderStatusView: View {
 /// Small capsule actions keep recovery visible without competing with the rings.
 struct QuotaLinkButton: View {
     let title: String
+    /// Texts that take turns in the title's place, in the collapsed bar's rhythm.
+    var turns: [String] = []
     var prominent = false
+    /// A leading symbol and the ink for it and the title, e.g. Codex's reset capsule.
+    var symbol: String?
+    var tint: Color?
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
+        let ink = prominent ? Color.black.opacity(0.85) : tint ?? PacerPalette.primary
         Button(action: action) {
-            Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                .foregroundStyle(prominent ? Color.black.opacity(0.85) : PacerPalette.primary)
+            HStack(spacing: 5) {
+                if let symbol { Image(systemName: symbol).font(.system(size: 10, weight: .semibold)) }
+                if turns.count > 1 {
+                    AlternatingQuotaText(entries: turns.map { .init(text: $0, color: NSColor(ink), splitsUnit: false) },
+                                         animates: true, font: .monospacedDigitSystemFont(ofSize: 11, weight: .medium), centered: true)
+                } else {
+                    Text(turns.first ?? title).font(.system(size: 11, weight: .medium)).lineLimit(1).monospacedDigit()
+                }
+            }
+                .foregroundStyle(ink)
                 .padding(.horizontal, 9).frame(height: 22)
                 .background(prominent ? PacerPalette.primary : (hovered ? PacerPalette.hover : PacerPalette.fill), in: Capsule())
                 .contentShape(Capsule())

@@ -35,7 +35,9 @@ internal static class ExpandedPanelChecks
             island.Reveal(); await island.SynchronizeExpansionAsync(); await island.WaitForPresentationAsync(); await Pump();
             var content = (StackPanel)island.FindName("PanelContent");
             var actions = (FrameworkElement)island.FindName("PanelActions");
-            Check(island.LogicalTarget.Width == 404 && island.LogicalTarget.Height == 438 && ReferenceEquals(content.Children[0], island.FindName("TasksSection"))
+            // The reference Codex account has banked resets, so its capsule adds its own row.
+            Check(island.LogicalTarget.Width == 404 && island.LogicalTarget.Height == 438 + PresentationWait.ResetCapsule(island).Height
+                && ReferenceEquals(content.Children[0], island.FindName("TasksSection"))
                 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
                 "Without a saved layout the panel keeps the reference tasks-then-quota panel with its buttons in the task header");
 
@@ -156,7 +158,7 @@ internal static class ExpandedPanelChecks
             await Until(() => ((Button)island.FindName("PinButton")).Visibility == Visibility.Visible && recenter.Visibility == Visibility.Collapsed
                 && Descendants(island).OfType<TaskRow>().All(row => row.Height == TaskRow.TwoLineHeight));
             await island.WaitForPresentationAsync();
-            Check(island.LogicalTarget.Height == 438 && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
+            Check(island.LogicalTarget.Height == PresentationWait.ReferenceHeight(island) && ReferenceEquals(actions.Parent, island.FindName("TaskHeaderTrailing")),
                 "Restoring the layout and choices returns the reference panel");
             Console.WriteLine("PASS expanded panel " + name + ": automatic layout, block moves, arrangement, rows, header buttons, Return to Top Center, removal and restore");
         }

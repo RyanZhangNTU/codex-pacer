@@ -43,6 +43,33 @@ final class QuotaHistoryPresentationTests: XCTestCase {
         XCTAssertFalse(text.contains("private-")); XCTAssertFalse(text.contains("accountScope")); XCTAssertFalse(text.contains("grantedAt"))
         XCTAssertEqual(try JSONDecoder().decode(QuotaAccountPresentation.self, from: data), value)
     }
+    func testCountdownsFollowFixedDeadlinesAndThePanelCapsuleNeedsAKnownCount() throws {
+        let snapshot = try snapshot(), value = QuotaAccountPresentation(snapshot: snapshot, context: "opaque", now: now)
+        XCTAssertEqual(value.nextExpiryText, L10n.text("account.known_next_expires_in", CompactDuration.text(60)),
+            "Partial details name the next known deadline")
+        XCTAssertEqual(value.expiries.map(\.remainingText), [60, 900_000].map { L10n.text("account.expiry_remaining", CompactDuration.text($0)) })
+        XCTAssertEqual(value.expiries.map(\.soon), [true, false], "Three days is the attention line, as for the summary")
+        XCTAssertTrue(value.expiries[0].accessibilityLabel.hasSuffix(value.expiries[0].remainingText))
+        XCTAssertEqual(value.panelText, L10n.text("account.panel_resets_expiring", 5, CompactDuration.text(60)))
+        XCTAssertFalse(try XCTUnwrap(value.panelText).contains("\n"), "The capsule is one short line; History holds the list")
+        XCTAssertEqual(value.panelCountText, L10n.text("account.panel_resets", 5))
+        XCTAssertEqual(value.panelTimeText, CompactDuration.text(60), "A shared row alternates the count with the time alone")
+        let later = QuotaAccountPresentation(snapshot: snapshot, context: "opaque", now: now.addingTimeInterval(3_600))
+        XCTAssertEqual(later.expiries.map(\.remainingText), [L10n.text("account.expiry_remaining", CompactDuration.text(900_000 - 3_600))],
+            "The countdown moves with the clock and drops a passed deadline without a new read")
+        let raw = try QuotaSnapshot.decode(Data(#"{"rateLimits":null}"#.utf8), capturedAt: now)
+        let unknown = QuotaAccountPresentation(snapshot: raw, context: "none", now: now)
+        XCTAssertNil(unknown.panelText); XCTAssertNil(unknown.nextExpiryText)
+        let none = try QuotaSnapshot.decode(Data(#"{"rateLimits":null,"rateLimitResetCredits":{"availableCount":0}}"#.utf8), capturedAt: now)
+        let zero = QuotaAccountPresentation(snapshot: none, context: "zero", now: now)
+        XCTAssertNil(zero.panelText, "No capsule without an available reset"); XCTAssertNil(zero.nextExpiryText)
+        XCTAssertNil(zero.panelCountText); XCTAssertNil(zero.panelTimeText)
+        let open = try QuotaSnapshot.decode(Data(#"{"rateLimits":null,"rateLimitResetCredits":{"availableCount":2}}"#.utf8), capturedAt: now)
+        let undated = QuotaAccountPresentation(snapshot: open, context: "open", now: now)
+        XCTAssertEqual(undated.panelText, L10n.text("account.panel_resets", 2), "A count without deadlines still shows the capsule")
+        XCTAssertNil(undated.nextExpiryText)
+        XCTAssertEqual(undated.panelCountText, L10n.text("account.panel_resets", 2)); XCTAssertNil(undated.panelTimeText, "Without a deadline the count stays")
+    }
     func testMissingMetadataAndZeroAvailabilityStayDistinctFromUnlimitedAndNoExpiry() throws {
         let raw = try QuotaSnapshot.decode(Data(#"{"rateLimits":null}"#.utf8), capturedAt: now)
         let unknown = QuotaAccountPresentation(snapshot: raw, context: "none", now: now)

@@ -101,7 +101,9 @@ internal static class NotificationChecks
             && NotificationPayload.ParseAction("pacer=1&action=TOPUP") == null, "Launch arguments are exact, not open-ended commands");
         Check(NotificationPayload.Tag(payload.Id).Length == 16 && !NotificationPayload.Xml(payload).Contains(payload.Id), "Raw task identities never enter OS launch arguments");
         Check(new DesktopPreferences().IsValid && !(new DesktopPreferences { WarningKinds = ["budget", "budget"] }).IsValid
-            && !(new DesktopPreferences { WarningKinds = ["unknown"] }).IsValid && !(new DesktopPreferences { DeepSeekSpikeLimit = double.NaN }).IsValid,
+            && !(new DesktopPreferences { WarningKinds = ["unknown"] }).IsValid && !(new DesktopPreferences { DeepSeekSpikeLimit = double.NaN }).IsValid
+            && !(new DesktopPreferences { CodexResetExpiryDays = 0 }).IsValid && !(new DesktopPreferences { CodexResetExpiryDays = 31 }).IsValid
+            && new DesktopPreferences { CodexResetExpiryDays = 30 }.IsValid && new DesktopPreferences().WarningKinds.Contains("resetExpiry"),
             "Reminder preferences reject unknown/duplicate kinds and nonfinite thresholds");
     }
     private static EngineSnapshot Frame(ulong sequence, EngineNotice notice, bool demo = false) => new(1, "snapshot", sequence, demo, 0, [], [], [], [], [notice], 0, 0, null, false);

@@ -80,6 +80,8 @@ public partial class IslandWindow : Window
     internal event Action? QuitRequested;
     internal event Action? SettingsRequested;
     internal event Action<string>? ProviderSettingsRequested;
+    /// The reset capsule under Codex's quota asks for History with the deadlines showing.
+    internal event Action? ResetExpiriesRequested;
     internal event Action<string>? DeepSeekWebSignInRequested;
     internal event Action<MotionFrame>? FrameApplied;
 

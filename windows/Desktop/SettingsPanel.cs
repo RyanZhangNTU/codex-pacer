@@ -259,6 +259,7 @@ internal sealed partial class SettingsWindow
                 value => ChoosePanel("quotaDetails", value)));
             if (account) quota.Children.Add(Link("harness.account.connection", "harness.account.open_settings", "panel.link." + provider, provider));
             else quota.Children.Add(Switch(provider + ".paceTick", "main.panel.pace_tick", "main.panel.pace_tick_help", value => ChoosePanel("paceTick", value)));
+            if (provider == "codex") quota.Children.Add(Switch("codex.resets", "main.panel.codex_resets", "main.panel.codex_resets_help", value => ChoosePanel("codexResets", value)));
             panelInspectorPanels[provider] = quota; body.Children.Add(quota);
         }
 
@@ -471,6 +472,7 @@ internal sealed partial class SettingsWindow
             Pick(provider + "Periods", options.Periods(provider)); Pick(provider + ".style", preferences.ExpandedQuotaStyle);
             Pick(provider + ".arrange", options.QuotaArrange); Flip(provider + ".details", options.QuotaDetails); Flip(provider + ".paceTick", options.PaceTick);
         }
+        Flip("codex.resets", options.CodexResets);
         Pick("dial", options.DeepseekDial); Flip("peak", options.DeepseekPeak);
         Pick("spendTasks", options.SpendTasks == 4 ? "4" : "2"); Flip("elsewhere", options.SpendElsewhere); Flip("weekLine", options.WeekLine);
         Flip("action.apps", preferences.ShowAppButtons);

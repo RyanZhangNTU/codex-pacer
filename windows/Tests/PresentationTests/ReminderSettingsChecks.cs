@@ -68,6 +68,16 @@ internal static class ReminderSettingsChecks
             Check(engine.LatestSnapshot!.Wallet?.Alert?.Kind == "nearingBudget", "A budget crossing reaches the compact warning slot");
             Toggle(budget); await Until(() => !session.Current.WarningKinds.Contains("budget") && budget.IsEnabled);
             Check(engine.LatestSnapshot!.Wallet?.Alert == null, "The budget switch controls the live alert");
+            // Codex's banked resets: the bar switch, and the days ahead that reject anything outside 1 to 30.
+            var resetSwitch = Find<CheckBox>(window, "settings.reminders.resetExpiry");
+            var resetDays = Find<TextBox>(window, "settings.reminders.resetExpiryDays");
+            bool resetShown = session.Current.WarningKinds.Contains("resetExpiry");
+            Toggle(resetSwitch); await Until(() => session.Current.WarningKinds.Contains("resetExpiry") != resetShown && resetSwitch.IsEnabled);
+            Toggle(resetSwitch); await Until(() => session.Current.WarningKinds.Contains("resetExpiry") == resetShown && resetSwitch.IsEnabled);
+            Check(resetDays.Text == "3", "Without a choice the field shows Core's three-day default");
+            resetDays.Text = "5"; Enter(window, resetDays); await Until(() => session.Current.CodexResetExpiryDays == 5 && resetDays.IsEnabled);
+            int resetBefore = configurations; resetDays.Text = "31"; Enter(window, resetDays); await Pump();
+            Check(configurations == resetBefore && session.Current.CodexResetExpiryDays == 5 && resetDays.Text == "5", "Days outside 1 to 30 never reach the engine");
             // Keeping ended tasks is the task list's choice; Notifications leads there, as on the Mac.
             ((IInvokeProvider)new ButtonAutomationPeer(Find<Button>(window, "settings.reminders.retention")).GetPattern(PatternInterface.Invoke)).Invoke();
             await Until(() => session.Current.LastSettingsPane == "expandedPanel"

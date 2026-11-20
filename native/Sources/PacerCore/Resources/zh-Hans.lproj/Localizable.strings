@@ -1586,3 +1586,17 @@
 "progress_guide.restart.confirm" = "%@ 有任务正在进行，重启会中断它。仍要重启？";
 "progress_guide.restart.confirm_action" = "仍要重启";
 "progress_guide.restart.failed" = "%@ 没有退出。请自己退出它，Pacer 会接着打开它。";
+"account.next_expires_in" = "最近一张 %@后过期";
+"account.known_next_expires_in" = "已知最近一张 %@后过期";
+"account.expiry_remaining" = "还剩 %@";
+"account.panel_resets" = "重置券 %ld";
+"account.panel_resets_expiring" = "重置券 %1$ld · %2$@过期";
+"warning.resetExpiry" = "重置券快到期";
+"warning.reset_expiry_help" = "%1$ld 张 Codex 重置券将在 %2$@后过期（%3$@）。";
+"notice.reset_expiry" = "Codex 重置券快过期了";
+"main.notify.reset_expiry" = "重置券快到期";
+"main.notify.reset_expiry_note" = "Codex 重置券在提前时间内到期时";
+"main.notify.reset_lead" = "重置券提前提醒";
+"main.notify.reset_lead_info" = "重置券在这么多天内到期时，折叠栏显示警告，并按上一行的设置发系统通知。";
+"main.panel.codex_resets" = "重置券";
+"main.panel.codex_resets_help" = "在 Codex 额度下方显示可用的重置券和最近一张的到期倒计时。";

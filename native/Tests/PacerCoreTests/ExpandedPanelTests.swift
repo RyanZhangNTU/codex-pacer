@@ -118,9 +118,13 @@ final class ExpandedPanelTests: XCTestCase {
         XCTAssertEqual(mixed.codexPeriods, .both); XCTAssertEqual(mixed.claudePeriods, .weekly)
         XCTAssertEqual(mixed.spendTasks, 2); XCTAssertTrue(mixed.weekLine); XCTAssertEqual(mixed.headerActions, [.pin])
         XCTAssertEqual(Options.decode(#"{"rowFields":[]}"#).rowFields, [], "An empty choice stays empty")
+        XCTAssertTrue(defaults.codexResets, "Codex's banked resets show under its quota by default")
+        XCTAssertFalse(Options.decode(#"{"codexResets":false}"#).codexResets)
+        XCTAssertTrue(Options.decode(#"{"codexResets":"no"}"#).codexResets, "A damaged choice falls back to its default")
 
         var chosen = defaults
         chosen.pageSize = 6; chosen.rowFields = [.model, .rate]; chosen.quotaArrange = .stack; chosen.headerActions = [.settings, .markRead]
+        chosen.codexResets = false
         XCTAssertEqual(Options.decode(chosen.json), chosen)
         XCTAssertTrue(chosen.json.contains(#""rowFields":["rate","model"]"#), "Sets save in a fixed order")
         XCTAssertTrue(chosen.json.contains(#""headerActions":["markRead","settings"]"#))

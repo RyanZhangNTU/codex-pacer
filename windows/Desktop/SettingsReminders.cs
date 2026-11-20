@@ -14,7 +14,8 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private readonly Dictionary<string, CheckBox> reminderKinds = new(), reminderFollows = new();
-    private StackPanel? reminderQuotaRows, reminderWalletRows, reminderCreditRows;
+    private StackPanel? reminderQuotaRows, reminderWalletRows, reminderCreditRows, reminderResetRows;
+    private TextBox? reminderResetDays;
     private readonly System.Collections.Generic.Dictionary<string, TextBlock> reminderCreditTitles = new();
     private readonly Dictionary<string, Border> reminderCreditCards = new();
     private readonly Dictionary<string, (TextBox Low, CheckBox Expiry, TextBox Days)> reminderCreditFields = new();
@@ -29,7 +30,7 @@ internal sealed partial class SettingsWindow
 
     private void ClearReminders()
     {
-        reminderKinds.Clear(); reminderFollows.Clear(); reminderQuotaRows = reminderWalletRows = reminderCreditRows = null; reminderFooter = null;
+        reminderKinds.Clear(); reminderFollows.Clear(); reminderQuotaRows = reminderWalletRows = reminderCreditRows = reminderResetRows = null; reminderResetDays = null; reminderFooter = null;
         reminderCreditTitles.Clear(); reminderCreditCards.Clear(); reminderCreditFields.Clear();
         reminderLow = reminderSpike = null; reminderAmountIssue = notificationIssue = null; notificationSwitch = null; reminderRetention = null;
         reminderLowValue = reminderSpikeValue = null; Array.Clear(reminderPendingAmount);
@@ -119,6 +120,11 @@ internal sealed partial class SettingsWindow
         reminderQuotaRows.Children.Add(SectionTitle(ui.Text("main.notify.group.quota")));
         reminderQuotaRows.Children.Add(Card(MatrixRow(ui.Text("warning.fiveHour"), BarCell("fiveHour", ui.Text("warning.fiveHour")), FollowsCell("fiveHour", ui.Text("warning.fiveHour")), ui.Text("main.notify.low_quota_note")),
             MatrixRow(ui.Text("warning.quotaDelay"), BarCell("quotaDelay", ui.Text("warning.quotaDelay")), NoneCell())));
+        // Codex's banked resets: the bar warning, the notification that follows it and how many days ahead count.
+        reminderResetRows = new StackPanel();
+        reminderResetRows.Children.Add(Card(MatrixRow(ui.Text("main.notify.reset_expiry"), BarCell("resetExpiry", ui.Text("main.notify.reset_expiry")),
+            FollowsCell("resetExpiry", ui.Text("main.notify.reset_expiry")), ui.Text("main.notify.reset_expiry_note")), ResetLeadRow()));
+        reminderQuotaRows.Children.Add(reminderResetRows);
         reminderQuotaRows.Children.Add(SectionTitle(ui.Text("main.pane.remote")));
         reminderQuotaRows.Children.Add(Card(MatrixRow(ui.Text("warning.ssh"), BarCell("ssh", ui.Text("warning.ssh")), NoneCell())));
         form.Children.Add(reminderQuotaRows);
@@ -223,6 +229,31 @@ internal sealed partial class SettingsWindow
         return InfoRow(ui.Text("credits.reminder.expiry_title"), row, ui.Text("credits.reminder.expiry_info"), id: "settings.reminders." + provider + ".expiry_row");
     }
 
+    /// How many days ahead a Codex banked reset counts as expiring, in the same field as credits' expiry.
+    private Grid ResetLeadRow()
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var days = new TextBox { Width = 44, MaxLength = 2, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center,
+            Style = (Style)FindResource("SettingsPathInput"), FontSize = 12 };
+        Identify(days, "settings.reminders.resetExpiryDays", ui.Text("main.notify.reset_lead"));
+        editors.Add(days); row.Children.Add(days);
+        var unit = Label(ui.Text("credits.reminder.days_within")); unit.Margin = new Thickness(6, 0, 0, 0);
+        unit.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); row.Children.Add(unit);
+        async Task Commit()
+        {
+            if (sourceClosed || activePane != "notifications") return;
+            if (!int.TryParse(days.Text.Trim(), out int value) || value is < 1 or > 30) { RefreshValues(); return; }
+            if (value == (session.Current.CodexResetExpiryDays ?? ResetExpiryDefaultDays)) return;
+            await Change(p => p with { CodexResetExpiryDays = value });
+        }
+        days.KeyDown += async (_, e) => { if (e.Key == Key.Enter && !composing) { e.Handled = true; await Commit(); } };
+        days.LostKeyboardFocus += async (_, _) => await Commit();
+        reminderResetDays = days;
+        return InfoRow(ui.Text("main.notify.reset_lead"), row, ui.Text("main.notify.reset_lead_info"), id: "settings.reminders.reset_lead");
+    }
+    /// Core's `ResetExpiryReminder.defaultLeadDays`, shown while no choice is saved.
+    private const int ResetExpiryDefaultDays = 3;
+
     private FrameworkElement ReminderAmount(bool low)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
@@ -273,6 +304,10 @@ internal sealed partial class SettingsWindow
         foreach (var pair in reminderKinds) { pair.Value.IsChecked = warnings?.Shown == true && preferences.WarningKinds.Contains(pair.Key); pair.Value.IsEnabled = enabled && connected && warnings != null; }
         reminderQuotaRows!.Visibility = Module("codex") || Module("claude") ? Visibility.Visible : Visibility.Collapsed;
         reminderWalletRows!.Visibility = Module("deepseek") ? Visibility.Visible : Visibility.Collapsed;
+        reminderResetRows!.Visibility = Module("codex") ? Visibility.Visible : Visibility.Collapsed;
+        if (!reminderResetDays!.IsKeyboardFocusWithin)
+            reminderResetDays.Text = (preferences.CodexResetExpiryDays ?? ResetExpiryDefaultDays).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        reminderResetDays.IsEnabled = enabled && connected;
         // The first snapshot, or a reconnect, can bring credit modules the page was built without.
         var creditIds = (snapshot?.Modules ?? []).Where(module => module.ReportsAccountCredits == true).Select(module => module.Provider).Order().ToArray();
         if (snapshot != null && !creditIds.SequenceEqual(reminderCreditTitles.Keys.Order()) && activePane == "notifications" && !reminderRebuildPending)
@@ -297,7 +332,7 @@ internal sealed partial class SettingsWindow
         if (reminderCreditRows != null) reminderCreditRows.Visibility = credits ? Visibility.Visible : Visibility.Collapsed;
         bool system = notifications?.DesiredEnabled ?? preferences.SystemNotifications;
         foreach (var pair in reminderFollows)
-            pair.Value.IsChecked = system && (pair.Key is not ("lowBalance" or "spendSpike" or "budget" or "lowCredits") || reminderKinds.TryGetValue(pair.Key, out var bar) && bar.IsChecked == true);
+            pair.Value.IsChecked = system && (pair.Key is not ("lowBalance" or "spendSpike" or "budget" or "lowCredits" or "resetExpiry") || reminderKinds.TryGetValue(pair.Key, out var bar) && bar.IsChecked == true);
         if (reminderLowValue != preferences.DeepSeekLowBalanceLine) { reminderLowValue = preferences.DeepSeekLowBalanceLine; reminderLow!.Text = DeepSeekBudgetText(reminderLowValue); }
         if (reminderSpikeValue != preferences.DeepSeekSpikeLimit) { reminderSpikeValue = preferences.DeepSeekSpikeLimit; reminderSpike!.Text = DeepSeekBudgetText(reminderSpikeValue); }
         reminderLow!.Tag = snapshot?.Wallet?.Reminders?.LowPlaceholder ?? ""; reminderSpike!.Tag = snapshot?.Wallet?.Reminders?.SpikePlaceholder ?? "";
