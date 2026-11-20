@@ -1600,3 +1600,9 @@
 "main.notify.reset_lead_info" = "重置券在这么多天内到期时，折叠栏显示警告，并按上一行的设置发系统通知。";
 "main.panel.codex_resets" = "重置券";
 "main.panel.codex_resets_help" = "在 Codex 额度下方显示可用的重置券和最近一张的到期倒计时。";
+"whats_new.banked_resets" = "Codex 重置券一目了然";
+"whats_new.banked_resets_detail" = "在历史页和 Codex 额度下方，查看还有几张重置券、最近一张多久后过期。快过期时 Pacer 会提醒你，提前几天可以在通知里设置。";
+"whats_new.return_top_center" = "从面板一键回到顶部居中";
+"whats_new.return_top_center_detail" = "常拖动灵动岛的话，可以在展开面板的标题栏加一个按钮，一键放回顶部居中。";
+"whats_new.claude_app_access" = "Claude 请求使用应用时提醒你";
+"whats_new.claude_app_access_detail" = "Claude Desktop 请求使用电脑上的应用时，Pacer 会提示这个任务在等你。";

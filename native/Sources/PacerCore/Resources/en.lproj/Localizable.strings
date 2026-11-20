@@ -1600,3 +1600,9 @@
 "main.notify.reset_lead_info" = "Resets expiring within this many days show the collapsed bar warning and, as set in the row above, a notification.";
 "main.panel.codex_resets" = "Banked resets";
 "main.panel.codex_resets_help" = "Shows the available banked resets and a countdown to the next expiry under the Codex quota.";
+"whats_new.banked_resets" = "Codex banked resets at a glance";
+"whats_new.banked_resets_detail" = "See how many resets you have and when the next one expires, in History and under Codex's quota. Pacer reminds you before one expires; choose how early in Notifications.";
+"whats_new.return_top_center" = "Return to Top Center button";
+"whats_new.return_top_center_detail" = "If you often move the island, add a button to the panel's header that puts it back at the top center.";
+"whats_new.claude_app_access" = "Reminders for Claude's app access requests";
+"whats_new.claude_app_access_detail" = "When Claude Desktop asks to use an app on your computer, Pacer shows that the task is waiting for you.";
