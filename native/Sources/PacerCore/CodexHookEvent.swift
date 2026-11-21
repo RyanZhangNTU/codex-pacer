@@ -161,6 +161,10 @@ public enum CodexHookSpool {
         return parts
     }
 
+    static func sameWindowsSpelling(_ first: URL, _ second: URL) -> Bool {
+        windowsComponents(first.path) != nil && folded(first.path) == folded(second.path)
+    }
+
     /// A name as NTFS compares it: each scalar through its single-scalar uppercase form.
     private static func folded(_ value: String) -> [Unicode.Scalar] {
         value.unicodeScalars.map { scalar in

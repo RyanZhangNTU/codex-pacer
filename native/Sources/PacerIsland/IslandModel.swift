@@ -473,6 +473,7 @@ final class IslandModel: ObservableObject {
     private var codexHookResult: CodexHookSetupResult?
     /// Setup passes run one at a time; each knows the home the previous one used.
     private var codexHookQueue = ProgressSetupQueue<CodexHookTarget>()
+    private static let codexHookHomeKey = "codexHookManagedHome"
     struct CodexHookTarget: Equatable, Sendable {
         let home: URL
         let executable: String
@@ -508,18 +509,31 @@ final class IslandModel: ObservableObject {
             await MacCodexHookSetup.apply(home: home, customExecutable: executable, enabled: enabled)
         }
         let task = Task { [weak self] in
-            let result = await Task.detached(priority: .utility) {
-                await ticket.waitForPrevious()
-                if let previous = ticket.previous, previous.home != target.home {
-                    _ = await setup(previous.home, previous.executable, false)
-                }
-                return await setup(target.home, target.executable, target.enabled)
-            }.value
-            guard let self, self.codexHookQueue.finish(ticket) else { return }
+            await ticket.waitForPrevious()
+            guard let self else { return }
+            let result = await self.applyCodexHooks(target, using: setup)
+            guard self.codexHookQueue.finish(ticket) else { return }
             self.codexHookResult = result
             await self.updateCodexHookStatus(force: true)
         }
         codexHookQueue.track(task)
+    }
+
+    private func applyCodexHooks(_ target: CodexHookTarget, using setup: CodexHookSetupCall) async -> CodexHookSetupResult {
+        if let previous = defaults.dictionary(forKey: Self.codexHookHomeKey) as? [String: String],
+           let path = previous["home"], path != target.home.path {
+            let removed = await setup(URL(fileURLWithPath: path, isDirectory: true), previous["executable"] ?? "", false)
+            guard removed.installed == false else { return removed }
+            defaults.removeObject(forKey: Self.codexHookHomeKey)
+        }
+        // Installation can write only part of the plugin before failing or quitting.
+        // Keep its home until Codex confirms removal, including across a restart.
+        if target.enabled {
+            defaults.set(["home": target.home.path, "executable": target.executable], forKey: Self.codexHookHomeKey)
+        }
+        let result = await setup(target.home, target.executable, target.enabled)
+        if !target.enabled, result.installed == false { defaults.removeObject(forKey: Self.codexHookHomeKey) }
+        return result
     }
 
     /// The user has to act in Codex before local Codex tasks can show.
@@ -1649,6 +1663,7 @@ final class IslandModel: ObservableObject {
     private var closeWork: DispatchWorkItem?
     private var rateExpiryWork: DispatchWorkItem?
     private var rateExpiryAt: Date?
+    private var codexRunningExpiry: Date?
     private var localActivityDirty = false
     private var localActivityNeedsDiscovery = false
     private(set) var watchedLogURLs: [URL] = []
@@ -2446,6 +2461,7 @@ final class IslandModel: ObservableObject {
         let agentStates = localSubagentStates(remoteActivities)
         launchOwnedWork(.init(.activity, provider: .codex)) { [weak self, reader] workTicket in
             let result = await reader.read(home: sourceHome, phaseAwareRate: true, metricsOnly: onlyMetrics, subagentStates: agentStates)
+            let expiry = await reader.nextRunningExpiry
             guard let self else { return }
             defer {
                 if generation == self.sourceGeneration {
@@ -2456,11 +2472,13 @@ final class IslandModel: ObservableObject {
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
             // A metrics read discovers too when a hook row names a new rollout, so
             // the watches follow what the reader follows, not the kind of read asked for.
-            if Set(result.watchURLs) != Set(self.watchedLogURLs) {
+            if !onlyMetrics || Set(result.watchURLs) != Set(self.watchedLogURLs) {
                 self.watchedLogURLs = result.watchURLs
                 self.logWatcher.update(result.watchURLs, interval: self.activityRefreshPolicy.interval)
             }
+            self.codexRunningExpiry = expiry
             self.receiveLocalUpdate(result.activities, requests: result.requests, excludedIDs: result.excludedIDs)
+            self.scheduleRateExpiry()
             self.refreshCodexHookStatusAfterRead()
             self.onStatusChange?()
         }
@@ -2816,6 +2834,7 @@ final class IslandModel: ObservableObject {
     }
 
     private func invalidateWork(invalidateSource: Bool = true) {
+        codexRunningExpiry = nil
         rateExpiryWork?.cancel(); rateExpiryWork = nil; rateExpiryAt = nil
         if invalidateSource { lifecycle.invalidateSources([.codex]) }
         codexQuotaCoordinator?.invalidateSource(); refreshTask?.cancel()
@@ -2859,7 +2878,8 @@ final class IslandModel: ObservableObject {
         clock?.tolerance = interval * 0.2
     }
     private func scheduleRateExpiry() {
-        let deadline = activityState.nextDisplayDeadline(at: now, retention: completedRetention, progressRingProviders: progressRingProviders)
+        let display = activityState.nextDisplayDeadline(at: now, retention: completedRetention, progressRingProviders: progressRingProviders)
+        let deadline = [display, codexRunningExpiry].compactMap { $0 }.min()
         guard deadline != rateExpiryAt else { return }
         rateExpiryWork?.cancel(); rateExpiryWork = nil; rateExpiryAt = nil
         guard !sleeping, !stopped, let deadline else { return }
@@ -2868,12 +2888,16 @@ final class IslandModel: ObservableObject {
             guard let self, !self.sleeping, !self.stopped else { return }
             self.rateExpiryWork = nil; self.rateExpiryAt = nil
             self.redrawClock()
+            if let expiry = self.codexRunningExpiry, expiry <= self.now {
+                self.codexRunningExpiry = nil
+                self.refreshActivity(metricsOnly: true)
+            }
             self.pruneCompletions()
             self.scheduleRateExpiry()
             self.onStatusChange?()
         }
         rateExpiryWork = work
-        // One UI-only wake-up at the earliest expiry; no quota, log or SSH work.
+        // Display deadlines redraw only. A quiet Codex turn gets one read at its own deadline.
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow) + 0.01, execute: work)
     }
     private func tick() {

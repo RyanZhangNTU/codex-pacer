@@ -39,7 +39,9 @@ public actor LocalActivityReader {
               let size = (attributes[.size] as? NSNumber)?.uint64Value else { return nil }
         return (String((attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0), size)
     }
-    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll(); hooks.reset() }
+    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll(); hooks.reset(); nextRunningExpiry = nil }
+    /// The next time a running cursor needs a read even if its file stays quiet.
+    public private(set) var nextRunningExpiry: Date?
     /// The newest hook row, for telling a silent hook from an idle Codex.
     public var lastHookRow: Date? { hooks.lastRowAt }
 
@@ -68,7 +70,7 @@ public actor LocalActivityReader {
         let manager = FileManager.default
         // A hook row can name a rollout no cursor follows yet; the spool's append is the only
         // event for it, so a metrics-only read that saw new rows discovers as well.
-        let hooksChanged = hooks.read(home: home, now: now) { self.signature($0) }
+        let hooksChanged = hooks.read(home: home, now: now, retaining: recentlyActiveHookThreads(at: now)) { self.signature($0) }
         let metricsOnly = metricsOnly && !hooksChanged
         hooks.locateChildren(home: home, now: now) { folder in
             (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
@@ -230,10 +232,15 @@ public actor LocalActivityReader {
         // A turn runs while its log moves or its hook holds it open; a Codex that
         // crashed does neither. Every read checks, including a file that did not
         // change, so a turn already followed cannot run on forever.
-        for (file, cursor) in cursors where [.running, .waitingForInput].contains(cursor.activity.phase)
-            && now.timeIntervalSince(cursor.activity.lastObserved ?? .distantPast) > Self.quietLimit
-            && !hookHoldsOpen(cursor.activity, now: now) {
-            cursors[file]?.activity.markUnconfirmed()
+        nextRunningExpiry = nil
+        for (file, cursor) in cursors {
+            let activity = closedBySessionEnd(projected(cursor))
+            guard [.running, .waitingForInput].contains(activity.phase) else { continue }
+            let logExpiry = (activity.lastObserved ?? .distantPast).addingTimeInterval(Self.quietLimit)
+            let hookExpiry = openHookDate(for: activity)?.addingTimeInterval(Self.hookOpenLimit) ?? .distantPast
+            let expiry = max(logExpiry, hookExpiry)
+            if expiry <= now { cursors[file]?.activity.markUnconfirmed() }
+            else { nextRunningExpiry = min(nextRunningExpiry ?? expiry, expiry) }
         }
         // Parent hints affect the published view and cursor selection, never
         // the log baseline. Withdrawing a running hint must work at unchanged
@@ -259,16 +266,25 @@ public actor LocalActivityReader {
     /// How long a running turn's log may stay quiet before only its hook can keep it running.
     static let quietLimit: TimeInterval = 15 * 60
 
-    private func hookHoldsOpen(_ activity: SessionActivity, now: Date) -> Bool {
-        guard let thread = activity.threadID else { return false }
+    private func openHookDate(for activity: SessionActivity) -> Date? {
+        guard let thread = activity.threadID else { return nil }
         if let state = hooks.threads[thread] {
-            guard let turn = activity.turnID else { return false }
-            return state.openTurn == turn && now.timeIntervalSince(state.lastAt) < Self.hookOpenLimit
+            guard let turn = activity.turnID, state.openTurn == turn else { return nil }
+            return state.lastAt
         }
         // A subagent runs within its parent's turn until SubagentStop.
         guard let child = hooks.children[thread], child.stoppedAt == nil,
-              let parent = hooks.threads[child.parent], parent.openTurn != nil else { return false }
-        return now.timeIntervalSince(max(parent.lastAt, child.startedAt)) < Self.hookOpenLimit
+              let parent = hooks.threads[child.parent], parent.openTurn != nil else { return nil }
+        return max(parent.lastAt, child.startedAt)
+    }
+
+    private func recentlyActiveHookThreads(at now: Date) -> Set<String> {
+        Set(cursors.values.compactMap { cursor in
+            let value = cursor.activity
+            guard [.running, .waitingForInput].contains(value.phase), openHookDate(for: value) != nil,
+                  now.timeIntervalSince(value.lastObserved ?? .distantPast) < Self.quietLimit else { return nil }
+            return value.threadID
+        })
     }
 
     /// What `CodexHookStatus.evaluate` needs to tell a silent hook from a long turn:
@@ -277,7 +293,8 @@ public actor LocalActivityReader {
     /// its own and its subagents' rollouts with no other hook event; a turn Codex ran
     /// without the hooks writes another rollout, or one whose turn had ended.
     public func hookEvidence(home: URL, now: Date = Date()) async -> (lastHookEvent: Date?, lastCodexTurn: Date?) {
-        let explained = hooks.openThreads(now: now, limit: Self.hookOpenLimit), last = hooks.lastRowAt
+        let explained = hooks.openThreads(now: now, limit: Self.hookOpenLimit).union(recentlyActiveHookThreads(at: now))
+        let last = hooks.lastRowAt
         let turn = await Task.detached(priority: .utility) {
             CodexHookSpool.latestRollout(home: home, now: now, excludingThreads: explained)
         }.value

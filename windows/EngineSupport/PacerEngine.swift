@@ -2040,7 +2040,7 @@ actor EngineRuntime {
     /// written between its read and this check is missed.
     private func codexLogsGrew() -> Bool {
         var sizes: [URL: UInt64] = [:], grew = false
-        for file in watchedCodexLogURLs where file.pathExtension == "jsonl" {
+        for file in watchedCodexLogURLs where file.pathExtension.lowercased() == "jsonl" {
             guard sizes.count < 32, let size = WindowsFileSystem().metadata(file)?.size else { continue }
             sizes[file] = size
             if codexLogSizes[file] != size { grew = true }

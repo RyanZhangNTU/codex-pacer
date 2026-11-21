@@ -77,13 +77,29 @@ final class WindowsCodexHookTests: XCTestCase {
         XCTAssertTrue(native.hasPrefix(homePath + "\\"))
         let tail = String(native.dropFirst(homePath.count))
         for spelling in [native, #"\\?\"# + native, homePath.uppercased() + tail, homePath.lowercased() + tail,
-                         native.replacingOccurrences(of: "\\", with: "/")] {
+                         native.replacingOccurrences(of: "\\", with: "/"), homePath + tail.uppercased()] {
             try? FileManager.default.removeItem(at: CodexHookSpool.current(home: home))
             try CodexHookFixture.announce(transcript: spelling, thread: thread, home: home, turn: "t1", at: start)
             let result = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5))
             XCTAssertEqual(result.activities.map(\.threadID), [thread], spelling)
             XCTAssertEqual(result.activities.first?.phase, .running, spelling)
         }
+
+        let question = ["type": "function_call", "name": "request_user_input_async", "call_id": "q1", "arguments": #"{"questions":[{"title":"Fixture"}]}"#]
+        let accepted = ["type": "function_call_output", "call_id": "q1", "output": #"{"accepted":true}"#]
+        for payload in [question, accepted] {
+            data += try JSONSerialization.data(withJSONObject: ["type": "response_item", "timestamp": stamp, "payload": payload]) + Data([10])
+        }
+        try data.write(to: file)
+        let reader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
+        let before = await reader.read(home: home, now: start.addingTimeInterval(5))
+        XCTAssertEqual(before.requests.map(\.kind), [.input])
+        try CodexHookFixture.announce(transcript: native, thread: thread, home: home, event: "PermissionRequest",
+                                      turn: "t1", at: start.addingTimeInterval(6))
+        let reread = await reader.read(home: home, now: start.addingTimeInterval(7))
+        XCTAssertEqual(reread.requests.map(\.id), before.requests.map(\.id))
+        XCTAssertEqual(reread.watchURLs.filter { $0.lastPathComponent.lowercased() == file.lastPathComponent.lowercased() }.count, 1,
+                       "A case change between events must reuse the cursor and its pending requests")
 
         let sibling = WindowsCodexHookLauncher.windowsPath(home.deletingLastPathComponent().appendingPathComponent(".codex-other", isDirectory: true))
         for spelling in [sibling + tail, #"\\?\"# + sibling + tail, homePath + "\\sessions\\..\\..\\outside" + tail,

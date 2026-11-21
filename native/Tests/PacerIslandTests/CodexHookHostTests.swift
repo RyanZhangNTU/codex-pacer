@@ -75,10 +75,10 @@ final class CodexHookHostTests: XCTestCase {
     }
 
     /// Appends one UserPromptSubmit row naming `rollout`, as Pacer's hook does.
-    private func announce(_ rollout: URL, thread: String, home: URL, at date: Date) throws {
+    private func announce(_ rollout: URL, thread: String, home: URL, at date: Date, event: String = "UserPromptSubmit") throws {
         let spool = CodexHookSpool.current(home: home)
         try FileManager.default.createDirectory(at: spool.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let row: [String: Any] = ["v": 1, "hook": 1, "at": date.timeIntervalSince1970, "event": "UserPromptSubmit", "thread": thread,
+        let row: [String: Any] = ["v": 1, "hook": 1, "at": date.timeIntervalSince1970, "event": event, "thread": thread,
                                   "turn": "turn-1", "agent": NSNull(), "agentType": NSNull(), "transcript": rollout.path,
                                   "agentTranscript": NSNull(), "approval": NSNull(), "reason": NSNull()]
         let data = try JSONSerialization.data(withJSONObject: row) + Data([10])
@@ -121,6 +121,47 @@ final class CodexHookHostTests: XCTestCase {
                           at: start.addingTimeInterval(3)), to: older)
         let asked = try await TestWait.until { model.pendingInputRequests.contains { $0.threadID == self.resumed } }
         XCTAssertTrue(asked, "The question shows from the rollout's own file event")
+    }
+
+    func testSpoolAppendsStillReachTheModelAfterSleepAndRotation() async throws {
+        let home = try temporaryHome("codex-rewatch"), model = try model(home: home)
+        let start = Date().addingTimeInterval(-60)
+        let original = try rollout(first, day: "2026/11/21", home: home, at: start)
+        let other = try rollout(resumed, day: "2026/11/14", home: home, at: start)
+        try announce(original, thread: first, home: home, at: start)
+        model.refreshActivity()
+        let running = try await TestWait.until { model.activities.contains { $0.threadID == self.first && $0.phase == .running } }
+        XCTAssertTrue(running)
+
+        await model.prepareForSleep()
+        // Only the contents change during sleep. The wake read returns the same URLs.
+        try append(line("event_msg", ["type": "task_complete", "turn_id": "turn-1"], at: Date()), to: original)
+        model.resumeAfterSleep()
+        let woke = try await TestWait.until { model.pendingCompletions.contains { $0.threadID == self.first } }
+        XCTAssertTrue(woke)
+        try announce(other, thread: resumed, home: home, at: start.addingTimeInterval(2))
+        let resumedTurn = try await TestWait.until { model.activities.contains { $0.threadID == self.resumed && $0.phase == .running } }
+        XCTAssertTrue(resumedTurn, "An append to the existing spool wakes the collapsed panel after sleep")
+
+        try FileManager.default.moveItem(at: CodexHookSpool.current(home: home), to: CodexHookSpool.previous(home: home))
+        try announce(other, thread: resumed, home: home, at: start.addingTimeInterval(3), event: "SessionEnd")
+        let closed = try await TestWait.until { !model.activities.contains { $0.threadID == self.resumed && $0.phase == .running } }
+        XCTAssertTrue(closed)
+        try announce(other, thread: resumed, home: home, at: start.addingTimeInterval(4))
+        let reopened = try await TestWait.until { model.activities.contains { $0.threadID == self.resumed && $0.phase == .running } }
+        XCTAssertTrue(reopened, "Only the replacement spool receives this append")
+    }
+
+    func testQuietTurnExpiresWithoutAnotherFileEvent() async throws {
+        let home = try temporaryHome("codex-expiry"), model = try model(home: home)
+        let start = Date().addingTimeInterval(-3 * 3600 + 5)
+        let file = try rollout(first, day: "2026/11/21", home: home, at: start)
+        try announce(file, thread: first, home: home, at: start)
+        model.refreshActivity()
+        let appeared = try await TestWait.until { model.activities.contains { $0.threadID == self.first && $0.phase == .running } }
+        XCTAssertTrue(appeared)
+        let expired = try await TestWait.until { !model.activities.contains { $0.threadID == self.first && $0.phase == .running } }
+        XCTAssertTrue(expired, "The deadline alone must release the running task")
     }
 
     func testRouteRefreshesKeepOneDotPollSoATurnThatEndsBetweenPollsCompletesOnce() async throws {
@@ -229,6 +270,36 @@ final class CodexHookHostTests: XCTestCase {
         model.syncCodexHooks(force: true)
         try await TestWait.until { installer.log.count == 8 }
         XCTAssertEqual(installer.log.last, "+d", "Retry runs the same target again")
+    }
+
+    func testRetryRemovesThePreviousHomeAfterAnUninstallTimeout() async throws {
+        actor Installer {
+            var calls: [URL] = []
+            var failedOnce = false
+            func apply(_ home: URL, _ enabled: Bool) -> CodexHookSetupResult {
+                calls.append(home.standardizedFileURL)
+                if !enabled, !failedOnce {
+                    failedOnce = true
+                    return .init(supportsHooks: nil, installed: nil, trust: nil)
+                }
+                return .init(supportsHooks: true, installed: enabled, trust: enabled ? Array(repeating: "trusted", count: 7) : nil)
+            }
+        }
+        let first = try temporaryHome("codex-uninstall"), second = try temporaryHome("codex-destination")
+        let model = try model(home: first), installer = Installer()
+        model.codexHookSetupOverride = { home, _, enabled in await installer.apply(home, enabled) }
+        model.syncCodexHooks()
+        let ready = try await TestWait.until { model.codexHookStatus == .running }
+        XCTAssertTrue(ready)
+        model.defaults.set(second.path, forKey: "codexHome")
+        model.syncCodexHooks()
+        let failed = try await TestWait.until { model.codexHookStatus == .installFailed }
+        XCTAssertTrue(failed)
+        model.syncCodexHooks(force: true)
+        let recovered = try await TestWait.until { model.codexHookStatus == .running }
+        XCTAssertTrue(recovered)
+        let calls = await installer.calls.map(\.path)
+        XCTAssertEqual(calls, [first.path, first.path, first.path, second.path])
     }
 
     func testAfterApprovalTheStatusFollowsActivityAndASilentHookNoticeClearsItself() async throws {

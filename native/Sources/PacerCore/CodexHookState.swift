@@ -39,7 +39,7 @@ struct CodexHookState: Sendable {
 
     /// Reads what was appended since the last call. Returns whether anything changed.
     @discardableResult
-    mutating func read(home: URL, now: Date, signature: (URL) -> (identity: String, size: UInt64)?) -> Bool {
+    mutating func read(home: URL, now: Date, retaining active: Set<String> = [], signature: (URL) -> (identity: String, size: UInt64)?) -> Bool {
         var changed = false
         // The previous file first: after a rotation its tail precedes the new current file.
         for (key, url) in [("previous", CodexHookSpool.previous(home: home)), ("current", CodexHookSpool.current(home: home))] {
@@ -64,26 +64,35 @@ struct CodexHookState: Sendable {
                         let line = current.fragment.prefix(upTo: end)
                         let partial = line.first == 0
                         current.fragment.removeSubrange(...end)
-                        if !partial, let event = CodexHookEvent.decode(Data(line)) { changed = apply(event, home: home, now: now) || changed }
+                        if !partial, let event = CodexHookEvent.decode(Data(line)) {
+                            changed = apply(event, home: home, now: now, identity: { signature($0)?.identity }) || changed
+                        }
                     }
                     if current.fragment.count > 64 * 1024 { current.fragment.removeAll() }
                 }
             }
             cursors[key] = current
         }
-        changed = prune(now: now) || changed
+        changed = prune(now: now, retaining: active) || changed
         return changed
     }
 
     /// Applies one row; rows arrive in order within a file and at most seconds apart across a rotation.
     @discardableResult
-    mutating func apply(_ event: CodexHookEvent, home: URL, now: Date) -> Bool {
+    private mutating func apply(_ event: CodexHookEvent, home: URL, now: Date, identity: (URL) -> String?) -> Bool {
         guard now.timeIntervalSince(event.at) < Self.retention, event.at <= now.addingTimeInterval(300) else { return false }
         lastRowAt = max(lastRowAt ?? event.at, event.at)
         let before = threads[event.thread]
         var thread = before ?? Thread(transcript: nil, lastAt: event.at)
         thread.lastAt = max(thread.lastAt, event.at)
-        if let transcript = CodexHookSpool.transcript(event.transcript, home: home) { thread.transcript = transcript }
+        func transcript(_ path: String?, following previous: URL?) -> URL? {
+            guard let url = CodexHookSpool.transcript(path, home: home) else { return previous }
+            // Keep the existing cursor when Windows returns another spelling of the same file.
+            if let previous, previous != url, CodexHookSpool.sameWindowsSpelling(previous, url),
+               let id = identity(previous), id == identity(url) { return previous }
+            return url
+        }
+        thread.transcript = transcript(event.transcript, following: thread.transcript ?? children[event.thread]?.transcript)
         switch event.kind {
         case .userPromptSubmit:
             thread.openTurn = event.turn; thread.approval = nil; thread.endedAt = nil
@@ -97,7 +106,7 @@ struct CodexHookState: Sendable {
         case .subagentStart, .subagentStop:
             guard let agent = event.agent else { break }
             var child = children[agent] ?? Child(parent: event.thread, transcript: nil, startedAt: event.at)
-            if let transcript = CodexHookSpool.transcript(event.agentTranscript, home: home) { child.transcript = transcript }
+            child.transcript = transcript(event.agentTranscript, following: child.transcript ?? threads[agent]?.transcript)
             if event.kind == .subagentStop { child.stoppedAt = event.at } else { child.stoppedAt = nil; child.startedAt = event.at }
             let changed = children[agent] != child
             children[agent] = child
@@ -153,9 +162,10 @@ struct CodexHookState: Sendable {
     }
 
     @discardableResult
-    private mutating func prune(now: Date) -> Bool {
+    private mutating func prune(now: Date, retaining active: Set<String>) -> Bool {
         let before = threads.count + children.count
-        threads = threads.filter { now.timeIntervalSince($0.value.lastAt) < Self.retention }
+        let keptActive = active.union(active.compactMap { children[$0]?.parent })
+        threads = threads.filter { now.timeIntervalSince($0.value.lastAt) < Self.retention || keptActive.contains($0.key) }
         if threads.count > Self.maximumThreads {
             let kept = threads.sorted { $0.value.lastAt > $1.value.lastAt }.prefix(Self.maximumThreads)
             threads = Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })

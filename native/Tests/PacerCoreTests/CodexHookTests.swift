@@ -345,17 +345,18 @@ final class CodexHookReaderTests: XCTestCase {
                                             lastCodexTurn: evidence.lastCodexTurn, trustedAt: trustedAt, now: now)
         }
 
-        let home = temporaryHome("pacer-hook-silence-"), start = now.addingTimeInterval(-6 * 60)
+        let home = temporaryHome("pacer-hook-silence-"), start = now.addingTimeInterval(-4 * 3600)
         let long = "019a0000-0000-7000-8000-000000000041", file = try rollout(home, long, day: day, start: start)
         try CodexHookFixture.announce([file], home: home, turn: "t1", at: start)
-        for second in stride(from: 30, through: 350, by: 40) {
+        let reader = LocalActivityReader()
+        _ = await reader.read(home: home, now: start)
+        for second in stride(from: 600, through: 4 * 3600, by: 600) {
             try append(file, record("event_msg", ["type": "token_count", "turn_id": "t1"], at: start.addingTimeInterval(TimeInterval(second))))
+            _ = await reader.read(home: home, now: start.addingTimeInterval(TimeInterval(second)))
         }
         try touch(file)
-        let reader = LocalActivityReader()
-        _ = await reader.read(home: home, now: now)
         let longTurn = await status(reader, home)
-        XCTAssertEqual(longTurn, .running, "Six minutes of the open turn's own output")
+        XCTAssertEqual(longTurn, .running, "The same turn still writes after its quiet-hook allowance expires")
 
         let other = try rollout(home, "019a0000-0000-7000-8000-000000000042", day: day, start: now.addingTimeInterval(-20))
         try touch(other)
