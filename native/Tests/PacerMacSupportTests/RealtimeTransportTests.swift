@@ -156,7 +156,10 @@ final class RealtimeTransportTests: XCTestCase {
         let capture = Capture(), initial = expectation(description: "initial ordinary batch"), expanded = expectation(description: "pending batch on expansion")
         let queued = expectation(description: "pending event received after collapsed settings"), checked = expectation(description: "logical cadence evaluated")
         stdout.fileHandleForReading.readabilityHandler = { handle in
-            let names = capture.append(handle.availableData)
+            let data = handle.availableData
+            // At EOF the handler fires again at once with no data; stop it rather than spin.
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            let names = capture.append(data)
             if names.contains("cadence-initial") { initial.fulfill() }
             if names.contains("cadence-pending") { expanded.fulfill() }
             if names.contains("testCadenceQueued") { queued.fulfill() }
@@ -178,7 +181,12 @@ final class RealtimeTransportTests: XCTestCase {
         XCTAssertFalse(capture.has("cadence-pending"), "Collapsed batches must not be clamped to the old one-second limit")
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":1,\"flushPending\":true}\n".utf8))
         await fulfillment(of: [expanded], timeout: TestWait.limit)
-        try stdin.fileHandleForWriting.close(); child.waitUntilExit()
+        try stdin.fileHandleForWriting.close()
+        // Bounded, so a helper that does not exit fails the test instead of hanging the suite.
+        let deadline = Date().addingTimeInterval(TestWait.limit)
+        while child.isRunning, Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        if child.isRunning { child.terminate(); XCTFail("The helper did not exit after its input closed") }
+        child.waitUntilExit()
         stdout.fileHandleForReading.readabilityHandler = nil
         _ = capture.append(stdout.fileHandleForReading.readDataToEndOfFile())
         XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
