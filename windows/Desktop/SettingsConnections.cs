@@ -15,7 +15,7 @@ internal sealed partial class SettingsWindow
     private CheckBox? connectionsSSH, connectionsDurable, connectionsWSL;
     private StackPanel? connectionSources, connectionHosts, connectionWslHosts, connectionOthers, connectionRetryRow, codexHooksCard;
     private TextBlock? connectionTitle;
-    private Button? connectionRetry, wslRefresh, codexHooksRetry;
+    private Button? connectionRetry, wslRefresh, codexHooksRetry, codexHooksOpen;
     private Ellipse? codexHooksDot;
     private TextBlock? codexHooksDetail, wslDetail;
     private bool wslInspectionRequested;
@@ -29,7 +29,7 @@ internal sealed partial class SettingsWindow
         connectionSources = connectionHosts = connectionWslHosts = codexHooksCard = null;
         connectionTitle = null;
         connectionRetry = null; connectionContent = null; connectionOthers = null; connectionRetryRow = null;
-        wslRefresh = codexHooksRetry = null; codexHooksDot = null;
+        wslRefresh = codexHooksRetry = codexHooksOpen = null; codexHooksDot = null;
         codexHooksDetail = wslDetail = null; wslInspectionRequested = false;
         connectionActions.Clear();
     }
@@ -51,8 +51,13 @@ internal sealed partial class SettingsWindow
         codexHooksDot = new Ellipse { Width = 7, Height = 7, VerticalAlignment = VerticalAlignment.Center };
         codexHooksRetry = ConnectionRefreshButton("connections.retry", "settings.connections.codex_hooks.retry", "retryCodexHooks");
         codexHooksRetry.Margin = new Thickness(8, 0, 0, 0);
+        // Allowing happens in Codex Desktop, which opens on its settings with the guide beside it.
+        string open = ui.Text("codex.hooks.open");
+        codexHooksOpen = new Button { Content = open, Style = (Style)FindResource("SettingsProminentButton"), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        Identify(codexHooksOpen, "settings.connections.codex_hooks.open", open); editors.Add(codexHooksOpen);
+        codexHooksOpen.Click += (_, _) => OpenCodexHooksGuide();
         var hooksTrailing = new StackPanel { Orientation = Orientation.Horizontal };
-        hooksTrailing.Children.Add(codexHooksDot); hooksTrailing.Children.Add(codexHooksRetry);
+        hooksTrailing.Children.Add(codexHooksDot); hooksTrailing.Children.Add(codexHooksOpen); hooksTrailing.Children.Add(codexHooksRetry);
         codexHooksCard = new StackPanel();
         codexHooksCard.Children.Add(SectionTitle("Codex", 0));
         codexHooksCard.Children.Add(Card(InfoRow(ui.Text("codex.hooks.title"), hooksTrailing, ui.Text("codex.hooks.info"), codexHooksDetail, "settings.connections.codex_hooks")));
@@ -108,8 +113,21 @@ internal sealed partial class SettingsWindow
         if (tone == "warning") codexHooksDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
         else codexHooksDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         codexHooksDot!.SetResourceReference(Shape.FillProperty, Tone(tone));
-        codexHooksRetry!.Visibility = retry ? Visibility.Visible : Visibility.Collapsed;
+        bool opens = codex && hooks?.State == "needsApproval" && hooks.OpensSettings == true;
+        codexHooksOpen!.Visibility = opens ? Visibility.Visible : Visibility.Collapsed;
+        codexHooksOpen.IsEnabled = available && opens;
+        codexHooksRetry!.Visibility = retry && !opens ? Visibility.Visible : Visibility.Collapsed;
         codexHooksRetry.IsEnabled = available && codex && retry;
+    }
+    /// Opens Codex's settings with the floating guide beside it on Settings' screen;
+    /// a Codex that cannot open them takes the guide away again.
+    private void OpenCodexHooksGuide()
+    {
+        if (demo || sourceClosed || engine is not { IsConnectionClosed: false } client) return;
+        var area = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
+        CodexHooksGuideFloat.Open(client, ui, Resources, area);
+        try { using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("codex://settings") { UseShellExecute = true }); }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { CodexHooksGuideFloat.Current?.Close(); }
     }
     /// Hooks the user still has to allow, or that stopped running, count as one Remote problem.
     internal static bool CodexHooksNeedUser(EngineSnapshot? snapshot) => snapshot?.CodexHooks?.State is "needsApproval" or "notRunning";

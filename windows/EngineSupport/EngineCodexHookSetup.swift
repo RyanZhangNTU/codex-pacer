@@ -7,6 +7,8 @@ struct EngineCodexHooks: Codable, Equatable, Sendable {
     let state: String
     /// For `needsApproval`: how many of Pacer's hooks the user still has to allow in Codex.
     var pending: Int?
+    /// For `needsApproval`: Codex Desktop is installed to open its settings (`codex://settings`).
+    var opensSettings: Bool?
 
     static let settingUp = EngineCodexHooks(state: "settingUp")
     init(state: String, pending: Int? = nil) { self.state = state; self.pending = pending }
@@ -33,6 +35,8 @@ struct EngineCodexHookServices: Sendable {
     /// Marks the one notice asking to allow Pacer's hooks in Codex as sent; nil sends none.
     /// The Mac keeps the same fact in its `codexHooksApprovalNotified` preference.
     var noticeMarker: URL? = nil
+    /// Whether Codex Desktop is installed, so Settings can open its settings with the guide.
+    var opensSettings: @Sendable () -> Bool = { false }
 
     static func live(runtimeRoot: URL) -> Self {
         Self(apply: { home, executable, enabled in
@@ -55,7 +59,8 @@ struct EngineCodexHookServices: Sendable {
             await client.shutdown()
             return trust
         }, noticeMarker: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CodexPacer/Notifications/codex-hooks-approval-v1"))
+            .appendingPathComponent("CodexPacer/Notifications/codex-hooks-approval-v1"),
+        opensSettings: { !WindowsCodexExecutableDiscovery.packageLocations().isEmpty })
     }
 }
 

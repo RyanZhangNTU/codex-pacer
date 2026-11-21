@@ -156,7 +156,11 @@ actor EngineRuntime {
     private var codexHooksEnabled = false
     /// The last setup pass; nil while one runs or Codex is not managed.
     private var codexHookResult: CodexHookSetupResult?
-    private var codexHookTrustCheck: Date?
+    /// Codex Desktop is there to open its settings, where the user allows the hooks.
+    private var codexHooksOpenSettings = false
+    private var codexTrustWatch: CodexHookTrustWatch?
+    /// The hooks last waited for the user; when Pacer then saw them allowed, earlier turns ran without them.
+    private var codexHooksAwaitingApproval = false, codexHooksTrustedAt: Date?
     /// The newest hook row and the newest rollout change, read at most once a minute.
     private var codexHookActivity: (hook: Date?, turn: Date?, checked: Date?) = (nil, nil, nil)
     private var codexHookActivityRequest: UUID?
@@ -1524,21 +1528,25 @@ actor EngineRuntime {
         guard force || codexHookHome != home || codexHookExecutable != executable || codexHooksEnabled != active else { return }
         codexHookTask?.cancel()
         let previous = codexHooksEnabled && codexHookHome != home ? codexHookHome : nil
+        if codexHookHome != home { codexHooksAwaitingApproval = false; codexHooksTrustedAt = nil }
         codexHookHome = home; codexHookExecutable = executable; codexHooksEnabled = active
         let request = UUID(); codexHookRequest = request
-        codexHookResult = nil; codexHookTrustCheck = nil
+        codexHookResult = nil
         codexHookActivity = (nil, nil, nil); codexHookActivityRequest = nil
+        watchCodexHookTrust(false)
         codexHookTask = Task { [weak self] in
             if let previous { _ = await services.apply(previous, executable, false) }
             let result = await services.apply(home, executable, active)
+            let opens = active && services.opensSettings()
             guard !Task.isCancelled else { return }
-            await self?.receiveCodexHookSetup(result, request: request)
+            await self?.receiveCodexHookSetup(result, opensSettings: opens, request: request)
         }
     }
-    private func receiveCodexHookSetup(_ result: CodexHookSetupResult, request: UUID) {
+    private func receiveCodexHookSetup(_ result: CodexHookSetupResult, opensSettings: Bool, request: UUID) {
         guard codexHookRequest == request else { return }
-        codexHookTask = nil; codexHookResult = result; codexHookTrustCheck = now()
-        if initialized { publish(notices: codexHooksNotice()) }
+        codexHookTask = nil; codexHookResult = result; codexHooksOpenSettings = opensSettings
+        let notices = updateCodexHookState()
+        if initialized { publish(notices: notices) }
     }
     /// Codex ran turns while the spool stayed silent: hooks stopped running.
     /// Only the reader's last row and rollout folder dates are read.
@@ -1558,7 +1566,26 @@ actor EngineRuntime {
         codexHookActivityRequest = nil
         let before = codexHookStatus
         codexHookActivity.hook = hook; codexHookActivity.turn = turn
-        if initialized, codexHookStatus != before { publish(notices: []) }
+        let notices = updateCodexHookState()
+        if initialized, codexHookStatus != before || !notices.isEmpty { publish(notices: notices) }
+    }
+    /// After the setup result, the trust or the activity changes: notes when the
+    /// user allowed the hooks, sends the one approval notice, and follows the
+    /// trust while it waits for the user.
+    private func updateCodexHookState() -> [IslandNotice] {
+        var notices: [IslandNotice] = []
+        switch codexHookStatus {
+        case .needsApproval?:
+            codexHooksAwaitingApproval = true
+            notices = codexHooksNotice()
+        case .running?, .notRunning?:
+            // Just allowed: the turns so far ran without the hooks, so their silence says nothing.
+            if codexHooksAwaitingApproval { codexHooksAwaitingApproval = false; codexHooksTrustedAt = now() }
+        case nil: break
+        default: codexHooksAwaitingApproval = false
+        }
+        if case .needsApproval? = codexHookStatus { watchCodexHookTrust(true) } else { watchCodexHookTrust(false) }
+        return notices
     }
     /// The one notice asking to allow Pacer's hooks in Codex, the first time approval is needed.
     private func codexHooksNotice() -> [IslandNotice] {
@@ -1579,25 +1606,53 @@ actor EngineRuntime {
         default: return false
         }
     }
-    /// While the user still has to allow Pacer's hooks in Codex, their trust is
-    /// read again at most once a minute; nothing is polled once they run.
-    private func refreshCodexHookTrust() {
-        guard let services = codexHookServices, codexHooksEnabled, codexHookTask == nil, let result = codexHookResult,
-              let home = codexHookHome, let executable = codexHookExecutable, let request = codexHookRequest,
-              case .needsApproval = codexHookStatus, now().timeIntervalSince(codexHookTrustCheck ?? .distantPast) >= 60 else { return }
-        codexHookTrustCheck = now()
-        codexHookTask = Task { [weak self] in
-            let trust = await services.trust(home, executable)
-            guard !Task.isCancelled else { return }
-            await self?.receiveCodexHookSetup(.init(supportsHooks: result.supportsHooks, installed: result.installed, trust: trust ?? result.trust), request: request)
+    private static let codexTrustKey = ApplicationWorkRegistry.Key(.setup, provider: .codex, identifier: "hooks-trust")
+    /// While the hooks wait for the user, a change to Codex's config is the cue
+    /// to ask Codex for their trust (`CodexHookTrustWatch`); only the trust call
+    /// runs, and the plugin stays as it is.
+    private func watchCodexHookTrust(_ on: Bool) {
+        guard on, let services = codexHookServices, let home = codexHookHome, let executable = codexHookExecutable else {
+            ownedWork.cancel(Self.codexTrustKey); codexTrustWatch = nil; return
         }
+        guard ownedWork.task(Self.codexTrustKey) == nil else { return }
+        let file = CodexHookTrustWatch.trustFile(home: home)
+        codexTrustWatch = CodexHookTrustWatch(stamp: Self.modified(file), now: now())
+        let owner = ownedWork.begin(Self.codexTrustKey, version: generation)
+        let task = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(CodexHookTrustWatch.interval))
+                guard let engine = self else { return }
+                guard !Task.isCancelled, await engine.shouldCheckCodexHookTrust(file: file, owner: owner) else { continue }
+                let trust = await services.trust(home, executable)
+                await engine.receiveCodexHookTrust(trust, home: home, owner: owner)
+            }
+        }
+        ownedWork.attach(task, to: owner)
+    }
+    private func shouldCheckCodexHookTrust(file: URL, owner: ApplicationWorkRegistry.Ticket) -> Bool {
+        guard ownedWork.owns(owner), codexHookTask == nil, var watch = codexTrustWatch else { return false }
+        let check = watch.shouldCheck(stamp: Self.modified(file), now: now())
+        codexTrustWatch = watch
+        return check
+    }
+    private func receiveCodexHookTrust(_ trust: [String]?, home: URL, owner: ApplicationWorkRegistry.Ticket) {
+        guard ownedWork.owns(owner), codexHookHome == home, codexHookTask == nil, let trust,
+              let result = codexHookResult, result.installed == true, trust != result.trust else { return }
+        let before = codexHookStatus
+        codexHookResult = .init(supportsHooks: result.supportsHooks, installed: result.installed, trust: trust)
+        let notices = updateCodexHookState()
+        if initialized, codexHookStatus != before || !notices.isEmpty { publish(notices: notices) }
+    }
+    private static func modified(_ file: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
     }
     private var codexHookStatus: CodexHookStatus? {
         guard codexHookServices != nil else { return nil }
         guard codexHooksEnabled else { return .off }
         guard let result = codexHookResult else { return nil }
         return CodexHookStatus.evaluate(enabled: true, supportsHooks: result.supportsHooks, installed: result.installed, trust: result.trust,
-                                        lastHookEvent: codexHookActivity.hook, lastCodexTurn: codexHookActivity.turn, now: now())
+                                        lastHookEvent: codexHookActivity.hook, lastCodexTurn: codexHookActivity.turn,
+                                        trustedAt: codexHooksTrustedAt, now: now())
     }
     /// Profile files are written off the actor, like the Codex setup.
     private func scheduleDeepSeekProgressSetup(force: Bool = false) {
@@ -2949,8 +3004,10 @@ actor EngineRuntime {
         snapshot.expandedPanel = EngineExpandedPanel(settings: panelSettings, enabled: enabled, snapshots: snapshots,
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
-        snapshot.codexHooks = codexHookServices == nil ? nil : codexHookStatus.map(EngineCodexHooks.init) ?? .settingUp
-        refreshCodexHookTrust(); refreshCodexHookActivity()
+        var hooks = codexHookServices == nil ? nil : codexHookStatus.map(EngineCodexHooks.init) ?? .settingUp
+        if case .needsApproval? = codexHookStatus, codexHooksOpenSettings { hooks?.opensSettings = true }
+        snapshot.codexHooks = hooks
+        refreshCodexHookActivity()
         snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in
             credits[provider].map { .init(provider: provider.rawValue, credits: $0, stale: accountCredits[provider]?.stale == true,
                                           presentation: HarnessCreditsPresentation(credits: $0, settings: creditSettings[provider] ?? .default, now: date)) }

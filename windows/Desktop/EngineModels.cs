@@ -21,7 +21,7 @@ internal sealed record EngineSnapshot(
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
 /// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
 /// `notRunning`, `needsCodexUpdate` or `installFailed`.
-internal sealed record CodexHooks(string State, int? Pending = null);
+internal sealed record CodexHooks(string State, int? Pending = null, bool? OpensSettings = null);
 /// A module's account credits as the engine knows them, with what the bill
 /// service reported; drawn the same way in Settings, Overview and the island.
 internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale,

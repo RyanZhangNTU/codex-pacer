@@ -66,4 +66,37 @@ final class EngineCodexHookStatusTests: XCTestCase {
         XCTAssertFalse(warned(), "Running hooks raise no warning")
         await runtime.stop()
     }
+
+    /// Allowing the hooks in Codex changes its config; Pacer then asks Codex for
+    /// their trust alone, and turns from before the approval are not a silent hook.
+    func testAConfigChangeFindsTheApprovalAndEarlierTurnsDoNotCountAsSilence() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-trust " + UUID().uuidString)
+        let home = root.appendingPathComponent("codex")
+        defer { try? FileManager.default.removeItem(at: root) }
+        // A turn Codex ran a moment ago, before the user allowed the hooks.
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + formatter.string(from: Date()))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        try Data().write(to: day.appendingPathComponent("rollout-019a0000-0000-7000-8000-000000000041.jsonl"))
+        let count = CodexHookEvent.Kind.allCases.count
+        let trust = HookTrust(Array(repeating: "untrusted", count: count)), setups = HookTrust([])
+        let services = EngineCodexHookServices(apply: { _, _, enabled in
+            setups.value += ["apply"]
+            return .init(supportsHooks: true, installed: enabled, trust: enabled ? trust.value : nil)
+        }, trust: { _, _ in trust.value }, opensSettings: { true })
+        let frames = HookStatusFrames(), date = Date()
+        let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(home)]))
+        let approval = try await TestWait.until { frames.all().last?.codexHooks?.state == "needsApproval" }
+        XCTAssertTrue(approval)
+        XCTAssertEqual(frames.all().last?.codexHooks?.opensSettings, true, "Settings can open Codex while approval is pending")
+
+        trust.value = Array(repeating: "trusted", count: count)
+        try Data("[features]\n".utf8).write(to: CodexHookTrustWatch.trustFile(home: home))
+        let running = try await TestWait.until { frames.all().last?.codexHooks?.state == "running" }
+        XCTAssertTrue(running, "The config change leads to the new trust, and the earlier turn is not a silent hook")
+        XCTAssertNil(frames.all().last?.codexHooks?.opensSettings)
+        XCTAssertEqual(setups.value, ["apply"], "Only the trust is read again; setup does not run")
+        await runtime.stop()
+    }
 }

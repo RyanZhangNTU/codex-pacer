@@ -26,11 +26,15 @@ enum CodexHookFixture {
         try announce(files, home: home, at: date)
     }
 
+    /// Appends to the spool in place, as the hook does under its lock.
     private static func append(_ rows: [[String: Any]], home: URL) throws {
         try FileManager.default.createDirectory(at: CodexHookSpool.folder(home: home), withIntermediateDirectories: true)
-        var data = (try? Data(contentsOf: CodexHookSpool.current(home: home))) ?? Data()
+        var data = Data()
         for row in rows { data += try JSONSerialization.data(withJSONObject: row) + Data([10]) }
-        try data.write(to: CodexHookSpool.current(home: home))
+        let spool = CodexHookSpool.current(home: home)
+        guard let handle = try? FileHandle(forWritingTo: spool) else { return try data.write(to: spool) }
+        defer { try? handle.close() }
+        try handle.seekToEnd(); try handle.write(contentsOf: data)
     }
 
     private static func thread(of url: URL) -> String { CodexRolloutName.threadID(of: url) ?? url.deletingPathExtension().lastPathComponent }
