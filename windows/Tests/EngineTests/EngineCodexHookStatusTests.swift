@@ -22,6 +22,22 @@ private final class HookTrust: @unchecked Sendable {
     }
 }
 
+/// Codex's answers to `hooks/list`, one per call; the last repeats.
+private final class TrustAnswers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answers: [[String]?]
+    private var calls = 0
+    init(_ answers: [[String]?]) { self.answers = answers }
+    func next() -> [String]? {
+        lock.withLock {
+            calls += 1
+            return answers.count > 1 ? answers.removeFirst() : answers.first ?? nil
+        }
+    }
+    func replace(_ value: [[String]?]) { lock.withLock { answers = value } }
+    var count: Int { lock.withLock { calls } }
+}
+
 final class EngineCodexHookStatusTests: XCTestCase {
     private func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
@@ -100,6 +116,48 @@ final class EngineCodexHookStatusTests: XCTestCase {
         XCTAssertTrue(running, "The config change leads to the new trust, and the earlier turn is not a silent hook")
         XCTAssertNil(frames.all().last?.codexHooks?.opensSettings)
         XCTAssertEqual(setups.value, ["apply"], "Only the trust is read again; setup does not run")
+        await runtime.stop()
+    }
+
+    /// The plugin installed, but Codex did not answer `hooks/list`: the hooks'
+    /// trust is unknown, so they do not show as running. Pacer asks Codex for the
+    /// trust alone again, shows the approval when Codex reports it pending and
+    /// running once the user allowed it, without setting the plugin up again.
+    func testAFailedTrustReadIsAskedAgainWithoutSettingTheHooksUpAgain() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-trust-retry " + UUID().uuidString)
+        let home = root.appendingPathComponent("codex"), marker = root.appendingPathComponent("notices/codex-hooks-approval-v1")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let count = CodexHookEvent.Kind.allCases.count
+        // The first retry fails as well; the next answer reports the approval pending.
+        let answers = TrustAnswers([nil, Array(repeating: "untrusted", count: count)]), setups = HookTrust([])
+        let services = EngineCodexHookServices(apply: { _, _, enabled in
+            setups.value += ["apply"]
+            return .init(supportsHooks: true, installed: enabled, trust: nil)
+        }, trust: { _, _ in answers.next() }, noticeMarker: marker, opensSettings: { true })
+        let frames = HookStatusFrames(), date = Date()
+        let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(home)]))
+        func state() -> String? { frames.all().last?.codexHooks?.state }
+
+        let retried = try await TestWait.until { answers.count >= 1 }
+        XCTAssertTrue(retried, "The trust is asked again without waiting for a change in Codex")
+        XCTAssertFalse(frames.all().contains { $0.codexHooks?.state == "running" }, "Hooks whose trust is unknown are not running")
+        XCTAssertEqual(state(), "notInstalled", "Settings says the hooks are still being set up")
+
+        let trustFile = CodexHookTrustWatch.trustFile(home: home)
+        try Data("[features]\n".utf8).write(to: trustFile)
+        let approval = try await TestWait.until { state() == "needsApproval" }
+        XCTAssertTrue(approval, "The next answer shows the approval")
+        XCTAssertEqual(frames.all().last?.codexHooks?.opensSettings, true)
+        XCTAssertEqual(frames.all().flatMap(\.notices).filter { $0.id == "codex:hooks-approval" }.count, 1)
+
+        answers.replace([Array(repeating: "trusted", count: count)])
+        try Data("[features]\n# allowed\n".utf8).write(to: trustFile)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: trustFile.path)
+        let running = try await TestWait.until { state() == "running" }
+        XCTAssertTrue(running, "Allowed hooks run")
+        XCTAssertEqual(setups.value, ["apply"], "A failed trust read never sets the plugin up again")
         await runtime.stop()
     }
 }

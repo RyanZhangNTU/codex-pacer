@@ -58,6 +58,42 @@ final class WindowsCodexHookTests: XCTestCase {
         }
     }
 
+    /// Codex may name a rollout through an extended-length `\\?\` path, with
+    /// forward slashes, or with its home in another letter case. Windows opens
+    /// the same file for each, and the hook row is how a local task appears.
+    func testARolloutNamedInAnyWindowsSpellingOfItsHomeShowsItsTask() async throws {
+        let home = try fixture().home, thread = "019a0000-0000-7000-8000-0000000000a1"
+        let day = home.appendingPathComponent("sessions/2026/11/21", isDirectory: true)
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("rollout-2026-11-21T10-00-00-\(thread).jsonl")
+        let start = Date().addingTimeInterval(-30), stamp = ISO8601DateFormatter().string(from: start)
+        var data = Data()
+        for (type, payload) in [("session_meta", ["id": thread, "originator": "Codex Desktop", "cwd": "C:\\fixture"]),
+                                ("event_msg", ["type": "task_started", "turn_id": "t1"])] {
+            data += try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": stamp, "payload": payload]) + Data([10])
+        }
+        try data.write(to: file)
+        let native = WindowsCodexHookLauncher.windowsPath(file), homePath = WindowsCodexHookLauncher.windowsPath(home)
+        XCTAssertTrue(native.hasPrefix(homePath + "\\"))
+        let tail = String(native.dropFirst(homePath.count))
+        for spelling in [native, #"\\?\"# + native, homePath.uppercased() + tail, homePath.lowercased() + tail,
+                         native.replacingOccurrences(of: "\\", with: "/")] {
+            try? FileManager.default.removeItem(at: CodexHookSpool.current(home: home))
+            try CodexHookFixture.announce(transcript: spelling, thread: thread, home: home, turn: "t1", at: start)
+            let result = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5))
+            XCTAssertEqual(result.activities.map(\.threadID), [thread], spelling)
+            XCTAssertEqual(result.activities.first?.phase, .running, spelling)
+        }
+
+        let sibling = WindowsCodexHookLauncher.windowsPath(home.deletingLastPathComponent().appendingPathComponent(".codex-other", isDirectory: true))
+        for spelling in [sibling + tail, #"\\?\"# + sibling + tail, homePath + "\\sessions\\..\\..\\outside" + tail,
+                         homePath + "\\sessions\\2026\\..\\..\\config.jsonl", homePath + "\\config.jsonl",
+                         homePath + "\\sessions\\2026\\11\\21\\rollout.json", native + ":hidden", String(tail.dropFirst()),
+                         #"\\?\UNC\server\share\.codex"# + tail, #"\\.\"# + native] {
+            XCTAssertNil(CodexHookSpool.transcript(spelling, home: home), spelling)
+        }
+    }
+
     /// cmd reads a batch file in the console code page, so the launcher holds
     /// no literal path that could be non-ASCII: the Codex home comes from its own
     /// location and the Python under %LOCALAPPDATA% through the variable.

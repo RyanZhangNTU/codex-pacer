@@ -85,8 +85,9 @@ public enum CodexHookSpool {
     public static func lock(home: URL) -> URL { folder(home: home).appendingPathComponent("events.lock") }
 
     /// The newest rollout change in today's or yesterday's session folder: Codex ran a
-    /// turn then. Only names and modification dates are read.
-    public static func latestRollout(home: URL, now: Date = Date()) -> Date? {
+    /// turn then. Only names and modification dates are read. Rollouts of
+    /// `excludingThreads` (lowercased IDs) are skipped: their changes are explained.
+    public static func latestRollout(home: URL, now: Date = Date(), excludingThreads: Set<String> = []) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
         var latest: Date?
@@ -95,6 +96,7 @@ public enum CodexHookSpool {
                   let entries = try? FileManager.default.contentsOfDirectory(at: home.appendingPathComponent("sessions/" + formatter.string(from: day)),
                     includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else { continue }
             for file in entries.prefix(4096) where file.pathExtension == "jsonl" {
+                if !excludingThreads.isEmpty, let thread = CodexRolloutName.threadID(of: file), excludingThreads.contains(thread) { continue }
                 if let date = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate { latest = max(latest ?? date, date) }
             }
         }
@@ -104,13 +106,68 @@ public enum CodexHookSpool {
     /// A transcript path from the spool, accepted only for a rollout file in
     /// this Codex home's `sessions` or `archived_sessions` tree.
     public static func transcript(_ path: String?, home: URL) -> URL? {
-        guard let path, path.hasPrefix("/") || path.dropFirst().hasPrefix(":\\") || path.dropFirst().hasPrefix(":/") else { return nil }
+        guard let path else { return nil }
+        #if os(Windows)
+        return windowsTranscript(path, home: home)
+        #else
+        guard path.hasPrefix("/") || path.dropFirst().hasPrefix(":\\") || path.dropFirst().hasPrefix(":/") else { return nil }
         let url = URL(fileURLWithPath: path).standardizedFileURL
         guard url.pathExtension == "jsonl", !url.pathComponents.contains("..") else { return nil }
         let base = home.standardizedFileURL.pathComponents
         let parts = url.pathComponents
         guard parts.count > base.count + 1, Array(parts.prefix(base.count)) == base else { return nil }
         return ["sessions", "archived_sessions"].contains(parts[base.count]) ? url : nil
+        #endif
+    }
+
+    /// Windows names one file in several spellings: with an extended-length
+    /// `\\?\` prefix, with either slash, and in any letter case, since NTFS
+    /// compares names through its simple uppercase table. The rollout keeps the
+    /// home's own spelling, so every spelling follows the same file. Anything
+    /// Windows would read differently is refused: `..`, streams, device and
+    /// relative paths.
+    static func windowsTranscript(_ path: String, home: URL) -> URL? {
+        guard let parts = windowsComponents(path), let base = windowsComponents(home.standardizedFileURL.path),
+              parts.count > base.count + 1, zip(base, parts).allSatisfy({ folded($0) == folded($1) }),
+              ["sessions", "archived_sessions"].contains(where: { folded($0) == folded(parts[base.count]) }),
+              let name = parts.last, name.count > 6, folded(String(name.suffix(6))) == folded(".jsonl") else { return nil }
+        let tail = parts.dropFirst(base.count)
+        var url = home.standardizedFileURL
+        for (index, part) in tail.enumerated() { url.appendPathComponent(part, isDirectory: index < tail.count - 1) }
+        return url
+    }
+
+    /// The root (`C:` or `\\server\share`) and the names of an absolute Windows
+    /// path, as Codex or Foundation (`/C:/...`) spells it; nil for anything else.
+    static func windowsComponents(_ value: String) -> [String]? {
+        var path = value.replacingOccurrences(of: "/", with: "\\")
+        if path.hasPrefix(#"\\?\UNC\"#) { path = #"\\"# + path.dropFirst(8) }
+        else if path.hasPrefix(#"\\?\"#) { path.removeFirst(4) }
+        else if path.hasPrefix("\\"), !path.hasPrefix(#"\\"#), path.dropFirst(2).hasPrefix(":") { path.removeFirst() }
+        var parts: [String], rest: ArraySlice<Substring>
+        if path.hasPrefix(#"\\"#) {
+            let names = path.dropFirst(2).split(separator: "\\", omittingEmptySubsequences: false)
+            guard names.count >= 2, !names[0].isEmpty, !names[1].isEmpty, names[0] != "?", names[0] != "." else { return nil }
+            parts = [#"\\"# + String(names[0]) + "\\" + String(names[1])]; rest = names.dropFirst(2)
+        } else {
+            let names = path.split(separator: "\\", omittingEmptySubsequences: false)
+            guard let drive = names.first, drive.count == 2, drive.last == ":",
+                  let letter = drive.unicodeScalars.first, letter.isASCII, CharacterSet.letters.contains(letter) else { return nil }
+            parts = [String(drive)]; rest = names.dropFirst()
+        }
+        for name in rest where !name.isEmpty && name != "." {
+            guard name != "..", !name.contains(":") else { return nil }
+            parts.append(String(name))
+        }
+        return parts
+    }
+
+    /// A name as NTFS compares it: each scalar through its single-scalar uppercase form.
+    private static func folded(_ value: String) -> [Unicode.Scalar] {
+        value.unicodeScalars.map { scalar in
+            let upper = scalar.properties.uppercaseMapping.unicodeScalars
+            return upper.count == 1 ? upper.first! : scalar
+        }
     }
 }
 

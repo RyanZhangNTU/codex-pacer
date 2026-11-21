@@ -144,6 +144,14 @@ struct CodexHookState: Sendable {
         return values.sorted { $0.1 > $1.1 }.map { (url: $0.0, at: $0.1) }
     }
 
+    /// Threads, lowercased, whose turn a hook opened and that wrote a row within
+    /// `limit`, with their subagents: their rollouts change as those turns go on.
+    func openThreads(now: Date, limit: TimeInterval) -> Set<String> {
+        var values = Set(threads.filter { $0.value.openTurn != nil && now.timeIntervalSince($0.value.lastAt) < limit }.keys.map { $0.lowercased() })
+        for (agent, child) in children where values.contains(child.parent.lowercased()) { values.insert(agent.lowercased()) }
+        return values
+    }
+
     @discardableResult
     private mutating func prune(now: Date) -> Bool {
         let before = threads.count + children.count

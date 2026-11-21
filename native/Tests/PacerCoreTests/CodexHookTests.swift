@@ -38,8 +38,17 @@ final class CodexHookTests: XCTestCase {
         XCTAssertNil(CodexHookSpool.transcript(path("config.jsonl"), home: home))
         XCTAssertNil(CodexHookSpool.transcript(path("sessions/rollout.json"), home: home))
         XCTAssertNil(CodexHookSpool.transcript(path("sessions/rollout.jsonl", in: root.appendingPathComponent("other")), home: home))
+        XCTAssertNil(CodexHookSpool.transcript(path("sessions/rollout.jsonl", in: root.appendingPathComponent(".codex-other")), home: home),
+                     "A sibling whose name starts with the home's is outside it")
+        XCTAssertNil(CodexHookSpool.transcript(home.path + "/sessions/../../outside/sessions/rollout.jsonl", home: home))
         XCTAssertNil(CodexHookSpool.transcript("sessions/rollout.jsonl", home: home))
         XCTAssertNil(CodexHookSpool.transcript(nil, home: home))
+        let otherCase = path("sessions/2026/11/21/rollout-x.jsonl", in: root.appendingPathComponent(".CODEX", isDirectory: true))
+        #if os(Windows)
+        XCTAssertNotNil(CodexHookSpool.transcript(otherCase, home: home), "Windows compares names without case")
+        #else
+        XCTAssertNil(CodexHookSpool.transcript(otherCase, home: home), "POSIX paths keep their case")
+        #endif
     }
 
     func testThePluginDefinesSevenFixedHooksAndOnlySessionEndWaits() throws {
@@ -93,6 +102,11 @@ final class CodexHookTests: XCTestCase {
         XCTAssertEqual(status(installed: false), .notInstalled)
         XCTAssertEqual(status(trust: ["trusted", "untrusted", "modified", "trusted", "trusted", "trusted", "trusted"]), .needsApproval(count: 2))
         XCTAssertEqual(status(trust: ["trusted"]), .installFailed, "Missing definitions mean the plugin did not load as written")
+        XCTAssertEqual(status(trust: nil), .notInstalled, "Installed hooks whose trust Codex did not report are not running yet")
+        XCTAssertTrue(CodexHookSetupResult(supportsHooks: true, installed: true, trust: nil).awaitsTrust)
+        XCTAssertFalse(CodexHookSetupResult(supportsHooks: true, installed: true, trust: all).awaitsTrust)
+        XCTAssertFalse(CodexHookSetupResult(supportsHooks: false, installed: true, trust: nil).awaitsTrust)
+        XCTAssertFalse(CodexHookSetupResult(supportsHooks: nil, installed: nil, trust: nil).awaitsTrust)
         XCTAssertEqual(status(), .running)
         XCTAssertEqual(status(turn: now.addingTimeInterval(-30)), .notRunning, "Codex ran a turn and no hook wrote a row")
         XCTAssertEqual(status(hook: now.addingTimeInterval(-40), turn: now.addingTimeInterval(-30)), .running)
@@ -120,6 +134,11 @@ final class CodexHookTests: XCTestCase {
         }
         XCTAssertFalse(watch.shouldCheck(stamp: start.addingTimeInterval(3), now: later + 3600), "The fallback gives up after an hour")
         XCTAssertTrue(watch.shouldCheck(stamp: nil, now: later + 3601), "A config change still asks")
+
+        var retry = CodexHookTrustWatch(stamp: stamp, now: start, due: true)
+        XCTAssertTrue(retry.shouldCheck(stamp: stamp, now: start.addingTimeInterval(2)), "A trust read that failed is asked again at once")
+        XCTAssertFalse(retry.shouldCheck(stamp: stamp, now: start.addingTimeInterval(4)), "and then like any other wait")
+        XCTAssertTrue(retry.shouldCheck(stamp: stamp, now: start.addingTimeInterval(62)))
 
         var missing = CodexHookTrustWatch(stamp: nil, now: start)
         XCTAssertFalse(missing.shouldCheck(stamp: nil, now: start.addingTimeInterval(2)))
@@ -223,6 +242,132 @@ final class CodexHookReaderTests: XCTestCase {
     private let thread = "019a0000-0000-7000-8000-000000000021"
     private func record(_ type: String, _ payload: [String: Any], at date: Date) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": ISO8601DateFormatter().string(from: date), "payload": payload]) + Data([10])
+    }
+    private func temporaryHome(_ prefix: String) -> URL {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(prefix + UUID().uuidString, isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+        return home
+    }
+    /// A rollout that opens turn `t1` at `start`.
+    private func rollout(_ home: URL, _ id: String, day: String = "2026/11/21", start: Date) throws -> URL {
+        let folder = home.appendingPathComponent("sessions/" + day, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("rollout-2026-11-21T10-00-00-\(id).jsonl")
+        try (record("session_meta", ["id": id, "originator": "Codex Desktop", "cwd": "/fixture"], at: start)
+            + record("event_msg", ["type": "task_started", "turn_id": "t1"], at: start)).write(to: file)
+        return file
+    }
+    private func append(_ file: URL, _ data: Data) throws {
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.seekToEnd(); try handle.write(contentsOf: data)
+    }
+    private func phase(_ activities: [SessionActivity], _ thread: String) -> ActivityPhase? {
+        activities.first { $0.threadID == thread }?.phase
+    }
+
+    /// A Codex that crashed sends no Stop or SessionEnd. A turn the reader already
+    /// follows stops running once neither its log nor its hook has said anything
+    /// for the hook's limit, while a turn whose log keeps moving runs on, however long.
+    func testACrashedTurnStopsRunningAfterTheHookLimitWhileALongActiveTurnRunsOn() async throws {
+        let home = temporaryHome("pacer-hook-crash-"), start = Date().addingTimeInterval(-5 * 3600)
+        let crashed = "019a0000-0000-7000-8000-000000000031", active = "019a0000-0000-7000-8000-000000000032"
+        let crashedFile = try rollout(home, crashed, start: start), activeFile = try rollout(home, active, start: start)
+        try CodexHookFixture.announce([crashedFile, activeFile], home: home, turn: "t1", at: start)
+        let reader = LocalActivityReader()
+        let first = await reader.read(home: home, now: start.addingTimeInterval(2))
+        XCTAssertEqual(phase(first.activities, crashed), .running)
+        XCTAssertEqual(phase(first.activities, active), .running)
+
+        // Four hours on, the active turn writes every ten minutes; the crashed one says nothing.
+        for minute in stride(from: 10, through: 240, by: 10) {
+            let at = start.addingTimeInterval(TimeInterval(minute * 60))
+            try append(activeFile, record("event_msg", ["type": "token_count", "turn_id": "t1"], at: at))
+            let result = await reader.read(home: home, now: at.addingTimeInterval(1))
+            XCTAssertEqual(phase(result.activities, active), .running, "A turn whose log moves runs on at minute \(minute)")
+            if minute <= 170 {
+                XCTAssertEqual(phase(result.activities, crashed), .running, "The hook holds a quiet turn open for three hours, minute \(minute)")
+            }
+        }
+        let late = await reader.read(home: home, now: start.addingTimeInterval(4 * 3600 + 60))
+        XCTAssertNotEqual(phase(late.activities, crashed), .running, "Four hours without a word from the log or the hook")
+        XCTAssertNotNil(phase(late.activities, crashed), "The task stays listed, unconfirmed")
+        XCTAssertEqual(phase(late.activities, active), .running)
+    }
+
+    /// SessionEnd closes a turn the log never ended, and its open question with it;
+    /// the thread's next turn can ask again.
+    func testSessionEndClearsAPendingQuestionAndTheNextTurnCanAskAgain() async throws {
+        let home = temporaryHome("pacer-hook-question-"), start = Date().addingTimeInterval(-120)
+        let thread = "019a0000-0000-7000-8000-000000000033"
+        let file = try rollout(home, thread, start: start)
+        func question(_ turn: String, _ call: String, at second: TimeInterval) throws -> Data {
+            try record("response_item", ["type": "function_call", "name": "request_user_input_async", "call_id": call,
+                                         "arguments": #"{"questions":[{"title":"synthetic"}]}"#], at: start.addingTimeInterval(second))
+                + record("response_item", ["type": "function_call_output", "call_id": call, "output": #"{"accepted":true}"#],
+                         at: start.addingTimeInterval(second + 1))
+        }
+        try append(file, question("t1", "first", at: 2))
+        try CodexHookFixture.announce([file], home: home, turn: "t1", at: start)
+        let reader = LocalActivityReader()
+        let asking = await reader.read(home: home, now: start.addingTimeInterval(4))
+        XCTAssertEqual(asking.requests.filter { $0.kind == .input }.count, 1)
+
+        try CodexHookFixture.announce([file], home: home, event: "SessionEnd", at: start.addingTimeInterval(5))
+        let closed = await reader.read(home: home, now: start.addingTimeInterval(6))
+        XCTAssertNotEqual(phase(closed.activities, thread), .running)
+        XCTAssertTrue(closed.requests.isEmpty, "A closed session has no question waiting")
+
+        try CodexHookFixture.announce([file], home: home, turn: "t2", at: start.addingTimeInterval(7))
+        try append(file, record("event_msg", ["type": "task_started", "turn_id": "t2"], at: start.addingTimeInterval(7)) + question("t2", "second", at: 8))
+        let next = await reader.read(home: home, now: start.addingTimeInterval(10))
+        XCTAssertEqual(phase(next.activities, thread), .running)
+        XCTAssertEqual(next.requests.filter { $0.kind == .input }.count, 1, "The next turn's question shows")
+    }
+
+    /// A long turn keeps writing its rollout with no other hook event; that is no
+    /// silent hook. A turn Codex ran without the hooks writes a rollout that no
+    /// open turn explains, in another conversation or after its own turn ended.
+    func testALongTurnIsNoSilentHookButATurnWithoutItsHookIs() async throws {
+        let now = Date(), formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
+        let day = formatter.string(from: now), all = Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count)
+        func touch(_ file: URL) throws { try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-10)], ofItemAtPath: file.path) }
+        func status(_ reader: LocalActivityReader, _ home: URL, trustedAt: Date? = nil) async -> CodexHookStatus {
+            let evidence = await reader.hookEvidence(home: home, now: now)
+            return CodexHookStatus.evaluate(enabled: true, supportsHooks: true, installed: true, trust: all, lastHookEvent: evidence.lastHookEvent,
+                                            lastCodexTurn: evidence.lastCodexTurn, trustedAt: trustedAt, now: now)
+        }
+
+        let home = temporaryHome("pacer-hook-silence-"), start = now.addingTimeInterval(-6 * 60)
+        let long = "019a0000-0000-7000-8000-000000000041", file = try rollout(home, long, day: day, start: start)
+        try CodexHookFixture.announce([file], home: home, turn: "t1", at: start)
+        for second in stride(from: 30, through: 350, by: 40) {
+            try append(file, record("event_msg", ["type": "token_count", "turn_id": "t1"], at: start.addingTimeInterval(TimeInterval(second))))
+        }
+        try touch(file)
+        let reader = LocalActivityReader()
+        _ = await reader.read(home: home, now: now)
+        let longTurn = await status(reader, home)
+        XCTAssertEqual(longTurn, .running, "Six minutes of the open turn's own output")
+
+        let other = try rollout(home, "019a0000-0000-7000-8000-000000000042", day: day, start: now.addingTimeInterval(-20))
+        try touch(other)
+        let missed = await status(reader, home)
+        XCTAssertEqual(missed, .notRunning, "Another conversation ran a turn that no hook announced")
+        let earlier = await status(reader, home, trustedAt: now.addingTimeInterval(-5))
+        XCTAssertEqual(earlier, .running, "Turns before the user allowed the hooks ran without them")
+
+        // The same conversation's next turn, long after its hook said the last one stopped.
+        let ended = temporaryHome("pacer-hook-ended-"), endedFile = try rollout(ended, long, day: day, start: now.addingTimeInterval(-20 * 60))
+        try CodexHookFixture.announce([endedFile], home: ended, turn: "t1", at: now.addingTimeInterval(-20 * 60))
+        try CodexHookFixture.announce([endedFile], home: ended, event: "Stop", turn: "t1", at: now.addingTimeInterval(-15 * 60))
+        try append(endedFile, record("event_msg", ["type": "task_started", "turn_id": "t2"], at: now.addingTimeInterval(-20)))
+        try touch(endedFile)
+        let endedReader = LocalActivityReader()
+        _ = await endedReader.read(home: ended, now: now)
+        let unannounced = await status(endedReader, ended)
+        XCTAssertEqual(unannounced, .notRunning, "A new turn in a conversation whose turn had ended, without its hook")
     }
 
     func testPermissionRequestsWaitUntilTheLogMovesOnAndSessionEndStopsARunningTurn() async throws {

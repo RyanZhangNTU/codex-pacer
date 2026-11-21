@@ -12,6 +12,13 @@ enum CodexHookFixture {
         }, home: home)
     }
 
+    /// A row naming the rollout exactly as `transcript` spells it, as Codex may.
+    static func announce(transcript: String, thread: String, home: URL, event: String = "UserPromptSubmit", turn: String? = nil,
+                         at date: Date = Date()) throws {
+        try append([["v": 1, "hook": 1, "at": date.timeIntervalSince1970, "event": event, "thread": thread,
+                     "turn": turn ?? NSNull(), "transcript": transcript]], home: home)
+    }
+
     /// A subagent row: the parent's thread names the child, whose rollout is found next to the parent's.
     static func subagent(_ child: URL, parent: URL, home: URL, event: String = "SubagentStart", at date: Date = Date()) throws {
         try append([["v": 1, "hook": 1, "at": date.timeIntervalSince1970, "event": event, "thread": thread(of: parent),

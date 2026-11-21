@@ -11,6 +11,9 @@ public struct CodexHookSetupResult: Equatable, Sendable {
     public init(supportsHooks: Bool?, installed: Bool?, trust: [String]?) {
         self.supportsHooks = supportsHooks; self.installed = installed; self.trust = trust
     }
+    /// Installed, but `hooks/list` failed: ask Codex for the trust alone again
+    /// (`CodexHookSetup.trust`), never by setting the plugin up again.
+    public var awaitsTrust: Bool { supportsHooks == true && installed == true && trust == nil }
 }
 
 /// Installs, refreshes or removes Pacer's Codex hooks, the same way on every
@@ -83,7 +86,9 @@ public enum CodexHookSetup {
 /// Where the user allows Pacer's hooks, and when to ask Codex again whether
 /// they did. Codex records hook trust in its user config, so a change to that
 /// file is when to ask; a slower check covers trust kept elsewhere, such as a
-/// managed config, and gives up after an hour as the setup recheck did.
+/// managed config, and gives up after an hour as the setup recheck did. After a
+/// trust read that failed (`CodexHookSetupResult.awaitsTrust`), the watch starts
+/// `due` and asks at its first check.
 public struct CodexHookTrustWatch: Sendable {
     /// Codex opens its settings at this link; its Hooks page has no link of its own.
     public static let settingsURL = URL(string: "codex://settings")!
@@ -95,13 +100,15 @@ public struct CodexHookTrustWatch: Sendable {
     private var stamp: Date?
     private var checkedAt: Date
     private var fallbacks = 0
+    private var due: Bool
 
     /// `stamp` is the trust file's modification date when the watch starts, nil if it is missing.
-    public init(stamp: Date?, now: Date) { self.stamp = stamp; checkedAt = now }
+    public init(stamp: Date?, now: Date, due: Bool = false) { self.stamp = stamp; checkedAt = now; self.due = due }
 
     /// Whether to ask Codex for the hooks' trust now.
     public mutating func shouldCheck(stamp current: Date?, now: Date) -> Bool {
-        if current != stamp {
+        if current != stamp || due {
+            due = false
             stamp = current; checkedAt = now
             return true
         }

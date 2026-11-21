@@ -224,10 +224,6 @@ public actor LocalActivityReader {
                 }
                 if current.fragment.count > maxBytes { current.fragment.removeAll(); current.attention.reset() }
                 if let entry = named.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title); current.activity.updateParent(entry.parentThreadID) }
-                // A turn the hook still holds open is running however quiet its log is.
-                if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
-                   now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900,
-                   !hookHoldsOpen(current.activity, now: now) { current.activity.markUnconfirmed() }
                 if current.activity.isInternalReview || current.activity.isIgnoredCodexSession {
                     if current.activity.isIgnoredCodexSession { ignoredIDs.insert(current.activity.canonicalized().id) }
                     metadata[file] = (identity, current.activity)
@@ -241,6 +237,14 @@ public actor LocalActivityReader {
                 metadata.removeValue(forKey: file)
             }
         }
+        // A turn runs while its log moves or its hook holds it open; a Codex that
+        // crashed does neither. Every read checks, including a file that did not
+        // change, so a turn already followed cannot run on forever.
+        for (file, cursor) in cursors where [.running, .waitingForInput].contains(cursor.activity.phase)
+            && now.timeIntervalSince(cursor.activity.lastObserved ?? .distantPast) > Self.quietLimit
+            && !hookHoldsOpen(cursor.activity, now: now) {
+            cursors[file]?.activity.markUnconfirmed()
+        }
         // Parent hints affect the published view and cursor selection, never
         // the log baseline. Withdrawing a running hint must work at unchanged
         // EOF, while explicitly observed endings remain independently known.
@@ -252,7 +256,8 @@ public actor LocalActivityReader {
         let activities = CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable)
             .filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.map(closedBySessionEnd)
             .sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) }
-        let requests = cursors.values.flatMap { $0.attention.requests(for: projected($0)) } + activities.compactMap { approval(for: $0) }
+        // Questions follow the same closed state as their tasks.
+        let requests = cursors.values.flatMap { $0.attention.requests(for: closedBySessionEnd(projected($0))) } + activities.compactMap { approval(for: $0) }
         return (activities,
                 watchURLs + watched.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) }, ignoredIDs,
                 requests.filter { !ignoredIDs.contains($0.activity.id) })
@@ -261,10 +266,32 @@ public actor LocalActivityReader {
     /// How long a turn the hook opened counts as running without any word in its log;
     /// a Codex that crashed sends no Stop or SessionEnd.
     static let hookOpenLimit: TimeInterval = 3 * 60 * 60
+    /// How long a running turn's log may stay quiet before only its hook can keep it running.
+    static let quietLimit: TimeInterval = 15 * 60
 
     private func hookHoldsOpen(_ activity: SessionActivity, now: Date) -> Bool {
-        guard let thread = activity.threadID, let turn = activity.turnID, let state = hooks.threads[thread] else { return false }
-        return state.openTurn == turn && now.timeIntervalSince(state.lastAt) < Self.hookOpenLimit
+        guard let thread = activity.threadID else { return false }
+        if let state = hooks.threads[thread] {
+            guard let turn = activity.turnID else { return false }
+            return state.openTurn == turn && now.timeIntervalSince(state.lastAt) < Self.hookOpenLimit
+        }
+        // A subagent runs within its parent's turn until SubagentStop.
+        guard let child = hooks.children[thread], child.stoppedAt == nil,
+              let parent = hooks.threads[child.parent], parent.openTurn != nil else { return false }
+        return now.timeIntervalSince(max(parent.lastAt, child.startedAt)) < Self.hookOpenLimit
+    }
+
+    /// What `CodexHookStatus.evaluate` needs to tell a silent hook from a long turn:
+    /// the newest hook row, and the newest rollout change in today's or yesterday's
+    /// folder that no turn the hooks hold open explains. An open turn keeps writing
+    /// its own and its subagents' rollouts with no other hook event; a turn Codex ran
+    /// without the hooks writes another rollout, or one whose turn had ended.
+    public func hookEvidence(home: URL, now: Date = Date()) async -> (lastHookEvent: Date?, lastCodexTurn: Date?) {
+        let explained = hooks.openThreads(now: now, limit: Self.hookOpenLimit), last = hooks.lastRowAt
+        let turn = await Task.detached(priority: .utility) {
+            CodexHookSpool.latestRollout(home: home, now: now, excludingThreads: explained)
+        }.value
+        return (last, turn)
     }
 
     /// Codex closed the thread (usually by quitting) after the log's last word on

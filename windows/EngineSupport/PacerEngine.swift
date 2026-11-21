@@ -1556,16 +1556,15 @@ actor EngineRuntime {
         if initialized { publish(notices: notices) }
     }
     /// Codex ran turns while the spool stayed silent: hooks stopped running.
-    /// Only the reader's last row and rollout folder dates are read.
+    /// Only the reader's hook state and rollout folder dates are read.
     private func refreshCodexHookActivity() {
         guard codexHooksEnabled, codexHookResult?.installed == true, let home = codexHookHome, codexHookActivityRequest == nil,
               now().timeIntervalSince(codexHookActivity.checked ?? .distantPast) >= 60 else { return }
         let request = UUID(), date = now(), reader = codexReader
         codexHookActivityRequest = request; codexHookActivity.checked = date
         Task { [weak self] in
-            let hook = await reader.lastHookRow
-            let turn = await Task.detached(priority: .utility) { CodexHookSpool.latestRollout(home: home, now: date) }.value
-            await self?.receiveCodexHookActivity(hook: hook, turn: turn, request: request)
+            let evidence = await reader.hookEvidence(home: home, now: date)
+            await self?.receiveCodexHookActivity(hook: evidence.lastHookEvent, turn: evidence.lastCodexTurn, request: request)
         }
     }
     private func receiveCodexHookActivity(hook: Date?, turn: Date?, request: UUID) {
@@ -1578,9 +1577,10 @@ actor EngineRuntime {
     }
     /// After the setup result, the trust or the activity changes: notes when the
     /// user allowed the hooks, sends the one approval notice, and follows the
-    /// trust while it waits for the user.
+    /// trust while it waits for the user or after Codex failed to report it.
     private func updateCodexHookState() -> [IslandNotice] {
         var notices: [IslandNotice] = []
+        let awaitsTrust = codexHookResult?.awaitsTrust == true
         switch codexHookStatus {
         case .needsApproval?:
             codexHooksAwaitingApproval = true
@@ -1589,9 +1589,10 @@ actor EngineRuntime {
             // Just allowed: the turns so far ran without the hooks, so their silence says nothing.
             if codexHooksAwaitingApproval { codexHooksAwaitingApproval = false; codexHooksTrustedAt = now() }
         case nil: break
+        case .notInstalled? where awaitsTrust: break // The trust is unknown, not changed.
         default: codexHooksAwaitingApproval = false
         }
-        if case .needsApproval? = codexHookStatus { watchCodexHookTrust(true) } else { watchCodexHookTrust(false) }
+        if case .needsApproval? = codexHookStatus { watchCodexHookTrust(true) } else { watchCodexHookTrust(awaitsTrust, due: true) }
         return notices
     }
     /// The one notice asking to allow Pacer's hooks in Codex, the first time approval is needed.
@@ -1616,14 +1617,15 @@ actor EngineRuntime {
     private static let codexTrustKey = ApplicationWorkRegistry.Key(.setup, identifier: "codex-hooks-trust")
     /// While the hooks wait for the user, a change to Codex's config is the cue
     /// to ask Codex for their trust (`CodexHookTrustWatch`); only the trust call
-    /// runs, and the plugin stays as it is.
-    private func watchCodexHookTrust(_ on: Bool) {
+    /// runs, and the plugin stays as it is. After a failed trust read the watch
+    /// is `due` and asks at its first check.
+    private func watchCodexHookTrust(_ on: Bool, due: Bool = false) {
         guard on, let services = codexHookServices, let home = codexHookHome, let executable = codexHookExecutable else {
             ownedWork.cancel(Self.codexTrustKey); codexTrustWatch = nil; return
         }
         guard ownedWork.task(Self.codexTrustKey) == nil else { return }
         let file = CodexHookTrustWatch.trustFile(home: home)
-        codexTrustWatch = CodexHookTrustWatch(stamp: Self.modified(file), now: now())
+        codexTrustWatch = CodexHookTrustWatch(stamp: Self.modified(file), now: now(), due: due)
         let owner = ownedWork.begin(Self.codexTrustKey, version: generation)
         let task = Task { [weak self] in
             while !Task.isCancelled {

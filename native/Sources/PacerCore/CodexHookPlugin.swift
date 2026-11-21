@@ -115,6 +115,7 @@ public extension CodexHookLauncher {
 public enum CodexHookStatus: Equatable, Sendable {
     /// The Codex module is off.
     case off
+    /// Still being set up: not installed, or installed while Codex has not reported its hooks' trust.
     case notInstalled
     /// Installed; the user still has to allow this many of Pacer's hooks in Codex.
     case needsApproval(count: Int)
@@ -127,9 +128,11 @@ public enum CodexHookStatus: Equatable, Sendable {
 
     /// Derives the status from what Pacer can observe.
     /// - Parameters:
-    ///   - trust: `hooks/list` trust states of Pacer's plugin hooks, nil when unknown.
+    ///   - trust: `hooks/list` trust states of Pacer's plugin hooks, nil when unknown;
+    ///     unknown trust is not running yet, and the host asks for it again.
     ///   - lastHookEvent: the newest spool row written by the current hook program.
-    ///   - lastCodexTurn: when Codex last wrote a rollout (`CodexHookSpool.latestRollout`).
+    ///   - lastCodexTurn: the newest rollout change no open hook turn explains
+    ///     (`LocalActivityReader.hookEvidence`).
     ///   - trustedAt: when Pacer saw the user allow the hooks; turns before it ran without them.
     public static func evaluate(enabled: Bool, supportsHooks: Bool?, installed: Bool?, trust: [String]?,
                                 lastHookEvent: Date?, lastCodexTurn: Date?, trustedAt: Date? = nil, now: Date,
@@ -137,12 +140,10 @@ public enum CodexHookStatus: Equatable, Sendable {
         guard enabled else { return .off }
         if supportsHooks == false { return .needsCodexUpdate }
         guard let installed else { return .installFailed }
-        guard installed else { return .notInstalled }
-        if let trust {
-            guard trust.count == CodexHookEvent.Kind.allCases.count else { return .installFailed }
-            let pending = trust.filter { $0 != "trusted" }.count
-            if pending > 0 { return .needsApproval(count: pending) }
-        }
+        guard installed, let trust else { return .notInstalled }
+        guard trust.count == CodexHookEvent.Kind.allCases.count else { return .installFailed }
+        let pending = trust.filter { $0 != "trusted" }.count
+        if pending > 0 { return .needsApproval(count: pending) }
         if let turn = lastCodexTurn, now.timeIntervalSince(turn) < silence, turn > trustedAt ?? .distantPast,
            turn.timeIntervalSince(lastHookEvent ?? .distantPast) > silence {
             return .notRunning
