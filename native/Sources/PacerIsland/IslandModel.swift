@@ -1602,7 +1602,7 @@ final class IslandModel: ObservableObject {
     private var rateExpiryAt: Date?
     private var localActivityDirty = false
     private var localActivityNeedsDiscovery = false
-    private var watchedLogURLs: [URL] = []
+    private(set) var watchedLogURLs: [URL] = []
     private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
         Task { @MainActor in self?.refreshActivity(metricsOnly: !discover) }
     }
@@ -2403,7 +2403,9 @@ final class IslandModel: ObservableObject {
                 }
             }
             guard !Task.isCancelled, generation == self.sourceGeneration else { return }
-            if !onlyMetrics {
+            // A metrics read discovers too when a hook row names a new rollout, so
+            // the watches follow what the reader follows, not the kind of read asked for.
+            if Set(result.watchURLs) != Set(self.watchedLogURLs) {
                 self.watchedLogURLs = result.watchURLs
                 self.logWatcher.update(result.watchURLs, interval: self.activityRefreshPolicy.interval)
             }
