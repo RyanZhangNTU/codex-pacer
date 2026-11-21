@@ -43,15 +43,18 @@ final class WindowsCodexHookTests: XCTestCase {
         let home = URL(fileURLWithPath: "C:/Users/O'Brien $x/.codex", isDirectory: true)
         let command = WindowsCodexHookLauncher.commandWindows(home: home)
         XCTAssertEqual(command, "& 'C:\\Users\\O''Brien $x\\.codex\\pacer\\bin\\codex-hook.cmd'")
-        XCTAssertEqual(WindowsCodexHookLauncher().commandWindows(home: home), command)
-        XCTAssertNil(WindowsCodexHookLauncher().command(home: home))
-        let files = try CodexHookPlugin.files(command: nil, commandWindows: command)
+        let launcher = WindowsCodexHookLauncher()
+        XCTAssertEqual(launcher.commandWindows(home: home), command)
+        let files = try CodexHookPlugin.files(command: launcher.command(home: home), commandWindows: launcher.commandWindows(home: home))
         let hooks = try XCTUnwrap(files.first { $0.relativePath.hasSuffix("hooks/hooks.json") })
         let definitions = try XCTUnwrap((try JSONSerialization.jsonObject(with: hooks.data) as? [String: Any])?["hooks"] as? [String: [[String: Any]]])
+        XCTAssertEqual(definitions.count, CodexHookEvent.Kind.allCases.count)
         for groups in definitions.values {
             let handler = try XCTUnwrap((groups.first?["hooks"] as? [[String: Any]])?.first)
             XCTAssertEqual(handler["commandWindows"] as? String, command)
-            XCTAssertNil(handler["command"], "Windows writes only its own command")
+            // Codex refuses a plugin hook without `command` ("missing field `command`"),
+            // even on Windows, where it runs `commandWindows`.
+            XCTAssertEqual(handler["command"] as? String, command)
         }
     }
 

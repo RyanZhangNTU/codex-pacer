@@ -148,9 +148,12 @@ actor EngineRuntime {
     private var claudeHookHome: URL?, claudeHookRequest: UUID?
     private var claudeHooksEnabled = false
     private let codexHookServices: EngineCodexHookServices?
+    /// Not keyed to the Codex source: replacing the source (as initialization
+    /// does) must not cancel the setup it started. A new home sets up again.
+    private static let codexHookKey = ApplicationWorkRegistry.Key(.setup, identifier: "codex-hooks")
     private var codexHookTask: Task<Void, Never>? {
-        get { ownedWork.task(.init(.setup, provider: .codex, identifier: "hooks")) }
-        set { setOwnedTask(newValue, key: .init(.setup, provider: .codex, identifier: "hooks")) }
+        get { ownedWork.task(Self.codexHookKey) }
+        set { setOwnedTask(newValue, key: Self.codexHookKey) }
     }
     private var codexHookHome: URL?, codexHookExecutable: String?, codexHookRequest: UUID?
     private var codexHooksEnabled = false
@@ -1606,7 +1609,7 @@ actor EngineRuntime {
         default: return false
         }
     }
-    private static let codexTrustKey = ApplicationWorkRegistry.Key(.setup, provider: .codex, identifier: "hooks-trust")
+    private static let codexTrustKey = ApplicationWorkRegistry.Key(.setup, identifier: "codex-hooks-trust")
     /// While the hooks wait for the user, a change to Codex's config is the cue
     /// to ask Codex for their trust (`CodexHookTrustWatch`); only the trust call
     /// runs, and the plugin stays as it is.

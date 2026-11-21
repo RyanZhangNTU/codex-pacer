@@ -12,7 +12,9 @@ public struct WindowsCodexHookLauncher: CodexHookLauncher {
 
     public static func launcher(home: URL) -> URL { home.appendingPathComponent("pacer/bin/codex-hook.cmd") }
 
-    public func command(home: URL) -> String? { nil }
+    /// Codex requires `command` to parse a plugin hook at all, and runs
+    /// `commandWindows` on Windows, so both carry the same command.
+    public func command(home: URL) -> String? { Self.commandWindows(home: home) }
 
     /// Codex runs Windows handlers through Windows PowerShell 5.1, where a line
     /// that starts with a quoted path is a syntax error that Codex still records

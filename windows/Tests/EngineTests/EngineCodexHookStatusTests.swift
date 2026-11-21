@@ -36,8 +36,11 @@ final class EngineCodexHookStatusTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let count = CodexHookEvent.Kind.allCases.count
         let trust = HookTrust(Array(repeating: "untrusted", count: count))
+        // Setup takes a moment, as Codex's own calls do: the initialization that
+        // starts it also replaces Codex's source and must not cancel it.
         let services = EngineCodexHookServices(apply: { _, _, enabled in
-            .init(supportsHooks: true, installed: enabled, trust: enabled ? trust.value : nil)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            return .init(supportsHooks: true, installed: enabled, trust: enabled ? trust.value : nil)
         }, trust: { _, _ in trust.value }, noticeMarker: marker)
         let frames = HookStatusFrames(), date = Date()
         let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
