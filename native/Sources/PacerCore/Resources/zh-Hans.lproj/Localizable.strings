@@ -1652,3 +1652,20 @@
 "codex.hooks.guide.picture.review_one" = "%ld 项待审核";
 "codex.hooks.guide.picture.trust_all" = "全部信任";
 "warning.label.codexHooks" = "Codex";
+
+/* Module pages: the Status card every module shares. */
+"provider.account" = "账号";
+"provider.usage" = "用量";
+"provider.usage_settings" = "用量设置";
+"provider.turn_usage" = "每轮用量";
+"codex.dot_tasks" = "Dot 任务";
+"codex.account.sign_in_hint" = "在 Codex 里登录，或在终端运行 codex login。";
+"monitoring.on" = "已开启";
+"monitoring.checking" = "正在检查…";
+"monitoring.setting_up" = "正在设置…";
+"monitoring.needs_approval" = "等你在 Codex 里允许";
+"monitoring.needs_update" = "需要更新 Codex";
+"monitoring.silent" = "没收到最近的任务";
+"monitoring.failed" = "设置失败";
+"monitoring.not_found" = "未找到";
+"monitoring.unreadable" = "无法读取";

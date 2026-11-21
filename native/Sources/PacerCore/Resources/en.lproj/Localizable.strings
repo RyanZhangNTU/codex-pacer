@@ -1652,3 +1652,20 @@
 "codex.hooks.guide.picture.review_one" = "%ld needs review";
 "codex.hooks.guide.picture.trust_all" = "Trust all";
 "warning.label.codexHooks" = "Codex";
+
+/* Module pages: the Status card every module shares. */
+"provider.account" = "Account";
+"provider.usage" = "Usage";
+"provider.usage_settings" = "Usage Settings";
+"provider.turn_usage" = "Usage per Turn";
+"codex.dot_tasks" = "Dot Tasks";
+"codex.account.sign_in_hint" = "Sign in in Codex, or run codex login in a terminal.";
+"monitoring.on" = "On";
+"monitoring.checking" = "Checking…";
+"monitoring.setting_up" = "Setting up…";
+"monitoring.needs_approval" = "Waiting for you in Codex";
+"monitoring.needs_update" = "Codex needs an update";
+"monitoring.silent" = "No recent reports";
+"monitoring.failed" = "Setup failed";
+"monitoring.not_found" = "Not found";
+"monitoring.unreadable" = "Can’t read";
