@@ -256,4 +256,37 @@ final class CodexHookReaderTests: XCTestCase {
         let last = await reader.lastHookRow
         XCTAssertEqual(last?.timeIntervalSince1970 ?? 0, start.addingTimeInterval(12).timeIntervalSince1970, accuracy: 0.01)
     }
+
+    func testASpoolAppendNamingANewRolloutIsFollowedByAMetricsOnlyRead() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-hook-append-" + UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let start = Date().addingTimeInterval(-60)
+        let reader = LocalActivityReader()
+        func rollout(_ day: String, _ id: String) throws -> URL {
+            let folder = home.appendingPathComponent("sessions/" + day, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appendingPathComponent("rollout-2026-11-21T10-00-00-\(id).jsonl")
+            try (record("session_meta", ["id": id, "originator": "Codex Desktop", "cwd": "/fixture"], at: start)
+                + record("event_msg", ["type": "task_started", "turn_id": "t1"], at: start.addingTimeInterval(1))).write(to: file)
+            return file
+        }
+        let first = try rollout("2026/11/21", thread)
+        try CodexHookFixture.announce([first], home: home, turn: "t1", at: start.addingTimeInterval(1))
+        let initial = await reader.read(home: home, now: start.addingTimeInterval(2))
+        XCTAssertEqual(initial.activities.count, 1)
+        XCTAssertFalse(initial.watchURLs.contains(first.deletingLastPathComponent().deletingLastPathComponent()),
+                       "The date folders are not watched, so the spool append is the only event for a new rollout")
+
+        // A week-old conversation continues: only the spool file changed.
+        let other = "019a0000-0000-7000-8000-000000000022"
+        let older = try rollout("2026/11/14", other)
+        try CodexHookFixture.announce([older], home: home, turn: "t1", at: start.addingTimeInterval(3))
+        let appended = await reader.read(home: home, now: start.addingTimeInterval(4), metricsOnly: true)
+        XCTAssertEqual(Set(appended.activities.compactMap(\.threadID)), [thread, other])
+        XCTAssertTrue(appended.watchURLs.contains(older), "The newly named rollout is watched from then on")
+
+        // Without new rows, a metrics-only read still only follows what it has.
+        let quiet = await reader.read(home: home, now: start.addingTimeInterval(5), metricsOnly: true)
+        XCTAssertEqual(quiet.activities.count, 2)
+    }
 }

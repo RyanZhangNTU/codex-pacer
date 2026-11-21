@@ -66,7 +66,10 @@ public actor LocalActivityReader {
         var watchURLs: [URL] = []
         var watchedDirectories: Set<String> = []
         let manager = FileManager.default
-        hooks.read(home: home, now: now) { self.signature($0) }
+        // A hook row can name a rollout no cursor follows yet; the spool's append is the only
+        // event for it, so a metrics-only read that saw new rows discovers as well.
+        let hooksChanged = hooks.read(home: home, now: now) { self.signature($0) }
+        let metricsOnly = metricsOnly && !hooksChanged
         hooks.locateChildren(home: home, now: now) { folder in
             (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
         }
