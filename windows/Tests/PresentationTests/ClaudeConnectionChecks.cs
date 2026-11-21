@@ -24,7 +24,10 @@ internal static class ClaudeConnectionChecks
     {
         var previous = CultureInfo.CurrentUICulture; CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(language);
         string root = Path.Combine(Path.GetTempPath(), "pacer-claude-connection-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
-        var site = new Site(); var web = new Web(new ClaudeWebSession(UiText.For(language == "zh-Hans"), Path.Combine(root, "profile"), site.Bind, dark));
+        var site = new Site(); var browser = new ClaudeWebSession(UiText.For(language == "zh-Hans"), Path.Combine(root, "profile"), site.Bind, dark);
+        var trace = new List<string>(); var traceClock = Stopwatch.StartNew();
+        void Note(string value) { lock (trace) trace.Add(traceClock.ElapsedMilliseconds.ToString("D6", CultureInfo.InvariantCulture) + " " + value); }
+        browser.Trace = Note; var web = new Web(browser) { Note = Note };
         await using var engine = new EngineClient();
         bool rejectSave = false;
         var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "claude", ProviderModes = new() { ["codex"] = "disabled", ["claude"] = "enabled", ["deepseek"] = "disabled" } };
@@ -36,6 +39,13 @@ internal static class ClaudeConnectionChecks
         var window = new SettingsWindow(UiText.For(language == "zh-Hans"), session, new Startup(), true, dark, engine, ready.Task, claudeConnection: coordinator)
             { IsHitTestVisible = false, ShowActivated = false };
         string scenario = language + (dark ? "-dark" : "-light");
+        string? shown = null;
+        engine.Snapshot += value =>
+        {
+            string now = value.ClaudeConnection is { } state ? state.State + (state.Refreshing ? "+refreshing" : "") + " context=" + state.Context[..Math.Min(8, state.Context.Length)] : "none";
+            if (now != shown) { shown = now; Note("engine: " + now); }
+        };
+        engine.ClaudeHostRequest += request => Note("request " + request.RequestID[..Math.Min(8, request.RequestID.Length)] + (request.Cancelled ? " cancelled" : request.Path == null ? " cookies" : " fetch"));
         try
         {
             window.Show();
@@ -69,7 +79,7 @@ internal static class ClaudeConnectionChecks
             window.CapturePreview(Path.Combine(output, "claude-connected-" + scenario + ".png"));
             var options = Find<Button>(window, "settings.claude.account_options");
             var oldRefresh = await Menu(options, "settings.claude.refresh"); options.ContextMenu!.IsOpen = false;
-            var choose = await Menu(options, "settings.claude.choose_organization"); Invoke(choose); picker = await Picker(); rejectSave = true; SelectWorkspace(picker, 2);
+            var choose = await Menu(options, "settings.claude.choose_organization"); Invoke(choose); picker = await Picker(); Note("step: rejected workspace write"); rejectSave = true; SelectWorkspace(picker, 2);
             await Until(() => !rejectSave && session.Current.ClaudeOrganization == First && engine.LatestSnapshot?.ClaudeConnection is { State: "signedIn", Refreshing: false } && options.IsEnabled);
             Check(engine.LatestSnapshot!.QuotaDashboard!.Providers.Single().Weekly.RemainingPercent == 65, "A rejected workspace write must restore the engine and quota, not only preferences");
             choose = await Menu(options, "settings.claude.choose_organization"); Invoke(choose); picker = await Picker(); SelectWorkspace(picker, 2);
@@ -124,6 +134,7 @@ internal static class ClaudeConnectionChecks
         {
             var state = engine.LatestSnapshot?.ClaudeConnection;
             Console.WriteLine($"Claude fixture diagnostics {scenario}: state={state?.State}, refreshing={state?.Refreshing}, paused={state?.Paused}, runtime={state?.WebAvailable}, coordinator={coordinator.LastFailure}, cookieRead={web.LastReadState}, loginWindows={Application.Current.Windows.OfType<ClaudeLoginWindow>().Count()}, organizationSelected={session.Current.ClaudeOrganization.Length > 0}, webview2={PresentationWait.WebViewProcesses()}");
+            lock (trace) foreach (string line in trace.TakeLast(120)) Console.WriteLine("  trace " + line);
             throw;
         }
         finally
@@ -153,13 +164,17 @@ internal static class ClaudeConnectionChecks
     {
         internal bool FailClear, RuntimeAvailable = true;
         internal string LastReadState = "none";
+        internal Action<string> Note = _ => { };
         public bool Available => RuntimeAvailable && inner.Available;
-        public Task PrepareAsync(CancellationToken cancellation) => inner.PrepareAsync(cancellation);
+        public Task PrepareAsync(CancellationToken cancellation) { Note("prepare"); return inner.PrepareAsync(cancellation); }
         public async Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation)
-        { var value = await inner.ReadAsync(cancellation); LastReadState = value == null ? "absent" : "present"; return value; }
-        public Task<bool> SignInAsync() => inner.SignInAsync();
+        {
+            try { var value = await inner.ReadAsync(cancellation); LastReadState = value == null ? "absent" : "present"; Note("cookie read: " + LastReadState); return value; }
+            catch (Exception error) { Note("cookie read threw " + error.GetType().Name); throw; }
+        }
+        public Task<bool> SignInAsync() { Note("sign-in"); return inner.SignInAsync(); }
         public bool SignInWasNew => inner.SignInWasNew;
-        public Task ClearAsync(CancellationToken cancellation) { if (FailClear) { FailClear = false; throw new IOException("Synthetic clear failure"); } return inner.ClearAsync(cancellation); }
+        public Task ClearAsync(CancellationToken cancellation) { Note("clear" + (FailClear ? " (fails)" : "")); if (FailClear) { FailClear = false; throw new IOException("Synthetic clear failure"); } return inner.ClearAsync(cancellation); }
         public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
     private sealed class Site

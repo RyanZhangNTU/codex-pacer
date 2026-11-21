@@ -34,7 +34,7 @@ internal sealed class ClaudeWebSession : ProviderWebSession, IClaudeWebSession
         => new ClaudeLoginWindow(ui, environment, fixture, darkOverride, lifetime);
     protected override async Task<string?> ReadFingerprintAsync(CancellationToken cancellation)
         => (await ReadAsync(cancellation))?.SessionHash;
-    public Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation) => base.ReadAsync((page, token) => ClaudeWebCookies.ReadAsync(page.Core, token), cancellation);
+    public Task<ClaudeWebSessionValue?> ReadAsync(CancellationToken cancellation) => base.ReadAsync((page, token) => ClaudeWebCookies.ReadAsync(page.Core, token, Trace), cancellation);
     /// The kept controller becomes a reader on a blank claude.ai document, which may make only
     /// the quota reads in `ProviderWebDefinition.Claude`; its cookie reads go on as before.
     public Task<ClaudeWebFetchValue> FetchAsync(string path, CancellationToken cancellation)

@@ -85,6 +85,19 @@ internal static class ClaudeWebSessionChecks
                 catch (OperationCanceledException) { }
                 Check(site.Controllers == before, "A cancelled query cannot create another browser controller");
             }
+            using (var superseded = new CancellationTokenSource())
+            {
+                // The engine cancels a cookie read when a new configuration supersedes it, after the read took
+                // the kept controller. Disposing it ended the browser, and the next read raced its exit (CI).
+                int before = site.Controllers; bool restarted = false;
+                site.Core!.Environment.BrowserProcessExited += (_, _) => restarted = true;
+                site.Mutate = _ => superseded.Cancel();
+                try { await session.ReadAsync(superseded.Token); throw new InvalidOperationException("A superseded cookie query succeeded"); }
+                catch (OperationCanceledException) { }
+                await Task.Delay(1000);
+                Check(!restarted && (await session.ReadAsync(CancellationToken.None))?.SessionHash == known.SessionHash && site.Controllers == before,
+                    "A superseded read keeps the kept controller, so the browser neither exits nor starts another controller");
+            }
             site.Ready = false; var reopening = session.SignInAsync();
             await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.Ready);
             var reopened = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); var environment = site.Core!.Environment; bool exited = false;
