@@ -4,7 +4,8 @@
 
 - Mac and Windows: Local Codex tasks, their progress and approval requests show again after Codex 26.1117, which removed the connection Pacer read them from ([#275](https://github.com/RyanZhangNTU/codex-pacer/issues/275)). Pacer now follows Codex through Codex's own hooks, which you allow in Codex once.
 - Mac and Windows: After this update, and in the welcome guide for new users, two steps get Codex ready: update Codex if it's too old, then allow Pacer in Codex. **Open Codex** opens Codex's settings with a small guide beside them, and each step checks itself off when it's done. The update note opens only while the Codex module is on.
-- Mac and Windows: If Codex runs tasks that Pacer doesn't hear about, Settings → Remote and the collapsed bar say so. The warning clears by itself once Pacer hears from Codex again.
+- Mac and Windows: Every service page in Settings has the same layout: Status (task monitoring, account and usage), Display, usage settings where a service has them, and custom folders. Remote lists only SSH hosts and, on Windows, WSL; Codex's task tracking and Dot tasks moved to the Codex page.
+- Mac and Windows: If Codex runs tasks that Pacer doesn't hear about, the Codex page and the collapsed bar say so. The warning clears by itself once Pacer hears from Codex again.
 - Mac and Windows: A Codex that's too old asks you to update it, and Pacer checks again after Codex updates.
 - Mac and Windows: Remote Control is removed, because Codex 26.1117 no longer supports it.
 - Mac and Windows: SSH hosts added in Codex Desktop show their running tasks.

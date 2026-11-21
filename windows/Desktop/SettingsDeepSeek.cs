@@ -19,12 +19,11 @@ internal sealed partial class SettingsWindow
     private Button? deepseekProgressRetry;
     private FrameworkElement? deepseekProgressStatus;
     private Button? deepseekAutomatic, deepseekSignIn, deepseekRingLink;
-    private TextBlock? deepseekDetection, deepseekBalance, deepseekRunway, deepseekDailyReference, deepseekWeeklyReference, deepseekBudgetIssue, deepseekLocalState, deepseekRingHint;
+    private TextBlock? deepseekDetection, deepseekBalance, deepseekRunway, deepseekDailyReference, deepseekWeeklyReference, deepseekBudgetIssue, deepseekRingHint;
     private StackPanel? deepseekSections, deepseekBudgetRows;
     private Border? deepseekOff;
     private TextBlock? deepseekModeNote;
     private FrameworkElement? deepseekBalanceRow;
-    private System.Windows.Shapes.Ellipse? deepseekLocalDot;
     private TextBox? deepseekDaily, deepseekWeekly;
     private DeepSeekPriceClock? deepseekClock;
     private DeepSeekPricingTimeline? deepseekPricing;
@@ -39,15 +38,15 @@ internal sealed partial class SettingsWindow
         ClearDeepSeekConnection();
         deepseekEnabled = deepseekTurnCost = deepseekProgress = null; deepseekAutomatic = deepseekSignIn = deepseekRingLink = null; deepseekConnection = null;
         deepseekProgressState = null; deepseekProgressRetry = null; deepseekProgressStatus = null;
-        deepseekDetection = deepseekBalance = deepseekRunway = deepseekDailyReference = deepseekWeeklyReference = deepseekBudgetIssue = deepseekLocalState = deepseekRingHint = null;
+        deepseekDetection = deepseekBalance = deepseekRunway = deepseekDailyReference = deepseekWeeklyReference = deepseekBudgetIssue = deepseekRingHint = null;
         deepseekSections = deepseekBudgetRows = null;
-        deepseekDaily = deepseekWeekly = null; deepseekOff = null; deepseekModeNote = null; deepseekBalanceRow = null; deepseekLocalDot = null; deepseekClock = null; deepseekPricing = null;
+        deepseekDaily = deepseekWeekly = null; deepseekOff = null; deepseekModeNote = null; deepseekBalanceRow = null; deepseekClock = null; deepseekPricing = null;
         deepseekDailyValue = deepseekWeeklyValue = null; deepseekChoices.Clear(); Array.Clear(deepseekPendingBudget);
         deepseekAccountHelp = deepseekConnectionDot = null;
     }
-    /// As on the Mac: the header holds the module switch, then the balance and
-    /// its connection, the dial's mode and budgets, what task rows show, prices,
-    /// and folded session locations. The panel style moved to Appearance.
+    /// As every module page: the header holds the module switch, then Status
+    /// (task monitoring, account, usage), Display, Usage Settings (the dial's
+    /// mode, budgets and prices) and the folded sessions folder.
     private void BuildDeepSeek()
     {
         SetPaneHeader(ProviderHeader("deepseek", out var detection, out var module, out var automatic));
@@ -67,9 +66,9 @@ internal sealed partial class SettingsWindow
         deepseekRunway.Margin = new Thickness(8, 0, 0, 0); deepseekRunway.VerticalAlignment = VerticalAlignment.Center; amount.Children.Add(deepseekRunway);
         var trend = new Button { Content = ui.Text("main.quota.trend"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         Identify(trend, "settings.deepseek.trend", ui.Text("main.quota.trend")); trend.Click += async (_, _) => await NavigateAsync("history"); amount.Children.Add(trend);
-        deepseekBalanceRow = InfoRow(ui.Text("deepseek.section.balance"), amount);
-        deepseekSections.Children.Add(SectionTitle(ui.Text("deepseek.section.balance"), 0));
-        deepseekSections.Children.Add(Card(deepseekBalanceRow, BuildDeepSeekConnection()));
+        deepseekBalanceRow = InfoRow(ui.Text("provider.usage"), amount);
+        deepseekSections.Children.Add(SectionTitle(ui.Text("main.section.status"), 0));
+        deepseekSections.Children.Add(Card(ModuleStatusRow("deepseek.monitoring", ui.Text("provider.monitoring")), BuildDeepSeekConnection(), deepseekBalanceRow));
 
         var mode = DeepSeekSegments("mode", new[] { ("balance", "deepseek.mode.balance"), ("budget", "deepseek.mode.budget") }, async value =>
         {
@@ -90,12 +89,10 @@ internal sealed partial class SettingsWindow
         deepseekBudgetIssue = Detail(""); deepseekBudgetIssue.Margin = new Thickness(14, 0, 14, 10); deepseekBudgetIssue.Visibility = Visibility.Collapsed; Identify(deepseekBudgetIssue, "settings.deepseek.budget.issue", ""); deepseekBudgetRows.Children.Add(deepseekBudgetIssue);
         deepseekBudgetIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
         deepseekModeNote = CardFooter("");
-        var modeCard = Card(Row(Label(ui.Text("deepseek.mode")), mode), deepseekBudgetRows);
-        deepseekSections.Children.Add(SectionTitle(ui.Text("deepseek.section.mode"))); deepseekSections.Children.Add(modeCard); deepseekSections.Children.Add(deepseekModeNote);
 
         var speed = InfoRow(ui.Text("main.deepseek.speed_basis"), DeepSeekSegments("speed", new[] { ("local", "windows.deepseek.speed_source.local"), ("account", "deepseek.speed_source.account") }, value => ChangeDeepSeek(p => p with { DeepSeekSpeedSource = value })),
             ui.Text("windows.deepseek.speed_basis_help"), id: "settings.deepseek.speed");
-        var costs = Toggle("deepseek.turn_cost", "deepseek.turn_cost_help", "settings.deepseek.turn_cost", out var cost);
+        var costs = Toggle("provider.turn_usage", "deepseek.turn_cost_help", "settings.deepseek.turn_cost", out var cost);
         deepseekTurnCost = cost; editors.Add(cost); BindToggle(cost, (p, value) => p with { DeepSeekShowsTurnCost = value });
         deepseekProgress = new CheckBox { Style = (Style)FindResource("SettingsSwitch"), VerticalAlignment = VerticalAlignment.Center };
         Identify(deepseekProgress, "settings.deepseek.progress_ring", ui.Text("main.claude.ring")); editors.Add(deepseekProgress);
@@ -117,8 +114,8 @@ internal sealed partial class SettingsWindow
         var progressEnd = new StackPanel { Orientation = Orientation.Horizontal }; progressEnd.Children.Add(deepseekProgressRetry); progressEnd.Children.Add(deepseekProgress);
         var progress = InfoRow(ui.Text("main.claude.ring"), progressEnd, ui.Text("deepseek.progress_ring_help"), deepseekProgressState, "settings.deepseek.progress_ring");
         deepseekProgressStatus = deepseekProgressState;
-        deepseekSections.Children.Add(SectionTitle(ui.Text("deepseek.section.display")));
-        deepseekSections.Children.Add(Card(speed, costs, progress)); deepseekSections.Children.Add(CardFooter(ui.Text("main.deepseek.estimate_note")));
+        deepseekSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
+        deepseekSections.Children.Add(Card(progress, costs, speed)); deepseekSections.Children.Add(CardFooter(ui.Text("main.deepseek.estimate_note")));
 
         var pricing = new Button { Content = ui.Text("deepseek.price_list"), Style = (Style)FindResource("SettingsLink"), FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center };
         Identify(pricing, "settings.deepseek.pricing", ui.Text("deepseek.price_list"));
@@ -127,15 +124,13 @@ internal sealed partial class SettingsWindow
             if (!SettingsPagePolicy.OpenPricing(ui.Language, guideLinkLauncher)) ShowIssue("windows.pages.open_failed");
         };
         deepseekPricing = new DeepSeekPricingTimeline(ui) { Margin = new Thickness(14, 12, 14, 12) };
-        deepseekSections.Children.Add(SectionTitle(ui.Text("deepseek.section.pricing")));
-        deepseekSections.Children.Add(Card(deepseekPricing, InfoRow(ui.Text("main.deepseek.estimate"), pricing, ui.Text("windows.deepseek.pricing_note"), id: "settings.deepseek.estimate")));
+        // The dial's mode and budgets, then prices: what the usage is measured against.
+        deepseekSections.Children.Add(SectionTitle(ui.Text("provider.usage_settings")));
+        deepseekSections.Children.Add(Card(Row(Label(ui.Text("deepseek.mode")), mode), deepseekBudgetRows, deepseekPricing,
+            InfoRow(ui.Text("main.deepseek.estimate"), pricing, ui.Text("windows.deepseek.pricing_note"), id: "settings.deepseek.estimate")));
+        deepseekSections.Children.Add(deepseekModeNote);
 
-        var sessions = StatusRow(ui.Text("windows.deepseek.sessions"), out var sessionDot, out var sessionState);
-        deepseekLocalDot = sessionDot; deepseekLocalState = sessionState; Identify(deepseekLocalState, "settings.deepseek.local_state", "");
-        var home = ProviderHomeEditor("deepseek");
-        // Session status reads first inside the folded locations, as on the Mac.
-        if (providerHomeLocations?.Content is StackPanel body) { body.Children.Insert(1, sessions); body.Children.Insert(2, Hairline(0, 0)); sessions.Margin = new Thickness(0); }
-        deepseekSections.Children.Add(Card(home));
+        deepseekSections.Children.Add(Card(ProviderHomeEditor("deepseek")));
     }
     private Task ChangeDeepSeek(Func<DesktopPreferences, DesktopPreferences> edit) => Change(edit);
     private TextBlock DeepSeekCaption(string value)
@@ -238,9 +233,8 @@ internal sealed partial class SettingsWindow
         deepseekProgressRetry.IsEnabled = deepseekProgress.IsEnabled;
         deepseekDaily!.IsEnabled = deepseekWeekly!.IsEnabled = deepseekTurnCost.IsEnabled = !busy && !session.RequiresRestart && connected && reading != null;
         deepseekAutomatic.IsEnabled = !busy && !session.RequiresRestart && connected && snapshot != null;
-        bool found = connected && snapshot?.Sources.Any(value => (value.Id is "deepseek:local-logs" or "deepseek:demo") && value.Available) == true;
-        SetStatus(deepseekLocalDot, deepseekLocalState, ui.Text(!connected ? "provider.state.failed" : found ? "provider.state.found" : "provider.state.no_home"),
-            !connected ? "attention" : found ? "positive" : "neutral");
-        if (providerHomeLocations != null && session.Current.DeepseekHome.Length == 0) providerHomeLocations.Tag = deepseekLocalState!.Text;
+        RefreshModuleStatusRow("deepseek.monitoring", module?.Monitoring);
+        if (providerHomeLocations != null && session.Current.DeepseekHome.Length == 0)
+            providerHomeLocations.Tag = ui.Text(module?.Monitoring?.State == "on" ? "provider.state.found" : "provider.state.no_home");
     }
 }

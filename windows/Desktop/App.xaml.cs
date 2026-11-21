@@ -279,7 +279,8 @@ public partial class App : Application
                 if (quitting || !settingsSession.Current.SystemNotifications || plan.Context != link.Context || plan.Provider != link.Provider ||
                     !await applications.OpenConversationAsync(plan, context => engine.QueryAsync<bool>("activateActivityHost", new { context }))) return false;
                 await engine.SendAsync("completeActivityOpen", new { context = link.Context }); return true;
-            });
+            },
+            provider => { Dispatcher.Invoke(() => OpenProviderSettings(provider)); return true; });
         notifications = new NotificationSession(settingsSession,
             demo ? new DemoSystemNotifications() : new WindowsSystemNotifications(Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico")),
             action => Dispatcher.InvokeAsync(action), action => _ = notificationActions.HandleReferenceAsync(action), demo, () => applications.CanOpenHarness);

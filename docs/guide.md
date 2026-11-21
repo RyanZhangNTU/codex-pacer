@@ -85,7 +85,7 @@ Estimates are the agent's own guess, so a ring can move back. Rings are on by de
 
 Codex tasks on SSH hosts, and in WSL on Windows, report too: Pacer sets reporting up on each connected host that runs Codex, including hosts added directly in Codex Desktop. Tasks that were already running pick it up once Codex reconnects to the host.
 
-Turn on **Include Codex Dot Tasks** on the Remote page to see Dot Durable tasks. It is off by default because checking them uses more power; after an upgrade it stays on if Dot tasks already reported progress on this computer. Pacer labels Dot tasks assigned to this computer with `Dot`, even when their chats are closed. On Windows this works with the Microsoft Store version of Codex Desktop and its default profile. The Codex **Progress Ring** switch sets up percentage reporting. Restart Codex Desktop after turning the ring on so Dot tasks pick it up. Turning the ring off stops new reports right away. Pacer still shows whether the task is running or has finished.
+Turn on **Dot Tasks** on the Codex page to see Dot Durable tasks. It is off by default because checking them uses more power; after an upgrade it stays on if Dot tasks already reported progress on this computer. Pacer labels Dot tasks assigned to this computer with `Dot`, even when their chats are closed. On Windows this works with the Microsoft Store version of Codex Desktop and its default profile. The Codex **Progress Ring** switch sets up percentage reporting. Restart Codex Desktop after turning the ring on so Dot tasks pick it up. Turning the ring off stops new reports right away. Pacer still shows whether the task is running or has finished.
 
 ## Quota and balance
 
@@ -127,7 +127,7 @@ After you click **Open** or **Restart**, a small floating guide shows in the cor
 
 **WSL on Windows.** Turn on WSL monitoring in **Settings → Remote** when you need it. At least one distribution must be installed. Monitoring increases power use. Use **Refresh Now** after installing a distribution or to check which ones are running.
 
-**Codex tasks.** Pacer follows Codex through hooks that Codex asks you to allow once. The welcome guide's last page (or, after an update, the update note) lists two steps: update Codex if it's too old, then choose **Open Codex** and follow the small guide beside it. You can also do it yourself: in Codex, choose **Review hooks** next to the message box, or open **Settings → Hooks**, and allow Codex Pacer's hooks. Until then Pacer shows no Codex tasks and the collapsed bar shows a Codex mark. **Settings → Remote** shows whether tracking works.
+**Codex tasks.** Pacer follows Codex through hooks that Codex asks you to allow once. The welcome guide's last page (or, after an update, the update note) lists two steps: update Codex if it's too old, then choose **Open Codex** and follow the small guide beside it. You can also do it yourself: in Codex, choose **Review hooks** next to the message box, or open **Settings → Hooks**, and allow Codex Pacer's hooks. Until then Pacer shows no Codex tasks and the collapsed bar shows a Codex mark. **Task monitoring**, the first row of the Codex page, shows whether tracking works.
 
 ## The main window
 
@@ -137,9 +137,9 @@ Click the gear in the expanded island to open the main window.
 | --- | --- |
 | **Overview** | Anything that needs you, each service at a glance and the running tasks. |
 | **History** | Each service's quota over the current period, and the last 7 days of DeepSeek spend and WorkBuddy credits. |
-| **Codex, Claude, DeepSeek, WorkBuddy** | Turn each service on or off, sign in, progress rings and custom folders. Only services found on this computer, or turned on, are listed. |
+| **Codex, Claude, DeepSeek, WorkBuddy** | Turn each service on or off. Every service page starts with the same status: **Task monitoring** (whether Pacer reads its tasks on this computer), **Account** and **Usage**; then what it shows, its usage settings if it has any, and custom folders. Only services found on this computer, or turned on, are listed. |
 | **Module Library** | Every service Pacer can follow. Those found on this computer come first; the rest are folded away. Turn any of them on or off, or follow the link to get one. |
-| **Remote** | Codex task tracking, SSH hosts and WSL. |
+| **Remote** | Tasks on other machines: SSH hosts and, on Windows, WSL. |
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
 | **Collapsed Bar** | What the bar shows and each item's options. |
 | **Expanded Panel** | The panel's blocks, their order and each block's options, including how long finished tasks stay. |

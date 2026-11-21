@@ -85,7 +85,7 @@ Codex、Claude Code、DeepSeek Harness 和 WorkBuddy 都会报告你的请求完
 
 SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也会报告进度：Pacer 会在每台已连接、装有 Codex 的主机上设置好。已经在运行的任务，要等 Codex 重新连接到该主机后才会开始报告。
 
-在“远程”页打开“统计 Codex Dot 任务”后才会显示 Dot 的 Durable 任务。它默认关闭，因为检查这些任务会增加耗电；升级时，如果这台电脑上已有 Dot 任务上报过进度，会保持开启。Dot 分派到这台电脑的任务会标注 `Dot`，聊天关闭时也能看到。Windows 上需要使用 Microsoft Store 版 Codex Desktop 和它的默认配置。Codex 页的“任务进度圆环”开关控制百分比上报。打开圆环后请重启 Codex Desktop，Dot 任务才会开始上报。关闭圆环会立即停止上报，Pacer 仍会显示任务是正在运行还是已经结束。
+在 Codex 页打开“Dot 任务”后才会显示 Dot 的 Durable 任务。它默认关闭，因为检查这些任务会增加耗电；升级时，如果这台电脑上已有 Dot 任务上报过进度，会保持开启。Dot 分派到这台电脑的任务会标注 `Dot`，聊天关闭时也能看到。Windows 上需要使用 Microsoft Store 版 Codex Desktop 和它的默认配置。Codex 页的“任务进度圆环”开关控制百分比上报。打开圆环后请重启 Codex Desktop，Dot 任务才会开始上报。关闭圆环会立即停止上报，Pacer 仍会显示任务是正在运行还是已经结束。
 
 ## 额度与余额
 
@@ -127,7 +127,7 @@ SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也
 
 **Windows 上的 WSL。** 需要时在“设置 → 远程”开启 WSL 监测。至少要安装一个发行版。开启后会增加能耗。安装发行版后，或需要查看哪些发行版正在运行时，点“立即刷新”。
 
-**Codex 任务。** Pacer 通过 Codex 的 hook 跟踪任务，第一次需要你在 Codex 里允许。欢迎向导的最后一页（升级的用户是更新说明）会列出两步：Codex 较旧时先更新，再点“打开 Codex”，按旁边小浮窗的提示允许。也可以自己在 Codex 输入框旁点“Review hooks”，或打开“设置 → Hooks”，允许 Codex Pacer 的 hook。允许之前，Pacer 不显示 Codex 任务，收起栏会显示一个 Codex 标记。“设置 → 远程”可以看到跟踪是否正常。
+**Codex 任务。** Pacer 通过 Codex 的 hook 跟踪任务，第一次需要你在 Codex 里允许。欢迎向导的最后一页（升级的用户是更新说明）会列出两步：Codex 较旧时先更新，再点“打开 Codex”，按旁边小浮窗的提示允许。也可以自己在 Codex 输入框旁点“Review hooks”，或打开“设置 → Hooks”，允许 Codex Pacer 的 hook。允许之前，Pacer 不显示 Codex 任务，收起栏会显示一个 Codex 标记。Codex 页第一行的“任务监测”可以看到跟踪是否正常。
 
 ## 主窗口
 
@@ -137,9 +137,9 @@ SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也
 | --- | --- |
 | **概览** | 需要你处理的事、各服务一览和正在运行的任务。 |
 | **历史** | 各服务当前周期的额度变化，以及 DeepSeek 花费和 WorkBuddy 积分的近 7 天。 |
-| **Codex、Claude、DeepSeek、WorkBuddy** | 开关服务、登录、进度圆环和自定义文件夹。这里只列出这台电脑上找到的或已开启的服务。 |
+| **Codex、Claude、DeepSeek、WorkBuddy** | 开关服务。每个服务页开头都是同样的状态：**任务监测**（Pacer 能否读到这台电脑上的任务）、**账号**和**用量**；下面是显示选项、用量设置（有的服务才有）和自定义文件夹。这里只列出这台电脑上找到的或已开启的服务。 |
 | **模块库** | Pacer 能追踪的所有服务。这台电脑上找到的排在前面，其余的折叠起来。可以在这里开关任何一个服务，或打开链接去获取。 |
-| **远程** | Codex 任务跟踪、SSH 主机和 WSL。 |
+| **远程** | 其他机器上的任务：SSH 主机，以及 Windows 上的 WSL。 |
 | **外观** | 主题、强调色、灵动岛的材质和大小、灵动岛或自由拖动，以及显示在哪块屏幕。 |
 | **折叠栏** | 折叠栏显示的内容和各组件的选项。 |
 | **展开面板** | 面板里的区块、顺序和各区块的选项，包括完成的任务保留多久。 |

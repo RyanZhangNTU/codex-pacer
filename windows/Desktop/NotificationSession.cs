@@ -120,7 +120,7 @@ internal sealed class NotificationSession : IDisposable
     }
 
     private static bool CanAttempt(NotificationAvailability? availability) => availability is NotificationAvailability.Available or NotificationAvailability.Denied;
-    private bool SupportedAction(string action) => action is "openTask" or "snoozeSpike" or "topUp" || action == "openHarness" && canOpenHarness();
+    private bool SupportedAction(string action) => action is "openTask" or "snoozeSpike" or "topUp" or "openCodexSettings" || action == "openHarness" && canOpenHarness();
 
     private void PreferencesChanged(DesktopPreferences value)
     {

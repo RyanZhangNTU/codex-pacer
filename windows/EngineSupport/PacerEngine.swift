@@ -3357,7 +3357,9 @@ actor EngineRuntime {
             : entry?.target.claudeCloud != nil ? "cloud" : deepseek ? "wallet" : notice.kind == .lowQuota ? "quota" : "local"
         guard let source = notificationSource(provider, scope: scope) else { value.actions = []; return value }
         let target = entry.map(EngineNotificationRegistry.target)
-        let kind = target != nil ? "openTask" : deepseek && notice.kind != .lowQuota ? "openHarness" : "showIsland"
+        // Allowing Pacer in Codex starts on Codex's page in Settings, as on the Mac.
+        let kind = target != nil ? "openTask" : notice.id == "codex:hooks-approval" ? "openCodexSettings"
+            : deepseek && notice.kind != .lowQuota ? "openHarness" : "showIsland"
         value.defaultAction = .init(kind: kind, title: L10n.text(kind == "showIsland" ? "main.overview.open" : "common.open_chat"),
             reference: notificationRegistry.issue(kind: kind, provider: provider, source: source, scope: scope, target: target, now: date))
         var actions = value.actions ?? []

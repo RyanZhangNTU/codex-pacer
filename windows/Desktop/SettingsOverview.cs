@@ -43,13 +43,9 @@ internal sealed partial class SettingsWindow
         return snapshot?.QuotaDashboard?.Providers.Select(value => value.Provider).ToArray() ?? [];
     }
 
-    private static int RemoteProblems(EngineSnapshot snapshot)
-    {
-        if (snapshot.Connections is not { } page) return 0;
-        int sources = page.Sources.Count(value => value.Module.Tone == "warning");
-        int hosts = page.Hosts.Count(host => host.Modules.Any(value => value.Tone == "warning"));
-        return Math.Max(sources, hosts) + (CodexHooksNeedUser(snapshot) ? 1 : 0);
-    }
+    /// Remote's problems are its hosts': each module's own tasks show on its page.
+    private static int RemoteProblems(EngineSnapshot snapshot) =>
+        snapshot.Connections is { } page ? page.Hosts.Count(host => host.Modules.Any(value => value.Tone == "warning")) : 0;
 
     /// What needs the user, with the one action that fixes it. The sidebar's
     /// amber dots and Overview's card read the same list, as on the Mac.
@@ -58,22 +54,33 @@ internal sealed partial class SettingsWindow
         var items = new List<AttentionItem>(); var snapshot = engine?.LatestSnapshot;
         if (snapshot == null || engine == null || providerConnectionClosed || engine.IsConnectionClosed) return items;
         var enabled = EnabledProviders();
+        // Each module whose task monitoring needs the user, in the words of its page's first row.
+        foreach (var module in snapshot.Modules ?? [])
+        {
+            if (!module.Enabled || snapshot.Demo || module.Monitoring is not { Tone: "attention" } monitoring) continue;
+            string provider = module.Provider;
+            string detail = monitoring.Detail ?? (provider == "codex" && monitoring.State == "notFound" ? sidebarCodexReport?.ExecutableIssue : null) ?? "";
+            items.Add(new(provider, PaneTitle(provider) + " · " + monitoring.Text, detail, ui.Text("main.overview.open"), () => NavigateAsync(provider)));
+        }
+        // Codex signs in in Codex; its page says how.
+        if (enabled.Contains("codex") && !snapshot.Demo && snapshot.Modules?.FirstOrDefault(value => value.Provider == "codex")?.Account is { State: "signedOut" } account
+            && !items.Any(value => value.Id == "codex"))
+            items.Add(new("codex", "Codex · " + account.Text, account.Detail ?? "", ui.Text("main.overview.open"), () => NavigateAsync("codex")));
         if (enabled.Contains("claude"))
         {
-            string? key = snapshot.ClaudeSetup?.State == "failed" && !snapshot.Demo ? "provider.state.failed"
-                : snapshot.ClaudeConnection?.State == "workspaceNeeded" ? "claude.account.workspace_needed"
+            string? key = snapshot.ClaudeConnection?.State == "workspaceNeeded" ? "claude.account.workspace_needed"
                 : snapshot.ClaudeConnection?.State == "signedOut" ? "claude.account.signed_out" : null;
-            if (key != null)
+            if (key != null && !items.Any(value => value.Id == "claude"))
                 items.Add(new("claude", "Claude · " + ui.Text(key), ui.Text("main.attention.quota_waits"),
-                    ui.Text(key == "provider.state.failed" ? "connections.retry" : key == "claude.account.workspace_needed" ? "claude.quota.choose_workspace" : "claude.quota.connect"),
-                    key == "provider.state.failed" ? () => engine.SendAsync("retryClaudeSetup") : () => GuideProviderActionAsync("claude")));
+                    ui.Text(key == "claude.account.workspace_needed" ? "claude.quota.choose_workspace" : "claude.quota.connect"),
+                    () => GuideProviderActionAsync("claude")));
         }
-        if (enabled.Contains("codex") && sidebarCodexReport is { SelectedExecutable: null })
-            items.Add(new("codex", "Codex CLI · " + ui.Text("provider.state.not_found"), ui.Text("main.attention.codex_cli"), ui.Text("main.overview.open"), () => NavigateAsync("codex")));
         // A module whose app must still trust Pacer's progress tool, or that lost it.
         foreach (var module in snapshot.Modules ?? [])
         {
-            if (!module.Enabled || !HarnessPane(module.Provider) || module.ProgressGuide is not { Attention: true, Summary: string summary } guide) continue;
+            // One line per module: its task monitoring or account comes first.
+            if (!module.Enabled || !HarnessPane(module.Provider) || module.ProgressGuide is not { Attention: true, Summary: string summary } guide
+                || items.Any(value => value.Id == module.Provider)) continue;
             string detail = guide.Steps.FirstOrDefault(step => step.State == "current")?.Title ?? guide.Line ?? "";
             string provider = module.Provider;
             items.Add(new(provider, PaneTitle(provider) + " · " + summary, detail, ui.Text("main.overview.open"), () => NavigateAsync(provider)));
@@ -348,7 +355,8 @@ internal sealed partial class SettingsWindow
                     classic: session.Current.ExpandedQuotaStyle == "classic", details: choices.QuotaDetails,
                     openSettings: () => _ = NavigateAsync(provider)));
             // Like the other services, the card shows its balance; local task state appears only when it needs a look.
-            var (status, _, _) = HarnessStatus(module);
+            // In the words of its page's Task Monitoring row.
+            string status = module.Monitoring?.Text ?? HarnessStatus(module).Status;
             if (module.ReportsAccountCredits != true || module.Status != "ready")
                 content.Children.Add(new TextBlock { Text = status, FontSize = 12, Foreground = PacerPalette.Secondary, TextWrapping = TextWrapping.Wrap });
         }

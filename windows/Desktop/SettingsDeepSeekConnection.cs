@@ -43,7 +43,7 @@ internal sealed partial class SettingsWindow
     }
     private StackPanel BuildDeepSeekConnection()
     {
-        deepseekConnectionTitle = Label(ui.Text("deepseek.platform_account"));
+        deepseekConnectionTitle = Label(ui.Text("provider.account"));
         deepseekSignIn = new Button { Content = ui.Text("deepseek.sign_in"), IsEnabled = false };
         Identify(deepseekSignIn, "settings.deepseek.sign_in", ui.Text("deepseek.sign_in")); editors.Add(deepseekSignIn);
         var actionButton = deepseekSignIn;
@@ -227,7 +227,7 @@ internal sealed partial class SettingsWindow
                 deepseekConnectionContext = state.Context; deepseekKeyInput!.Clear();
                 deepseekKeyIssue!.Text = DeepSeekKeyHelp; deepseekKeyIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
             }
-            deepseekConnectionTitle.Text = value.Title; deepseekConnection!.Text = value.Text;
+            deepseekConnectionTitle.Text = ui.Text("provider.account"); deepseekConnection!.Text = value.Text;
             deepseekConnection.SetResourceReference(TextBlock.ForegroundProperty, value.Color == "orange" ? "SettingsWarning" : "SettingsSecondary");
             deepseekConnectionDot!.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, value.Color == "green" ? "SettingsSuccess" : value.Color == "orange" ? "SettingsWarning" : "SettingsSecondary");
             deepseekSignIn!.Content = value.ActionLabel ?? ui.Text("deepseek.sign_in"); AutomationProperties.SetName(deepseekSignIn, (string)deepseekSignIn.Content);
