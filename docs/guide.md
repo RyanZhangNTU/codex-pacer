@@ -127,7 +127,7 @@ After you click **Open** or **Restart**, a small floating guide shows in the cor
 
 **WSL on Windows.** Turn on WSL monitoring in **Settings → Remote** when you need it. At least one distribution must be installed. Monitoring increases power use. Use **Refresh Now** after installing a distribution or to check which ones are running.
 
-**Codex tasks.** Pacer follows Codex through hooks that Codex asks you to allow once. In Codex, choose **Review hooks** next to the message box, or open **Settings → Hooks**, and allow Codex Pacer's hooks. Until then Pacer shows no Codex tasks and the collapsed bar shows a Codex mark. **Settings → Remote** shows whether tracking works.
+**Codex tasks.** Pacer follows Codex through hooks that Codex asks you to allow once. The welcome guide's last page (or, after an update, the update note) lists two steps: update Codex if it's too old, then choose **Open Codex** and follow the small guide beside it. You can also do it yourself: in Codex, choose **Review hooks** next to the message box, or open **Settings → Hooks**, and allow Codex Pacer's hooks. Until then Pacer shows no Codex tasks and the collapsed bar shows a Codex mark. **Settings → Remote** shows whether tracking works.
 
 ## The main window
 

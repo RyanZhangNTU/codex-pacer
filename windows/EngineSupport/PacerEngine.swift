@@ -458,6 +458,10 @@ actor EngineRuntime {
     /// When a running local Codex turn's evidence runs out and it needs one more
     /// read although nothing grew (`LocalActivityReader.nextRunningExpiry`).
     private var codexRunningExpiry: Date?
+    /// The Codex packages the last hook setup saw, and when a Codex too old for
+    /// hooks was last checked for an update: a new package version sets up again.
+    private var codexHookPackages: [String] = []
+    private var codexUpdateCheckedAt: Date?
     // Give a burst of writes time to land before reading lifecycle evidence.
     private static let codexFileEventCoalescing: TimeInterval = 0.1
     private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
@@ -1543,6 +1547,9 @@ actor EngineRuntime {
         let request = UUID(); codexHookRequest = request
         codexHookResult = nil
         codexHookActivity = (nil, nil, nil); codexHookActivityRequest = nil
+        #if os(Windows)
+        codexHookPackages = Self.codexPackages(); codexUpdateCheckedAt = now()
+        #endif
         watchCodexHookTrust(false)
         codexHookTask = Task { [weak self] in
             if let previous { _ = await services.apply(previous, executable, false) }
@@ -2035,6 +2042,12 @@ actor EngineRuntime {
                 guard active, projectionReady, !Task.isCancelled else { return }
             }
         } else if !codexLogSizes.isEmpty { codexLogSizes = [:] }
+        // Codex too old for hooks: the Store replaces the package folder with the
+        // new version's, so a changed list is an update and setup runs again.
+        if !demo, codexHookStatus == .needsCodexUpdate, now().timeIntervalSince(codexUpdateCheckedAt ?? .distantPast) >= 60 {
+            codexUpdateCheckedAt = now()
+            if Self.codexPackages() != codexHookPackages { scheduleCodexHooks(force: true) }
+        }
         #endif
         // The metadata projection changes on every clock tick. Do not reopen
         // transcript files or rescan source directories while nothing is written.
@@ -2042,6 +2055,8 @@ actor EngineRuntime {
         if refreshTask == nil { publish(notices: []) } else { handOffToCollect(localSnapshot: false) }
     }
     #if os(Windows)
+    /// The installed Codex packages' folders, whose names carry their versions.
+    private static func codexPackages() -> [String] { WindowsCodexExecutableDiscovery.packageLocations().map(\.path) }
     /// Whether a followed rollout or the hook spool changed size since the last
     /// check. A file seen for the first time counts as changed, so nothing
     /// written between its read and this check is missed.

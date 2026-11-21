@@ -86,6 +86,8 @@ internal static class GuidePageChecks
             Invoke(Find<Button>(window, "welcome.next")); await Pump();
             Check(AutomationProperties.GetName(Find<StackPanel>(window, "welcome.progress")) == window.StepName(3) && Has(window, "guide.done") && !Has(window, "welcome.next"),
                 "The last page finishes with Done");
+            Check(Find<StackPanel>(window, "welcome.codexSetup").IsVisible && Has(window, "guide.codexSetup.allow.state"),
+                "With Codex on, the last page leads with Codex's two steps");
             var rings = Find<CheckBox>(window, "welcome.rings"); Toggle(rings);
             await Until(() => !session.Current.ClaudeProgressRing && !session.Current.CodexProgressRing && !session.Current.DeepSeekProgressRing && rings.IsEnabled);
             Toggle(rings);
@@ -147,6 +149,46 @@ internal static class GuidePageChecks
                 "Only the three settings highlights carry a link");
         }
         finally { freshWindow.Close(); }
+        // 4.6.1: the Codex setup follows the hooks' state, and the button under it reads Later until both steps are done.
+        var setup = await engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = new GuideRequest("4.6.1", "4.6.0", 4, language, true, false, false, true, new[] { "codex" }) } }, TimeSpan.FromSeconds(3));
+        var started = new List<string>();
+        var setupBody = new GuideContent(ui, session, startup, setup, settingsActions.Add, () => welcomeActions++, engine, notifications, uri => { links.Add(uri); return true; }, () => snapshot,
+            start: target => { started.Add(target); return true; });
+        var setupWindow = new GuideWindow(ui, setupBody, setup, dark) { ShowActivated = false, IsHitTestVisible = false };
+        try
+        {
+            setupWindow.Show(); await Pump();
+            string State(string step) => Find<TextBlock>(setupWindow, "guide.codexSetup." + step + ".state").Text;
+            Button Action(string step) => Find<Button>(setupWindow, "guide.codexSetup." + step + ".action");
+            string Done() => (string)Find<Button>(setupWindow, "guide.done").Content;
+            async Task Hooks(string state, bool? opens = null) { snapshot = engine.LatestSnapshot! with { CodexHooks = new CodexHooks(state, null, opens) }; setupBody.Refresh(); await Pump(); }
+            string Suffix(string name) => "pages-whats-new-codex-" + name + "-" + language + (dark ? "-dark" : "-light") + ".png";
+            Check(setup.Releases.Count == 1 && setup.Releases[0].Version == "4.6.1" && setup.Releases[0].Items.Single().Control == "codexHooksSetup",
+                "The 4.6.1 note is the Codex setup alone: " + string.Join(",", setup.Releases.Select(value => value.Version + ":" + string.Join("/", value.Items.Select(item => item.Control)))));
+            Check(Has(setupWindow, "guide.codexSetup.reason") && Find<TextBlock>(setupWindow, "guide.codexSetup.reason").Text == ui.Text("whats_new.codex_setup.reason"),
+                "The 4.6.1 note says why in one line above the steps");
+            await Hooks("needsCodexUpdate");
+            Check(State("update") == ui.Text("whats_new.codex_setup.update_needed") && Action("update").IsVisible && State("allow") == ui.Text("whats_new.codex_setup.allow_waiting")
+                && !Action("allow").IsVisible && Done() == ui.Text("whats_new.codex_setup.later"), "An old Codex asks for its update first, and closing reads Later");
+            Invoke(Action("update")); await Pump();
+            Check(started.Last() == GuideContent.CodexApplication, "Update opens Codex itself, which offers its own update");
+            Capture(setupWindow.ClientContent, Path.Combine(output, Suffix("update")));
+            await Hooks("needsApproval", true);
+            Check(State("update") == ui.Text("whats_new.codex_setup.update_ready") && !Action("update").IsVisible && Action("allow").IsVisible
+                && (string)Action("allow").Content == ui.Text("codex.hooks.open") && State("allow") == ui.Text("whats_new.codex_setup.allow_detail"), "Approval offers Open Codex");
+            Capture(setupWindow.ClientContent, Path.Combine(output, Suffix("allow")));
+            await Hooks("needsApproval", false);
+            Check(State("allow") == ui.Text("whats_new.codex_setup.allow_manual") && !Action("allow").IsVisible, "Without Codex Desktop the step says what to do in Codex");
+            await Hooks("installFailed");
+            Check(State("allow") == ui.Text("whats_new.codex_setup.failed") && (string)Action("allow").Content == ui.Text("connections.retry"), "A failed setup offers Retry");
+            await Hooks("running");
+            Check(State("update") == ui.Text("whats_new.codex_setup.update_ready") && State("allow") == ui.Text("whats_new.codex_setup.done")
+                && !Action("allow").IsVisible && Done() == ui.Text("whats_new.done"), "Both steps done, the button reads Continue");
+            Capture(setupWindow.ClientContent, Path.Combine(output, Suffix("done")));
+            await Hooks("settingUp");
+            Check(State("update") == ui.Text("whats_new.codex_setup.checking") && Done() == ui.Text("whats_new.codex_setup.later"), "Setup in progress checks first");
+        }
+        finally { setupWindow.Close(); }
         // 4.5: WorkBuddy, the Module Library and remote Codex progress; only the library links to a page.
         var modules = await Query("4.4.4", current: "4.5.0"); var modulesBody = Body(modules);
         var modulesWindow = new GuideWindow(ui, modulesBody, modules, dark) { ShowActivated = false, IsHitTestVisible = false };

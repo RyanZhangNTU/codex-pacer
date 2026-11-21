@@ -11,6 +11,10 @@ public enum WhatsNew {
         public enum Control: Equatable, Sendable {
             case openAtLogin, showEmbeddedSessions, showAppButtons
             case openExpandedPanel, openCollapsedBar, openAppearance, openModules
+            /// The update note shows the item's detail and two steps that follow the
+            /// hooks' live status: update Codex, then allow Pacer's hooks in Codex.
+            /// Help & Updates lists it as an ordinary item.
+            case codexHooksSetup
         }
         public let symbol: String
         public let titleKey: String
@@ -24,11 +28,17 @@ public enum WhatsNew {
         /// A targeted introduction uses the last confirmed note as its
         /// migration baseline. Older copies did not record launch versions.
         public var requiredSeenVersion: String? = nil
+        /// The note opens only while this module is on; otherwise the version
+        /// updates quietly. Help & Updates still lists it.
+        public var requiredModule: AgentProvider? = nil
     }
 
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        Release(version: "4.6.1", items: [
+            Item(symbol: "terminal", titleKey: "whats_new.codex_hooks", detailKey: "whats_new.codex_hooks_detail", control: .codexHooksSetup)
+        ], requiredModule: .codex),
         Release(version: "4.6.0", items: [
             Item(symbol: "arrow.counterclockwise", titleKey: "whats_new.banked_resets", detailKey: "whats_new.banked_resets_detail"),
             Item(symbol: "arrow.up.to.line", titleKey: "whats_new.return_top_center", detailKey: "whats_new.return_top_center_detail",
@@ -102,16 +112,19 @@ public enum WhatsNew {
 
     /// Releases after the last version seen, up to the running one, newest
     /// first. Copies from before this note existed only see the running version.
-    public static func pending(current: String, defaults: UserDefaults = .standard,
+    /// `enabledModules`, when given, leaves out a release whose module is off.
+    public static func pending(current: String, defaults: UserDefaults = .standard, enabledModules: Set<AgentProvider>? = nil,
                                releases: [Release] = releases) -> [Release] {
         let seen = defaults.string(forKey: defaultsKey)
-        return pending(current: current, seen: seen, releases: releases)
+        return pending(current: current, seen: seen, enabledModules: enabledModules, releases: releases)
     }
 
     /// Hosts with their own preference store supply the last confirmed note.
-    public static func pending(current: String, seen: String?, releases: [Release] = releases) -> [Release] {
+    public static func pending(current: String, seen: String?, enabledModules: Set<AgentProvider>? = nil,
+                               releases: [Release] = releases) -> [Release] {
         return releases.filter { release in
             guard !newer(release.version, than: current) else { return false }
+            if let module = release.requiredModule, let enabledModules, !enabledModules.contains(module) { return false }
             if let required = release.requiredSeenVersion {
                 guard let seen, seen.compare(required, options: .numeric) == .orderedSame else { return false }
             }

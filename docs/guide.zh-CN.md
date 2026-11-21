@@ -127,7 +127,7 @@ SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也
 
 **Windows 上的 WSL。** 需要时在“设置 → 远程”开启 WSL 监测。至少要安装一个发行版。开启后会增加能耗。安装发行版后，或需要查看哪些发行版正在运行时，点“立即刷新”。
 
-**Codex 任务。** Pacer 通过 Codex 的 hook 跟踪任务，第一次需要你在 Codex 里允许。在 Codex 输入框旁点“Review hooks”，或打开“设置 → Hooks”，允许 Codex Pacer 的 hook。允许之前，Pacer 不显示 Codex 任务，收起栏会显示一个 Codex 标记。“设置 → 远程”可以看到跟踪是否正常。
+**Codex 任务。** Pacer 通过 Codex 的 hook 跟踪任务，第一次需要你在 Codex 里允许。欢迎向导的最后一页（升级的用户是更新说明）会列出两步：Codex 较旧时先更新，再点“打开 Codex”，按旁边小浮窗的提示允许。也可以自己在 Codex 输入框旁点“Review hooks”，或打开“设置 → Hooks”，允许 Codex Pacer 的 hook。允许之前，Pacer 不显示 Codex 任务，收起栏会显示一个 Codex 标记。“设置 → 远程”可以看到跟踪是否正常。
 
 ## 主窗口
 

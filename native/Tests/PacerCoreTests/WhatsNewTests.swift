@@ -72,6 +72,27 @@ final class WhatsNewTests: XCTestCase {
         XCTAssertEqual(WhatsNew.pending(current: "3.2.0", defaults: defaults), [])
     }
 
+    func testAModuleNoteOpensOnlyWhileItsModuleIsOn() throws {
+        let catalog = [WhatsNew.Release(version: "5.0.1", items: [.init(symbol: "a", titleKey: "a", detailKey: "a", control: .codexHooksSetup)],
+                                        requiredModule: .codex),
+                       WhatsNew.Release(version: "5.0.0", items: [.init(symbol: "b", titleKey: "b", detailKey: "b")])]
+        func pending(_ modules: Set<AgentProvider>?) -> [String] {
+            WhatsNew.pending(current: "5.0.1", seen: "4.9.0", enabledModules: modules, releases: catalog).map(\.version)
+        }
+        XCTAssertEqual(pending([.codex, .claude]), ["5.0.1", "5.0.0"])
+        XCTAssertEqual(pending([.claude]), ["5.0.0"], "With the module off its note stays closed")
+        XCTAssertEqual(pending(nil), ["5.0.1", "5.0.0"], "Unknown modules open the note")
+        XCTAssertEqual(WhatsNew.history(upTo: "5.0.1", releases: catalog).map(\.version), ["5.0.1", "5.0.0"], "Help & Updates keeps it")
+        let shipped = try XCTUnwrap(WhatsNew.releases.first { $0.version == "4.6.1" })
+        XCTAssertEqual(shipped.requiredModule, .codex)
+        XCTAssertEqual(shipped.items.map(\.control), [.codexHooksSetup], "4.6.1 is the Codex setup alone")
+        let steps = ["reason", "update", "update_ready", "update_needed", "update_hint_mac", "update_hint_windows", "update_action", "checking",
+                     "allow", "allow_detail", "allow_manual", "allow_waiting", "done", "failed", "later"].map { "whats_new.codex_setup." + $0 }
+        for key in steps + ["welcome.codex_setup.title", "welcome.codex_setup.reason"] {
+            for language in [AppLanguage.english, .simplifiedChinese] { XCTAssertNotEqual(L10n.text(key, language: language), key, key) }
+        }
+    }
+
     func testShippedHighlightsAreOrderedAndLocalized() {
         let shipped = WhatsNew.releases.map(\.version)
         XCTAssertEqual(shipped, shipped.sorted { WhatsNew.newer($0, than: $1) }, "Newest first")
