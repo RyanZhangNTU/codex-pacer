@@ -1663,6 +1663,7 @@
 "monitoring.on" = "On";
 "monitoring.checking" = "Checking…";
 "monitoring.setting_up" = "Setting up…";
+"monitoring.waiting" = "No data yet";
 "monitoring.needs_approval" = "Waiting for you in Codex";
 "monitoring.needs_update" = "Codex needs an update";
 "monitoring.silent" = "No recent reports";

@@ -5,7 +5,7 @@ import Foundation
 /// actions, so the pages read alike; only what feeds them differs.
 public struct ModuleMonitoring: Equatable, Sendable {
     public enum State: String, Equatable, Sendable {
-        case on, checking, settingUp, needsApproval, needsUpdate, silent, failed, notFound, unreadable
+        case on, checking, settingUp, waiting, needsApproval, needsUpdate, silent, failed, notFound, unreadable
     }
     public enum Tone: String, Equatable, Sendable { case positive, neutral, attention }
     /// At most one button per row.
@@ -32,7 +32,7 @@ public struct ModuleMonitoring: Equatable, Sendable {
     public var tone: Tone {
         switch state {
         case .on: .positive
-        case .checking, .settingUp: .neutral
+        case .checking, .settingUp, .waiting: .neutral
         case .needsApproval, .needsUpdate, .silent, .failed, .notFound, .unreadable: .attention
         }
     }
@@ -47,11 +47,21 @@ public struct ModuleMonitoring: Equatable, Sendable {
     /// The module page needs the user: its sidebar entry and Overview say so.
     public var needsUser: Bool { tone == .attention }
 
+    /// The module's sessions on this computer that still run or wait for the user.
+    public static func localSessions(_ activities: [SessionActivity], provider: AgentProvider, at now: Date) -> Int {
+        activities.filter { activity in
+            guard activity.provider == provider, activity.sourceHostID == nil else { return false }
+            let phase = activity.observedPhase(at: now)
+            return phase == .running || phase == .waitingForInput
+        }.count
+    }
+
     private static func key(_ state: State) -> String {
         switch state {
         case .on: "on"
         case .checking: "checking"
         case .settingUp: "setting_up"
+        case .waiting: "waiting"
         case .needsApproval: "needs_approval"
         case .needsUpdate: "needs_update"
         case .silent: "silent"
@@ -89,7 +99,7 @@ public struct ModuleMonitoring: Equatable, Sendable {
         case .ready: .init(.on, sessions: sessions, detail: note)
         case .checking: .init(.checking)
         case .configuring: .init(.settingUp)
-        case .missingHome: .init(.notFound, detail: L10n.text("provider.state.no_home"))
+        case .missingHome: .init(.waiting, detail: L10n.text("provider.state.no_home"))
         case .failed: .init(.failed, detail: L10n.text("claude.monitoring_setup_failed"), action: .retry)
         }
     }
@@ -99,7 +109,8 @@ public struct ModuleMonitoring: Equatable, Sendable {
     public static func harness(_ status: HarnessSourceStatus?, detected: Bool, sessions: Int) -> Self {
         switch status {
         case .ready?: .init(.on, sessions: sessions)
-        case .missing?: .init(.notFound, detail: detected ? L10n.text("harness.missing") : nil, action: .rescan)
+        // Installed without task data yet is no problem; not installed is.
+        case .missing?: detected ? .init(.waiting, detail: L10n.text("harness.missing"), action: .rescan) : .init(.notFound, action: .rescan)
         case .incompatible?: .init(.unreadable, detail: L10n.text("harness.incompatible"), action: .rescan)
         case .unavailable?: .init(.unreadable, detail: L10n.text("harness.unavailable"), action: .rescan)
         case nil: detected ? .init(.checking) : .init(.notFound, action: .rescan)
@@ -110,7 +121,7 @@ public struct ModuleMonitoring: Equatable, Sendable {
     public static func deepseek(found: Bool?, sessions: Int) -> Self {
         switch found {
         case true?: .init(.on, sessions: sessions)
-        case false?: .init(.notFound, detail: L10n.text("provider.state.no_home"))
+        case false?: .init(.waiting, detail: L10n.text("provider.state.no_home"))
         case nil: .init(.checking)
         }
     }

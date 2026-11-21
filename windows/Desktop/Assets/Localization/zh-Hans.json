@@ -1147,6 +1147,7 @@
     "monitoring.setting_up": "正在设置…",
     "monitoring.silent": "没收到最近的任务",
     "monitoring.unreadable": "无法读取",
+    "monitoring.waiting": "还没有数据",
     "notice.body": "%1$@：%2$@",
     "notice.low_quota": "额度偏低",
     "notice.quota_remaining": "%1$@剩余 %2$ld%%",

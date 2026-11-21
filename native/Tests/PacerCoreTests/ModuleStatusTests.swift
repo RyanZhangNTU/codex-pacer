@@ -30,16 +30,17 @@ final class ModuleStatusTests: XCTestCase {
         XCTAssertEqual(ModuleMonitoring.claude(.ready, sessions: 1, note: "Estimated"), .init(.on, sessions: 1, detail: "Estimated"))
         XCTAssertEqual(ModuleMonitoring.claude(.configuring, sessions: 0).state, .settingUp)
         XCTAssertEqual(ModuleMonitoring.claude(.failed, sessions: 0).action, .retry)
-        XCTAssertEqual(ModuleMonitoring.claude(.missingHome, sessions: 0).state, .notFound)
+        XCTAssertEqual(ModuleMonitoring.claude(.missingHome, sessions: 0).tone, .neutral, "No Claude folder yet is no problem")
 
         XCTAssertEqual(ModuleMonitoring.harness(.ready, detected: true, sessions: 3).text, L10n.text("monitoring.on") + " · " + L10n.text("connections.sessions", 3))
-        XCTAssertEqual(ModuleMonitoring.harness(.missing, detected: true, sessions: 0), .init(.notFound, detail: L10n.text("harness.missing"), action: .rescan))
+        XCTAssertEqual(ModuleMonitoring.harness(.missing, detected: true, sessions: 0), .init(.waiting, detail: L10n.text("harness.missing"), action: .rescan))
+        XCTAssertEqual(ModuleMonitoring.harness(.missing, detected: false, sessions: 0).tone, .attention, "An app not installed needs the user")
         XCTAssertEqual(ModuleMonitoring.harness(.incompatible, detected: true, sessions: 0).state, .unreadable)
         XCTAssertEqual(ModuleMonitoring.harness(nil, detected: true, sessions: 0).state, .checking, "Searching needs no button")
         XCTAssertEqual(ModuleMonitoring.harness(nil, detected: false, sessions: 0).action, .rescan)
 
         XCTAssertEqual(ModuleMonitoring.deepseek(found: true, sessions: 1).state, .on)
-        XCTAssertEqual(ModuleMonitoring.deepseek(found: false, sessions: 0).state, .notFound)
+        XCTAssertEqual(ModuleMonitoring.deepseek(found: false, sessions: 0).state, .waiting)
         XCTAssertEqual(ModuleMonitoring.deepseek(found: nil, sessions: 0).tone, .neutral)
     }
 

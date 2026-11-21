@@ -1663,6 +1663,7 @@
 "monitoring.on" = "已开启";
 "monitoring.checking" = "正在检查…";
 "monitoring.setting_up" = "正在设置…";
+"monitoring.waiting" = "还没有数据";
 "monitoring.needs_approval" = "等你在 Codex 里允许";
 "monitoring.needs_update" = "需要更新 Codex";
 "monitoring.silent" = "没收到最近的任务";

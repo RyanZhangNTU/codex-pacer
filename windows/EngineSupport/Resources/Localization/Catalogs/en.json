@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "d94b62402e1ba78c816ce0801b8755d0e546208477f027b50b2e7a9810ce89d4",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "ca8c7710ff69e8efb3eeda498ef45019cf0d7e49eee2033b464dbdf20c2ed8dc",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -1151,6 +1151,7 @@
     "monitoring.setting_up": "Setting up\u2026",
     "monitoring.silent": "No recent reports",
     "monitoring.unreadable": "Can\u2019t read",
+    "monitoring.waiting": "No data yet",
     "notice.body": "%1$@: %2$@",
     "notice.low_quota": "Quota is low",
     "notice.quota_remaining": "%1$@: %2$ld%% remaining",

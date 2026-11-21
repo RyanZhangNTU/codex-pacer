@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "fa56279b6b8720fcfa3612cab5e23ef2980afeed661fd8816ee10e91edbcc23c",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "0d1d4ab9497787d95c487a3366265300f7fb0018557baeb903c9c95bb5630b2e",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -1151,6 +1151,7 @@
     "monitoring.setting_up": "\u6b63\u5728\u8bbe\u7f6e\u2026",
     "monitoring.silent": "\u6ca1\u6536\u5230\u6700\u8fd1\u7684\u4efb\u52a1",
     "monitoring.unreadable": "\u65e0\u6cd5\u8bfb\u53d6",
+    "monitoring.waiting": "\u8fd8\u6ca1\u6709\u6570\u636e",
     "notice.body": "%1$@\uff1a%2$@",
     "notice.low_quota": "\u989d\u5ea6\u504f\u4f4e",
     "notice.quota_remaining": "%1$@\u5269\u4f59 %2$ld%%",

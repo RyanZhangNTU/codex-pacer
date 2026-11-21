@@ -1147,6 +1147,7 @@
     "monitoring.setting_up": "Setting up…",
     "monitoring.silent": "No recent reports",
     "monitoring.unreadable": "Can’t read",
+    "monitoring.waiting": "No data yet",
     "notice.body": "%1$@: %2$@",
     "notice.low_quota": "Quota is low",
     "notice.quota_remaining": "%1$@: %2$ld%% remaining",
