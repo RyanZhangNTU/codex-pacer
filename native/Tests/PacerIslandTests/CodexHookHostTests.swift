@@ -240,24 +240,57 @@ final class CodexHookHostTests: XCTestCase {
         model.syncCodexHooks()
         try await TestWait.until { model.codexHookStatus == .running }
         XCTAssertFalse(model.codexHooksNeedUser)
-
-        // Codex runs a turn and no hook row follows.
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
-        let now = Date()
-        let file = try rollout(first, day: formatter.string(from: now), home: home, at: now)
+        let now = Date(), day = formatter.string(from: now)
+
+        // A long turn: its hook row is ten minutes old and its rollout is still being written.
+        let long = try rollout(first, day: day, home: home, at: now)
+        try announce(long, thread: first, home: home, at: now.addingTimeInterval(-600))
+        model.refreshActivity()
+        try await TestWait.until { model.activities.contains { $0.threadID == self.first } }
         model.refreshCodexHookStatusOnClock(now: now)
         try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertEqual(model.codexHookStatus, .running, "Within a minute of the last check the clock does not list the folders")
         model.refreshCodexHookStatusOnClock(now: now.addingTimeInterval(61))
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(model.codexHookStatus, .running, "A turn the hooks hold open explains its own writes")
+
+        // Another conversation runs a turn and no hook row follows.
+        let other = try rollout(resumed, day: day, home: home, at: now)
+        model.refreshCodexHookStatusOnClock(now: now.addingTimeInterval(90))
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(model.codexHookStatus, .running, "Within a minute of the last check the clock does not list the folders")
+        model.refreshCodexHookStatusOnClock(now: now.addingTimeInterval(122))
         let silent = try await TestWait.until { model.codexHookStatus == .notRunning }
         XCTAssertTrue(silent, "The clock notices the silence after approval, without Retry")
         XCTAssertTrue(model.codexHooksNeedUser, "The collapsed bar and the Remote page show it")
 
         // The hook writes again: the read its row causes clears the notice.
-        try announce(file, thread: first, home: home, at: Date())
+        try announce(other, thread: resumed, home: home, at: Date())
         model.refreshActivity(metricsOnly: true)
         let cleared = try await TestWait.until { model.codexHookStatus == .running }
         XCTAssertTrue(cleared, "A valid hook row clears the notice by itself")
         XCTAssertFalse(model.codexHooksNeedUser)
+    }
+
+    func testAFailedTrustReadShowsSettingUpAndIsAskedAgainAtOnce() async throws {
+        final class Reads: @unchecked Sendable {
+            private let lock = NSLock(); private var count = 0
+            func next() -> Int { lock.withLock { count += 1; return count } }
+            var value: Int { lock.withLock { count } }
+        }
+        let home = try temporaryHome("codex-trust")
+        let model = try model(home: home)
+        let reads = Reads()
+        model.codexHookSetupOverride = { _, _, enabled in .init(supportsHooks: true, installed: enabled, trust: nil) }
+        // Setup could not read the trust; the watch's first check asks again at once.
+        model.codexHookTrustOverride = { _, _ in _ = reads.next(); return Array(repeating: "trusted", count: 7) }
+        model.syncCodexHooks()
+        try await TestWait.until { model.codexHookStatus == .notInstalled }
+        XCTAssertFalse(model.codexHooksNeedUser, "Unknown trust shows as setting up, not as a problem")
+        let started = Date()
+        let running = try await TestWait.until { model.codexHookStatus == .running }
+        XCTAssertTrue(running, "The trust is asked again without Retry")
+        XCTAssertLessThan(Date().timeIntervalSince(started), CodexHookTrustWatch.fallback, "At the first check, not after the fallback minute")
+        XCTAssertEqual(reads.value, 1)
     }
 }

@@ -479,8 +479,9 @@ final class IslandModel: ObservableObject {
         let enabled: Bool
     }
     typealias CodexHookSetupCall = @Sendable (_ home: URL, _ executable: String, _ enabled: Bool) async -> CodexHookSetupResult
-    /// Tests replace the installer. Without one, a model given its installation never touches a Codex home.
+    /// Tests replace the installer and the trust read. Without them, a model given its installation never touches a Codex home.
     var codexHookSetupOverride: CodexHookSetupCall?
+    var codexHookTrustOverride: (@Sendable (_ home: URL, _ executable: String) async -> [String]?)?
     private var codexHookStatusCheckedAt = Date.distantPast
     /// The rollout folders are listed at most this often for the status.
     static let codexHookStatusInterval: TimeInterval = 60
@@ -562,26 +563,32 @@ final class IslandModel: ObservableObject {
     func updateCodexHookStatus(force: Bool = false, now: Date = Date()) async {
         guard force || now.timeIntervalSince(codexHookStatusCheckedAt) >= Self.codexHookStatusInterval else { return }
         codexHookStatusCheckedAt = now
-        let home = self.home, lastHook = await reader.lastHookRow
-        codexHookEvaluatedRow = lastHook
-        let lastTurn = await Task.detached(priority: .utility) { CodexHookSpool.latestRollout(home: home, now: now) }.value
-        let result = codexHookResult
+        let evidence = await reader.hookEvidence(home: self.home, now: now)
+        codexHookEvaluatedRow = evidence.lastHookEvent
+        let result = codexHookResult, awaitsTrust = result?.awaitsTrust == true
         var status = CodexHookStatus.evaluate(enabled: isModuleEnabled(.codex) && !demo, supportsHooks: result?.supportsHooks,
             installed: result == nil ? false : result?.installed, trust: result?.trust,
-            lastHookEvent: lastHook, lastCodexTurn: lastTurn, trustedAt: codexHooksTrustedAt, now: now)
+            lastHookEvent: evidence.lastHookEvent, lastCodexTurn: evidence.lastCodexTurn, trustedAt: codexHooksTrustedAt, now: now)
         let waiting: Bool
         if case .needsApproval = status { waiting = true } else { waiting = false }
-        // Just allowed: the turns so far ran without the hooks, so their silence says nothing.
-        if case .needsApproval = codexHookStatus, status == .running || status == .notRunning {
-            codexHooksTrustedAt = now; status = .running
+        switch status {
+        case .needsApproval: codexHooksAwaitingApproval = true
+        case .running, .notRunning:
+            // Just allowed: the turns so far ran without the hooks, so their silence says nothing.
+            if codexHooksAwaitingApproval { codexHooksAwaitingApproval = false; codexHooksTrustedAt = now; status = .running }
+        case .notInstalled where awaitsTrust: break // The trust is unknown, not changed.
+        default: codexHooksAwaitingApproval = false
         }
         if codexHookStatus != status { codexHookStatus = status }
         if waiting, !defaults.bool(forKey: Self.codexHooksApprovalNotifiedKey) {
             defaults.set(true, forKey: Self.codexHooksApprovalNotifiedKey)
             postCodexHooksNotice()
         }
-        watchCodexHookTrust(waiting)
+        // While the user approves, and after Codex failed to report the trust, which is asked again at once.
+        if waiting { watchCodexHookTrust(true) } else { watchCodexHookTrust(awaitsTrust, due: true) }
     }
+    /// The hooks waited for approval; kept while a failed trust read leaves it unknown.
+    private var codexHooksAwaitingApproval = false
 
     /// The newest hook row the last status saw.
     private var codexHookEvaluatedRow: Date?
@@ -607,13 +614,13 @@ final class IslandModel: ObservableObject {
 
     /// While the hooks wait for the user, a change to Codex's config is the cue
     /// to ask Codex for their trust, which only the trust call does; the plugin stays as it is.
-    private func watchCodexHookTrust(_ on: Bool) {
+    private func watchCodexHookTrust(_ on: Bool, due: Bool = false) {
         guard on else {
             codexTrustTimer?.invalidate(); codexTrustTimer = nil; codexTrustWatch = nil
             return
         }
         guard codexTrustTimer == nil else { return }
-        codexTrustWatch = CodexHookTrustWatch(stamp: Self.modified(CodexHookTrustWatch.trustFile(home: home)), now: Date())
+        codexTrustWatch = CodexHookTrustWatch(stamp: Self.modified(CodexHookTrustWatch.trustFile(home: home)), now: Date(), due: due)
         let timer = Timer(timeInterval: CodexHookTrustWatch.interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkCodexHookTrust() }
         }
@@ -627,10 +634,9 @@ final class IslandModel: ObservableObject {
               watch.shouldCheck(stamp: Self.modified(CodexHookTrustWatch.trustFile(home: home)), now: Date()) else { return }
         codexTrustWatch = watch
         let home = self.home, executable = defaults.string(forKey: "codexExecutable") ?? ""
+        let read = codexHookTrustOverride ?? { home, executable in await MacCodexHookSetup.trust(home: home, customExecutable: executable) }
         codexTrustCheck = Task { [weak self] in
-            let trust = await Task.detached(priority: .utility) {
-                await MacCodexHookSetup.trust(home: home, customExecutable: executable)
-            }.value
+            let trust = await Task.detached(priority: .utility) { await read(home, executable) }.value
             guard let self else { return }
             self.codexTrustCheck = nil
             guard !Task.isCancelled, self.home == home, let trust, let result = self.codexHookResult, result.installed == true else { return }
