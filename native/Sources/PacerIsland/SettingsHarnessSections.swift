@@ -3,9 +3,10 @@ import PacerCore
 import PacerMacSupport
 import SwiftUI
 
-/// A local module's page below its header, laid out like Claude's: what is
-/// found and signed in, what the panel shows, then the data folder folded
-/// away. Everything a module has comes from its registry entry.
+/// A local module's page below its header, in the order every module page
+/// uses: Status (task monitoring, account, usage), what the island shows, the
+/// credits and their reminders, then the data folder folded away. Everything
+/// a module has comes from its registry entry.
 struct SettingsHarnessSections: View {
     @ObservedObject var model: IslandModel
     let descriptor: HarnessDescriptor
@@ -19,13 +20,12 @@ struct SettingsHarnessSections: View {
 
     var body: some View {
         MainCard(title: L10n.text("main.section.status")) {
-            dataRow
+            ModuleMonitoringRow(monitoring: model.harnessMonitoring(provider), help: model.localHarnessHome(provider)?.path,
+                                rescan: { model.refreshLocalHarness(provider) })
             if let connection = model.harnessAccount(provider) {
                 HarnessAccountRow(connection: connection)
+                HarnessUsageRow(connection: connection, settings: model.creditSettings(provider), now: model.now)
             }
-        }
-        if let connection = model.harnessAccount(provider) {
-            HarnessCreditsCard(connection: connection, settings: model.creditSettings(provider), now: model.now)
         }
         // While the ring needs steps or has a problem, its card stands alone;
         // ready or off, it is one row like any other service's ring.
@@ -41,6 +41,9 @@ struct SettingsHarnessSections: View {
         if guideOpen, descriptor.reportsAccountCredits {
             MainCard { turnCredits }
         }
+        if let connection = model.harnessAccount(provider) {
+            HarnessCreditsCard(connection: connection, settings: model.creditSettings(provider), now: model.now)
+        }
         MainCard {
             CardDisclosure(title: L10n.text("provider.custom_locations"),
                 summary: dataFolder.isEmpty ? L10n.text("settings.auto_discovery") : L10n.text("main.location.custom"),
@@ -52,28 +55,8 @@ struct SettingsHarnessSections: View {
         }
     }
 
-    /// Found or not; a rescan only while it is not found or not readable.
-    private var dataRow: some View {
-        let status = model.localHarnessStatus(provider)
-        let (tint, key, detail): (Color, String, String?) = switch status {
-        case .ready: (MainPalette.positive, "harness.data.found", nil)
-        case .missing where model.providerDetected(provider): (.secondary, "harness.data.missing", "harness.missing")
-        case .incompatible: (MainPalette.attention, "harness.data.found", "harness.incompatible")
-        case .unavailable: (MainPalette.attention, "harness.data.found", "harness.unavailable")
-        case nil where model.providerDetected(provider): (.secondary, "provider.state.searching", nil)
-        default: (MainPalette.attention, "harness.data.missing", nil)
-        }
-        return CardStatusRow(title: L10n.text("harness.data"), state: L10n.text(key), tint: tint,
-                             help: model.localHarnessHome(provider)?.path, detail: detail.map { L10n.text($0) }) {
-            // Searching needs no button; a folder not found or not readable does.
-            if status != .ready, status != nil || !model.providerDetected(provider) {
-                Button(L10n.text("settings.rescan")) { model.refreshLocalHarness(provider) }.buttonStyle(.main)
-            }
-        }
-    }
-
     private var turnCredits: some View {
-        CardToggle(title: L10n.text("harness.turn_credits"), info: L10n.text("main.info.harness_turn_credits"), isOn: $showsTurnCredits)
+        CardToggle(title: L10n.text("provider.turn_usage"), info: L10n.text("main.info.harness_turn_credits"), isOn: $showsTurnCredits)
     }
 
     private var defaultFolder: String {
@@ -105,7 +88,7 @@ private struct HarnessAccountRow: View {
             connection.signedIn ? (failed ? MainPalette.attention : MainPalette.positive, "harness.account.signed_in") :
             (MainPalette.attention, "harness.account.signed_out")
         let state = [L10n.text(key), key == "harness.account.signed_in" ? reading?.plan : nil].compactMap { $0 }.joined(separator: " · ")
-        return CardStatusRow(title: L10n.text("harness.account_row"), state: state, tint: tint, help: connection.siteHost,
+        return CardStatusRow(title: L10n.text("provider.account"), state: state, tint: tint, help: connection.siteHost,
                              detail: failed ? L10n.text("harness.account.unavailable") : nil) {
             Group {
                 if !connection.signedIn {
@@ -128,6 +111,21 @@ private struct HarnessAccountRow: View {
     }
 }
 
+/// Usage: the credits available now, while signed in.
+private struct HarnessUsageRow: View {
+    @ObservedObject var connection: HarnessAccountConnection
+    let settings: HarnessCreditsSettings
+    let now: Date
+
+    var body: some View {
+        if connection.signedIn, let total = HarnessCreditsPresentation(credits: connection.credits, settings: settings, now: now)?.lines.last {
+            CardRow(title: L10n.text("provider.usage")) {
+                Text(total.value).font(.system(size: 12.5)).foregroundStyle(total.warns ? MainPalette.attention : Color.secondary).monospacedDigit()
+            }
+        }
+    }
+}
+
 /// The credits block: the 104 pt dial beside its lines, then the breakdown
 /// by how each group behaves behind ⓘ. The lines run to the card's edge, as
 /// the breakdown below them does.
@@ -142,7 +140,7 @@ private struct HarnessCreditsCard: View {
 
     var body: some View {
         if let presentation = HarnessCreditsPresentation(credits: connection.credits, settings: settings, now: now) {
-            MainCard(title: L10n.text("harness.credits")) {
+            MainCard(title: L10n.text("provider.usage_settings")) {
                 HStack(alignment: .center, spacing: 20) {
                     CreditsDial(dial: presentation.dial, tint: tint, size: 104, stale: connection.state == .unavailable, island: false)
                     CreditsLines(presentation: presentation, tint: tint, island: false)

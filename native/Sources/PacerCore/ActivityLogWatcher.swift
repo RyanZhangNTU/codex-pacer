@@ -38,7 +38,7 @@ public final class ActivityLogWatcher: @unchecked Sendable {
         self.files = files; self.events = events
         self.interval = min(5, max(0.1, interval))
         self.maximumDirectoryWatches = min(99, max(1, maximumDirectoryWatches)); self.changed = changed
-        self.fileExtensions = fileExtensions
+        self.fileExtensions = fileExtensions.map { Set($0.map { $0.lowercased() }) }
     }
     public func update(_ urls: [URL], interval: TimeInterval, flushPending: Bool = false) {
         queue.async { [self] in
@@ -51,7 +51,7 @@ public final class ActivityLogWatcher: @unchecked Sendable {
                 if !wantsDirectory && !wantsFile { break }
                 let metadata = wantsDirectory || (wantsFile && fileExtensions == nil) ? files.metadata(url) : nil
                 if wantsDirectory, metadata?.isDirectory == true { directoryURLs.append(url) }
-                if wantsFile, fileExtensions?.contains(url.pathExtension) ?? (metadata?.isRegularFile == true) {
+                if wantsFile, fileExtensions?.contains(url.pathExtension.lowercased()) ?? (metadata?.isRegularFile == true) {
                     regularFiles.append(url)
                 }
             }

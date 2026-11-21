@@ -21,11 +21,12 @@ internal sealed class ClaudeWebSessionValue(string cookieHeader, string sessionH
 
 internal static class ClaudeWebCookies
 {
-    internal static async Task<ClaudeWebSessionValue?> ReadAsync(CoreWebView2 browser, CancellationToken cancellation)
+    internal static async Task<ClaudeWebSessionValue?> ReadAsync(CoreWebView2 browser, CancellationToken cancellation, Action<string>? trace = null)
     {
         var origin = ProviderWebDefinition.Claude.Origin;
         var cookies = await browser.CookieManager.GetCookiesAsync(new Uri(origin, "api/").AbsoluteUri).WaitAsync(cancellation);
         cancellation.ThrowIfCancellationRequested();
+        trace?.Invoke("cookies=" + cookies.Count + " sessionKeys=" + cookies.Count(cookie => cookie.Name == "sessionKey"));
         var now = DateTime.UtcNow;
         var allowed = cookies.Where(cookie => cookie.Domain.Trim('.').Equals(origin.IdnHost, StringComparison.OrdinalIgnoreCase) &&
             (cookie.IsSession || cookie.Expires.ToUniversalTime() > now) && AppliesToAPI(cookie.Path) &&

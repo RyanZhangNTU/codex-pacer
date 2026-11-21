@@ -89,7 +89,7 @@ final class CodexLogAttentionTests: XCTestCase {
         state.reset(); XCTAssertTrue(state.requests(for: activity).isEmpty)
     }
 
-    func testActualReaderFindsCoveredQuestionsAndDropsThemOnReplyReplacementAndRemoval() async throws {
+    func testActualReaderFindsQuestionsAndDropsThemOnReplyReplacementAndRemoval() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-log-attention-" + UUID().uuidString)
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
         let directory = home.appendingPathComponent("sessions/" + formatter.string(from: epoch))
@@ -98,28 +98,35 @@ final class CodexLogAttentionTests: XCTestCase {
         let file = directory.appendingPathComponent("rollout-" + thread + ".jsonl")
         let now = epoch.addingTimeInterval(100), reader = LocalActivityReader(fileMetadata: { TestFileSystem().metadata($0) })
         try data([start()]).write(to: file)
-        _ = await reader.read(home: home, now: now, excludingThreads: [thread], includeCoveredMetrics: true)
+        try CodexHookFixture.announceAll(home: home, at: now)
+        _ = await reader.read(home: home, now: now)
         func append(_ rows: [[String: Any]]) throws {
             let stream = try FileHandle(forWritingTo: file)
             try stream.seekToEnd(); try stream.write(contentsOf: data(rows)); try stream.close()
         }
         try append([question(), output()])
-        let pending = await reader.read(home: home, now: now, excludingThreads: [thread], includeCoveredMetrics: true, metricsOnly: true)
+        try CodexHookFixture.announceAll(home: home, at: now)
+        let pending = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertEqual(pending.requests.count, 1)
         XCTAssertEqual(pending.activities.first?.phase, .running)
-        let unchanged = await reader.read(home: home, now: now, excludingThreads: [thread], includeCoveredMetrics: true, metricsOnly: true)
+        try CodexHookFixture.announceAll(home: home, at: now)
+        let unchanged = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertEqual(unchanged.requests.map(\.id), pending.requests.map(\.id))
         try append([record(["type": "message", "role": "user", "content": "PRIVATE reply"], second: 3)])
+        try CodexHookFixture.announceAll(home: home, at: now)
         let replied = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertTrue(replied.requests.isEmpty)
         try append([question("new", second: 4), output("new", second: 5)])
+        try CodexHookFixture.announceAll(home: home, at: now)
         let next = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertEqual(next.requests.count, 1)
         let replacement = try data([start("replacement", second: 6), output("new", second: 7)])
         XCTAssertTrue(TestFileSystem().replace(file, with: replacement))
+        try CodexHookFixture.announceAll(home: home, at: now)
         let replaced = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertTrue(replaced.requests.isEmpty)
         try FileManager.default.removeItem(at: file)
+        try CodexHookFixture.announceAll(home: home, at: now)
         let removed = await reader.read(home: home, now: now)
         XCTAssertTrue(removed.requests.isEmpty)
     }

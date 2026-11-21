@@ -42,6 +42,7 @@ final class WindowsCodexOriginTests: XCTestCase {
                 number.isMultiple(of: 2) ? #"C:\Demo\zotero-chat\translate"# : #"\\server\share\ZOTERO-CHAT-CATALOG.synthetic"#))
         }
         let official = try write(99, client: "codex-tui", cwd: #"C:\Demo\zotero-chat\translate"#)
+        try CodexHookFixture.announceAll(home: root, at: now)
         let reader = LocalActivityReader(), result = await reader.read(home: root, now: now)
         XCTAssertEqual(result.activities.count, 1)
         XCTAssertEqual(result.activities.first?.threadID, "019a0000-0000-7000-8000-000000000099")

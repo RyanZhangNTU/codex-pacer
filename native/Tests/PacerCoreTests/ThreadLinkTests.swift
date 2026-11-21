@@ -14,7 +14,8 @@ final class ThreadLinkTests: XCTestCase {
     }
 
     func testRemoteConversationLinkTargetsItsConfiguredHost() throws {
-        for host in ["remote-ssh-discovered:example-host", "remote-control:env_fixture"] {
+        for host in ["remote-ssh-discovered:example-host", "remote-ssh-codex-managed:studio",
+                     "remote-ssh-codex-managed:" + uuid] {
             let activity = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "example-host", sourceHostID: host)
             let url = try XCTUnwrap(activity.threadURL)
             let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
@@ -27,6 +28,8 @@ final class ThreadLinkTests: XCTestCase {
     func testHostCannotInjectPromptOrSelectAnUnsupportedSource() {
         let unsafe = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "bad", sourceHostID: "remote-ssh-discovered:host&prompt=send")
         XCTAssertNil(unsafe.threadURL)
+        let managed = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHostID: "remote-ssh-codex-managed:host&prompt=send")
+        XCTAssertNil(managed.threadURL)
         let control = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHostID: "remote-control:env_fixture&prompt=send")
         XCTAssertNil(control.threadURL)
         let unsupported = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "other", sourceHostID: "unsupported:anything")

@@ -12,6 +12,7 @@
     <Compile Include="../../Desktop/WindowsUpdateService.cs" Link="WindowsUpdateService.cs"/>
     <Compile Include="../../Desktop/ReleaseNotesMarkdown.cs" Link="ReleaseNotesMarkdown.cs"/>
     <Compile Include="../../Desktop/EngineClient.cs" Link="EngineClient.cs"/>
+    <Compile Include="../../Desktop/EngineCommandWriter.cs" Link="EngineCommandWriter.cs"/>
     <Compile Include="../../Desktop/EngineLaunch.cs" Link="EngineLaunch.cs"/>
     <Compile Include="../../Desktop/ModuleIds.cs" Link="ModuleIds.cs"/>
     <Compile Include="../../Desktop/EngineCrashLog.cs" Link="EngineCrashLog.cs"/>

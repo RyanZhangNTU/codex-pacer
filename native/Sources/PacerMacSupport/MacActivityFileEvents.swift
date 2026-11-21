@@ -21,7 +21,8 @@ private final class MacActivityFileWatch: ActivityFileWatch, @unchecked Sendable
         source.setCancelHandler { Darwin.close(fd) }
         source.setEventHandler { [weak source] in
             guard let source else { return }
-            changed(ActivityFileEvent(requiresDiscovery: isDirectory, invalidated: !source.data.intersection([.rename, .delete]).isEmpty))
+            let invalidated = !source.data.intersection([.rename, .delete]).isEmpty
+            changed(ActivityFileEvent(requiresDiscovery: isDirectory || invalidated, invalidated: invalidated))
         }
         source.resume()
     }

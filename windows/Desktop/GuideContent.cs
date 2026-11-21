@@ -29,6 +29,8 @@ internal sealed class GuideContent : StackPanel
     private readonly Action welcome;
     private readonly Func<Uri, bool>? launch;
     private readonly Action<string> copyLink;
+    /// Starts an app or link outside Pacer; tests record the target instead.
+    private readonly Func<string, bool>? start;
     private readonly List<Action> refresh = [];
     private readonly List<FrameworkElement> editors = [];
     private readonly TextBlock issue;
@@ -37,9 +39,10 @@ internal sealed class GuideContent : StackPanel
     private int copyRevision;
     private SupportShareSession? share;
     internal GuideContent(UiText ui, PreferencesSession session, IStartupRegistration startup, GuideCatalog catalog,
-        Action<string> settings, Action welcome, EngineClient? engine = null, NotificationSession? notifications = null, Func<Uri, bool>? launch = null, Func<EngineSnapshot?>? snapshot = null, Action<string>? copyLink = null)
+        Action<string> settings, Action welcome, EngineClient? engine = null, NotificationSession? notifications = null, Func<Uri, bool>? launch = null, Func<EngineSnapshot?>? snapshot = null, Action<string>? copyLink = null,
+        Func<string, bool>? start = null)
     {
-        this.ui = ui; this.session = session; this.startup = startup; this.catalog = catalog;
+        this.ui = ui; this.session = session; this.startup = startup; this.catalog = catalog; this.start = start;
         this.settings = settings; this.welcome = welcome; this.engine = engine; this.notifications = notifications; this.launch = launch;
         this.snapshot = snapshot ?? (() => engine?.LatestSnapshot);
         this.copyLink = copyLink ?? Clipboard.SetText;
@@ -333,6 +336,8 @@ internal sealed class GuideContent : StackPanel
                     ChoiceRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 28), ui.Text("settings.system_notifications"), ui.Text("main.welcome.notifications_info"), notificationProblem, notification),
                     ChoiceRow(GuideArt.Tile("power", Color.FromRgb(51, 189, 102), 28), ui.Text("settings.open_at_login"), ui.Text("main.welcome.login_info"), loginProblem, Login(ui.Text("settings.open_at_login"), "welcome.startup")),
                     ChoiceRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 28), ui.Text("welcome.layout.title"), ui.Text("main.welcome.layout_info"), null, layout));
+                // With Codex on, its two steps come first: without them no Codex task shows.
+                var codex = CodexSetup(welcome: true); codex.Margin = new Thickness(24, 0, 24, 0); Children.Add(codex);
                 choices.Margin = new Thickness(24, 0, 24, 0); Children.Add(choices);
                 break;
         }
@@ -528,6 +533,7 @@ internal sealed class GuideContent : StackPanel
             foreach (var item in release.Items)
             {
                 // The update note keeps each explanation behind ⓘ, as Help & Updates does.
+                if (large && item.Control == "codexHooksSetup") { Children.Add(CodexSetup()); continue; }
                 if (large) { var feature = InfoFeatureRow(item, true, unique: false); feature.Margin = new Thickness(0, 0, 0, 14); Children.Add(feature); continue; }
                 UIElement? control = item.Control switch
                 {
@@ -576,6 +582,148 @@ internal sealed class GuideContent : StackPanel
             Children.Add(Card(earlier, new Thickness(0)));
         }
         Refresh();
+    }
+    /// Whether the update note's Codex steps are done, after each change of the hooks' state.
+    internal event Action<bool>? CodexSetupChanged;
+    /// The two steps for the hooks' state, as Settings → Remote reads it: updating Codex
+    /// (`checking`, `needed`, `ready`) and allowing Pacer in Codex (`waiting`, `open`,
+    /// `manual` without Codex Desktop, `done`, `failed`).
+    internal static (string Update, string Allow) CodexSetupSteps(CodexHooks? hooks) => hooks?.State switch
+    {
+        "needsCodexUpdate" => ("needed", "waiting"),
+        "needsApproval" => ("ready", hooks.OpensSettings == true ? "open" : "manual"),
+        "running" or "notRunning" => ("ready", "done"),
+        "installFailed" => ("ready", "failed"),
+        _ => ("checking", "waiting")
+    };
+    private sealed record SetupStep(string Digit, StackPanel Host, Border Badge, TextBlock Number, IconGlyph Mark, TextBlock Detail, Button Action, Button? Info, Border? Hint);
+    /// The Codex reason and its two steps, which follow the hooks' live state: update
+    /// Codex, then allow Pacer in Codex with the floating guide beside it. The update
+    /// note puts the reason above the steps; the welcome guide's last page titles the
+    /// card and shows it only while the Codex module is on.
+    private StackPanel CodexSetup(bool welcome = false)
+    {
+        var host = new StackPanel();
+        var reason = Text(ui.Text(welcome ? "welcome.codex_setup.reason" : "whats_new.codex_setup.reason"), 12.5); reason.LineHeight = 18;
+        reason.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        Identify(reason, "guide.codexSetup.reason", reason.Text);
+        var update = Step("update", "1", ui.Text("whats_new.codex_setup.update"), ui.Text("whats_new.codex_setup.update_hint_windows"));
+        var allow = Step("allow", "2", ui.Text("whats_new.codex_setup.allow"), null);
+        string allowState = ""; bool desktop = false;
+        update.Action.Click += (_, _) => Start(desktop ? CodexApplication : CodexPage);
+        allow.Action.Click += (_, _) => { if (allowState == "failed") _ = RetryCodexHooks(); else OpenCodexSettings(); };
+        var rows = new StackPanel();
+        if (welcome)
+        {
+            var title = Text(ui.Text("welcome.codex_setup.title"), 14, true); title.Margin = new Thickness(14, 12, 14, 2);
+            AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level2); rows.Children.Add(title);
+            reason.Margin = new Thickness(14, 0, 14, 10); rows.Children.Add(reason);
+            var top = new Border { Height = 1 }; top.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); rows.Children.Add(top);
+        }
+        else { reason.TextAlignment = TextAlignment.Center; reason.Margin = new Thickness(0, 0, 0, 16); host.Children.Add(reason); }
+        rows.Children.Add(update.Host);
+        var line = new Border { Height = 1, Margin = new Thickness(50, 0, 0, 0) }; line.SetResourceReference(Border.BackgroundProperty, "SettingsSeparator"); rows.Children.Add(line);
+        rows.Children.Add(allow.Host);
+        var card = Card(rows, new Thickness(0)); card.Margin = new Thickness(0, 0, 0, welcome ? 14 : 18); host.Children.Add(card);
+        if (welcome) Identify(host, "welcome.codexSetup", ui.Text("welcome.codex_setup.title"));
+        refresh.Add(() =>
+        {
+            if (welcome) host.Visibility = (snapshot()?.Modules ?? []).Any(module => module.Provider == "codex" && module.Enabled) ? Visibility.Visible : Visibility.Collapsed;
+            var hooks = snapshot()?.CodexHooks;
+            var (updateState, next) = CodexSetupSteps(hooks); allowState = next; desktop = hooks?.OpensSettings == true;
+            Show(update, updateState switch { "ready" => "done", "needed" => "attention", _ => "checking" },
+                ui.Text(updateState switch { "ready" => "whats_new.codex_setup.update_ready", "needed" => "whats_new.codex_setup.update_needed", _ => "whats_new.codex_setup.checking" }),
+                updateState == "needed" ? ui.Text("whats_new.codex_setup.update_action") : null, true);
+            // How to check in the Store applies to Codex Desktop only.
+            bool hint = updateState == "needed" && desktop;
+            if (update.Info != null) update.Info.Visibility = hint ? Visibility.Visible : Visibility.Collapsed;
+            if (update.Hint != null && !hint) update.Hint.Visibility = Visibility.Collapsed;
+            Show(allow, next switch { "done" => "done", "failed" => "attention", "open" or "manual" => "active", _ => "number" },
+                ui.Text(next switch
+                {
+                    "done" => "whats_new.codex_setup.done", "failed" => "whats_new.codex_setup.failed", "manual" => "whats_new.codex_setup.allow_manual",
+                    "waiting" when updateState == "needed" => "whats_new.codex_setup.allow_waiting", _ => "whats_new.codex_setup.allow_detail"
+                }),
+                next switch { "open" => ui.Text("codex.hooks.open"), "failed" => ui.Text("connections.retry"), _ => null }, next == "open");
+            CodexSetupChanged?.Invoke(next == "done");
+        });
+        return host;
+    }
+    private SetupStep Step(string id, string number, string title, string? hint)
+    {
+        var host = new StackPanel { Margin = new Thickness(14, 12, 14, 12) };
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var badge = new Border { Width = 24, Height = 24, CornerRadius = new CornerRadius(12), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 1, 12, 0) };
+        var digits = new TextBlock { Text = number, FontSize = 12, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var mark = new IconGlyph { Symbol = "checkmark", Width = 11, Height = 11, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var face = new Grid(); face.Children.Add(digits); face.Children.Add(mark); badge.Child = face; row.Children.Add(badge);
+        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var heading = new WrapPanel(); var name = Text(title, 13.5, true); heading.Children.Add(name); labels.Children.Add(heading);
+        var detail = Text("", 12); detail.LineHeight = 17; detail.Margin = new Thickness(0, 2, 0, 0);
+        detail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); Identify(detail, "guide.codexSetup." + id + ".state", "");
+        AutomationProperties.SetLiveSetting(detail, AutomationLiveSetting.Polite); labels.Children.Add(detail);
+        Grid.SetColumn(labels, 1); row.Children.Add(labels);
+        var action = new Button { Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+        Identify(action, "guide.codexSetup." + id + ".action", ""); editors.Add(action);
+        Grid.SetColumn(action, 2); row.Children.Add(action);
+        host.Children.Add(row);
+        Button? info = null; Border? box = null;
+        if (hint != null)
+        {
+            // How to check for an update yourself waits behind ⓘ.
+            box = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(11, 9, 11, 9), Margin = new Thickness(36, 8, 0, 0), Visibility = Visibility.Collapsed };
+            box.SetResourceReference(Border.BackgroundProperty, "SettingsInfoFill");
+            var body = Text(hint, 12); body.LineHeight = 17; body.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); box.Child = body;
+            info = InfoToggle(title, box); heading.Children.Add(info); host.Children.Add(box);
+        }
+        return new SetupStep(number, host, badge, digits, mark, detail, action, info, box);
+    }
+    /// A step's badge (`number`, `active`, `checking`, `done`, `attention`), state and button.
+    private void Show(SetupStep step, string badge, string detail, string? action, bool primary)
+    {
+        var (fill, ink) = badge switch
+        {
+            "done" => ("SettingsSuccessFill", "SettingsSuccessText"), "attention" => ("SettingsNoticeFill", "SettingsNoticeText"),
+            "active" => ("SettingsChipOn", "SettingsChipOnText"), _ => ("SettingsFill", "SettingsSecondary")
+        };
+        step.Badge.SetResourceReference(Border.BackgroundProperty, fill);
+        step.Number.SetResourceReference(TextBlock.ForegroundProperty, ink); step.Mark.SetResourceReference(IconGlyph.InkProperty, ink);
+        bool check = badge == "done"; step.Mark.Visibility = check ? Visibility.Visible : Visibility.Collapsed; step.Number.Visibility = check ? Visibility.Collapsed : Visibility.Visible;
+        step.Number.Text = badge switch { "attention" => "!", "checking" => "…", _ => step.Digit };
+        step.Detail.Text = detail; AutomationProperties.SetName(step.Detail, detail);
+        step.Action.Visibility = action == null ? Visibility.Collapsed : Visibility.Visible;
+        if (action != null)
+        {
+            step.Action.Content = action; AutomationProperties.SetName(step.Action, action);
+            if (primary) step.Action.Style = (Style)FindResource("SettingsProminentButton"); else step.Action.ClearValue(StyleProperty);
+        }
+    }
+    /// Codex Desktop's own start entry; it shows an available update in its lower-left corner.
+    internal const string CodexApplication = @"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App";
+    /// Codex's own page, for a computer that runs the Codex CLI without Codex Desktop.
+    internal const string CodexPage = "https://developers.openai.com/codex/app";
+    private bool Start(string target)
+    {
+        if (start != null) return start(target);
+        try { using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true }); return process != null; }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { return false; }
+    }
+    /// Codex's settings with the floating guide beside them, as Settings → Remote opens them.
+    private void OpenCodexSettings()
+    {
+        if (engine is not { IsConnectionClosed: false } client) return;
+        var window = Window.GetWindow(this);
+        var area = window == null ? System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea
+            : System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(window).Handle).WorkingArea;
+        CodexHooksGuideFloat.Open(client, ui, window?.Resources ?? Resources, area);
+        if (!Start("codex://settings")) CodexHooksGuideFloat.Current?.Close();
+    }
+    private async Task RetryCodexHooks()
+    {
+        if (engine == null) return;
+        try { await engine.SendAsync("retryCodexHooks"); }
+        catch (Exception error) when (error is System.IO.IOException or EngineCommandException or OperationCanceledException) { issue.Text = ui.Text("windows.settings.apply_failed"); }
     }
     private string VersionTitle(GuideRelease release) =>
         ui.Has("whats_new.version") ? ui.Text("whats_new.version").Replace("%@", release.Version, StringComparison.Ordinal) : release.Title;

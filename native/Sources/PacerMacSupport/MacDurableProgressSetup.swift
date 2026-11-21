@@ -25,7 +25,7 @@ public enum MacDurableProgressSetup {
         let owner = root.appendingPathComponent(".pacer-owner")
         let config = home.appendingPathComponent("config.toml")
         if reporter == nil, !storage.exists(root) { return .unchanged }
-        let application = desktopExecutor(home: home)?.application ?? CodexApplicationResolver.find()
+        let application = MacDurableExecutor.findRunning()?.application ?? CodexApplicationResolver.find()
         let executable: URL?
         if let application {
             executable = MacDurableExecutor.verifiedCLI(in: application)
@@ -99,10 +99,4 @@ public enum MacDurableProgressSetup {
         if (try? storage.read(path)) != bytes { try storage.replace(path, with: bytes, permissions: 0o600) }
     }
 
-    private static func desktopExecutor(home: URL) -> MacDurableExecutor? {
-        guard let socket = try? NativeDesktopCollector.connect(home: home) else { return nil }
-        defer { Darwin.close(socket) }
-        guard let peer = NativeDesktopCollector.peerPID(socket) else { return nil }
-        return MacDurableExecutor.find(peer: peer)
-    }
 }

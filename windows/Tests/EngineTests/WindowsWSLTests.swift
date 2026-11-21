@@ -46,13 +46,6 @@ private actor WSLUpdates {
     var snapshot: RealtimeActivitySnapshot?
     func receive(_ value: RealtimeActivitySnapshot) { snapshot = value }
 }
-private actor WSLNoDesktop: DesktopActivityChannel {
-    func start() {}
-    func discover(_ threads: [String]) {}
-    func setHosts(_ hosts: Set<String>) {}
-    func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) {}
-    func stop() {}
-}
 private final class WSLFrames: @unchecked Sendable {
     private let lock = NSLock()
     private var frames: [EngineSnapshot] = []
@@ -166,12 +159,10 @@ final class WindowsWSLTests: XCTestCase {
         let profile = profile(), registry = WindowsWSLRegistry(), launches = WSLLaunches(), updates = WSLUpdates()
         activate(registry, profile)
         let services = WindowsWSLServices(registry: registry, start: { launches.launch($0, input: $1, output: $2, ended: $3) })
-        let catalog = RemoteControlCatalog(fetch: { _ in Data() }, files: WindowsFileSystem(), makeClient: { _ in nil })
-        let monitor = RealtimeActivityMonitor(controlCatalog: catalog, services: .init(desktopAvailable: { _ in false }, controlAvailable: { _ in false },
-            makeDesktop: { _, _, _, _, _, _ in WSLNoDesktop() }, processes: services.launcher(), python: WindowsExecutables.python, ssh: WindowsExecutables.ssh,
+        let monitor = RealtimeActivityMonitor(services: .init(processes: services.launcher(), ssh: WindowsExecutables.ssh,
             sshTargets: { _ in registry.targets(.codex) }, sshArguments: { registry.arguments($0) }), retryInterval: 60)
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await updates.receive($0) }
+        await monitor.startAsync(home: home, includeSSH: true) { await updates.receive($0) }
         let child = try XCTUnwrap(launches.all().first?.2), thread = "019a0000-0000-7000-8000-000000000001", now = Date().timeIntervalSince1970
         try await child.send(["kind": "status", "connected": true, "sourceAvailable": true])
         try await child.send(["kind": "runtimeBatch", "events": [["method": "turn/started", "threadId": thread, "turnId": "turn", "at": now]]])
@@ -181,18 +172,17 @@ final class WindowsWSLTests: XCTestCase {
         var inbox = CompletionInbox(); inbox.bindSourceHomes(provider: .codex, localHome: home, remoteHomes: [profile.id: profile.codexHome])
         inbox.observe(running, at: Date(), retention: 600); inbox.observe(ended, at: Date(), retention: 600)
         await monitor.retryInactiveHelpers()
-        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await updates.receive($0) }
+        await monitor.startAsync(home: home, includeSSH: true) { await updates.receive($0) }
         XCTAssertEqual(launches.all().count, 1, "Retrying sources does not resubscribe a healthy helper")
         await child.disconnect()
         XCTAssertTrue(inbox.unreadActivities.contains { $0.sourceHostID == profile.id })
-        await monitor.refreshRemoteControlCatalog()
-        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await updates.receive($0) }
-        // Failed helper backoff is source-owned; explicit refresh must not
+        await monitor.startAsync(home: home, includeSSH: true) { await updates.receive($0) }
+        // Failed helper backoff is source-owned; a plain restart must not
         // replace healthy helpers or acknowledge their retained completions.
         XCTAssertTrue(inbox.unreadActivities.contains { $0.sourceHostID == profile.id })
-        XCTAssertEqual(launches.all().count, 1, "Catalog retry alone retains the helper's backoff")
+        XCTAssertEqual(launches.all().count, 1, "A plain restart retains the helper's backoff")
         await monitor.retryInactiveHelpers()
-        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { await updates.receive($0) }
+        await monitor.startAsync(home: home, includeSSH: true) { await updates.receive($0) }
         XCTAssertEqual(launches.all().count, 2, "The explicit task-source retry bypasses inactive helper backoff")
         XCTAssertTrue(inbox.unreadActivities.contains { $0.sourceHostID == profile.id })
         await monitor.shutdown(); XCTAssertFalse(child.isRunning)
@@ -270,7 +260,7 @@ final class WindowsWSLTests: XCTestCase {
             if args.contains(where: { $0.contains("print('verified')") }) { return Data("verified\n".utf8) }
             return data
         }, start: { launches.launch($0, input: $1, output: $2, ended: $3) }, watchRegistrations: { _ in nil })
-        let desktop = CodexDesktopServices { _, _, _, _ in WSLNoDesktop() }
+        let desktop = CodexDesktopServices()
         let runtime = EngineRuntime(demo: false, dismissalStore: nil, desktopServices: desktop, wslServices: services, output: { frames.append($0) })
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-wsl-engine-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -343,7 +333,7 @@ final class WindowsWSLTests: XCTestCase {
         let lists = Lists(), bytes = try JSONEncoder().encode(profile)
         let services = WindowsWSLServices(registry: registry, capture: { _, args, _, _ in await lists.read(args, bytes: bytes) },
             start: { launches.launch($0, input: $1, output: $2, ended: $3) }, watchRegistrations: { _ in nil })
-        let desktop = CodexDesktopServices { _, _, _, _ in WSLNoDesktop() }
+        let desktop = CodexDesktopServices()
         let runtime = EngineRuntime(demo: false, dismissalStore: nil, desktopServices: desktop, wslServices: services,
             output: { frames.append($0) })
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-wsl-unregister-" + UUID().uuidString)

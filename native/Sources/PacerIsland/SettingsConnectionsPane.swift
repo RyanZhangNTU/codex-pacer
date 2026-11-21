@@ -1,36 +1,27 @@
 import PacerCore
 import SwiftUI
 
-/// Remote: SSH hosts with each module's state, Codex Remote Control, and any
-/// other task source, with the overall state in the page's subtitle. The
-/// island shows no connection banners, so problems are read here.
+/// Remote: other computers only, SSH hosts with each module's state, the
+/// overall state in the page's subtitle. What runs on this computer belongs
+/// to its module's page. The island shows no connection banners, so problems
+/// are read here.
 struct SettingsConnectionsPane: View {
     @ObservedObject var model: IslandModel
     @Binding var monitorSSH: Bool
-    @Binding var monitorRemoteControl: Bool
-    @Binding var monitorDurable: Bool
     let codexEnabled: Bool
     let claudeEnabled: Bool
 
-    private var sources: [ConnectionSource] { Self.sources(model) }
     private var hosts: [SSHHost] { Self.hosts(model) }
-    private var deviceListDetail: String? {
-        guard let directory = model.remoteControlDirectory else { return nil }
-        if directory.refreshing { return L10n.text("settings.remote_control_refreshing") }
-        let last = directory.refreshedAt.map {
-            L10n.text("settings.remote_control_last_refresh") + " · " + Date(timeIntervalSince1970: $0).formatted(date: .abbreviated, time: .shortened)
-        }
-        if directory.failed {
-            return [L10n.text("settings.remote_control_refresh_failed"), last].compactMap { $0 }.joined(separator: " ")
-        }
-        return last
+    /// Other computers' sources alone; local, Dot and cloud sources are their modules' own.
+    private static func hostSources(_ model: IslandModel) -> [ConnectionSource] {
+        sources(model).filter { ConnectionSummary.isHost($0.key) }
     }
-
-    /// Retrying sources and hosts with a problem, for the sidebar dot and Overview.
+    /// Hosts with a problem, for the sidebar dot and Overview.
     static func problemCount(_ model: IslandModel) -> Int {
         let hosts = hosts(model)
         let retrying: Int
-        if case .retrying(let count) = ConnectionSummary(enabledProviders: model.enabledProviders, sources: sources(model), hosts: hosts).state {
+        if case .retrying(let count) = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts,
+                                                          hostsOnly: true).state {
             retrying = count
         } else {
             retrying = 0
@@ -49,24 +40,30 @@ struct SettingsConnectionsPane: View {
 
     static func hosts(_ model: IslandModel) -> [SSHHost] {
         guard model.monitorsSSH else { return [] }
-        let prefix = ConnectionSource.sshPrefix, targets = model.claudeRemoteTargets
+        let targets = model.claudeRemoteTargets
         func aliases<S: Sequence>(_ ids: S) -> Set<String> where S.Element == String {
-            Set(ids.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
+            let ids = Set(ids)
+            return Set(targets.filter { ids.contains($0.id) }.map(\.alias))
         }
         return SSHHost.hosts(
             codex: model.isModuleEnabled(.codex) ? model.providerStreamStatuses(.codex) : nil, unavailableCodex: model.unavailableSSH,
             claude: model.isModuleEnabled(.claude) ? model.providerStreamStatuses(.claude) : nil, claudeAliases: targets.map(\.alias),
+            claudeIDs: Dictionary(targets.map { ($0.alias, $0.id) }, uniquingKeysWith: { first, _ in first }),
             configured: Set(targets.filter { model.claudeRemoteConfigured($0) }.map(\.alias)),
             configuring: aliases(model.configuringClaudeHosts), failed: aliases(model.claudeRemoteSetupFailures.keys),
             names: Dictionary(targets.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }),
             telemetryConflicts: model.claudeRemoteTelemetryConflicts())
     }
 
-    /// The page's subtitle: the overall state and how many sources it covers.
-    static func summaryText(_ model: IslandModel) -> String {
-        let summary = ConnectionSummary(enabledProviders: model.enabledProviders, sources: sources(model), hosts: hosts(model))
+    /// The page's subtitle: the hosts' overall state and how many it covers;
+    /// nothing while SSH monitoring is off, as its switch says.
+    static func summaryText(_ model: IslandModel) -> String? {
+        guard model.monitorsSSH else { return nil }
+        let summary = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts(model),
+                                        hostsOnly: true)
         let title: String = switch summary.state {
         case .disabled: L10n.text("provider.none_enabled")
+        case .noHosts: L10n.text("connections.summary.no_hosts")
         case .checking: L10n.text("connections.summary.checking")
         case .retrying(let count): L10n.text(count == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying", count)
         case .connecting(let count): L10n.text(count == 1 ? "connections.summary.connecting_one" : "connections.summary.connecting", count)
@@ -80,76 +77,15 @@ struct SettingsConnectionsPane: View {
     }
 
     var body: some View {
-        let sources = sources, hosts = hosts
         MainCard(title: L10n.text("connections.section.ssh")) {
             CardToggle(title: L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
                 .disabled(!codexEnabled && !claudeEnabled)
             ForEach(hosts) { host in hostRow(host) }
         }
-        MainCard(title: "Codex Remote Control") {
-            CardToggle(title: L10n.text("settings.monitor_remote_control"), info: L10n.text("settings.remote_control_help"),
-                       isOn: $monitorRemoteControl)
-                .disabled(!codexEnabled)
-            if monitorRemoteControl {
-                CardRow(title: L10n.text("settings.remote_control_devices"), detail: deviceListDetail) {
-                    Button(L10n.text("settings.remote_control_refresh")) { model.refreshRemoteControlDevices() }
-                        .buttonStyle(.main)
-                        .disabled(!codexEnabled || model.remoteControlDirectory?.refreshing == true)
-                }
-            }
-            ForEach(sources.filter { $0.key.hasPrefix(ConnectionSource.controlPrefix) }) { source in sourceRow(source) }
-        }
-        MainCard(title: "Codex Dot") {
-            CardToggle(title: L10n.text("settings.monitor_durable"), info: L10n.text("settings.durable_help"), isOn: $monitorDurable)
-                .disabled(!codexEnabled)
-        }
-        let others = sources.filter { !$0.key.hasPrefix(ConnectionSource.sshPrefix) && !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
-        if !others.isEmpty {
-            MainCard(title: L10n.text("connections.section.tasks")) {
-                ForEach(others) { source in sourceRow(source) }
-                if sources.contains(where: { $0.state == .retrying }) || hosts.contains(where: \.claudeSetupFailed) {
-                    CardRow(title: L10n.text("main.remote.retry_all")) {
-                        Button(L10n.text("connections.retry")) { retryAll() }.buttonStyle(.main)
-                    }
-                }
-            }
-        }
     }
 
-    private func retryAll() {
-        model.refreshTaskSources()
-        for host in hosts where host.claudeSetupFailed { retrySetup(host) }
-    }
     private func retrySetup(_ host: SSHHost) {
-        Task { _ = await model.configureClaudeRemote(targetID: ConnectionSource.sshPrefix + host.alias) }
-    }
-
-    private func sourceRow(_ source: ConnectionSource) -> some View {
-        let (tint, state): (Color, String) = switch source.state {
-        case .connected: (.green, L10n.text("connections.state.connected"))
-        case .retrying: (.orange, L10n.text("connections.state.retrying"))
-        case .paused: (.secondary, source.key == ClaudeCloudProjectState.sourceID ? L10n.text("connections.state.cloud_signed_out")
-            : L10n.text("connections.state.paused", source.provider.displayName))
-        case .idle: (.secondary, L10n.text("connections.state.idle"))
-        case .offline: (.secondary, L10n.text("connections.state.offline"))
-        }
-        return HStack(spacing: 12) {
-            ProviderTile(provider: source.provider)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(source.name).lineLimit(1).truncationMode(.middle).help(source.name)
-                HStack(spacing: 5) {
-                    Circle().fill(tint).frame(width: 6, height: 6).accessibilityHidden(true)
-                    Text((source.kind == source.name ? "" : source.kind + " · ") + state)
-                        .foregroundStyle(source.state == .retrying ? Color.orange : Color.secondary)
-                }.font(.system(size: 11))
-            }
-            Spacer(minLength: 8)
-            if source.state == .connected {
-                Text(L10n.text(source.sessions == 1 ? "connections.sessions_one" : "connections.sessions", source.sessions))
-                    .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
-            }
-        }
-        .accessibilityElement(children: .combine)
+        Task { _ = await model.configureClaudeRemote(targetID: host.id) }
     }
 
     private func hostRow(_ host: SSHHost) -> some View {
@@ -170,7 +106,7 @@ struct SettingsConnectionsPane: View {
             Spacer(minLength: 8)
             if host.claudeSetupFailed {
                 Button(L10n.text("connections.retry")) { retrySetup(host) }.buttonStyle(.main)
-                    .help(model.claudeRemoteSetupFailures[ConnectionSource.sshPrefix + host.alias] ?? "")
+                    .help(model.claudeRemoteSetupFailures[host.id] ?? "")
             }
         }
         .accessibilityElement(children: .combine)

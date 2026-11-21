@@ -55,7 +55,7 @@ extension IslandModel {
         let alert = wallet.flatMap { DeepSeekAlertPresentation(wallet: $0,
             lowBalance: warnings.contains(.lowBalance), spike: warnings.contains(.spendSpike), budget: warnings.contains(.budget)) }
         return CompactWarningPresentation.items(enabled: enabled, warnings: warnings, snapshots: snapshots,
-            failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, wallet: alert, credits: harnessCredits,
+            failed: failed, selections: selections, sshIssue: hasSSHConnectionIssue, codexHooksNeedUser: codexHooksNeedUser, wallet: alert, credits: harnessCredits,
             creditSettings: creditSettings, resetLeadDays: resetExpiryLeadDays, now: now)
     }
 

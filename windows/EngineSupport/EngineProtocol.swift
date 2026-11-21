@@ -36,7 +36,6 @@ struct EngineCommand: Decodable {
         var sourceID: String?
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
-        var monitorRemoteControl: Bool?
         var monitorDurable: Bool?
         var monitorWSL: Bool?
         var showEmbeddedClaudeSessions: Bool?
@@ -233,6 +232,36 @@ struct EngineModule: Codable, Equatable {
     /// How the host opens the app: its URL scheme, the signer its handler
     /// must carry, and where the app installs.
     var launch: EngineModuleLaunch? = nil
+    /// The first row of the module page's Status card (`ModuleMonitoring`), while the module is on.
+    var monitoring: EngineStatusRow? = nil
+    /// Codex's Account row, read from its quota (`CodexAccountState`).
+    var account: EngineStatusRow? = nil
+}
+
+/// One Status row as Core words it: its state, tone (`positive`, `neutral`,
+/// `attention`), text, a line under it and at most one action.
+struct EngineStatusRow: Codable, Equatable, Sendable {
+    let state: String
+    let tone: String
+    let text: String
+    var detail: String? = nil
+    /// `openCodex`, `retry`, `rescan`, or `signIn` for an account.
+    var action: String? = nil
+
+    init(_ monitoring: ModuleMonitoring) {
+        state = monitoring.state.rawValue; tone = monitoring.tone.rawValue; text = monitoring.text
+        detail = monitoring.detail; action = monitoring.action?.rawValue
+    }
+    init(_ account: CodexAccountState, opensCodex: Bool) {
+        switch account {
+        case .checking: state = "checking"
+        case .signedIn: state = "signedIn"
+        case .signedOut: state = "signedOut"
+        case .unavailable: state = "unavailable"
+        }
+        tone = account.tone.rawValue; text = account.text; detail = account.detail
+        action = account == .signedOut && opensCodex ? "openCodex" : nil
+    }
 }
 
 struct EngineModuleLaunch: Codable, Equatable {
@@ -367,8 +396,9 @@ struct EngineSnapshot: Codable, Equatable {
     let openingActivityIDs: [String]?
     var expandedPanel: EngineExpandedPanel? = nil
     var accountCredits: [EngineAccountCredits]? = nil
+    /// Codex task tracking through Pacer's hooks; nil while Codex is not managed.
+    var codexHooks: EngineCodexHooks? = nil
     var wslAvailability: WindowsWSLAvailability?
-    var remoteControlDirectory: RemoteControlDirectoryStatus?
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,

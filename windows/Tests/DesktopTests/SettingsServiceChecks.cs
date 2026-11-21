@@ -40,12 +40,12 @@ internal static class SettingsServiceChecks
             int evidenceReads = 0;
             Func<string, bool> usedDot = _ => { evidenceReads++; return true; }, neverUsedDot = _ => { evidenceReads++; return false; };
             var defaults = new PreferencesStore(profile).Load(migrateOptIns: true, durableEvidence: usedDot).Value;
-            Check(!defaults.MonitorWSL && !defaults.MonitorRemoteControl && !defaults.MonitorDurable && evidenceReads == 0,
+            Check(!defaults.MonitorWSL && !defaults.MonitorDurable && evidenceReads == 0,
                 "New profiles opt in to every kind of remote monitoring, including Dot");
             File.WriteAllText(profile, """{"schemaVersion":1,"monitorWSL":true,"monitorRemoteControl":true,"hideProjects":true,"otherPreference":true}""");
             var store = new PreferencesStore(profile);
             var migrated = store.Load(migrateOptIns: true, durableEvidence: neverUsedDot).Value;
-            Check(!migrated.MonitorWSL && migrated.WslOptInMigrated && migrated.MonitorRemoteControl && migrated.HideProjects,
+            Check(!migrated.MonitorWSL && migrated.WslOptInMigrated && migrated.HideProjects,
                 "The upgrade closes WSL and preserves the user's other choices");
             Check(!migrated.MonitorDurable && migrated.DurableOptInMigrated && evidenceReads == 1, "A profile that never used Dot upgrades with Dot off");
             Check(File.ReadAllText(profile).Contains("otherPreference", StringComparison.Ordinal), "Unknown settings survive the migration");

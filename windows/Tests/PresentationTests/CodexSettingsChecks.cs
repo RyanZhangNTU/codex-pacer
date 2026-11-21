@@ -32,12 +32,17 @@ internal static class CodexSettingsChecks
         try
         {
             window.Show(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
-            Check(Find<TextBlock>(window, "settings.codex.cli.status").Text == ui.Text("provider.state.searching"),
+            Check(Find<TextBlock>(window, "settings.codex.monitoring").Text == ui.Text("monitoring.checking"),
                 "Opening settings before engine initialization must wait instead of reporting a failed source check");
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language,
                 preferences.EngineConfiguration(), referenceFixture: true);
             ready.TrySetResult();
-            await Until(() => Find<TextBlock>(window, "settings.codex.cli.status").Text == ui.Text("provider.state.found"), "The provider page must inspect its saved CLI source");
+            await Until(() => Find<TextBlock>(window, "settings.codex.monitoring").Text.StartsWith(ui.Text("monitoring.on"), StringComparison.Ordinal),
+                "The provider page's first row says Codex's tasks are monitored");
+            // Every module page's Status card: task monitoring, account, usage, in that order.
+            Check(Find<TextBlock>(window, "settings.codex.account").Text.StartsWith(ui.Text("claude.account.signed_in"), StringComparison.Ordinal)
+                && Find<TextBlock>(window, "settings.codex.quota").IsVisible && !Descendants(window).OfType<FrameworkElement>().Any(value => AutomationProperties.GetAutomationId(value) == "settings.codex.cli.status"),
+                "Codex's Status card reads task monitoring, account and usage, with the CLI folded into monitoring");
             Check(Math.Abs(window.ClientContent.ActualWidth - SettingsWindow.DefaultWidth) < 0.5 && Math.Abs(window.ClientContent.ActualHeight - SettingsWindow.DefaultHeight) < 0.5,
                 "The provider page must keep the original Mac client and sidebar dimensions");
             var module = Find<CheckBox>(window, "settings.codex.enabled");
@@ -61,16 +66,14 @@ internal static class CodexSettingsChecks
                 "Enabling Codex progress must reach the engine and show the dashed ring");
             Toggle(progress);
             await Until(() => !session.Current.CodexProgressRing && progress.IsEnabled, "Codex progress can be turned off again");
-            // Remote Control lives on Remote, as on the Mac.
-            await window.NavigateAsync("remote"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
-            var remote = Find<CheckBox>(window, "settings.connections.remote_control");
-            Check(remote.IsEnabled && remote.IsChecked == false, "Remote Control starts disabled");
-            Toggle(remote);
-            await Until(() => session.Current.MonitorRemoteControl && remote.IsEnabled, "Enabling Remote Control must await engine acknowledgement");
-            Check(Find<Button>(window, "settings.connections.refresh_remote_control").IsVisible, "Device refresh belongs in Remote settings");
-            Toggle(remote);
-            await Until(() => !session.Current.MonitorRemoteControl && remote.IsEnabled, "Disabling Remote Control must await engine acknowledgement");
-            Check(!Find<Button>(window, "settings.connections.refresh_remote_control").IsVisible, "Disabled monitoring hides device refresh");
+            // Dot tasks and Codex's hooks live on Codex's page, as Claude's cloud projects and hooks live on Claude's.
+            Check(Find<Button>(window, "settings.codex.monitoring.info").IsVisible, "Codex's hooks are explained behind its monitoring row's info button");
+            var durable = Find<CheckBox>(window, "settings.codex.dot_tasks");
+            Check(durable.IsEnabled && durable.IsChecked == false, "Dot starts disabled");
+            Toggle(durable);
+            await Until(() => session.Current.MonitorDurable && durable.IsEnabled, "Enabling Dot must await engine acknowledgement");
+            Toggle(durable);
+            await Until(() => !session.Current.MonitorDurable && durable.IsEnabled, "Disabling Dot must await engine acknowledgement");
             await window.NavigateAsync("codex"); await window.WaitForSourceInspectionAsync(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             module = Find<CheckBox>(window, "settings.codex.enabled");
             int sourceConfigurations = configurations;
@@ -137,7 +140,7 @@ internal static class CodexSettingsChecks
                     "The recovery action must select the actual Codex source pane");
             }
             finally { linkWindow.Close(); }
-            await Until(() => Find<TextBlock>(window, "settings.codex.cli.status").Text == ui.Text("provider.state.found"), "Reopening must reload the acknowledged source");
+            await Until(() => Find<TextBlock>(window, "settings.codex.monitoring").Text.StartsWith(ui.Text("monitoring.on"), StringComparison.Ordinal), "Reopening must reload the acknowledged source");
             Check(Find<TextBox>(window, "settings.codex.executable").Text == session.Current.CodexExecutable,
                 "Provider navigation must retain the saved normalized executable");
             int beforeConcurrentEdit = configurations;
@@ -159,7 +162,7 @@ internal static class CodexSettingsChecks
             Invoke(Find<Button>(window, "settings.recovery_restart")); await Until(() => restarts == 1, "The recovery restart must reach the lifecycle owner without requiring navigation");
             await engine.SendAsync("shutdown");
             await Until(() => engine.IsConnectionClosed && !Descendants(window).OfType<QuotaHistoryChart>().Any()
-                && Find<TextBlock>(window, "settings.codex.cli.status").Text == ui.Text("provider.state.failed"),
+                && Find<TextBlock>(window, "settings.codex.monitoring").Text == ui.Text("windows.connection.closed"),
                 "A stopped engine cannot leave a fresh chart or a successful source check on screen");
             await engine.DisposeAsync();
             var offlineSession = new PreferencesSession(preferences, _ => Task.CompletedTask, _ => true);
@@ -167,9 +170,9 @@ internal static class CodexSettingsChecks
             try
             {
                 offline.Show(); await offline.WaitForSourceInspectionAsync();
-                Check(Find<TextBlock>(offline, "settings.codex.cli.status").Text == ui.Text("provider.state.failed")
-                    && Find<Button>(offline, "settings.codex.rescan").IsVisible,
-                    "A stopped engine must report a failed check and permit retry without claiming that the CLI is missing");
+                Check(Find<TextBlock>(offline, "settings.codex.monitoring").Text == ui.Text("windows.connection.closed")
+                    && !Find<Button>(offline, "settings.codex.monitoring.action").IsVisible,
+                    "A stopped engine must say the connection closed without claiming that the CLI is missing");
                 Check(!Descendants(offline).OfType<QuotaHistoryChart>().Any()
                     && Descendants(offline).OfType<TextBlock>().Any(value => value.Text == ui.Text("windows.connection.closed")),
                     "Reopening settings after disconnection must hide old account and chart values immediately");

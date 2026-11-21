@@ -135,7 +135,7 @@ enum PacerMain {
                 // Per source in key order, labelled by kind only so host aliases stay out of the output.
                 "sources": statuses.keys.sorted().map { key -> [String: Any] in
                     let status = statuses[key]!, own = values.filter { ($0.sourceHostID ?? "local") == key }
-                    return ["kind": key == "local" ? "local" : key.hasPrefix("remote-ssh-discovered:") ? "ssh" : "other",
+                    return ["kind": key == "local" ? "local" : ConnectionSource.isSSHSourceID(key) ? "ssh" : "other",
                         "connected": status.connected, "claudeHome": status.sourceAvailable.map { $0 ? 1 : 0 } ?? -1,
                         "exactSpans": status.exactRequestSpans ? 1 : 0,
                         "running": own.filter { [.running, .waitingForInput].contains($0.phase) }.count,
@@ -158,21 +158,9 @@ enum PacerMain {
             print("A valid --thread-id is required."); return
         }
         let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
-        let hostIndex = args.firstIndex(of: "--host-id")
-        let host = hostIndex.flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? "local"
-        guard host == "local" || host.range(of: #"^remote-control:[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else {
-            print("A valid local or Remote Control --host-id is required."); return
-        }
-        let monitor = RealtimeActivityMonitor()
-        await monitor.start(home: home, includeSSH: false, useSSHFallback: false) { _, _, _ in }
-        try? await Task.sleep(nanoseconds: 5_000_000_000)
-        let streamed = await monitor.activities()
-        var evidence: [String: SessionActivity.SubagentEvidence] = [:]
-        for value in streamed where value.sourceHostID == nil { evidence.merge(value.subagentStates) { old, new in old.observedAt > new.observedAt ? old : new } }
         let reader = LocalActivityReader()
-        let logged = await reader.read(home: home, phaseAwareRate: true, includeCoveredMetrics: true, subagentStates: evidence)
-        let merged = ActivitySourceMerger.merge(logged: logged.activities, streamed: streamed)
-        let group = ActivityTaskGroup.make(merged).first { $0.primary.threadID == thread && ($0.primary.sourceHostID ?? "local") == host }
+        let logged = await reader.read(home: home, phaseAwareRate: true)
+        let group = ActivityTaskGroup.make(logged.activities).first { $0.primary.threadID == thread && $0.primary.sourceHostID == nil }
         let now = Date()
         let summary: [String: Any] = ["observed": group != nil,
             "liveParentObserved": group?.primary.hasLiveEvidence ?? false,
@@ -182,7 +170,6 @@ enum PacerMain {
             "estimated": group?.rateIsEstimated(at: now) ?? true]
         if let bytes = try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]),
            let text = String(data: bytes, encoding: .utf8) { print(text) }
-        await monitor.shutdown()
     }
 
     private static func diagnoseEvents() async {
@@ -191,8 +178,13 @@ enum PacerMain {
         let args = CommandLine.arguments
         let index = args.firstIndex(of: "--observe-seconds")
         let seconds = index.flatMap { $0 + 1 < args.count ? Int(args[$0 + 1]) : nil }.map { min(60, max(5, $0)) } ?? 20
-        print("Local event endpoint available: \(RealtimeActivityMonitor.localEndpointAvailable(home: home))")
-        await monitor.start(home: home, useSSHFallback: !args.contains("--desktop-only")) { _, _, _ in }
+        // Local Codex reaches Pacer only through its hooks; only the spool's age is printed.
+        let reader = LocalActivityReader()
+        let local = await reader.read(home: home)
+        let lastRow = await reader.lastHookRow
+        print("Codex hook spool: \(lastRow.map { "last event \(Int(Date().timeIntervalSince($0)))s ago" } ?? "no events")")
+        print("Local Codex tasks followed: \(local.activities.count)")
+        await monitor.start(home: home) { _ in }
         try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
         let statuses = await monitor.statuses()
         for (source, status) in statuses.sorted(by: { $0.key < $1.key }) {
@@ -233,7 +225,7 @@ enum PacerMain {
             print("Internal review tasks included: \(overview.activities.filter(\.isInternalReview).count)")
             print("Fresh aggregate output rate available: \(overview.tokensPerSecond != nil)")
             let remote = RealtimeActivityMonitor()
-            await remote.start(home: home) { _, _, _ in }
+            await remote.start(home: home) { _ in }
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             let remoteActivities = await remote.activities()
             let combined = ActivityOverview(activities: local.activities + remoteActivities, at: Date())
@@ -348,7 +340,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.showWelcome() }
         } else if let version = Self.version {
             // Within a line, each update's highlights once; --whats-new forces them.
-            let pending = WhatsNew.pending(current: version)
+            // A note for a module that is off stays quiet; the version updates all the same.
+            let pending = WhatsNew.pending(current: version, enabledModules: Set(model.enabledProviders))
             if CommandLine.arguments.contains("--whats-new") || (!quiet && !pending.isEmpty) {
                 let releases = pending.isEmpty ? Array(WhatsNew.releases.prefix(1)) : pending
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -472,14 +465,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let action = response.actionIdentifier
+        let action = response.actionIdentifier, identifier = response.notification.request.identifier
         Task { @MainActor [weak self] in
             guard let self else { return }
             switch action {
             case NotificationDelivery.openHarnessAction: self.model.openDeepSeekApp()
             case NotificationDelivery.snoozeSpikeAction: self.model.snoozeDeepSeekSpike()
             case NotificationDelivery.topUpAction: NSWorkspace.shared.open(IslandModel.deepseekTopUpURL)
-            default: self.panel.show()
+            // Allowing Pacer in Codex starts on Codex's page, where its monitoring row opens Codex.
+            default: if identifier == NotificationDelivery.identifier(IslandModel.codexHooksNoticeID) { self.showSettingsPane(.codex) } else { self.panel.show() }
             }
         }
         completionHandler()
@@ -574,7 +568,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.delegate = self
             whatsNewWindow = window
         }
-        var view = WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin,
+        var view = WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin, model: model,
             onSettingsChange: { [weak self] in self?.model.applySettings(sourceChanged: false) },
             onOpenPane: { [weak self] pane in self?.closeWhatsNew(); self?.showSettingsPane(pane) },
             onDone: { [weak self] in self?.closeWhatsNew() })

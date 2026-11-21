@@ -63,7 +63,7 @@ internal static class ProviderHomeSettingsChecks
             await PresentationWait.UntilAsync(() => row.IsVisible, "A module turned on shows in the Services sidebar even when it isn't found");
             Check(Descendants(row).OfType<Image>().Any(icon => icon.Source != null && ReferenceEquals(icon.Source, ProviderIcon.Source("workbuddy"))),
                 "WorkBuddy has its official icon in the Services sidebar");
-            Check(Find<TextBlock>(window, id + ".status").IsVisible
+            Check(Find<TextBlock>(window, id + ".monitoring").IsVisible
                 && !Descendants(window).OfType<Button>().Any(value => AutomationProperties.GetAutomationId(value) == id + ".accountUsage"),
                 "The enabled service has local task status and no account usage link");
             var detected = engine.LatestSnapshot?.Modules?.First(value => value.Provider == "workbuddy").Installed;
@@ -73,6 +73,7 @@ internal static class ProviderHomeSettingsChecks
             Check(progress.IsEnabled && progress.IsChecked == true, "The progress ring is on by default, like the built-in services' rings");
             CheckProgressGuide(window, id);
             await CheckGuideFloat(window, ui);
+            await CheckCodexHooksGuideFloat(window, ui);
             Toggle(progress);
             await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false
                 && session.Current.DisabledHarnessProgress.SequenceEqual(["workbuddy"]), "The progress switch saves independently of the module mode");
@@ -161,9 +162,9 @@ internal static class ProviderHomeSettingsChecks
                         "An exact request span means speeds are exact, so the estimate notice hides");
                 Check(SettingsWindow.ClaudeSetupVisible("ready", managed with { ExactRequestSpans = false }), "Spans not yet seen keep the estimate notice");
                 Check(SettingsWindow.ClaudeSetupDescription(ui, "failed", setup) == ui.Text("windows.claude.setup_failed"), "A failed setup must retain its actionable error");
-                Check(Find<TextBlock>(window, "settings.claude.setup").Text == UiText.For(language == "zh-Hans").Text("windows.claude.setup_ready"),
-                    "The demo must show the localized Claude setup state");
-                Check(!Find<Button>(window, "settings.claude.retry_setup").IsEnabled,
+                Check(Find<TextBlock>(window, "settings.claude.monitoring").Text.StartsWith(UiText.For(language == "zh-Hans").Text("monitoring.on"), StringComparison.Ordinal),
+                    "The demo must show Claude's task monitoring on, in the words every module page shares");
+                Check(!Find<Button>(window, "settings.claude.monitoring.action").IsVisible,
                     "A demo must never invoke the live hook installer");
             }
             if (provider == "claude") window.CapturePreview(Path.Combine(output, "settings-" + scenario + ".png"));
@@ -209,9 +210,9 @@ internal static class ProviderHomeSettingsChecks
             Check(!Find<Button>(window, prefix + ".choose_home").IsEnabled, "A closed engine must also disable the folder picker");
             if (provider == "claude")
             {
-                Check(Find<TextBlock>(window, "settings.claude.setup").Text == UiText.For(language == "zh-Hans").Text("windows.claude.setup_failed") &&
-                    !Find<Button>(window, "settings.claude.retry_setup").IsEnabled,
-                    "Engine exit must show a setup error and disable retries without a synchronous request");
+                Check(Find<TextBlock>(window, "settings.claude.monitoring").Text == UiText.For(language == "zh-Hans").Text("windows.connection.closed") &&
+                    !Find<Button>(window, "settings.claude.monitoring.action").IsVisible,
+                    "Engine exit must say the connection closed and offer no retry that would need the engine");
             }
             Console.WriteLine("PASS provider home " + scenario + ": initialization, existing/missing/file/relative paths, normalized Unicode, duplicate/stale drafts, engine/save rollback, default restoration, module modes, navigation and closed connection");
         }
@@ -275,6 +276,42 @@ internal static class ProviderHomeSettingsChecks
         }
         finally { if (!closed) shown.Close(); }
         Check(AppWindows.MainWindow([]) == null, "Without the app's processes there is no window to bring forward");
+    }
+    /// The guide beside Codex while the user allows Pacer's hooks: three numbered
+    /// clicks and a picture of Codex's Hooks page with the pending count, then
+    /// a done line once the engine sees the hooks allowed.
+    private static async Task CheckCodexHooksGuideFloat(SettingsWindow settings, UiText ui)
+    {
+        var area = new System.Drawing.Rectangle(100, 80, 1600, 1000);
+        CodexHooks? hooks = new("needsApproval", 3, true);
+        var shown = new CodexHooksGuideFloat(() => hooks, () => false, ui, settings.Resources, area);
+        T Part<T>(string id) where T : FrameworkElement => Descendants(shown).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
+        bool closed = false; shown.Closed += (_, _) => closed = true;
+        try
+        {
+            shown.Follow(); await Pump();
+            var handle = new System.Windows.Interop.WindowInteropHelper(shown).Handle;
+            Check(shown.IsVisible && shown.Topmost && !shown.IsActive && (NativeStyle(handle) & 0x08000000) != 0,
+                "The Codex guide floats beside Codex without taking focus");
+            Check(Part<TextBlock>("codex_hooks_guide.title").Text == ui.Text("codex.hooks.guide.title")
+                && AutomationProperties.GetName(Part<StackPanel>("codex_hooks_guide.steps")).Contains(CodexHooksGuideFloat.PluginName, StringComparison.Ordinal),
+                "It names the three clicks, with Pacer's plugin as Codex lists it");
+            string pending = ui.Text("codex.hooks.guide.picture.review").Replace("%ld", "3", StringComparison.Ordinal);
+            Check(Descendants(shown).OfType<DecorativeBorder>().Count() == 1 && Descendants(shown).OfType<TextBlock>().Any(value => value.Text == pending),
+                "Its picture shows the hooks still waiting for review");
+            var bounds = NativeBounds(handle);
+            Check(Math.Abs(bounds.Right - area.Right) <= 12 && Math.Abs(bounds.Bottom - area.Bottom) <= 12, "It sits in the corner of Settings' screen");
+            hooks = new("running");
+            shown.Follow(); await Pump();
+            Check(Part<TextBlock>("codex_hooks_guide.done").IsVisible && !Part<TextBlock>("codex_hooks_guide.title").IsVisible,
+                "Once the hooks are allowed it says so in place of the steps");
+            Check(CodexHooksGuideFloat.Phase("installFailed") == "gone" && CodexHooksGuideFloat.Phase("notInstalled") == "steps",
+                "A state the guide doesn't describe closes it");
+            Invoke(Part<Button>("codex_hooks_guide.close"));
+            await Pump();
+            Check(closed && !shown.IsVisible, "Close dismisses the Codex guide");
+        }
+        finally { if (!closed) shown.Close(); }
     }
     private static long NativeStyle(IntPtr handle) => GetWindowLongPtr(handle, -20).ToInt64();
     private static System.Drawing.Rectangle NativeBounds(IntPtr handle)

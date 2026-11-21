@@ -345,8 +345,11 @@ struct ProviderQuotaRow: View {
 
     var body: some View {
         let error = model.providerQuotaError(provider)
-        CardRow(title: L10n.text("main.quota")) {
-            if let error {
+        CardRow(title: L10n.text("provider.usage")) {
+            if signedOut {
+                // The Account row above says to sign in; the read's own message would repeat it.
+                Text("—").font(.system(size: 12.5)).foregroundStyle(.secondary)
+            } else if let error {
                 Text(error).font(.system(size: 12.5)).foregroundStyle(MainPalette.attention).lineLimit(1).truncationMode(.tail).help(error)
                 Button(L10n.text("connections.retry")) { model.retryQuotaConnection(for: provider) }
                     .buttonStyle(.main).disabled(model.providerRefreshing(provider))
@@ -354,6 +357,14 @@ struct ProviderQuotaRow: View {
                 Text(summary).font(.system(size: 12.5)).foregroundStyle(.secondary).monospacedDigit()
                 Button(L10n.text("main.quota.trend"), action: openHistory).buttonStyle(.link).font(.system(size: 12.5))
             }
+        }
+    }
+
+    private var signedOut: Bool {
+        switch provider {
+        case .codex: model.codexAccount == .signedOut
+        case .claude: model.claudeConnectionNeeded || model.claudeNeedsOrganizationSelection
+        default: false
         }
     }
 

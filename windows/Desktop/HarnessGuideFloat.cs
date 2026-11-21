@@ -14,13 +14,86 @@ using System.Windows.Media.Effects;
 
 namespace CodexPacer.Windows;
 
+/// The shell of a floating guide beside an app: a card in the bottom-right
+/// corner of the screen Settings is on, with Pacer's mark, a header and Close.
+/// It stays above other windows without taking focus and never reads the
+/// app's window. Each guide fills `Body` below the header.
+internal abstract class GuideFloatWindow : Window
+{
+    private readonly System.Drawing.Rectangle area;
+    private protected readonly UiText ui;
+    private protected readonly TextBlock Header;
+    private protected readonly StackPanel Body;
+    /// The float has shown; before that, it waits for something to show.
+    internal bool Presented { get; private set; }
+
+    /// <param name="resources">Settings' palette, so the float and its pictures match it.</param>
+    /// <param name="area">The work area of Settings' screen, in pixels.</param>
+    /// <param name="id">The float's automation ID; Close is `id.close`.</param>
+    private protected GuideFloatWindow(UiText ui, ResourceDictionary resources, System.Drawing.Rectangle area, string id)
+    {
+        this.ui = ui; this.area = area;
+        WindowRendering.Prepare(this); FontFamily = PacerFonts.Interface; Language = PacerFonts.RenderingLanguage(ui);
+        WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true;
+        ShowInTaskbar = false; ShowActivated = false; ResizeMode = ResizeMode.NoResize; SizeToContent = SizeToContent.WidthAndHeight;
+        Title = "Pacer";
+        Resources.MergedDictionaries.Add(resources);
+        AutomationProperties.SetAutomationId(this, id);
+
+        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+        var glyph = new IconGlyph { Symbol = "xmark", Width = 11, Height = 11 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
+        string close = ui.Text("progress_guide.float.close");
+        var closeButton = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 24, Height = 24, Padding = new Thickness(0), Content = glyph, ToolTip = close, VerticalAlignment = VerticalAlignment.Top };
+        AutomationProperties.SetAutomationId(closeButton, id + ".close"); AutomationProperties.SetName(closeButton, close);
+        closeButton.Click += (_, _) => Close();
+        DockPanel.SetDock(closeButton, Dock.Right); top.Children.Add(closeButton);
+        var icon = new DecorativeImage { Width = 16, Height = 16, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center,
+            Source = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))) };
+        top.Children.Add(icon);
+        Header = new TextBlock { FontSize = 11.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+        Header.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        top.Children.Add(Header);
+
+        Body = new StackPanel(); Body.Children.Add(top);
+        var card = new Border { Width = 400, CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Padding = new Thickness(16, 10, 10, 16), Margin = new Thickness(14), Child = Body,
+            Effect = new DropShadowEffect { BlurRadius = 20, ShadowDepth = 3, Direction = 270, Opacity = 0.22 } };
+        card.SetResourceReference(Border.BackgroundProperty, "SettingsBackground"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
+        Content = card;
+        SourceInitialized += (_, _) => NativeWindowBounds.MakeNonActivating(this);
+        SizeChanged += (_, _) => Place();
+    }
+
+    /// Shows the float the first time, in front without taking focus.
+    private protected void ShowFloat()
+    {
+        if (Presented) return;
+        Presented = true;
+        Show(); UpdateLayout(); Place();
+        NativeWindowBounds.RaiseWithoutActivation(this);
+    }
+
+    /// The bottom-right corner of Settings' screen; the card's own margin
+    /// leaves room for its shadow.
+    private void Place()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero || !GetWindowRect(handle, out var frame)) return;
+        int width = frame.Right - frame.Left, height = frame.Bottom - frame.Top;
+        int gap = (int)Math.Round(4 * Math.Max(1, GetDpiForWindow(handle)) / 96.0);
+        SetWindowPos(handle, IntPtr.Zero, Math.Max(area.Left, area.Right - width - gap), Math.Max(area.Top, area.Bottom - height - gap), 0, 0, 0x0001 | 0x0004 | 0x0010);
+    }
+
+    [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
+}
+
 /// The floating guide beside a module's app while the user clicks through its
 /// connectors (Core's `floatTitle`): the click to make now, the card's picture
-/// of it, and the click after. It sits in the bottom-right corner of the screen
-/// Settings is on, stays above other windows without taking focus, and never
-/// reads the app's window. It outlives Settings, which people often close
+/// of it, and the click after. It outlives Settings, which people often close
 /// once they're in the app, and checks the app itself while it is open.
-internal sealed class HarnessGuideFloat : Window
+internal sealed class HarnessGuideFloat : GuideFloatWindow
 {
     private static HarnessGuideFloat? current;
     private static EngineClient? engine;
@@ -35,7 +108,7 @@ internal sealed class HarnessGuideFloat : Window
     {
         // A second click for the same app, such as the restart finishing, keeps the guide.
         if (current is { } open && open.Provider == provider && engine == client) { Follow(); return; }
-        current?.Close();
+        current?.Close(); CodexHooksGuideFloat.Current?.Close();
         var shown = new HarnessGuideFloat(provider, ui, resources, picture, area);
         var timer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
         var openedAt = DateTime.UtcNow;
@@ -93,45 +166,21 @@ internal sealed class HarnessGuideFloat : Window
     private DateTime? emptySince, doneSince;
     // The guide has shown a step from the app itself, past the restart or start.
     private bool reachedApp;
-    private readonly UiText ui;
 
     private readonly Func<string, UIElement> picture;
-    private readonly System.Drawing.Rectangle area;
-    private readonly TextBlock header, title, next;
+    private readonly TextBlock title, next;
     private readonly Border art;
     private string key = "";
     internal string Provider { get; }
     internal DateTime OpenedAt { get; } = DateTime.UtcNow;
-    /// The guide has shown a step; before that, the app is still on its way.
-    internal bool Presented { get; private set; }
 
     /// <param name="resources">Settings' palette, so the float and its pictures match it.</param>
     /// <param name="picture">Draws the card's picture for a step.</param>
     /// <param name="area">The work area of Settings' screen, in pixels.</param>
     internal HarnessGuideFloat(string provider, UiText ui, ResourceDictionary resources, Func<string, UIElement> picture, System.Drawing.Rectangle area)
+        : base(ui, resources, area, "guide_float")
     {
-        Provider = provider; this.picture = picture; this.area = area; this.ui = ui;
-        WindowRendering.Prepare(this); FontFamily = PacerFonts.Interface; Language = PacerFonts.RenderingLanguage(ui);
-        WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true;
-        ShowInTaskbar = false; ShowActivated = false; ResizeMode = ResizeMode.NoResize; SizeToContent = SizeToContent.WidthAndHeight;
-        Title = "Pacer";
-        Resources.MergedDictionaries.Add(resources);
-        AutomationProperties.SetAutomationId(this, "guide_float");
-
-        var top = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-        var glyph = new IconGlyph { Symbol = "xmark", Width = 11, Height = 11 }; glyph.SetResourceReference(IconGlyph.InkProperty, "SettingsSecondary");
-        string close = ui.Text("progress_guide.float.close");
-        var closeButton = new Button { Style = (Style)FindResource("SettingsSidebarButton"), Width = 24, Height = 24, Padding = new Thickness(0), Content = glyph, ToolTip = close, VerticalAlignment = VerticalAlignment.Top };
-        AutomationProperties.SetAutomationId(closeButton, "guide_float.close"); AutomationProperties.SetName(closeButton, close);
-        closeButton.Click += (_, _) => Close();
-        DockPanel.SetDock(closeButton, Dock.Right); top.Children.Add(closeButton);
-        var icon = new DecorativeImage { Width = 16, Height = 16, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center,
-            Source = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets/Pacer.ico"))) };
-        top.Children.Add(icon);
-        header = new TextBlock { FontSize = 11.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
-        header.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
-        top.Children.Add(header);
-
+        Provider = provider; this.picture = picture;
         title = new TextBlock { FontSize = 14.5, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
         title.SetResourceReference(TextBlock.ForegroundProperty, "SettingsPrimary");
         AutomationProperties.SetAutomationId(title, "guide_float.title");
@@ -142,13 +191,7 @@ internal sealed class HarnessGuideFloat : Window
         next.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         AutomationProperties.SetAutomationId(next, "guide_float.next");
 
-        var body = new StackPanel(); body.Children.Add(top); body.Children.Add(title); body.Children.Add(art); body.Children.Add(next);
-        var card = new Border { Width = 400, CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Padding = new Thickness(16, 10, 10, 16), Margin = new Thickness(14), Child = body,
-            Effect = new DropShadowEffect { BlurRadius = 20, ShadowDepth = 3, Direction = 270, Opacity = 0.22 } };
-        card.SetResourceReference(Border.BackgroundProperty, "SettingsBackground"); card.SetResourceReference(Border.BorderBrushProperty, "SettingsCardBorder");
-        Content = card;
-        SourceInitialized += (_, _) => NativeWindowBounds.MakeNonActivating(this);
-        SizeChanged += (_, _) => Place();
+        Body.Children.Add(title); Body.Children.Add(art); Body.Children.Add(next);
     }
 
     /// Shows the guide's step, or updates it in place.
@@ -158,7 +201,7 @@ internal sealed class HarnessGuideFloat : Window
         if (shownKey != key)
         {
             key = shownKey;
-            header.Text = "Pacer · " + guide.Chip;
+            Header.Text = "Pacer · " + guide.Chip;
             title.Text = guide.FloatTitle ?? "";
             art.Child = guide.Picture is string kind ? picture(kind) : null;
             // The card's picture keeps its own width there; here it fills the float.
@@ -168,29 +211,8 @@ internal sealed class HarnessGuideFloat : Window
             next.Visibility = guide.FloatNext == null ? Visibility.Collapsed : Visibility.Visible;
             if (Presented) UIElementAutomationPeer.FromElement(title)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
         }
-        if (!Presented)
-        {
-            Presented = true;
-            Show(); UpdateLayout(); Place();
-            NativeWindowBounds.RaiseWithoutActivation(this);
-        }
+        ShowFloat();
     }
-
-    /// The bottom-right corner of Settings' screen; the card's own margin
-    /// leaves room for its shadow.
-    private void Place()
-    {
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle == IntPtr.Zero || !GetWindowRect(handle, out var frame)) return;
-        int width = frame.Right - frame.Left, height = frame.Bottom - frame.Top;
-        int gap = (int)Math.Round(4 * Math.Max(1, GetDpiForWindow(handle)) / 96.0);
-        SetWindowPos(handle, IntPtr.Zero, Math.Max(area.Left, area.Right - width - gap), Math.Max(area.Top, area.Bottom - height - gap), 0, 0, 0x0001 | 0x0004 | 0x0010);
-    }
-
-    [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
-    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
 }
 
 /// After the card opens an app, brings its window forward if the app didn't

@@ -17,6 +17,14 @@ do {
         let command = try runtime.prepare(home: home, package: package, stablePath: arguments[0] == "--prepare-local-harness-progress")
         try FileHandle.standardOutput.write(contentsOf: JSONEncoder().encode(command) + Data([10]))
         result = 0
+    } else if arguments.count == 3, arguments[0] == "--prepare-codex-hook" {
+        // The bundled Python, the wrapped hook program and the fixed launcher that
+        // Pacer's trusted Codex hook definitions start (WindowsCodexHookRuntime).
+        let home = URL(fileURLWithPath: arguments[2], isDirectory: true).standardizedFileURL
+        let package = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("Python", isDirectory: true)
+        let launcher = try WindowsCodexHookRuntime(root: URL(fileURLWithPath: arguments[1], isDirectory: true)).prepare(home: home, package: package)
+        try FileHandle.standardOutput.write(contentsOf: JSONEncoder().encode(["launcher": launcher.path]) + Data([10]))
+        result = 0
     } else if codexCleanup, (3...5).contains(arguments.count) {
         let runtime = WindowsCodexProgressRuntime(root: URL(fileURLWithPath: arguments[1], isDirectory: true))
         let homes = arguments.dropFirst(3).map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
@@ -59,7 +67,7 @@ do {
 } catch {
     // No paths, provider settings, account data or record contents in diagnostics.
     let provider = harnessCleanup || arguments.first == "--prepare-local-harness-progress" ? "local Harness" : deepseekCleanup ? "DeepSeek Harness"
-        : codexCleanup || arguments.first == "--prepare-codex-progress" ? "Codex" : "Claude"
+        : codexCleanup || ["--prepare-codex-progress", "--prepare-codex-hook"].contains(arguments.first ?? "") ? "Codex" : "Claude"
     FileHandle.standardError.write(Data("Pacer could not safely update \(provider) configuration or its owned runtime.\n".utf8))
     result = 1
 }

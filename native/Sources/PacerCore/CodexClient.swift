@@ -58,9 +58,18 @@ public enum CodexClientError: Error, LocalizedError {
     }
 }
 
-/// A dedicated app-server connection. It never starts or resumes a turn.
-/// Only local progress setup uses the versioned config write below.
+/// A dedicated app-server connection. It never starts or resumes a turn:
+/// `request` refuses every method outside `allowedMethods`. Only local progress
+/// setup uses the versioned config write, and only Pacer's own local plugins
+/// are installed or removed.
 public actor CodexClient {
+    /// Read-only account, thread and hook queries, plus the plugin and config
+    /// changes Pacer's own setup makes. Nothing here starts, resumes or steers a turn.
+    static let allowedMethods: Set<String> = [
+        "initialize", "getAuthStatus", "account/read", "account/rateLimits/read", "config/read", "config/batchWrite",
+        "marketplace/add", "marketplace/remove", "plugin/install", "plugin/uninstall", "plugin/installed",
+        "hooks/list", "thread/list", "thread/read", "thread/goal/get"
+    ]
     private var process: (any ChildProcessConnection)?
     private var closingProcesses: [any ChildProcessConnection] = []
     private var closingReaders: [ShutdownSignal] = []
@@ -252,6 +261,36 @@ public actor CodexClient {
     package func setDurableProgressPlugin(market: String, plugin: String, source: URL,
                                           enabled: Bool, cachedManifestMatches: Bool, checkOnly: Bool = false,
                                           pathsMatch: ((String, URL) -> Bool)? = nil) async throws -> Bool {
+        try await setLocalPlugin(market: market, plugin: plugin, source: source, enabled: enabled,
+                                 cachedManifestMatches: cachedManifestMatches, checkOnly: checkOnly, pathsMatch: pathsMatch)
+    }
+
+    /// The trust states (`trusted`, `untrusted`, `modified`, ...) of the hooks a
+    /// plugin brings, in Codex's display order, or an empty list when it brings none.
+    public func pluginHookTrust(pluginID: String) async throws -> [String] {
+        try await prepareReadConnection()
+        let bytes = try await request("hooks/list", params: ["cwds": [home.path]])
+        let fields = try JSONFieldView.document(bytes).fields(["data"])
+        guard let data = fields["data"], data.isArray else { throw CodexClientError.invalidResponse }
+        var states: [String] = []
+        for scope in try data.elements(maximumCount: 8) {
+            guard let hooks = try scope.fields(["hooks"])["hooks"], hooks.isArray else { continue }
+            for hook in try hooks.elements(maximumCount: 512) {
+                let row = try hook.fields(["pluginId", "trustStatus", "enabled"])
+                guard row["pluginId"]?.string() == pluginID else { continue }
+                states.append(row["enabled"]?.boolean() == false ? "disabled" : row["trustStatus"]?.string() ?? "unknown")
+            }
+            // Plugin hooks are user-level, so every cwd lists the same ones.
+            break
+        }
+        return states
+    }
+
+    /// Install, refresh or remove one of Pacer's local plugins. The marketplace
+    /// must point at `source`; any other configuration of the same names is refused.
+    package func setLocalPlugin(market: String, plugin: String, source: URL,
+                                enabled: Bool, cachedManifestMatches: Bool, checkOnly: Bool = false,
+                                pathsMatch: ((String, URL) -> Bool)? = nil) async throws -> Bool {
         try await prepareReadConnection()
         let id = plugin + "@" + market
         let manifest = source.appendingPathComponent(".agents/plugins/marketplace.json")
@@ -300,11 +339,11 @@ public actor CodexClient {
                   matches(reply["installedRoot"]?.string(limit: 4096), source) else { throw CodexClientError.invalidResponse }
         }
         if configured {
-            if cachedManifestMatches, try await durablePluginIsEnabled(id: id, market: market, manifest: manifest, pathsMatch: matches) { return false }
+            if cachedManifestMatches, try await pluginIsEnabled(id: id, market: market, manifest: manifest, pathsMatch: matches) { return false }
             _ = try await request("plugin/uninstall", params: ["pluginId": id])
         }
         _ = try await request("plugin/install", params: ["pluginName": plugin, "marketplacePath": manifest.path])
-        guard try await durablePluginIsEnabled(id: id, market: market, manifest: manifest, pathsMatch: matches) else { throw CodexClientError.invalidResponse }
+        guard try await pluginIsEnabled(id: id, market: market, manifest: manifest, pathsMatch: matches) else { throw CodexClientError.invalidResponse }
         return true
     }
 
@@ -314,7 +353,7 @@ public actor CodexClient {
             expected.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
-    private func durablePluginIsEnabled(id: String, market: String, manifest: URL, pathsMatch: (String?, URL) -> Bool) async throws -> Bool {
+    private func pluginIsEnabled(id: String, market: String, manifest: URL, pathsMatch: (String?, URL) -> Bool) async throws -> Bool {
         let bytes = try await request("plugin/installed", params: [:])
         let fields = try JSONFieldView.document(bytes).fields(["marketplaces"])
         guard let values = fields["marketplaces"], values.isArray else { throw CodexClientError.invalidResponse }
@@ -329,21 +368,21 @@ public actor CodexClient {
         }
         return false
     }
-    /// Short-lived authorization for the paired-device metadata GET only.
-    /// No authentication material is cached by the catalog or exposed to UI.
-    func remoteControlCatalogAuthorization() async throws -> RemoteControlCatalogAuthorization {
+    /// Short-lived authorization for the Dot catalog handshake only.
+    /// No authentication material is cached or exposed to UI.
+    private func accountAuthorization() async throws -> CodexAccountAuthorization {
         do {
             try await prepareReadConnection()
             let account = try await request("account/read", params: ["refreshToken": false])
             let auth = try await request("getAuthStatus", params: ["includeToken": true, "refreshToken": false])
-            return try RemoteControlCatalogAuthorization(account: account, auth: auth)
+            return try CodexAccountAuthorization(account: account, auth: auth)
         } catch { disconnect(); throw error }
     }
 
     /// Reuse the Desktop profile's current login for the first-party Durable
     /// catalog. The bearer travels only in the TLS WebSocket handshake.
     package func durableCatalogCredentials() async throws -> (request: URLRequest, scope: String) {
-        let auth = try await remoteControlCatalogAuthorization()
+        let auth = try await accountAuthorization()
         guard auth.backendOrigin.host == "chatgpt.com", !auth.isFedRAMP else { throw CodexClientError.invalidResponse }
         var request = URLRequest(url: URL(string: "wss://codex-cloud-backend.chatgpt.com/")!, timeoutInterval: 8)
         request.setValue("codex-app-server, codex-client.desktop, openai-bearer." + auth.token,
@@ -430,6 +469,7 @@ public actor CodexClient {
     }
 
     private func request(_ method: String, params: [String: Any]?) async throws -> Data {
+        guard Self.allowedMethods.contains(method) else { throw CodexClientError.invalidResponse }
         let id = nextID
         nextID += 1
         return try await withCheckedThrowingContinuation { continuation in

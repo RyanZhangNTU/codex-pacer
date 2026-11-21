@@ -39,46 +39,21 @@ private final class RealtimeStalledLauncher: HelperProcessLauncher, @unchecked S
         self.request = request; self.output = output; return child
     }
 }
-private struct RealtimeStalledDesktop: DesktopActivityChannel {
-    let gate: RealtimeTestGate
-    func start() {}
-    func setHosts(_ hosts: Set<String>) {}
-    func discover(_ threads: [String]) {}
-    func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) {}
-    func stop() async { await gate.wait() }
-}
-
 final class RealtimeLifecyclePortTests: XCTestCase {
-    private func catalog() -> RemoteControlCatalog {
-        RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse }, files: TestFileSystem(), makeClient: { _ in nil })
-    }
-    func testStalledDesktopStopCannotExtendTheSharedShutdownDeadline() async throws {
-        let gate = RealtimeTestGate(), launcher = RealtimeStalledLauncher()
-        let monitor = RealtimeActivityMonitor(controlCatalog: catalog(), services: .init(
-            desktopAvailable: { _ in true }, controlAvailable: { _ in false },
-            makeDesktop: { _, _, _, _, _, _ in RealtimeStalledDesktop(gate: gate) }, processes: launcher,
-            python: URL(fileURLWithPath: "/unused/python"), ssh: URL(fileURLWithPath: "/unused/ssh")))
-        await monitor.startAsync(home: FileManager.default.temporaryDirectory, includeSSH: false, includeRemoteControl: false) { _ in }
-        let started = ProcessInfo.processInfo.systemUptime
-        await monitor.shutdown()
-        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, ShutdownDeadline.maximumWait + 0.25)
-        let entered = gate.entered.isFinished
-        XCTAssertTrue(entered)
-        await gate.release()
-        let statuses = await monitor.statuses()
-        XCTAssertFalse(statuses["local"]?.connected == true)
+    /// One SSH host whose helper the stalled launcher owns.
+    private func services(_ launcher: RealtimeStalledLauncher) -> RealtimeActivityServices {
+        let target = RemoteActivityTarget(id: "remote-ssh-discovered:fixture", name: "fixture", alias: "fixture", home: "~/.codex")
+        return .init(processes: launcher, ssh: URL(fileURLWithPath: "/fixture/ssh"),
+                     sshTargets: { _ in [target] }, sshArguments: { _ in ["--", "fixture"] })
     }
     func testStalledHelperAndConsumerStillCloseAndForceOnlyTheOwnedChild() async throws {
-        let gate = RealtimeTestGate(), desktopGate = RealtimeTestGate(), launcher = RealtimeStalledLauncher()
-        let monitor = RealtimeActivityMonitor(controlCatalog: catalog(), services: .init(
-            desktopAvailable: { _ in false }, controlAvailable: { _ in true },
-            makeDesktop: { _, _, _, _, _, _ in RealtimeStalledDesktop(gate: desktopGate) }, processes: launcher,
-            python: URL(fileURLWithPath: "/fixture/python"), ssh: URL(fileURLWithPath: "/fixture/ssh")))
-        await monitor.startAsync(home: FileManager.default.temporaryDirectory, includeSSH: false, includeRemoteControl: false) { value in
+        let gate = RealtimeTestGate(), launcher = RealtimeStalledLauncher()
+        let monitor = RealtimeActivityMonitor(services: services(launcher))
+        await monitor.startAsync(home: FileManager.default.temporaryDirectory) { value in
             if !value.activities.isEmpty { await gate.wait() }
         }
-        XCTAssertEqual(launcher.request?.executable.lastPathComponent, "python")
-        XCTAssertEqual(launcher.request?.arguments.last, "control")
+        XCTAssertEqual(launcher.request?.executable.lastPathComponent, "ssh")
+        XCTAssertEqual(launcher.request?.arguments.prefix(2), ["--", "fixture"])
         var bytes = try JSONSerialization.data(withJSONObject: ["kind": "status", "connected": true]) + Data([10])
         bytes += try JSONSerialization.data(withJSONObject: ["kind": "runtimeBatch", "events": [[
             "method": "turn/started", "threadId": "019a0000-0000-7000-8000-000000000001", "turnId": "current",
@@ -97,15 +72,12 @@ final class RealtimeLifecyclePortTests: XCTestCase {
     }
     func testReplacingHomeForcesTheOldHelperWithinTheSameBudget() async throws {
         actor Publications { var count = 0; func append() { count += 1 } }
-        let launcher = RealtimeStalledLauncher(), gate = RealtimeTestGate(), publications = Publications()
-        let monitor = RealtimeActivityMonitor(controlCatalog: catalog(), services: .init(
-            desktopAvailable: { _ in false }, controlAvailable: { _ in true },
-            makeDesktop: { _, _, _, _, _, _ in RealtimeStalledDesktop(gate: gate) }, processes: launcher,
-            python: URL(fileURLWithPath: "/fixture/python"), ssh: URL(fileURLWithPath: "/fixture/ssh")))
+        let launcher = RealtimeStalledLauncher(), publications = Publications()
+        let monitor = RealtimeActivityMonitor(services: services(launcher))
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-switch-home")
-        await monitor.startAsync(home: home, includeSSH: false, includeRemoteControl: false) { _ in await publications.append() }
+        await monitor.startAsync(home: home) { _ in await publications.append() }
         let oldOutput = launcher.output, started = ProcessInfo.processInfo.systemUptime
-        await monitor.startAsync(home: home.appendingPathComponent("next"), includeSSH: false, includeRemoteControl: false) { _ in await publications.append() }
+        await monitor.startAsync(home: home.appendingPathComponent("next")) { _ in await publications.append() }
         XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, ShutdownDeadline.maximumWait + 0.25)
         XCTAssertTrue(launcher.child.closed); XCTAssertTrue(launcher.child.forced); XCTAssertFalse(launcher.child.isRunning)
         let count = await publications.count

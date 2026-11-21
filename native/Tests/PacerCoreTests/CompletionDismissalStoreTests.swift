@@ -10,7 +10,6 @@ final class CompletionDismissalStoreTests: XCTestCase {
     private let epoch = Date(timeIntervalSince1970: 1_800_000_000)
     private let session = "019a0000-0000-7000-8000-000000000901"
     private let host = "remote-ssh-discovered:synthetic-host"
-    private let controlHost = "remote-control:synthetic_control"
 
     private func fixture() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dismissal-" + UUID().uuidString)
@@ -30,16 +29,14 @@ final class CompletionDismissalStoreTests: XCTestCase {
     private func inbox(_ file: URL, home: String = "/synthetic/private-home", remoteHome: String = "~/.synthetic-private-home") -> CompletionInbox {
         var value = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: file, files: TestFileSystem()))
         for provider in AgentProvider.allCases {
-            value.bindSourceHomes(provider: provider, localHome: URL(fileURLWithPath: home), remoteHomes: [host: remoteHome],
-                remoteControlHostIDs: provider == .codex ? [controlHost] : [])
+            value.bindSourceHomes(provider: provider, localHome: URL(fileURLWithPath: home), remoteHomes: [host: remoteHome])
         }
         return value
     }
 
     func testAcknowledgedLocalAndRemoteEndingsSurviveStoreReconstructionWithoutPrivateText() throws {
         let file = try fixture()
-        let endings = AgentProvider.allCases.flatMap { provider in [completion(provider), completion(provider, hostID: host)] } +
-            [completion(.codex, hostID: controlHost)]
+        let endings = AgentProvider.allCases.flatMap { provider in [completion(provider), completion(provider, hostID: host)] }
         var first = inbox(file)
         first.observe(endings, at: epoch.addingTimeInterval(2), retention: 0)
         XCTAssertEqual(first.activities.count, endings.count)
@@ -50,7 +47,7 @@ final class CompletionDismissalStoreTests: XCTestCase {
         XCTAssertTrue(relaunched.unreadActivities.isEmpty)
         let data = try Data(contentsOf: file)
         let text = String(decoding: data, as: UTF8.self)
-        for privateText in [session, "synthetic-private-turn", "Synthetic private title", "private-project", "private-home", host, controlHost] {
+        for privateText in [session, "synthetic-private-turn", "Synthetic private title", "private-project", "private-home", host] {
             XCTAssertFalse(text.contains(privateText))
         }
         let value = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -245,39 +242,4 @@ final class CompletionDismissalStoreTests: XCTestCase {
         }
     }
 
-    func testRemoteControlScopesAreValidatedCodexOwnerRoutesAndRemainIsolatedAcrossRemovalOrHomeChanges() throws {
-        let file = try fixture(), ended = completion(.codex, hostID: controlHost)
-        var value = inbox(file)
-        value.observe([ended], at: epoch.addingTimeInterval(2), retention: 0)
-        let token = try XCTUnwrap(value.acknowledgment(for: ended)), source = value.sourceToken(for: ended)
-        XCTAssertTrue(value.dismiss(ended, acknowledging: token))
-        let saved = try Data(contentsOf: file)
-        var rebuilt = inbox(file)
-        rebuilt.observe([ended], at: epoch.addingTimeInterval(3), retention: 0)
-        XCTAssertTrue(rebuilt.activities.isEmpty)
-        value.bindSourceHomes(provider: .codex, localHome: URL(fileURLWithPath: "/synthetic/private-home"))
-        XCTAssertFalse(value.isCurrentSource(source))
-        value.observe([ended], at: epoch.addingTimeInterval(4), retention: 0)
-        XCTAssertFalse(value.dismiss(ended, acknowledging: token), "A removed owner route cannot acknowledge an ending after await")
-        XCTAssertTrue(value.isUnread(ended))
-        value.bindSourceHomes(provider: .codex, localHome: URL(fileURLWithPath: "/synthetic/private-home"), remoteControlHostIDs: [controlHost])
-        value.observe([ended], at: epoch.addingTimeInterval(5), retention: 0)
-        XCTAssertTrue(value.activities.isEmpty, "Re-enabling the same owner-home route preserves its successful acknowledgment")
-        value.bindSourceHomes(provider: .codex, localHome: URL(fileURLWithPath: "/synthetic/replacement-home"), remoteControlHostIDs: [controlHost])
-        value.observe([ended], at: epoch.addingTimeInterval(6), retention: 0)
-        XCTAssertTrue(value.isUnread(ended), "The same host/session/turn in another owner home is independent")
-        XCTAssertFalse(value.dismiss(ended, acknowledging: token))
-        XCTAssertEqual(try Data(contentsOf: file), saved, "Route removal and rebinding never change the on-disk acknowledgment store")
-
-        for (provider, hostID) in [(AgentProvider.claude, controlHost), (.codex, "remote-control:bad/path"),
-                                   (.codex, "remote-control:trailing\n"), (.codex, "remote-control:" + String(repeating: "a", count: 129))] {
-            let invalidFile = try fixture(), invalid = completion(provider, hostID: hostID)
-            var invalidInbox = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: invalidFile, files: TestFileSystem()))
-            invalidInbox.bindSourceHomes(provider: provider, localHome: URL(fileURLWithPath: "/synthetic/private-home"),
-                remoteHomes: [hostID: "/invented/remote-home"], remoteControlHostIDs: [hostID])
-            invalidInbox.observe([invalid], at: epoch.addingTimeInterval(2), retention: 0)
-            invalidInbox.dismiss(invalid)
-            XCTAssertFalse(FileManager.default.fileExists(atPath: invalidFile.path), "Unsupported/invalid control routes never gain a fabricated remote home")
-        }
-    }
 }

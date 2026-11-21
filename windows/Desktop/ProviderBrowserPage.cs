@@ -50,6 +50,9 @@ internal class ProviderBrowserPage : IDisposable
         catch { Dispose(); throw; }
     }
     private Uri? reader;
+    /// Idle on a document a read can use: never made a reader, or still on its reader document.
+    /// A read stopped while the page was becoming a reader leaves it on neither.
+    internal bool Reusable => IsUsable && !Loading && (reader == null || Core.Source == reader.AbsoluteUri);
     /// A kept page becomes a reader once and stays one: its request filter and
     /// navigation lock belong to one document, and a second reader would stack them.
     internal async Task UseReader(Func<Uri> blank, CancellationToken cancellation)

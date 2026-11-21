@@ -233,43 +233,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(Set(state.activities.compactMap(\.threadID)), Set([thread, second]))
     }
 
-    func testHelpersRecycleSubscriptionsAndQueueWaitingThread() throws {
-        let script = #"""
-        class Fake:
-            def __init__(self):self.sent=[]
-            def send(self,v):self.sent.append(v)
-        def tid(i):return str(uuid.UUID(int=i+1))
-        def follow(i):return {'type':'broadcast','method':'thread-stream-following-changed','version':1,'params':{'hostId':'local','conversationId':tid(i),'following':True}}
-        ipc=Fake();s=DesktopSession(ipc)
-        s.receive({'type':'response','method':'initialize','resultType':'success','result':{'clientId':tid(1000)}})
-        def snapshot(i,rev,status):
-            s.receive({'type':'broadcast','method':'thread-stream-state-changed','version':11,'sourceClientId':tid(2000),'params':{'hostId':'local','conversationId':tid(i),'change':{'type':'snapshot','revision':rev,'conversationState':{'turns':[{'turnId':'turn','status':status}]}}}})
-        for i in range(32):s.receive(follow(i));snapshot(i,0,'inProgress')
-        s.receive(follow(32));assert tid(32) not in s.followed
-        snapshot(0,1,'completed')
-        assert tid(0) not in s.followed and tid(32) in s.followed and len(s.followed)==32
-        assert any(e['method']=='turn/completed' for e in s.queue)
-        assert any(e['method']=='stream/released' for e in s.queue)
-        s.queue=[]
-        ws=Fake();r=Session(ws);r.receive({'id':1,'result':{}})
-        rid=next(k for k,v in r.pending.items() if v[0]=='list');r.receive({'id':rid,'result':{'data':[]}})
-        for i in range(40):
-            id=tid(i);r.read_thread(id)
-            rid=next(k for k,v in r.pending.items() if v[0]=='read' and v[1]==id)
-            r.receive({'id':rid,'result':{'thread':{'id':id,'status':{'type':'active'}}}})
-            rid=next(k for k,v in r.pending.items() if v[0]=='resume' and v[1]==id)
-            r.receive({'id':rid,'result':{'thread':{'id':id,'status':{'type':'active'}}}})
-            r.receive({'method':'thread/status/changed','params':{'threadId':id,'status':{'type':'idle'}}})
-            assert id in r.attached,'idle alone must not end an observed turn'
-            r.receive({'method':'turn/completed','params':{'threadId':id,'turn':{'id':'turn','status':'completed'}}})
-            assert id not in r.attached and id not in r.known
-            assert not any(v[1]==id for v in r.pending.values())
-            r.queue=[]
-        print('subscription lifecycle passed')
-        """#
-        XCTAssertTrue(try python(DesktopEventProbe.library + "\n" + script).contains("lifecycle passed"))
-    }
-
     func testLargeSnapshotFramesReconstructExactlyLikeLegacy() throws {
         let script = #"""
         now=datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -375,7 +338,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertNil(ActivitySourceMerger.merge(logged: [otherHost], streamed: state.activities).first { $0.sourceHostID == host }?.title)
     }
 
-    func testRemoteAndDesktopModelSettingsCrossAsBoundedMetadata() throws {
+    func testRemoteModelSettingsCrossAsBoundedMetadata() throws {
         let script = #"""
         class Fake:
             def __init__(self):self.sent=[]
@@ -393,21 +356,9 @@ final class RuntimeLifecycleTests: XCTestCase {
         s.receive({'method':'thread/settings/updated','params':{'threadId':tid,'threadSettings':{'effort':'low'}}})
         assert len(s.queue)==before,'an effort without its model is not attributed'
         assert 'PRIVATE' not in repr(s.queue)
-        p=Projection(tid)
-        events=p.consume({'type':'snapshot','revision':0,'conversationState':{'turns':[],'latestModel':'gpt-6.1-sol','latestReasoningEffort':'high'}},'owner')
-        assert [e.get('reasoningEffort') for e in events if e['method']=='metadata']==['high']
-        events=p.consume({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['latestReasoningEffort'],'value':'max'}]},'owner')
-        assert [e.get('reasoningEffort') for e in events if e['method']=='metadata']==['max']
-        events=p.consume({'type':'patches','baseRevision':1,'revision':2,'patches':[{'op':'replace','path':['latestReasoningEffort'],'value':None}]},'owner')
-        assert any('reasoningEffort' in e and e['reasoningEffort'] is None for e in events if e['method']=='metadata')
-        events=p.consume({'type':'patches','baseRevision':2,'revision':3,'patches':[{'op':'remove','path':['latestReasoningEffort']}]},'owner')
-        assert any('reasoningEffort' in e and e['reasoningEffort'] is None for e in events if e['method']=='metadata')
-        p=Projection(tid)
-        events=p.consume({'type':'snapshot','revision':0,'conversationState':{'turns':[],'latestModel':'gpt-6.1-sol','latestReasoningEffort':None}},'owner')
-        assert any('reasoningEffort' in e and e['reasoningEffort'] is None for e in events if e['method']=='metadata')
         print('model settings passed')
         """#
-        XCTAssertTrue(try python(DesktopEventProbe.library + "\n" + script).contains("model settings passed"))
+        XCTAssertTrue(try python(RealtimeProbe.library + "\n" + script).contains("model settings passed"))
     }
 
     func testRemoteThreadConfigurationCannotReplaceTheActiveTurnsRolloutModel() {
@@ -470,17 +421,9 @@ final class RuntimeLifecycleTests: XCTestCase {
         s.receive({'method':'thread/started','params':{'thread':{'id':tid,'ephemeral':True}}})
         s.receive({'id':rid,'result':{'thread':{'id':tid,'status':{'type':'active'}}}})
         assert tid not in s.known and not s.attached and not s.queue,'an in-flight reply cannot recreate an excluded task'
-        for initial in (True,False):
-            p=Projection(tid)
-            raw={'ephemeral':initial,'turns':[]}
-            try:
-                p.consume({'type':'snapshot','revision':0,'conversationState':raw},'owner')
-                p.consume({'type':'patches','baseRevision':0,'revision':1,'patches':[{'op':'replace','path':['ephemeral'],'value':True}]},'owner')
-            except ValueError as e:assert str(e)=='excluded ephemeral'
-            else:raise AssertionError('compatibility projection retained an ephemeral thread')
         print('remote metadata passed')
         """#
-        XCTAssertTrue(try python(DesktopEventProbe.library + "\n" + script).contains("remote metadata passed"))
+        XCTAssertTrue(try python(RealtimeProbe.library + "\n" + script).contains("remote metadata passed"))
     }
 
     private func python(_ script: String) throws -> String {

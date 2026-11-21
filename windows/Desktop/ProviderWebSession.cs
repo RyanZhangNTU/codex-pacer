@@ -28,6 +28,9 @@ internal abstract class ProviderWebSession : IAsyncDisposable
     internal static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(60);
     internal static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(20);
     internal Action<string, TimeSpan>? StartupMeasured { get; set; }
+    /// Fixture diagnostics: which controller each read used and when the browser restarted. Counts only, never cookie values.
+    internal Action<string>? Trace { get; set; }
+    private int reads;
     protected ProviderWebSession(UiText ui, ProviderWebDefinition provider, string directory, Action<CoreWebView2>? fixture, bool? darkOverride)
     { this.ui = ui; this.provider = provider; this.directory = Path.GetFullPath(directory); this.fixture = fixture; this.darkOverride = darkOverride; }
     protected abstract ProviderLoginWindow CreateLogin(Task<CoreWebView2Environment> environment, CancellationToken lifetime);
@@ -63,8 +66,10 @@ internal abstract class ProviderWebSession : IAsyncDisposable
     private async Task<CoreWebView2Environment> CreateEnvironment()
     {
         var value = await CoreWebView2Environment.CreateAsync(null, directory, Options());
-        value.BrowserProcessExited += (_, _) =>
+        Trace?.Invoke("environment created");
+        value.BrowserProcessExited += (_, e) =>
         {
+            Trace?.Invoke("browser exited: " + e.BrowserProcessExitKind + " pid=" + e.BrowserProcessId);
             if (environment is { IsCompletedSuccessfully: true } current && ReferenceEquals(current.Result, value)) environment = null;
         };
         return value;
@@ -113,7 +118,7 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         {
             if (clearing || current != revision) throw new OperationCanceledException();
             activeRead = warm;
-            if (browserKeeper is { IsUsable: true }) return;
+            if (browserKeeper is { Reusable: true }) return;
             page = await CreateReader(warm.Token);
             warm.Token.ThrowIfCancellationRequested();
             if (clearing || current != revision) throw new OperationCanceledException();
@@ -121,6 +126,8 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         }
         finally
         {
+            // A warm-up a sign-in or sign-out overtook keeps its fresh controller for the same reason as a read.
+            RetainBrowser(ref page);
             page?.Dispose(); if (ReferenceEquals(activeRead, warm)) activeRead = null; operation.Release();
         }
     }
@@ -136,12 +143,19 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         await operation.WaitAsync(queue.Token);
         ProviderBrowserPage? page = null;
         bool completed = false;
+        int number = ++reads;
         try
         {
             if (clearing || current != revision) throw new OperationCanceledException();
             activeRead = read;
-            if (ReuseReader && browserKeeper is { IsUsable: true }) { page = browserKeeper; browserKeeper = null; }
-            else page = await CreateReader(read.Token);
+            // A kept page that is not reusable stays kept until the new one replaces it, so the browser never exits between them.
+            if (ReuseReader && browserKeeper is { Reusable: true }) { page = browserKeeper; browserKeeper = null; Trace?.Invoke("read " + number + " reuses pid=" + page.Core.BrowserProcessId); }
+            else
+            {
+                Trace?.Invoke("read " + number + " creates (keeper " + (browserKeeper == null ? "none" : "not reusable") + ")");
+                page = await CreateReader(read.Token);
+                Trace?.Invoke("read " + number + " created pid=" + page.Core.BrowserProcessId);
+            }
             using var inspection = CancellationTokenSource.CreateLinkedTokenSource(read.Token);
             inspection.CancelAfter(timeout);
             fixture?.Invoke(page.Core);
@@ -153,7 +167,12 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         }
         finally
         {
-            if (completed && !clearing && !read.IsCancellationRequested) RetainBrowser(ref page);
+            // A read the engine superseded, or one a sign-in or sign-out stopped, keeps its controller too.
+            // Disposing the only controller would end the browser, and the next read would start another
+            // browser on the same profile while the first one exits. One stopped while it was becoming a
+            // reader keeps the browser alive but is not reused (see `Reusable`).
+            if (completed ? !clearing && !read.IsCancellationRequested : read.IsCancellationRequested) RetainBrowser(ref page);
+            Trace?.Invoke("read " + number + (page == null ? " kept" : " disposes loading=" + page.Loading + " usable=" + page.IsUsable) + " completed=" + completed + " cancelled=" + read.IsCancellationRequested);
             page?.Dispose(); if (ReferenceEquals(activeRead, read)) activeRead = null; operation.Release();
         }
     }
@@ -174,7 +193,7 @@ internal abstract class ProviderWebSession : IAsyncDisposable
             // A window that confirms by reading needs no baseline, so it opens without waiting for one.
             string? baseline = provider.ConfirmByReading ? null : await ReadFingerprintAsync(lifetime.Token);
             if (!window.Completion.IsCompleted) { window.Show(); await window.StartAsync(baseline, ReadFingerprintAsync); }
-            bool result = await window.Completion; SignInWasNew = result && window.NewSession; return result;
+            bool result = await window.Completion; SignInWasNew = result && window.NewSession; Trace?.Invoke("sign-in ended result=" + result + " new=" + SignInWasNew); return result;
         }
         finally { if (ReferenceEquals(login, window)) login = null; window.Abort(); }
     }

@@ -16,8 +16,12 @@ internal sealed record EngineSnapshot(
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
     IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
     string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
-    string? WslAvailability = null, RemoteControlDirectory? RemoteControlDirectory = null,
-    IReadOnlyList<EngineAccountCredits>? AccountCredits = null);
+    string? WslAvailability = null,
+    IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null);
+/// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
+/// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
+/// `notRunning`, `needsCodexUpdate` or `installFailed`.
+internal sealed record CodexHooks(string State, int? Pending = null, bool? OpensSettings = null);
 /// A module's account credits as the engine knows them, with what the bill
 /// service reported; drawn the same way in Settings, Overview and the island.
 internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale,
@@ -36,7 +40,6 @@ internal sealed record HarnessAccountCredits(string State, double? Remaining, do
     HarnessAccountCycle? Cycle = null, HarnessAccountExpiration? Expiration = null);
 internal sealed record HarnessAccountCycle(double Total, double Remaining, double? Used, double? Reset);
 internal sealed record HarnessAccountExpiration(double Credits, double At);
-internal sealed record RemoteControlDirectory(bool Refreshing, double? RefreshedAt, bool Failed);
 internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
     bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
 internal sealed record ConnectionSourceRow(string Id, string Key, string Provider, string Name, string Kind, ConnectionModule Module);
@@ -83,12 +86,15 @@ internal sealed record EngineModule(string Provider, string Mode, bool? Installe
     string? ProgressSetup = null, string? ProgressConnection = null, bool? ReportsAccountCredits = null,
     EngineModuleBrand? Brand = null, string? Website = null, string? Balance = null, bool? Prominent = null,
     bool? Local = null, DeepSeekWeekPresentation? Week = null, EngineModuleLaunch? Launch = null,
-    HarnessProgressGuide? ProgressGuide = null)
+    HarnessProgressGuide? ProgressGuide = null, EngineStatusRow? Monitoring = null, EngineStatusRow? Account = null)
 {
     /// Found on this computer or turned on explicitly. Older engines send
     /// nothing, so their modules stay listed.
     internal bool IsProminent => Prominent ?? true;
 }
+/// A row of a module page's Status card, worded by Core: state, tone
+/// (`positive`, `neutral`, `attention`), text, a line under it and one action.
+internal sealed record EngineStatusRow(string State, string Tone, string Text, string? Detail = null, string? Action = null);
 /// The progress ring card for a module whose app must trust Pacer's tool, worded by Core.
 internal sealed record HarnessProgressGuide(string Stage, string Chip, string Tone, IReadOnlyList<HarnessProgressStep> Steps,
     string? Line, string? Action, string? ActionTitle, bool Attention, string? Summary, bool Waiting, string Info,

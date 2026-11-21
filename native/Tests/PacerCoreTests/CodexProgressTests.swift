@@ -56,18 +56,14 @@ final class CodexProgressTests: XCTestCase {
             + line("event_msg", -57, ["type": "task_complete", "turn_id": "turn-0"])).write(to: original)
         try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(-57)], ofItemAtPath: original.path)
 
+        // Codex's hook names the thread's current rollout, the one after the revert.
+        try CodexHookFixture.announce([file], home: home, at: start.addingTimeInterval(5))
         let read = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), phaseAwareRate: true)
         XCTAssertEqual(read.activities.count, 1, "Both rollouts are one thread")
         XCTAssertEqual(read.activities.first?.threadID, thread)
         XCTAssertEqual(read.activities.first?.turnID, "turn-1", "The newest rollout is the thread's current turn")
         XCTAssertEqual(read.activities.first?.phase, .running)
         XCTAssertEqual(read.activities.first?.currentProgress?.percent, 70)
-        let covered = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread])
-        XCTAssertTrue(covered.activities.isEmpty, "A thread the live connection follows is not read twice")
-        let metrics = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread],
-                                                       includeCoveredMetrics: true)
-        XCTAssertEqual(metrics.activities.map(\.turnID), ["turn-1"])
-        XCTAssertEqual(metrics.activities.first?.currentProgress?.percent, 70, "Its log still fills in the live task's progress")
     }
 
     /// Several rollouts of one thread resolve to the most recently observed one,
@@ -195,34 +191,6 @@ final class CodexProgressTests: XCTestCase {
         XCTAssertEqual(ring(value, at: 8)?.mode, .done)
     }
 
-    func testDesktopProgressCanArriveInSeparateStatusAndResultPatches() throws {
-        var value = activity()
-        var wire = DesktopWireProjection(threadID: thread)
-        func send(_ change: [String: Any], at seconds: Double) throws {
-            let document = try JSONFieldView.document(JSONSerialization.data(withJSONObject: change))
-            for event in try wire.consume(document, owner: "test-owner", at: start.addingTimeInterval(seconds)) {
-                value.applyRuntime(event)
-                XCTAssertNil(event["arguments"])
-                XCTAssertNil(event["result"])
-            }
-        }
-        let item: [String: Any] = ["id": "report-1", "type": "mcpToolCall", "server": "pacer_progress",
-            "tool": "report_progress", "status": "inProgress", "arguments": ["percent": 41]]
-        try send(["type": "snapshot", "revision": 1, "conversationState": [
-            "turns": [["turnId": "turn-1", "status": "inProgress", "turnStartedAtMs": start.timeIntervalSince1970 * 1000, "items": [item]]]
-        ]], at: 0)
-        XCTAssertNil(value.currentProgress)
-        XCTAssertNil(value.toolWaitStartedAt)
-        try send(["type": "patches", "baseRevision": 1, "revision": 2,
-                  "patches": [["op": "replace", "path": ["turns", 0, "items", 0, "status"], "value": "completed"]]], at: 1)
-        XCTAssertNil(value.currentProgress)
-        try send(["type": "patches", "baseRevision": 2, "revision": 3,
-                  "patches": [["op": "add", "path": ["turns", 0, "items", 0, "result"],
-                               "value": ["content": [["type": "text", "text": "pacer-progress:accepted"]]]]]], at: 2)
-        XCTAssertEqual(value.currentProgress?.percent, 41)
-        XCTAssertEqual(value.phase, .running)
-    }
-
     func testLiveAttemptEndingDoesNotFillRingWhenLogAlreadyBoundAGoal() {
         var logged = activity(), live = activity()
         let created = start.timeIntervalSince1970
@@ -336,6 +304,7 @@ final class CodexProgressTests: XCTestCase {
             + line("event_msg", 1, ["type": "task_started", "turn_id": "turn-1"]) + progress(30, turn: "turn-1", at: 2)).write(to: file)
         try FileManager.default.setAttributes([.modificationDate: start.addingTimeInterval(2)], ofItemAtPath: file.path)
         let reader = LocalActivityReader()
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(3))
         let first = await reader.read(home: home, now: start.addingTimeInterval(3), phaseAwareRate: true)
         XCTAssertEqual(first.activities.first?.currentProgress?.percent, 30)
 
@@ -345,6 +314,7 @@ final class CodexProgressTests: XCTestCase {
         for step in 1...10 {
             let seconds = Double(step) + 2
             try append(output(at: seconds) + (step == 10 ? progress(60, turn: "turn-1", at: seconds) : Data()), at: seconds)
+            try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(seconds + 1))
             skipped = await reader.read(home: home, now: start.addingTimeInterval(seconds + 1), phaseAwareRate: true)
             XCTAssertEqual(skipped.activities.map(\.turnID), ["turn-1"], "Step \(step) keeps the turn")
         }
@@ -357,6 +327,7 @@ final class CodexProgressTests: XCTestCase {
             + line("event_msg", 21, ["type": "task_started", "turn_id": "turn-2"])
             + (0..<3).reduce(into: Data()) { data, _ in data += try line("response_item", 22, ["type": "function_call_output", "call_id": "call", "output": String(repeating: "y", count: 65_536)]) }
             + progress(20, turn: "turn-2", at: 23), at: 23)
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(24))
         let next = await reader.read(home: home, now: start.addingTimeInterval(24), phaseAwareRate: true)
         XCTAssertEqual(next.activities.map(\.turnID), ["turn-2"])
         XCTAssertEqual(next.activities.first?.currentProgress?.percent, 20)

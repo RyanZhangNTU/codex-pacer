@@ -63,7 +63,9 @@ final class EngineEmbeddedSessionTests: XCTestCase {
             try bytes.write(to: url); return url
         }
         let parent = try start(1, embedded: true), child = try start(2, embedded: false, parent: 1)
-        _ = try start(3, embedded: false)
+        let other = try start(3, embedded: false)
+        try CodexHookFixture.announce([parent, other], home: root, at: clock.date().addingTimeInterval(-1))
+        try CodexHookFixture.subagent(child, parent: parent, home: root, at: clock.date().addingTimeInterval(-1))
         let runtime = EngineRuntime(demo: false, now: { clock.date() }, dismissalStore: nil,
             navigationServices: .demo, output: { capture.append($0) })
         _ = await runtime.receive(try command("initialize", ["codexHome": EngineCodexSourceReport.path(root), "enabledProviders": ["codex"]]))

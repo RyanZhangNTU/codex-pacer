@@ -63,20 +63,16 @@ final class SSHReconnectTests: XCTestCase {
     func testCodexReconnectsOnlyFailedSSHHelpersAndKeepsLiveOnesAndWSL() async throws {
         let launcher = Launcher()
         let targets = [target("down"), target("up"), target("distro", id: ConnectionSource.wslPrefix + "distro")]
-        let monitor = RealtimeActivityMonitor(controlCatalog: RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse },
-            files: TestFileSystem(), makeClient: { _ in nil }), services: .init(
-            desktopAvailable: { _ in false }, controlAvailable: { _ in false },
-            makeDesktop: { _, _, _, _, _, _ in fatalError("no Desktop in this test") }, processes: launcher,
-            python: URL(fileURLWithPath: "/fixture/python"), ssh: URL(fileURLWithPath: "/fixture/ssh"),
+        let monitor = RealtimeActivityMonitor(services: .init(processes: launcher, ssh: URL(fileURLWithPath: "/fixture/ssh"),
             sshTargets: { _ in targets }, sshArguments: { ["-T", "--", $0.alias] }))
         let home = home()
-        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { _ in }
+        await monitor.startAsync(home: home, includeSSH: true) { _ in }
         XCTAssertEqual(launcher.children.count, 3)
         let up = try XCTUnwrap(launcher.launches("up").first)
         await up.output(try line(["kind": "status", "connected": true, "attached": 0]))
         // The VPN is down: these helpers die before their first frame.
         for alias in ["down", "distro"] { await launcher.launches(alias)[0].ended() }
-        await monitor.startAsync(home: home, includeSSH: true, includeRemoteControl: false) { _ in }
+        await monitor.startAsync(home: home, includeSSH: true) { _ in }
         XCTAssertEqual(launcher.children.count, 3, "The routine 30-second discovery keeps the backoff")
 
         await monitor.reconnectUnreachableSSH()
@@ -86,6 +82,29 @@ final class SSHReconnectTests: XCTestCase {
         XCTAssertEqual(up.closeCount, 0, "A live helper keeps its connection and state")
         await monitor.reconnectUnreachableSSH()
         XCTAssertEqual(launcher.launches("down").count, 2, "A helper already reconnecting is not started twice")
+        await monitor.shutdown()
+    }
+
+    func testManagedSSHUsesItsDestinationAndKeepsItsDesktopIDAfterFailure() async throws {
+        let launcher = Launcher()
+        let managed = RemoteActivityTarget(id: "remote-ssh-codex-managed:fixture", name: "Build server",
+            alias: "codex-fixture", home: "~/.codex", sshDestination: "fixture@build.example.test")
+        let monitor = RealtimeActivityMonitor(services: .init(processes: launcher, ssh: URL(fileURLWithPath: "/fixture/ssh"),
+            sshTargets: { _ in [managed] }, sshArguments: { $0.sshArguments(validDestination: { $0 == "fixture@build.example.test" }) }))
+        await monitor.startAsync(home: home()) { _ in }
+        let child = try XCTUnwrap(launcher.launches("fixture@build.example.test").first)
+        XCTAssertTrue(launcher.launches(managed.alias).isEmpty)
+        await child.output(try line(["kind": "status", "connected": true, "attached": 1]))
+        let connected = await monitor.statuses()[managed.id]
+        XCTAssertEqual(connected?.sourceName, managed.name)
+        XCTAssertEqual(connected?.attachedThreads, 1)
+
+        await child.ended()
+        let failed = await monitor.statuses()[managed.id]
+        XCTAssertEqual(failed?.sourceName, managed.name)
+        XCTAssertEqual(failed?.hasConnectionFailure, true)
+        await monitor.reconnectUnreachableSSH()
+        XCTAssertEqual(launcher.launches("fixture@build.example.test").count, 2)
         await monitor.shutdown()
     }
 

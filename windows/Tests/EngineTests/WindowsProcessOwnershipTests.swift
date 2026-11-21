@@ -22,7 +22,7 @@ final class WindowsProcessOwnershipTests: XCTestCase {
             catch { try? FileManager.default.removeItem(at: root); throw error }
             let deadline = Date().addingTimeInterval(5)
             while process.isRunning && !FileManager.default.fileExists(atPath: ready.path) && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
-            guard FileManager.default.fileExists(atPath: ready.path) else { stop(); throw WindowsDesktopTransport.Failure.unavailable }
+            guard FileManager.default.fileExists(atPath: ready.path) else { stop(); throw CocoaError(.fileNoSuchFile) }
         }
         var pid: UInt32 { UInt32(process.processIdentifier) }
         func stop() { if process.isRunning { process.terminate() }; process.waitUntilExit(); try? FileManager.default.removeItem(at: root) }

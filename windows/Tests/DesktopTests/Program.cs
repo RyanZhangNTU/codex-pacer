@@ -50,7 +50,7 @@ internal static class Program
             {
                 providerModes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled",
                     ["deepseek"] = "disabled", ["workbuddy"] = "enabled" },
-                monitorSSH = false, monitorWSL = false, monitorRemoteControl = false, monitorDurable = false, retentionMinutes = 1440
+                monitorSSH = false, monitorWSL = false, monitorDurable = false, retentionMinutes = 1440
             }, readOnlyDiagnostics: true);
             var snapshot = client.LatestSnapshot;
             var rows = snapshot?.Tasks.Where(task => task.Provider == "workbuddy").ToArray() ?? [];
@@ -89,6 +89,7 @@ internal static class Program
             catch (Exception error) { failed++; Console.WriteLine("FAIL " + name + ": " + error); }
         }
 
+        await Test("cancelled engine commands leave complete protocol frames", EngineCommandWriterChecks.Run);
         await Test("Windows update verification and asynchronous lifecycle", () => WindowsUpdateChecks.Run());
 
         await Test("quota alternation deadlines preserve four-second slots and 350 ms fades", () => { QuotaScheduleChecks.Run(); return Task.CompletedTask; });

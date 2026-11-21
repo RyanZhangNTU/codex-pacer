@@ -12,6 +12,8 @@ enum EngineGuidePages {
         let settings: Bool
         let forceWelcome: Bool
         let forceWhatsNew: Bool
+        /// The modules that are on, for a note that opens only with its module; nil when unknown.
+        var modules: [String]? = nil
     }
     struct Item: Encodable {
         let symbol: String, title: String, detail: String
@@ -42,7 +44,8 @@ enum EngineGuidePages {
               validVersion(input.current), input.seen.map({ $0.utf8.count <= 64 }) ?? true else { return nil }
         let quiet = input.demo || input.settings
         let welcome = input.forceWelcome || (!quiet && input.welcomed < WelcomeGuide.currentMajor)
-        let pending = WhatsNew.pending(current: input.current, seen: input.seen)
+        let modules = input.modules.map { Set($0.prefix(128).compactMap(AgentProvider.init(rawValue:))) }
+        let pending = WhatsNew.pending(current: input.current, seen: input.seen, enabledModules: modules)
         let history = WhatsNew.history(upTo: input.current)
         let note = !welcome && (input.forceWhatsNew || (!quiet && !pending.isEmpty))
         func release(_ value: WhatsNew.Release) -> Release {
@@ -57,6 +60,7 @@ enum EngineGuidePages {
                     case .openCollapsedBar: control = "openCollapsedBar"
                     case .openAppearance: control = "openAppearance"
                     case .openModules: control = "openModules"
+                    case .codexHooksSetup: control = "codexHooksSetup"
                     case nil: control = nil
                     }
                     return Item(symbol: item.symbol, title: L10n.text(item.titleKey, language: language),

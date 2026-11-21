@@ -96,7 +96,9 @@ try:
             env['CLAUDE_CODE_GIT_BASH_PATH']=str(fixture/'missing-bash.exe')
             command=[str(powershell),'-NoProfile','-NonInteractive','-Command','& '+' '.join(quote_ps(value) for value in values)]
         payload=b'{"rate_limits":{"five_hour":{"used_percentage":45,"resets_at":1890000000}}}'
-        result=subprocess.run(command,input=payload,env=env,capture_output=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
+        # Only a hang guard: a cold PowerShell on a hosted runner has taken over 15 s to start.
+        # The renderer's own ten-second budget is asserted from the report below.
+        result=subprocess.run(command,input=payload,env=env,capture_output=True,timeout=60,creationflags=subprocess.CREATE_NO_WINDOW)
         facts=json.loads(report.read_bytes()) if report.exists() else {'reportMissing':True}
         facts.update(executor=executor,exit=result.returncode,outputBytes=len(result.stdout),errorBytes=len(result.stderr),rendererMatches=result.stdout.strip()==b'SYNTHETIC_RENDERER')
         print(json.dumps(facts,sort_keys=True),flush=True)

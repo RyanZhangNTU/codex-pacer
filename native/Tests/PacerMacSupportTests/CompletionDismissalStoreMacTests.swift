@@ -6,7 +6,6 @@ final class CompletionDismissalStoreMacTests: XCTestCase {
     private let epoch = Date(timeIntervalSince1970: 1_800_000_000)
     private let session = "019a0000-0000-7000-8000-000000000901"
     private let host = "remote-ssh-discovered:synthetic-host"
-    private let controlHost = "remote-control:synthetic_control"
 
     private func fixture() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-dismissal-" + UUID().uuidString)
@@ -26,8 +25,7 @@ final class CompletionDismissalStoreMacTests: XCTestCase {
     private func inbox(_ file: URL, home: String = "/synthetic/private-home", remoteHome: String = "~/.synthetic-private-home") -> CompletionInbox {
         var value = CompletionInbox(dismissalStore: CompletionDismissalStore(fileURL: file))
         for provider in AgentProvider.allCases {
-            value.bindSourceHomes(provider: provider, localHome: URL(fileURLWithPath: home), remoteHomes: [host: remoteHome],
-                remoteControlHostIDs: provider == .codex ? [controlHost] : [])
+            value.bindSourceHomes(provider: provider, localHome: URL(fileURLWithPath: home), remoteHomes: [host: remoteHome])
         }
         return value
     }

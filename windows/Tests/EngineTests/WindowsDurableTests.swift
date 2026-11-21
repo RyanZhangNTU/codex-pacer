@@ -106,12 +106,51 @@ final class WindowsDurableTests: XCTestCase {
         XCTAssertEqual(mailbox.read(at: Date())[thread + ":" + turn]?.callID, "lower")
     }
 
+    /// Only the exec-server child of a packaged Desktop counts; its command line is read last.
+    func testExecutorIsTheExecServerChildOfAPackagedDesktop() {
+        let package = URL(fileURLWithPath: "C:/Program Files/WindowsApps/OpenAI.Codex_1.0.0.0_x64__2p2nqsd0c76g0")
+        let cli = package.appendingPathComponent("app/resources/codex.exe")
+        let managed = URL(fileURLWithPath: "C:/Users/Synthetic/AppData/Local/OpenAI/Codex/bin")
+        typealias Image = WindowsDurableExecutor.ProcessImage
+        func image(_ pid: UInt32, _ started: UInt64, _ path: URL, parent: UInt32 = 0) -> Image {
+            .init(identity: .init(pid: pid, started: started), parent: parent, executable: path)
+        }
+        let desktop = image(100, 10, package.appendingPathComponent("app/Codex.exe"))
+        var images: [UInt32: Image] = [100: desktop, 200: image(200, 20, cli, parent: 100),
+            300: image(300, 30, managed.appendingPathComponent("0123456789abcdef/codex.exe"), parent: 100),
+            400: image(400, 40, URL(fileURLWithPath: "C:/tools/codex.exe"), parent: 100),
+            500: image(500, 50, URL(fileURLWithPath: "C:/tools/Other.exe")), 600: image(600, 60, cli, parent: 500)]
+        var packaged: Set<UInt32> = [100], read: [UInt32] = [], environments: [UInt32: String] = [200: "env-a"]
+        func select(_ candidates: [(pid: UInt32, parent: UInt32)]) -> WindowsDurableExecutor? {
+            read = []
+            return WindowsDurableExecutor.select(candidates: candidates, packages: [package], managedBin: managed,
+                process: { pid, parent in images[pid].map { .init(identity: $0.identity, parent: parent, executable: $0.executable) } },
+                packaged: { packaged.contains($0.pid) },
+                environment: { read.append($0.pid); return environments[$0.pid] }, cli: { _ in cli })
+        }
+        let found = select([(200, 100), (400, 100), (600, 500)])
+        XCTAssertEqual(found?.identity.pid, 200); XCTAssertEqual(found?.desktop, desktop.identity)
+        XCTAssertEqual(found?.environmentID, "env-a"); XCTAssertEqual(found?.packagedCLI, cli)
+        XCTAssertEqual(read, [200], "A codex.exe outside Desktop's own CLI images is never read")
+
+        environments[300] = "env-b"
+        XCTAssertNil(select([(200, 100), (300, 100)]), "Several executors are ambiguous")
+        environments[200] = nil
+        XCTAssertEqual(select([(200, 100), (300, 100)])?.environmentID, "env-b", "Desktop's staged CLI is recognized")
+        environments[200] = "env-a"; environments[300] = nil
+
+        images[100] = image(100, 25, desktop.executable)
+        XCTAssertNil(select([(200, 100)]), "A parent started after its child is a reused PID")
+        images[100] = desktop; packaged = []
+        XCTAssertNil(select([(200, 100)]), "The parent must carry the Codex package identity")
+        packaged = [100]; environments[200] = "bad id"
+        XCTAssertNil(select([(200, 100)]), "An environment ID outside the expected form is refused")
+    }
+
     func testInstalledDesktopExecutorAndPluginInADisposableProfile() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PACER_DURABLE_DESKTOP_QA"] == "1",
             "Requires a running Store Codex Desktop executor; run with PACER_DURABLE_DESKTOP_QA=1.")
-        let pipe = try WindowsDesktopTransport.connectCodex(); defer { pipe.cancel() }
-        let peer = try XCTUnwrap(pipe.peerIdentity), package = try XCTUnwrap(pipe.codexPackage)
-        let executor = try XCTUnwrap(WindowsDurableExecutor.find(desktop: peer, package: package))
+        let executor = try XCTUnwrap(WindowsDurableExecutor.findRunning())
         let root = try fixtureDirectory(); defer { try? FileManager.default.removeItem(at: root) }
         let reporter = try prepareReporter(root: root)
         let config = root.appendingPathComponent("config.toml")
@@ -147,9 +186,7 @@ final class WindowsDurableTests: XCTestCase {
     func testLiveCatalogReadOnly() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PACER_DURABLE_CATALOG_QA"] == "1",
             "Opt in to one read-only catalog request using the current Desktop login.")
-        let pipe = try WindowsDesktopTransport.connectCodex(); defer { pipe.cancel() }
-        let peer = try XCTUnwrap(pipe.peerIdentity), package = try XCTUnwrap(pipe.codexPackage)
-        let executor = try XCTUnwrap(WindowsDurableExecutor.find(desktop: peer, package: package))
+        let executor = try XCTUnwrap(WindowsDurableExecutor.findRunning())
         let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
         let client = CodexClient(executable: executor.packagedCLI, home: home, timeout: 8)
         let credentials: (request: URLRequest, scope: String)

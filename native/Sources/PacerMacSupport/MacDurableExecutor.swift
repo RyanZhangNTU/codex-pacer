@@ -1,10 +1,12 @@
 import Darwin
 import Foundation
+import os
 import PacerCore
 import Security
 
-/// A local executor is a child of the Codex Desktop instance serving our IPC
-/// socket. Neither a local-looking cwd nor an arbitrary codex CLI proves that.
+/// A local executor is the `exec-server --remote` child of a running Codex
+/// Desktop, whose bundle and signer are checked. Neither a local-looking cwd
+/// nor an arbitrary codex CLI proves that.
 struct MacDurableExecutor: Equatable, Sendable {
     let pid: pid_t
     let desktopPID: pid_t
@@ -31,6 +33,44 @@ struct MacDurableExecutor: Equatable, Sendable {
         guard SecStaticCodeCreateWithPath(executable as CFURL, [], &code) == errSecSuccess, let code,
               SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement else { return false }
         return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSBasicValidateOnly), requirement) == errSecSuccess
+    }
+
+    /// The executor of the one running Codex Desktop, or nil with none or several.
+    static func findRunning() -> Self? {
+        let matches = desktopProcesses().compactMap(find(peer:))
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    /// The one Codex Desktop process the last scan found, reused while that same
+    /// process runs, for at most `rescanInterval`; a later scan notices a second one.
+    private static let lastDesktop = OSAllocatedUnfairLock<(pid: pid_t, started: Date, scannedAt: Date)?>(initialState: nil)
+    static let rescanInterval: TimeInterval = 300
+
+    /// This user's processes that run a Codex Desktop bundle's main executable.
+    static func desktopProcesses(now: Date = Date()) -> [pid_t] {
+        if let last = lastDesktop.withLock({ $0 }), now >= last.scannedAt, now.timeIntervalSince(last.scannedAt) < rescanInterval,
+           startDate(last.pid) == last.started { return [last.pid] }
+        let found = scanDesktopProcesses()
+        let one = found.count == 1 ? startDate(found[0]).map { (pid: found[0], started: $0, scannedAt: now) } : nil
+        lastDesktop.withLock { $0 = one }
+        return found
+    }
+
+    /// Every process is listed, but only paths shaped like an app's main executable
+    /// are turned into URLs and bundles.
+    private static func scanDesktopProcesses() -> [pid_t] {
+        var pids = [pid_t](repeating: 0, count: 4096)
+        let size = pids.withUnsafeMutableBytes {
+            proc_listpids(UInt32(PROC_UID_ONLY), UInt32(getuid()), $0.baseAddress, Int32($0.count))
+        }
+        guard size > 0 else { return [] }
+        return pids.prefix(min(pids.count, Int(size) / MemoryLayout<pid_t>.stride)).filter { pid in
+            guard pid > 1, let raw = executablePath(pid), raw.contains(".app/Contents/MacOS/") else { return false }
+            let path = URL(fileURLWithPath: raw).resolvingSymlinksInPath()
+            guard path.deletingLastPathComponent().lastPathComponent == "MacOS" else { return false }
+            let app = path.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            return app.pathExtension == "app" && Bundle(url: app)?.bundleIdentifier == "com.openai.codex"
+        }
     }
 
     static func find(peer: pid_t) -> Self? {
@@ -65,19 +105,24 @@ struct MacDurableExecutor: Equatable, Sendable {
         return pids.prefix(Int(size) / MemoryLayout<pid_t>.stride).filter { $0 > 1 }
     }
 
-    private static func startDate(_ pid: pid_t, parent: pid_t) -> Date? {
+    /// When this user's process started; with `parent`, only while it is that process's child.
+    private static func startDate(_ pid: pid_t, parent: pid_t? = nil) -> Date? {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
-              info.pbi_uid == getuid(), info.pbi_ppid == UInt32(parent) else { return nil }
+        guard pid > 1, proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.pbi_uid == getuid(), parent.map({ info.pbi_ppid == UInt32($0) }) ?? true else { return nil }
         return Date(timeIntervalSince1970: Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1_000_000)
     }
 
-    private static func executable(_ pid: pid_t) -> URL? {
+    private static func executablePath(_ pid: pid_t) -> String? {
         guard pid > 1 else { return nil }
         var bytes = [CChar](repeating: 0, count: 4096)
         guard proc_pidpath(pid, &bytes, UInt32(bytes.count)) > 0 else { return nil }
-        return URL(fileURLWithPath: String(cString: bytes)).resolvingSymlinksInPath()
+        return String(cString: bytes)
+    }
+
+    private static func executable(_ pid: pid_t) -> URL? {
+        executablePath(pid).map { URL(fileURLWithPath: $0).resolvingSymlinksInPath() }
     }
 
     private static func arguments(_ pid: pid_t) -> [String]? {

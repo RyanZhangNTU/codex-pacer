@@ -105,115 +105,9 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         await rebuilt.shutdown()
     }
 
-    private func controlCatalogFixture(savedRoute: Bool = false) throws -> FamilyFixture {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-catalog-ack-" + UUID().uuidString)
-        let domain = testDefaultsName("catalog-ack-tests")
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        addTeardownBlock { removeTestDefaults(domain); try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defaults.set(directory.path, forKey: "codexHome")
-        defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
-        defaults.set(false, forKey: "monitorSSH")
-        defaults.set(true, forKey: "monitorRemoteControl")
-        defaults.set(0, forKey: "completedRetentionMinutes")
-        ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
-        var configuration: [String: Any] = ["electron-remote-control-client-enrollments": [
-            "synthetic": ["accountUserId": "user", "clientId": "client"]]]
-        if savedRoute { configuration["added-remote-control-env-ids"] = ["catalog-fixture"] }
-        try JSONSerialization.data(withJSONObject: configuration).write(to: directory.appendingPathComponent(".codex-global-state.json"))
-        XCTAssertEqual(RemoteControlActivityTarget.configured(home: directory).isEmpty, !savedRoute)
-        let file = directory.appendingPathComponent("dismissals.json")
-        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
-            installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
-            completionDismissalStore: CompletionDismissalStore(fileURL: file))
-        return FamilyFixture(model: model, defaults: defaults, file: file, host: "remote-control:catalog-fixture")
-    }
-
-    func testCatalogOnlyCompletionPersistsBeforeReplayDespiteMissingConnectionStatus() async throws {
-        for outcome in [ActivityOpenOutcome.openedConversation, .dispatchedTerminal, .failed("Synthetic failure")] {
-            let fixture = try controlCatalogFixture(), model = fixture.model, host = try XCTUnwrap(fixture.host)
-            let ended = familyActivity(.codex, 960, host: host, at: Date().addingTimeInterval(-2))
-            // Source bindings precede the first ending in the same publication.
-            model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
-                remoteControlBindings: .init(hostIDs: [host], authoritative: true))
-            XCTAssertTrue(model.isUnreadCompletion(ended))
-            // Adding a device and losing status must not unbind this ending.
-            model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [],
-                remoteControlBindings: .init(hostIDs: [host, "remote-control:another"], authoritative: true))
-            // A cold catalog after transport restart is not evidence of removal.
-            model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [],
-                remoteControlBindings: .init(hostIDs: [], authoritative: false))
-            model.refreshRemote()
-            let handled = expectation(description: "Catalog-only conversation open handled")
-            var reported = false
-            model.onOpenActivity = { _ in outcome }
-            model.onStatusChange = { if !reported { reported = true; handled.fulfill() } }
-            model.open(ended)
-            await fulfillment(of: [handled], timeout: TestWait.limit)
-            let acknowledged = outcome == .openedConversation
-            XCTAssertEqual(FileManager.default.fileExists(atPath: fixture.file.path), acknowledged)
-            XCTAssertEqual(model.isUnreadCompletion(ended), !acknowledged)
-            await model.shutdown()
-            let rebuilt = fixture.rebuild()
-            rebuilt.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
-                remoteControlBindings: .init(hostIDs: [host], authoritative: true))
-            XCTAssertEqual(rebuilt.activities.contains { $0.id == ended.id }, !acknowledged)
-            XCTAssertEqual(rebuilt.isUnreadCompletion(ended), !acknowledged)
-            await rebuilt.shutdown()
-        }
-    }
-
-    func testCatalogRemovalInvalidatesAwaitedOpenEvenWithStaleSavedRoute() async throws {
-        let fixture = try controlCatalogFixture(savedRoute: true), model = fixture.model, host = try XCTUnwrap(fixture.host)
-        let at = Date().addingTimeInterval(-2)
-        let ended = familyActivity(.codex, 961, host: host, at: at), claude = familyActivity(.claude, 962, at: at)
-        model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
-            remoteControlBindings: .init(hostIDs: [host], authoritative: true))
-        model.receiveClaudeUpdate([claude], statuses: [:], requests: [])
-        let dispatched = expectation(description: "Catalog-only open suspended"), returned = expectation(description: "Open returned")
-        var continuation: CheckedContinuation<ActivityOpenOutcome, Never>?
-        model.onOpenActivity = { _ in
-            let outcome = await withCheckedContinuation { continuation = $0; dispatched.fulfill() }
-            returned.fulfill(); return outcome
-        }
-        model.open(ended)
-        await fulfillment(of: [dispatched], timeout: TestWait.limit)
-        model.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
-            remoteControlBindings: .init(hostIDs: [], authoritative: true))
-        model.refreshRemote() // Periodic discovery must not reinstate the stale saved route.
-        try XCTUnwrap(continuation).resume(returning: .openedConversation)
-        await fulfillment(of: [returned], timeout: TestWait.limit); await Task.yield()
-        XCTAssertTrue(model.isUnreadCompletion(ended), "An old open cannot acknowledge the removed device's ending")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.file.path))
-        XCTAssertTrue(model.isUnreadCompletion(claude), "The other provider's completion remains independent")
-        await model.shutdown()
-        let rebuilt = fixture.rebuild()
-        rebuilt.receiveRemoteUpdate([ended], statuses: [:], unavailable: [], requests: [], names: [],
-            remoteControlBindings: .init(hostIDs: [host], authoritative: true))
-        XCTAssertTrue(rebuilt.isUnreadCompletion(ended), "Re-adding the device must not recover an acknowledgment from its removed source")
-        await rebuilt.shutdown()
-    }
-
-    func testRevalidatingRemoteControlHidesUnreadEndingUntilTheSameAccountReturns() async throws {
-        let fixture = try controlCatalogFixture(), model = fixture.model, host = try XCTUnwrap(fixture.host)
-        let ending = familyActivity(.codex, 963, host: host, at: Date().addingTimeInterval(-2))
-        let verified = RemoteControlSourceBindings(hostIDs: [host], authoritative: true, accountScope: "fixture")
-        model.receiveRemoteUpdate([ending], statuses: [:], unavailable: [], requests: [], names: [], remoteControlBindings: verified)
-        XCTAssertTrue(model.isUnreadCompletion(ending))
-        model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [],
-            remoteControlBindings: .init(hostIDs: [], authoritative: false, accountScope: "fixture", isRevalidating: true))
-        XCTAssertFalse(model.activities.contains { $0.id == ending.id })
-        XCTAssertFalse(model.canOpen(ending))
-        model.receiveRemoteUpdate([], statuses: [:], unavailable: [], requests: [], names: [], remoteControlBindings: verified)
-        XCTAssertTrue(model.activities.contains { $0.id == ending.id })
-        XCTAssertTrue(model.isUnreadCompletion(ending))
-        await model.shutdown()
-    }
-
     func testOnlyActualConversationOpenPersistsAcrossModelReconstructionForBothProvidersAndHosts() async throws {
         for provider in HarnessRegistry.legacyIDs {
-            for sourceHostID in [nil, "remote-ssh-discovered:synthetic-ack", "remote-control:synthetic-ack"] as [String?]
-                where (provider == .codex || sourceHostID?.hasPrefix("remote-control:") != true) && (provider != .deepseek || sourceHostID == nil) {
+            for sourceHostID in [nil, "remote-ssh-discovered:synthetic-ack"] as [String?] where provider != .deepseek || sourceHostID == nil {
                 for outcome in [ActivityOpenOutcome.openedConversation, .dispatchedTerminal, .failed("Synthetic failure")] {
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-model-ack-" + UUID().uuidString)
                     let domain = testDefaultsName("ack-tests")
@@ -223,14 +117,12 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
                     defaults.set(directory.path, forKey: "codexHome")
                     defaults.set(directory.appendingPathComponent("claude-home").path, forKey: "claudeHome")
                     defaults.set("synthetic-ack", forKey: "claudeSSHHosts")
-                    defaults.set(true, forKey: "monitorRemoteControl")
                     defaults.set(0, forKey: "completedRetentionMinutes")
                     ProviderModules(codexMode: .enabled, claudeMode: .enabled, deepseekMode: .enabled).save(to: defaults)
                     let host = "remote-ssh-discovered:synthetic-ack"
                     let configuration: [String: Any] = [
                         "codex-managed-remote-connections": [["source": "discovered", "hostId": host, "alias": "synthetic-ack"]],
-                        "remote-connection-auto-connect-by-host-id": [host: true],
-                        "added-remote-control-env-ids": ["synthetic-ack"]]
+                        "remote-connection-auto-connect-by-host-id": [host: true]]
                     try JSONSerialization.data(withJSONObject: configuration).write(to: directory.appendingPathComponent(".codex-global-state.json"))
                     let file = directory.appendingPathComponent("dismissals.json")
                     let started = Date().addingTimeInterval(-2), session = "019a0000-0000-7000-8000-000000000903"
@@ -478,88 +370,4 @@ final class CompletionAcknowledgmentPersistenceTests: XCTestCase {
         }
     }
 
-    func testRemoteControlOpenBarrierPreservesReplacementScopeAndClaudeStateAfterRouteOrSettingsChanges() async throws {
-        for change in ["host-removed", "owner-home", "control-off"] {
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-control-ack-" + UUID().uuidString)
-            let domain = testDefaultsName("control-ack-tests")
-            let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-            defer { removeTestDefaults(domain); try? FileManager.default.removeItem(at: directory) }
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            defaults.set(directory.path, forKey: "codexHome")
-            defaults.set(directory.appendingPathComponent("claude-profile").path, forKey: "claudeHome")
-            defaults.set(false, forKey: "monitorSSH")
-            defaults.set(true, forKey: "monitorRemoteControl")
-            defaults.set(0, forKey: "completedRetentionMinutes")
-            ProviderModules(codexMode: .enabled, claudeMode: .enabled).save(to: defaults)
-            func configuration(_ home: URL, enabled: Bool = true) throws {
-                try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-                try JSONSerialization.data(withJSONObject: ["added-remote-control-env-ids": enabled ? ["scope-fixture"] : []])
-                    .write(to: home.appendingPathComponent(".codex-global-state.json"))
-            }
-            try configuration(directory)
-            let file = directory.appendingPathComponent("dismissals.json")
-            let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
-                installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
-                completionDismissalStore: CompletionDismissalStore(fileURL: file))
-            XCTAssertTrue(model.monitorsRemoteControl, "The injected defaults opt in to Remote Control")
-            let at = Date().addingTimeInterval(-2), host = "remote-control:scope-fixture"
-            let codex = familyActivity(.codex, 950, host: host, at: at), claude = familyActivity(.claude, 951, at: at)
-            publishFamily([codex, claude], to: model)
-            model.selectProvider(.claude)
-            var quota = try QuotaSnapshot.decode(JSONSerialization.data(withJSONObject: ["rateLimits": ["limitId": "claude",
-                "primary": ["usedPercent": 30, "windowDurationMins": 300, "resetsAt": Date().timeIntervalSince1970 + 3600],
-                "secondary": ["usedPercent": 40, "windowDurationMins": 10080, "resetsAt": Date().timeIntervalSince1970 + 86400]]]))
-            quota.accountScope = "synthetic-claude-control-scope"
-            model.quota = quota; model.history.record(quota); model.historyWarning = "Synthetic Claude history warning"
-            model.errorMessage = "Synthetic Claude error"
-            let history = model.history, warning = model.historyWarning, error = model.errorMessage
-            var codexQuota = try QuotaSnapshot.decode(JSONSerialization.data(withJSONObject: ["rateLimits": ["limitId": "codex",
-                "primary": ["usedPercent": 20, "windowDurationMins": 300, "resetsAt": Date().timeIntervalSince1970 + 3600]]]))
-            codexQuota.accountScope = "synthetic-codex-control-scope"
-            model.selectProvider(.codex); model.quota = codexQuota; model.selectProvider(.claude)
-            let dispatched = expectation(description: "Control navigation suspended"), returned = expectation(description: "Control navigation returned")
-            var continuation: CheckedContinuation<ActivityOpenOutcome, Never>?
-            model.onOpenActivity = { requested in
-                XCTAssertEqual(requested.id, codex.id)
-                let outcome = await withCheckedContinuation { continuation = $0; dispatched.fulfill() }
-                returned.fulfill(); return outcome
-            }
-            model.open(codex)
-            await fulfillment(of: [dispatched], timeout: TestWait.limit)
-            switch change {
-            case "host-removed":
-                try configuration(directory, enabled: false)
-                model.refreshRemote()
-            case "owner-home":
-                let replacement = directory.appendingPathComponent("replacement-owner")
-                try configuration(replacement)
-                defaults.set(replacement.path, forKey: "codexHome")
-                model.applySettings(sourceChanged: true)
-            default:
-                defaults.set(false, forKey: "monitorRemoteControl")
-                model.applySettings(sourceChanged: true)
-                XCTAssertFalse(model.monitorsRemoteControl)
-            }
-            XCTAssertEqual(model.providerQuota(.codex), change == "host-removed" ? codexQuota : nil,
-                "The RC preference and owner-home change reset Codex; route discovery alone keeps its quota client context")
-            // Identical replay now belongs to the replacement/unbound scope.
-            model.receiveRemoteUpdate([codex], statuses: [:], unavailable: [], requests: [], names: [])
-            try XCTUnwrap(continuation).resume(returning: .openedConversation)
-            await fulfillment(of: [returned], timeout: TestWait.limit); await Task.yield()
-            XCTAssertTrue(model.activities.contains { $0.id == codex.id }); XCTAssertTrue(model.isUnreadCompletion(codex))
-            XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
-            XCTAssertEqual(model.providerQuota(.claude), quota)
-            XCTAssertEqual(model.providerHistory(.claude), history); XCTAssertEqual(model.providerHistoryWarning(.claude), warning)
-            XCTAssertEqual(model.providerQuotaError(.claude), error)
-            XCTAssertTrue(model.activities.contains { $0.id == claude.id }); XCTAssertTrue(model.isUnreadCompletion(claude))
-            await model.shutdown()
-            let rebuilt = IslandModel(demo: true, demoArguments: nil, defaults: defaults,
-                installation: ProviderInstallationDetection(codexInstalled: false, claudeInstalled: false),
-                completionDismissalStore: CompletionDismissalStore(fileURL: file))
-            publishFamily([codex, claude], to: rebuilt)
-            XCTAssertTrue(rebuilt.activities.contains { $0.id == codex.id })
-            XCTAssertTrue(rebuilt.isUnreadCompletion(codex))
-            await rebuilt.shutdown()
-        }
-    }
 }

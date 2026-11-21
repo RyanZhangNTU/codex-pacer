@@ -4,7 +4,9 @@ name: Engine cache
 # else runs there. After a merge that changes what the release engine is built
 # from, this builds it once per architecture, so the next pull requests start
 # with a cache hit. It tests nothing. A key that is already cached ends the job
-# after the lookup.
+# after the lookup. Pull requests compile ARM64 only when they change what
+# compiles differently for it, so this ARM64 build is also where an engine
+# change first compiles for ARM64; a failure here shows on develop.
 on:
   push:
     branches: [develop]

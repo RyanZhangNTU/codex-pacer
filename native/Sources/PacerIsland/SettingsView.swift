@@ -48,7 +48,6 @@ struct SettingsView: View {
     @State private var completedRetention = UserDefaults.standard.object(forKey: "completedRetentionMinutes") as? Int ?? 30
     @State private var hideProjects = UserDefaults.standard.bool(forKey: "hideProjects")
     @State private var monitorSSH = UserDefaults.standard.object(forKey: "monitorSSH") == nil || UserDefaults.standard.bool(forKey: "monitorSSH")
-    @State private var monitorRemoteControl = UserDefaults.standard.bool(forKey: "monitorRemoteControl")
     @State private var monitorDurable = UserDefaults.standard.bool(forKey: IslandModel.monitorsDurableKey)
     /// Shared with the update note, which can change them while this is open.
     @AppStorage(IslandModel.showsEmbeddedClaudeSessionsKey) private var showEmbeddedClaudeSessions = true
@@ -100,7 +99,7 @@ struct SettingsView: View {
             let library = library
             MainWindowSidebar(selection: $pane, services: library.prominent.map(\.provider), searchable: library.entries.map(\.provider),
                 hiddenModules: library.collapsed.count, isDisabled: { $0.provider.map { !moduleEnabled($0) } ?? false },
-                needsAttention: needsAttention, attentionHelp: { $0.provider.flatMap(progressAttention) },
+                needsAttention: needsAttention, attentionHelp: { $0.provider.flatMap(moduleAttention)?.title },
                 updateVersion: updater.flow.available?.version, updateCheckFailed: updater.flow.failure == .check)
                 .background(SidebarMaterial())
             Rectangle().fill(Color.black.opacity(0.25)).frame(width: 1)
@@ -226,22 +225,48 @@ struct SettingsView: View {
         }
     }
 
-    /// What Claude needs from the user, if anything, as its state's text key.
-    private var claudeAttentionKey: String? {
-        guard moduleEnabled(.claude) else { return nil }
-        if model.claudeLocalSetup == .failed { return "provider.state.failed" }
-        if model.claudeNeedsOrganizationSelection { return "claude.account.workspace_needed" }
-        if model.claudeConnectionNeeded { return "claude.account.signed_out" }
+    /// Codex: its CLI first, then the hooks it runs.
+    private var codexMonitoring: ModuleMonitoring {
+        .codex(executableFound: cliReport.map { $0.selected != nil }, executableIssue: cliReport?.issue, hooks: model.codexHookStatus,
+               sessions: model.localRunningSessions(.codex), opensCodex: model.canOpenCodexSettings)
+    }
+
+    /// Task Monitoring of an enabled module, in the vocabulary every page shares.
+    private func monitoring(_ provider: AgentProvider) -> ModuleMonitoring? {
+        guard moduleEnabled(provider) else { return nil }
+        switch provider {
+        case .codex: return codexMonitoring
+        case .claude: return model.claudeMonitoring
+        case .deepseek: return model.deepseekMonitoring
+        default: return model.localHarnessDescriptors.contains { $0.id == provider } ? model.harnessMonitoring(provider) : nil
+        }
+    }
+
+    /// What a module page needs from the user, if anything: its monitoring first,
+    /// then its account, then its progress ring. One line each for the sidebar
+    /// and Overview.
+    private func moduleAttention(_ provider: AgentProvider) -> (title: String, detail: String)? {
+        guard moduleEnabled(provider) else { return nil }
+        let name = provider.displayName
+        if let monitoring = monitoring(provider), monitoring.needsUser {
+            return (name + " · " + monitoring.text, monitoring.detail ?? "")
+        }
+        if provider == .codex, model.codexAccount.tone == .attention {
+            return (name + " · " + model.codexAccount.text, model.codexAccount.detail ?? "")
+        }
+        if provider == .claude {
+            if model.claudeNeedsOrganizationSelection { return (name + " · " + L10n.text("claude.account.workspace_needed"), L10n.text("main.attention.quota_waits")) }
+            if model.claudeConnectionNeeded { return (name + " · " + L10n.text("claude.account.signed_out"), L10n.text("main.attention.quota_waits")) }
+        }
+        if let summary = progressAttention(provider), let guide = model.progressGuide(provider) {
+            return (name + " · " + summary, guide.steps.first { $0.state == .current }?.title ?? guide.line ?? "")
+        }
         return nil
     }
 
     private func needsAttention(_ pane: SettingsPane) -> Bool {
-        switch pane {
-        case .claude: claudeAttentionKey != nil
-        case .codex: moduleEnabled(.codex) && cliReport.map { $0.selected == nil } == true
-        case .remote: SettingsConnectionsPane.problemCount(model) > 0
-        default: pane.provider.flatMap(progressAttention) != nil
-        }
+        if pane == .remote { return SettingsConnectionsPane.problemCount(model) > 0 }
+        return pane.provider.flatMap(moduleAttention) != nil
     }
 
     /// What a module's progress ring still needs from the user, while its ring is on.
@@ -251,27 +276,13 @@ struct SettingsView: View {
         return guide.summary
     }
 
+    /// One line per module that needs the user, opening its page; hosts that need it on Remote.
     private var attentionItems: [OverviewAttention] {
         var items: [OverviewAttention] = []
-        if let key = claudeAttentionKey {
-            let (action, perform): (String, () -> Void) = switch key {
-            case "provider.state.failed": (L10n.text("connections.retry"), { model.retryClaudeLocalSetup() })
-            case "claude.account.workspace_needed": (L10n.text("claude.quota.choose_workspace"), { model.chooseClaudeOrganization() })
-            default: (L10n.text("claude.quota.connect"), { model.signInClaudeQuota() })
-            }
-            items.append(.init(id: "claude", title: AgentProvider.claude.displayName + " · " + L10n.text(key),
-                detail: L10n.text("main.attention.quota_waits"), action: action, perform: perform))
-        }
-        // A ring whose app still needs a step: what it needs, and its current step.
         for provider in library.prominent.map(\.provider) {
-            guard let summary = progressAttention(provider), let guide = model.progressGuide(provider) else { continue }
-            items.append(.init(id: "progress." + provider.rawValue, title: provider.displayName + " · " + summary,
-                detail: guide.steps.first { $0.state == .current }?.title ?? guide.line ?? "",
+            guard let attention = moduleAttention(provider) else { continue }
+            items.append(.init(id: provider.rawValue, title: attention.title, detail: attention.detail,
                 action: L10n.text("main.overview.open"), perform: { pane = SettingsPane(provider: provider) }))
-        }
-        if needsAttention(.codex) {
-            items.append(.init(id: "codex", title: "Codex CLI · " + L10n.text("provider.state.not_found"),
-                detail: L10n.text("main.attention.codex_cli"), action: L10n.text("main.overview.open"), perform: { pane = .codex }))
         }
         let problems = SettingsConnectionsPane.problemCount(model)
         if problems > 0 {
@@ -334,7 +345,7 @@ struct SettingsView: View {
         case .codex, .claude, .deepseek:
             if let provider = pane.provider { providerPane(provider) }
         case .remote:
-            SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH, monitorRemoteControl: $monitorRemoteControl, monitorDurable: $monitorDurable,
+            SettingsConnectionsPane(model: model, monitorSSH: $monitorSSH,
                 codexEnabled: moduleEnabled(.codex), claudeEnabled: moduleEnabled(.claude))
         case .about:
             SettingsAboutPane(updater: updater, automaticallyChecks: $automaticUpdateChecks, launchAtLogin: launchAtLogin,
@@ -386,15 +397,23 @@ struct SettingsView: View {
                 }, openHistory: { pane = .history }, home: $deepseekHome, homeIssue: textIssues[.deepseekHome],
                 commitHome: { commit(.deepseekHome) }, chooseHome: chooseDeepSeekHome)
         } else {
+            // Task Monitoring, Account and Usage, in that order on every module page.
             MainCard(title: L10n.text("main.section.status")) {
-                if provider == .codex { codexCLIRow } else { claudeMonitoringRow; claudeAccountRow }
+                if provider == .codex {
+                    ModuleMonitoringRow(monitoring: codexMonitoring, info: L10n.text("codex.hooks.info"), help: cliReport?.selected?.url.path,
+                        openCodex: { model.openCodexHooksGuide(screen: NSApp.keyWindow?.screen) },
+                        retry: { model.syncCodexHooks(force: true) }, rescan: { cliScanRevision += 1 })
+                    codexAccountRow
+                } else {
+                    ModuleMonitoringRow(monitoring: model.claudeMonitoring, retry: { model.retryClaudeLocalSetup() })
+                    claudeAccountRow
+                }
                 if model.enabledProviders.contains(provider) {
                     ProviderQuotaRow(model: model, provider: provider, openHistory: { pane = .history })
                 }
             }
             MainCard(title: L10n.text("main.section.display")) {
                 if provider == .codex {
-                    CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.codex_embedded"), isOn: $showEmbeddedCodexSessions)
                     let setup = codexProgressRing ? model.codexProgressSetup : nil
                     ProgressRingToggle(info: L10n.text("codex.progress_ring_help"), isOn: Binding(get: { codexProgressRing }, set: { value in
                             codexProgressRing = value
@@ -403,10 +422,14 @@ struct SettingsView: View {
                         status: setup.map { L10n.text("codex.progress_setup." + $0.rawValue) },
                         canRetry: setup == .failed || setup == .missingCLI || setup == .conflict,
                         retry: { model.syncCodexProgressSwitch(force: true) })
+                    CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.codex_embedded"), isOn: $showEmbeddedCodexSessions)
+                    CardToggle(title: L10n.text("codex.dot_tasks"), info: L10n.text("settings.durable_help"), isOn: $monitorDurable)
                 } else {
-                    CardToggle(title: L10n.text("main.claude.cloud"), info: L10n.text("main.info.claude_cloud"), isOn: $showClaudeCloudProjects)
-                    CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.claude_embedded"), isOn: $showEmbeddedClaudeSessions)
                     CardToggle(title: L10n.text("main.claude.ring"), info: L10n.text("main.info.claude_ring"), isOn: $claudeProgressRing)
+                    CardToggle(title: L10n.text("main.embedded"), info: L10n.text("main.info.claude_embedded"), isOn: $showEmbeddedClaudeSessions)
+                    CardToggle(title: L10n.text("main.claude.cloud"),
+                               detail: showClaudeCloudProjects && claudeCloudSignedOut ? L10n.text("connections.state.cloud_signed_out") : nil,
+                               info: L10n.text("main.info.claude_cloud"), isOn: $showClaudeCloudProjects)
                 }
             }
             MainCard {
@@ -427,16 +450,20 @@ struct SettingsView: View {
         return claudeHome.isEmpty ? (resolvedClaudeHome as NSString).abbreviatingWithTildeInPath : L10n.text("main.location.custom")
     }
 
-    private var codexCLIRow: some View {
-        let report = cliReport
-        let (tint, state): (Color, String) = report == nil ? (.secondary, L10n.text("provider.state.searching")) :
-            report?.selected != nil ? (MainPalette.positive, L10n.text("provider.state.found")) : (MainPalette.attention, L10n.text("provider.state.not_found"))
-        return CardStatusRow(title: "Codex CLI", state: state, tint: tint, help: report?.selected?.url.path,
-                             detail: report?.selected == nil ? report?.issue : nil) {
-            if report != nil, report?.selected == nil {
-                Button(L10n.text("settings.rescan")) { cliScanRevision += 1 }.buttonStyle(.main)
+    /// The ChatGPT account Codex uses; signing in happens in Codex itself.
+    private var codexAccountRow: some View {
+        let account = model.codexAccount
+        return ModuleStatusRow(title: L10n.text("provider.account"), state: account.text, tone: account.tone, detail: account.detail) {
+            if account == .signedOut, model.canOpenCodexSettings {
+                // Task Monitoring's own Open Codex stays the card's prominent one.
+                Button(L10n.text("codex.hooks.open")) { model.openCodexApplication() }.buttonStyle(.main)
             }
         }
+    }
+
+    /// Claude cloud projects are on but Claude in the browser is signed out.
+    private var claudeCloudSignedOut: Bool {
+        SettingsConnectionsPane.sources(model).first { $0.key == ClaudeCloudProjectState.sourceID }?.state == .paused
     }
 
     /// One plain line when Pacer keeps a home's own telemetry settings and
@@ -448,22 +475,6 @@ struct SettingsView: View {
         case .managed: L10n.text("claude.telemetry.managed")
         }
     }
-    private var claudeMonitoringRow: some View {
-        let (tint, state): (Color, String) = switch model.claudeLocalSetup {
-        case .ready: (MainPalette.positive, L10n.text("provider.state.ready"))
-        case .checking, .configuring: (.secondary, L10n.text("provider.state.configuring"))
-        case .missingHome: (.secondary, L10n.text("provider.state.no_home"))
-        case .failed: (MainPalette.attention, L10n.text("provider.state.failed"))
-        }
-        return CardStatusRow(title: L10n.text("provider.monitoring"), state: state, tint: tint,
-                             help: model.claudeLocalSetup == .failed ? L10n.text("claude.monitoring_setup_failed") : nil,
-                             detail: model.claudeLocalSpeedsEstimated ? Self.claudeTelemetryNote(model.claudeTelemetryConflict) : nil) {
-            if model.claudeLocalSetup == .failed {
-                Button(L10n.text("connections.retry")) { model.retryClaudeLocalSetup() }.buttonStyle(.main)
-            }
-        }
-    }
-
     /// Sign-in reads as a status. A button appears only when Claude needs the
     /// user; switching accounts otherwise waits in the row's menu.
     private var claudeAccountRow: some View {
@@ -475,7 +486,7 @@ struct SettingsView: View {
             signedIn ? (MainPalette.positive, "claude.account.signed_in") :
             model.providerRefreshing(.claude) ? (.secondary, "claude.account.checking") : (.secondary, "claude.account.unavailable")
         let unavailable = model.providerRefreshing(.claude) || resolvedClaudeHome != model.claudeHome.path || !model.isModuleEnabled(.claude)
-        return CardStatusRow(title: L10n.text("claude.account"), state: L10n.text(key), tint: tint,
+        return CardStatusRow(title: L10n.text("provider.account"), state: L10n.text(key), tint: tint,
                              help: signedIn ? model.claudeQuotaSource?.label : nil) {
             Group {
                 if workspace {
@@ -591,7 +602,7 @@ struct SettingsView: View {
             barSize: barSize, appearance: appearance, theme: theme, accent: accent,
             quotaStyle: quotaStyle, fullscreen: fullscreen, displayID: displayID, positionPerDisplay: positionPerDisplay, metric: metric, singleTask: singleTask,
             windowID: windowID, claudeWindowID: claudeWindowID, retention: completedRetention, hideProjects: hideProjects, showsAppButtons: showsAppButtons,
-            monitorSSH: monitorSSH, monitorRemoteControl: monitorRemoteControl, monitorDurable: monitorDurable, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
+            monitorSSH: monitorSSH, monitorDurable: monitorDurable, showEmbeddedClaudeSessions: showEmbeddedClaudeSessions,
             showEmbeddedCodexSessions: showEmbeddedCodexSessions, showClaudeCloudProjects: showClaudeCloudProjects, claudeProgressRing: claudeProgressRing, deepseekSource: deepseekSource, deepseekLowBalance: deepseekLowBalance,
             codexProgressRing: codexProgressRing, deepseekProgressRing: deepseekProgressRing,
             showsDeepSeekTurnCost: showsDeepSeekTurnCost, deepseekSpeedSource: deepseekSpeedSource, deepseekSpikeLimit: deepseekSpikeLimit, deepseekBudgets: deepseekBudgets,
@@ -611,7 +622,6 @@ struct SettingsView: View {
         applyTask?.cancel(); applyTask = nil
         let defaults = UserDefaults.standard
         defaults.set(monitorSSH, forKey: "monitorSSH")
-        defaults.set(monitorRemoteControl, forKey: "monitorRemoteControl")
         defaults.set(monitorDurable, forKey: IslandModel.monitorsDurableKey)
         modules.save(to: defaults)
         displayMode.save(to: defaults)
@@ -623,7 +633,7 @@ struct SettingsView: View {
         for key in ["performanceRefreshMode", "quotaDashboardPeriod", "showInMenuBar",
                     "glassStyle", "glassTint", "glassTransparency", "glassCornerRadius",
                     "islandWidthMode", "specifiedIslandWidth", "collapsedIslandWidth", "expandedIslandWidth",
-                    "lowQuotaReminder", "inputReminder", "completionReminder", "claudeSSHHosts"] {
+                    "lowQuotaReminder", "inputReminder", "completionReminder", "claudeSSHHosts", "monitorRemoteControl"] {
             defaults.removeObject(forKey: key)
         }
         defaults.set(appearance.rawValue, forKey: "islandAppearance")
@@ -728,7 +738,6 @@ private struct LiveSettings: Equatable {
     var hideProjects: Bool
     var showsAppButtons: Bool
     var monitorSSH: Bool
-    var monitorRemoteControl: Bool
     var monitorDurable: Bool
     var showEmbeddedClaudeSessions: Bool
     var showEmbeddedCodexSessions: Bool

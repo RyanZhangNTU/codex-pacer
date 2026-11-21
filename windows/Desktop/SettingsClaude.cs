@@ -8,20 +8,19 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     private CheckBox? claudeEnabled, claudeCloudProjects, claudeEmbedded, claudeProgress;
-    private Button? claudeAutomatic, claudeSetupRetry;
-    private TextBlock? claudeDetection, claudeLocalState, claudeSetupState;
+    private Button? claudeAutomatic;
+    private TextBlock? claudeDetection, claudeCloudState;
     private StackPanel? claudeSections;
     private Border? claudeOff;
-    private System.Windows.Shapes.Ellipse? claudeMonitorDot;
 
     private void ClearClaude()
     {
         ClearClaudeConnection();
-        claudeEnabled = claudeCloudProjects = claudeEmbedded = claudeProgress = null; claudeAutomatic = null; claudeDetection = claudeLocalState = null; claudeSections = null;
-        claudeSetupRetry = null; claudeSetupState = null; claudeOff = null; claudeMonitorDot = null;
+        claudeEnabled = claudeCloudProjects = claudeEmbedded = claudeProgress = null; claudeAutomatic = null; claudeDetection = claudeCloudState = null; claudeSections = null;
+        claudeOff = null;
     }
-    /// As on the Mac: the header holds the module switch, then Status
-    /// (monitoring, account, quota), Display, and folded custom locations.
+    /// As every module page: the header holds the module switch, then Status
+    /// (task monitoring, account, usage), Display, and folded custom locations.
     /// The quota trend lives on History.
     private void BuildClaude()
     {
@@ -33,21 +32,12 @@ internal sealed partial class SettingsWindow
         claudeAutomatic.Click += async (_, _) => await Change(p => p with { ProviderModes = new(p.ProviderModes) { ["claude"] = "automatic" } });
         claudeOff = ModuleOffCard(); form.Children.Add(claudeOff);
         claudeSections = new StackPanel(); form.Children.Add(claudeSections);
-        claudeSetupState = Detail(""); Identify(claudeSetupState, "settings.claude.setup", "");
-        claudeSetupRetry = new Button { Content = ui.Text("connections.retry"), Visibility = Visibility.Collapsed };
-        Identify(claudeSetupRetry, "settings.claude.retry_setup", ui.Text("windows.claude.retry_setup"));
-        claudeSetupRetry.Click += async (sender, _) =>
-        {
-            if (sourceClosed || !ReferenceEquals(sender, claudeSetupRetry) || engine == null || !claudeSetupRetry.IsEnabled) return;
-            try { await engine.SendAsync("retryClaudeSetup"); }
-            catch (System.Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException)
-            { if (!sourceClosed && ReferenceEquals(sender, claudeSetupRetry)) claudeSetupState?.SetCurrentValue(TextBlock.TextProperty, ui.Text("windows.claude.setup_failed")); }
-        };
-        var monitoring = StatusRow(ui.Text("provider.monitoring"), out var dot, out var state, claudeSetupRetry, claudeSetupState);
-        claudeMonitorDot = dot; claudeLocalState = state; Identify(claudeLocalState, "settings.claude.local_state", "");
         claudeSections.Children.Add(SectionTitle(ui.Text("main.section.status"), 0));
-        claudeSections.Children.Add(Card(monitoring, BuildClaudeConnection(), ProviderQuotaRow("claude")));
+        claudeSections.Children.Add(Card(ModuleStatusRow("claude.monitoring", ui.Text("provider.monitoring")), BuildClaudeConnection(), ProviderQuotaRow("claude")));
         var cloud = Toggle("main.claude.cloud", "main.info.claude_cloud", "settings.claude.cloud_projects", out var cloudSwitch);
+        // While cloud projects are on but claude.ai is signed out, the row says so.
+        claudeCloudState = Detail(""); claudeCloudState.Margin = new Thickness(14, -6, 14, 10); claudeCloudState.Visibility = Visibility.Collapsed;
+        Identify(claudeCloudState, "settings.claude.cloud_state", "");
         claudeCloudProjects = cloudSwitch; editors.Add(cloudSwitch);
         RoutedEventHandler cloudChanged = async (_, _) =>
         {
@@ -63,8 +53,9 @@ internal sealed partial class SettingsWindow
         var progress = Toggle("main.claude.ring", "main.info.claude_ring", "settings.claude.progress_ring", out var progressSwitch);
         claudeProgress = progressSwitch; editors.Add(progressSwitch);
         BindToggle(progressSwitch, (p, value) => p with { ClaudeProgressRing = value });
+        var cloudRow = new StackPanel(); cloudRow.Children.Add(cloud); cloudRow.Children.Add(claudeCloudState);
         claudeSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
-        claudeSections.Children.Add(Card(cloud, embedded, progress));
+        claudeSections.Children.Add(Card(progress, embedded, cloudRow));
         claudeSections.Children.Add(Card(ProviderHomeEditor("claude")));
     }
     private void RefreshClaude()
@@ -89,22 +80,14 @@ internal sealed partial class SettingsWindow
         claudeProgress.IsEnabled = claudeEmbedded.IsEnabled;
         claudeCloudProjects.IsEnabled = enabled && connected && !busy && !claudeAccountBusy && !session.RequiresRestart;
         string setup = !connected ? "failed" : snapshot?.ClaudeSetup?.State ?? (snapshot?.Demo == true ? "ready" : "failed");
-        bool logs = snapshot?.Sources.Any(value => (value.Id is "claude:local-logs" or "claude:demo") && value.Available) == true;
-        // Monitoring reads as one state, as on the Mac; the setup sentence shows only when it says more.
-        var (stateKey, tone) = setup switch
-        {
-            "failed" => ("provider.state.failed", "attention"),
-            "settingUp" => ("provider.state.configuring", "neutral"),
-            "missingHome" => ("provider.state.no_home", "neutral"),
-            "ready" => ("provider.state.ready", "positive"),
-            _ => (logs ? "provider.state.found" : "provider.state.no_home", "neutral")
-        };
-        SetStatus(claudeMonitorDot, claudeLocalState, ui.Text(stateKey), tone);
-        claudeSetupState!.Text = ClaudeSetupDescription(ui, setup, snapshot?.ClaudeSetup);
-        claudeSetupState.Visibility = ClaudeSetupVisible(setup, snapshot?.ClaudeSetup) ? Visibility.Visible : Visibility.Collapsed;
-        claudeSetupState.SetResourceReference(TextBlock.ForegroundProperty, setup == "failed" ? "SettingsWarning" : "SettingsSecondary");
-        claudeSetupRetry!.Visibility = setup == "failed" ? Visibility.Visible : Visibility.Collapsed;
-        claudeSetupRetry.IsEnabled = enabled && connected && !busy && setup != "settingUp" && snapshot?.Demo == false;
+        // Monitoring reads as one state, as on every module page; the setup sentence shows only when it says more.
+        RefreshModuleStatusRow("claude.monitoring", module?.Monitoring,
+            ClaudeSetupVisible(setup, snapshot?.ClaudeSetup) ? ClaudeSetupDescription(ui, setup, snapshot?.ClaudeSetup) : "");
+        // Cloud projects read claude.ai through the account above.
+        bool signedOutCloud = session.Current.ShowClaudeCloudProjects && snapshot?.Demo != true && snapshot?.ClaudeConnection?.State == "signedOut";
+        string cloudState = signedOutCloud ? ui.Text("connections.state.cloud_signed_out") : "";
+        claudeCloudState!.Text = cloudState; System.Windows.Automation.AutomationProperties.SetName(claudeCloudState, cloudState);
+        claudeCloudState.Visibility = cloudState.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         RefreshProviderQuotaRow("claude");
         RefreshClaudeConnection(connected && enabled);
     }

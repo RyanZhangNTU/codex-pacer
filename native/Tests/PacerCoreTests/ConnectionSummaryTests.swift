@@ -88,34 +88,12 @@ final class ConnectionSummaryTests: XCTestCase {
         XCTAssertEqual(claudeOnly.sources, 2, "Disabled providers do not contribute sources")
     }
 
-    func testIdleRemoteControlIsNeutralAndCannotHideOtherFailures() throws {
-        let control = ConnectionSource.controlPrefix + "fixture"
-        var idle = status(false)
-        idle.waitingForSession = true
-        var statuses: [AgentProvider: [String: RuntimeStreamStatus]] = [
-            .codex: ["local": status(true, sessions: 2), control: idle], .claude: ["local": status(true)]]
-        let sources = ConnectionSource.sources(statuses: statuses, unavailableSSH: [], names: [:])
-        XCTAssertEqual(try XCTUnwrap(sources.first { $0.key == control }).state, .idle)
-        let waiting = summary(statuses)
-        XCTAssertEqual(waiting.state, .idle)
-        XCTAssertEqual(waiting.sources, 3)
-        XCTAssertEqual(waiting.sessions, 2)
-
-        statuses[.codex]?[prefix + "failed"] = status(false)
-        XCTAssertEqual(summary(statuses).state, .retrying(1), "An idle Remote Control host cannot hide an SSH failure")
-        statuses[.codex]?.removeValue(forKey: prefix + "failed")
-        statuses[.codex]?[control] = status(false)
-        XCTAssertEqual(summary(statuses).state, .retrying(1), "Actual Remote Control failure still offers Retry")
-        statuses[.codex]?[control] = status(true, sessions: 1)
-        XCTAssertEqual(summary(statuses).state, .connected)
-        XCTAssertEqual(summary(statuses).sessions, 3)
-    }
     func testDeviceNamesSurviveZeroSessionsAndOfflineIsNotAConnectionFailure() throws {
         var work = status(true, sessions: 1), notebook = status(false)
         work.sourceName = "Workstation"; work.remoteHostOnline = true
         notebook.sourceName = "Notebook"; notebook.remoteHostOnline = false
         let rows = ConnectionSource.sources(statuses: [.codex: ["local": status(true),
-            ConnectionSource.controlPrefix + "work": work, ConnectionSource.controlPrefix + "notebook": notebook]], unavailableSSH: [], names: [:])
+            ConnectionSource.wslPrefix + "work": work, ConnectionSource.wslPrefix + "notebook": notebook]], unavailableSSH: [], names: [:])
         let offline = try XCTUnwrap(rows.first { $0.name == "Notebook" })
         XCTAssertEqual(offline.state, .offline)
         XCTAssertFalse(notebook.hasConnectionFailure)

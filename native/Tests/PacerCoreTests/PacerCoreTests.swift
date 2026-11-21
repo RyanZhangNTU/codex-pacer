@@ -86,17 +86,22 @@ final class ActivityTests: XCTestCase {
         var line = event("task_started", turn: "new", second: 1)
         try line.prefix(line.count - 2).write(to: file)
         let reader = LocalActivityReader(fileMetadata: { TestFileSystem().metadata($0) })
-        let partial = await reader.read(home: directory)
+        // The clock of the log, so the turn is seconds old rather than quiet for weeks.
+        let now = try XCTUnwrap(SessionActivity.parseDate("2026-10-01T00:00:05Z"))
+        try CodexHookFixture.announceAll(home: directory, at: now)
+        let partial = await reader.read(home: directory, now: now)
         XCTAssertEqual(partial.activities.first?.phase, .unknown)
         let handle = try FileHandle(forWritingTo: file)
         try handle.seekToEnd()
         try handle.write(contentsOf: line.suffix(2) + Data([10]))
         try handle.close()
-        let complete = await reader.read(home: directory)
+        try CodexHookFixture.announceAll(home: directory, at: now)
+        let complete = await reader.read(home: directory, now: now)
         XCTAssertEqual(complete.activities.first?.phase, .running)
         line = event("task_complete", turn: "other", second: 2)
         try (line + Data([10])).write(to: file, options: .atomic)
-        let replaced = await reader.read(home: directory)
+        try CodexHookFixture.announceAll(home: directory, at: now)
+        let replaced = await reader.read(home: directory, now: now)
         XCTAssertEqual(replaced.activities.first?.phase, .unknown)
     }
     func testLongRolloutRecoversExplicitEndingWithoutAnUnreadNotification() async throws {
@@ -117,6 +122,7 @@ final class ActivityTests: XCTestCase {
         try log.write(to: file)
 
         let reader = LocalActivityReader(fileMetadata: { TestFileSystem().metadata($0) })
+        try CodexHookFixture.announceAll(home: home, at: now)
         let attached = await reader.read(home: home, now: now)
         let ended = try XCTUnwrap(attached.activities.first)
         XCTAssertEqual(ended.phase, .completed)
@@ -132,6 +138,7 @@ final class ActivityTests: XCTestCase {
         try handle.write(contentsOf: event("task_started", turn: "new-turn", second: 4) + Data([10]) +
             event("task_complete", turn: turn, second: 5) + Data([10]))
         try handle.close()
+        try CodexHookFixture.announceAll(home: home, at: now)
         let resumed = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertEqual(resumed.activities.first?.phase, .running)
         XCTAssertEqual(resumed.activities.first?.turnID, "new-turn")
@@ -151,6 +158,7 @@ final class ActivityTests: XCTestCase {
         try (header + Data([10]) + event("task_started", turn: turn, second: 1) + Data([10])).write(to: file)
 
         let reader = LocalActivityReader(fileMetadata: { TestFileSystem().metadata($0) })
+        try CodexHookFixture.announceAll(home: home, at: now)
         let started = await reader.read(home: home, now: now)
         XCTAssertEqual(started.activities.first?.phase, .running)
         var inbox = CompletionInbox()
@@ -167,6 +175,7 @@ final class ActivityTests: XCTestCase {
         try handle.write(contentsOf: terminal.prefix(terminal.count - 2))
         try handle.close()
 
+        try CodexHookFixture.announceAll(home: home, at: now)
         let incomplete = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertEqual(incomplete.activities.first?.phase, .unknown)
         let tail = try FileHandle(forWritingTo: file)
@@ -174,6 +183,7 @@ final class ActivityTests: XCTestCase {
         try tail.write(contentsOf: terminal.suffix(2) + Data([10]))
         try tail.close()
 
+        try CodexHookFixture.announceAll(home: home, at: now)
         let read = await reader.read(home: home, now: now, metricsOnly: true)
         let ended = try XCTUnwrap(read.activities.first)
         XCTAssertEqual(ended.phase, .completed)

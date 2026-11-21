@@ -43,7 +43,7 @@ internal sealed partial class SettingsWindow
         claudeOptions = new Button { Content = more, ContentTemplate = null, Style = (Style)FindResource("SettingsSidebarButton"), Width = 22, Height = 22, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
         Identify(claudeOptions, "settings.claude.account_options", ui.Text("claude.account.options")); editors.Add(claudeOptions); trailing.Children.Add(claudeOptions);
         claudeOptions.Click += async (_, _) => await OpenClaudeAccountMenu(false);
-        content.Children.Add(Row(Label(ui.Text("claude.account")), trailing));
+        content.Children.Add(Row(Label(ui.Text("provider.account")), trailing));
         claudeAccountHelp = Detail(""); claudeAccountHelp.Margin = new Thickness(14, -4, 14, 10); content.Children.Add(claudeAccountHelp);
         claudeRuntimeDownload = new Button { Content = ui.Text("windows.deepseek.runtime_download"), Style = (Style)FindResource("SettingsLink"),
             HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(14, 0, 14, 10) };

@@ -63,6 +63,9 @@ final class CodexRemoteProgressAutoSetupTests: XCTestCase {
                        try CodexRemoteProgressSetup.digest(enabled: true))
 
         fixture.defaults.set(false, forKey: IslandModel.codexProgressRingKey)
+        // CI has read the earlier value right after this write; act once the model sees it.
+        let ringOff = try await TestWait.until { !model.showsCodexProgressRing }
+        XCTAssertTrue(ringOff, "The model must see the ring switched off before the run")
         let off = await model.configureCodexRemoteProgress(target: fixture.target)
         XCTAssertNotNil(off)
         request = try fixture.request()
@@ -82,22 +85,26 @@ final class CodexRemoteProgressAutoSetupTests: XCTestCase {
 
     func testOnlyConnectedHostsRunAndTheRingOffVisitsOnlyHostsThisMacSetUp() throws {
         let on = try CodexRemoteProgressSetup.digest(enabled: true), off = try CodexRemoteProgressSetup.digest(enabled: false)
-        let targets = ["a", "b", "c"].map { RemoteActivityTarget(id: "remote-ssh-discovered:" + $0, name: $0, alias: $0, home: "~/.codex") }
+        let managed = RemoteActivityTarget(id: "remote-ssh-codex-managed:fixture", name: "Build server",
+            alias: "codex-fixture", home: "~/.codex", sshDestination: "fixture@build.example.test")
+        let targets = ["a", "b", "c"].map { RemoteActivityTarget(id: "remote-ssh-discovered:" + $0, name: $0, alias: $0, home: "~/.codex") } + [managed]
         var connected = RuntimeStreamStatus(); connected.connected = true
         var missing = connected; missing.sourceAvailable = false
-        let statuses = ["remote-ssh-discovered:a": connected, "remote-ssh-discovered:b": connected, "remote-ssh-discovered:c": missing]
+        let statuses = ["remote-ssh-discovered:a": connected, "remote-ssh-discovered:b": connected,
+                        "remote-ssh-discovered:c": missing, managed.id: connected]
         let now = Date()
         func pending(ring: Bool, configured: [String: String], failures: [String: Date] = [:], checkedAt: [String: Date] = [:]) -> [String] {
             IslandModel.codexRemoteProgressPending(targets: targets, statuses: statuses, configured: configured, ring: ring,
                 digest: ring ? on : off, failures: failures, inFlight: [], checkedAt: checkedAt, now: now).map(\.alias)
         }
-        XCTAssertEqual(pending(ring: true, configured: [:]), ["a", "b"], "A host without a Codex source is skipped")
-        XCTAssertEqual(pending(ring: true, configured: ["a": on], checkedAt: ["remote-ssh-discovered:a": now]), ["b"],
+        XCTAssertEqual(pending(ring: true, configured: [:]), ["a", "b", "codex-fixture"],
+                       "Hosts added in Desktop are set up like SSH config aliases; a host without a Codex source is skipped")
+        XCTAssertEqual(pending(ring: true, configured: ["a": on], checkedAt: ["remote-ssh-discovered:a": now]), ["b", "codex-fixture"],
                        "A host checked this launch stays quiet until the recheck interval")
-        XCTAssertEqual(pending(ring: true, configured: ["a": on]), ["a", "b"], "A host set up by an earlier launch is checked once again")
-        XCTAssertEqual(pending(ring: true, configured: [:], failures: ["remote-ssh-discovered:a": now.addingTimeInterval(-60)]), ["b"],
+        XCTAssertEqual(pending(ring: true, configured: ["a": on]), ["a", "b", "codex-fixture"], "A host set up by an earlier launch is checked once again")
+        XCTAssertEqual(pending(ring: true, configured: [:], failures: ["remote-ssh-discovered:a": now.addingTimeInterval(-60)]), ["b", "codex-fixture"],
                        "A failed host backs off")
-        XCTAssertEqual(pending(ring: true, configured: [:], failures: ["remote-ssh-discovered:a": now.addingTimeInterval(-31 * 60)]), ["a", "b"])
+        XCTAssertEqual(pending(ring: true, configured: [:], failures: ["remote-ssh-discovered:a": now.addingTimeInterval(-31 * 60)]), ["a", "b", "codex-fixture"])
         XCTAssertEqual(pending(ring: false, configured: ["a": on]), ["a"], "Off removes the tool only where this Mac installed it")
         XCTAssertEqual(pending(ring: false, configured: ["a": off], checkedAt: ["remote-ssh-discovered:a": now]), [])
     }

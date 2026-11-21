@@ -120,6 +120,7 @@ final class MetricPresentationTests: XCTestCase {
             "item": ["type": "AgentMessage", "content": ["Fixture text"]]])
         try row("ignored", 5, ["padding": String(repeating: "x", count: 600_000)])
         try bytes.write(to: directory.appendingPathComponent("rollout-" + thread + ".jsonl"))
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(30))
         let result = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(30), phaseAwareRate: true)
         let a = try XCTUnwrap(result.activities.first)
         XCTAssertEqual(a.turnStartedAt, start)

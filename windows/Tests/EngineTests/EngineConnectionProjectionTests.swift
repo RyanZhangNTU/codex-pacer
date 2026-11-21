@@ -20,6 +20,26 @@ final class EngineConnectionProjectionTests: XCTestCase {
     private var profile: WindowsWSLProfile { .init(distro: "Fixture", user: "fixture", uid: 1000, home: "/home/fixture", identity: "2:4",
         codexHome: "/home/fixture/.codex", claudeHome: "/home/fixture/.claude", codexIdentity: "2:5", claudeIdentity: "2:6") }
     private var ssh: RemoteActivityTarget { .init(id: ConnectionSource.sshPrefix + "fixture", name: "SSH fixture", alias: "fixture", home: "~/.claude") }
+    /// A host added directly in Codex Desktop keeps its Desktop ID; its alias only keys the helper.
+    func testAHostAddedInDesktopIsOneRowForBothProvidersOnWindows() throws {
+        let id = ConnectionSource.managedSSHPrefix + "5B0C2E4A-1D3F-4E7A-9C11-0F2B6D8E4A10"
+        let managed = RemoteActivityTarget(id: id, name: "Lab box", alias: "codex-0123456789abcdef01234567", home: "~/.claude",
+            sshDestination: "fixture@lab.example", sshPort: 2222, sshIdentityFile: "C:/fixture/key")
+        let setups = [EngineClaudeRemoteSetup(sourceID: id, context: UUID().uuidString, configured: true, inFlight: false,
+            canRetry: false, message: nil, retryAt: nil)]
+        var codex = status(2); codex.sourceName = "Lab box"
+        let both = EngineConnectionProjection.make(enabled: [.codex, .claude], statuses: [.codex: ["local": status(0), id: codex],
+            .claude: ["local": status(0), id: status(1)]], targets: [ssh, managed], setups: setups, canRetrySetup: true)
+        let host = try XCTUnwrap(both.hosts.first { $0.id == id }, "The Desktop ID names the row")
+        XCTAssertEqual(both.hosts.filter { $0.name == "Lab box" }.count, 1, "Claude joins the Codex row instead of adding one")
+        XCTAssertEqual(host.modules.map(\.provider), ["codex", "claude"]); XCTAssertEqual(host.modules.map(\.state), ["connected", "connected"])
+        XCTAssertTrue(host.modules.allSatisfy { $0.key == id }); XCTAssertFalse(both.sources.contains { $0.key == id })
+        let claudeOnly = EngineConnectionProjection.make(enabled: [.claude], statuses: [.claude: [id: status(1)]], targets: [managed],
+            setups: setups, canRetrySetup: true)
+        XCTAssertEqual(claudeOnly.hosts.map(\.id), [id]); XCTAssertEqual(claudeOnly.hosts.first?.name, "Lab box", "The saved name shows without Codex")
+        var failed = RuntimeStreamStatus(); failed.sourceAvailable = true
+        XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [[id: failed]]), "Its broken stream raises the SSH reminder")
+    }
     func testSSHAndWSLSetupFactsShareProblemOrderingRetryAndProviderColumns() throws {
         let profile = profile, targets = [ssh], context = UUID().uuidString
         let setups = [ssh.id, profile.id].map { EngineClaudeRemoteSetup(sourceID: $0, context: context, configured: false, inFlight: false,
@@ -30,8 +50,9 @@ final class EngineConnectionProjectionTests: XCTestCase {
         let wsl = registry.snapshot()
         let page = EngineConnectionProjection.make(enabled: [.codex, .claude], statuses: streams, targets: targets, setups: setups,
             wsl: wsl, canRetrySetup: true)
-        XCTAssertEqual(page.state, "retrying"); XCTAssertEqual(page.sourceCount, 6); XCTAssertEqual(page.sessionCount, 5)
-        XCTAssertEqual(page.hosts.count, 2); XCTAssertEqual(page.sources.count, 2)
+        // Remote counts the two hosts' modules alone; each module's local tasks show on its own page.
+        XCTAssertEqual(page.state, "retrying"); XCTAssertEqual(page.sourceCount, 4); XCTAssertEqual(page.sessionCount, 5)
+        XCTAssertEqual(page.hosts.count, 2); XCTAssertTrue(page.sources.isEmpty)
         for host in page.hosts {
             XCTAssertEqual(host.modules.map(\.provider), ["codex", "claude"])
             let claude = try XCTUnwrap(host.modules.last)
@@ -101,15 +122,16 @@ final class EngineConnectionProjectionTests: XCTestCase {
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
         }
-        _ = await runtime.receive(try command("initialize", ["monitorRemoteControl": true, "monitorWSL": true]))
+        _ = await runtime.receive(try command("initialize", ["monitorWSL": true]))
         let before = try XCTUnwrap(frames.read())
-        XCTAssertEqual(before.connections?.sources.count, 4); XCTAssertEqual(before.connections?.hosts.count, 1)
-        XCTAssertTrue(before.connections?.sources.contains { $0.key == ClaudeCloudProjectState.sourceID } == true)
+        XCTAssertEqual(before.connections?.hosts.count, 1)
+        XCTAssertEqual(before.connections?.sources.isEmpty, true, "Local and cloud sources show on their module pages, not on Remote")
         _ = await runtime.receive(try command("refreshTaskSources"))
-        _ = await runtime.receive(try command("configure", ["monitorSSH": false, "monitorWSL": false, "monitorRemoteControl": false]))
+        _ = await runtime.receive(try command("configure", ["monitorSSH": false, "monitorWSL": false]))
         let after = try XCTUnwrap(frames.read())
         XCTAssertEqual(after.quota, before.quota); XCTAssertEqual(after.tasks, before.tasks)
-        XCTAssertEqual(after.connections?.sourceCount, 4); XCTAssertEqual(before.connections?.sourceCount, 5)
+        XCTAssertEqual(after.connections?.sourceCount, 0); XCTAssertEqual(before.connections?.sourceCount, 1)
+        XCTAssertEqual(after.connections?.state, "noHosts")
         XCTAssertTrue(after.connections?.hosts.isEmpty == true)
         let encoded = try JSONEncoder().encode(after), decoded = try JSONDecoder().decode(EngineSnapshot.self, from: encoded)
         XCTAssertEqual(decoded.connections, after.connections); XCTAssertEqual(decoded.protocolVersion, 1)

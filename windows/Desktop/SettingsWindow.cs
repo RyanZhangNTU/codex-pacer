@@ -361,7 +361,7 @@ internal sealed partial class SettingsWindow : Window
             renderDpi = 96, windowDpi = dpi.PixelsPerInchX, nativeDpiFile = Path.GetFileName(nativePath), version = Version,
             font = FontFamily.Source, fontFace = resolvedFont?.FontUri.AbsoluteUri, fontWeight = resolvedFont?.Weight.ToOpenTypeWeight(),
             sourceInspectionPending = activePane == "codex" ? !sourceInspection.IsCompleted : activePane is "claude" or "deepseek" && !homeInspection.IsCompleted,
-            sourceState = activePane == "codex" ? cliState?.Text : activePane == "claude" ? claudeLocalState?.Text : activePane == "deepseek" ? deepseekLocalState?.Text : null,
+            sourceState = activePane is "codex" or "claude" or "deepseek" && statusRows.TryGetValue(activePane + ".monitoring", out var monitoring) ? monitoring.State.Text : null,
             moduleDetected = activePane == "codex" ? engine?.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == "codex")?.Installed : null,
             historySamples = activePane == "codex" ? engine?.LatestSnapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == "codex")?.History?.Chart?.Points.Count : null,
             historyChartWidth = activePane == "codex" ? codexHistory?.Chart?.ActualWidth : null,

@@ -58,6 +58,26 @@ final class ClaudeSSHDiscoveryTests: XCTestCase {
         XCTAssertEqual(removed.map(\.id), [id], "Removing a host in Claude removes only its source")
     }
 
+    func testCodexEntriesThatReachOneMachineShareOneHelper() async throws {
+        let root = try fixture(), codex = root.appendingPathComponent(".codex")
+        let alias = "remote-ssh-discovered:gpu-alias"
+        let same = "remote-ssh-codex-managed:019a0000-0000-7000-8000-0000000000a1"
+        let other = "remote-ssh-codex-managed:019a0000-0000-7000-8000-0000000000a2"
+        try write(["codex-managed-remote-connections": [
+            ["source": "discovered", "hostId": alias, "alias": "gpu-alias"],
+            ["source": "codex-managed", "hostId": same, "alias": NSNull(), "hostname": "fixture@gpu.example"],
+            ["source": "codex-managed", "hostId": other, "alias": NSNull(), "hostname": "fixture@other.example", "sshPort": 2200]],
+            "remote-connection-auto-connect-by-host-id": [alias: true, same: true, other: true]], ".codex/.codex-global-state.json", root: root)
+        let discovery = ClaudeSSHDiscovery { host, port in
+            .init(hostname: host == "gpu-alias" || host == "fixture@gpu.example" ? "gpu.example" : host, user: "fixture", port: port ?? 22)
+        }
+        let targets = await discovery.configuredCodex(home: codex, userHome: root)
+        XCTAssertEqual(targets.map(\.id), [alias, other], "The SSH config alias keeps the helper for its machine")
+        XCTAssertEqual(targets.first?.sameMachineIDs, [same])
+        XCTAssertEqual(targets.last?.sameMachineIDs, [])
+        XCTAssertEqual(targets.last?.sshPort, 2200)
+    }
+
     func testInvalidRoutesAndIdentityPathsAreRejectedButBrokenSafeRoutesRemainVisible() async throws {
         let root = try fixture()
         try write(["configs": [
