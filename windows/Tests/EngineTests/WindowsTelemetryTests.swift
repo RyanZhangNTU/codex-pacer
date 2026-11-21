@@ -135,17 +135,18 @@ final class WindowsTelemetryTests: XCTestCase {
         executors={'bash':[str(Path(os.environ['ProgramFiles'])/'Git/bin/bash.exe'),'--noprofile','--norc','-c'],
             'powershell':[str(system/'WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-NonInteractive','-Command']}
         results=[]
+        # Only a hang guard: a cold PowerShell on a hosted runner has taken over 5 s to start.
         for route in routes:
             for shell,prefix in executors.items():
                 started=time.monotonic()
-                result=subprocess.run(prefix+[route['command']],env=env,input=b'{}',capture_output=True,timeout=5,
+                result=subprocess.run(prefix+[route['command']],env=env,input=b'{}',capture_output=True,timeout=30,
                     creationflags=subprocess.CREATE_NO_WINDOW)
                 results.append({'mode':route['mode'],'executor':shell,'status':200 if result.stdout.strip()==b'200' else 0,
                     'exit':result.returncode,'errorBytes':len(result.stderr),'milliseconds':round((time.monotonic()-started)*1000)})
         print(json.dumps(results))
         """#
         let arguments = String(decoding: try JSONSerialization.data(withJSONObject: routes), as: UTF8.self)
-        let result = await WindowsSubprocess.capture(executable: python, arguments: ["-S", "-c", driver, arguments], timeout: 30, limit: 16384)
+        let result = await WindowsSubprocess.capture(executable: python, arguments: ["-S", "-c", driver, arguments], timeout: 200, limit: 16384)
         let results = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(result)) as? [[String: Any]])
         XCTAssertEqual(results.count, routes.count * 2)
         for item in results {

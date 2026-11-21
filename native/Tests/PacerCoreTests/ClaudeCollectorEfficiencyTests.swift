@@ -57,7 +57,9 @@ def finish(tailer):
         child.standardInput = FileHandle.nullDevice; child.standardOutput = stdout; child.standardError = stderr
         let pythonFixture = try PythonFixture.prepare(child); defer { pythonFixture.remove() }; try child.run()
         let timeout = DispatchWorkItem { if child.isRunning { child.terminate() } }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10, execute: timeout)
+        // Only a hang guard: this checks work counts, not time. A hosted Windows runner
+        // has taken 1 to 4 s to create the 1,024 fixture files, and once over 10 s.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60, execute: timeout)
         defer { timeout.cancel() }
         let data = stdout.fileHandleForReading.readDataToEndOfFile(); child.waitUntilExit()
         let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)

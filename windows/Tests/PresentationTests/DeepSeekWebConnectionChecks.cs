@@ -24,6 +24,15 @@ internal static class DeepSeekWebConnectionChecks
         var site = new DeepSeekWebSessionChecks.Site(); var ui = UiText.For(language == "zh-Hans");
         await using var engine = new EngineClient();
         var browser = new DeepSeekWebSession(ui, directory, site.Install, dark);
+        var trace = new List<string>(); var traceClock = Stopwatch.StartNew();
+        browser.Trace = value => { lock (trace) trace.Add(traceClock.ElapsedMilliseconds.ToString("D6", System.Globalization.CultureInfo.InvariantCulture) + " " + value); };
+        string? shown = null;
+        engine.Snapshot += value =>
+        {
+            var state = value.DeepseekConnection;
+            string now = $"refreshing={state?.Refreshing} status={state?.Status?.Tone} connected={state?.Reading.Connected} balance={value.Wallet?.Balance != null}";
+            if (now != shown) { shown = now; browser.Trace?.Invoke("engine: " + now); }
+        };
         var session = new Faults(browser);
         await using var connection = new DeepSeekConnectionCoordinator(engine, session, Application.Current.Dispatcher);
         var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "deepseek",
@@ -137,6 +146,9 @@ internal static class DeepSeekWebConnectionChecks
             Console.WriteLine("Web dial state: " + JsonSerializer.Serialize(new { engine.LatestSnapshot?.Wallet?.Balance, engine.LatestSnapshot?.Wallet?.Dial }));
             Console.WriteLine("Web host failure: " + connection.LastFailure);
             Console.WriteLine("WebView2 processes: " + PresentationWait.WebViewProcesses());
+            foreach (var open in Application.Current.Windows.OfType<DeepSeekLoginWindow>())
+                Console.WriteLine("Login window: visible=" + open.IsVisible + " views=" + string.Join(",", SelfAndDescendants(open).OfType<WebView2>().Select(view => view.CoreWebView2?.Source ?? "uninitialized")) + " siteReady=" + site.Ready);
+            lock (trace) foreach (string line in trace.TakeLast(120)) Console.WriteLine("  trace " + line);
             throw;
         }
         finally

@@ -85,6 +85,19 @@ internal static class ClaudeWebSessionChecks
                 catch (OperationCanceledException) { }
                 Check(site.Controllers == before, "A cancelled query cannot create another browser controller");
             }
+            using (var superseded = new CancellationTokenSource())
+            {
+                // The engine cancels a cookie read when a new configuration supersedes it, after the read took
+                // the kept controller. Disposing it ended the browser, and the next read raced its exit (CI).
+                int before = site.Controllers; bool restarted = false;
+                site.Core!.Environment.BrowserProcessExited += (_, _) => restarted = true;
+                site.Mutate = _ => superseded.Cancel();
+                try { await session.ReadAsync(superseded.Token); throw new InvalidOperationException("A superseded cookie query succeeded"); }
+                catch (OperationCanceledException) { }
+                await Task.Delay(1000);
+                Check(!restarted && (await session.ReadAsync(CancellationToken.None))?.SessionHash == known.SessionHash && site.Controllers == before,
+                    "A superseded read keeps the kept controller, so the browser neither exits nor starts another controller");
+            }
             site.Ready = false; var reopening = session.SignInAsync();
             await Until(() => Application.Current.Windows.OfType<ClaudeLoginWindow>().Any() && site.Ready);
             var reopened = Application.Current.Windows.OfType<ClaudeLoginWindow>().Single(); var environment = site.Core!.Environment; bool exited = false;
@@ -140,6 +153,21 @@ internal static class ClaudeWebSessionChecks
         site.Api = path => path == usage ? (200, "application/json", "", reply)
             : path == "/api/account" ? (403, "text/html; charset=utf-8", "\r\ncf-mitigated: challenge\r\nRetry-After: 30", page)
             : path == "/api/organizations" ? (200, "application/json", "", workspaces) : null;
+        using (var cancelled = new CancellationTokenSource())
+        {
+            // The engine can cancel the first quota read while the kept controller is still becoming a reader.
+            // Reused half set up, it failed the next read before its request ("left its document"); disposed,
+            // it ended the browser, which the next read would race.
+            bool restarted = false;
+            site.Core!.Environment.BrowserProcessExited += (_, _) => restarted = true;
+            site.Mutate = _ => cancelled.Cancel();
+            try { await session.FetchAsync(usage, cancelled.Token); throw new InvalidOperationException("A cancelled quota read succeeded"); }
+            catch (OperationCanceledException) { }
+            ClaudeWebFetchValue? retried = null;
+            try { retried = await session.FetchAsync(usage, CancellationToken.None); } catch (IOException) { }
+            Check(retried is { State: "ok", Status: 200 } && !restarted,
+                "A quota read cancelled while the reader was being set up neither fails the next read nor ends the browser");
+        }
         int controllers = site.Controllers;
         var usageReply = await session.FetchAsync(usage, CancellationToken.None);
         Check(usageReply is { State: "ok", Status: 200, ContentType: "application/json", CfMitigated: null, RetryAfter: null } && usageReply.Body == reply,
