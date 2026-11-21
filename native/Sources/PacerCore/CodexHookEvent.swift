@@ -104,12 +104,12 @@ public enum CodexHookSpool {
     }
 
     /// A transcript path from the spool, accepted only for a rollout file in
-    /// this Codex home's `sessions` or `archived_sessions` tree.
+    /// this Codex home's `sessions` or `archived_sessions` tree. A home on a
+    /// Windows drive or share follows Windows' names; any other keeps POSIX
+    /// rules, case included. The home decides, so Core needs no platform branch.
     public static func transcript(_ path: String?, home: URL) -> URL? {
         guard let path else { return nil }
-        #if os(Windows)
-        return windowsTranscript(path, home: home)
-        #else
+        if windowsComponents(home.standardizedFileURL.path) != nil { return windowsTranscript(path, home: home) }
         guard path.hasPrefix("/") || path.dropFirst().hasPrefix(":\\") || path.dropFirst().hasPrefix(":/") else { return nil }
         let url = URL(fileURLWithPath: path).standardizedFileURL
         guard url.pathExtension == "jsonl", !url.pathComponents.contains("..") else { return nil }
@@ -117,7 +117,6 @@ public enum CodexHookSpool {
         let parts = url.pathComponents
         guard parts.count > base.count + 1, Array(parts.prefix(base.count)) == base else { return nil }
         return ["sessions", "archived_sessions"].contains(parts[base.count]) ? url : nil
-        #endif
     }
 
     /// Windows names one file in several spellings: with an extended-length

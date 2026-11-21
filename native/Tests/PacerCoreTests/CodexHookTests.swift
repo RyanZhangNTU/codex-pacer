@@ -49,6 +49,12 @@ final class CodexHookTests: XCTestCase {
         #else
         XCTAssertNil(CodexHookSpool.transcript(otherCase, home: home), "POSIX paths keep their case")
         #endif
+        // The home's own form decides, on every platform.
+        let windowsHome = URL(fileURLWithPath: "/C:/Users/a/.codex", isDirectory: true)
+        XCTAssertNotNil(CodexHookSpool.transcript(#"C:\Users\A\.CODEX\sessions\2026\11\21\rollout-x.jsonl"#, home: windowsHome),
+                        "A Windows home compares names without case")
+        XCTAssertNil(CodexHookSpool.transcript(#"C:\Users\a\.codex\sessions\..\auth.jsonl"#, home: windowsHome))
+        XCTAssertNil(CodexHookSpool.transcript("/Users/a/.codex/sessions/rollout-x.jsonl", home: windowsHome))
     }
 
     func testThePluginDefinesSevenFixedHooksAndOnlySessionEndWaits() throws {
