@@ -543,9 +543,9 @@ final class IslandModel: ObservableObject {
         syncCodexHooks(force: true)
     }
 
-    /// Running tasks this computer reads for `provider`, not those of other hosts, Dot or the cloud.
+    /// Running tasks this computer reads for `provider`, not those of other hosts, Dot or the cloud, counted as on Windows.
     func localRunningSessions(_ provider: AgentProvider) -> Int {
-        activities.filter { $0.provider == provider && $0.sourceHostID == nil && [.running, .waitingForInput].contains($0.phase) }.count
+        ModuleMonitoring.localSessions(activities, provider: provider, at: now)
     }
 
     /// Claude's local setup in the vocabulary every module page shares.
