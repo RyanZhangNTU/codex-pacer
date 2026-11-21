@@ -165,12 +165,22 @@ final class RealtimeTransportTests: XCTestCase {
             if names.contains("testCadenceQueued") { queued.fulfill() }
             if names.contains("testCadenceChecked") { checked.fulfill() }
         }
-        defer { stdout.fileHandleForReading.readabilityHandler = nil; if child.isRunning { child.terminate() } }
+        // The helper's errors are drained as they come: a full pipe would stop it mid-write.
+        let errors = Capture()
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            _ = errors.append(data)
+        }
+        defer {
+            stdout.fileHandleForReading.readabilityHandler = nil; stderr.fileHandleForReading.readabilityHandler = nil
+            if child.isRunning { child.terminate() }
+        }
         try child.run()
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":1,\"flushPending\":true}\n".utf8))
         await fulfillment(of: [initial], timeout: TestWait.limit)
         guard child.isRunning else {
-            XCTFail(String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)); return
+            XCTFail(String(decoding: errors.output(), as: UTF8.self)); return
         }
         try stdin.fileHandleForWriting.write(contentsOf: Data("{\"kind\":\"settings\",\"batchInterval\":5,\"flushPending\":false}\n".utf8))
         await fulfillment(of: [queued], timeout: TestWait.limit)
@@ -187,9 +197,12 @@ final class RealtimeTransportTests: XCTestCase {
         while child.isRunning, Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
         if child.isRunning { child.terminate(); XCTFail("The helper did not exit after its input closed") }
         child.waitUntilExit()
-        stdout.fileHandleForReading.readabilityHandler = nil
-        _ = capture.append(stdout.fileHandleForReading.readDataToEndOfFile())
-        XCTAssertEqual(child.terminationStatus, 0, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        // The handlers stop at each pipe's EOF; a pipe something else still holds open is not waited for.
+        let drained = Date().addingTimeInterval(5)
+        while stdout.fileHandleForReading.readabilityHandler != nil || stderr.fileHandleForReading.readabilityHandler != nil, Date() < drained {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: errors.output(), as: UTF8.self))
         let frames = try String(decoding: capture.output(), as: UTF8.self).split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
         let requests = try XCTUnwrap(frames.last?["testRequests"] as? [[String: Any]])
         XCTAssertEqual(requests.filter { $0["method"] as? String == "initialize" }.count, 1)
