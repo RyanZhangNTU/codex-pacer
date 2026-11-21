@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.6.2
+
+- Mac and Windows: In a Codex Desktop chat set to Approve for Me, a task no longer shows that it waits for your approval while Codex reviews the request itself. The alert used to appear for each such command and vanish a few seconds later.
+- Windows: A Codex chat that Codex's index records under an extended Windows path keeps its title instead of the project folder's name ([#276](https://github.com/RyanZhangNTU/codex-pacer/issues/276)).
+
 ## 4.6.1
 
 - Mac and Windows: Local Codex tasks, their progress and approval requests show again after Codex 26.1117, which removed the connection Pacer read them from ([#275](https://github.com/RyanZhangNTU/codex-pacer/issues/275)). Pacer now follows Codex through Codex's own hooks, which you allow in Codex once.
