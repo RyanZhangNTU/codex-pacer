@@ -118,7 +118,7 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         {
             if (clearing || current != revision) throw new OperationCanceledException();
             activeRead = warm;
-            if (browserKeeper is { IsUsable: true }) return;
+            if (browserKeeper is { Reusable: true }) return;
             page = await CreateReader(warm.Token);
             warm.Token.ThrowIfCancellationRequested();
             if (clearing || current != revision) throw new OperationCanceledException();
@@ -148,10 +148,11 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         {
             if (clearing || current != revision) throw new OperationCanceledException();
             activeRead = read;
-            if (ReuseReader && browserKeeper is { IsUsable: true }) { page = browserKeeper; browserKeeper = null; Trace?.Invoke("read " + number + " reuses pid=" + page.Core.BrowserProcessId); }
+            // A kept page that is not reusable stays kept until the new one replaces it, so the browser never exits between them.
+            if (ReuseReader && browserKeeper is { Reusable: true }) { page = browserKeeper; browserKeeper = null; Trace?.Invoke("read " + number + " reuses pid=" + page.Core.BrowserProcessId); }
             else
             {
-                Trace?.Invoke("read " + number + " creates (keeper " + (browserKeeper == null ? "none" : "unusable") + ")");
+                Trace?.Invoke("read " + number + " creates (keeper " + (browserKeeper == null ? "none" : "not reusable") + ")");
                 page = await CreateReader(read.Token);
                 Trace?.Invoke("read " + number + " created pid=" + page.Core.BrowserProcessId);
             }
@@ -166,10 +167,11 @@ internal abstract class ProviderWebSession : IAsyncDisposable
         }
         finally
         {
-            // A read the engine superseded, or one a sign-in or sign-out stopped, leaves its controller as
-            // usable as a finished read. Disposing the only controller would end the browser, and the next
-            // read would start another browser on the same profile while the first one exits.
-            if (completed ? !clearing && !read.IsCancellationRequested : read.IsCancellationRequested && page is { Loading: false }) RetainBrowser(ref page);
+            // A read the engine superseded, or one a sign-in or sign-out stopped, keeps its controller too.
+            // Disposing the only controller would end the browser, and the next read would start another
+            // browser on the same profile while the first one exits. One stopped while it was becoming a
+            // reader keeps the browser alive but is not reused (see `Reusable`).
+            if (completed ? !clearing && !read.IsCancellationRequested : read.IsCancellationRequested) RetainBrowser(ref page);
             Trace?.Invoke("read " + number + (page == null ? " kept" : " disposes loading=" + page.Loading + " usable=" + page.IsUsable) + " completed=" + completed + " cancelled=" + read.IsCancellationRequested);
             page?.Dispose(); if (ReferenceEquals(activeRead, read)) activeRead = null; operation.Release();
         }

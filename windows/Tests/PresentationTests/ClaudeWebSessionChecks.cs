@@ -153,6 +153,21 @@ internal static class ClaudeWebSessionChecks
         site.Api = path => path == usage ? (200, "application/json", "", reply)
             : path == "/api/account" ? (403, "text/html; charset=utf-8", "\r\ncf-mitigated: challenge\r\nRetry-After: 30", page)
             : path == "/api/organizations" ? (200, "application/json", "", workspaces) : null;
+        using (var cancelled = new CancellationTokenSource())
+        {
+            // The engine can cancel the first quota read while the kept controller is still becoming a reader.
+            // Reused half set up, it failed the next read before its request ("left its document"); disposed,
+            // it ended the browser, which the next read would race.
+            bool restarted = false;
+            site.Core!.Environment.BrowserProcessExited += (_, _) => restarted = true;
+            site.Mutate = _ => cancelled.Cancel();
+            try { await session.FetchAsync(usage, cancelled.Token); throw new InvalidOperationException("A cancelled quota read succeeded"); }
+            catch (OperationCanceledException) { }
+            ClaudeWebFetchValue? retried = null;
+            try { retried = await session.FetchAsync(usage, CancellationToken.None); } catch (IOException) { }
+            Check(retried is { State: "ok", Status: 200 } && !restarted,
+                "A quota read cancelled while the reader was being set up neither fails the next read nor ends the browser");
+        }
         int controllers = site.Controllers;
         var usageReply = await session.FetchAsync(usage, CancellationToken.None);
         Check(usageReply is { State: "ok", Status: 200, ContentType: "application/json", CfMitigated: null, RetryAfter: null } && usageReply.Body == reply,
