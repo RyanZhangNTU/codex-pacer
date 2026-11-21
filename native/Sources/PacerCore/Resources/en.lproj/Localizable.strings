@@ -566,6 +566,7 @@
 "connections.retry" = "Retry";
 "connections.summary.ok" = "All sources connected";
 "connections.summary.checking" = "Checking sources";
+"connections.summary.no_hosts" = "No remote hosts";
 "connections.summary.idle" = "Waiting for Remote Control sessions";
 "connections.summary.retrying" = "%ld sources retrying";
 "connections.summary.retrying_one" = "%ld source retrying";

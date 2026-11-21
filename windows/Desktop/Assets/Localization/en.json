@@ -344,6 +344,7 @@
     "connections.summary.connecting_one": "%ld source connecting",
     "connections.summary.detail": "%ld sources · %ld running sessions",
     "connections.summary.idle": "Waiting for Remote Control sessions",
+    "connections.summary.no_hosts": "No remote hosts",
     "connections.summary.offline": "%d devices offline",
     "connections.summary.offline_one": "%d device offline",
     "connections.summary.ok": "All sources connected",

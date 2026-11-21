@@ -38,6 +38,9 @@ struct EngineCodexHookServices: Sendable {
     var noticeMarker: URL? = nil
     /// Whether Codex Desktop is installed, so Settings can open its settings with the guide.
     var opensSettings: @Sendable () -> Bool = { false }
+    /// Whether the Codex CLI (the custom path, or one found) exists; Codex's
+    /// Status row says Not Found with Rescan otherwise.
+    var findsExecutable: @Sendable (_ executable: String) -> Bool = { _ in true }
 
     static func live(runtimeRoot: URL) -> Self {
         Self(apply: { home, executable, enabled in
@@ -61,7 +64,8 @@ struct EngineCodexHookServices: Sendable {
             return trust
         }, noticeMarker: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CodexPacer/Notifications/codex-hooks-approval-v1"),
-        opensSettings: { !WindowsCodexExecutableDiscovery.packageLocations().isEmpty })
+        opensSettings: { !WindowsCodexExecutableDiscovery.packageLocations().isEmpty },
+        findsExecutable: { CodexClient.findExecutable(customPath: $0) != nil })
     }
 }
 

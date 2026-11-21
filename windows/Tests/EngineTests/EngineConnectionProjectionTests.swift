@@ -50,8 +50,9 @@ final class EngineConnectionProjectionTests: XCTestCase {
         let wsl = registry.snapshot()
         let page = EngineConnectionProjection.make(enabled: [.codex, .claude], statuses: streams, targets: targets, setups: setups,
             wsl: wsl, canRetrySetup: true)
-        XCTAssertEqual(page.state, "retrying"); XCTAssertEqual(page.sourceCount, 6); XCTAssertEqual(page.sessionCount, 5)
-        XCTAssertEqual(page.hosts.count, 2); XCTAssertEqual(page.sources.count, 2)
+        // Remote counts the two hosts' modules alone; each module's local tasks show on its own page.
+        XCTAssertEqual(page.state, "retrying"); XCTAssertEqual(page.sourceCount, 4); XCTAssertEqual(page.sessionCount, 5)
+        XCTAssertEqual(page.hosts.count, 2); XCTAssertTrue(page.sources.isEmpty)
         for host in page.hosts {
             XCTAssertEqual(host.modules.map(\.provider), ["codex", "claude"])
             let claude = try XCTUnwrap(host.modules.last)
@@ -123,13 +124,14 @@ final class EngineConnectionProjectionTests: XCTestCase {
         }
         _ = await runtime.receive(try command("initialize", ["monitorWSL": true]))
         let before = try XCTUnwrap(frames.read())
-        XCTAssertEqual(before.connections?.sources.count, 4); XCTAssertEqual(before.connections?.hosts.count, 1)
-        XCTAssertTrue(before.connections?.sources.contains { $0.key == ClaudeCloudProjectState.sourceID } == true)
+        XCTAssertEqual(before.connections?.hosts.count, 1)
+        XCTAssertEqual(before.connections?.sources.isEmpty, true, "Local and cloud sources show on their module pages, not on Remote")
         _ = await runtime.receive(try command("refreshTaskSources"))
         _ = await runtime.receive(try command("configure", ["monitorSSH": false, "monitorWSL": false]))
         let after = try XCTUnwrap(frames.read())
         XCTAssertEqual(after.quota, before.quota); XCTAssertEqual(after.tasks, before.tasks)
-        XCTAssertEqual(after.connections?.sourceCount, 4); XCTAssertEqual(before.connections?.sourceCount, 5)
+        XCTAssertEqual(after.connections?.sourceCount, 0); XCTAssertEqual(before.connections?.sourceCount, 1)
+        XCTAssertEqual(after.connections?.state, "noHosts")
         XCTAssertTrue(after.connections?.hosts.isEmpty == true)
         let encoded = try JSONEncoder().encode(after), decoded = try JSONDecoder().decode(EngineSnapshot.self, from: encoded)
         XCTAssertEqual(decoded.connections, after.connections); XCTAssertEqual(decoded.protocolVersion, 1)

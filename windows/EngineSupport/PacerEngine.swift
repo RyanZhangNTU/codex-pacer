@@ -161,6 +161,8 @@ actor EngineRuntime {
     private var codexHookResult: CodexHookSetupResult?
     /// Codex Desktop is there to open its settings, where the user allows the hooks.
     private var codexHooksOpenSettings = false
+    /// Whether the last setup found the Codex CLI; nil until it looked.
+    private var codexExecutableFound: Bool?
     private var codexTrustWatch: CodexHookTrustWatch?
     /// The hooks last waited for the user; when Pacer then saw them allowed, earlier turns ran without them.
     private var codexHooksAwaitingApproval = false, codexHooksTrustedAt: Date?
@@ -1439,7 +1441,40 @@ actor EngineRuntime {
         }
         // The data folder and its default stay in the Settings query.
         if definition != nil { module.local = true }
+        if enabled.contains(provider) {
+            module.monitoring = EngineStatusRow(monitoring(provider, installed: installation?.isInstalled(provider) == true))
+            if provider == .codex {
+                module.account = EngineStatusRow(demo ? .signedIn(plan: "pro") : CodexAccountState(quota: codexQuota, error: codexQuotaState?.error),
+                                                 opensCodex: codexHooksOpenSettings)
+            }
+        }
         return module
+    }
+
+    /// Whether Pacer reads the module's tasks on this computer, in the words
+    /// every module page shares.
+    private func monitoring(_ provider: AgentProvider, installed: Bool) -> ModuleMonitoring {
+        let sessions = ModuleMonitoring.localSessions(activities, provider: provider, at: now())
+        if demo { return .init(.on, sessions: sessions) }
+        switch provider {
+        case .codex:
+            guard codexHookServices != nil else { return .init(.checking) }
+            return .codex(executableFound: codexExecutableFound, hooks: codexHookStatus ?? (codexExecutableFound == true ? .notInstalled : nil),
+                          sessions: sessions, opensCodex: codexHooksOpenSettings)
+        case .claude:
+            let setup: ModuleMonitoring.Setup = switch claudeHookSetup?.state {
+            case .ready?: .ready
+            case .settingUp?, .needsSetup?: .configuring
+            case .missingHome?: .missingHome
+            case .failed?: .failed
+            case .disabled?, nil: .checking
+            }
+            return .claude(setup, sessions: sessions)
+        case .deepseek:
+            return .deepseek(found: harnessActivities[.deepseek]?.status.map { $0 == .ready }, sessions: sessions)
+        default:
+            return .harness(harnessActivities[provider]?.status, detected: installed, sessions: sessions)
+        }
     }
 
     /// A data folder chosen in Settings counts as an installation once it
@@ -1551,17 +1586,19 @@ actor EngineRuntime {
         codexHookPackages = Self.codexPackages(); codexUpdateCheckedAt = now()
         #endif
         watchCodexHookTrust(false)
+        codexExecutableFound = nil
         codexHookTask = Task { [weak self] in
             if let previous { _ = await services.apply(previous, executable, false) }
+            let found = !active || services.findsExecutable(executable)
             let result = await services.apply(home, executable, active)
             let opens = active && services.opensSettings()
             guard !Task.isCancelled else { return }
-            await self?.receiveCodexHookSetup(result, opensSettings: opens, request: request)
+            await self?.receiveCodexHookSetup(result, opensSettings: opens, executableFound: found, request: request)
         }
     }
-    private func receiveCodexHookSetup(_ result: CodexHookSetupResult, opensSettings: Bool, request: UUID) {
+    private func receiveCodexHookSetup(_ result: CodexHookSetupResult, opensSettings: Bool, executableFound: Bool, request: UUID) {
         guard codexHookRequest == request else { return }
-        codexHookTask = nil; codexHookResult = result; codexHooksOpenSettings = opensSettings
+        codexHookTask = nil; codexHookResult = result; codexHooksOpenSettings = opensSettings; codexExecutableFound = executableFound
         let notices = updateCodexHookState()
         if initialized { publish(notices: notices) }
     }

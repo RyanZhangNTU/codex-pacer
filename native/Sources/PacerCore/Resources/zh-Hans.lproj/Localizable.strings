@@ -566,6 +566,7 @@
 "connections.retry" = "重试";
 "connections.summary.ok" = "全部来源已连接";
 "connections.summary.checking" = "正在检查来源";
+"connections.summary.no_hosts" = "没有远程主机";
 "connections.summary.idle" = "等待 Remote Control 会话";
 "connections.summary.retrying" = "%ld 个来源正在重试";
 "connections.summary.retrying_one" = "%ld 个来源正在重试";

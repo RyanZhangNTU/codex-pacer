@@ -44,6 +44,20 @@ final class ModuleStatusTests: XCTestCase {
         XCTAssertEqual(ModuleMonitoring.deepseek(found: nil, sessions: 0).tone, .neutral)
     }
 
+    /// Remote counts other machines alone: each module's own tasks here show on its page.
+    func testRemoteSummaryCountsHostsOnly() {
+        var local = RuntimeStreamStatus(); local.connected = true; local.attachedThreads = 2
+        var host = RuntimeStreamStatus(); host.connected = true; host.attachedThreads = 1; host.sourceName = "devbox"
+        let alone = ConnectionPagePresentation(enabledProviders: [.codex, .claude], statuses: [.codex: ["local": local], .claude: ["local": local]], hostsOnly: true)
+        XCTAssertEqual(alone.state, "noHosts"); XCTAssertEqual(alone.title, L10n.text("connections.summary.no_hosts"))
+        XCTAssertTrue(alone.sources.isEmpty); XCTAssertEqual(alone.detail, "")
+        let ssh = ConnectionSource.sshPrefix + "devbox"
+        let page = ConnectionPagePresentation(enabledProviders: [.codex], statuses: [.codex: ["local": local, ssh: host]], hostsOnly: true)
+        XCTAssertEqual(page.state, "connected"); XCTAssertEqual(page.sourceCount, 1, "The local source is not counted")
+        XCTAssertEqual(ConnectionPagePresentation(enabledProviders: [.codex], statuses: [.codex: ["local": local]]).sourceCount, 1,
+                       "Without hostsOnly the local source still counts, as before")
+    }
+
     func testCodexAccountComesFromItsQuotaRead() throws {
         let data = Data(#"{"rateLimitsByLimitId":{"codex":{"limitId":"codex","planType":"plus","primary":{"usedPercent":10,"windowDurationMins":300,"resetsAt":1900000000}}}}"#.utf8)
         let quota = try QuotaSnapshot.decode(data)
