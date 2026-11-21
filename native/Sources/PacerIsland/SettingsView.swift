@@ -455,7 +455,8 @@ struct SettingsView: View {
         let account = model.codexAccount
         return ModuleStatusRow(title: L10n.text("provider.account"), state: account.text, tone: account.tone, detail: account.detail) {
             if account == .signedOut, model.canOpenCodexSettings {
-                Button(L10n.text("codex.hooks.open")) { model.openCodexApplication() }.buttonStyle(.mainProminent)
+                // Task Monitoring's own Open Codex stays the card's prominent one.
+                Button(L10n.text("codex.hooks.open")) { model.openCodexApplication() }.buttonStyle(.main)
             }
         }
     }

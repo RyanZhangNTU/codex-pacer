@@ -12,15 +12,16 @@ struct SettingsConnectionsPane: View {
     let claudeEnabled: Bool
 
     private var hosts: [SSHHost] { Self.hosts(model) }
-    /// The SSH sources alone; local, Dot and cloud sources are their modules' own.
-    private static func sshSources(_ model: IslandModel) -> [ConnectionSource] {
-        sources(model).filter { ConnectionSource.isSSHSourceID($0.key) }
+    /// Other computers' sources alone; local, Dot and cloud sources are their modules' own.
+    private static func hostSources(_ model: IslandModel) -> [ConnectionSource] {
+        sources(model).filter { ConnectionSummary.isHost($0.key) }
     }
     /// Hosts with a problem, for the sidebar dot and Overview.
     static func problemCount(_ model: IslandModel) -> Int {
         let hosts = hosts(model)
         let retrying: Int
-        if case .retrying(let count) = ConnectionSummary(enabledProviders: model.enabledProviders, sources: sshSources(model), hosts: hosts).state {
+        if case .retrying(let count) = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts,
+                                                          hostsOnly: true).state {
             retrying = count
         } else {
             retrying = 0
@@ -54,11 +55,15 @@ struct SettingsConnectionsPane: View {
             telemetryConflicts: model.claudeRemoteTelemetryConflicts())
     }
 
-    /// The page's subtitle: the overall state and how many sources it covers.
-    static func summaryText(_ model: IslandModel) -> String {
-        let summary = ConnectionSummary(enabledProviders: model.enabledProviders, sources: sshSources(model), hosts: hosts(model))
+    /// The page's subtitle: the hosts' overall state and how many it covers;
+    /// nothing while SSH monitoring is off, as its switch says.
+    static func summaryText(_ model: IslandModel) -> String? {
+        guard model.monitorsSSH else { return nil }
+        let summary = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts(model),
+                                        hostsOnly: true)
         let title: String = switch summary.state {
         case .disabled: L10n.text("provider.none_enabled")
+        case .noHosts: L10n.text("connections.summary.no_hosts")
         case .checking: L10n.text("connections.summary.checking")
         case .retrying(let count): L10n.text(count == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying", count)
         case .connecting(let count): L10n.text(count == 1 ? "connections.summary.connecting_one" : "connections.summary.connecting", count)
