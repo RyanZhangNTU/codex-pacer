@@ -190,6 +190,34 @@ final class WindowsLiveSourceTests: XCTestCase {
         }
     }
 
+    /// A Codex that crashed writes no more and sends no Stop, so no file grows and
+    /// no hook row arrives. Nothing reads on a timer, so the engine reads once
+    /// when the turn's evidence expires (`LocalActivityReader.nextRunningExpiry`).
+    func testACrashedTurnStopsRunningWhenItsEvidenceExpiresWithoutAnotherEvent() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-crash-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let start = Date(), clock = CodexTestClock(start), capture = LiveSnapshots(), id = UUID().uuidString.lowercased()
+        _ = try session(root, id: id, at: start)
+        let runtime = EngineRuntime(demo: false, now: { clock.now }, dismissalStore: nil, output: { capture.append($0) })
+        do {
+            _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(root)]))
+            _ = await runtime.receive(try command("setExpanded", ["expanded": true]))
+            try await until({ capture.all().last?.tasks.contains { $0.sessionID == id && $0.phase == "running" } == true },
+                message: "The announced turn runs")
+            // The clock's first checks note the files' sizes (a first sight counts as
+            // growth), and file events from the reads so far settle.
+            try await Task.sleep(nanoseconds: 8_000_000_000)
+            // Past both deadlines: a quiet log (15 minutes) and the hook's hold (three hours).
+            clock.set(start.addingTimeInterval(3 * 3600 + 16 * 60))
+            try await until({ capture.all().last?.tasks.contains { $0.sessionID == id && $0.phase == "running" } == false },
+                message: "The expired turn stops running without another file or hook event")
+            await runtime.stop()
+        } catch {
+            await runtime.stop()
+            throw error
+        }
+    }
+
     func testCollapsedCodexBatchesMetricsButPublishesAnEndingImmediately() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-batch-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

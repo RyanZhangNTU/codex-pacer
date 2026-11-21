@@ -455,6 +455,9 @@ actor EngineRuntime {
     /// Codex keeps a rollout open while it writes, and Windows reports a size
     /// change of an open file only once it is closed or flushed to disk.
     private var codexLogSizes: [URL: UInt64] = [:]
+    /// When a running local Codex turn's evidence runs out and it needs one more
+    /// read although nothing grew (`LocalActivityReader.nextRunningExpiry`).
+    private var codexRunningExpiry: Date?
     // Give a burst of writes time to land before reading lifecycle evidence.
     private static let codexFileEventCoalescing: TimeInterval = 0.1
     private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
@@ -1960,7 +1963,7 @@ actor EngineRuntime {
         case .codex:
             clearCodexMetricsBatch()
             #if os(Windows)
-            watchedCodexLogURLs = []
+            watchedCodexLogURLs = []; codexRunningExpiry = nil
             logWatcher.stop()
             #endif
             desktopBinding = UUID(); stopDurable(); durableAccountScope = nil
@@ -2021,9 +2024,13 @@ actor EngineRuntime {
         guard projectionReady else { return }
         #if os(Windows)
         // While a local Codex turn runs, a followed rollout that grew is read as
-        // a file event would be. Checking costs one handle query per file.
+        // a file event would be. Checking costs one handle query per file. A
+        // Codex that crashed writes nothing and sends no Stop, and nothing reads
+        // on a timer, so a turn is also read once when its evidence expires.
         if !demo, activities.contains(where: { $0.provider == .codex && $0.sourceHostID == nil && [.running, .waitingForInput].contains($0.phase) }) {
-            if codexLogsGrew() {
+            let expired = codexRunningExpiry.map { $0 <= now() } == true
+            if codexLogsGrew() || expired {
+                if expired { codexRunningExpiry = nil }
                 await refresh(discover: false, refreshActivityMonitors: false, fileEvent: true)
                 guard active, projectionReady, !Task.isCancelled else { return }
             }
@@ -2694,8 +2701,10 @@ actor EngineRuntime {
     private func collectCodexLogs(_ context: ActivityAdapters.Adapter.SnapshotContext) async {
         let revision = generation, home = codexHome
         let result = await codexReader.read(home: home, now: context.observedAt, phaseAwareRate: true, metricsOnly: !context.discover)
+        let expiry = await codexReader.nextRunningExpiry
         guard active, generation == revision, !Task.isCancelled else { return }
         #if os(Windows)
+        codexRunningExpiry = expiry
         // A hook row can name a new rollout in any read, not only discovery.
         if result.watchURLs != watchedCodexLogURLs {
             watchedCodexLogURLs = result.watchURLs
@@ -3132,7 +3141,7 @@ actor EngineRuntime {
         clearCodexMetricsBatch()
         forceBalanceRequested = false
         #if os(Windows)
-        watchedCodexLogURLs = []
+        watchedCodexLogURLs = []; codexRunningExpiry = nil
         logWatcher.stop()
         #endif
     }
