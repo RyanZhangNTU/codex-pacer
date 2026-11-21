@@ -471,7 +471,16 @@ final class IslandModel: ObservableObject {
     /// Whether Pacer's Codex hooks are installed, allowed in Codex and writing events.
     @Published private(set) var codexHookStatus: CodexHookStatus = .off
     private var codexHookResult: CodexHookSetupResult?
-    private var codexHookTask: Task<Void, Never>?
+    /// Setup passes run one at a time; each knows the home the previous one used.
+    private var codexHookQueue = ProgressSetupQueue<CodexHookTarget>()
+    struct CodexHookTarget: Equatable, Sendable {
+        let home: URL
+        let executable: String
+        let enabled: Bool
+    }
+    typealias CodexHookSetupCall = @Sendable (_ home: URL, _ executable: String, _ enabled: Bool) async -> CodexHookSetupResult
+    /// Tests replace the installer. Without one, a model given its installation never touches a Codex home.
+    var codexHookSetupOverride: CodexHookSetupCall?
     private var codexHookStatusCheckedAt = Date.distantPast
     /// The rollout folders are listed at most this often for the status.
     static let codexHookStatusInterval: TimeInterval = 60
@@ -486,19 +495,30 @@ final class IslandModel: ObservableObject {
 
     /// Installs Pacer's Codex hooks while the Codex module is on and removes them
     /// when it is off. Setup is idempotent: an unchanged plugin is not reinstalled.
-    func syncCodexHooks() {
-        guard !demo, installationOverride == nil else { return }
-        let enabled = isModuleEnabled(.codex) && !stopped, home = self.home
-        let executable = defaults.string(forKey: "codexExecutable") ?? ""
-        codexHookTask?.cancel()
-        codexHookTask = Task { [weak self] in
+    /// Moving to another Codex home first removes them from the one Pacer leaves,
+    /// and passes run in order, so a quick series of switches ends with the hooks
+    /// in the last home only. `force` runs an unchanged target again (Retry).
+    func syncCodexHooks(force: Bool = false) {
+        guard !demo, installationOverride == nil || codexHookSetupOverride != nil,
+              let ticket = codexHookQueue.request(.init(home: home, executable: defaults.string(forKey: "codexExecutable") ?? "",
+                                                         enabled: isModuleEnabled(.codex) && !stopped), force: force) else { return }
+        let target = ticket.target
+        let setup: CodexHookSetupCall = codexHookSetupOverride ?? { home, executable, enabled in
+            await MacCodexHookSetup.apply(home: home, customExecutable: executable, enabled: enabled)
+        }
+        let task = Task { [weak self] in
             let result = await Task.detached(priority: .utility) {
-                await MacCodexHookSetup.apply(home: home, customExecutable: executable, enabled: enabled)
+                await ticket.waitForPrevious()
+                if let previous = ticket.previous, previous.home != target.home {
+                    _ = await setup(previous.home, previous.executable, false)
+                }
+                return await setup(target.home, target.executable, target.enabled)
             }.value
-            guard let self, !Task.isCancelled, self.home == home else { return }
+            guard let self, self.codexHookQueue.finish(ticket) else { return }
             self.codexHookResult = result
             await self.updateCodexHookStatus(force: true)
         }
+        codexHookQueue.track(task)
     }
 
     /// The user has to act in Codex before local Codex tasks can show.

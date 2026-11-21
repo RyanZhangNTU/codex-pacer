@@ -178,4 +178,56 @@ final class CodexHookHostTests: XCTestCase {
         try await TestWait.until { dot.starts == 4 && dot.active == 1 }
         XCTAssertEqual(dot.starts, 4)
     }
+
+    func testSwitchingCodexHomesLeavesTheHooksInTheLastHomeOnly() async throws {
+        /// Records each pass and which homes hold Pacer's hooks; each pass takes a moment, as Codex's CLI does.
+        final class Installer: @unchecked Sendable {
+            private let lock = NSLock()
+            private var calls: [(String, Bool)] = []
+            private var installed: Set<String> = []
+            func apply(_ home: URL, _ enabled: Bool) async -> CodexHookSetupResult {
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                lock.withLock {
+                    calls.append((home.lastPathComponent, enabled))
+                    if enabled { installed.insert(home.path) } else { installed.remove(home.path) }
+                }
+                return .init(supportsHooks: true, installed: enabled, trust: enabled ? Array(repeating: "trusted", count: 7) : nil)
+            }
+            var log: [String] { lock.withLock { calls.map { ($0.1 ? "+" : "-") + $0.0 } } }
+            var homes: Set<String> { lock.withLock { installed } }
+        }
+        let root = try temporaryHome("codex-homes").deletingLastPathComponent()
+        let homes = try ["a", "b", "c", "d"].map { name -> URL in
+            let home = root.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            return home
+        }
+        let installer = Installer()
+        let model = try model(home: homes[0])
+        model.codexHookSetupOverride = { home, _, enabled in await installer.apply(home, enabled) }
+
+        model.syncCodexHooks()
+        try await TestWait.until { installer.homes == [homes[0].path] }
+        try await TestWait.until { model.codexHookStatus == .running }
+        model.syncCodexHooks()
+        XCTAssertEqual(installer.log, ["+a"], "An unchanged target is not set up again")
+
+        model.defaults.set(homes[1].path, forKey: "codexHome")
+        model.syncCodexHooks()
+        try await TestWait.until { installer.homes == [homes[1].path] }
+        XCTAssertEqual(installer.log, ["+a", "-a", "+b"], "Leaving a home removes the hooks there before installing in the next")
+
+        // Two quick switches: the passes run in order and the earlier one cannot reinstall its home afterwards.
+        model.defaults.set(homes[2].path, forKey: "codexHome"); model.syncCodexHooks()
+        model.defaults.set(homes[3].path, forKey: "codexHome"); model.syncCodexHooks()
+        try await TestWait.until { installer.log.count == 7 }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(installer.log, ["+a", "-a", "+b", "-b", "+c", "-c", "+d"])
+        XCTAssertEqual(installer.homes, [homes[3].path])
+        XCTAssertEqual(model.codexHookStatus, .running)
+
+        model.syncCodexHooks(force: true)
+        try await TestWait.until { installer.log.count == 8 }
+        XCTAssertEqual(installer.log.last, "+d", "Retry runs the same target again")
+    }
 }

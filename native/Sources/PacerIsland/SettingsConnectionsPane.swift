@@ -117,7 +117,7 @@ struct SettingsConnectionsPane: View {
                     Button(L10n.text("codex.hooks.open")) { model.openCodexHooksGuide(screen: NSApp.keyWindow?.screen) }
                         .buttonStyle(MainButtonStyle(prominent: true, height: 28)).fixedSize()
                 } else if retry {
-                    Button(L10n.text("connections.retry")) { model.syncCodexHooks() }.buttonStyle(.main)
+                    Button(L10n.text("connections.retry")) { model.syncCodexHooks(force: true) }.buttonStyle(.main)
                 }
             }
         }
