@@ -451,6 +451,10 @@ actor EngineRuntime {
     private let codexMetricsWork = ApplicationWorkRegistry.Key(.presentation, provider: .codex, identifier: "log-metrics")
     #if os(Windows)
     private var watchedCodexLogURLs: [URL] = []
+    /// Sizes of the followed rollouts and the hook spool at the last clock check.
+    /// Codex keeps a rollout open while it writes, and Windows reports a size
+    /// change of an open file only once it is closed or flushed to disk.
+    private var codexLogSizes: [URL: UInt64] = [:]
     // Give a burst of writes time to land before reading lifecycle evidence.
     private static let codexFileEventCoalescing: TimeInterval = 0.1
     private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
@@ -2003,19 +2007,36 @@ actor EngineRuntime {
         guard active, !Task.isCancelled else { return }
         await performLifecycle(lifecycle.tick(lifecycleTick))
         guard projectionReady else { return }
-        // Codex keeps a rollout open while it writes, and Windows reports a size
-        // change of an open file only once it is closed or flushed to disk. While
-        // a local Codex turn runs, its followed rollouts are read on this clock,
-        // as a file event would; their size comes from an open handle.
+        #if os(Windows)
+        // While a local Codex turn runs, a followed rollout that grew is read as
+        // a file event would be. Checking costs one handle query per file.
         if !demo, activities.contains(where: { $0.provider == .codex && $0.sourceHostID == nil && [.running, .waitingForInput].contains($0.phase) }) {
-            await refresh(discover: false, refreshActivityMonitors: false, fileEvent: true)
-            guard active, projectionReady, !Task.isCancelled else { return }
-        }
-        // The metadata projection changes on every clock tick. Do not reopen other
+            if codexLogsGrew() {
+                await refresh(discover: false, refreshActivityMonitors: false, fileEvent: true)
+                guard active, projectionReady, !Task.isCancelled else { return }
+            }
+        } else if !codexLogSizes.isEmpty { codexLogSizes = [:] }
+        #endif
+        // The metadata projection changes on every clock tick. Do not reopen
         // transcript files or rescan source directories while nothing is written.
         guard activities.contains(where: { [.running, .waitingForInput].contains($0.phase) }) || !quota.isEmpty || codexQuota != nil || claudeQuotaState?.snapshot != nil || enabled.contains(.deepseek) && walletSource != nil else { return }
         if refreshTask == nil { publish(notices: []) } else { handOffToCollect(localSnapshot: false) }
     }
+    #if os(Windows)
+    /// Whether a followed rollout or the hook spool changed size since the last
+    /// check. A file seen for the first time counts as changed, so nothing
+    /// written between its read and this check is missed.
+    private func codexLogsGrew() -> Bool {
+        var sizes: [URL: UInt64] = [:], grew = false
+        for file in watchedCodexLogURLs where file.pathExtension == "jsonl" {
+            guard sizes.count < 32, let size = WindowsFileSystem().metadata(file)?.size else { continue }
+            sizes[file] = size
+            if codexLogSizes[file] != size { grew = true }
+        }
+        codexLogSizes = sizes
+        return grew
+    }
+    #endif
 
     private func receiveBalance(_ state: DeepSeekBalanceState) {
         guard lifecycle.acceptsObservedWork, state.context == lifecycle.version(.deepseek) else { return }
@@ -2664,7 +2685,8 @@ actor EngineRuntime {
         let result = await codexReader.read(home: home, now: context.observedAt, phaseAwareRate: true, metricsOnly: !context.discover)
         guard active, generation == revision, !Task.isCancelled else { return }
         #if os(Windows)
-        if context.discover {
+        // A hook row can name a new rollout in any read, not only discovery.
+        if result.watchURLs != watchedCodexLogURLs {
             watchedCodexLogURLs = result.watchURLs
             await updateCodexLogWatches()
             guard active, generation == revision, !Task.isCancelled else { return }
