@@ -345,7 +345,7 @@ struct ProviderQuotaRow: View {
 
     var body: some View {
         let error = model.providerQuotaError(provider)
-        CardRow(title: L10n.text("main.quota")) {
+        CardRow(title: L10n.text("provider.usage")) {
             if let error {
                 Text(error).font(.system(size: 12.5)).foregroundStyle(MainPalette.attention).lineLimit(1).truncationMode(.tail).help(error)
                 Button(L10n.text("connections.retry")) { model.retryQuotaConnection(for: provider) }

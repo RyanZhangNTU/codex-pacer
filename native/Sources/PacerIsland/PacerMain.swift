@@ -465,14 +465,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let action = response.actionIdentifier
+        let action = response.actionIdentifier, identifier = response.notification.request.identifier
         Task { @MainActor [weak self] in
             guard let self else { return }
             switch action {
             case NotificationDelivery.openHarnessAction: self.model.openDeepSeekApp()
             case NotificationDelivery.snoozeSpikeAction: self.model.snoozeDeepSeekSpike()
             case NotificationDelivery.topUpAction: NSWorkspace.shared.open(IslandModel.deepseekTopUpURL)
-            default: self.panel.show()
+            // Allowing Pacer in Codex starts on Codex's page, where its monitoring row opens Codex.
+            default: if identifier == NotificationDelivery.identifier(IslandModel.codexHooksNoticeID) { self.showSettingsPane(.codex) } else { self.panel.show() }
             }
         }
         completionHandler()

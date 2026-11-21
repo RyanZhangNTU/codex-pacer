@@ -27,9 +27,11 @@ final class NotificationDelivery {
             let detail = hidden ? L10n.text("activity.hidden_local_name") : notice.detail
             content.body = L10n.text("notice.body", notice.title, detail)
             if let category = notice.category { content.categoryIdentifier = category }
-            try? await addRequest(UNNotificationRequest(identifier: "pacer-" + notice.id, content: content, trigger: nil))
+            try? await addRequest(UNNotificationRequest(identifier: Self.identifier(notice.id), content: content, trigger: nil))
         }
     }
+    /// The system notification's identifier for one of Pacer's notices.
+    static func identifier(_ noticeID: String) -> String { "pacer-" + noticeID }
     static let openHarnessAction = "deepseek.open-harness"
     static let snoozeSpikeAction = "deepseek.snooze-spike"
     static let topUpAction = "deepseek.top-up"
