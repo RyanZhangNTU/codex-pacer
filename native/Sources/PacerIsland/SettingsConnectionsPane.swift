@@ -1,28 +1,32 @@
 import PacerCore
 import SwiftUI
 
-/// Remote: SSH hosts with each module's state, Codex Dot and any other task
-/// source, with the overall state in the page's subtitle. The
-/// island shows no connection banners, so problems are read here.
+/// Remote: other computers only, SSH hosts with each module's state, the
+/// overall state in the page's subtitle. What runs on this computer belongs
+/// to its module's page. The island shows no connection banners, so problems
+/// are read here.
 struct SettingsConnectionsPane: View {
     @ObservedObject var model: IslandModel
     @Binding var monitorSSH: Bool
-    @Binding var monitorDurable: Bool
     let codexEnabled: Bool
     let claudeEnabled: Bool
 
-    private var sources: [ConnectionSource] { Self.sources(model) }
     private var hosts: [SSHHost] { Self.hosts(model) }
-    /// Retrying sources and hosts with a problem, for the sidebar dot and Overview.
+    /// Other computers' sources alone; local, Dot and cloud sources are their modules' own.
+    private static func hostSources(_ model: IslandModel) -> [ConnectionSource] {
+        sources(model).filter { ConnectionSummary.isHost($0.key) }
+    }
+    /// Hosts with a problem, for the sidebar dot and Overview.
     static func problemCount(_ model: IslandModel) -> Int {
         let hosts = hosts(model)
         let retrying: Int
-        if case .retrying(let count) = ConnectionSummary(enabledProviders: model.enabledProviders, sources: sources(model), hosts: hosts).state {
+        if case .retrying(let count) = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts,
+                                                          hostsOnly: true).state {
             retrying = count
         } else {
             retrying = 0
         }
-        return max(retrying, hosts.filter { $0.modules.contains { $0.state.isProblem } }.count) + (model.codexHooksNeedUser ? 1 : 0)
+        return max(retrying, hosts.filter { $0.modules.contains { $0.state.isProblem } }.count)
     }
 
     static func sources(_ model: IslandModel) -> [ConnectionSource] {
@@ -51,11 +55,15 @@ struct SettingsConnectionsPane: View {
             telemetryConflicts: model.claudeRemoteTelemetryConflicts())
     }
 
-    /// The page's subtitle: the overall state and how many sources it covers.
-    static func summaryText(_ model: IslandModel) -> String {
-        let summary = ConnectionSummary(enabledProviders: model.enabledProviders, sources: sources(model), hosts: hosts(model))
+    /// The page's subtitle: the hosts' overall state and how many it covers;
+    /// nothing while SSH monitoring is off, as its switch says.
+    static func summaryText(_ model: IslandModel) -> String? {
+        guard model.monitorsSSH else { return nil }
+        let summary = ConnectionSummary(enabledProviders: model.enabledProviders, sources: hostSources(model), hosts: hosts(model),
+                                        hostsOnly: true)
         let title: String = switch summary.state {
         case .disabled: L10n.text("provider.none_enabled")
+        case .noHosts: L10n.text("connections.summary.no_hosts")
         case .checking: L10n.text("connections.summary.checking")
         case .retrying(let count): L10n.text(count == 1 ? "connections.summary.retrying_one" : "connections.summary.retrying", count)
         case .connecting(let count): L10n.text(count == 1 ? "connections.summary.connecting_one" : "connections.summary.connecting", count)
@@ -69,94 +77,15 @@ struct SettingsConnectionsPane: View {
     }
 
     var body: some View {
-        let sources = sources, hosts = hosts
-        if codexEnabled {
-            MainCard(title: "Codex") { codexHooksRow }
-        }
         MainCard(title: L10n.text("connections.section.ssh")) {
             CardToggle(title: L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
                 .disabled(!codexEnabled && !claudeEnabled)
             ForEach(hosts) { host in hostRow(host) }
         }
-        MainCard(title: "Codex Dot") {
-            CardToggle(title: L10n.text("settings.monitor_durable"), info: L10n.text("settings.durable_help"), isOn: $monitorDurable)
-                .disabled(!codexEnabled)
-        }
-        let others = sources.filter { !ConnectionSource.isSSHSourceID($0.key) }
-        let canRetry = sources.contains(where: { $0.state == .retrying }) || hosts.contains(where: \.claudeSetupFailed)
-        if !others.isEmpty || canRetry {
-            MainCard(title: L10n.text("connections.section.tasks")) {
-                ForEach(others) { source in sourceRow(source) }
-                if canRetry {
-                    CardRow(title: L10n.text("main.remote.retry_all")) {
-                        Button(L10n.text("connections.retry")) { retryAll() }.buttonStyle(.main)
-                    }
-                }
-            }
-        }
     }
 
-    /// Local Codex reaches Pacer only through its hooks, which the user allows in Codex once.
-    private var codexHooksRow: some View {
-        let detail: String, tint: Color, retry: Bool
-        switch model.codexHookStatus {
-        case .off, .notInstalled: (detail, tint, retry) = (L10n.text("codex.hooks.setting_up"), .secondary, false)
-        case .needsApproval: (detail, tint, retry) = (L10n.text("codex.hooks.needs_approval"), .orange, true)
-        case .running: (detail, tint, retry) = (L10n.text("codex.hooks.running"), .green, false)
-        case .notRunning: (detail, tint, retry) = (L10n.text("codex.hooks.not_running"), .orange, true)
-        case .needsCodexUpdate: (detail, tint, retry) = (L10n.text("codex.hooks.needs_update"), .orange, false)
-        case .installFailed: (detail, tint, retry) = (L10n.text("codex.hooks.failed"), .orange, true)
-        }
-        // Allowing happens in Codex Desktop, which opens on its settings with the guide beside it.
-        let opensCodex: Bool
-        if case .needsApproval = model.codexHookStatus { opensCodex = model.canOpenCodexSettings } else { opensCodex = false }
-        return CardRow(title: L10n.text("codex.hooks.title"), detail: detail, info: L10n.text("codex.hooks.info")) {
-            HStack(spacing: 8) {
-                Circle().fill(tint).frame(width: 7, height: 7)
-                if opensCodex {
-                    Button(L10n.text("codex.hooks.open")) { model.openCodexHooksGuide(screen: NSApp.keyWindow?.screen) }
-                        .buttonStyle(MainButtonStyle(prominent: true, height: 28)).fixedSize()
-                } else if retry {
-                    Button(L10n.text("connections.retry")) { model.syncCodexHooks(force: true) }.buttonStyle(.main)
-                }
-            }
-        }
-    }
-
-    private func retryAll() {
-        model.refreshTaskSources()
-        for host in hosts where host.claudeSetupFailed { retrySetup(host) }
-    }
     private func retrySetup(_ host: SSHHost) {
         Task { _ = await model.configureClaudeRemote(targetID: host.id) }
-    }
-
-    private func sourceRow(_ source: ConnectionSource) -> some View {
-        let (tint, state): (Color, String) = switch source.state {
-        case .connected: (.green, L10n.text("connections.state.connected"))
-        case .retrying: (.orange, L10n.text("connections.state.retrying"))
-        case .paused: (.secondary, source.key == ClaudeCloudProjectState.sourceID ? L10n.text("connections.state.cloud_signed_out")
-            : L10n.text("connections.state.paused", source.provider.displayName))
-        case .idle: (.secondary, L10n.text("connections.state.idle"))
-        case .offline: (.secondary, L10n.text("connections.state.offline"))
-        }
-        return HStack(spacing: 12) {
-            ProviderTile(provider: source.provider)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(source.name).lineLimit(1).truncationMode(.middle).help(source.name)
-                HStack(spacing: 5) {
-                    Circle().fill(tint).frame(width: 6, height: 6).accessibilityHidden(true)
-                    Text((source.kind == source.name ? "" : source.kind + " · ") + state)
-                        .foregroundStyle(source.state == .retrying ? Color.orange : Color.secondary)
-                }.font(.system(size: 11))
-            }
-            Spacer(minLength: 8)
-            if source.state == .connected {
-                Text(L10n.text(source.sessions == 1 ? "connections.sessions_one" : "connections.sessions", source.sessions))
-                    .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
-            }
-        }
-        .accessibilityElement(children: .combine)
     }
 
     private func hostRow(_ host: SSHHost) -> some View {

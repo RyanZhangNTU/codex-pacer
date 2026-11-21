@@ -326,6 +326,68 @@ extension CardStatusRow where Action == EmptyView {
     }
 }
 
+/// A Status card row in the vocabulary every module page shares: green when it
+/// works, gray while under way, orange when the user has to act; at most one
+/// button, anything rarer in the row's ⋯ menu.
+struct ModuleStatusRow<Action: View>: View {
+    let title: String
+    let state: String
+    let tone: ModuleMonitoring.Tone
+    var info: String? = nil
+    var help: String? = nil
+    var detail: String? = nil
+    @ViewBuilder var action: Action
+
+    static func tint(_ tone: ModuleMonitoring.Tone) -> Color {
+        switch tone {
+        case .positive: MainPalette.positive
+        case .neutral: .secondary
+        case .attention: MainPalette.attention
+        }
+    }
+
+    var body: some View {
+        CardRow(title: title, detail: detail, info: info) {
+            HStack(spacing: 7) {
+                Circle().fill(Self.tint(tone)).frame(width: 7, height: 7).accessibilityHidden(true)
+                Text(state).font(.system(size: 12.5))
+                    .foregroundStyle(tone == .attention ? MainPalette.attention : Color.secondary)
+                    .lineLimit(1)
+                action
+            }
+            .help(help ?? "")
+        }
+    }
+}
+
+extension ModuleStatusRow where Action == EmptyView {
+    init(title: String, state: String, tone: ModuleMonitoring.Tone, info: String? = nil, help: String? = nil, detail: String? = nil) {
+        self.init(title: title, state: state, tone: tone, info: info, help: help, detail: detail, action: { EmptyView() })
+    }
+}
+
+/// Task Monitoring, the first row of every module page, with its one action.
+struct ModuleMonitoringRow: View {
+    let monitoring: ModuleMonitoring
+    var info: String? = nil
+    var help: String? = nil
+    var openCodex: () -> Void = {}
+    var retry: () -> Void = {}
+    var rescan: () -> Void = {}
+
+    var body: some View {
+        ModuleStatusRow(title: L10n.text("provider.monitoring"), state: monitoring.text, tone: monitoring.tone,
+                        info: info, help: help, detail: monitoring.detail) {
+            switch monitoring.action {
+            case .openCodex?: Button(L10n.text("codex.hooks.open"), action: openCodex).buttonStyle(.mainProminent)
+            case .retry?: Button(L10n.text("connections.retry"), action: retry).buttonStyle(.main)
+            case .rescan?: Button(L10n.text("settings.rescan"), action: rescan).buttonStyle(.main)
+            case nil: EmptyView()
+            }
+        }
+    }
+}
+
 /// The ⓘ beside a title; it toggles the explanation under the row.
 struct InfoButton: View {
     let title: String

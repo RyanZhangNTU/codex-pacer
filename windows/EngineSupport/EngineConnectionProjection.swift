@@ -21,6 +21,6 @@ enum EngineConnectionProjection {
             claudeAliases: ssh.map(\.alias), claudeIDs: Dictionary(ssh.map { ($0.alias, $0.id) }, uniquingKeysWith: { first, _ in first }),
             configured: configured, configuring: configuring, failed: failed,
             names: Dictionary(ssh.map { ($0.alias, $0.name) }, uniquingKeysWith: { first, _ in first }),
-            setup: wslSetup, canRetrySetup: canRetrySetup, quotaSources: quotas, transportProblemsFirst: true)
+            setup: wslSetup, canRetrySetup: canRetrySetup, quotaSources: quotas, transportProblemsFirst: true, hostsOnly: true)
     }
 }

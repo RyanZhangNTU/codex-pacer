@@ -9,7 +9,8 @@ namespace CodexPacer.Windows;
 /// the fixed action routes and readiness/lifetime checks in one place.
 internal sealed class NotificationActions(Task ready, Func<bool> stopping, Action showIsland,
     Func<Task> snoozeSpike, Func<Uri, bool> openLink, CancellationToken lifetime = default, Func<bool>? openHarness = null,
-    Func<string, string, Task<EngineNotificationActivation>>? resolve = null, Func<EngineActivityLink, Task<bool>>? openTask = null)
+    Func<string, string, Task<EngineNotificationActivation>>? resolve = null, Func<EngineActivityLink, Task<bool>>? openTask = null,
+    Func<string, bool>? openSettings = null)
 {
     internal static readonly Uri TopUpUri = new("https://platform.deepseek.com/top_up");
     private readonly System.Collections.Generic.HashSet<string> received = [];
@@ -37,11 +38,12 @@ internal sealed class NotificationActions(Task ready, Func<bool> stopping, Actio
         if (stopping() || lifetime.IsCancellationRequested) return false;
         try
         {
-            if (action is not ("showIsland" or "snoozeSpike" or "topUp" or "openHarness")) return false;
+            if (action is not ("showIsland" or "snoozeSpike" or "topUp" or "openHarness" or "openCodexSettings")) return false;
             await ready.WaitAsync(lifetime);
             if (stopping() || lifetime.IsCancellationRequested) return false;
             if (action == "topUp") return openLink(TopUpUri);
             if (action == "openHarness") return openHarness?.Invoke() == true;
+            if (action == "openCodexSettings") return openSettings?.Invoke("codex") == true;
             if (action == "showIsland") showIsland();
             else await snoozeSpike();
             return true;

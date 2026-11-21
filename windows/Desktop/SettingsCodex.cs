@@ -16,14 +16,13 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? codexEnabled, codexEmbedded, codexProgress;
+    private CheckBox? codexEnabled, codexEmbedded, codexProgress, codexDurable;
     private TextBlock? codexProgressState;
     private Button? codexProgressRetry;
     private FrameworkElement? codexProgressStatus;
-    private TextBlock? codexDetection, cliState, cliIssue, executableIssue, homeIssue, historyTitle;
+    private TextBlock? codexDetection, executableIssue, homeIssue, historyTitle;
     private QuotaHistoryView? codexHistory;
-    private Ellipse? cliDot;
-    private Button? codexAutomatic, cliRescan, cliCandidates;
+    private Button? codexAutomatic, cliCandidates;
     private StackPanel? codexSections;
     private Border? codexOff;
     private Expander? codexLocations;
@@ -41,15 +40,15 @@ internal sealed partial class SettingsWindow
     private void ClearCodex()
     {
         sourceInspectionRevision++; sourceCommitRevision++; Array.Clear(pendingSourceValidation); sourceInspectionKey = null; sourceReport = null;
-        codexEnabled = codexEmbedded = codexProgress = null; codexDetection = cliState = cliIssue = executableIssue = homeIssue = historyTitle = null; codexHistory = null;
+        codexEnabled = codexEmbedded = codexProgress = codexDurable = null; codexDetection = executableIssue = homeIssue = historyTitle = null; codexHistory = null;
         codexProgressState = null; codexProgressRetry = null; codexProgressStatus = null;
-        cliDot = null; codexAutomatic = cliRescan = cliCandidates = null; codexSections = null; codexOff = null; codexLocations = null;
+        codexAutomatic = cliCandidates = null; codexSections = null; codexOff = null; codexLocations = null;
         executableField = homeField = null; executablePreference = homePreference = null;
     }
 
-    /// As on the Mac: the header holds the module switch, then Status (CLI and
-    /// quota), Display, and folded custom locations. Remote Control lives on
-    /// Remote and the quota trend on History.
+    /// As every module page: the header holds the module switch, then Status
+    /// (task monitoring, account, usage), Display, and folded custom locations.
+    /// The quota trend lives on History.
     private void BuildCodex()
     {
         SetPaneHeader(ProviderHeader("codex", out var detection, out var module, out var automatic));
@@ -61,14 +60,10 @@ internal sealed partial class SettingsWindow
         codexOff = ModuleOffCard(); form.Children.Add(codexOff);
         codexSections = new StackPanel(); form.Children.Add(codexSections);
 
-        cliRescan = new Button { Content = ui.Text("settings.rescan"), Visibility = Visibility.Collapsed };
-        Identify(cliRescan, "settings.codex.rescan", ui.Text("settings.rescan")); editors.Add(cliRescan);
-        cliRescan.Click += async (_, _) => { sourceInspection = InspectSavedSourceAsync(); await sourceInspection; };
-        cliIssue = Detail(""); cliIssue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
-        var cli = StatusRow("Codex CLI", out var dot, out var state, cliRescan, cliIssue); cliDot = dot; cliState = state;
-        cliState.Text = ui.Text("provider.state.searching"); Identify(cliState, "settings.codex.cli.status", cliState.Text);
+        // Codex's CLI and its hooks read as one Task Monitoring row; signing in happens in Codex.
         codexSections.Children.Add(SectionTitle(ui.Text("main.section.status"), 0));
-        codexSections.Children.Add(Card(cli, ProviderQuotaRow("codex")));
+        codexSections.Children.Add(Card(ModuleStatusRow("codex.monitoring", ui.Text("provider.monitoring"), ui.Text("codex.hooks.info")),
+            ModuleStatusRow("codex.account", ui.Text("provider.account")), ProviderQuotaRow("codex")));
 
         var embedded = Toggle("main.embedded", "main.info.codex_embedded", "settings.codex.embedded", out var embeddedSwitch);
         codexEmbedded = embeddedSwitch; editors.Add(embeddedSwitch);
@@ -89,8 +84,12 @@ internal sealed partial class SettingsWindow
         var progressEnd = new StackPanel { Orientation = Orientation.Horizontal }; progressEnd.Children.Add(codexProgressRetry); progressEnd.Children.Add(codexProgress);
         var progress = InfoRow(ui.Text("main.claude.ring"), progressEnd, ui.Text("codex.progress_ring_help"), codexProgressState, "settings.codex.progress_ring");
         codexProgressStatus = codexProgressState;
+        // Dot tasks are Codex's own extra source, as Claude's cloud projects are Claude's.
+        var durable = Toggle("codex.dot_tasks", "settings.durable_help", "settings.codex.dot_tasks", out var durableSwitch);
+        codexDurable = durableSwitch; editors.Add(durableSwitch);
+        BindToggle(durableSwitch, (p, value) => p with { MonitorDurable = value });
         codexSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
-        codexSections.Children.Add(Card(embedded, progress));
+        codexSections.Children.Add(Card(progress, embedded, durable));
 
         // Each location is a row of its own, as on the Mac: its name, the field, then Choose.
         var fields = new StackPanel { Margin = new Thickness(14, 0, 14, 0) };
@@ -177,6 +176,7 @@ internal sealed partial class SettingsWindow
         bool enabled = module?.Enabled ?? (mode != "disabled" && engine.LatestSnapshot?.QuotaDashboard?.Providers.Any(value => value.Provider == "codex") == true);
         codexEnabled.IsChecked = enabled;
         if (codexEmbedded != null) codexEmbedded.IsChecked = session.Current.ShowEmbeddedCodexSessions;
+        if (codexDurable != null) codexDurable.IsChecked = session.Current.MonitorDurable;
         if (codexProgress != null) codexProgress.IsChecked = session.Current.CodexProgressRing;
         if (codexProgressStatus != null && codexProgressState != null && codexProgressRetry != null)
         {
@@ -195,6 +195,10 @@ internal sealed partial class SettingsWindow
         if (codexOff != null) codexOff.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         if (codexLocations != null) codexLocations.Tag = ui.Text(session.Current.CodexExecutable.Length == 0 && session.Current.CodexHome.Length == 0 ? "settings.auto_discovery" : "main.location.custom");
         RefreshProviderQuotaRow("codex");
+        // A missing CLI says why, as the location fields do.
+        RefreshModuleStatusRow("codex.monitoring", module?.Monitoring,
+            module?.Monitoring?.State == "notFound" ? sourceReport?.ExecutableIssue : null);
+        RefreshModuleStatusRow("codex.account", module?.Account);
         if (executablePreference != session.Current.CodexExecutable)
         { executablePreference = session.Current.CodexExecutable; executableField!.Text = executablePreference; SetSourceIssue(executableIssue, null); }
         if (homePreference != session.Current.CodexHome)
@@ -253,17 +257,12 @@ internal sealed partial class SettingsWindow
 
     private void UpdateSourceStatus()
     {
-        if (cliState == null || cliDot == null || cliIssue == null || cliRescan == null || cliCandidates == null) return;
-        bool missing = sourceReport?.SelectedExecutable == null && (sourceReport != null || sourceInspectionFailed);
-        string key = sourceInspectionFailed ? "provider.state.failed" : missing ? "provider.state.not_found" : sourceReport == null ? "provider.state.searching" : "provider.state.found";
-        cliState.Text = ui.Text(key); AutomationProperties.SetName(cliState, cliState.Text);
-        cliState.SetResourceReference(TextBlock.ForegroundProperty, missing ? "SettingsWarning" : "SettingsSecondary");
-        cliDot.SetResourceReference(Shape.FillProperty, missing ? "SettingsWarning" : sourceReport == null ? "SettingsSecondary" : "SettingsSuccess");
-        cliState.ToolTip = sourceReport?.SelectedExecutable;
-        cliIssue.Text = sourceInspectionFailed ? ui.Text("windows.settings.inspect_failed") : sourceReport?.ExecutableIssue ?? "";
-        cliIssue.Visibility = cliIssue.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        cliRescan.Visibility = missing ? Visibility.Visible : Visibility.Collapsed;
+        if (cliCandidates == null) return;
         cliCandidates.Visibility = sourceReport?.Candidates.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        if (executableField != null) executableField.ToolTip = sourceReport?.SelectedExecutable;
+        var monitoring = engine?.LatestSnapshot?.Modules?.FirstOrDefault(value => value.Provider == "codex")?.Monitoring;
+        RefreshModuleStatusRow("codex.monitoring", monitoring, monitoring?.State == "notFound"
+            ? sourceInspectionFailed ? ui.Text("windows.settings.inspect_failed") : sourceReport?.ExecutableIssue : null);
         if (homeField != null) homeField.ToolTip = sourceReport?.EffectiveHome;
         if (historyTitle != null) historyTitle.Text = sourceReport?.HistoryTitle
             ?? engine?.LatestSnapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == "codex")?.History?.Title ?? "";

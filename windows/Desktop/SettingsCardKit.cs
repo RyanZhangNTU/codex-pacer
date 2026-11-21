@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -151,7 +152,85 @@ internal sealed partial class SettingsWindow
         retry.Click += async (_, _) => { await sourceReady; if (!sourceClosed && engine != null) await engine.SendAsync("retryQuota", new { provider }); };
         end.Children.Add(retry);
         quotaRows[provider] = (summary, trend, retry);
-        return InfoRow(ui.Text("main.quota"), end);
+        return InfoRow(ui.Text("provider.usage"), end);
+    }
+
+    private readonly System.Collections.Generic.Dictionary<string, (Ellipse Dot, TextBlock State, TextBlock Detail, Button Action)> statusRows = new();
+
+    /// A row of a module's Status card as the engine words it (`EngineStatusRow`):
+    /// a dot and state, a line under it when the user has something to read, and
+    /// at most one button. `key` is `<provider>.monitoring` or `<provider>.account`.
+    private Grid ModuleStatusRow(string key, string title, string? info = null)
+    {
+        var action = new Button { Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
+        Identify(action, "settings." + key + ".action", ""); editors.Add(action);
+        action.Click += async (sender, _) => { if (ReferenceEquals(sender, action) && action.IsEnabled && action.Tag is string kind) await RunStatusAction(key, kind); };
+        var detail = Detail(""); detail.Visibility = Visibility.Collapsed; detail.TextWrapping = TextWrapping.Wrap;
+        Identify(detail, "settings." + key + ".detail", ""); AutomationProperties.SetLiveSetting(detail, AutomationLiveSetting.Polite);
+        var trailing = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var dot = new Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
+        dot.SetResourceReference(Shape.FillProperty, "SettingsSecondary");
+        var state = Label(ui.Text("monitoring.checking"), 12.5); state.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); Identify(state, "settings." + key, state.Text);
+        AutomationProperties.SetLiveSetting(state, AutomationLiveSetting.Polite);
+        action.Margin = new Thickness(8, 0, 0, 0);
+        trailing.Children.Add(dot); trailing.Children.Add(state); trailing.Children.Add(action);
+        statusRows[key] = (dot, state, detail, action);
+        return InfoRow(title, trailing, info, detail, "settings." + key);
+    }
+
+    /// Shows a Status row; `detail` replaces the engine's line when the page knows more.
+    private void RefreshModuleStatusRow(string key, EngineStatusRow? row, string? detail = null)
+    {
+        if (!statusRows.TryGetValue(key, out var parts)) return;
+        bool closed = providerConnectionClosed || engine?.IsConnectionClosed != false;
+        if (closed) row = new EngineStatusRow("failed", "attention", ui.Text("windows.connection.closed"));
+        SetStatus(parts.Dot, parts.State, row?.Text ?? ui.Text("monitoring.checking"), row?.Tone ?? "neutral");
+        string line = detail ?? row?.Detail ?? "";
+        parts.Detail.Text = line; AutomationProperties.SetName(parts.Detail, line);
+        parts.Detail.Visibility = line.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        parts.Detail.SetResourceReference(TextBlock.ForegroundProperty, row?.Tone == "attention" ? "SettingsWarning" : "SettingsSecondary");
+        string? label = row?.Action switch
+        {
+            "openCodex" => ui.Text("codex.hooks.open"), "retry" => ui.Text("connections.retry"), "rescan" => ui.Text("settings.rescan"), _ => null
+        };
+        parts.Action.Tag = closed ? null : row?.Action;
+        parts.Action.Visibility = label == null || closed ? Visibility.Collapsed : Visibility.Visible;
+        if (label != null)
+        {
+            parts.Action.Content = label; AutomationProperties.SetName(parts.Action, label);
+            // The card's one prominent button is Task Monitoring's Open Codex.
+            if (row?.Action == "openCodex" && key.EndsWith(".monitoring", StringComparison.Ordinal)) parts.Action.Style = (Style)FindResource("SettingsProminentButton");
+            else parts.Action.ClearValue(StyleProperty);
+        }
+        parts.Action.IsEnabled = !closed && !busy && !session.RequiresRestart && !demo;
+    }
+
+    /// A Status row's one button: Open Codex, Retry or Rescan for its module.
+    private async Task RunStatusAction(string key, string kind)
+    {
+        if (sourceClosed || engine == null || busy) return;
+        string provider = key[..key.IndexOf('.')];
+        try
+        {
+            await sourceReady;
+            if (sourceClosed) return;
+            switch (provider, kind)
+            {
+                case ("codex", "openCodex") when key == "codex.account": OpenCodexApplication(); break;
+                case ("codex", "openCodex"): OpenCodexHooksGuide(); break;
+                case ("codex", "retry"): await engine.SendAsync("retryCodexHooks"); break;
+                case ("codex", "rescan"): sourceInspection = InspectSavedSourceAsync(); await engine.SendAsync("retryCodexHooks"); break;
+                case ("claude", "retry"): await engine.SendAsync("retryClaudeSetup"); break;
+                case (_, "rescan"): await engine.SendAsync("refreshLocalHarness", new { provider }); break;
+            }
+        }
+        catch (Exception error) when (DeepSeekLoginWindow.Recoverable(error) || error is EngineCommandException) { if (!sourceClosed) ShowIssue("windows.connection.refresh_failed"); }
+    }
+    /// Codex Desktop itself, where the user signs in.
+    private void OpenCodexApplication()
+    {
+        try { using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(GuideContent.CodexApplication) { UseShellExecute = true }); }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { ShowIssue("windows.pages.open_failed"); }
     }
 
     private void RefreshProviderQuotaRow(string provider)
@@ -159,6 +238,16 @@ internal sealed partial class SettingsWindow
         if (!quotaRows.TryGetValue(provider, out var row)) return;
         var dashboard = engine?.LatestSnapshot?.QuotaDashboard?.Providers.FirstOrDefault(value => value.Provider == provider);
         bool closed = providerConnectionClosed || engine?.IsConnectionClosed != false;
+        // While the Account row asks the user to sign in, the usage waits for it instead of repeating the read's error.
+        var snapshot = engine?.LatestSnapshot;
+        bool signIn = !closed && (provider == "codex" ? snapshot?.Modules?.FirstOrDefault(value => value.Provider == "codex")?.Account?.State == "signedOut"
+            : provider == "claude" && snapshot?.ClaudeConnection?.State is "signedOut" or "workspaceNeeded");
+        if (signIn)
+        {
+            row.Summary.Text = "—"; row.Summary.ToolTip = null; row.Summary.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+            row.Trend.Visibility = Visibility.Collapsed; row.Retry.Visibility = Visibility.Collapsed;
+            AutomationProperties.SetName(row.Summary, row.Summary.Text); return;
+        }
         string? error = closed ? ui.Text("windows.connection.closed") : dashboard?.Status is { State: "error" } status ? status.Message ?? ui.Text("provider.state.failed") : null;
         if (error != null)
         {

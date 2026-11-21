@@ -11,17 +11,19 @@ using System.Windows.Threading;
 
 namespace CodexPacer.Windows;
 
-/// A module read by the shared local adapter, laid out like the built-in
-/// pages: the header switch, Status (local tasks, account, credits), Display
-/// (progress ring, turn credits) and the folded data folder.
+/// A module read by the shared local adapter, laid out like every module page:
+/// the header switch, Status (task monitoring, account, usage), Display
+/// (progress ring, usage per turn), Usage Settings (the credits in detail) and
+/// the folded data folder.
 internal sealed partial class SettingsWindow
 {
     private StackPanel? harnessSections;
     private Border? harnessOff;
     private CheckBox? harnessEnabled, harnessProgress, harnessTurnCredits;
-    private Button? harnessAutomatic, harnessRefresh;
-    private Ellipse? harnessStatusDot, harnessAccountDot;
-    private TextBlock? harnessDetection, harnessState, harnessHint;
+    private Button? harnessAutomatic;
+    private Ellipse? harnessAccountDot;
+    private TextBlock? harnessDetection, harnessUsage;
+    private Grid? harnessUsageRow;
     // The progress ring's step card, for a module whose app must trust Pacer's tool.
     private Border? harnessProgressChip;
     private TextBlock? harnessProgressChipText, harnessProgressInfo;
@@ -32,20 +34,18 @@ internal sealed partial class SettingsWindow
     private StackPanel? harnessCreditsBlock;
     private string harnessCreditsKey = "";
     private Button? harnessAccountSignIn, harnessAccountOptions;
-    private bool refreshingHarness;
 
     private void ClearHarnessPage()
     {
         harnessSections = null; harnessOff = null;
         harnessEnabled = harnessProgress = harnessTurnCredits = null;
-        harnessAutomatic = harnessRefresh = null;
-        harnessStatusDot = harnessAccountDot = null;
-        harnessDetection = harnessState = harnessHint = null;
+        harnessAutomatic = null;
+        harnessAccountDot = null;
+        harnessDetection = harnessUsage = null; harnessUsageRow = null;
         harnessProgressPoll?.Stop(); harnessProgressPoll = null;
         harnessProgressChip = null; harnessProgressChipText = harnessProgressInfo = null; harnessProgressBody = null; harnessProgressKey = "";
         harnessAccountState = harnessAccountHelp = null; harnessCreditsBlock = null; harnessCreditsKey = "";
         harnessAccountSignIn = harnessAccountOptions = null;
-        refreshingHarness = false;
     }
 
     private void BuildHarnessPage(string provider)
@@ -61,27 +61,17 @@ internal sealed partial class SettingsWindow
         harnessOff = ModuleOffCard(); form.Children.Add(harnessOff);
         harnessSections = new StackPanel(); form.Children.Add(harnessSections);
 
-        // Local tasks: one state, with Rescan only while nothing is found, as Codex's CLI row.
-        var rescan = new Button { Content = ui.Text("settings.rescan"), Visibility = Visibility.Collapsed }; harnessRefresh = rescan;
-        Identify(rescan, id + ".refresh", ui.Text("settings.rescan")); editors.Add(rescan);
-        rescan.Click += async (_, _) =>
-        {
-            refreshingHarness = true; rescan.IsEnabled = false;
-            try { await client.SendAsync("refreshLocalHarness", new { provider }); }
-            catch (Exception error) when (ProviderLoginWindow.Recoverable(error) || error is EngineCommandException)
-            { if (harnessRefresh == rescan) ShowIssue("windows.connection.refresh_failed"); }
-            finally { if (harnessRefresh == rescan) { refreshingHarness = false; RefreshHarnessPage(); } }
-        };
-        harnessHint = Detail("");
-        var status = StatusRow(ui.Text("harness.local_tasks"), out var dot, out var state, rescan, harnessHint);
-        harnessStatusDot = dot; harnessState = state;
-        Identify(state, id + ".status", "");
-        var rows = new List<UIElement> { status };
+        // Task monitoring, with Rescan while nothing is found, as every module's first row.
+        var rows = new List<UIElement> { ModuleStatusRow(provider + ".monitoring", ui.Text("provider.monitoring")) };
         if (descriptor.ReportsAccountCredits == true)
         {
             rows.Add(BuildHarnessAccountRow(provider, id));
+            // The credits available now, while signed in, as on the Mac; the credits in detail wait in Usage Settings.
+            harnessUsage = Label("", 12.5); harnessUsage.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+            Identify(harnessUsage, id + ".usage", "");
+            harnessUsageRow = InfoRow(ui.Text("provider.usage"), harnessUsage, id: id + ".usage"); harnessUsageRow.Visibility = Visibility.Collapsed;
+            rows.Add(harnessUsageRow);
             harnessCreditsBlock = new StackPanel(); Identify(harnessCreditsBlock, id + ".credits_block", ui.Text("harness.credits"));
-            rows.Add(harnessCreditsBlock);
         }
         harnessSections.Children.Add(SectionTitle(ui.Text("main.section.status")));
         harnessSections.Children.Add(Card(rows.ToArray()));
@@ -90,7 +80,7 @@ internal sealed partial class SettingsWindow
         if (descriptor.HasTaskProgress == true) display.Add(BuildHarnessProgressRow(client, provider, id, descriptor));
         if (descriptor.ReportsAccountCredits == true || descriptor.ReportsSessionUsage == true)
         {
-            var credits = Toggle("harness.turn_credits", "main.info.harness_turn_credits", id + ".turn_credits", out var creditsSwitch);
+            var credits = Toggle("provider.turn_usage", "main.info.harness_turn_credits", id + ".turn_credits", out var creditsSwitch);
             harnessTurnCredits = creditsSwitch; editors.Add(creditsSwitch);
             BindToggle(creditsSwitch, (p, value) => p with
             {
@@ -103,6 +93,11 @@ internal sealed partial class SettingsWindow
         {
             harnessSections.Children.Add(SectionTitle(ui.Text("main.section.display")));
             harnessSections.Children.Add(Card(display.ToArray()));
+        }
+        if (harnessCreditsBlock != null)
+        {
+            harnessSections.Children.Add(SectionTitle(ui.Text("provider.usage_settings")));
+            harnessSections.Children.Add(Card(harnessCreditsBlock));
         }
         if (descriptor.Local == true) harnessSections.Children.Add(Card(ProviderHomeEditor(provider)));
     }
@@ -446,7 +441,7 @@ internal sealed partial class SettingsWindow
         harnessAccountOptions = options; Identify(options, id + ".account_options", ui.Text("claude.account.options")); editors.Add(options); trailing.Children.Add(options);
         options.Click += (_, _) => OpenHarnessAccountMenu(provider, id);
         harnessAccountHelp = Detail("");
-        return InfoRow(ui.Text("harness.account_row"), trailing, detail: harnessAccountHelp, id: id + ".account");
+        return InfoRow(ui.Text("provider.account"), trailing, detail: harnessAccountHelp, id: id + ".account");
     }
 
     /// The page's own module: each credits module keeps its own account and site.
@@ -486,6 +481,14 @@ internal sealed partial class SettingsWindow
         if (harnessCreditsBlock == null) return;
         var credits = engine?.LatestSnapshot?.AccountCredits?.FirstOrDefault(value => value.Provider == provider);
         var presentation = account?.Reading == null ? null : credits?.Presentation;
+        if (harnessUsage != null && harnessUsageRow != null)
+        {
+            // Signed out, the account row asks to sign in and the usage row waits for the first reading.
+            var total = presentation?.Lines.LastOrDefault();
+            harnessUsageRow.Visibility = total == null ? Visibility.Collapsed : Visibility.Visible;
+            harnessUsage.Text = total?.Value ?? ""; AutomationProperties.SetName(harnessUsage, harnessUsage.Text);
+            harnessUsage.SetResourceReference(TextBlock.ForegroundProperty, total?.Warns == true ? "SettingsWarning" : "SettingsSecondary");
+        }
         string key = System.Text.Json.JsonSerializer.Serialize(new { presentation, stale = credits?.Stale, state = account?.State, busy = account?.Busy, ui.Language, light = settingsLight });
         if (key == harnessCreditsKey) return;
         harnessCreditsKey = key;
@@ -637,8 +640,6 @@ internal sealed partial class SettingsWindow
         harnessAutomatic.IsEnabled = editable;
         harnessOff!.Visibility = !closed && !module.Enabled ? Visibility.Visible : Visibility.Collapsed;
         harnessSections!.Visibility = closed || module.Enabled ? Visibility.Visible : Visibility.Collapsed;
-        harnessRefresh!.Visibility = closed || module.Status == "ready" ? Visibility.Collapsed : Visibility.Visible;
-        harnessRefresh.IsEnabled = editable && !refreshingHarness;
         RefreshHarnessAccount(editable && module.Enabled);
         bool progressOn = !session.Current.DisabledHarnessProgress.Contains(module.Provider, StringComparer.Ordinal);
         if (harnessProgress != null)
@@ -659,9 +660,7 @@ internal sealed partial class SettingsWindow
             if (poll && !harnessProgressPoll.IsEnabled) harnessProgressPoll.Start();
             else if (!poll) harnessProgressPoll.Stop();
         }
-        var (status, hint, tone) = closed ? (ui.Text("windows.connection.closed"), "", "neutral") : HarnessStatus(module);
-        SetStatus(harnessStatusDot, harnessState, status, tone);
-        SetHarnessText(harnessHint, hint);
+        RefreshModuleStatusRow(module.Provider + ".monitoring", module.Monitoring);
         RefreshProviderHome();
     }
 

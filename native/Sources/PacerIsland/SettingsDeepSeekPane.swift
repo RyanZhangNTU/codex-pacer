@@ -40,10 +40,11 @@ struct DeepSeekBudgetSettings: Equatable {
     }
 }
 
-/// DeepSeek's page below the shared header, as the draft lays it out: the
-/// balance and its connection, the dial's mode and budgets, what task rows
-/// show, prices, then where sessions are read from. A connected wallet shows
-/// only its state and time, never the account.
+/// DeepSeek's page below the shared header, in the order every module page
+/// uses: Status (task monitoring, the balance connection, the balance), what
+/// the island shows, the dial's mode and budgets with prices, then where
+/// sessions are read from. A connected wallet shows only its state and time,
+/// never the account.
 struct SettingsDeepSeekSections: View {
     @ObservedObject var model: IslandModel
     @Binding var balanceSource: DeepSeekBalanceSource
@@ -64,46 +65,15 @@ struct SettingsDeepSeekSections: View {
     @State private var showsLocation = !(UserDefaults.standard.string(forKey: "deepseekHome") ?? "").isEmpty
 
     var body: some View {
-        balanceCard
-        modeCard
-        MainCard(title: L10n.text("deepseek.section.display"), footer: L10n.text("main.deepseek.estimate_note")) {
-            CardRow(title: L10n.text("main.deepseek.speed_basis"), info: L10n.text("main.info.speed")) {
-                MainSegmented(options: [(DeepSeekSpeedSource.local.rawValue, L10n.text("deepseek.speed_source.local")),
-                                        (DeepSeekSpeedSource.account.rawValue, L10n.text("deepseek.speed_source.account"))],
-                              selection: $speedSource, label: L10n.text("main.deepseek.speed_basis"))
-            }
-            CardToggle(title: L10n.text("deepseek.turn_cost"), info: L10n.text("deepseek.turn_cost_help"), isOn: $showsTurnCost)
-            // A failed removal stays visible after the switch is off, with Retry.
-            let setup = model.deepseekProgressSetup.flatMap { showsProgressRing || $0 == .failed || $0 == .conflict ? $0 : nil }
-            ProgressRingToggle(info: L10n.text("deepseek.progress_ring_help"), isOn: $showsProgressRing,
-                status: setup.map { L10n.text((showsProgressRing ? "deepseek.progress_setup." : "deepseek.progress_cleanup.") + $0.rawValue) },
-                canRetry: setup == .failed || setup == .conflict, retry: { model.syncDeepSeekProgressSwitch(force: true) })
-        }
-        MainCard(title: L10n.text("deepseek.section.pricing")) {
-            DeepSeekPeakTimeline(now: model.now).padding(.vertical, 4)
-            CardRow(title: L10n.text("main.deepseek.estimate"), info: L10n.text("deepseek.pricing_note")) {
-                Link(L10n.text("deepseek.price_list"), destination: IslandModel.deepseekPricingURL).font(.system(size: 12.5))
-            }
-        }
-        MainCard {
-            let status = model.providerStreamStatuses(.deepseek)["local"]
-            CardDisclosure(title: L10n.text("provider.custom_locations"),
-                summary: home.isEmpty ? L10n.text(status?.connected == true ? "provider.state.found" : "provider.state.no_home") : L10n.text("main.location.custom"),
-                isExpanded: $showsLocation)
-            if showsLocation {
-                CardStatusRow(title: L10n.text("deepseek.sessions"),
-                    state: L10n.text(status?.connected == true ? "provider.state.found" : "provider.state.no_home"),
-                    tint: status?.connected == true ? MainPalette.positive : .secondary)
-                CardPathField(title: L10n.text("deepseek.home"), text: $home, prompt: "~/.dsh", issue: homeIssue,
-                    commit: commitHome, choose: chooseHome)
-            }
-        }
-    }
-
-    private var balanceCard: some View {
-        MainCard(title: L10n.text("deepseek.section.balance")) {
+        // Task Monitoring, Account and Usage, in that order on every module page.
+        MainCard(title: L10n.text("main.section.status")) {
+            ModuleMonitoringRow(monitoring: model.deepseekMonitoring)
+            connectionRow
+            // How the source was found matters while signing in or after choosing one by hand.
+            if connection.showDetection { CardRow(title: connection.detectedText) }
+            if connection.keyEditor { keyEditor }
             if let balance = model.deepseekWallet.balance {
-                CardRow(title: L10n.text("deepseek.section.balance")) {
+                CardRow(title: L10n.text("provider.usage")) {
                     Text(DeepSeekDayDial.amount(balance.total)).font(.system(size: 15, weight: .semibold, design: .rounded)).monospacedDigit()
                     if let days = model.deepseekWallet.runwayDays {
                         Text(days >= 365 ? L10n.text("deepseek.runway_year") : L10n.text("deepseek.runway_short", max(1, Int(days.rounded(.down)))))
@@ -112,16 +82,36 @@ struct SettingsDeepSeekSections: View {
                     Button(L10n.text("main.quota.trend"), action: openHistory).buttonStyle(.link).font(.system(size: 12.5))
                 }
             }
-            connectionRow
-            // How the source was found matters while signing in or after choosing one by hand.
-            if connection.showDetection { CardRow(title: connection.detectedText) }
-            if connection.keyEditor { keyEditor }
+        }
+        MainCard(title: L10n.text("main.section.display"), footer: L10n.text("main.deepseek.estimate_note")) {
+            // A failed removal stays visible after the switch is off, with Retry.
+            let setup = model.deepseekProgressSetup.flatMap { showsProgressRing || $0 == .failed || $0 == .conflict ? $0 : nil }
+            ProgressRingToggle(info: L10n.text("deepseek.progress_ring_help"), isOn: $showsProgressRing,
+                status: setup.map { L10n.text((showsProgressRing ? "deepseek.progress_setup." : "deepseek.progress_cleanup.") + $0.rawValue) },
+                canRetry: setup == .failed || setup == .conflict, retry: { model.syncDeepSeekProgressSwitch(force: true) })
+            CardToggle(title: L10n.text("provider.turn_usage"), info: L10n.text("deepseek.turn_cost_help"), isOn: $showsTurnCost)
+            CardRow(title: L10n.text("main.deepseek.speed_basis"), info: L10n.text("main.info.speed")) {
+                MainSegmented(options: [(DeepSeekSpeedSource.local.rawValue, L10n.text("deepseek.speed_source.local")),
+                                        (DeepSeekSpeedSource.account.rawValue, L10n.text("deepseek.speed_source.account"))],
+                              selection: $speedSource, label: L10n.text("main.deepseek.speed_basis"))
+            }
+        }
+        usageSettingsCard
+        MainCard {
+            CardDisclosure(title: L10n.text("provider.custom_locations"),
+                summary: home.isEmpty ? L10n.text("settings.auto_discovery") : L10n.text("main.location.custom"),
+                isExpanded: $showsLocation)
+            if showsLocation {
+                CardPathField(title: L10n.text("deepseek.home"), text: $home, prompt: "~/.dsh", issue: homeIssue,
+                    commit: commitHome, choose: chooseHome)
+            }
         }
     }
 
-    private var modeCard: some View {
+    /// The dial's mode and budgets, then the prices the estimates use.
+    private var usageSettingsCard: some View {
         let average = model.deepseekWallet.averageDaily.flatMap { $0 >= 0.01 ? $0 : nil }
-        return MainCard(title: L10n.text("deepseek.section.mode"),
+        return MainCard(title: L10n.text("provider.usage_settings"),
                         footer: L10n.text(budgets.budgetMode ? "main.deepseek.budget_note" : "main.deepseek.balance_note")) {
             CardRow(title: L10n.text("deepseek.mode")) {
                 MainSegmented(options: [(false, L10n.text("deepseek.mode.balance")), (true, L10n.text("deepseek.mode.budget"))],
@@ -144,6 +134,10 @@ struct SettingsDeepSeekSections: View {
                     Button(L10n.text(ringSlot == nil ? "deepseek.ring_hint.choose" : "deepseek.ring_hint.change"), action: openCollapsedBar)
                         .buttonStyle(.link).font(.system(size: 12.5))
                 }
+            }
+            DeepSeekPeakTimeline(now: model.now).padding(.vertical, 4)
+            CardRow(title: L10n.text("main.deepseek.estimate"), info: L10n.text("deepseek.pricing_note")) {
+                Link(L10n.text("deepseek.price_list"), destination: IslandModel.deepseekPricingURL).font(.system(size: 12.5))
             }
         }
     }
@@ -173,7 +167,7 @@ struct SettingsDeepSeekSections: View {
         case .orange: MainPalette.attention
         case .secondary: .secondary
         }
-        CardStatusRow(title: presentation.title, state: presentation.text, tint: tint) {
+        CardStatusRow(title: L10n.text("provider.account"), state: presentation.text, tint: tint) {
             switch presentation.action {
             case .signIn:
                 Button(presentation.actionLabel ?? "") { model.connectDeepSeek() }.buttonStyle(.mainProminent)

@@ -20,11 +20,13 @@ internal sealed record GuideRequest(
     [property: JsonPropertyName("demo")] bool Demo,
     [property: JsonPropertyName("settings")] bool Settings,
     [property: JsonPropertyName("forceWelcome")] bool ForceWelcome,
-    [property: JsonPropertyName("forceWhatsNew")] bool ForceWhatsNew);
+    [property: JsonPropertyName("forceWhatsNew")] bool ForceWhatsNew,
+    [property: JsonPropertyName("modules")] IReadOnlyList<string>? Modules = null);
 
 /// The engine supplies Mac's release selection and monotonic version decision.
+/// <param name="modules">The modules that are on, so a note for a module that is off stays closed; null when unknown.</param>
 internal sealed class GuideSession(PreferencesSession preferences, Func<GuideRequest, Task<GuideCatalog>> query,
-    string current, string language, bool demo, bool settings)
+    string current, string language, bool demo, bool settings, Func<IReadOnlyList<string>?>? modules = null)
 {
     private GuideCatalog? confirmed;
     private string? confirmedSeen;
@@ -32,7 +34,7 @@ internal sealed class GuideSession(PreferencesSession preferences, Func<GuideReq
         => Query(preferences.Current, forceWelcome, forceWhatsNew);
     private async Task<GuideCatalog> Query(DesktopPreferences value, bool welcome = false, bool note = false)
     {
-        var result = await query(new(current, value.WhatsNewVersion, value.WelcomeGuideVersion, language, demo, settings, welcome, note));
+        var result = await query(new(current, value.WhatsNewVersion, value.WelcomeGuideVersion, language, demo, settings, welcome, note, modules?.Invoke()));
         confirmedSeen = value.WhatsNewVersion; confirmed = result; return result;
     }
     internal async Task<PreferencesApplyResult> RecordAsync(bool welcomeClosed)

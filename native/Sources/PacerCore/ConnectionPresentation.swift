@@ -178,16 +178,21 @@ public struct SSHHost: Equatable, Identifiable {
 public struct ConnectionSummary: Equatable {
     public enum State: Equatable, Sendable {
         case disabled, checking, retrying(Int), connecting(Int), paused(Int), offline(Int), idle, connected
+        /// Remote counts hosts only, and none is set up.
+        case noHosts
     }
     private enum EntryState { case retrying, connecting, paused, offline, idle, connected }
     public let state: State
     public let sources: Int
     public let sessions: Int
 
-    public init(enabledProviders: [AgentProvider], sources: [ConnectionSource], hosts: [SSHHost], overrides: [String: SSHHost.State] = [:]) {
+    /// `hostsOnly`: Remote's summary, over SSH hosts and WSL alone; each module's
+    /// own tasks on this computer show on its page.
+    public init(enabledProviders: [AgentProvider], sources: [ConnectionSource], hosts: [SSHHost], overrides: [String: SSHHost.State] = [:],
+                hostsOnly: Bool = false) {
         let enabled = Set(enabledProviders)
         var entries: [String: (state: EntryState, sessions: Int)] = [:]
-        for source in sources where enabled.contains(source.provider) {
+        for source in sources where enabled.contains(source.provider) && (!hostsOnly || Self.isHost(source.key)) {
             // Signing in to claude.ai is optional; without it nothing is wrong.
             if source.key == ClaudeCloudProjectState.sourceID, source.state == .paused { continue }
             let state: EntryState = switch source.state {
@@ -222,10 +227,10 @@ public struct ConnectionSummary: Equatable {
             if case .connected = value { sessions = entries[id]?.sessions ?? 0 } else { sessions = 0 }
             entries[id] = (value, sessions)
         }
-        let checking = entries.isEmpty
+        let checking = entries.isEmpty && !hostsOnly
         // Every enabled module has a local source. One module publishing first
         // must not imply that another module is already connected.
-        for provider in enabled {
+        for provider in enabled where !hostsOnly {
             let id = provider.rawValue + ":local"
             if entries[id] == nil { entries[id] = (.connecting, 0) }
         }
@@ -236,9 +241,12 @@ public struct ConnectionSummary: Equatable {
         let paused = entries.values.filter { $0.state == .paused }.count
         let offline = entries.values.filter { $0.state == .offline }.count
         let idle = entries.values.contains { $0.state == .idle }
-        state = enabled.isEmpty ? .disabled : checking ? .checking :
+        state = enabled.isEmpty ? .disabled : checking ? .checking : entries.isEmpty ? .noHosts :
             retrying > 0 ? .retrying(retrying) : connecting > 0 ? .connecting(connecting) :
             paused > 0 ? .paused(paused) : offline > 0 ? .offline(offline) : idle ? .idle : .connected
     }
+
+    /// A source on another machine or system: an SSH host or a WSL distribution.
+    public static func isHost(_ key: String) -> Bool { ConnectionSource.isSSHSourceID(key) || key.hasPrefix(ConnectionSource.wslPrefix) }
 }
 

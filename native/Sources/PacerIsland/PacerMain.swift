@@ -340,7 +340,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.showWelcome() }
         } else if let version = Self.version {
             // Within a line, each update's highlights once; --whats-new forces them.
-            let pending = WhatsNew.pending(current: version)
+            // A note for a module that is off stays quiet; the version updates all the same.
+            let pending = WhatsNew.pending(current: version, enabledModules: Set(model.enabledProviders))
             if CommandLine.arguments.contains("--whats-new") || (!quiet && !pending.isEmpty) {
                 let releases = pending.isEmpty ? Array(WhatsNew.releases.prefix(1)) : pending
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -464,14 +465,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let action = response.actionIdentifier
+        let action = response.actionIdentifier, identifier = response.notification.request.identifier
         Task { @MainActor [weak self] in
             guard let self else { return }
             switch action {
             case NotificationDelivery.openHarnessAction: self.model.openDeepSeekApp()
             case NotificationDelivery.snoozeSpikeAction: self.model.snoozeDeepSeekSpike()
             case NotificationDelivery.topUpAction: NSWorkspace.shared.open(IslandModel.deepseekTopUpURL)
-            default: self.panel.show()
+            // Allowing Pacer in Codex starts on Codex's page, where its monitoring row opens Codex.
+            default: if identifier == NotificationDelivery.identifier(IslandModel.codexHooksNoticeID) { self.showSettingsPane(.codex) } else { self.panel.show() }
             }
         }
         completionHandler()
@@ -566,7 +568,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.delegate = self
             whatsNewWindow = window
         }
-        var view = WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin,
+        var view = WhatsNewView(version: version, releases: releases, launchAtLogin: launchAtLogin, model: model,
             onSettingsChange: { [weak self] in self?.model.applySettings(sourceChanged: false) },
             onOpenPane: { [weak self] pane in self?.closeWhatsNew(); self?.showSettingsPane(pane) },
             onDone: { [weak self] in self?.closeWhatsNew() })

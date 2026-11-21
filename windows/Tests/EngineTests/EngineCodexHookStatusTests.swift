@@ -86,6 +86,25 @@ final class EngineCodexHookStatusTests: XCTestCase {
         await runtime.stop()
     }
 
+    /// A Codex too old for hooks says whether Codex Desktop is installed: its
+    /// update step then opens Codex itself, and the CLI alone gets Codex's page.
+    func testAnOldCodexSaysWhetherCodexDesktopCanUpdateIt() async throws {
+        for desktop in [true, false] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-old " + UUID().uuidString)
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let services = EngineCodexHookServices(apply: { _, _, _ in .init(supportsHooks: false, installed: nil, trust: nil) },
+                                                   trust: { _, _ in nil }, opensSettings: { desktop })
+            let frames = HookStatusFrames(), date = Date()
+            let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
+            _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(home)]))
+            let old = try await TestWait.until { frames.all().last?.codexHooks?.state == "needsCodexUpdate" }
+            XCTAssertTrue(old, "A Codex without hooks asks for its update")
+            XCTAssertEqual(frames.all().last?.codexHooks?.opensSettings, desktop ? true : nil, "Codex Desktop installed: \(desktop)")
+            await runtime.stop()
+        }
+    }
+
     /// Allowing the hooks in Codex changes its config; Pacer then asks Codex for
     /// their trust alone, and turns from before the approval are not a silent hook.
     func testAConfigChangeFindsTheApprovalAndEarlierTurnsDoNotCountAsSilence() async throws {

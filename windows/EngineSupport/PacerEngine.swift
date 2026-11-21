@@ -161,6 +161,8 @@ actor EngineRuntime {
     private var codexHookResult: CodexHookSetupResult?
     /// Codex Desktop is there to open its settings, where the user allows the hooks.
     private var codexHooksOpenSettings = false
+    /// Whether the last setup found the Codex CLI; nil until it looked.
+    private var codexExecutableFound: Bool?
     private var codexTrustWatch: CodexHookTrustWatch?
     /// The hooks last waited for the user; when Pacer then saw them allowed, earlier turns ran without them.
     private var codexHooksAwaitingApproval = false, codexHooksTrustedAt: Date?
@@ -458,6 +460,10 @@ actor EngineRuntime {
     /// When a running local Codex turn's evidence runs out and it needs one more
     /// read although nothing grew (`LocalActivityReader.nextRunningExpiry`).
     private var codexRunningExpiry: Date?
+    /// The Codex packages the last hook setup saw, and when a Codex too old for
+    /// hooks was last checked for an update: a new package version sets up again.
+    private var codexHookPackages: [String] = []
+    private var codexUpdateCheckedAt: Date?
     // Give a burst of writes time to land before reading lifecycle evidence.
     private static let codexFileEventCoalescing: TimeInterval = 0.1
     private lazy var logWatcher = ActivityLogWatcher { [weak self] discover in
@@ -1435,7 +1441,40 @@ actor EngineRuntime {
         }
         // The data folder and its default stay in the Settings query.
         if definition != nil { module.local = true }
+        if enabled.contains(provider) {
+            module.monitoring = EngineStatusRow(monitoring(provider, installed: installation?.isInstalled(provider) == true))
+            if provider == .codex {
+                module.account = EngineStatusRow(demo ? .signedIn(plan: "pro") : CodexAccountState(quota: codexQuota, error: codexQuotaState?.error),
+                                                 opensCodex: codexHooksOpenSettings)
+            }
+        }
         return module
+    }
+
+    /// Whether Pacer reads the module's tasks on this computer, in the words
+    /// every module page shares.
+    private func monitoring(_ provider: AgentProvider, installed: Bool) -> ModuleMonitoring {
+        let sessions = ModuleMonitoring.localSessions(activities, provider: provider, at: now())
+        if demo { return .init(.on, sessions: sessions) }
+        switch provider {
+        case .codex:
+            guard codexHookServices != nil else { return .init(.checking) }
+            return .codex(executableFound: codexExecutableFound, hooks: codexHookStatus ?? (codexExecutableFound == true ? .notInstalled : nil),
+                          sessions: sessions, opensCodex: codexHooksOpenSettings)
+        case .claude:
+            let setup: ModuleMonitoring.Setup = switch claudeHookSetup?.state {
+            case .ready?: .ready
+            case .settingUp?, .needsSetup?: .configuring
+            case .missingHome?: .missingHome
+            case .failed?: .failed
+            case .disabled?, nil: .checking
+            }
+            return .claude(setup, sessions: sessions)
+        case .deepseek:
+            return .deepseek(found: harnessActivities[.deepseek]?.status.map { $0 == .ready }, sessions: sessions)
+        default:
+            return .harness(harnessActivities[provider]?.status, detected: installed, sessions: sessions)
+        }
     }
 
     /// A data folder chosen in Settings counts as an installation once it
@@ -1543,18 +1582,23 @@ actor EngineRuntime {
         let request = UUID(); codexHookRequest = request
         codexHookResult = nil
         codexHookActivity = (nil, nil, nil); codexHookActivityRequest = nil
+        #if os(Windows)
+        codexHookPackages = Self.codexPackages(); codexUpdateCheckedAt = now()
+        #endif
         watchCodexHookTrust(false)
+        codexExecutableFound = nil
         codexHookTask = Task { [weak self] in
             if let previous { _ = await services.apply(previous, executable, false) }
+            let found = !active || services.findsExecutable(executable)
             let result = await services.apply(home, executable, active)
             let opens = active && services.opensSettings()
             guard !Task.isCancelled else { return }
-            await self?.receiveCodexHookSetup(result, opensSettings: opens, request: request)
+            await self?.receiveCodexHookSetup(result, opensSettings: opens, executableFound: found, request: request)
         }
     }
-    private func receiveCodexHookSetup(_ result: CodexHookSetupResult, opensSettings: Bool, request: UUID) {
+    private func receiveCodexHookSetup(_ result: CodexHookSetupResult, opensSettings: Bool, executableFound: Bool, request: UUID) {
         guard codexHookRequest == request else { return }
-        codexHookTask = nil; codexHookResult = result; codexHooksOpenSettings = opensSettings
+        codexHookTask = nil; codexHookResult = result; codexHooksOpenSettings = opensSettings; codexExecutableFound = executableFound
         let notices = updateCodexHookState()
         if initialized { publish(notices: notices) }
     }
@@ -2035,6 +2079,12 @@ actor EngineRuntime {
                 guard active, projectionReady, !Task.isCancelled else { return }
             }
         } else if !codexLogSizes.isEmpty { codexLogSizes = [:] }
+        // Codex too old for hooks: the Store replaces the package folder with the
+        // new version's, so a changed list is an update and setup runs again.
+        if !demo, codexHookStatus == .needsCodexUpdate, now().timeIntervalSince(codexUpdateCheckedAt ?? .distantPast) >= 60 {
+            codexUpdateCheckedAt = now()
+            if Self.codexPackages() != codexHookPackages { scheduleCodexHooks(force: true) }
+        }
         #endif
         // The metadata projection changes on every clock tick. Do not reopen
         // transcript files or rescan source directories while nothing is written.
@@ -2042,6 +2092,8 @@ actor EngineRuntime {
         if refreshTask == nil { publish(notices: []) } else { handOffToCollect(localSnapshot: false) }
     }
     #if os(Windows)
+    /// The installed Codex packages' folders, whose names carry their versions.
+    private static func codexPackages() -> [String] { WindowsCodexExecutableDiscovery.packageLocations().map(\.path) }
     /// Whether a followed rollout or the hook spool changed size since the last
     /// check. A file seen for the first time counts as changed, so nothing
     /// written between its read and this check is missed.
@@ -3058,7 +3110,10 @@ actor EngineRuntime {
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
         var hooks = codexHookServices == nil ? nil : codexHookStatus.map(EngineCodexHooks.init) ?? .settingUp
-        if case .needsApproval? = codexHookStatus, codexHooksOpenSettings { hooks?.opensSettings = true }
+        switch codexHookStatus {
+        case .needsApproval?, .needsCodexUpdate?: if codexHooksOpenSettings { hooks?.opensSettings = true }
+        default: break
+        }
         snapshot.codexHooks = hooks
         refreshCodexHookActivity()
         snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in
@@ -3302,7 +3357,9 @@ actor EngineRuntime {
             : entry?.target.claudeCloud != nil ? "cloud" : deepseek ? "wallet" : notice.kind == .lowQuota ? "quota" : "local"
         guard let source = notificationSource(provider, scope: scope) else { value.actions = []; return value }
         let target = entry.map(EngineNotificationRegistry.target)
-        let kind = target != nil ? "openTask" : deepseek && notice.kind != .lowQuota ? "openHarness" : "showIsland"
+        // Allowing Pacer in Codex starts on Codex's page in Settings, as on the Mac.
+        let kind = target != nil ? "openTask" : notice.id == "codex:hooks-approval" ? "openCodexSettings"
+            : deepseek && notice.kind != .lowQuota ? "openHarness" : "showIsland"
         value.defaultAction = .init(kind: kind, title: L10n.text(kind == "showIsland" ? "main.overview.open" : "common.open_chat"),
             reference: notificationRegistry.issue(kind: kind, provider: provider, source: source, scope: scope, target: target, now: date))
         var actions = value.actions ?? []

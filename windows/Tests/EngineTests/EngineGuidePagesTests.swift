@@ -60,6 +60,25 @@ final class EngineGuidePagesTests: XCTestCase {
             XCTAssertEqual(WhatsNew.history(upTo: "4.2.4").first?.version, "4.2.4", "Mac and Windows share one release list")
         }
     }
+    /// 4.6.1's note is the Codex setup: it opens only with the Codex module on, and
+    /// with Codex off the version updates quietly and is recorded as seen at launch.
+    func test461NoteOpensOnlyWithCodexOnAndCarriesItsSetup() throws {
+        func plan(_ modules: [String]?) throws -> EngineGuidePages.Value {
+            try XCTUnwrap(EngineGuidePages.project(.init(current: "4.6.1", seen: "4.6.0", welcomed: 4, language: "en", demo: false, settings: false,
+                forceWelcome: false, forceWhatsNew: false, modules: modules)))
+        }
+        let on = try plan(["codex", "claude"])
+        XCTAssertEqual(on.page, "whatsNew"); XCTAssertEqual(on.releases.map(\.version), ["4.6.1"])
+        XCTAssertEqual(on.releases.first?.items.map(\.control), ["codexHooksSetup"])
+        let off = try plan(["claude", "deepseek", "not-a-module"])
+        XCTAssertNil(off.page); XCTAssertTrue(off.recordLaunch); XCTAssertEqual(off.nextSeen, "4.6.1")
+        XCTAssertTrue(off.history.contains { $0.version == "4.6.1" }, "Help & Updates still lists it")
+        XCTAssertEqual(try plan(nil).page, "whatsNew", "Without the modules the note opens")
+        XCTAssertEqual(try plan([]).page, nil)
+        let wire = try JSONSerialization.data(withJSONObject: ["current": "4.6.1", "seen": "4.6.0", "welcomed": 4, "language": "en", "demo": false,
+            "settings": false, "forceWelcome": false, "forceWhatsNew": false, "modules": ["deepseek"]])
+        XCTAssertNil(EngineGuidePages.project(try JSONDecoder().decode(EngineGuidePages.Request.self, from: wire))?.page)
+    }
     func testHistoryContainsEveryReleaseAndUsesBothAuthoritativeCatalogs() throws {
         for language in AppLanguage.allCases {
             let value = try plan(language: language.rawValue)

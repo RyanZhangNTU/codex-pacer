@@ -16,7 +16,8 @@ public partial class App
         if (engine == null || settingsSession == null || ui == null) return;
         string version = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
         guides = new(settingsSession, input => engine.QueryAsync<GuideCatalog>("guidePages", new { shell = new { guide = input } }, TimeSpan.FromSeconds(3)),
-            version, ui.Language, demo, arguments.Contains("--settings"));
+            version, ui.Language, demo, arguments.Contains("--settings"),
+            () => engine.LatestSnapshot?.Modules?.Where(module => module.Enabled).Select(module => module.Provider).ToList());
         await ShowGuideAsync(arguments.Contains("--welcome"), arguments.Contains("--whats-new"));
     }
     private async Task ShowGuideAsync(bool forceWelcome, bool forceNote = false)

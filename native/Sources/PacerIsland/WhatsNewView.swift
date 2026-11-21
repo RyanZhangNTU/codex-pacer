@@ -15,6 +15,8 @@ struct WhatsNewView: View {
     /// Nil only while measuring the natural height before the window opens.
     var height: CGFloat? = nil
     @ObservedObject var launchAtLogin: LaunchAtLoginPreference
+    /// Follows Codex's setup for a release that asks the user to finish it; nil leaves those steps out.
+    var model: IslandModel? = nil
     /// Applies a preference changed here to the running island.
     var onSettingsChange: () -> Void = {}
     /// Opens the main window on the page a highlight introduces.
@@ -67,8 +69,13 @@ struct WhatsNewView: View {
                                 .foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
                         }
                         ForEach(Array(release.items.enumerated()), id: \.offset) { _, item in
-                            WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin, large: true, detailInInfo: true,
-                                            openPane: onOpenPane)
+                            // Codex's two steps stand in for the highlight: without them no Codex task shows.
+                            if item.control == .codexHooksSetup, let model {
+                                CodexSetupCard(model: model)
+                            } else {
+                                WhatsNewItemRow(item: item, launchAtLogin: launchAtLogin, large: true, detailInInfo: true,
+                                                openPane: onOpenPane)
+                            }
                         }
                     }
                 }
@@ -81,9 +88,13 @@ struct WhatsNewView: View {
 
     private var footer: some View {
         VStack(spacing: 12) {
-            Button(action: onDone) { Text(L10n.text("whats_new.done")).frame(maxWidth: .infinity) }
-                .buttonStyle(MainButtonStyle(prominent: true, height: 34))
-                .keyboardShortcut(.defaultAction)
+            if let model, releases.contains(where: { $0.items.contains { $0.control == .codexHooksSetup } }) {
+                WhatsNewSetupDone(model: model, onDone: onDone)
+            } else {
+                Button(action: onDone) { Text(L10n.text("whats_new.done")).frame(maxWidth: .infinity) }
+                    .buttonStyle(MainButtonStyle(prominent: true, height: 34))
+                    .keyboardShortcut(.defaultAction)
+            }
             Button {
                 if let url = URL(string: Self.repository + "/releases/tag/v" + version) { NSWorkspace.shared.open(url) }
             } label: {
@@ -101,6 +112,19 @@ struct WhatsNewView: View {
 
     private static var naturalHeight: some View {
         GeometryReader { Color.clear.preference(key: WhatsNewNaturalHeight.self, value: $0.size.height) }
+    }
+}
+
+/// Later while Codex's steps are open; Continue, prominent, once they are done.
+private struct WhatsNewSetupDone: View {
+    @ObservedObject var model: IslandModel
+    let onDone: () -> Void
+
+    var body: some View {
+        let done = CodexSetupSteps(status: model.codexHookStatus, opensSettings: model.canOpenCodexSettings).done
+        Button(action: onDone) { Text(L10n.text(done ? "whats_new.done" : "whats_new.codex_setup.later")).frame(maxWidth: .infinity) }
+            .buttonStyle(MainButtonStyle(prominent: done, height: 34))
+            .keyboardShortcut(.defaultAction)
     }
 }
 
@@ -171,7 +195,7 @@ struct WhatsNewItemRow: View {
             Toggle(L10n.text(item.titleKey), isOn: $showsAppButtons).labelsHidden().toggleStyle(.switch)
         case .openExpandedPanel, .openCollapsedBar, .openAppearance, .openModules:
             item.control?.settingsPane.map(pageLink)
-        case nil:
+        case .codexHooksSetup, nil:
             EmptyView()
         }
     }
@@ -202,7 +226,7 @@ extension WhatsNew.Item.Control {
         case .openCollapsedBar: .collapsedBar
         case .openAppearance: .appearance
         case .openModules: .modules
-        case .openAtLogin, .showEmbeddedSessions, .showAppButtons: nil
+        case .openAtLogin, .showEmbeddedSessions, .showAppButtons, .codexHooksSetup: nil
         }
     }
 }

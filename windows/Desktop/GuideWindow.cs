@@ -72,6 +72,14 @@ internal sealed class GuideWindow : Window
             divider.Visibility = Visibility.Collapsed; footer.Margin = new Thickness(40, 6, 40, 22);
             AddButton("whats_new.done", "guide.done", Close, true);
             var done = (Button)actions.Children[0]; done.MinHeight = 34; done.HorizontalAlignment = HorizontalAlignment.Stretch;
+            // Until the note's Codex steps are done, closing reads as putting them off.
+            // The step's own button stays the prominent one meanwhile.
+            body.CodexSetupChanged += finished =>
+            {
+                string label = ui.Text(finished ? "whats_new.done" : "whats_new.codex_setup.later");
+                done.Content = label; System.Windows.Automation.AutomationProperties.SetName(done, label);
+                if (finished) done.Style = (Style)FindResource("SettingsProminentButton"); else done.ClearValue(StyleProperty);
+            };
             DockPanel.SetDock(actions, Dock.Top); actions.HorizontalAlignment = HorizontalAlignment.Stretch; actions.Orientation = Orientation.Vertical;
             var notes = CreateButton("whats_new.release_notes", "guide.releaseNotes", body.OpenReleaseNotes);
             notes.Style = (Style)FindResource("SettingsLink"); notes.Content = ui.Text("whats_new.release_notes") + " ↗"; notes.FontSize = 12;

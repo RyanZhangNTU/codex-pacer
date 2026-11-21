@@ -536,6 +536,50 @@ final class IslandModel: ObservableObject {
         return result
     }
 
+    /// A Codex too old for hooks updates itself and starts again: its launch is
+    /// when to set the hooks up again, so the status follows without Retry.
+    func codexApplicationDidLaunch(_ bundleIdentifier: String?) {
+        guard bundleIdentifier == "com.openai.codex", codexHookStatus == .needsCodexUpdate else { return }
+        syncCodexHooks(force: true)
+    }
+
+    /// Running tasks this computer reads for `provider`, not those of other hosts, Dot or the cloud, counted as on Windows.
+    func localRunningSessions(_ provider: AgentProvider) -> Int {
+        ModuleMonitoring.localSessions(activities, provider: provider, at: now)
+    }
+
+    /// Claude's local setup in the vocabulary every module page shares.
+    var claudeMonitoring: ModuleMonitoring {
+        let setup: ModuleMonitoring.Setup = switch claudeLocalSetup {
+        case .checking: .checking
+        case .configuring: .configuring
+        case .ready: .ready
+        case .missingHome: .missingHome
+        case .failed: .failed
+        }
+        let note = claudeLocalSpeedsEstimated ? SettingsView.claudeTelemetryNote(claudeTelemetryConflict) : nil
+        return .claude(setup, sessions: localRunningSessions(.claude), note: note)
+    }
+
+    /// DeepSeek Harness, found once its sessions folder is read.
+    var deepseekMonitoring: ModuleMonitoring {
+        .deepseek(found: providerStreamStatuses(.deepseek)["local"]?.connected, sessions: localRunningSessions(.deepseek))
+    }
+
+    /// A local harness's data folder.
+    func harnessMonitoring(_ provider: AgentProvider) -> ModuleMonitoring {
+        .harness(localHarnessStatus(provider), detected: providerDetected(provider), sessions: localRunningSessions(provider))
+    }
+
+    /// The ChatGPT account Codex is signed in to, as its quota read shows it.
+    var codexAccount: CodexAccountState { CodexAccountState(quota: codexQuota, error: codexErrorMessage) }
+
+    /// Codex itself, where the user signs in; its settings open with the hooks guide elsewhere.
+    func openCodexApplication() {
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") else { return }
+        NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     /// The user has to act in Codex before local Codex tasks can show.
     var codexHooksNeedUser: Bool {
         switch codexHookStatus {
@@ -544,7 +588,7 @@ final class IslandModel: ObservableObject {
         }
     }
     private func postCodexHooksNotice() {
-        present([IslandNotice(id: "codex:hooks-approval", kind: .waitingForInput,
+        present([IslandNotice(id: Self.codexHooksNoticeID, kind: .waitingForInput,
                               title: L10n.text("codex.hooks.notice_title"), detail: L10n.text("codex.hooks.notice_body"))])
     }
     /// Dot tasks come from the catalog poll while the Dot switch and the Codex module are on.
@@ -570,6 +614,8 @@ final class IslandModel: ObservableObject {
         durableActivities = []; remoteActivities = sshActivities
     }
 
+    /// The notice asking to allow Pacer's hooks in Codex; clicking it opens Codex's page.
+    static let codexHooksNoticeID = "codex:hooks-approval"
     /// Shared with Windows: the one notice asking to allow Pacer's hooks in Codex was sent.
     static let codexHooksApprovalNotifiedKey = "codexHooksApprovalNotified"
 
@@ -1911,6 +1957,10 @@ final class IslandModel: ObservableObject {
             Task { @MainActor in
                 self?.resumeAfterSleep()
             }
+        })
+        observations.append(center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            let bundle = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
+            Task { @MainActor in self?.codexApplicationDidLaunch(bundle) }
         })
         // A pinned panel behind a dark display, the lock screen or another user's session is not seen.
         for (name, blocker, blocked) in [(NSWorkspace.screensDidSleepNotification, VisibilityBlocker.displaySleep, true),
