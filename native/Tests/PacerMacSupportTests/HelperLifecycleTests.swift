@@ -28,9 +28,6 @@ final class HelperLifecycleTests: XCTestCase {
     func testRemoteHelperExitsInsteadOfSpinningWhenOutputReaderDisappears() throws {
         try brokenOutput(RealtimeProbe.script)
     }
-    func testDesktopHelperExitsInsteadOfSpinningWhenOutputReaderDisappears() throws {
-        try brokenOutput(DesktopEventProbe.script)
-    }
     func testSshOwnerInputEofStopsHelperWithoutWaitingForHeartbeat() throws {
         let home = URL(fileURLWithPath: "/private/tmp/pacer-owner-" + String(UUID().uuidString.prefix(8)))
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

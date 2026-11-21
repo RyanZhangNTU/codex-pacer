@@ -1,31 +1,18 @@
 import PacerCore
 import SwiftUI
 
-/// Remote: SSH hosts with each module's state, Codex Remote Control, and any
-/// other task source, with the overall state in the page's subtitle. The
+/// Remote: SSH hosts with each module's state, Codex Dot and any other task
+/// source, with the overall state in the page's subtitle. The
 /// island shows no connection banners, so problems are read here.
 struct SettingsConnectionsPane: View {
     @ObservedObject var model: IslandModel
     @Binding var monitorSSH: Bool
-    @Binding var monitorRemoteControl: Bool
     @Binding var monitorDurable: Bool
     let codexEnabled: Bool
     let claudeEnabled: Bool
 
     private var sources: [ConnectionSource] { Self.sources(model) }
     private var hosts: [SSHHost] { Self.hosts(model) }
-    private var deviceListDetail: String? {
-        guard let directory = model.remoteControlDirectory else { return nil }
-        if directory.refreshing { return L10n.text("settings.remote_control_refreshing") }
-        let last = directory.refreshedAt.map {
-            L10n.text("settings.remote_control_last_refresh") + " · " + Date(timeIntervalSince1970: $0).formatted(date: .abbreviated, time: .shortened)
-        }
-        if directory.failed {
-            return [L10n.text("settings.remote_control_refresh_failed"), last].compactMap { $0 }.joined(separator: " ")
-        }
-        return last
-    }
-
     /// Retrying sources and hosts with a problem, for the sidebar dot and Overview.
     static func problemCount(_ model: IslandModel) -> Int {
         let hosts = hosts(model)
@@ -35,7 +22,7 @@ struct SettingsConnectionsPane: View {
         } else {
             retrying = 0
         }
-        return max(retrying, hosts.filter { $0.modules.contains { $0.state.isProblem } }.count)
+        return max(retrying, hosts.filter { $0.modules.contains { $0.state.isProblem } }.count) + (model.codexHooksNeedUser ? 1 : 0)
     }
 
     static func sources(_ model: IslandModel) -> [ConnectionSource] {
@@ -83,29 +70,19 @@ struct SettingsConnectionsPane: View {
 
     var body: some View {
         let sources = sources, hosts = hosts
+        if codexEnabled {
+            MainCard(title: "Codex") { codexHooksRow }
+        }
         MainCard(title: L10n.text("connections.section.ssh")) {
             CardToggle(title: L10n.text("settings.monitor_ssh"), isOn: $monitorSSH)
                 .disabled(!codexEnabled && !claudeEnabled)
             ForEach(hosts) { host in hostRow(host) }
         }
-        MainCard(title: "Codex Remote Control") {
-            CardToggle(title: L10n.text("settings.monitor_remote_control"), info: L10n.text("settings.remote_control_help"),
-                       isOn: $monitorRemoteControl)
-                .disabled(!codexEnabled)
-            if monitorRemoteControl {
-                CardRow(title: L10n.text("settings.remote_control_devices"), detail: deviceListDetail) {
-                    Button(L10n.text("settings.remote_control_refresh")) { model.refreshRemoteControlDevices() }
-                        .buttonStyle(.main)
-                        .disabled(!codexEnabled || model.remoteControlDirectory?.refreshing == true)
-                }
-            }
-            ForEach(sources.filter { $0.key.hasPrefix(ConnectionSource.controlPrefix) }) { source in sourceRow(source) }
-        }
         MainCard(title: "Codex Dot") {
             CardToggle(title: L10n.text("settings.monitor_durable"), info: L10n.text("settings.durable_help"), isOn: $monitorDurable)
                 .disabled(!codexEnabled)
         }
-        let others = sources.filter { !ConnectionSource.isSSHSourceID($0.key) && !$0.key.hasPrefix(ConnectionSource.controlPrefix) }
+        let others = sources.filter { !ConnectionSource.isSSHSourceID($0.key) }
         let canRetry = sources.contains(where: { $0.state == .retrying }) || hosts.contains(where: \.claudeSetupFailed)
         if !others.isEmpty || canRetry {
             MainCard(title: L10n.text("connections.section.tasks")) {
@@ -115,6 +92,25 @@ struct SettingsConnectionsPane: View {
                         Button(L10n.text("connections.retry")) { retryAll() }.buttonStyle(.main)
                     }
                 }
+            }
+        }
+    }
+
+    /// Local Codex reaches Pacer only through its hooks, which the user allows in Codex once.
+    private var codexHooksRow: some View {
+        let detail: String, tint: Color, retry: Bool
+        switch model.codexHookStatus {
+        case .off, .notInstalled: (detail, tint, retry) = (L10n.text("codex.hooks.setting_up"), .secondary, false)
+        case .needsApproval: (detail, tint, retry) = (L10n.text("codex.hooks.needs_approval"), .orange, true)
+        case .running: (detail, tint, retry) = (L10n.text("codex.hooks.running"), .green, false)
+        case .notRunning: (detail, tint, retry) = (L10n.text("codex.hooks.not_running"), .orange, true)
+        case .needsCodexUpdate: (detail, tint, retry) = (L10n.text("codex.hooks.needs_update"), .orange, false)
+        case .installFailed: (detail, tint, retry) = (L10n.text("codex.hooks.failed"), .orange, true)
+        }
+        return CardRow(title: L10n.text("codex.hooks.title"), detail: detail, info: L10n.text("codex.hooks.info")) {
+            HStack(spacing: 8) {
+                Circle().fill(tint).frame(width: 7, height: 7)
+                if retry { Button(L10n.text("connections.retry")) { model.syncCodexHooks() }.buttonStyle(.main) }
             }
         }
     }

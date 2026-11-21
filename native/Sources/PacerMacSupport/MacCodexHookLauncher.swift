@@ -37,3 +37,21 @@ public struct MacCodexHookLauncher: CodexHookLauncher {
         if (try? storage.read(path)) != bytes { try storage.replace(path, with: bytes, permissions: permissions) }
     }
 }
+
+/// Pacer's Codex hooks on this Mac.
+public enum MacCodexHookSetup {
+    /// Installs or removes the hooks with the CLI that Codex Desktop bundles, so the
+    /// plugin is registered by the same engine that runs Desktop's turns; a separately
+    /// installed CLI is the fallback.
+    public static func apply(home: URL, customExecutable: String, enabled: Bool) async -> CodexHookSetupResult {
+        let application = MacDurableExecutor.findRunning()?.application ?? CodexApplicationResolver.find()
+        guard let cli = application.flatMap(MacDurableExecutor.verifiedCLI(in:)) ?? CodexClient.findExecutable(customPath: customExecutable) else {
+            return .init(supportsHooks: nil, installed: nil, trust: nil)
+        }
+        let client = CodexClient(executable: cli, home: home, timeout: 8)
+        let result = await CodexHookSetup.apply(home: home, enabled: enabled, launcher: MacCodexHookLauncher(),
+                                                storage: MacClaudeHookStorage(), client: client)
+        await client.shutdown()
+        return result
+    }
+}

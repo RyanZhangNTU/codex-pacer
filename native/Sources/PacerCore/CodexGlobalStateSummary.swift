@@ -1,11 +1,10 @@
 import Foundation
 
 /// Codex rewrites its global state (often over a megabyte) several times a
-/// minute. SSH and Remote Control discovery share one field scan per change.
+/// minute. SSH discovery scans its fields once per change.
 enum CodexGlobalStateSummary {
     struct Value: Sendable {
         let sshTargets: [RemoteActivityTarget]?
-        let remoteControlTargets: [RemoteControlActivityTarget]
     }
     private static let cache = FileSignatureCache<Value>()
 
@@ -16,11 +15,9 @@ enum CodexGlobalStateSummary {
     private static func parse(_ file: URL) -> Value {
         guard let data = try? Data(contentsOf: file), data.count < 8 * 1024 * 1024,
               let fields = try? JSONFieldView.document(data).fields(
-                RemoteActivityTarget.globalStateFields.union(RemoteControlActivityTarget.globalStateFields),
-                allowedPrefixes: RemoteActivityTarget.scopedFieldPrefixes) else {
-            return Value(sshTargets: nil, remoteControlTargets: [])
+                RemoteActivityTarget.globalStateFields, allowedPrefixes: RemoteActivityTarget.scopedFieldPrefixes) else {
+            return Value(sshTargets: nil)
         }
-        return Value(sshTargets: RemoteActivityTarget.configuration(fields),
-                     remoteControlTargets: RemoteControlActivityTarget.configured(fields))
+        return Value(sshTargets: RemoteActivityTarget.configuration(fields))
     }
 }

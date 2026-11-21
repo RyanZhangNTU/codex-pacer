@@ -13,7 +13,7 @@ public enum CompactWarningPresentation {
     }
     public struct Item: Codable, Equatable, Sendable {
         public enum Kind: String, Codable, CaseIterable, Sendable {
-            case fiveHour, ssh, quotaDelay, exhausted, lowBalance, spike, overBudget, nearingBudget, lowCredits, resetExpiry
+            case fiveHour, ssh, quotaDelay, exhausted, lowBalance, spike, overBudget, nearingBudget, lowCredits, resetExpiry, codexHooks
 
             init(_ wallet: DeepSeekAlertPresentation.Kind) {
                 switch wallet {
@@ -38,14 +38,14 @@ public enum CompactWarningPresentation {
         for item in items {
             switch item.kind {
             case .fiveHour: fiveHour.append(item.help)
-            case .ssh, .quotaDelay, .exhausted, .lowBalance, .spike, .overBudget, .nearingBudget, .lowCredits, .resetExpiry: other.append(item.help)
+            case .ssh, .codexHooks, .quotaDelay, .exhausted, .lowBalance, .spike, .overBudget, .nearingBudget, .lowCredits, .resetExpiry: other.append(item.help)
             }
         }
         return ([fiveHour.joined(separator: " · ")] + other).filter { !$0.isEmpty }.joined(separator: "\n")
     }
     public static func items(enabled: Set<AgentProvider>, warnings: Set<CompactIslandLayout.Warning>,
                              snapshots: [AgentProvider: QuotaSnapshot], failed: Set<AgentProvider> = [],
-                             selections: [AgentProvider: QuotaWindowSelection] = [:], sshIssue: Bool = false,
+                             selections: [AgentProvider: QuotaWindowSelection] = [:], sshIssue: Bool = false, codexHooksNeedUser: Bool = false,
                              wallet: DeepSeekAlertPresentation? = nil,
                              credits: [AgentProvider: HarnessAccountCredits] = [:],
                              creditSettings: [AgentProvider: HarnessCreditsSettings] = [:],
@@ -70,6 +70,12 @@ public enum CompactWarningPresentation {
         }
         if warnings.contains(.ssh), sshIssue {
             result.append(.init(kind: .ssh, provider: nil, solid: false, label: L10n.text("warning.label.ssh"), symbol: nil, help: L10n.text("source.ssh_retrying")))
+        }
+        // Until the user allows Pacer's hooks in Codex, no local Codex task can show. Like an
+        // empty wallet, this shows whatever the warning choices, and only until it is resolved.
+        if codexHooksNeedUser, enabled.contains(.codex) {
+            result.append(.init(kind: .codexHooks, provider: AgentProvider.codex.rawValue, solid: false, label: L10n.text("warning.label.codexHooks"),
+                                symbol: nil, help: L10n.text("codex.hooks.needs_approval")))
         }
         if warnings.contains(.quotaDelay) {
             let delayed = ordered.filter { provider in

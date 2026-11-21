@@ -105,6 +105,7 @@ final class CodexSessionOriginTests: XCTestCase {
         let official = folder.appendingPathComponent("rollout-" + session + ".jsonl")
         try log(session, origin: "codex-tui", now: now).write(to: official)
         let reader = LocalActivityReader()
+        try CodexHookFixture.announceAll(home: root, at: now)
         let result = await reader.read(home: root, now: now)
         XCTAssertEqual(result.activities.compactMap(\.threadID), [session])
         XCTAssertTrue(ignored.allSatisfy { !result.watchURLs.contains($0) })
@@ -115,56 +116,10 @@ final class CodexSessionOriginTests: XCTestCase {
         let handle = try FileHandle(forWritingTo: revived); try handle.seekToEnd()
         try handle.write(contentsOf: metadata(parentID, origin: "codex-tui", at: ISO8601DateFormatter().string(from: now)))
         try handle.write(contentsOf: Data([10])); try handle.close()
+        try CodexHookFixture.announceAll(home: root, at: now)
         let next = await reader.read(home: root, now: now)
         XCTAssertFalse(next.excludedIDs.contains("local:" + parentID))
         XCTAssertTrue(next.activities.contains { $0.threadID == parentID && !$0.launchedByEmbeddingApp })
-    }
-
-    func testTranslationCannotResumeThroughRuntimeOrFollowThroughDesktop() throws {
-        let root = try directory(), file = root.appendingPathComponent("sessions/rollout-" + session + ".jsonl")
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try metadata(session, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate").write(to: file)
-        final class Sent { var values: [[String: Any]] = [] }
-        let sent = Sent(), remote = "remote-control:synthetic"
-        var desktop = try NativeDesktopSession(hosts: ["local", remote]) { sent.values.append($0) }
-        desktop.localOrigin = { _ in CodexRolloutMetadata.read(file) }
-        try desktop.receive(JSONSerialization.data(withJSONObject: ["type": "response", "method": "initialize", "resultType": "success",
-            "result": ["clientId": "019a0000-0000-7000-8000-0000000000b1"]]))
-        try desktop.discover([.init(host: "local", thread: session), .init(host: remote, thread: session)])
-        let follows = sent.values.filter { $0["method"] as? String == "thread-stream-following-changed" }.compactMap { $0["params"] as? [String: Any] }
-        XCTAssertFalse(follows.contains { $0["hostId"] as? String == "local" && $0["following"] as? Bool == true })
-        XCTAssertTrue(follows.contains { $0["hostId"] as? String == remote && $0["following"] as? Bool == true })
-    }
-
-    func testNativeDesktopCarriesVerifiedLaunchDatesAcrossRefollows() throws {
-        let file = try directory().appendingPathComponent("rollout-" + session + ".jsonl")
-        var launch: Date?
-        var desktop = try NativeDesktopSession(hosts: ["local"]) { _ in }
-        desktop.localOrigin = { _ in
-            .init(origin: .init(embedded: true, ignored: false), url: file, observedAt: launch, parentThreadID: nil)
-        }
-        try desktop.receive(JSONSerialization.data(withJSONObject: ["type": "response", "method": "initialize", "resultType": "success",
-            "result": ["clientId": "019a0000-0000-7000-8000-0000000000b1"]]))
-        try desktop.discover([.init(host: "local", thread: session)])
-
-        var runtime = RuntimeEventState(sourceID: nil, sourceName: nil)
-        runtime.consume(["kind": "status", "connected": true])
-        func publishMetadata() throws {
-            try desktop.publishEvents()
-            for data in desktop.takeFrames() {
-                runtime.consume(try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any]))
-            }
-        }
-        try publishMetadata()
-        runtime.consume(["kind": "runtime", "event": ["method": "turn/started", "threadId": session, "turnId": "synthetic", "at": 201.0]])
-        XCTAssertNil(try XCTUnwrap(runtime.activities.first).hostLaunchAt)
-
-        for seconds in [200.0, 202.0] {
-            launch = Date(timeIntervalSince1970: seconds)
-            try desktop.service(at: XCTUnwrap(desktop.nextServiceDate))
-            try publishMetadata()
-            XCTAssertEqual(try XCTUnwrap(runtime.activities.first).hostLaunchAt, launch)
-        }
     }
 
     func testMetadataHeadAndTailKeepTheLatestLaunchAcrossChunkBoundaries() throws {
@@ -181,31 +136,6 @@ final class CodexSessionOriginTests: XCTestCase {
             // The reader passes the header chunk it already read; the result must not change.
             XCTAssertFalse(try XCTUnwrap(CodexRolloutMetadata.read(file, head: data.prefix(32768))).origin.embedded)
         }
-    }
-
-    func testNativePreflightInheritsAnUnsubscribedParentsExclusion() throws {
-        let root = try directory(), format = DateFormatter(); format.dateFormat = "yyyy/MM/dd"
-        let folder = root.appendingPathComponent("sessions/" + format.string(from: Date()))
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try metadata(session, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate")
-            .write(to: folder.appendingPathComponent("rollout-" + session + ".jsonl"))
-        try metadata(child, origin: nil, parent: session).write(to: folder.appendingPathComponent("rollout-" + child + ".jsonl"))
-        let grandchild = "019a0000-0000-7000-8000-0000000000a3"
-        try metadata(grandchild, origin: "codex-tui", parent: child).write(to: folder.appendingPathComponent("rollout-" + grandchild + ".jsonl"))
-        let lookup = CodexOriginLookup(home: root)
-        XCTAssertTrue(try XCTUnwrap(lookup.lookup(child)).origin.ignored)
-        XCTAssertTrue(try XCTUnwrap(lookup.lookup(grandchild)).origin.ignored)
-        // Restore the excluded root before testing native IPC follow preflight.
-        try metadata(session, origin: "@agentclientprotocol/codex-acp", cwd: "/fixture/zotero-chat/translate")
-            .write(to: folder.appendingPathComponent("rollout-" + session + ".jsonl"))
-        final class Sent { var values: [[String: Any]] = [] }
-        let sent = Sent()
-        var desktop = try NativeDesktopSession(hosts: ["local"]) { sent.values.append($0) }
-        desktop.localOrigin = { lookup.lookup($0) }
-        try desktop.receive(JSONSerialization.data(withJSONObject: ["type": "response", "method": "initialize", "resultType": "success",
-            "result": ["clientId": "019a0000-0000-7000-8000-0000000000b1"]]))
-        try desktop.discover([.init(host: "local", thread: child), .init(host: "local", thread: grandchild)])
-        XCTAssertFalse(sent.values.contains { $0["method"] as? String == "thread-stream-following-changed" })
     }
 
     private func directory() throws -> URL {

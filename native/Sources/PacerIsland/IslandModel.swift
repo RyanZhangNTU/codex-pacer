@@ -40,7 +40,6 @@ final class IslandModel: ObservableObject {
     var taskGroupingComputations: Int { activityState.taskGroupingComputations }
     @Published private(set) var latestFirstOutputLatency: TimeInterval?
     @Published var streamStatuses: [String: RuntimeStreamStatus] = [:]
-    @Published private(set) var remoteControlDirectory: RemoteControlDirectoryStatus?
     @Published var unavailableSSH: [String] = []
     @Published var navigationError: String?
     var navigationErrorDuration: TimeInterval = TaskRowInteraction.navigationErrorDuration
@@ -81,7 +80,7 @@ final class IslandModel: ObservableObject {
                 reset: { [weak self] in self?.resetCodexSource() },
                 discoverRoutes: { [weak self] in self?.refreshRemote() },
                 updatePolicy: { policy, flush in await realtime.updateRefreshPolicy(policy, flushPending: flush) },
-                stop: { deadline, reason, _ in await realtime.shutdown(deadline: deadline, retainingRemoteControlCatalog: reason == .sleep) }),
+                stop: { deadline, _, _ in await realtime.shutdown(deadline: deadline) }),
             .claude: .init(start: { [weak self] in self?.startClaudeActivity() },
                 reset: { [weak self] in self?.resetClaudeSource() },
                 discoverRoutes: { [weak self] in self?.discoverClaudeRemoteTargets() },
@@ -469,6 +468,74 @@ final class IslandModel: ObservableObject {
     @Published private(set) var codexProgressSetup: CodexProgressSetupStatus?
     private var codexProgressQueue = ProgressSetupQueue<CodexProgressSetup.Target>()
     private var codexProgressFlagTask: Task<Int, Never>?
+    /// Whether Pacer's Codex hooks are installed, allowed in Codex and writing events.
+    @Published private(set) var codexHookStatus: CodexHookStatus = .off
+    private var codexHookResult: CodexHookSetupResult?
+    private var codexHookTask: Task<Void, Never>?
+    private var codexHookRecheck: Task<Void, Never>?
+    private var codexHookRechecks = 0
+    private var codexHookStatusCheckedAt = Date.distantPast
+    /// While the user still has to allow the hooks in Codex, setup checks again this often, up to an hour.
+    static let codexHookRecheckInterval: TimeInterval = 60
+
+    /// Installs Pacer's Codex hooks while the Codex module is on and removes them
+    /// when it is off. Setup is idempotent: an unchanged plugin is not reinstalled.
+    func syncCodexHooks(resetRechecks: Bool = true) {
+        guard !demo, installationOverride == nil else { return }
+        let enabled = isModuleEnabled(.codex) && !stopped, home = self.home
+        let executable = defaults.string(forKey: "codexExecutable") ?? ""
+        if resetRechecks { codexHookRechecks = 0 }
+        codexHookTask?.cancel(); codexHookRecheck?.cancel(); codexHookRecheck = nil
+        codexHookTask = Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                await MacCodexHookSetup.apply(home: home, customExecutable: executable, enabled: enabled)
+            }.value
+            guard let self, !Task.isCancelled, self.home == home else { return }
+            self.codexHookResult = result
+            await self.updateCodexHookStatus(force: true)
+        }
+    }
+
+    /// The user has to act in Codex before local Codex tasks can show.
+    var codexHooksNeedUser: Bool {
+        switch codexHookStatus {
+        case .needsApproval, .notRunning: return true
+        default: return false
+        }
+    }
+    private func postCodexHooksNotice() {
+        present([IslandNotice(id: "codex:hooks-approval", kind: .waitingForInput,
+                              title: L10n.text("codex.hooks.notice_title"), detail: L10n.text("codex.hooks.notice_body"))])
+    }
+    /// Shared with Windows: the one notice asking to allow Pacer's hooks in Codex was sent.
+    static let codexHooksApprovalNotifiedKey = "codexHooksApprovalNotified"
+
+    /// Recomputes the status; the rollout folders are listed at most once a minute.
+    func updateCodexHookStatus(force: Bool = false) async {
+        let now = Date()
+        guard force || now.timeIntervalSince(codexHookStatusCheckedAt) >= Self.codexHookRecheckInterval else { return }
+        codexHookStatusCheckedAt = now
+        let home = self.home, lastHook = await reader.lastHookRow
+        let lastTurn = await Task.detached(priority: .utility) { CodexHookSpool.latestRollout(home: home, now: now) }.value
+        let result = codexHookResult
+        let status = CodexHookStatus.evaluate(enabled: isModuleEnabled(.codex) && !demo, supportsHooks: result?.supportsHooks,
+            installed: result == nil ? false : result?.installed, trust: result?.trust,
+            lastHookEvent: lastHook, lastCodexTurn: lastTurn, now: now)
+        if codexHookStatus != status { codexHookStatus = status }
+        if case .needsApproval = status, !defaults.bool(forKey: Self.codexHooksApprovalNotifiedKey) {
+            defaults.set(true, forKey: Self.codexHooksApprovalNotifiedKey)
+            postCodexHooksNotice()
+        }
+        if case .needsApproval = status, codexHookRecheck == nil, codexHookRechecks < 60 {
+            codexHookRechecks += 1
+            codexHookRecheck = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(Self.codexHookRecheckInterval * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                self?.codexHookRecheck = nil
+                self?.syncCodexHooks(resetRechecks: false)
+            }
+        }
+    }
     private let codexProgressGate = CodexProgressSwitchGate()
     var showsCodexProgressRing: Bool { Self.progressRingEnabled(Self.codexProgressRingKey, in: defaults) }
     func syncCodexProgressSwitch(force: Bool = false) {
@@ -1145,7 +1212,7 @@ final class IslandModel: ObservableObject {
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id)))
     }
     func canOpen(_ activity: SessionActivity) -> Bool {
-        guard !activity.isIgnoredCodexSession, completionInbox.isSourceVisible(activity.sourceHostID) else { return false }
+        guard !activity.isIgnoredCodexSession else { return false }
         if localHarnesses.definition(for: activity.provider) != nil {
             return providerDetected(activity.provider) && localHarnessActivities[activity.provider]?.conversationURLs[activity.id] != nil
         }
@@ -1233,11 +1300,9 @@ final class IslandModel: ObservableObject {
     private var claudeQuotaOwnerID = UUID()
     private var claudeQuotaReceiptID: UUID?
     private var claudeQuotaStarting = false
-    private let reader = LocalActivityReader()
+    let reader = LocalActivityReader()
     private let realtimeMonitor = RealtimeActivityMonitor()
     private var remoteTask: Task<Void, Never>? { ownedWork.task(.init(.remote, provider: .codex)) }
-    private var remoteControlHostIDs: Set<String>?
-    private var remoteControlAccountScope: String?
     private var appliedCodexSSH: Bool?
     private var durableAccountScope: String?
     private var lastRemoteDiscovery = Date.distantPast
@@ -1604,7 +1669,6 @@ final class IslandModel: ObservableObject {
     var rate: Double? { overview.displayedRate }
     var rateIsFresh: Bool { overview.rateIsFresh }
     var monitorsSSH: Bool { defaults.object(forKey: "monitorSSH") == nil || defaults.bool(forKey: "monitorSSH") }
-    var monitorsRemoteControl: Bool { defaults.bool(forKey: "monitorRemoteControl") }
     /// Dot tasks are opt-in; see `migrateDurableSwitch`.
     nonisolated static let monitorsDurableKey = "monitorDurable"
     var monitorsDurable: Bool { defaults.bool(forKey: Self.monitorsDurableKey) }
@@ -1685,6 +1749,7 @@ final class IslandModel: ObservableObject {
         let plan = lifecycle.start()
         guard !plan.actions.isEmpty else { return }
         syncCodexProgressSwitch()
+        syncCodexHooks()
         syncDeepSeekProgressSwitch()
         syncLocalHarnessProgress()
         configureHarnessAccounts()
@@ -1779,11 +1844,10 @@ final class IslandModel: ObservableObject {
     func close() { if pinned { pinned = false }; setExpanded(false) }
     private func navigationScope(for activity: SessionActivity) -> String? {
         if let value = localHarnessActivities[activity.provider] { return value.scope }
-        if activity.sourceHostID?.hasPrefix(ConnectionSource.controlPrefix) == true { return remoteControlAccountScope }
         return activity.claudeCloud == nil ? nil : claudeCloudNavigationScope
     }
     private func acceptsNavigation(_ activity: SessionActivity) -> Bool {
-        !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo) && completionInbox.isSourceVisible(activity.sourceHostID)
+        !stopped && !sleeping && (isModuleEnabled(activity.provider) || demo)
     }
     func open(_ activity: SessionActivity) {
         guard canOpen(activity), let target = conversationTarget(for: activity), let open = onOpenActivity,
@@ -2238,10 +2302,6 @@ final class IslandModel: ObservableObject {
             if self.isModuleEnabled(.claude) { await self.claudeMonitor.reconnectUnreachableSSH() }
         }
     }
-    func refreshRemoteControlDevices() {
-        guard monitorsRemoteControl, isModuleEnabled(.codex), !sleeping, !stopped, !demo else { return }
-        Task { await realtimeMonitor.refreshRemoteControlCatalog() }
-    }
     func refreshActivity(metricsOnly: Bool = false) {
         guard isModuleEnabled(.codex), !sleeping, !stopped, !demo else { return }
         if !metricsOnly { localActivityNeedsDiscovery = true }
@@ -2291,19 +2351,15 @@ final class IslandModel: ObservableObject {
         launchOwnedWork(.init(.remote, provider: .codex)) { [weak self] workTicket in
             guard let self else { return }
             defer { if generation == self.sourceGeneration { self.ownedWork.finish(workTicket) } }
-            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH, includeRemoteControl: self.monitorsRemoteControl,
-                includeDurable: self.monitorsDurable, refreshPolicy: self.activityRefreshPolicy) { [weak self] snapshot in
+            await self.realtimeMonitor.startAsync(home: sourceHome, includeSSH: self.monitorsSSH,
+                refreshPolicy: self.activityRefreshPolicy) { [weak self] snapshot in
                 // The monitor publishes serially. Keep that order on the UI
                 // queue so a later empty snapshot cannot overtake an ending.
                 DispatchQueue.main.async {
                     guard let self, generation == self.sourceGeneration, !self.stopped, !self.sleeping else { return }
-                    if self.remoteControlDirectory != snapshot.remoteControlDirectory {
-                        self.remoteControlDirectory = snapshot.remoteControlDirectory
-                    }
                     self.receiveRemoteUpdate(snapshot.activities, statuses: snapshot.statuses,
                         unavailable: snapshot.unavailableSources.filter(ConnectionSource.isSSHSourceID),
-                        requests: snapshot.attention, names: snapshot.names, performance: snapshot.performance,
-                        remoteControlBindings: snapshot.bindings, durableAccountScope: snapshot.durableAccountScope)
+                        requests: [], names: snapshot.names, performance: snapshot.performance)
                 }
             }
             // A hover/collapse can occur while start is awaiting the monitor.
@@ -2312,22 +2368,7 @@ final class IslandModel: ObservableObject {
     }
 
     func receiveRemoteUpdate(_ activities: [SessionActivity], statuses: [String: RuntimeStreamStatus],
-                             unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = [],
-                             remoteControlBindings: RemoteControlSourceBindings? = nil, durableAccountScope: String? = nil) {
-        if self.durableAccountScope != durableAccountScope {
-            self.durableAccountScope = durableAccountScope
-            bindCompletionSources(.codex)
-        }
-        if let bindings = remoteControlBindings {
-            completionInbox.remoteControlRevalidating = bindings.isRevalidating
-            let previous = remoteControlHostIDs ?? Set(RemoteControlActivityTarget.configured(home: home).map(\.id))
-            let hosts = bindings.authoritative ? bindings.hostIDs : previous.union(bindings.hostIDs)
-            if remoteControlHostIDs != hosts || remoteControlAccountScope != bindings.accountScope {
-                remoteControlHostIDs = hosts
-                remoteControlAccountScope = bindings.accountScope
-                bindCompletionSources(.codex)
-            }
-        }
+                             unavailable: [String], requests: [PendingAttentionRequest], names: [SessionNameUpdate], performance: [SessionPerformanceUpdate] = []) {
         let oldLocal = Set(remoteActivities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let newLocal = Set(activities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let agentStatesChanged = localSubagentStates(remoteActivities) != localSubagentStates(activities)
@@ -2376,7 +2417,7 @@ final class IslandModel: ObservableObject {
     }
 
     private var currentCodexSourceSignature: String {
-        home.path + "|" + (defaults.string(forKey: "codexExecutable") ?? "") + "|" + String(monitorsRemoteControl) + "|" + String(monitorsDurable)
+        home.path + "|" + (defaults.string(forKey: "codexExecutable") ?? "") + "|" + String(monitorsDurable)
     }
     private var currentClaudeSourceSignature: String {
         claudeHome.path + "|" + String(monitorsSSH) + (monitorsSSH
@@ -2490,6 +2531,7 @@ final class IslandModel: ObservableObject {
         syncTone()
         enabledProviders = configuredProviders
         syncCodexProgressSwitch()
+        syncCodexHooks()
         syncDeepSeekProgressSwitch()
         syncLocalHarnessProgress()
         if !quotaProviders.contains(selectedProvider) { selectedProvider = quotaProviders.first ?? .codex }
@@ -2532,10 +2574,6 @@ final class IslandModel: ObservableObject {
         codexQuota = nil; codexHistory = QuotaCycleHistory(); codexHistoryWarning = nil; codexErrorMessage = nil
         quotaCLI = nil; attention = AttentionPolicy()
         completionInbox.remove(provider: .codex)
-        completionInbox.remoteControlRevalidating = false
-        remoteControlHostIDs = nil
-        remoteControlAccountScope = nil
-        remoteControlDirectory = nil
         durableAccountScope = nil
         bindCompletionSources(.codex)
         codexAttentionRequests = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
@@ -2607,12 +2645,8 @@ final class IslandModel: ObservableObject {
         let targets = provider == .codex ? (monitorsSSH ? RemoteActivityTarget.configured(home: home) : []) : claudeRemoteTargets
         var remoteHomes = Dictionary(targets.map { ($0.id, $0.home) }, uniquingKeysWith: { _, latest in latest })
         if provider == .claude { remoteHomes[ClaudeCloudProjectState.sourceID] = "cloud" }
-        let controls = provider == .codex && isModuleEnabled(.codex) && monitorsRemoteControl
-            ? remoteControlHostIDs ?? Set(RemoteControlActivityTarget.configured(home: home).map(\.id)) : []
         completionInbox.bindSourceHomes(provider: provider, localHome: provider == .codex ? home : claudeHome,
-            remoteHomes: remoteHomes, remoteControlHostIDs: controls,
-            remoteControlAccountScope: provider == .codex ? remoteControlAccountScope : nil,
-            durableAccountScope: provider == .codex ? durableAccountScope : nil)
+            remoteHomes: remoteHomes, durableAccountScope: provider == .codex ? durableAccountScope : nil)
     }
 
     func shutdown() async {

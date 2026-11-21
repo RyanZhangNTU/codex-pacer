@@ -16,7 +16,7 @@ public struct ConnectionSource: Equatable, Identifiable {
     public let sessions: Int
     public var id: String { provider.rawValue + ":" + key }
 
-    public static let sshPrefix = "remote-ssh-discovered:", controlPrefix = "remote-control:"
+    public static let sshPrefix = "remote-ssh-discovered:"
     public static let managedSSHPrefix = "remote-ssh-codex-managed:"
     public static let wslPrefix = "wsl:"
 
@@ -64,8 +64,7 @@ public struct ConnectionSource: Equatable, Identifiable {
         for (provider, byKey) in statuses {
             for (key, status) in byKey {
                 let state: State = status.connected ? .connected :
-                    (key.hasPrefix(controlPrefix) || key.hasPrefix(wslPrefix)) && status.remoteHostOnline == false ? .offline :
-                    key.hasPrefix(controlPrefix) && status.waitingForSession ? .idle :
+                    key.hasPrefix(wslPrefix) && status.remoteHostOnline == false ? .offline :
                     status.sourceAvailable == false ? .paused : .retrying
                 let name: String, kind: String
                 if key == "local" {
@@ -75,9 +74,6 @@ public struct ConnectionSource: Equatable, Identifiable {
                 } else if isSSHSourceID(key) {
                     name = sshName(key, displayName: key.hasPrefix(sshPrefix) ? nil : status.sourceName ?? names[key])
                     kind = L10n.text("connections.kind.ssh")
-                } else if key.hasPrefix(controlPrefix) {
-                    name = status.sourceName ?? names[key] ?? L10n.text("connections.kind.remote_control") + " (" + String(key.suffix(8)) + ")"
-                    kind = L10n.text("connections.kind.remote_control")
                 } else if key.hasPrefix(wslPrefix) {
                     name = status.sourceName ?? names[key] ?? "WSL"; kind = "WSL"
                 } else {

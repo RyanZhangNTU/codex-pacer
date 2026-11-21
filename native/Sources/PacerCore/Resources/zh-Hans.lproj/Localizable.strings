@@ -1607,3 +1607,16 @@
 "whats_new.return_top_center_detail" = "常拖动灵动岛的话，可以在展开面板的标题栏加一个按钮，一键放回顶部居中。";
 "whats_new.claude_app_access" = "Claude 请求使用应用时提醒你";
 "whats_new.claude_app_access_detail" = "Claude Desktop 请求使用电脑上的应用时，Pacer 会提示这个任务在等你。";
+
+/* Codex hooks */
+"codex.hooks.title" = "Codex 任务跟踪";
+"codex.hooks.setting_up" = "正在设置 Codex 任务跟踪…";
+"codex.hooks.needs_approval" = "请在 Codex 中允许 Codex Pacer 的 hook，才能跟踪任务。";
+"codex.hooks.running" = "Codex 任务跟踪已开启。";
+"codex.hooks.not_running" = "Pacer 的 hook 没有上报 Codex 最近的任务。请在 Codex 的“设置 → Hooks”中检查。";
+"codex.hooks.needs_update" = "请更新 Codex，才能跟踪任务。";
+"codex.hooks.failed" = "未能设置 Codex 任务跟踪。";
+"codex.hooks.info" = "Codex 会在运行 hook 前请你审核。请在 Codex 输入框旁点“Review hooks”，或打开“设置 → Hooks”，允许 Codex Pacer 的 hook。只需一次，之后 Pacer 更新不用再允许。";
+"codex.hooks.notice_title" = "在 Codex 中允许 Pacer";
+"codex.hooks.notice_body" = "Codex 现在需要你批准，Pacer 才能跟踪它的任务。";
+"warning.label.codexHooks" = "Codex";

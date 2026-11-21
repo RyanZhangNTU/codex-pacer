@@ -107,18 +107,22 @@ final class SubagentMetricsTests: XCTestCase {
         var parent = measured(1)
         live(&parent, "subagents/updated", 30, ["states": [id(2): "running"]])
         let reader = LocalActivityReader()
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(31))
         let projected = await reader.read(home: home, now: start.addingTimeInterval(31), phaseAwareRate: true,
                                           subagentStates: parent.subagentStates)
         XCTAssertEqual(projected.activities.first?.phase, .running, "A new parent activation still shows immediately")
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(32))
         let restored = await reader.read(home: home, now: start.addingTimeInterval(32), phaseAwareRate: true,
                                          metricsOnly: true, subagentStates: [:])
         XCTAssertEqual(restored.activities.first?.phase, .completed, "Removing a hint must reveal the unchanged log ending")
         XCTAssertEqual(restored.activities.first?.phaseChangedAt, start.addingTimeInterval(20))
         try append(40, ["type": "task_started", "turn_id": "second"])
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(41))
         let running = await reader.read(home: home, now: start.addingTimeInterval(41), phaseAwareRate: true)
         XCTAssertEqual(running.activities.first?.turnID, "second")
         XCTAssertEqual(running.activities.first?.phase, .running)
         try append(50, ["type": "task_complete", "turn_id": "second"])
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(51))
         let finished = await reader.read(home: home, now: start.addingTimeInterval(51), phaseAwareRate: true,
                                          subagentStates: parent.subagentStates)
         XCTAssertEqual(finished.activities.first?.phase, .completed, "The earlier hint cannot revive the next ending either")
@@ -165,14 +169,17 @@ final class SubagentMetricsTests: XCTestCase {
         var parent = measured(1)
         live(&parent, "subagents/updated", 20, ["states": [id(2): "completed"]])
         let reader = LocalActivityReader()
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(21))
         let ended = await reader.read(home: home, now: start.addingTimeInterval(21), phaseAwareRate: true,
                                       subagentStates: parent.subagentStates)
         XCTAssertEqual(ended.activities.first?.phase, .completed)
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(22))
         let retained = await reader.read(home: home, now: start.addingTimeInterval(22), phaseAwareRate: true,
                                          metricsOnly: true, subagentStates: [:])
         XCTAssertEqual(retained.activities.first?.phase, .completed, "Releasing the parent cannot discard confirmed terminal evidence")
         XCTAssertEqual(retained.activities.first?.phaseChangedAt, start.addingTimeInterval(20))
         try append(30, turn: "second")
+        try CodexHookFixture.announceAll(home: home, at: start.addingTimeInterval(31))
         let resumed = await reader.read(home: home, now: start.addingTimeInterval(31), phaseAwareRate: true,
                                         subagentStates: parent.subagentStates)
         XCTAssertEqual(resumed.activities.first?.phase, .running)
@@ -229,99 +236,5 @@ final class SubagentMetricsTests: XCTestCase {
         XCTAssertEqual(grouped.count, 1)
         XCTAssertEqual(grouped.first?.runningSubagentCount, 1)
         XCTAssertEqual(grouped.first?.displayedRate(at: start.addingTimeInterval(11))?.value, 80)
-    }
-    func testNativeCollaborationDiscoversChildrenAndDropsPromptAndAgentMessages() throws {
-        var messages: [[String: Any]] = []
-        var session = try NativeDesktopSession(hosts: ["local"]) { messages.append($0) }
-        try session.discover([.init(host: "local", thread: id(1))])
-        func receive(_ value: [String: Any]) throws { try session.receive(JSONSerialization.data(withJSONObject: value), at: start) }
-        try receive(["type": "response", "method": "initialize", "resultType": "success", "result": ["clientId": id(9)]])
-        try receive(["type": "broadcast", "method": "thread-stream-state-changed", "version": 11, "sourceClientId": id(8), "params": ["hostId": "local", "conversationId": id(1), "change": ["type": "snapshot", "revision": 0, "conversationState": ["turns": [["turnId": "turn", "status": "inProgress", "items": [["id": "spawn", "type": "collabAgentToolCall", "status": "inProgress", "receiverThreadIds": [id(2), id(3), id(2)], "prompt": "PRIVATE", "agentsStates": [id(2): ["status": "running", "message": "PRIVATE"]]]]]]]]]])
-        let follows = messages.filter { $0["method"] as? String == "thread-stream-following-changed" }.compactMap { ($0["params"] as? [String: Any])?["conversationId"] as? String }
-        XCTAssertEqual(Set(follows), Set([id(1), id(2), id(3)]))
-        try session.publishEvents()
-        XCTAssertFalse(String(describing: session.takeFrames().map { String(decoding: $0, as: UTF8.self) }).contains("PRIVATE"))
-    }
-    func testDesktopSubAgentActivityCompletesAndReactivatesWithoutChildSnapshots() throws {
-        var projection = DesktopWireProjection(threadID: id(1))
-        var state = RuntimeEventState(sourceID: nil, sourceName: nil)
-        state.consume(["kind": "status", "connected": true])
-        func consume(_ value: [String: Any], at second: Double) throws {
-            let view = try JSONFieldView.document(JSONSerialization.data(withJSONObject: value))
-            let events = try projection.consume(view, owner: "owner", at: start.addingTimeInterval(second))
-            XCTAssertFalse(String(describing: events).contains("PRIVATE"))
-            state.consume(["kind": "runtimeBatch", "events": events])
-        }
-        func crumb(_ kind: String, _ n: Int, _ item: String) -> [String: Any] {
-            ["type": "subAgentActivity", "id": item, "kind": kind, "agentThreadId": id(n), "agentPath": "PRIVATE", "message": "PRIVATE"]
-        }
-        try consume(["type": "snapshot", "revision": 0, "conversationState": ["turns": [["turnId": "turn", "status": "inProgress", "items": [crumb("started", 2, "a"), crumb("started", 3, "b")]]]]], at: 11)
-        XCTAssertEqual(Set(projection.collaborationThreadIDs), Set([id(2), id(3)]))
-        var child = SessionActivity(id: id(2), phaseAwareRate: true)
-        child.updateParent(id(1))
-        let formatter = ISO8601DateFormatter()
-        for (type, second, payload) in [
-            ("event_msg", 0.0, ["type": "task_started", "turn_id": "turn"]),
-            ("response_item", 10.0, ["type": "message", "role": "assistant"]),
-            ("token_usage_record", 10.0, ["thread_id": id(2), "turn_id": "turn", "response_id": "child", "usage": ["output_tokens": 300]])
-        ] as [(String, Double, [String: Any])] {
-            child.consume(try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": formatter.string(from: start.addingTimeInterval(second)), "payload": payload]))
-        }
-        XCTAssertFalse(child.hasLiveEvidence)
-        func group(_ second: Double) throws -> ActivityTaskGroup {
-            let combined = ActivitySourceMerger.merge(logged: [measured(1), child], streamed: state.activities)
-            return try XCTUnwrap(ActivityTaskGroup.make(combined).first)
-        }
-        XCTAssertEqual(try group(11).runningSubagentCount, 2)
-        XCTAssertEqual(try group(11).displayedRate(at: start.addingTimeInterval(11))?.value, 90)
-        try consume(["type": "patches", "baseRevision": 0, "revision": 1, "patches": [["op": "add", "path": ["turns", 0, "items", 2], "value": crumb("completed", 2, "c")]]], at: 12)
-        XCTAssertEqual(try group(12).runningSubagentCount, 1)
-        XCTAssertEqual(try group(12).displayedRate(at: start.addingTimeInterval(12))?.value, 60)
-        try consume(["type": "patches", "baseRevision": 1, "revision": 2, "patches": [["op": "add", "path": ["turns", 0, "items", 3], "value": crumb("interacted", 2, "d")]]], at: 13)
-        XCTAssertEqual(try group(13).runningSubagentCount, 2)
-        XCTAssertEqual(try group(13).displayedRate(at: start.addingTimeInterval(13))?.value, 90)
-        XCTAssertTrue(try group(13).rateIsEstimated(at: start.addingTimeInterval(13)))
-        try consume(["type": "patches", "baseRevision": 2, "revision": 3, "patches": [["op": "replace", "path": ["turns", 0, "items", 1, "kind"], "value": "completed"]]], at: 14)
-        XCTAssertEqual(try group(14).runningSubagentCount, 1)
-    }
-    func testReplayedDesktopCrumbsCannotReviveEndedChildrenAndClearWithTheParentTurn() throws {
-        // Desktop keeps a "started" crumb after the child ends. Pacer then
-        // reattaches (wake, relaunch or stream reconnect) during the parent turn.
-        var projection = DesktopWireProjection(threadID: id(1))
-        var state = RuntimeEventState(sourceID: nil, sourceName: nil)
-        state.consume(["kind": "status", "connected": true])
-        func consume(_ value: [String: Any], at second: Double) throws {
-            let view = try JSONFieldView.document(JSONSerialization.data(withJSONObject: value))
-            state.consume(["kind": "runtimeBatch", "events": try projection.consume(view, owner: "owner", at: start.addingTimeInterval(second))])
-        }
-        func crumb(_ kind: String, _ n: Int, _ item: String) -> [String: Any] {
-            ["type": "subAgentActivity", "id": item, "kind": kind, "agentThreadId": id(n)]
-        }
-        var ended = SessionActivity(id: id(2), phaseAwareRate: true)
-        ended.updateParent(id(1))
-        let formatter = ISO8601DateFormatter()
-        for (second, kind) in [(1.0, "task_started"), (20.0, "task_complete")] {
-            ended.consume(try JSONSerialization.data(withJSONObject: ["type": "event_msg",
-                "timestamp": formatter.string(from: start.addingTimeInterval(second)), "payload": ["type": kind, "turn_id": "child"]]))
-        }
-        func group() throws -> ActivityTaskGroup {
-            let combined = ActivitySourceMerger.merge(logged: [ended], streamed: state.activities)
-            return try XCTUnwrap(ActivityTaskGroup.make(combined).first { $0.primary.threadID == id(1) })
-        }
-        func parentStates() -> [String: SessionActivity.SubagentEvidence]? { state.activities.first { $0.threadID == id(1) }?.subagentStates }
-        try consume(["type": "snapshot", "revision": 0, "conversationState": ["turns": [["turnId": "turn", "status": "inProgress",
-            "turnStartedAtMs": start.timeIntervalSince1970 * 1000, "items": [crumb("started", 2, "a"), crumb("started", 3, "b")]]]]], at: 30)
-        XCTAssertEqual(parentStates()?[id(2)]?.observedAt, start, "Replayed running crumbs are dated no later than the turn start")
-        XCTAssertEqual(try group().runningSubagentCount, 1, "The replay cannot revive the logged ending; an unlogged child still runs")
-        XCTAssertEqual(try group().members.first { $0.threadID == id(2) }?.phase, .completed)
-        // A transition observed live after the ending is a genuine reactivation.
-        try consume(["type": "patches", "baseRevision": 0, "revision": 1, "patches": [["op": "replace", "path": ["turns", 0, "items", 0, "kind"], "value": "completed"]]], at: 31)
-        try consume(["type": "patches", "baseRevision": 1, "revision": 2, "patches": [["op": "add", "path": ["turns", 0, "items", 2], "value": crumb("interacted", 2, "c")]]], at: 32)
-        XCTAssertEqual(try group().runningSubagentCount, 2)
-        // The terminal patch alone ends the turn's crumbs; no later patch is required.
-        try consume(["type": "patches", "baseRevision": 2, "revision": 3, "patches": [["op": "replace", "path": ["turns", 0, "status"], "value": "completed"]]], at: 40)
-        XCTAssertEqual(state.activities.first { $0.threadID == id(1) }?.phase, .completed)
-        XCTAssertEqual(parentStates()?.isEmpty, true)
-        XCTAssertFalse(try group().isRunning, "A finished parent cannot keep its task row running through stale crumbs")
     }
 }

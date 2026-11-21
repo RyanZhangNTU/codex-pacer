@@ -106,3 +106,125 @@ final class CodexHookTests: XCTestCase {
         XCTAssertTrue(CodexClient.allowedMethods.isSuperset(of: ["hooks/list", "thread/read", "thread/list", "thread/goal/get"]))
     }
 }
+
+final class CodexHookStateTests: XCTestCase {
+    private let thread = "019a0000-0000-7000-8000-000000000011", child = "019a0000-0000-7000-8000-000000000012"
+    private func home() throws -> URL {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-hook-state-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: CodexHookSpool.folder(home: home), withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+        return home
+    }
+    private func signature(_ url: URL) -> (identity: String, size: UInt64)? {
+        guard let values = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (values[.size] as? NSNumber)?.uint64Value else { return nil }
+        return (String((values[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0), size)
+    }
+    private func append(_ home: URL, _ event: String, turn: String? = nil, agent: String? = nil, approval: String? = nil,
+                        transcript: String? = nil, agentTranscript: String? = nil, at: Date = Date(), to url: URL? = nil) throws {
+        let row: [String: Any] = ["v": 1, "hook": 1, "at": at.timeIntervalSince1970, "event": event, "thread": thread,
+            "turn": turn ?? NSNull(), "agent": agent ?? NSNull(), "agentType": NSNull(),
+            "transcript": transcript ?? home.appendingPathComponent("sessions/2026/11/21/rollout-\(thread).jsonl").path,
+            "agentTranscript": agentTranscript ?? NSNull(), "approval": approval ?? NSNull(), "reason": NSNull()]
+        let file = url ?? CodexHookSpool.current(home: home)
+        var data = (try? Data(contentsOf: file)) ?? Data()
+        data += try JSONSerialization.data(withJSONObject: row) + Data([10])
+        try data.write(to: file)
+    }
+
+    func testTurnsApprovalsAndEndingsFollowTheSpoolInOrder() throws {
+        let home = try home(); var state = CodexHookState(), now = Date()
+        try append(home, "UserPromptSubmit", turn: "t1")
+        XCTAssertTrue(state.read(home: home, now: now, signature: signature))
+        XCTAssertEqual(state.threads[thread]?.openTurn, "t1")
+        XCTAssertEqual(state.transcripts(now: now, recent: 60).count, 1)
+        try append(home, "PermissionRequest", turn: "t1", approval: "exec")
+        state.read(home: home, now: now, signature: signature)
+        XCTAssertEqual(state.threads[thread]?.approval?.kind, .exec)
+        try append(home, "Stop", turn: "t1")
+        state.read(home: home, now: now, signature: signature)
+        XCTAssertNil(state.threads[thread]?.openTurn); XCTAssertNil(state.threads[thread]?.approval)
+        XCTAssertFalse(state.read(home: home, now: now, signature: signature), "Nothing new, nothing changed")
+        try append(home, "UserPromptSubmit", turn: "t2"); try append(home, "SessionEnd")
+        state.read(home: home, now: now, signature: signature)
+        XCTAssertNil(state.threads[thread]?.openTurn); XCTAssertNotNil(state.threads[thread]?.endedAt)
+        XCTAssertEqual(state.transcripts(now: now.addingTimeInterval(120), recent: 60).count, 0, "An ended, quiet thread is no longer followed")
+    }
+
+    func testRotationKeepsReadingTheOldTailBeforeTheNewFile() throws {
+        let home = try home(); var state = CodexHookState(), now = Date()
+        try append(home, "UserPromptSubmit", turn: "t1")
+        state.read(home: home, now: now, signature: signature)
+        try append(home, "Stop", turn: "t1")
+        try FileManager.default.moveItem(at: CodexHookSpool.current(home: home), to: CodexHookSpool.previous(home: home))
+        try append(home, "UserPromptSubmit", turn: "t2")
+        state.read(home: home, now: now, signature: signature)
+        XCTAssertEqual(state.threads[thread]?.openTurn, "t2", "The rotated file's Stop and the new file's start both apply, in order")
+    }
+
+    func testOldRowsAndForeignTranscriptsAreIgnored() throws {
+        let home = try home(); var state = CodexHookState(), now = Date()
+        try append(home, "UserPromptSubmit", turn: "old", at: now.addingTimeInterval(-CodexHookState.retention - 60))
+        try append(home, "UserPromptSubmit", turn: "t1", transcript: "/etc/rollout.jsonl")
+        state.read(home: home, now: now, signature: signature)
+        XCTAssertEqual(state.threads[thread]?.openTurn, "t1")
+        XCTAssertNil(state.threads[thread]?.transcript, "A transcript outside the Codex home is never followed")
+    }
+
+    func testSubagentsAreFoundByNameWhileRunningAndByPathWhenTheyStop() throws {
+        let home = try home(); var state = CodexHookState(), now = Date()
+        let parent = home.appendingPathComponent("sessions/2026/11/21/rollout-2026-11-21T10-00-00-\(thread).jsonl")
+        let childFile = parent.deletingLastPathComponent().appendingPathComponent("rollout-2026-11-21T10-01-00-\(child).jsonl")
+        try FileManager.default.createDirectory(at: parent.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: parent); try Data().write(to: childFile)
+        try append(home, "UserPromptSubmit", turn: "t1", transcript: parent.path)
+        try append(home, "SubagentStart", turn: "c1", agent: child, transcript: parent.path)
+        state.read(home: home, now: now, signature: signature)
+        XCTAssertNil(state.children[child]?.transcript)
+        state.locateChildren(home: home, now: now) { (try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
+        XCTAssertEqual(state.children[child]?.transcript?.lastPathComponent, childFile.lastPathComponent)
+        XCTAssertEqual(Set(state.transcripts(now: now, recent: 60).map(\.url.lastPathComponent)), [parent.lastPathComponent, childFile.lastPathComponent])
+        try append(home, "SubagentStop", turn: "c1", agent: child, transcript: parent.path, agentTranscript: childFile.path)
+        state.read(home: home, now: now, signature: signature)
+        XCTAssertNotNil(state.children[child]?.stoppedAt)
+    }
+}
+
+final class CodexHookReaderTests: XCTestCase {
+    private let thread = "019a0000-0000-7000-8000-000000000021"
+    private func record(_ type: String, _ payload: [String: Any], at date: Date) throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": ISO8601DateFormatter().string(from: date), "payload": payload]) + Data([10])
+    }
+
+    func testPermissionRequestsWaitUntilTheLogMovesOnAndSessionEndStopsARunningTurn() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-hook-reader-" + UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let start = Date().addingTimeInterval(-60)
+        let day = home.appendingPathComponent("sessions/2026/11/21", isDirectory: true)
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("rollout-2026-11-21T10-00-00-\(thread).jsonl")
+        try (record("session_meta", ["id": thread, "originator": "Codex Desktop", "cwd": "/fixture"], at: start)
+            + record("event_msg", ["type": "task_started", "turn_id": "t1"], at: start.addingTimeInterval(1))).write(to: file)
+        let reader = LocalActivityReader()
+        try CodexHookFixture.announce([file], home: home, turn: "t1", at: start.addingTimeInterval(1))
+        try CodexHookFixture.announce([file], home: home, event: "PermissionRequest", turn: "t1", approval: "exec", at: start.addingTimeInterval(5))
+        let waiting = await reader.read(home: home, now: start.addingTimeInterval(6))
+        XCTAssertEqual(waiting.activities.first?.phase, .running)
+        XCTAssertEqual(waiting.requests.map(\.kind), [.approval])
+        XCTAssertEqual(waiting.requests.first?.threadID, thread)
+        XCTAssertTrue(waiting.watchURLs.contains(CodexHookSpool.current(home: home)), "Appends to the spool wake the reader")
+
+        // The command ran after the user's answer: the log moved past the request.
+        let handle = try FileHandle(forWritingTo: file); try handle.seekToEnd()
+        try handle.write(contentsOf: record("event_msg", ["type": "exec_command_end", "turn_id": "t1"], at: start.addingTimeInterval(9))); try handle.close()
+        let answered = await reader.read(home: home, now: start.addingTimeInterval(10))
+        XCTAssertTrue(answered.requests.isEmpty)
+        XCTAssertEqual(answered.activities.first?.phase, .running)
+
+        try CodexHookFixture.announce([file], home: home, event: "SessionEnd", at: start.addingTimeInterval(12))
+        let closed = await reader.read(home: home, now: start.addingTimeInterval(13))
+        XCTAssertNotEqual(closed.activities.first?.phase, .running, "A Codex that quit mid-turn cannot leave the task running")
+        let last = await reader.lastHookRow
+        XCTAssertEqual(last?.timeIntervalSince1970 ?? 0, start.addingTimeInterval(12).timeIntervalSince1970, accuracy: 0.01)
+    }
+}

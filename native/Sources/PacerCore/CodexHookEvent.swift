@@ -84,6 +84,23 @@ public enum CodexHookSpool {
     public static func previous(home: URL) -> URL { folder(home: home).appendingPathComponent("events.previous.jsonl") }
     public static func lock(home: URL) -> URL { folder(home: home).appendingPathComponent("events.lock") }
 
+    /// The newest rollout change in today's or yesterday's session folder: Codex ran a
+    /// turn then. Only names and modification dates are read.
+    public static func latestRollout(home: URL, now: Date = Date()) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
+        var latest: Date?
+        for offset in [0, -1] {
+            guard let day = Calendar.current.date(byAdding: .day, value: offset, to: now),
+                  let entries = try? FileManager.default.contentsOfDirectory(at: home.appendingPathComponent("sessions/" + formatter.string(from: day)),
+                    includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else { continue }
+            for file in entries.prefix(4096) where file.pathExtension == "jsonl" {
+                if let date = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate { latest = max(latest ?? date, date) }
+            }
+        }
+        return latest
+    }
+
     /// A transcript path from the spool, accepted only for a rollout file in
     /// this Codex home's `sessions` or `archived_sessions` tree.
     public static func transcript(_ path: String?, home: URL) -> URL? {

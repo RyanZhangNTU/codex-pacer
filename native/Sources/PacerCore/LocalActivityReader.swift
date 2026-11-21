@@ -1,7 +1,8 @@
 import Foundation
 
-/// Reads recent files and resumed sessions from the read-only Codex index.
-/// Startup and catch-up reads are bounded; conversation text is never retained.
+/// Follows the rollouts that Pacer's Codex hook names in its spool. The spool is
+/// the only discovery: it says which threads have turns, which turns are open and
+/// which wait for a permission. Rollout reads are bounded and keep no conversation text.
 public actor LocalActivityReader {
     private struct Cursor {
         var offset: UInt64
@@ -21,6 +22,11 @@ public actor LocalActivityReader {
     private var titlesReadAt: Date?
     private var originSizes: [URL: UInt64] = [:]
     private var ignoredIDs: Set<String> = []
+    private var hooks = CodexHookState()
+    /// How long a thread whose turn ended stays followed after its last hook row.
+    static let recentWindow: TimeInterval = 30 * 60
+    /// Request IDs for hook permission requests.
+    static let approvalPrefix = "codex-hook-approval:"
     private let maxFiles = 16
     private let maxBytes = 128 * 1024
     private let startupBytes = 512 * 1024
@@ -33,7 +39,9 @@ public actor LocalActivityReader {
               let size = (attributes[.size] as? NSNumber)?.uint64Value else { return nil }
         return (String((attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0), size)
     }
-    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll() }
+    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll(); hooks.reset() }
+    /// The newest hook row, for telling a silent hook from an idle Codex.
+    public var lastHookRow: Date? { hooks.lastRowAt }
 
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
                      excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false,
@@ -58,45 +66,26 @@ public actor LocalActivityReader {
         var watchURLs: [URL] = []
         var watchedDirectories: Set<String> = []
         let manager = FileManager.default
+        hooks.read(home: home, now: now) { self.signature($0) }
+        hooks.locateChildren(home: home, now: now) { folder in
+            (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        }
+        // The spool folder shows its creation and rotation; the file itself shows appends.
+        var spool = CodexHookSpool.folder(home: home), isDirectory: ObjCBool = false
+        while !manager.fileExists(atPath: spool.path, isDirectory: &isDirectory) || !isDirectory.boolValue {
+            if spool.path == home.path || spool.pathComponents.count <= 1 { break }
+            spool.deleteLastPathComponent()
+        }
+        watchURLs.append(spool); watchedDirectories.insert(spool.path)
+        if manager.fileExists(atPath: CodexHookSpool.current(home: home).path) { watchURLs.append(CodexHookSpool.current(home: home)) }
         if metricsOnly {
             files = cursors.keys.map { ($0, cursors[$0]?.activity.lastObserved ?? .distantPast) }
         } else {
-            let calendar = Calendar.current
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "yyyy/MM/dd"
-            for offset in [0, -1, 1] {
-                guard let day = calendar.date(byAdding: .day, value: offset, to: now) else { continue }
-                let directory = home.appendingPathComponent("sessions/\(formatter.string(from: day))", isDirectory: true)
-                var existing = directory
-                var isDirectory: ObjCBool = false
-                while !manager.fileExists(atPath: existing.path, isDirectory: &isDirectory) || !isDirectory.boolValue {
-                    if existing.path == home.path { break }
-                    existing.deleteLastPathComponent()
-                }
-                if isDirectory.boolValue, watchedDirectories.insert(existing.path).inserted { watchURLs.append(existing) }
-                // Watch for tomorrow's first rollout even if its folder is created at midnight.
-                guard offset <= 0 else { continue }
-                let entries = (try? manager.contentsOfDirectory(at: directory,
-                    includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])) ?? []
-                for file in entries where file.pathExtension == "jsonl" {
-                    let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                    // The same form as SessionIndex's URLs: on macOS a listing
-                    // keeps /private where standardizing drops it, and one rollout
-                    // then had two cursors, only one of them named.
-                    files.append((file.standardizedFileURL, date))
-                }
-            }
+            files = hooks.transcripts(now: now, recent: Self.recentWindow).map { ($0.url, $0.at) }
         }
-        let indexed = metricsOnly ? [] : SessionIndex.entries(home: home)
-        let titlesDue = !metricsOnly || titlesReadAt.map { now.timeIntervalSince($0) >= Self.titleRefreshInterval || $0 > now } ?? true
-        let named = metricsOnly && titlesDue && !cursors.isEmpty ? SessionIndex.entries(home: home) : indexed
-        if titlesDue { titlesReadAt = now }
-        for entry in indexed {
-            let file = entry.url
-            let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            if !files.contains(where: { $0.0 == file }) { files.append((file, date)) }
-        }
+        let titlesDue = titlesReadAt.map { now.timeIntervalSince($0) >= Self.titleRefreshInterval || $0 > now } ?? true
+        let named = titlesDue && !(files.isEmpty && cursors.isEmpty) ? SessionIndex.entries(home: home) : []
+        if titlesDue && !(files.isEmpty && cursors.isEmpty) { titlesReadAt = now }
         for file in Array(cursors.keys) {
             if let cursor = cursors[file] { cursors[file] = retainingCompletion(cursor) }
         }
@@ -232,8 +221,10 @@ public actor LocalActivityReader {
                 }
                 if current.fragment.count > maxBytes { current.fragment.removeAll(); current.attention.reset() }
                 if let entry = named.first(where: { $0.url == file }) { current.activity.updateTitle(entry.title); current.activity.updateParent(entry.parentThreadID) }
+                // A turn the hook still holds open is running however quiet its log is.
                 if cursors[file] == nil, [.running, .waitingForInput].contains(current.activity.phase),
-                   now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900 { current.activity.markUnconfirmed() }
+                   now.timeIntervalSince(current.activity.lastObserved ?? .distantPast) > 900,
+                   !hookHoldsOpen(current.activity, now: now) { current.activity.markUnconfirmed() }
                 if current.activity.isInternalReview || current.activity.isIgnoredCodexSession {
                     if current.activity.isIgnoredCodexSession { ignoredIDs.insert(current.activity.canonicalized().id) }
                     metadata[file] = (identity, current.activity)
@@ -255,9 +246,40 @@ public actor LocalActivityReader {
             let directory = file.deletingLastPathComponent()
             if watchedDirectories.insert(directory.path).inserted { watchURLs.append(directory) }
         }
-        return (CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable).filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) },
+        let activities = CodexSessionOrigin.inheriting(cursors.values.map(projected) + unavailable)
+            .filter { !$0.isInternalReview && !$0.isIgnoredCodexSession }.map(closedBySessionEnd)
+            .sorted { ($0.lastObserved ?? .distantPast) > ($1.lastObserved ?? .distantPast) }
+        let requests = cursors.values.flatMap { $0.attention.requests(for: projected($0)) } + activities.compactMap { approval(for: $0) }
+        return (activities,
                 watchURLs + watched.sorted { (cursors[$0]?.activity.lastObserved ?? .distantPast) > (cursors[$1]?.activity.lastObserved ?? .distantPast) }, ignoredIDs,
-                cursors.values.flatMap { $0.attention.requests(for: projected($0)) }.filter { !ignoredIDs.contains($0.activity.id) })
+                requests.filter { !ignoredIDs.contains($0.activity.id) })
+    }
+
+    /// How long a turn the hook opened counts as running without any word in its log;
+    /// a Codex that crashed sends no Stop or SessionEnd.
+    static let hookOpenLimit: TimeInterval = 3 * 60 * 60
+
+    private func hookHoldsOpen(_ activity: SessionActivity, now: Date) -> Bool {
+        guard let thread = activity.threadID, let turn = activity.turnID, let state = hooks.threads[thread] else { return false }
+        return state.openTurn == turn && now.timeIntervalSince(state.lastAt) < Self.hookOpenLimit
+    }
+
+    /// Codex closed the thread (usually by quitting) after the log's last word on
+    /// a turn it never ended: that turn can no longer be confirmed as running.
+    private func closedBySessionEnd(_ activity: SessionActivity) -> SessionActivity {
+        guard let thread = activity.threadID, let ended = hooks.threads[thread]?.endedAt,
+              [.running, .waitingForInput].contains(activity.phase), (activity.lastObserved ?? .distantPast) <= ended else { return activity }
+        var value = activity; value.markUnconfirmed(); return value
+    }
+
+    /// A permission request waits until its turn's log moves past it or the turn ends.
+    private func approval(for activity: SessionActivity) -> PendingAttentionRequest? {
+        guard let thread = activity.threadID, activity.parentThreadID == nil, let request = hooks.threads[thread]?.approval,
+              [.running, .waitingForInput].contains(activity.phase),
+              request.turn == nil || activity.turnID == nil || request.turn == activity.turnID,
+              (activity.lastObserved ?? .distantPast) <= request.at else { return nil }
+        return PendingAttentionRequest(id: Self.approvalPrefix + thread + ":" + (request.turn ?? ""), threadID: thread, sourceHostID: nil,
+                                       sourceName: nil, kind: .approval, detectedAt: request.at)
     }
     /// The most unread log a skip still checks for turn boundaries; more falls back to an anchor.
     static let boundaryScanLimit: UInt64 = 8 * 1024 * 1024

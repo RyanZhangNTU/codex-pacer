@@ -368,21 +368,21 @@ public actor CodexClient {
         }
         return false
     }
-    /// Short-lived authorization for the paired-device metadata GET only.
-    /// No authentication material is cached by the catalog or exposed to UI.
-    func remoteControlCatalogAuthorization() async throws -> RemoteControlCatalogAuthorization {
+    /// Short-lived authorization for the Dot catalog handshake only.
+    /// No authentication material is cached or exposed to UI.
+    private func accountAuthorization() async throws -> CodexAccountAuthorization {
         do {
             try await prepareReadConnection()
             let account = try await request("account/read", params: ["refreshToken": false])
             let auth = try await request("getAuthStatus", params: ["includeToken": true, "refreshToken": false])
-            return try RemoteControlCatalogAuthorization(account: account, auth: auth)
+            return try CodexAccountAuthorization(account: account, auth: auth)
         } catch { disconnect(); throw error }
     }
 
     /// Reuse the Desktop profile's current login for the first-party Durable
     /// catalog. The bearer travels only in the TLS WebSocket handshake.
     package func durableCatalogCredentials() async throws -> (request: URLRequest, scope: String) {
-        let auth = try await remoteControlCatalogAuthorization()
+        let auth = try await accountAuthorization()
         guard auth.backendOrigin.host == "chatgpt.com", !auth.isFedRAMP else { throw CodexClientError.invalidResponse }
         var request = URLRequest(url: URL(string: "wss://codex-cloud-backend.chatgpt.com/")!, timeoutInterval: 8)
         request.setValue("codex-app-server, codex-client.desktop, openai-bearer." + auth.token,

@@ -15,14 +15,14 @@ struct CodexActivityInput: Sendable {
     var knownActivities: [SessionActivity] { logged + streamed + Array(endings.values) }
 
     func snapshot(inbox: CompletionInbox) -> HarnessActivity {
-        let ready = endings.values.filter { inbox.isSourceVisible($0.sourceHostID) }
+        let ready = Array(endings.values)
         let live = ready.isEmpty ? streamed : ActivitySourceMerger.merge(logged: ready, streamed: streamed)
         let activities = ActivitySourceMerger.merge(logged: logged, streamed: live)
         return .init(activities: activities, requests: requests)
     }
 
     mutating func releaseVisibleEndings(inbox: CompletionInbox) {
-        endings = endings.filter { !inbox.isSourceVisible($0.value.sourceHostID) }
+        endings.removeAll()
     }
 
     private var requests: [PendingAttentionRequest] {

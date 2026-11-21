@@ -21,9 +21,11 @@ final class SourceDiscoveryTests: XCTestCase {
         }
         for id in ids { try write(id, at: now) }
         let reader = LocalActivityReader()
+        try CodexHookFixture.announceAll(home: home, at: now)
         let initial = await reader.read(home: home, now: now)
         XCTAssertEqual(initial.activities.count, 16)
         let new = UUID().uuidString.lowercased(); try write(new, at: now.addingTimeInterval(1))
+        try CodexHookFixture.announceAll(home: home, at: now.addingTimeInterval(2))
         let result = await reader.read(home: home, now: now.addingTimeInterval(2), excludingThreads: Set(ids))
         XCTAssertTrue(result.activities.contains { $0.threadID == new })
         XCTAssertTrue(result.activities.contains { $0.threadID == ids[0] })
@@ -40,6 +42,7 @@ final class SourceDiscoveryTests: XCTestCase {
         bytes += try record("turn_context", payload: ["turn_id": "turn", "model": "gpt-fixture", "effort": NSNull()], at: now)
         bytes += try record("ignored", payload: ["padding": String(repeating: "x", count: 600_000)], at: now)
         try bytes.write(to: file)
+        try CodexHookFixture.announceAll(home: home, at: now)
         let result = await LocalActivityReader().read(home: home, now: now, excludingThreads: [id], includeCoveredMetrics: true)
         XCTAssertEqual(result.activities.first?.turnID, "turn")
         XCTAssertEqual(result.activities.first?.modelName, "gpt-fixture")
@@ -54,11 +57,14 @@ final class SourceDiscoveryTests: XCTestCase {
         let file = day.appendingPathComponent("rollout-" + UUID().uuidString + ".jsonl")
         try record("event_msg", payload: ["type": "task_started", "turn_id": "turn"], at: now).write(to: file)
         let reader = LocalActivityReader()
+        try CodexHookFixture.announceAll(home: home, at: now)
         let first = await reader.read(home: home, now: now)
         XCTAssertEqual(first.activities.first?.phase, .running)
         try FileManager.default.removeItem(at: file)
+        try CodexHookFixture.announceAll(home: home, at: now.addingTimeInterval(3600))
         let lost = await reader.read(home: home, now: now.addingTimeInterval(3600))
         XCTAssertEqual(lost.activities.first?.phase, .unknown)
+        try CodexHookFixture.announceAll(home: home, at: now.addingTimeInterval(3601))
         let next = await reader.read(home: home, now: now.addingTimeInterval(3601))
         XCTAssertTrue(next.activities.isEmpty)
     }
@@ -87,6 +93,7 @@ final class SourceDiscoveryTests: XCTestCase {
         let now = Date()
         try record("event_msg", payload: ["type":"task_started","turn_id":"resumed"], at: now).write(to: file)
         try database(home: home, rollout: file)
+        try CodexHookFixture.announceAll(home: home, at: now)
         let result = await LocalActivityReader().read(home: home, now: now)
         XCTAssertEqual(result.activities.first?.phase, .running)
         XCTAssertEqual(result.activities.first?.title, "Resumed analysis")
@@ -105,6 +112,7 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertEqual(sqlite3_exec(db, "ALTER TABLE threads ADD COLUMN name TEXT", nil, nil, nil), SQLITE_OK)
         XCTAssertEqual(sqlite3_exec(db, "UPDATE threads SET name='Assigned conversation'", nil, nil, nil), SQLITE_OK)
         sqlite3_close(db)
+        try CodexHookFixture.announceAll(home: home, at: now)
         let result = await LocalActivityReader().read(home: home, now: now)
         XCTAssertEqual(result.activities.first?.title, "Assigned conversation")
     }
@@ -122,12 +130,15 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertEqual(sqlite3_open(home.appendingPathComponent("state_5.sqlite").path, &db), SQLITE_OK)
         XCTAssertEqual(sqlite3_exec(db, "ALTER TABLE threads ADD COLUMN name TEXT; UPDATE threads SET title=NULL", nil, nil, nil), SQLITE_OK)
         let reader = LocalActivityReader()
+        try CodexHookFixture.announceAll(home: home, at: now)
         let started = await reader.read(home: home, now: now)
         XCTAssertNil(started.activities.first?.title)
         XCTAssertEqual(sqlite3_exec(db, "UPDATE threads SET name='Random number generator'", nil, nil, nil), SQLITE_OK)
         sqlite3_close(db)
+        try CodexHookFixture.announceAll(home: home, at: now.addingTimeInterval(1))
         let soon = await reader.read(home: home, now: now.addingTimeInterval(1), metricsOnly: true)
         XCTAssertNil(soon.activities.first?.title, "Metrics-only reads reread names at most every five seconds")
+        try CodexHookFixture.announceAll(home: home, at: now.addingTimeInterval(6))
         let named = await reader.read(home: home, now: now.addingTimeInterval(6), metricsOnly: true)
         XCTAssertEqual(named.activities.first?.title, "Random number generator")
     }
@@ -250,11 +261,9 @@ final class SourceDiscoveryTests: XCTestCase {
         try write([row], flag: true, padding: 1)
         let ssh = try XCTUnwrap(RemoteActivityTarget.readConfiguration(home: home))
         XCTAssertEqual(ssh.map(\.alias), ["one"]); XCTAssertEqual(ssh.first?.home, "/srv/codex"); XCTAssertEqual(ssh.first?.name, "Build \"one\"")
-        XCTAssertEqual(RemoteControlActivityTarget.configured(home: home).map(\.id), ["remote-control:desk", "remote-control:laptop"])
         // A malformed row voids only the SSH list; a non-Boolean flag reads as off.
         try write([row, "not an object"], flag: true, padding: 2)
         XCTAssertNil(RemoteActivityTarget.readConfiguration(home: home))
-        XCTAssertEqual(RemoteControlActivityTarget.configured(home: home).count, 2)
         try write([row], flag: 1, padding: 3)
         XCTAssertEqual(RemoteActivityTarget.readConfiguration(home: home)?.count, 0)
     }
@@ -287,8 +296,12 @@ final class SourceDiscoveryTests: XCTestCase {
         let now=Date()
         try record("event_msg",payload:["type":"task_started","turn_id":"old"],at:now.addingTimeInterval(-3600)).write(to:file)
         try database(home:home,rollout:file)
-        let result=await LocalActivityReader().read(home:home,now:now)
-        XCTAssertEqual(result.activities.first?.phase,.unknown)
+        let unnamed=await LocalActivityReader().read(home:home,now:now)
+        XCTAssertTrue(unnamed.activities.isEmpty, "A log no hook named is not followed")
+        // A start the hook saw an hour ago, then silence: the log alone cannot say it still runs.
+        try CodexHookFixture.announce([file], home: home, at: now.addingTimeInterval(-3600))
+        let named=await LocalActivityReader().read(home:home,now:now)
+        XCTAssertFalse(named.activities.contains { $0.phase == .running })
     }
     func testExperimentalTailKeepsCompleteRecentSamplesAfterPartialStartup() async throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
@@ -301,6 +314,7 @@ final class SourceDiscoveryTests: XCTestCase {
             bytes += try record("event_msg", payload:["type":"token_count","info":["total_token_usage":["output_tokens":count]]], at:now.addingTimeInterval(seconds))
         }
         try bytes.write(to: file); try database(home: home, rollout: file)
+        try CodexHookFixture.announceAll(home: home, at: now)
         let result = await LocalActivityReader().read(home: home, now: now, phaseAwareRate: true)
         XCTAssertEqual(result.activities.first?.outputEstimate(at: now)?.value, 20)
     }

@@ -3,8 +3,9 @@ import Foundation
 import PacerCore
 import Security
 
-/// A local executor is a child of the Codex Desktop instance serving our IPC
-/// socket. Neither a local-looking cwd nor an arbitrary codex CLI proves that.
+/// A local executor is the `exec-server --remote` child of a running Codex
+/// Desktop, whose bundle and signer are checked. Neither a local-looking cwd
+/// nor an arbitrary codex CLI proves that.
 struct MacDurableExecutor: Equatable, Sendable {
     let pid: pid_t
     let desktopPID: pid_t
@@ -31,6 +32,26 @@ struct MacDurableExecutor: Equatable, Sendable {
         guard SecStaticCodeCreateWithPath(executable as CFURL, [], &code) == errSecSuccess, let code,
               SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement else { return false }
         return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSBasicValidateOnly), requirement) == errSecSuccess
+    }
+
+    /// The executor of the one running Codex Desktop, or nil with none or several.
+    static func findRunning() -> Self? {
+        let matches = desktopProcesses().compactMap(find(peer:))
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    /// This user's processes that run a Codex Desktop bundle's main executable.
+    static func desktopProcesses() -> [pid_t] {
+        var pids = [pid_t](repeating: 0, count: 4096)
+        let size = pids.withUnsafeMutableBytes {
+            proc_listpids(UInt32(PROC_UID_ONLY), UInt32(getuid()), $0.baseAddress, Int32($0.count))
+        }
+        guard size > 0 else { return [] }
+        return pids.prefix(min(pids.count, Int(size) / MemoryLayout<pid_t>.stride)).filter { pid in
+            guard pid > 1, let path = executable(pid), path.deletingLastPathComponent().lastPathComponent == "MacOS" else { return false }
+            let app = path.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            return app.pathExtension == "app" && Bundle(url: app)?.bundleIdentifier == "com.openai.codex"
+        }
     }
 
     static func find(peer: pid_t) -> Self? {
