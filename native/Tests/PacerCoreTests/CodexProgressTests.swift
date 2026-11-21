@@ -64,16 +64,6 @@ final class CodexProgressTests: XCTestCase {
         XCTAssertEqual(read.activities.first?.turnID, "turn-1", "The newest rollout is the thread's current turn")
         XCTAssertEqual(read.activities.first?.phase, .running)
         XCTAssertEqual(read.activities.first?.currentProgress?.percent, 70)
-        // Codex's hook names the thread's current rollout, the one after the revert.
-        try CodexHookFixture.announce([file], home: home, at: start.addingTimeInterval(5))
-        let covered = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread])
-        XCTAssertTrue(covered.activities.isEmpty, "A thread the live connection follows is not read twice")
-        // Codex's hook names the thread's current rollout, the one after the revert.
-        try CodexHookFixture.announce([file], home: home, at: start.addingTimeInterval(5))
-        let metrics = await LocalActivityReader().read(home: home, now: start.addingTimeInterval(5), excludingThreads: [thread],
-                                                       includeCoveredMetrics: true)
-        XCTAssertEqual(metrics.activities.map(\.turnID), ["turn-1"])
-        XCTAssertEqual(metrics.activities.first?.currentProgress?.percent, 70, "Its log still fills in the live task's progress")
     }
 
     /// Several rollouts of one thread resolve to the most recently observed one,

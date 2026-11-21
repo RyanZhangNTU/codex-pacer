@@ -10,7 +10,6 @@ enum MacDurableCatalog {
     static let activeInterval: TimeInterval = 15, idleInterval: TimeInterval = 90
 
     static func observe(home: URL, publish: @Sendable (DurableActivityCatalog?) -> Void,
-                        ipcObservations: @Sendable () -> [String: Date],
                         publishHistory: @Sendable (String, [DurableTurnHistory]) -> Void,
                         panelInView: @Sendable () -> Bool = { false },
                         display: MacDisplayActivity? = .shared) async {
@@ -57,7 +56,7 @@ enum MacDurableCatalog {
                 publish(result.catalog)
                 let now = Date()
                 let history = try await polls.read(result, using: connection.reader,
-                    ipc: ipcObservations(), receipts: mailbox.read(at:), at: now)
+                    receipts: mailbox.read(at:), at: now)
                 if !history.isEmpty {
                     try Task.checkCancellation()
                     guard MacDurableExecutor.findRunning() == executor,
@@ -68,8 +67,7 @@ enum MacDurableCatalog {
                 }
                 retryDelay = 5
                 let recent = now.addingTimeInterval(-DurableActivityCatalog.recentWindow)
-                let busy = polls.followsActiveTurn || result.entries.contains { $0.active || ($0.updatedAt ?? .distantPast) >= recent } ||
-                    ipcObservations().values.contains { $0 >= recent }
+                let busy = polls.followsActiveTurn || result.entries.contains { $0.active || ($0.updatedAt ?? .distantPast) >= recent }
                 delay = max(1, (busy ? activeInterval : idleInterval) - Date().timeIntervalSince(now))
             } catch {
                 connection?.close()
@@ -181,7 +179,6 @@ public final class MacDurableMonitor: @unchecked Sendable {
         }
         let started = Task.detached(priority: .utility) {
             await MacDurableCatalog.observe(home: home, publish: { catalog in emit { $0.setCatalog(catalog) } },
-                ipcObservations: { [:] },
                 publishHistory: { scope, turns in emit { $0.observe(turns, scope: scope, at: Date()) } },
                 panelInView: panelInView)
         }

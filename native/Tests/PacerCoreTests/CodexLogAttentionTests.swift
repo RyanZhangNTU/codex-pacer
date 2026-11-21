@@ -89,7 +89,7 @@ final class CodexLogAttentionTests: XCTestCase {
         state.reset(); XCTAssertTrue(state.requests(for: activity).isEmpty)
     }
 
-    func testActualReaderFindsCoveredQuestionsAndDropsThemOnReplyReplacementAndRemoval() async throws {
+    func testActualReaderFindsQuestionsAndDropsThemOnReplyReplacementAndRemoval() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-log-attention-" + UUID().uuidString)
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
         let directory = home.appendingPathComponent("sessions/" + formatter.string(from: epoch))
@@ -99,18 +99,18 @@ final class CodexLogAttentionTests: XCTestCase {
         let now = epoch.addingTimeInterval(100), reader = LocalActivityReader(fileMetadata: { TestFileSystem().metadata($0) })
         try data([start()]).write(to: file)
         try CodexHookFixture.announceAll(home: home, at: now)
-        _ = await reader.read(home: home, now: now, excludingThreads: [thread], includeCoveredMetrics: true)
+        _ = await reader.read(home: home, now: now)
         func append(_ rows: [[String: Any]]) throws {
             let stream = try FileHandle(forWritingTo: file)
             try stream.seekToEnd(); try stream.write(contentsOf: data(rows)); try stream.close()
         }
         try append([question(), output()])
         try CodexHookFixture.announceAll(home: home, at: now)
-        let pending = await reader.read(home: home, now: now, excludingThreads: [thread], includeCoveredMetrics: true, metricsOnly: true)
+        let pending = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertEqual(pending.requests.count, 1)
         XCTAssertEqual(pending.activities.first?.phase, .running)
         try CodexHookFixture.announceAll(home: home, at: now)
-        let unchanged = await reader.read(home: home, now: now, excludingThreads: [thread], includeCoveredMetrics: true, metricsOnly: true)
+        let unchanged = await reader.read(home: home, now: now, metricsOnly: true)
         XCTAssertEqual(unchanged.requests.map(\.id), pending.requests.map(\.id))
         try append([record(["type": "message", "role": "user", "content": "PRIVATE reply"], second: 3)])
         try CodexHookFixture.announceAll(home: home, at: now)

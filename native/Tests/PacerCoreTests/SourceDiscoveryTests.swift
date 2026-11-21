@@ -8,30 +8,7 @@ import SQLite3
 @testable import PacerCore
 
 final class SourceDiscoveryTests: XCTestCase {
-    func testCoveredCursorsDoNotSpendNewLogDiscoverySlots() async throws {
-        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
-        let now = Date(), formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
-        let day = home.appendingPathComponent("sessions/" + formatter.string(from: now))
-        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
-        let ids = (0..<16).map { _ in UUID().uuidString.lowercased() }
-        func write(_ id: String, at date: Date) throws {
-            let file = day.appendingPathComponent("rollout-" + id + ".jsonl")
-            try record("event_msg", payload: ["type": "task_started", "turn_id": id], at: date).write(to: file)
-            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: file.path)
-        }
-        for id in ids { try write(id, at: now) }
-        let reader = LocalActivityReader()
-        try CodexHookFixture.announceAll(home: home, at: now)
-        let initial = await reader.read(home: home, now: now)
-        XCTAssertEqual(initial.activities.count, 16)
-        let new = UUID().uuidString.lowercased(); try write(new, at: now.addingTimeInterval(1))
-        try CodexHookFixture.announceAll(home: home, at: now.addingTimeInterval(2))
-        let result = await reader.read(home: home, now: now.addingTimeInterval(2), excludingThreads: Set(ids))
-        XCTAssertTrue(result.activities.contains { $0.threadID == new })
-        XCTAssertTrue(result.activities.contains { $0.threadID == ids[0] })
-    }
-
-    func testLongCoveredRolloutRecoversItsMatchingTurnModel() async throws {
+    func testLongRolloutRecoversItsMatchingTurnModel() async throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
         let now = Date(), formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
         let day = home.appendingPathComponent("sessions/" + formatter.string(from: now))
@@ -43,7 +20,7 @@ final class SourceDiscoveryTests: XCTestCase {
         bytes += try record("ignored", payload: ["padding": String(repeating: "x", count: 600_000)], at: now)
         try bytes.write(to: file)
         try CodexHookFixture.announceAll(home: home, at: now)
-        let result = await LocalActivityReader().read(home: home, now: now, excludingThreads: [id], includeCoveredMetrics: true)
+        let result = await LocalActivityReader().read(home: home, now: now)
         XCTAssertEqual(result.activities.first?.turnID, "turn")
         XCTAssertEqual(result.activities.first?.modelName, "gpt-fixture")
         XCTAssertNil(result.activities.first?.reasoningEffort)

@@ -141,7 +141,7 @@ Codex Desktop 26.1117 removed the IPC router that clients followed, so local Cod
 
 | Source | How it is read | Limits and rules |
 | --- | --- | --- |
-| Local Codex | Pacer's Codex hooks append one row per event to `<Codex home>/pacer/hooks/events.jsonl`; `LocalActivityReader` follows the spool and the rollouts it names | Rows hold IDs, event kinds and transcript paths only. 512 KiB of a rollout on attach, 128 KiB per append, at most 16 rollouts. A thread is followed while its turn is open and for 30 minutes after its last row. |
+| Local Codex | Pacer's Codex hooks append one row per event to `<Codex home>/pacer/hooks/events.jsonl`; `LocalActivityReader` follows the spool and the rollouts it names | Rows hold IDs, event kinds and transcript paths only. 512 KiB of a rollout on attach, 128 KiB per append, at most 16 rollouts. A thread is followed while its turn is open and for 30 minutes after its last row. Nothing is read on a timer: hook rows and rollout appends trigger reads, and start, wake and module changes read once. |
 | SSH | Owned Python 3.6+ helper over existing non-interactive SSH and known host keys, with agent and port forwarding disabled; it talks to the host's own app-server socket | At most 64 rollout cursors and 32 active subscriptions (idle and review threads take none); 15-second status heartbeat. |
 | Dot Durable Codex | The account's catalog (`thread/list`) and each thread's latest turn, read with the bundled CLI's credentials | Only threads assigned to this computer's executor; see below. |
 

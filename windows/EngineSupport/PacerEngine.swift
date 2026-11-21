@@ -172,7 +172,7 @@ actor EngineRuntime {
     private var lifecycle = ApplicationLifecycleCoordinator()
     private var generation: UInt64 { lifecycle.revision }
     private var active: Bool { initialized && lifecycle.acceptsObservedWork }
-    private var lastCodexDiscovery = Date.distantPast, lastRemoteDiscovery = Date.distantPast, lastClaudeDiscovery = Date.distantPast
+    private var lastRemoteDiscovery = Date.distantPast, lastClaudeDiscovery = Date.distantPast
     private var sequence: UInt64 = 0
     private var snapshotEmission = EngineSnapshotEmission()
     private var hideProjects = false
@@ -1881,9 +1881,7 @@ actor EngineRuntime {
     }
 
     private var lifecycleTick: ApplicationLifecycleCoordinator.Tick {
-        // Local Codex has no stream since Codex Desktop 26.1117; its hook spool is read on events.
-        .init(now: now(), expanded: expanded, codexConnected: false,
-            lastCodexDiscovery: lastCodexDiscovery, lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
+        .init(now: now(), expanded: expanded, lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
             deepseekRunning: activities.contains { $0.provider == .deepseek && $0.phase == .running })
     }
 
@@ -2623,7 +2621,6 @@ actor EngineRuntime {
     private func collect(discover: Bool, refreshMonitors: Bool, batchCodexMetrics: Bool) async {
         defer { collectHandoff.endCollect() }
         let date = now(), revision = generation
-        if discover { lastCodexDiscovery = date }
         let previousDeepSeekTurns = Set(activities.filter {
             $0.provider == .deepseek && $0.phase == .running
         }.map { $0.id + "|" + ($0.turnID ?? "") })

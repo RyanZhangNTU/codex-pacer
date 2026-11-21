@@ -44,7 +44,7 @@ public actor LocalActivityReader {
     public var lastHookRow: Date? { hooks.lastRowAt }
 
     public func read(home: URL, now: Date = Date(), phaseAwareRate: Bool = false,
-                     excludingThreads: Set<String> = [], includeCoveredMetrics: Bool = false, metricsOnly: Bool = false,
+                     metricsOnly: Bool = false,
                      subagentStates: [String: SessionActivity.SubagentEvidence] = [:]) -> (activities: [SessionActivity], watchURLs: [URL], excludedIDs: Set<String>, requests: [PendingAttentionRequest]) {
         func retainingCompletion(_ cursor: Cursor) -> Cursor {
             var value = cursor
@@ -103,12 +103,8 @@ public actor LocalActivityReader {
         for (file, cursor) in cursors where [.running, .waitingForInput].contains(projected(cursor).phase) && !files.contains(where: { $0.0 == file }) {
             files.append((file, cursor.activity.lastObserved ?? .distantPast))
         }
-        // Reviews must not consume the user-task discovery slots.
-        func covered(_ file: URL) -> Bool {
-            CodexRolloutName.threadID(of: file).map(excludingThreads.contains) ?? false
-        }
         var selected = metricsOnly ? Array(cursors.keys) : cursors.filter {
-            [.running, .waitingForInput].contains(projected($0.value).phase) && !covered($0.key)
+            [.running, .waitingForInput].contains(projected($0.value).phase)
         }.map(\.key)
         let candidates = Array(files.sorted { $0.1 > $1.1 }.prefix(256).map(\.0))
         metadata = metadata.filter { candidates.contains($0.key) }
@@ -144,20 +140,14 @@ public actor LocalActivityReader {
             selected.removeAll { file in metadata[file].flatMap { inherited[$0.activity.id] }?.isIgnoredCodexSession == true }
             for file in candidates {
                 guard selected.count < maxFiles else { break }
-                guard !covered(file), let value = metadata[file]?.activity, !value.isInternalReview,
+                guard let value = metadata[file]?.activity, !value.isInternalReview,
                       inherited[value.id]?.isIgnoredCodexSession != true, !selected.contains(file) else { continue }
                 selected.append(file)
             }
             originSizes = originSizes.filter { metadata[$0.key] != nil }
         }
-        // Keep covered baselines for reconnects without spending fallback slots.
-        if includeCoveredMetrics && !metricsOnly {
-            let metricFiles = candidates.filter { covered($0) && metadata[$0]?.activity.isIgnoredCodexSession != true }.prefix(32)
-            selected += metricFiles.filter { !selected.contains($0) }
-        }
-        if !metricsOnly { cursors = cursors.filter { selected.contains($0.key) || covered($0.key) } }
+        if !metricsOnly { cursors = cursors.filter { selected.contains($0.key) } }
         for file in selected {
-            if covered(file), !includeCoveredMetrics { continue }
             guard let facts = signature(file) else {
                 if let cursor = cursors.removeValue(forKey: file) {
                     var activity = projected(cursor)

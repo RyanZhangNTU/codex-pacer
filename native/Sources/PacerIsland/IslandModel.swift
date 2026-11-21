@@ -1609,7 +1609,6 @@ final class IslandModel: ObservableObject {
     var sleeping: Bool { lifecycle.isSleeping }
     var stopped: Bool { lifecycle.isStopped }
     private(set) var interactionSuspended = false
-    private var lastDiscovery = Date.distantPast
     private var sourceGeneration: Int { Int(lifecycle.version(.codex)) }
     private var observations: [NSObjectProtocol] = []
     private var networkChanges: MacNetworkChanges?
@@ -2391,15 +2390,11 @@ final class IslandModel: ObservableObject {
         localActivityDirty = false
         let onlyMetrics = !localActivityNeedsDiscovery
         localActivityNeedsDiscovery = false
-        if !onlyMetrics { lastDiscovery = Date() }
         let generation = sourceGeneration
         let sourceHome = home
-        let covered = streamStatuses["local"]?.connected == true ? Set(remoteActivities.filter {
-            $0.sourceHostID == nil && $0.hasLiveEvidence && [.running, .waitingForInput].contains($0.phase)
-        }.compactMap(\.threadID)) : []
         let agentStates = localSubagentStates(remoteActivities)
         launchOwnedWork(.init(.activity, provider: .codex)) { [weak self, reader] workTicket in
-            let result = await reader.read(home: sourceHome, phaseAwareRate: true, excludingThreads: covered, includeCoveredMetrics: true, metricsOnly: onlyMetrics, subagentStates: agentStates)
+            let result = await reader.read(home: sourceHome, phaseAwareRate: true, metricsOnly: onlyMetrics, subagentStates: agentStates)
             guard let self else { return }
             defer {
                 if generation == self.sourceGeneration {
@@ -2830,8 +2825,8 @@ final class IslandModel: ObservableObject {
     private func tick() {
         redrawClock()
         harnessMaintenance()
-        performLifecycle(lifecycle.tick(.init(now: now, expanded: visiblyExpanded, codexConnected: streamStatuses["local"]?.connected == true,
-            lastCodexDiscovery: lastDiscovery, lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
+        performLifecycle(lifecycle.tick(.init(now: now, expanded: visiblyExpanded,
+            lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
             deepseekRunning: running.contains { $0.provider == .deepseek })))
         if !sleeping, !stopped, !demo { onStatusChange?() }
     }

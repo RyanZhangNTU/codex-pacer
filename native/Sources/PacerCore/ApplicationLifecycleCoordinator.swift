@@ -28,15 +28,11 @@ public struct ApplicationLifecycleCoordinator: Sendable {
     public struct Tick: Sendable {
         public let now: Date
         public let expanded: Bool
-        public let codexConnected: Bool
-        public let lastCodexDiscovery: Date
         public let lastRemoteDiscovery: Date
         public let lastClaudeDiscovery: Date
         public let deepseekRunning: Bool
-        public init(now: Date, expanded: Bool, codexConnected: Bool, lastCodexDiscovery: Date, lastRemoteDiscovery: Date,
-                    lastClaudeDiscovery: Date, deepseekRunning: Bool) {
-            self.now = now; self.expanded = expanded; self.codexConnected = codexConnected
-            self.lastCodexDiscovery = lastCodexDiscovery; self.lastRemoteDiscovery = lastRemoteDiscovery
+        public init(now: Date, expanded: Bool, lastRemoteDiscovery: Date, lastClaudeDiscovery: Date, deepseekRunning: Bool) {
+            self.now = now; self.expanded = expanded; self.lastRemoteDiscovery = lastRemoteDiscovery
             self.lastClaudeDiscovery = lastClaudeDiscovery; self.deepseekRunning = deepseekRunning
         }
     }
@@ -104,9 +100,8 @@ public struct ApplicationLifecycleCoordinator: Sendable {
         var actions: [Action] = [.pruneActivities, .pruneHistory]
         guard acceptsObservedWork, !demo else { return Plan(actions) }
         actions += [AgentProvider.codex, .claude].filter { configuration.enabled.contains($0) }.map { .quota($0, force: false) }
-        if configuration.enabled.contains(.codex), input.now.timeIntervalSince(input.lastCodexDiscovery) >= (input.codexConnected ? 120 : 60) {
-            actions.append(.activity(.codex))
-        }
+        // Local Codex has no periodic read: its hooks announce every rollout, and start, wake
+        // and module changes read it once.
         if configuration.enabled.contains(.codex), input.now.timeIntervalSince(input.lastRemoteDiscovery) >= 30 { actions.append(.discoverActivityRoutes(.codex)) }
         if configuration.enabled.contains(.claude), input.now.timeIntervalSince(input.lastClaudeDiscovery) >= 30 { actions.append(.discoverActivityRoutes(.claude)) }
         if configuration.enabled.contains(.deepseek) { actions.append(.quota(.deepseek, force: false, active: input.expanded || input.deepseekRunning)) }
