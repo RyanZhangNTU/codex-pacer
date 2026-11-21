@@ -230,4 +230,34 @@ final class CodexHookHostTests: XCTestCase {
         try await TestWait.until { installer.log.count == 8 }
         XCTAssertEqual(installer.log.last, "+d", "Retry runs the same target again")
     }
+
+    func testAfterApprovalTheStatusFollowsActivityAndASilentHookNoticeClearsItself() async throws {
+        let home = try temporaryHome("codex-status")
+        let model = try model(home: home)
+        model.codexHookSetupOverride = { _, _, enabled in
+            .init(supportsHooks: true, installed: enabled, trust: Array(repeating: "trusted", count: 7))
+        }
+        model.syncCodexHooks()
+        try await TestWait.until { model.codexHookStatus == .running }
+        XCTAssertFalse(model.codexHooksNeedUser)
+
+        // Codex runs a turn and no hook row follows.
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
+        let now = Date()
+        let file = try rollout(first, day: formatter.string(from: now), home: home, at: now)
+        model.refreshCodexHookStatusOnClock(now: now)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(model.codexHookStatus, .running, "Within a minute of the last check the clock does not list the folders")
+        model.refreshCodexHookStatusOnClock(now: now.addingTimeInterval(61))
+        let silent = try await TestWait.until { model.codexHookStatus == .notRunning }
+        XCTAssertTrue(silent, "The clock notices the silence after approval, without Retry")
+        XCTAssertTrue(model.codexHooksNeedUser, "The collapsed bar and the Remote page show it")
+
+        // The hook writes again: the read its row causes clears the notice.
+        try announce(file, thread: first, home: home, at: Date())
+        model.refreshActivity(metricsOnly: true)
+        let cleared = try await TestWait.until { model.codexHookStatus == .running }
+        XCTAssertTrue(cleared, "A valid hook row clears the notice by itself")
+        XCTAssertFalse(model.codexHooksNeedUser)
+    }
 }

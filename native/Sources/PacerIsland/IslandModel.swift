@@ -559,11 +559,11 @@ final class IslandModel: ObservableObject {
     static let codexHooksApprovalNotifiedKey = "codexHooksApprovalNotified"
 
     /// Recomputes the status; the rollout folders are listed at most once a minute.
-    func updateCodexHookStatus(force: Bool = false) async {
-        let now = Date()
+    func updateCodexHookStatus(force: Bool = false, now: Date = Date()) async {
         guard force || now.timeIntervalSince(codexHookStatusCheckedAt) >= Self.codexHookStatusInterval else { return }
         codexHookStatusCheckedAt = now
         let home = self.home, lastHook = await reader.lastHookRow
+        codexHookEvaluatedRow = lastHook
         let lastTurn = await Task.detached(priority: .utility) { CodexHookSpool.latestRollout(home: home, now: now) }.value
         let result = codexHookResult
         var status = CodexHookStatus.evaluate(enabled: isModuleEnabled(.codex) && !demo, supportsHooks: result?.supportsHooks,
@@ -581,6 +581,28 @@ final class IslandModel: ObservableObject {
             postCodexHooksNotice()
         }
         watchCodexHookTrust(waiting)
+    }
+
+    /// The newest hook row the last status saw.
+    private var codexHookEvaluatedRow: Date?
+
+    /// Once the hooks are installed, only activity tells a silent hook from an idle
+    /// Codex. The clock asks at most once a minute (the status's own limit), so a
+    /// silence shows within about a minute while Codex works and costs one listing
+    /// of two day folders a minute otherwise.
+    func refreshCodexHookStatusOnClock(now: Date = Date()) {
+        guard codexHookResult?.installed == true, !demo, !sleeping, !stopped else { return }
+        Task { [weak self] in await self?.updateCodexHookStatus(now: now) }
+    }
+
+    /// A read that brought a new hook row while the hooks are reported silent
+    /// recomputes at once, so the notice clears by itself without Retry.
+    private func refreshCodexHookStatusAfterRead() {
+        guard codexHookStatus == .notRunning else { return }
+        Task { [weak self] in
+            guard let self, let row = await self.reader.lastHookRow, row != self.codexHookEvaluatedRow else { return }
+            await self.updateCodexHookStatus(force: true)
+        }
     }
 
     /// While the hooks wait for the user, a change to Codex's config is the cue
@@ -2433,6 +2455,7 @@ final class IslandModel: ObservableObject {
                 self.logWatcher.update(result.watchURLs, interval: self.activityRefreshPolicy.interval)
             }
             self.receiveLocalUpdate(result.activities, requests: result.requests, excludedIDs: result.excludedIDs)
+            self.refreshCodexHookStatusAfterRead()
             self.onStatusChange?()
         }
     }
@@ -2850,6 +2873,7 @@ final class IslandModel: ObservableObject {
     private func tick() {
         redrawClock()
         harnessMaintenance()
+        refreshCodexHookStatusOnClock()
         performLifecycle(lifecycle.tick(.init(now: now, expanded: visiblyExpanded,
             lastRemoteDiscovery: lastRemoteDiscovery, lastClaudeDiscovery: lastClaudeDiscovery,
             deepseekRunning: running.contains { $0.provider == .deepseek })))
