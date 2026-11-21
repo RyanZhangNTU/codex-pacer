@@ -609,8 +609,8 @@ internal sealed class GuideContent : StackPanel
         Identify(reason, "guide.codexSetup.reason", reason.Text);
         var update = Step("update", "1", ui.Text("whats_new.codex_setup.update"), ui.Text("whats_new.codex_setup.update_hint_windows"));
         var allow = Step("allow", "2", ui.Text("whats_new.codex_setup.allow"), null);
-        string allowState = "";
-        update.Action.Click += (_, _) => Start(CodexApplication);
+        string allowState = ""; bool desktop = false;
+        update.Action.Click += (_, _) => Start(desktop ? CodexApplication : CodexPage);
         allow.Action.Click += (_, _) => { if (allowState == "failed") _ = RetryCodexHooks(); else OpenCodexSettings(); };
         var rows = new StackPanel();
         if (welcome)
@@ -629,12 +629,15 @@ internal sealed class GuideContent : StackPanel
         refresh.Add(() =>
         {
             if (welcome) host.Visibility = (snapshot()?.Modules ?? []).Any(module => module.Provider == "codex" && module.Enabled) ? Visibility.Visible : Visibility.Collapsed;
-            var (updateState, next) = CodexSetupSteps(snapshot()?.CodexHooks); allowState = next;
+            var hooks = snapshot()?.CodexHooks;
+            var (updateState, next) = CodexSetupSteps(hooks); allowState = next; desktop = hooks?.OpensSettings == true;
             Show(update, updateState switch { "ready" => "done", "needed" => "attention", _ => "checking" },
                 ui.Text(updateState switch { "ready" => "whats_new.codex_setup.update_ready", "needed" => "whats_new.codex_setup.update_needed", _ => "whats_new.codex_setup.checking" }),
                 updateState == "needed" ? ui.Text("whats_new.codex_setup.update_action") : null, true);
-            if (update.Info != null) update.Info.Visibility = updateState == "needed" ? Visibility.Visible : Visibility.Collapsed;
-            if (update.Hint != null && updateState != "needed") update.Hint.Visibility = Visibility.Collapsed;
+            // How to check in the Store applies to Codex Desktop only.
+            bool hint = updateState == "needed" && desktop;
+            if (update.Info != null) update.Info.Visibility = hint ? Visibility.Visible : Visibility.Collapsed;
+            if (update.Hint != null && !hint) update.Hint.Visibility = Visibility.Collapsed;
             Show(allow, next switch { "done" => "done", "failed" => "attention", "open" or "manual" => "active", _ => "number" },
                 ui.Text(next switch
                 {
@@ -698,6 +701,8 @@ internal sealed class GuideContent : StackPanel
     }
     /// Codex Desktop's own start entry; it shows an available update in its lower-left corner.
     internal const string CodexApplication = @"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App";
+    /// Codex's own page, for a computer that runs the Codex CLI without Codex Desktop.
+    internal const string CodexPage = "https://developers.openai.com/codex/app";
     private bool Start(string target)
     {
         if (start != null) return start(target);

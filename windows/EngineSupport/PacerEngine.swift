@@ -3073,7 +3073,10 @@ actor EngineRuntime {
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
         var hooks = codexHookServices == nil ? nil : codexHookStatus.map(EngineCodexHooks.init) ?? .settingUp
-        if case .needsApproval? = codexHookStatus, codexHooksOpenSettings { hooks?.opensSettings = true }
+        switch codexHookStatus {
+        case .needsApproval?, .needsCodexUpdate?: if codexHooksOpenSettings { hooks?.opensSettings = true }
+        default: break
+        }
         snapshot.codexHooks = hooks
         refreshCodexHookActivity()
         snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in

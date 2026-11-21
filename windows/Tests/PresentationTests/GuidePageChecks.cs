@@ -167,12 +167,17 @@ internal static class GuidePageChecks
                 "The 4.6.1 note is the Codex setup alone: " + string.Join(",", setup.Releases.Select(value => value.Version + ":" + string.Join("/", value.Items.Select(item => item.Control)))));
             Check(Has(setupWindow, "guide.codexSetup.reason") && Find<TextBlock>(setupWindow, "guide.codexSetup.reason").Text == ui.Text("whats_new.codex_setup.reason"),
                 "The 4.6.1 note says why in one line above the steps");
-            await Hooks("needsCodexUpdate");
+            bool Hint() => SelfAndDescendants(setupBody).OfType<Button>().Any(button => button.IsVisible
+                && AutomationProperties.GetName(button) == ui.Text("main.info").Replace("%@", ui.Text("whats_new.codex_setup.update"), StringComparison.Ordinal));
+            await Hooks("needsCodexUpdate", true);
             Check(State("update") == ui.Text("whats_new.codex_setup.update_needed") && Action("update").IsVisible && State("allow") == ui.Text("whats_new.codex_setup.allow_waiting")
                 && !Action("allow").IsVisible && Done() == ui.Text("whats_new.codex_setup.later"), "An old Codex asks for its update first, and closing reads Later");
             Invoke(Action("update")); await Pump();
-            Check(started.Last() == GuideContent.CodexApplication, "Update opens Codex itself, which offers its own update");
+            Check(started.Last() == GuideContent.CodexApplication && Hint(), "Update opens Codex itself, which offers its own update; how to check waits behind its info button");
             Capture(setupWindow.ClientContent, Path.Combine(output, Suffix("update")));
+            await Hooks("needsCodexUpdate");
+            Invoke(Action("update")); await Pump();
+            Check(started.Last() == GuideContent.CodexPage && !Hint(), "The Codex CLI alone gets Codex's page, without the Store hint");
             await Hooks("needsApproval", true);
             Check(State("update") == ui.Text("whats_new.codex_setup.update_ready") && !Action("update").IsVisible && Action("allow").IsVisible
                 && (string)Action("allow").Content == ui.Text("codex.hooks.open") && State("allow") == ui.Text("whats_new.codex_setup.allow_detail"), "Approval offers Open Codex");

@@ -7,7 +7,8 @@ struct EngineCodexHooks: Codable, Equatable, Sendable {
     let state: String
     /// For `needsApproval`: how many of Pacer's hooks the user still has to allow in Codex.
     var pending: Int?
-    /// For `needsApproval`: Codex Desktop is installed to open its settings (`codex://settings`).
+    /// For `needsApproval` and `needsCodexUpdate`: Codex Desktop is installed, to open
+    /// its settings (`codex://settings`) or itself, which offers its own update.
     var opensSettings: Bool?
 
     static let settingUp = EngineCodexHooks(state: "settingUp")
