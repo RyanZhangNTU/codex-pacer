@@ -98,6 +98,15 @@ public protocol CodexHookLauncher: Sendable {
     func commandWindows(home: URL) -> String?
     func prepare(home: URL) throws
     func remove(home: URL) throws
+    /// Whether a path Codex reports names `expected`; Windows reports `\\?\` paths.
+    func samePath(_ value: String, _ expected: URL) -> Bool
+}
+
+public extension CodexHookLauncher {
+    func samePath(_ value: String, _ expected: URL) -> Bool {
+        value.hasPrefix("/") && URL(fileURLWithPath: value).standardizedFileURL.resolvingSymlinksInPath().path ==
+            expected.standardizedFileURL.resolvingSymlinksInPath().path
+    }
 }
 
 /// What Settings and the collapsed bar say about Codex task tracking.
