@@ -30,6 +30,9 @@ struct EngineCodexHookServices: Sendable {
     var apply: @Sendable (_ home: URL, _ executable: String, _ enabled: Bool) async -> CodexHookSetupResult
     /// The trust state alone, while the user approves Pacer's hooks in Codex.
     var trust: @Sendable (_ home: URL, _ executable: String) async -> [String]?
+    /// Marks the one notice asking to allow Pacer's hooks in Codex as sent; nil sends none.
+    /// The Mac keeps the same fact in its `codexHooksApprovalNotified` preference.
+    var noticeMarker: URL? = nil
 
     static func live(runtimeRoot: URL) -> Self {
         Self(apply: { home, executable, enabled in
@@ -51,7 +54,8 @@ struct EngineCodexHookServices: Sendable {
             let trust = await CodexHookSetup.trust(client: client)
             await client.shutdown()
             return trust
-        })
+        }, noticeMarker: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CodexPacer/Notifications/codex-hooks-approval-v1"))
     }
 }
 

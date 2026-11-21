@@ -27,10 +27,6 @@ private actor SSHRuntimeFrames {
     func count() -> Int { rows.count }
     func last() -> SessionActivity? { rows.last }
 }
-private struct SSHUnusedDesktop: DesktopActivityChannel {
-    func start() {}; func setHosts(_ hosts: Set<String>) {}; func discover(_ threads: [String]) {}
-    func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) {}; func stop() {}
-}
 private final class SSHEngineCapture: @unchecked Sendable {
     private let lock = NSLock()
     private var data: [Data] = []
@@ -144,19 +140,16 @@ final class WindowsSSHTests: XCTestCase {
             ["method": "turn/completed", "threadId": thread, "turnId": "turn", "at": now + 1, "status": "completed"]]]]
         let bytes = try rows.reduce(into: Data()) { $0 += try JSONSerialization.data(withJSONObject: $1) + Data([10]) }
         try bytes.write(to: root.appendingPathComponent("frames.jsonl"))
-        let catalog = RemoteControlCatalog(fetch: { _ in throw CodexClientError.invalidResponse }, files: WindowsFileSystem(), makeClient: { _ in nil })
-        let monitor = RealtimeActivityMonitor(controlCatalog: catalog, services: .init(desktopAvailable: { _ in false }, controlAvailable: { _ in false },
-            makeDesktop: { _, _, _, _, _, _ in SSHUnusedDesktop() }, processes: WindowsSSHProcessLauncher(ssh: ssh, environment: environment),
-            python: ssh, ssh: ssh, sshTargets: { _ in [remote] }, sshArguments: { WindowsSSHServices.arguments($0) }), retryInterval: 0.05)
+        let monitor = RealtimeActivityMonitor(services: .init(processes: WindowsSSHProcessLauncher(ssh: ssh, environment: environment), ssh: ssh, sshTargets: { _ in [remote] }, sshArguments: { WindowsSSHServices.arguments($0) }), retryInterval: 0.05)
         let home = root.appendingPathComponent("local")
-        await monitor.startAsync(home: home, includeRemoteControl: false) { await frames.append($0) }
+        await monitor.startAsync(home: home) { await frames.append($0) }
         try await wait { await frames.latest()?.activities.first?.phase == .completed }
         let latest = await frames.latest(); XCTAssertEqual(latest?.activities.first?.sourceHostID, remote.id)
-        XCTAssertEqual(latest?.activities.first?.threadID, thread); XCTAssertTrue(latest?.attention.isEmpty == true)
-        await monitor.startAsync(home: home, includeSSH: false, includeRemoteControl: false) { await frames.append($0) }
+        XCTAssertEqual(latest?.activities.first?.threadID, thread)
+        await monitor.startAsync(home: home, includeSSH: false) { await frames.append($0) }
         let disabled = await monitor.statuses(); XCTAssertNil(disabled[remote.id])
         try Data().write(to: root.appendingPathComponent("disconnect"))
-        await monitor.startAsync(home: home, includeRemoteControl: false) { await frames.append($0) }
+        await monitor.startAsync(home: home) { await frames.append($0) }
         try await wait { await monitor.statuses()[remote.id]?.connected == false }
         try FileManager.default.removeItem(at: root.appendingPathComponent("disconnect"))
         try await wait { await monitor.statuses()[remote.id]?.connected == true }
@@ -165,7 +158,7 @@ final class WindowsSSHTests: XCTestCase {
         let after = await frames.count(); XCTAssertEqual(after, count, "A sleeping/stopped source cannot publish late frames")
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("prompt")); XCTAssertFalse(calls.contains("PRIVATE TASK"))
-        await monitor.startAsync(home: home, includeRemoteControl: false) { await frames.append($0) }
+        await monitor.startAsync(home: home) { await frames.append($0) }
         try await wait { await monitor.statuses()[remote.id]?.connected == true }
         await monitor.shutdown()
     }
@@ -241,7 +234,7 @@ final class WindowsSSHTests: XCTestCase {
         let services = WindowsSSHServices(ssh: ssh, userHome: root, desktopFile: root.appendingPathComponent("desktop.json"), environment: environment,
             resolve: { _, port in .init(hostname: "same.example", user: "fixture", port: port ?? 22) })
         let runtime = EngineRuntime(demo: false, dismissalStore: nil,
-            desktopServices: .init { _, _, _, _ in SSHUnusedDesktop() }, sshServices: services, output: { capture.append($0) })
+            desktopServices: .init(), sshServices: services, output: { capture.append($0) })
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
         }
@@ -272,7 +265,7 @@ final class WindowsSSHTests: XCTestCase {
         let services = WindowsSSHServices(ssh: ssh, userHome: root, desktopFile: root.appendingPathComponent("desktop.json"), environment: environment,
             resolve: { _, port in .init(hostname: "same.example", user: "fixture", port: port ?? 22) })
         let runtime = EngineRuntime(demo: false, dismissalStore: nil,
-            desktopServices: .init { _, _, _, _ in SSHUnusedDesktop() }, sshServices: services, output: { capture.append($0) })
+            desktopServices: .init(), sshServices: services, output: { capture.append($0) })
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
         }

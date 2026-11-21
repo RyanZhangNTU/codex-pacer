@@ -16,7 +16,7 @@ internal sealed record EngineSnapshot(
     EngineNavigationFailure? NavigationError = null, IReadOnlyList<string>? OpeningActivityIDs = null, ClaudeHookSetup? ClaudeSetup = null,
     IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
     string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
-    string? WslAvailability = null, RemoteControlDirectory? RemoteControlDirectory = null,
+    string? WslAvailability = null,
     IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null);
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
 /// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
@@ -40,7 +40,6 @@ internal sealed record HarnessAccountCredits(string State, double? Remaining, do
     HarnessAccountCycle? Cycle = null, HarnessAccountExpiration? Expiration = null);
 internal sealed record HarnessAccountCycle(double Total, double Remaining, double? Used, double? Reset);
 internal sealed record HarnessAccountExpiration(double Credits, double At);
-internal sealed record RemoteControlDirectory(bool Refreshing, double? RefreshedAt, bool Failed);
 internal sealed record ConnectionPage(string State, string Title, string Detail, string Tone, int SourceCount, int SessionCount,
     bool Retry, IReadOnlyList<ConnectionSourceRow> Sources, IReadOnlyList<ConnectionHostRow> Hosts);
 internal sealed record ConnectionSourceRow(string Id, string Key, string Provider, string Name, string Kind, ConnectionModule Module);

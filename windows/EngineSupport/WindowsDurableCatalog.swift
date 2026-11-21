@@ -3,13 +3,17 @@ import Foundation
 import FoundationNetworking
 import PacerCore
 
+/// Codex sends Pacer no Dot events, so the catalog poll is the only source: the
+/// catalog for which threads run here, then bounded turn and tool-result pages.
 enum WindowsDurableCatalog {
     struct Binding: Equatable, Sendable {
         let executor: WindowsDurableExecutor
         let fingerprint: String
 
+        /// The same executor still runs and the same account is signed in.
         func isCurrent(home: URL) -> Bool {
-            executor.isAlive && CodexClient.authenticationFingerprint(home: home, files: WindowsFileSystem()) == fingerprint
+            executor.isAlive && WindowsDurableExecutor.findRunning() == executor &&
+                CodexClient.authenticationFingerprint(home: home, files: WindowsFileSystem()) == fingerprint
         }
     }
 
@@ -19,10 +23,8 @@ enum WindowsDurableCatalog {
         let expires = Date().addingTimeInterval(DurableCatalogReader.connectionLifetime)
     }
 
-    static func observe(home: URL, desktop: WindowsProcessIdentity, package: URL,
-                        publish: @Sendable (DurableActivityCatalog?, Binding?) async -> Void,
-                        ipc: @Sendable () async -> [String: Date],
-                        publishHistory: @Sendable (String, Binding, [DurableTurnHistory]) async -> Void) async {
+    static func observe(home: URL, publish: @Sendable (DurableActivityCatalog?) async -> Void,
+                        publishHistory: @Sendable (String, [DurableTurnHistory]) async -> Void) async {
         var connection: Connection?, previous: DurableActivityCatalog?
         var history = DurableHistoryPoll(), retryDelay = 5.0
         let mailbox = WindowsDurableProgressMailbox(home: home)
@@ -31,7 +33,7 @@ enum WindowsDurableCatalog {
             let delay: TimeInterval
             do {
                 try WindowsLocalProfileStorage().validate(home.appendingPathComponent("auth.json"))
-                guard let executor = WindowsDurableExecutor.find(desktop: desktop, package: package),
+                guard let executor = WindowsDurableExecutor.findRunning(),
                       let fingerprint = CodexClient.authenticationFingerprint(home: home, files: WindowsFileSystem()) else {
                     throw CodexClientError.disconnected
                 }
@@ -57,12 +59,12 @@ enum WindowsDurableCatalog {
                 guard binding.isCurrent(home: home) else { throw CodexClientError.accountMismatch }
                 if previous?.scope != result.catalog.scope { history.reset(startingNow: previous != nil) }
                 previous = result.catalog
-                await publish(result.catalog, binding)
+                await publish(result.catalog)
                 let now = Date()
-                let updates = try await history.read(result, using: reader, ipc: await ipc(), receipts: mailbox.read(at:), at: now)
+                let updates = try await history.read(result, using: reader, ipc: [:], receipts: mailbox.read(at:), at: now)
                 try Task.checkCancellation()
                 guard binding.isCurrent(home: home) else { throw CodexClientError.accountMismatch }
-                if !updates.isEmpty { await publishHistory(result.catalog.scope, binding, updates) }
+                if !updates.isEmpty { await publishHistory(result.catalog.scope, updates) }
                 retryDelay = 5
                 // 15 s while a Dot task runs or ended in the last three
                 // minutes; otherwise a new task is found within 90 s.
@@ -71,7 +73,7 @@ enum WindowsDurableCatalog {
                 connection?.reader.close()
                 connection = nil
                 if Task.isCancelled { break }
-                await publish(nil, nil)
+                await publish(nil)
                 delay = retryDelay
                 retryDelay = min(60, retryDelay * 2)
             }

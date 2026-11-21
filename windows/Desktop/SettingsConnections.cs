@@ -12,12 +12,12 @@ namespace CodexPacer.Windows;
 
 internal sealed partial class SettingsWindow
 {
-    private CheckBox? connectionsSSH, connectionsRemote, connectionsDurable, connectionsWSL;
-    private StackPanel? connectionSources, connectionHosts, connectionControl, connectionWslHosts, connectionOthers, connectionRetryRow;
+    private CheckBox? connectionsSSH, connectionsDurable, connectionsWSL;
+    private StackPanel? connectionSources, connectionHosts, connectionWslHosts, connectionOthers, connectionRetryRow, codexHooksCard;
     private TextBlock? connectionTitle;
-    private Button? connectionRetry, remoteDeviceRefresh, wslRefresh;
-    private FrameworkElement? remoteDeviceRow;
-    private TextBlock? remoteDeviceDetail, wslDetail;
+    private Button? connectionRetry, wslRefresh, codexHooksRetry;
+    private Ellipse? codexHooksDot;
+    private TextBlock? codexHooksDetail, wslDetail;
     private bool wslInspectionRequested;
     private string? connectionContent;
     private bool connectionBusy;
@@ -25,17 +25,17 @@ internal sealed partial class SettingsWindow
 
     private void ClearConnections()
     {
-        connectionsSSH = connectionsRemote = connectionsDurable = connectionsWSL = null;
-        connectionSources = connectionHosts = connectionControl = connectionWslHosts = null;
+        connectionsSSH = connectionsDurable = connectionsWSL = null;
+        connectionSources = connectionHosts = connectionWslHosts = codexHooksCard = null;
         connectionTitle = null;
         connectionRetry = null; connectionContent = null; connectionOthers = null; connectionRetryRow = null;
-        remoteDeviceRefresh = wslRefresh = null; remoteDeviceRow = null;
-        remoteDeviceDetail = wslDetail = null; wslInspectionRequested = false;
+        wslRefresh = codexHooksRetry = null; codexHooksDot = null;
+        codexHooksDetail = wslDetail = null; wslInspectionRequested = false;
         connectionActions.Clear();
     }
-    /// As on the Mac: the overall state is the page's subtitle, then SSH hosts,
-    /// Codex Remote Control and any other task source, each in its own card.
-    /// WSL is the Windows-only fourth card. Quota lives on each service page.
+    /// As on the Mac: the overall state is the page's subtitle, then Codex's
+    /// hooks, SSH hosts, Codex Dot and any other task source, each in its own
+    /// card. WSL is the Windows-only card. Quota lives on each service page.
     private void BuildConnections()
     {
         var header = new StackPanel();
@@ -45,20 +45,23 @@ internal sealed partial class SettingsWindow
         Identify(connectionTitle, "settings.connections.summary", ""); AutomationProperties.SetLiveSetting(connectionTitle, AutomationLiveSetting.Polite);
         header.Children.Add(connectionTitle); SetPaneHeader(header);
 
+        // Local Codex reaches Pacer only through its hooks, which the user allows in Codex once.
+        codexHooksDetail = Label("", 11.5); codexHooksDetail.TextWrapping = TextWrapping.Wrap;
+        Identify(codexHooksDetail, "settings.connections.codex_hooks.state", "");
+        codexHooksDot = new Ellipse { Width = 7, Height = 7, VerticalAlignment = VerticalAlignment.Center };
+        codexHooksRetry = ConnectionRefreshButton("connections.retry", "settings.connections.codex_hooks.retry", "retryCodexHooks");
+        codexHooksRetry.Margin = new Thickness(8, 0, 0, 0);
+        var hooksTrailing = new StackPanel { Orientation = Orientation.Horizontal };
+        hooksTrailing.Children.Add(codexHooksDot); hooksTrailing.Children.Add(codexHooksRetry);
+        codexHooksCard = new StackPanel();
+        codexHooksCard.Children.Add(SectionTitle("Codex", 0));
+        codexHooksCard.Children.Add(Card(InfoRow(ui.Text("codex.hooks.title"), hooksTrailing, ui.Text("codex.hooks.info"), codexHooksDetail, "settings.connections.codex_hooks")));
+        form.Children.Add(codexHooksCard);
+
         var ssh = Toggle("settings.monitor_ssh", null, "settings.connections.ssh", out var sshSwitch);
         connectionsSSH = sshSwitch; monitorSSH = sshSwitch; editors.Add(sshSwitch); BindToggle(sshSwitch, (p, value) => p with { MonitorSSH = value });
         connectionHosts = new StackPanel(); var hosts = new StackPanel(); hosts.Children.Add(ssh); hosts.Children.Add(connectionHosts);
-        form.Children.Add(SectionTitle(ui.Text("connections.section.ssh"), 0)); form.Children.Add(Card(hosts));
-
-        var remote = Toggle("settings.monitor_remote_control", "settings.remote_control_help", "settings.connections.remote_control", out var remoteSwitch);
-        connectionsRemote = remoteSwitch; editors.Add(remoteSwitch);
-        BindToggle(remoteSwitch, (p, value) => p with { MonitorRemoteControl = value });
-        remoteDeviceRefresh = ConnectionRefreshButton("settings.remote_control_refresh", "settings.connections.refresh_remote_control", "refreshRemoteControl");
-        remoteDeviceDetail = Label("", 11.5); remoteDeviceDetail.TextWrapping = TextWrapping.Wrap;
-        remoteDeviceRow = InfoRow(ui.Text("settings.remote_control_devices"), remoteDeviceRefresh, detail: remoteDeviceDetail);
-        connectionControl = new StackPanel(); var control = new StackPanel();
-        control.Children.Add(remote); control.Children.Add(remoteDeviceRow); control.Children.Add(connectionControl);
-        form.Children.Add(SectionTitle("Codex Remote Control")); form.Children.Add(Card(control));
+        form.Children.Add(SectionTitle(ui.Text("connections.section.ssh"))); form.Children.Add(Card(hosts));
 
         var durable = Toggle("settings.monitor_durable", "settings.durable_help", "settings.connections.durable", out var durableSwitch);
         connectionsDurable = durableSwitch; editors.Add(durableSwitch);
@@ -87,6 +90,29 @@ internal sealed partial class SettingsWindow
         connectionOthers = new StackPanel(); connectionOthers.Children.Add(SectionTitle(ui.Text("connections.section.tasks"))); connectionOthers.Children.Add(Card(others));
         form.Children.Add(connectionOthers);
     }
+    /// The hooks row as the Mac shows it: the state, a tint dot, and Retry when the user can act.
+    private void RefreshCodexHooks(EngineSnapshot? snapshot, bool codex, bool available)
+    {
+        var hooks = snapshot?.CodexHooks;
+        codexHooksCard!.Visibility = codex ? Visibility.Visible : Visibility.Collapsed;
+        (string key, string tone, bool retry) = hooks?.State switch
+        {
+            "needsApproval" => ("codex.hooks.needs_approval", "warning", true),
+            "running" => ("codex.hooks.running", "success", false),
+            "notRunning" => ("codex.hooks.not_running", "warning", true),
+            "needsCodexUpdate" => ("codex.hooks.needs_update", "warning", false),
+            "installFailed" => ("codex.hooks.failed", "warning", true),
+            _ => ("codex.hooks.setting_up", "", false)
+        };
+        codexHooksDetail!.Text = ui.Text(key); AutomationProperties.SetName(codexHooksDetail, codexHooksDetail.Text);
+        if (tone == "warning") codexHooksDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
+        else codexHooksDetail.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
+        codexHooksDot!.SetResourceReference(Shape.FillProperty, Tone(tone));
+        codexHooksRetry!.Visibility = retry ? Visibility.Visible : Visibility.Collapsed;
+        codexHooksRetry.IsEnabled = available && codex && retry;
+    }
+    /// Hooks the user still has to allow, or that stopped running, count as one Remote problem.
+    internal static bool CodexHooksNeedUser(EngineSnapshot? snapshot) => snapshot?.CodexHooks?.State is "needsApproval" or "notRunning";
     private Button ConnectionRefreshButton(string key, string id, string method)
     {
         string label = ui.Text(key);
@@ -97,7 +123,7 @@ internal sealed partial class SettingsWindow
     }
     private void RefreshConnections()
     {
-        if (connectionTitle == null || connectionSources == null || connectionHosts == null || connectionControl == null || connectionWslHosts == null) return;
+        if (connectionTitle == null || connectionSources == null || connectionHosts == null || connectionWslHosts == null) return;
         var snapshot = engine?.LatestSnapshot; var page = snapshot?.Connections;
         bool available = !sourceClosed && !providerConnectionClosed && !busy && !connectionBusy && !session.RequiresRestart && engine != null;
         bool codex = snapshot?.Modules?.FirstOrDefault(value => value.Provider == "codex")?.Enabled ?? snapshot?.QuotaDashboard?.Providers.Any(value => value.Provider == "codex") == true;
@@ -105,7 +131,6 @@ internal sealed partial class SettingsWindow
         bool previous = synchronizing; synchronizing = true;
         try
         {
-            connectionsRemote!.IsChecked = session.Current.MonitorRemoteControl; connectionsRemote.IsEnabled = available && codex;
             connectionsDurable!.IsChecked = session.Current.MonitorDurable; connectionsDurable.IsEnabled = available && codex;
             connectionsSSH!.IsChecked = session.Current.MonitorSSH; connectionsSSH.IsEnabled = available && (codex || claude);
             connectionsWSL!.IsChecked = session.Current.MonitorWSL && snapshot?.WslAvailability != "unavailable";
@@ -113,13 +138,7 @@ internal sealed partial class SettingsWindow
                 (connectionsWSL.IsChecked == true || snapshot?.WslAvailability == "available");
         }
         finally { synchronizing = previous; }
-        var directory = snapshot?.RemoteControlDirectory;
-        remoteDeviceRow!.Visibility = session.Current.MonitorRemoteControl ? Visibility.Visible : Visibility.Collapsed;
-        remoteDeviceRefresh!.IsEnabled = available && codex && session.Current.MonitorRemoteControl && directory?.Refreshing != true;
-        string last = directory?.RefreshedAt is double seconds && seconds is >= 0 and < 253402300799
-            ? ui.Text("settings.remote_control_last_refresh") + " · " + DateTimeOffset.FromUnixTimeSeconds((long)seconds).ToLocalTime().ToString("g") : "";
-        remoteDeviceDetail!.Text = directory?.Refreshing == true ? ui.Text("settings.remote_control_refreshing")
-            : directory?.Failed == true ? (ui.Text("settings.remote_control_refresh_failed") + " " + last).TrimEnd() : last;
+        RefreshCodexHooks(snapshot, codex, available);
         wslRefresh!.IsEnabled = available && snapshot != null && !snapshot.Demo && snapshot.WslAvailability != "checking";
         wslDetail!.Text = snapshot?.WslAvailability switch
         {
@@ -143,7 +162,7 @@ internal sealed partial class SettingsWindow
         string content = JsonSerializer.Serialize(new { page, snapshot?.Sources, snapshot?.ClaudeRemoteSetups, available });
         if (content == connectionContent) return;
         connectionContent = content; connectionActions.Clear();
-        connectionSources.Children.Clear(); connectionHosts.Children.Clear(); connectionControl.Children.Clear(); connectionWslHosts.Children.Clear();
+        connectionSources.Children.Clear(); connectionHosts.Children.Clear(); connectionWslHosts.Children.Clear();
         if (page == null) { connectionOthers!.Visibility = Visibility.Collapsed; return; }
         int others = 0;
         foreach (var source in page.Sources)
@@ -153,9 +172,8 @@ internal sealed partial class SettingsWindow
             QuotaLines(module, snapshot, details);
             var row = ConnectionRow(ProviderTile(module.Provider), source.Name, details, ModuleActions(module, snapshot, available, module.State == "connected" ? SessionCount(module.Sessions) : ""));
             Identify(row, "settings.connections.source." + source.Id, source.Name + " " + module.Label);
-            // Remote Control sessions sit under their switch; SSH hosts are listed by host below.
-            if (source.Key.StartsWith("remote-control:", StringComparison.Ordinal)) { connectionControl.Children.Add(Hairline(14)); connectionControl.Children.Add(row); }
-            else if (!source.Key.StartsWith("remote-ssh-discovered:", StringComparison.Ordinal))
+            // SSH hosts are listed by host below.
+            if (!source.Key.StartsWith("remote-ssh-discovered:", StringComparison.Ordinal))
             { if (others++ > 0) connectionSources.Children.Add(Hairline(14)); connectionSources.Children.Add(row); }
         }
         connectionOthers!.Visibility = others > 0 ? Visibility.Visible : Visibility.Collapsed;

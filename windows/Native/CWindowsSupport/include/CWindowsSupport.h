@@ -64,17 +64,6 @@ int pacer_harness_registry_path(size_t index, uint16_t *path, size_t capacity);
 int pacer_url_handler_path(const uint16_t *scheme, size_t index, uint16_t *path, size_t capacity);
 int pacer_codex_package_path(size_t index, uint16_t *path, size_t capacity);
 int pacer_package_path(const uint16_t *family, size_t index, uint16_t *path, size_t capacity);
-// True when a local pipe of this name exists; it neither connects nor waits.
-int pacer_pipe_exists(const uint16_t *name);
-// Local named pipes only. The caller supplies a registered package root and
-// family, or an explicit fixture root with a null family in isolated tests.
-void *pacer_pipe_open(const uint16_t *name, const uint16_t *root, const uint16_t *family, uint32_t timeout_ms, int32_t *failure);
-// One read and one write may run together. Cancel is safe during either;
-// close runs after those calls have returned. -2 = timeout, -3 = cancelled.
-int64_t pacer_pipe_read(void *pipe, uint8_t *bytes, size_t capacity, uint32_t timeout_ms);
-int64_t pacer_pipe_write(void *pipe, const uint8_t *bytes, size_t count, uint32_t timeout_ms);
-void pacer_pipe_cancel(void *pipe);
-void pacer_pipe_close(void *pipe);
 typedef struct { uint32_t pid; uint32_t parent; uint64_t started; } pacer_process_identity;
 // Creation times use the original 100 ns FILETIME ticks, never rounded dates.
 int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity *identity,
@@ -82,12 +71,15 @@ int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity
 int pacer_process_image(uint32_t pid, uint64_t started, pacer_process_identity *identity,
                         uint16_t *image, size_t image_capacity);
 int pacer_process_parents(pacer_process_identity *identities, size_t capacity);
+// Processes whose image file name equals `name`, ignoring case; started is 0.
+int pacer_process_named(const uint16_t *name, pacer_process_identity *identities, size_t capacity);
+// 1 when the exact current-user/session process runs in a package of this family.
+int pacer_process_package_family(uint32_t pid, uint64_t started, const uint16_t *family);
 int pacer_process_durable_environment(uint32_t pid, uint64_t started, uint16_t *environment, size_t capacity);
 typedef struct { uint64_t volume, low, high, modified, size; } pacer_application_stamp;
 int pacer_process_application(uint32_t pid, uint64_t started, uint16_t *image, size_t capacity,
                               uint16_t *application_id, size_t id_capacity, pacer_application_stamp *stamp);
 int pacer_application_open(const uint16_t *image, const uint16_t *application_id, const pacer_application_stamp *stamp);
-int pacer_pipe_peer_identity(void *pipe, pacer_process_identity *identity);
 // Metadata only: current-user/session writers of this exact file identity.
 // A negative result means ownership could not be established.
 int pacer_file_writers(const uint16_t *path, pacer_process_identity *writers, size_t capacity);

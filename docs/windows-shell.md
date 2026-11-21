@@ -153,7 +153,7 @@ Preferences live in `%LOCALAPPDATA%\CodexPacer\preferences-v1.json`; keep the fi
 | DeepSeek | `deepseekPanelStyle`, `deepseekMode`, `deepseekBalanceSource`, `deepseekDailyBudget`, `deepseekWeeklyBudget`, `deepseekRingPeriod`, `deepseekSpeedSource`, `deepseekShowsTurnCost`, `deepseekLowBalanceLine`, `deepseekSpikeLimit` | `detailed`, `balance`, `automatic`, no amounts, `day`, `local`, turn cost on |
 | Task progress rings | `codexProgressRing`, `claudeProgressRing`, `deepseekProgressRing` | on |
 | Privacy and visible tasks | `hideProjects`, `showAppButtons`, `showEmbeddedCodexSessions`, `showEmbeddedClaudeSessions`, `showClaudeCloudProjects` | off, then on |
-| Remote sources | `monitorSSH`, `monitorRemoteControl`, `monitorDurable`, `monitorWSL` (Windows only) | on, off, off (see Dot), off |
+| Remote sources | `monitorSSH`, `monitorDurable`, `monitorWSL` (Windows only); `monitorRemoteControl` is retired and ignored | on, off (see Dot), off |
 | Retention and page | `completedRetentionMinutes`, `settingsPane` | `30`, `overview` |
 | Source overrides | `codexExecutable`, `codexHome`, `claudeHome`, `deepseekHome`, `claudeWebOrganizationID` | empty |
 | Modules | `providerModule.codex`, `providerModule.claude`, `providerModule.deepseek` | `automatic` |
@@ -232,21 +232,24 @@ A Claude task without a live host opens through Desktop's `claude://code/continu
 - Older builds use `%APPDATA%\Claude` or the package's `LocalCache\Roaming\Claude` and `RoamingState\Claude`. A folder containing Desktop's `.user-data-left.claude_pzs8sxrjxfjjc` marker is skipped, so leftover files from another account cannot break every mapping.
 - Without a verified mapping the card falls back to its host or reports that the starting app is unknown.
 
-## Codex Remote Control
+## Codex hooks
 
-- `monitorRemoteControl` defaults to off, as on the Mac. Pacer reads the paired-device directory through the shared catalog and receives task updates over the authenticated Desktop pipe. It verifies a saved route before following it.
-- Bearer credentials stay inside the read-only catalog request ([WinHTTP limits](windows-engine.md#http-through-winhttp)). Catalog work is separate from initialization, so a slow directory cannot block the local task source or the 650 ms cleanup budget.
-- Only the currently verified account and exact device ID can open a Remote Control thread. Account or enrollment changes revoke old pipe proofs and navigation; a token refresh for the same account keeps its scope. A hashed account scope keeps acknowledgements of two accounts apart.
+Local Codex reaches Pacer only through the shared [Codex hooks](development.md#codex-hooks); on Windows only the start differs.
 
-Checks use synthetic catalogs, RPC replies and a private named-pipe fixture; they never send prompts or touch real accounts.
+- Codex runs a hook command through Windows PowerShell 5.1, so the command is `& '<Codex home>\pacer\bin\codex-hook.cmd'`. A quoted path at the start of a PowerShell command is only a string, and Codex would still record that hook as completed. Each hook start costs about 220 ms of PowerShell CPU, which is why tool events are not registered.
+- `PacerInstallerHooks --prepare-codex-hook` writes the launcher and `<Codex home>\pacer\codex_hook.py` (the shared program inside the Claude hook bootstrap) and prepares the same bundled CPython as the [Claude hooks](windows-engine.md#claude-python-runtime). The launcher is ASCII: it finds the home from its own folder, reaches the runtime through `%LOCALAPPDATA%` or an 8.3 short path, discards all output and always exits 0.
+- The engine installs the plugin while the Codex module is on and removes it when the module is off or Pacer is uninstalled. While approval is pending it reads the trust again once a minute, and reads the spool's last row and the rollout dates at most once a minute to tell running from not running.
+- The approval notice is sent once per Windows user: `%APPDATA%\CodexPacer\Notifications\codex-hooks-approval-v1` records it, as the Mac's `codexHooksApprovalNotified` preference does. Settings → Remote shows the state in its Codex card with a Retry when the user can act, and counts it as one Remote problem while approval is pending or the hooks stopped running.
+
+`test-engine.ps1 -Filter "WindowsCodexHookTests|EngineCodexHookStatusTests"` runs the launcher through Windows PowerShell in a path with spaces and Chinese characters, and checks the status, the collapsed-bar mark and the single notice with a synthetic setup. Nothing touches a real Codex profile.
 
 ## Dot Durable Codex
 
-`monitorDurable` is off for new profiles. The first launch after an upgrade sets it once from local Dot receipts (`durableOptInMigrated` records the decision), and the Remote page's Codex Dot card changes it. The Microsoft Store version of Codex Desktop supplies the named pipe. With the default Codex profile, Pacer checks the pipe's package and looks for one matching executor under that Desktop process. A managed copy of the CLI can identify the executor, but Pacer launches the CLI from the verified package.
+`monitorDurable` is off for new profiles. The first launch after an upgrade sets it once from local Dot receipts (`durableOptInMigrated` records the decision), and the Remote page's Codex Dot card changes it. With the default Codex profile, each poll looks for the one `codex.exe exec-server --remote` whose parent runs from a registered Microsoft Store Codex package with that package's identity; with none or several, nothing is read. The parent is checked before the child's command line is read, and a parent that started after its child is a reused process ID. A managed copy of the CLI can identify the executor, but Pacer launches the CLI from the verified package. `DurableActivityState` turns the catalog and latest turns into tasks, as on the Mac.
 
 The catalog and turn history use WinHTTP over TLS. Pacer checks the executor and the profile's authentication file before publishing either. The Codex **Progress Ring** switch installs or removes Pacer's local plugin. Turning it off revokes connected reporters immediately. Desktop picks up plugin changes on its next executor registration, which a Codex restart triggers. When the reporter script changes, Pacer uses a new runtime path so Store Codex can load it even if its private cache still holds an older copy.
 
-`test-engine.ps1 -Filter WindowsDurableTests` checks the socket and packaged reporter with synthetic data. With Store Codex Desktop running a local executor, set `PACER_DURABLE_DESKTOP_QA=1` to also check executor detection and plugin setup in a disposable profile. `PACER_DURABLE_CATALOG_QA=1` checks a read-only catalog request with the current Desktop login. It prints no catalog contents.
+`test-engine.ps1 -Filter WindowsDurableTests` checks the socket and packaged reporter with synthetic data. `EngineDurableTests` feeds the engine a synthetic poll. With Store Codex Desktop running a local executor, set `PACER_DURABLE_DESKTOP_QA=1` to also check executor detection and plugin setup in a disposable profile. `PACER_DURABLE_CATALOG_QA=1` checks a read-only catalog request with the current Desktop login. It prints no catalog contents.
 
 ## WSL sources
 
@@ -261,7 +264,7 @@ Tests use synthetic profiles, private helpers and intercepted transport; a real 
 
 ## Remote page
 
-The Remote page draws `ConnectionPagePresentation` (Core's `ConnectionSource`, `SSHHost` and `ConnectionSummary`): local collectors, Cloud Projects and Remote Control, then SSH and WSL hosts with Codex and Claude side by side, problems first. Session counts exclude a Claude source whose hooks are still being set up or failed.
+The Remote page starts with the Codex card ([Codex hooks](#codex-hooks)), then draws `ConnectionPagePresentation` (Core's `ConnectionSource`, `SSHHost` and `ConnectionSummary`): local collectors and Cloud Projects, then SSH and WSL hosts with Codex and Claude side by side, problems first. Session counts exclude a Claude source whose hooks are still being set up or failed.
 
 - A source retry clears backoff for inactive helpers, retries failed Claude setup and refreshes discovery without restarting healthy subscriptions. Quota and balance have their own actions.
 - Setup buttons carry the source and its context. Removing, disabling or replacing a source invalidates old buttons, and a second retry is refused while setup runs.

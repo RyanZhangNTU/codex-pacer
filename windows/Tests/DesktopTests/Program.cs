@@ -50,7 +50,7 @@ internal static class Program
             {
                 providerModes = new Dictionary<string, string> { ["codex"] = "disabled", ["claude"] = "disabled",
                     ["deepseek"] = "disabled", ["workbuddy"] = "enabled" },
-                monitorSSH = false, monitorWSL = false, monitorRemoteControl = false, monitorDurable = false, retentionMinutes = 1440
+                monitorSSH = false, monitorWSL = false, monitorDurable = false, retentionMinutes = 1440
             }, readOnlyDiagnostics: true);
             var snapshot = client.LatestSnapshot;
             var rows = snapshot?.Tasks.Where(task => task.Provider == "workbuddy").ToArray() ?? [];

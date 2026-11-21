@@ -136,6 +136,7 @@ final class EngineDeepSeekConnectionTests: XCTestCase {
         var log = try record("session_meta", ["id": id, "source": "cli", "cwd": root.path])
         log += try record("event_msg", ["type": "task_started", "turn_id": id])
         try log.write(to: directory.appendingPathComponent("rollout-" + id + ".jsonl"))
+        try CodexHookFixture.announce([directory.appendingPathComponent("rollout-" + id + ".jsonl")], home: home, turn: id, at: now)
         let capture = Capture(), mode = DetectedMode(), history = HistoryGate()
         let services = DeepSeekBalanceServices(readKey: { nil }, saveKey: { _ in false }, removeKey: { true },
             readAPI: { _ in throw DeepSeekBalanceError.missingKey }, fingerprint: { _, _ in nil }, detect: { _, _ in mode.read() },
