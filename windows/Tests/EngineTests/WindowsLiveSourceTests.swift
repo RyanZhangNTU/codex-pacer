@@ -155,6 +155,41 @@ final class WindowsLiveSourceTests: XCTestCase {
         }
     }
 
+    /// Codex keeps its rollout open while it writes, and Windows reports a size
+    /// change of an open file only once it is closed or flushed to disk. While a
+    /// local turn runs, the engine reads the rollouts it follows on its clock.
+    func testARolloutCodexKeepsOpenIsReadWhileItsTurnRuns() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-open-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = LiveSnapshots(), id = UUID().uuidString.lowercased()
+        let file = try session(root, id: id, at: Date())
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, output: { capture.append($0) })
+        let writer = try FileHandle(forWritingTo: file)
+        do {
+            _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(root)]))
+            _ = await runtime.receive(try command("setExpanded", ["expanded": true]))
+            try await until({ capture.all().last?.tasks.contains { $0.sessionID == id && $0.phase == "running" } == true },
+                message: "The announced turn runs")
+            // As Codex does: append through a handle that stays open, without a hook row.
+            try writer.seekToEnd()
+            try writer.write(contentsOf: record("event_msg", payload: ["type": "task_complete", "turn_id": id], at: Date()))
+            let started = ProcessInfo.processInfo.systemUptime
+            while capture.all().last?.tasks.contains(where: { $0.sessionID == id && $0.phase == "completed" }) != true,
+                  ProcessInfo.processInfo.systemUptime - started < 10 {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            XCTAssertTrue(capture.all().last?.tasks.contains { $0.sessionID == id && $0.phase == "completed" } == true,
+                "A write to an open rollout must reach the panel while the turn runs")
+            XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 3, "The expanded panel reads every second while a turn runs")
+            try writer.close()
+            await runtime.stop()
+        } catch {
+            try? writer.close()
+            await runtime.stop()
+            throw error
+        }
+    }
+
     func testCollapsedCodexBatchesMetricsButPublishesAnEndingImmediately() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-batch-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -2003,7 +2003,15 @@ actor EngineRuntime {
         guard active, !Task.isCancelled else { return }
         await performLifecycle(lifecycle.tick(lifecycleTick))
         guard projectionReady else { return }
-        // Only the metadata projection changes on a clock tick. Do not reopen
+        // Codex keeps a rollout open while it writes, and Windows reports a size
+        // change of an open file only once it is closed or flushed to disk. While
+        // a local Codex turn runs, its followed rollouts are read on this clock,
+        // as a file event would; their size comes from an open handle.
+        if !demo, activities.contains(where: { $0.provider == .codex && $0.sourceHostID == nil && [.running, .waitingForInput].contains($0.phase) }) {
+            await refresh(discover: false, refreshActivityMonitors: false, fileEvent: true)
+            guard active, projectionReady, !Task.isCancelled else { return }
+        }
+        // The metadata projection changes on every clock tick. Do not reopen other
         // transcript files or rescan source directories while nothing is written.
         guard activities.contains(where: { [.running, .waitingForInput].contains($0.phase) }) || !quota.isEmpty || codexQuota != nil || claudeQuotaState?.snapshot != nil || enabled.contains(.deepseek) && walletSource != nil else { return }
         if refreshTask == nil { publish(notices: []) } else { handOffToCollect(localSnapshot: false) }
