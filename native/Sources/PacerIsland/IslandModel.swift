@@ -472,20 +472,25 @@ final class IslandModel: ObservableObject {
     @Published private(set) var codexHookStatus: CodexHookStatus = .off
     private var codexHookResult: CodexHookSetupResult?
     private var codexHookTask: Task<Void, Never>?
-    private var codexHookRecheck: Task<Void, Never>?
-    private var codexHookRechecks = 0
     private var codexHookStatusCheckedAt = Date.distantPast
-    /// While the user still has to allow the hooks in Codex, setup checks again this often, up to an hour.
-    static let codexHookRecheckInterval: TimeInterval = 60
+    /// The rollout folders are listed at most this often for the status.
+    static let codexHookStatusInterval: TimeInterval = 60
+    /// While the user still has to allow the hooks in Codex: when to ask Codex again.
+    private var codexTrustWatch: CodexHookTrustWatch?
+    private var codexTrustTimer: Timer?
+    private var codexTrustCheck: Task<Void, Never>?
+    /// When Pacer saw the hooks become allowed; earlier turns ran without them.
+    private var codexHooksTrustedAt: Date?
+    /// The small floating guide beside Codex while the user allows the hooks.
+    private(set) lazy var codexHooksGuideFloat = CodexHooksGuideFloat(model: self)
 
     /// Installs Pacer's Codex hooks while the Codex module is on and removes them
     /// when it is off. Setup is idempotent: an unchanged plugin is not reinstalled.
-    func syncCodexHooks(resetRechecks: Bool = true) {
+    func syncCodexHooks() {
         guard !demo, installationOverride == nil else { return }
         let enabled = isModuleEnabled(.codex) && !stopped, home = self.home
         let executable = defaults.string(forKey: "codexExecutable") ?? ""
-        if resetRechecks { codexHookRechecks = 0 }
-        codexHookTask?.cancel(); codexHookRecheck?.cancel(); codexHookRecheck = nil
+        codexHookTask?.cancel()
         codexHookTask = Task { [weak self] in
             let result = await Task.detached(priority: .utility) {
                 await MacCodexHookSetup.apply(home: home, customExecutable: executable, enabled: enabled)
@@ -535,27 +540,75 @@ final class IslandModel: ObservableObject {
     /// Recomputes the status; the rollout folders are listed at most once a minute.
     func updateCodexHookStatus(force: Bool = false) async {
         let now = Date()
-        guard force || now.timeIntervalSince(codexHookStatusCheckedAt) >= Self.codexHookRecheckInterval else { return }
+        guard force || now.timeIntervalSince(codexHookStatusCheckedAt) >= Self.codexHookStatusInterval else { return }
         codexHookStatusCheckedAt = now
         let home = self.home, lastHook = await reader.lastHookRow
         let lastTurn = await Task.detached(priority: .utility) { CodexHookSpool.latestRollout(home: home, now: now) }.value
         let result = codexHookResult
-        let status = CodexHookStatus.evaluate(enabled: isModuleEnabled(.codex) && !demo, supportsHooks: result?.supportsHooks,
+        var status = CodexHookStatus.evaluate(enabled: isModuleEnabled(.codex) && !demo, supportsHooks: result?.supportsHooks,
             installed: result == nil ? false : result?.installed, trust: result?.trust,
-            lastHookEvent: lastHook, lastCodexTurn: lastTurn, now: now)
+            lastHookEvent: lastHook, lastCodexTurn: lastTurn, trustedAt: codexHooksTrustedAt, now: now)
+        let waiting: Bool
+        if case .needsApproval = status { waiting = true } else { waiting = false }
+        // Just allowed: the turns so far ran without the hooks, so their silence says nothing.
+        if case .needsApproval = codexHookStatus, status == .running || status == .notRunning {
+            codexHooksTrustedAt = now; status = .running
+        }
         if codexHookStatus != status { codexHookStatus = status }
-        if case .needsApproval = status, !defaults.bool(forKey: Self.codexHooksApprovalNotifiedKey) {
+        if waiting, !defaults.bool(forKey: Self.codexHooksApprovalNotifiedKey) {
             defaults.set(true, forKey: Self.codexHooksApprovalNotifiedKey)
             postCodexHooksNotice()
         }
-        if case .needsApproval = status, codexHookRecheck == nil, codexHookRechecks < 60 {
-            codexHookRechecks += 1
-            codexHookRecheck = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(Self.codexHookRecheckInterval * 1_000_000_000))
-                guard !Task.isCancelled else { return }
-                self?.codexHookRecheck = nil
-                self?.syncCodexHooks(resetRechecks: false)
-            }
+        watchCodexHookTrust(waiting)
+    }
+
+    /// While the hooks wait for the user, a change to Codex's config is the cue
+    /// to ask Codex for their trust, which only the trust call does; the plugin stays as it is.
+    private func watchCodexHookTrust(_ on: Bool) {
+        guard on else {
+            codexTrustTimer?.invalidate(); codexTrustTimer = nil; codexTrustWatch = nil
+            return
+        }
+        guard codexTrustTimer == nil else { return }
+        codexTrustWatch = CodexHookTrustWatch(stamp: Self.modified(CodexHookTrustWatch.trustFile(home: home)), now: Date())
+        let timer = Timer(timeInterval: CodexHookTrustWatch.interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkCodexHookTrust() }
+        }
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        codexTrustTimer = timer
+    }
+
+    private func checkCodexHookTrust() {
+        guard codexTrustCheck == nil, var watch = codexTrustWatch,
+              watch.shouldCheck(stamp: Self.modified(CodexHookTrustWatch.trustFile(home: home)), now: Date()) else { return }
+        codexTrustWatch = watch
+        let home = self.home, executable = defaults.string(forKey: "codexExecutable") ?? ""
+        codexTrustCheck = Task { [weak self] in
+            let trust = await Task.detached(priority: .utility) {
+                await MacCodexHookSetup.trust(home: home, customExecutable: executable)
+            }.value
+            guard let self else { return }
+            self.codexTrustCheck = nil
+            guard !Task.isCancelled, self.home == home, let trust, let result = self.codexHookResult, result.installed == true else { return }
+            self.codexHookResult = .init(supportsHooks: result.supportsHooks, installed: result.installed, trust: trust)
+            await self.updateCodexHookStatus(force: true)
+        }
+    }
+
+    private static func modified(_ file: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+    }
+
+    /// Codex Desktop can open its settings, where the user allows the hooks.
+    var canOpenCodexSettings: Bool { NSWorkspace.shared.urlForApplication(toOpen: CodexHookTrustWatch.settingsURL) != nil }
+
+    /// Opens Codex's settings with the floating guide beside it on `screen`, the one Settings is on.
+    func openCodexHooksGuide(screen: NSScreen?) {
+        codexHooksGuideFloat.show(on: screen)
+        NSWorkspace.shared.open(CodexHookTrustWatch.settingsURL, configuration: NSWorkspace.OpenConfiguration()) { [weak float = codexHooksGuideFloat] _, error in
+            guard error != nil else { return }
+            DispatchQueue.main.async { float?.close() }
         }
     }
     private let codexProgressGate = CodexProgressSwitchGate()

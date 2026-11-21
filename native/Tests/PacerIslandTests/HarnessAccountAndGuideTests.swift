@@ -126,4 +126,27 @@ final class HarnessAccountAndGuideTests: XCTestCase {
         XCTAssertFalse(HarnessGuideFloat.keepsPending(off, provider: .workbuddy))
         XCTAssertFalse(HarnessGuideFloat.keepsPending(try guide(.unknown), provider: .workbuddy))
     }
+
+    func testCodexHooksGuideFollowsTheHooksStatus() throws {
+        XCTAssertEqual(CodexHooksGuideFloat.phase(.needsApproval(count: 7)), .steps)
+        XCTAssertEqual(CodexHooksGuideFloat.phase(.notInstalled), .steps, "A setup pass in flight keeps the steps")
+        XCTAssertEqual(CodexHooksGuideFloat.phase(.running), .done)
+        XCTAssertEqual(CodexHooksGuideFloat.phase(.notRunning), .done, "Allowed is done; Settings reports a silent hook")
+        for status in [CodexHookStatus.off, .needsCodexUpdate, .installFailed] {
+            XCTAssertEqual(CodexHooksGuideFloat.phase(status), .gone, "\(status) has no click in Codex")
+        }
+
+        let domain = testDefaultsName("codex-hooks-guide-tests")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let model = IslandModel(demo: true, demoArguments: nil, defaults: defaults)
+        addTeardownBlock {
+            await model.shutdown()
+            removeTestDefaults(domain)
+        }
+        // The demo has no hooks to allow, so the guide has nothing to show.
+        let float = CodexHooksGuideFloat(model: model)
+        float.show(on: nil)
+        XCTAssertFalse(float.isShowing)
+        XCTAssertNil(float.doneSince)
+    }
 }

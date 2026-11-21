@@ -44,14 +44,28 @@ public enum MacCodexHookSetup {
     /// plugin is registered by the same engine that runs Desktop's turns; a separately
     /// installed CLI is the fallback.
     public static func apply(home: URL, customExecutable: String, enabled: Bool) async -> CodexHookSetupResult {
-        let application = MacDurableExecutor.findRunning()?.application ?? CodexApplicationResolver.find()
-        guard let cli = application.flatMap(MacDurableExecutor.verifiedCLI(in:)) ?? CodexClient.findExecutable(customPath: customExecutable) else {
+        guard let client = client(home: home, customExecutable: customExecutable) else {
             return .init(supportsHooks: nil, installed: nil, trust: nil)
         }
-        let client = CodexClient(executable: cli, home: home, timeout: 8)
         let result = await CodexHookSetup.apply(home: home, enabled: enabled, launcher: MacCodexHookLauncher(),
                                                 storage: MacClaudeHookStorage(), client: client)
         await client.shutdown()
         return result
+    }
+
+    /// The hooks' trust alone, while the user allows them in Codex.
+    public static func trust(home: URL, customExecutable: String) async -> [String]? {
+        guard let client = client(home: home, customExecutable: customExecutable) else { return nil }
+        let trust = await CodexHookSetup.trust(client: client)
+        await client.shutdown()
+        return trust
+    }
+
+    private static func client(home: URL, customExecutable: String) -> CodexClient? {
+        let application = MacDurableExecutor.findRunning()?.application ?? CodexApplicationResolver.find()
+        guard let cli = application.flatMap(MacDurableExecutor.verifiedCLI(in:)) ?? CodexClient.findExecutable(customPath: customExecutable) else {
+            return nil
+        }
+        return CodexClient(executable: cli, home: home, timeout: 8)
     }
 }

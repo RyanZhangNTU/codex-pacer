@@ -79,3 +79,34 @@ public enum CodexHookSetup {
         try? await client.pluginHookTrust(pluginID: CodexHookPlugin.id)
     }
 }
+
+/// Where the user allows Pacer's hooks, and when to ask Codex again whether
+/// they did. Codex records hook trust in its user config, so a change to that
+/// file is when to ask; a slower check covers trust kept elsewhere, such as a
+/// managed config, and gives up after an hour as the setup recheck did.
+public struct CodexHookTrustWatch: Sendable {
+    /// Codex opens its settings at this link; its Hooks page has no link of its own.
+    public static let settingsURL = URL(string: "codex://settings")!
+    public static let interval: TimeInterval = 2
+    public static let fallback: TimeInterval = 60
+    public static let fallbackLimit = 60
+    public static func trustFile(home: URL) -> URL { home.appendingPathComponent("config.toml") }
+
+    private var stamp: Date?
+    private var checkedAt: Date
+    private var fallbacks = 0
+
+    /// `stamp` is the trust file's modification date when the watch starts, nil if it is missing.
+    public init(stamp: Date?, now: Date) { self.stamp = stamp; checkedAt = now }
+
+    /// Whether to ask Codex for the hooks' trust now.
+    public mutating func shouldCheck(stamp current: Date?, now: Date) -> Bool {
+        if current != stamp {
+            stamp = current; checkedAt = now
+            return true
+        }
+        guard fallbacks < Self.fallbackLimit, now.timeIntervalSince(checkedAt) >= Self.fallback else { return false }
+        fallbacks += 1; checkedAt = now
+        return true
+    }
+}

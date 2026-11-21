@@ -14,6 +14,8 @@ public enum CodexHookPlugin {
     public static let plugin = "pacer-hooks"
     public static let version = "1.0.0"
     public static var id: String { plugin + "@" + market }
+    /// The name Codex shows for the plugin, on its Hooks page among others.
+    public static let displayName = "Codex Pacer"
     /// Written next to the marketplace so Pacer only ever changes or removes its own copy.
     public static let ownerMarker = Data("codex-pacer-hooks-v1\n".utf8)
 
@@ -44,13 +46,13 @@ public enum CodexHookPlugin {
     public static func files(command: String?, commandWindows: String?) throws -> [(relativePath: String, data: Data)] {
         guard command != nil || commandWindows != nil else { throw CocoaError(.featureUnsupported) }
         let marketplace: [String: Any] = [
-            "name": market, "interface": ["displayName": "Codex Pacer"],
+            "name": market, "interface": ["displayName": displayName],
             "plugins": [["name": plugin, "source": ["source": "local", "path": "./plugins/" + plugin],
                          "policy": ["installation": "AVAILABLE", "authentication": "ON_INSTALL"]]]
         ]
         let manifest: [String: Any] = [
             "name": plugin, "version": version, "description": "Task status for Codex Pacer.", "hooks": "./hooks/hooks.json",
-            "interface": ["displayName": "Codex Pacer"]
+            "interface": ["displayName": displayName]
         ]
         return [(".agents/plugins/marketplace.json", try json(marketplace)),
                 ("plugins/\(plugin)/.codex-plugin/plugin.json", try json(manifest)),
@@ -127,9 +129,10 @@ public enum CodexHookStatus: Equatable, Sendable {
     /// - Parameters:
     ///   - trust: `hooks/list` trust states of Pacer's plugin hooks, nil when unknown.
     ///   - lastHookEvent: the newest spool row written by the current hook program.
-    ///   - lastCodexTurn: the newest turn activity Codex reports through `thread/list`.
+    ///   - lastCodexTurn: when Codex last wrote a rollout (`CodexHookSpool.latestRollout`).
+    ///   - trustedAt: when Pacer saw the user allow the hooks; turns before it ran without them.
     public static func evaluate(enabled: Bool, supportsHooks: Bool?, installed: Bool?, trust: [String]?,
-                                lastHookEvent: Date?, lastCodexTurn: Date?, now: Date,
+                                lastHookEvent: Date?, lastCodexTurn: Date?, trustedAt: Date? = nil, now: Date,
                                 silence: TimeInterval = 300) -> CodexHookStatus {
         guard enabled else { return .off }
         if supportsHooks == false { return .needsCodexUpdate }
@@ -140,7 +143,8 @@ public enum CodexHookStatus: Equatable, Sendable {
             let pending = trust.filter { $0 != "trusted" }.count
             if pending > 0 { return .needsApproval(count: pending) }
         }
-        if let turn = lastCodexTurn, now.timeIntervalSince(turn) < silence, turn.timeIntervalSince(lastHookEvent ?? .distantPast) > silence {
+        if let turn = lastCodexTurn, now.timeIntervalSince(turn) < silence, turn > trustedAt ?? .distantPast,
+           turn.timeIntervalSince(lastHookEvent ?? .distantPast) > silence {
             return .notRunning
         }
         return .running

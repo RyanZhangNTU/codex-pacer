@@ -107,10 +107,18 @@ struct SettingsConnectionsPane: View {
         case .needsCodexUpdate: (detail, tint, retry) = (L10n.text("codex.hooks.needs_update"), .orange, false)
         case .installFailed: (detail, tint, retry) = (L10n.text("codex.hooks.failed"), .orange, true)
         }
+        // Allowing happens in Codex Desktop, which opens on its settings with the guide beside it.
+        let opensCodex: Bool
+        if case .needsApproval = model.codexHookStatus { opensCodex = model.canOpenCodexSettings } else { opensCodex = false }
         return CardRow(title: L10n.text("codex.hooks.title"), detail: detail, info: L10n.text("codex.hooks.info")) {
             HStack(spacing: 8) {
                 Circle().fill(tint).frame(width: 7, height: 7)
-                if retry { Button(L10n.text("connections.retry")) { model.syncCodexHooks() }.buttonStyle(.main) }
+                if opensCodex {
+                    Button(L10n.text("codex.hooks.open")) { model.openCodexHooksGuide(screen: NSApp.keyWindow?.screen) }
+                        .buttonStyle(MainButtonStyle(prominent: true, height: 28)).fixedSize()
+                } else if retry {
+                    Button(L10n.text("connections.retry")) { model.syncCodexHooks() }.buttonStyle(.main)
+                }
             }
         }
     }

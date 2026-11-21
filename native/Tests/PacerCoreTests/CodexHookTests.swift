@@ -97,6 +97,35 @@ final class CodexHookTests: XCTestCase {
         XCTAssertEqual(status(turn: now.addingTimeInterval(-30)), .notRunning, "Codex ran a turn and no hook wrote a row")
         XCTAssertEqual(status(hook: now.addingTimeInterval(-40), turn: now.addingTimeInterval(-30)), .running)
         XCTAssertEqual(status(turn: now.addingTimeInterval(-3600)), .running, "Old Codex activity proves nothing")
+        XCTAssertEqual(CodexHookStatus.evaluate(enabled: true, supportsHooks: true, installed: true, trust: all, lastHookEvent: nil,
+                                                lastCodexTurn: now.addingTimeInterval(-30), trustedAt: now.addingTimeInterval(-20), now: now),
+                       .running, "A turn before the user allowed the hooks ran without them")
+        XCTAssertEqual(CodexHookStatus.evaluate(enabled: true, supportsHooks: true, installed: true, trust: all, lastHookEvent: nil,
+                                                lastCodexTurn: now.addingTimeInterval(-10), trustedAt: now.addingTimeInterval(-20), now: now),
+                       .notRunning)
+    }
+
+    func testTrustIsAskedWhenCodexConfigChangesOrOnceAMinuteForAnHour() {
+        let start = Date(timeIntervalSince1970: 1_000_000), stamp = start.addingTimeInterval(-500)
+        var watch = CodexHookTrustWatch(stamp: stamp, now: start)
+        XCTAssertFalse(watch.shouldCheck(stamp: stamp, now: start.addingTimeInterval(2)), "An unchanged config asks nothing")
+        XCTAssertTrue(watch.shouldCheck(stamp: start.addingTimeInterval(3), now: start.addingTimeInterval(4)), "Codex wrote its config")
+        XCTAssertFalse(watch.shouldCheck(stamp: start.addingTimeInterval(3), now: start.addingTimeInterval(6)), "Once per change")
+        XCTAssertFalse(watch.shouldCheck(stamp: start.addingTimeInterval(3), now: start.addingTimeInterval(63)))
+        XCTAssertTrue(watch.shouldCheck(stamp: start.addingTimeInterval(3), now: start.addingTimeInterval(64)), "A minute later it asks anyway")
+        var later = start.addingTimeInterval(64)
+        for _ in 1..<CodexHookTrustWatch.fallbackLimit {
+            later += CodexHookTrustWatch.fallback
+            XCTAssertTrue(watch.shouldCheck(stamp: start.addingTimeInterval(3), now: later))
+        }
+        XCTAssertFalse(watch.shouldCheck(stamp: start.addingTimeInterval(3), now: later + 3600), "The fallback gives up after an hour")
+        XCTAssertTrue(watch.shouldCheck(stamp: nil, now: later + 3601), "A config change still asks")
+
+        var missing = CodexHookTrustWatch(stamp: nil, now: start)
+        XCTAssertFalse(missing.shouldCheck(stamp: nil, now: start.addingTimeInterval(2)))
+        XCTAssertTrue(missing.shouldCheck(stamp: start, now: start.addingTimeInterval(4)), "Codex created its config")
+        XCTAssertEqual(CodexHookTrustWatch.trustFile(home: URL(fileURLWithPath: "/h/.codex")).path, "/h/.codex/config.toml")
+        XCTAssertEqual(CodexHookTrustWatch.settingsURL.absoluteString, "codex://settings")
     }
 
     func testCodexClientRefusesMethodsThatCouldStartOrSteerATurn() {
