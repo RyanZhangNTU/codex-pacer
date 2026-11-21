@@ -74,13 +74,13 @@ final class IslandModel: ObservableObject {
     private lazy var activityAdapters: ActivityAdapters = makeActivityAdapters()
 
     private func makeActivityAdapters() -> ActivityAdapters {
-        let realtime = realtimeMonitor, claude = claudeMonitor, deepseek = deepseekMonitor
+        let realtime = realtimeMonitor, durable = durableMonitor, claude = claudeMonitor, deepseek = deepseekMonitor
         return ActivityAdapters([
             .codex: .init(start: { [weak self] in self?.refreshActivity() },
                 reset: { [weak self] in self?.resetCodexSource() },
                 discoverRoutes: { [weak self] in self?.refreshRemote() },
                 updatePolicy: { policy, flush in await realtime.updateRefreshPolicy(policy, flushPending: flush) },
-                stop: { deadline, _, _ in await realtime.shutdown(deadline: deadline) }),
+                stop: { deadline, _, _ in durable.stop(); await realtime.shutdown(deadline: deadline) }),
             .claude: .init(start: { [weak self] in self?.startClaudeActivity() },
                 reset: { [weak self] in self?.resetClaudeSource() },
                 discoverRoutes: { [weak self] in self?.discoverClaudeRemoteTargets() },
@@ -507,6 +507,28 @@ final class IslandModel: ObservableObject {
         present([IslandNotice(id: "codex:hooks-approval", kind: .waitingForInput,
                               title: L10n.text("codex.hooks.notice_title"), detail: L10n.text("codex.hooks.notice_body"))])
     }
+    /// Dot tasks come from the catalog poll while the Dot switch and the Codex module are on.
+    func syncDurable() {
+        guard monitorsDurable, isModuleEnabled(.codex), !demo, !stopped, !sleeping else { stopDurable(); return }
+        let generation = sourceGeneration, visibility = durablePanelInView
+        visibility.set(visiblyExpanded)
+        durableMonitor.start(home: home, panelInView: { visibility.value }) { [weak self] activities, scope in
+            DispatchQueue.main.async {
+                guard let self, generation == self.sourceGeneration, !self.stopped else { return }
+                if self.durableAccountScope != scope { self.durableAccountScope = scope; self.bindCompletionSources(.codex) }
+                self.durableActivities = activities
+                self.now = Date(); self.remoteActivities = self.sshActivities + activities
+                self.refilterEmbeddedSessions()
+            }
+        }
+    }
+
+    func stopDurable() {
+        durableMonitor.stop()
+        guard !durableActivities.isEmpty else { return }
+        durableActivities = []; remoteActivities = sshActivities
+    }
+
     /// Shared with Windows: the one notice asking to allow Pacer's hooks in Codex was sent.
     static let codexHooksApprovalNotifiedKey = "codexHooksApprovalNotified"
 
@@ -1302,6 +1324,12 @@ final class IslandModel: ObservableObject {
     private var claudeQuotaStarting = false
     let reader = LocalActivityReader()
     private let realtimeMonitor = RealtimeActivityMonitor()
+    private let durableMonitor = MacDurableMonitor()
+    /// SSH tasks and Dot tasks, which arrive separately and show together.
+    private var sshActivities: [SessionActivity] = []
+    private var durableActivities: [SessionActivity] = []
+    /// A thread-safe copy of whether the panel can be seen, for the Dot poll's pacing.
+    private let durablePanelInView = DurableVisibility()
     private var remoteTask: Task<Void, Never>? { ownedWork.task(.init(.remote, provider: .codex)) }
     private var appliedCodexSSH: Bool?
     private var durableAccountScope: String?
@@ -1581,6 +1609,7 @@ final class IslandModel: ObservableObject {
         if Date().timeIntervalSince(codexQuotaState?.lastAttempt ?? .distantPast) > 30 { refreshQuota() }
     }
     private func applyRefreshCadence() {
+        durablePanelInView.set(visiblyExpanded)
         if !demo, !sleeping, !stopped {
             logWatcher.update(watchedLogURLs, interval: activityRefreshPolicy.interval, flushPending: visiblyExpanded)
             let generation = sourceGeneration
@@ -2364,6 +2393,7 @@ final class IslandModel: ObservableObject {
             }
             // A hover/collapse can occur while start is awaiting the monitor.
             await self.realtimeMonitor.updateRefreshPolicy(self.activityRefreshPolicy, flushPending: self.visiblyExpanded)
+            self.syncDurable()
         }
     }
 
@@ -2372,7 +2402,7 @@ final class IslandModel: ObservableObject {
         let oldLocal = Set(remoteActivities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let newLocal = Set(activities.filter { $0.sourceHostID == nil }.map { $0.id + ":" + ($0.turnID ?? "") })
         let agentStatesChanged = localSubagentStates(remoteActivities) != localSubagentStates(activities)
-        now = Date(); remoteActivities = activities
+        now = Date(); sshActivities = activities; remoteActivities = activities + durableActivities
         let hidden = hiddenEmbeddedActivityIDs, ignored = ignoredCodexActivityIDs
         for update in performance where !hidden.contains(update.id) {
             rememberFirstOutput(update.firstTokenLatency, reportedAt: update.firstTokenReportedAt)
@@ -2558,6 +2588,7 @@ final class IslandModel: ObservableObject {
         if appliedDurable != monitorsDurable {
             appliedDurable = monitorsDurable
             syncCodexProgressSwitch(force: true)
+            syncDurable()
         }
         if appliedClaudeProgressRing != showsClaudeProgressRing {
             appliedClaudeProgressRing = showsClaudeProgressRing
@@ -2576,6 +2607,7 @@ final class IslandModel: ObservableObject {
         completionInbox.remove(provider: .codex)
         durableAccountScope = nil
         bindCompletionSources(.codex)
+        stopDurable(); sshActivities = []
         codexAttentionRequests = []; localActivities = []; remoteActivities = []; unavailableSSH = []; streamStatuses = [:]
         activities.removeAll { $0.provider == .codex }
         observeAttentionRequests(claudeAttentionRequests + deepseekAttentionRequests)
@@ -2838,3 +2870,12 @@ final class IslandModel: ObservableObject {
         onLayoutChange?(); onStatusChange?()
     }
 }
+
+/// Whether the panel can be seen, readable from the Dot poll's background task.
+final class DurableVisibility: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = false
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return current }
+    func set(_ value: Bool) { lock.lock(); current = value; lock.unlock() }
+}
+
