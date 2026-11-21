@@ -1,7 +1,31 @@
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
+import PacerMacSupport
 import PacerTestSupport
+
+/// A Dot poll the test drives: it records each start and stop, and reports
+/// whatever catalog and turns the test hands it.
+private final class ScriptedDot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var catalog: (@Sendable (DurableActivityCatalog?) -> Void)?
+    private var history: (@Sendable (String, [DurableTurnHistory]) -> Void)?
+    private(set) var homes: [URL] = []
+    private(set) var running = 0
+
+    var starts: Int { lock.withLock { homes.count } }
+    var active: Int { lock.withLock { running } }
+    var lastHome: URL? { lock.withLock { homes.last } }
+
+    func observe(home: URL, catalog: @escaping @Sendable (DurableActivityCatalog?) -> Void,
+                 history: @escaping @Sendable (String, [DurableTurnHistory]) -> Void) async {
+        lock.withLock { homes.append(home); running += 1; self.catalog = catalog; self.history = history }
+        try? await Task.sleep(nanoseconds: 3_600_000_000_000)
+        lock.withLock { running -= 1 }
+    }
+    func report(_ value: DurableActivityCatalog) { lock.withLock { catalog }?(value) }
+    func report(_ scope: String, _ turns: [DurableTurnHistory]) { lock.withLock { history }?(scope, turns) }
+}
 
 /// The Mac host around Pacer's Codex hooks: which rollouts it watches, when it
 /// recomputes the hooks' status, and which Codex home it installs them in.
@@ -18,16 +42,18 @@ final class CodexHookHostTests: XCTestCase {
         return home
     }
 
-    private func model(home: URL) throws -> IslandModel {
+    private func model(home: URL, durable: MacDurableMonitor = MacDurableMonitor { _, _, _, _ in }) throws -> IslandModel {
         let domain = testDefaultsName("CodexHookHostTests")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         addTeardownBlock { removeTestDefaults(domain) }
         ProviderModules(codexMode: .enabled, claudeMode: .disabled, deepseekMode: .disabled).save(to: defaults)
         defaults.set(home.path, forKey: "codexHome")
         defaults.set(false, forKey: "monitorSSH"); defaults.set(false, forKey: IslandModel.monitorsDurableKey)
+        defaults.set("/nonexistent/codex", forKey: "codexExecutable")
         defaults.set(false, forKey: "systemNotifications")
         let model = IslandModel(demo: false, defaults: defaults, installation: .init(codexInstalled: true, claudeInstalled: false),
-            completionDismissalStore: CompletionDismissalStore(fileURL: home.deletingLastPathComponent().appendingPathComponent("dismissals.json")))
+            completionDismissalStore: CompletionDismissalStore(fileURL: home.deletingLastPathComponent().appendingPathComponent("dismissals.json")),
+            durableMonitor: durable)
         model.hostApplicationResolver = { _, _, _ in [:] }
         addTeardownBlock { await model.shutdown() }
         return model
@@ -95,5 +121,61 @@ final class CodexHookHostTests: XCTestCase {
                           at: start.addingTimeInterval(3)), to: older)
         let asked = try await TestWait.until { model.pendingInputRequests.contains { $0.threadID == self.resumed } }
         XCTAssertTrue(asked, "The question shows from the rollout's own file event")
+    }
+
+    func testRouteRefreshesKeepOneDotPollSoATurnThatEndsBetweenPollsCompletesOnce() async throws {
+        let home = try temporaryHome("codex-dot")
+        let dot = ScriptedDot()
+        let monitor = MacDurableMonitor { home, catalog, history, _ in await dot.observe(home: home, catalog: catalog, history: history) }
+        let model = try model(home: home, durable: monitor)
+        model.defaults.set(true, forKey: IslandModel.monitorsDurableKey)
+        let thread = "019a0000-0000-7000-8000-0000000000d1", start = Date().addingTimeInterval(-60)
+        func turn(_ status: DurableTurnHistory.Status, completed: Double? = nil) -> DurableTurnHistory {
+            DurableTurnHistory(threadID: thread, name: "Synthetic Dot task", turnID: "turn-1", rootTurnID: nil, status: status,
+                               startedAt: start, completedAt: completed.map { start.addingTimeInterval($0) }, report: nil)
+        }
+
+        // Routes are refreshed every 30 seconds, and each refresh syncs Dot.
+        for _ in 0..<3 { model.syncDurable() }
+        try await TestWait.until { dot.active == 1 }
+        XCTAssertEqual(dot.starts, 1, "The same home keeps its one poll")
+
+        dot.report(DurableActivityCatalog(scope: "account", threadIDs: [thread]))
+        dot.report("account", [turn(.inProgress)])
+        try await TestWait.until { model.activities.contains { $0.threadID == thread && $0.phase == .running } }
+
+        // The turn ends; a route refresh comes before the next poll reads it.
+        model.syncDurable()
+        dot.report("account", [turn(.completed, completed: 50)])
+        try await TestWait.until { model.pendingCompletions.contains { $0.threadID == thread } }
+        dot.report("account", [turn(.completed, completed: 50)])
+        model.syncDurable()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(model.pendingCompletions.filter { $0.threadID == thread }.count, 1, "One ending, reported once")
+        XCTAssertEqual(dot.starts, 1)
+
+        // Turning Dot off stops the poll; on again starts one.
+        model.defaults.set(false, forKey: IslandModel.monitorsDurableKey)
+        model.syncDurable()
+        try await TestWait.until { dot.active == 0 }
+        XCTAssertEqual(dot.active, 0)
+        model.defaults.set(true, forKey: IslandModel.monitorsDurableKey)
+        model.syncDurable()
+        try await TestWait.until { dot.starts == 2 && dot.active == 1 }
+        XCTAssertEqual(dot.starts, 2)
+
+        // Another Codex home is another poll.
+        let other = try temporaryHome("codex-dot-other")
+        model.defaults.set(other.path, forKey: "codexHome")
+        model.syncDurable()
+        try await TestWait.until { dot.starts == 3 && dot.active == 1 }
+        XCTAssertEqual(dot.lastHome?.standardizedFileURL, other.standardizedFileURL)
+
+        // Sleep stops the monitor directly; waking syncs it again and it restarts.
+        monitor.stop()
+        try await TestWait.until { dot.active == 0 }
+        model.syncDurable()
+        try await TestWait.until { dot.starts == 4 && dot.active == 1 }
+        XCTAssertEqual(dot.starts, 4)
     }
 }

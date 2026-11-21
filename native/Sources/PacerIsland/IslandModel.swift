@@ -513,6 +513,7 @@ final class IslandModel: ObservableObject {
                               title: L10n.text("codex.hooks.notice_title"), detail: L10n.text("codex.hooks.notice_body"))])
     }
     /// Dot tasks come from the catalog poll while the Dot switch and the Codex module are on.
+    /// Route refreshes call this every 30 seconds; the monitor keeps a poll that follows this home.
     func syncDurable() {
         guard monitorsDurable, isModuleEnabled(.codex), !demo, !stopped, !sleeping else { stopDurable(); return }
         let generation = sourceGeneration, visibility = durablePanelInView
@@ -1377,7 +1378,7 @@ final class IslandModel: ObservableObject {
     private var claudeQuotaStarting = false
     let reader = LocalActivityReader()
     private let realtimeMonitor = RealtimeActivityMonitor()
-    private let durableMonitor = MacDurableMonitor()
+    private let durableMonitor: MacDurableMonitor
     /// SSH tasks and Dot tasks, which arrive separately and show together.
     private var sshActivities: [SessionActivity] = []
     private var durableActivities: [SessionActivity] = []
@@ -1783,8 +1784,10 @@ final class IslandModel: ObservableObject {
          completionDismissalStore: CompletionDismissalStore? = nil,
          claudeMonitor: ClaudeActivityMonitor = ClaudeActivityMonitor(),
          claudeRemoteSetup: ClaudeRemoteSetup = ClaudeRemoteSetup(),
-         deepseekMonitor: DeepSeekActivityMonitor = DeepSeekActivityMonitor()) {
+         deepseekMonitor: DeepSeekActivityMonitor = DeepSeekActivityMonitor(),
+         durableMonitor: MacDurableMonitor = MacDurableMonitor()) {
         self.defaults = defaults
+        self.durableMonitor = durableMonitor
         self.compactLayout = .load(from: defaults)
         self.savedPanelLayout = .load(from: defaults)
         self.panelOptions = .load(from: defaults)
