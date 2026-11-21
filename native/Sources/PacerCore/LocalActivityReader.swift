@@ -171,7 +171,7 @@ public actor LocalActivityReader {
             if attaching {
                 var activity = metadata[file]?.activity ?? SessionActivity(id: file.lastPathComponent, phaseAwareRate: phaseAwareRate)
                 activity.setCodexRollout(file)
-                if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: activity.threadID) { activity.consume(anchor) }
+                recoverTurnAnchor(handle: handle, size: size, into: &activity)
                 cursor = Cursor(offset: 0, fragment: Data(), activity: activity, identity: identity)
             }
             guard var current = cursor else { continue }
@@ -191,7 +191,7 @@ public actor LocalActivityReader {
                 if !attaching { current.attention.reset() }
                 if !attaching && !sameTurn {
                     current.activity.markDiscontinuity()
-                    if let anchor = latestTurnAnchor(handle: handle, size: size, threadID: current.activity.threadID) { current.activity.consume(anchor) }
+                    recoverTurnAnchor(handle: handle, size: size, into: &current.activity)
                 }
                 if current.activity.turnID != nil { current.gap = nil }
                 dropPartial = true
@@ -309,9 +309,10 @@ public actor LocalActivityReader {
         var value = activity; value.markUnconfirmed(); return value
     }
 
-    /// A permission request waits until its turn's log moves past it or the turn ends.
+    /// The hook fires before Codex chooses who reviews the request.
     private func approval(for activity: SessionActivity) -> PendingAttentionRequest? {
-        guard let thread = activity.threadID, activity.parentThreadID == nil, let request = hooks.threads[thread]?.approval,
+        guard let thread = activity.threadID, activity.parentThreadID == nil, !activity.codexReviewsApprovals,
+              let request = hooks.threads[thread]?.approval,
               [.running, .waitingForInput].contains(activity.phase),
               request.turn == nil || activity.turnID == nil || request.turn == activity.turnID,
               (activity.lastObserved ?? .distantPast) <= request.at else { return nil }
@@ -342,14 +343,12 @@ public actor LocalActivityReader {
         }
         return false
     }
-    /// Recover the latest explicit turn anchor without loading conversation history.
-    /// Scan the existing 8 MiB budget; retain one anchor and numeric first-output times.
-    private func latestTurnAnchor(handle: FileHandle, size: UInt64, threadID: String?) -> Data? {
+    /// Replay the latest turn's start and matching context within the 8 MiB scan budget.
+    private func recoverTurnAnchor(handle: FileHandle, size: UInt64, into activity: inout SessionActivity) {
         var offset = size
         let floor = size > 8 * 1024 * 1024 ? size - 8 * 1024 * 1024 : 0
         var fragment = Data()
-        var fallback: Data?
-        var latestTurn: String?
+        var latestContext: (turn: String, record: [String: Any])?
         var firstTimes: [String: Double] = [:]
         while offset > floor {
             let start = max(floor, offset > 128 * 1024 ? offset - 128 * 1024 : 0)
@@ -364,36 +363,31 @@ public actor LocalActivityReader {
                           var value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                           var payload = value["payload"] as? [String: Any], let turn = payload["turn_id"] as? String else { continue }
                     if value["type"] as? String == "event_msg", payload["type"] as? String == "item_completed",
-                       payload["thread_id"] as? String == threadID, let ms = SessionActivity.loggedFirstOutput(payload), ms.isFinite,
+                       payload["thread_id"] as? String == activity.threadID, let ms = SessionActivity.loggedFirstOutput(payload), ms.isFinite,
                        let stamp = value["timestamp"] as? String, let reported = SessionActivity.parseDate(stamp),
                        ms / 1000 <= reported.timeIntervalSince1970,
                        firstTimes[turn] != nil || firstTimes.count < 64 {
                         firstTimes[turn] = min(firstTimes[turn] ?? ms, ms)
-                    } else if value["type"] as? String == "turn_context", fallback == nil {
-                        fallback = Data(line); latestTurn = turn
+                    } else if value["type"] as? String == "turn_context", latestContext == nil {
+                        latestContext = (turn, value)
                     } else if value["type"] as? String == "event_msg", payload["type"] as? String == "task_started",
-                              latestTurn == nil || latestTurn == turn {
-                        if let fallback, let context = (try? JSONSerialization.jsonObject(with: fallback) as? [String: Any])?["payload"] as? [String: Any],
-                           context["turn_id"] as? String == turn, let model = ModelDisplay.sanitizedModel(context["model"]) {
-                            var recovered: [String: Any] = ["model": model]
-                            if let effort = context["effort"] { recovered["effort"] = (ModelDisplay.sanitizedEffort(effort) as Any?) ?? NSNull() }
-                            payload["_model_context"] = recovered
-                            value["payload"] = payload
-                        }
+                              latestContext == nil || latestContext?.turn == turn {
                         if let ms = firstTimes[turn], let stamp = value["timestamp"] as? String,
                            let began = SessionActivity.parseDate(stamp) {
                             let duration = ms - began.timeIntervalSince1970 * 1000
                             if duration >= 0, duration <= 3_600_000 { payload["first_output_latency_ms"] = duration; value["payload"] = payload }
                         }
-                        return try? JSONSerialization.data(withJSONObject: value)
+                        activity.consume(value)
+                        if let latestContext, activity.turnID == turn { activity.consume(latestContext.record) }
+                        return
                     }
                 }
                 fragment = lines.first.map { Data($0) } ?? Data()
                 if fragment.count > 1024 * 1024 { fragment.removeAll() }
                 offset = start
-            } catch { return nil }
+            } catch { return }
         }
-        return fallback
+        if let latestContext { activity.consume(latestContext.record) }
     }
 
 }
