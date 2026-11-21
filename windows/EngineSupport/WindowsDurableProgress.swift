@@ -144,10 +144,6 @@ package enum WindowsDurableProgressSetup {
         return bytes
     }
 
-    private static func samePath(_ value: String, _ expected: URL) -> Bool {
-        let path = value.hasPrefix(#"\\?\"#) ? String(value.dropFirst(4)) : value
-        guard WindowsCodexExecutableDiscovery.absolute(path) else { return false }
-        return URL(fileURLWithPath: path).standardizedFileURL.path.caseInsensitiveCompare(expected.standardizedFileURL.path) == .orderedSame
-    }
+    private static func samePath(_ value: String, _ expected: URL) -> Bool { WindowsCodexHookLauncher.samePath(value, expected) }
 }
 #endif

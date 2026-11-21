@@ -367,6 +367,8 @@ struct EngineSnapshot: Codable, Equatable {
     let openingActivityIDs: [String]?
     var expandedPanel: EngineExpandedPanel? = nil
     var accountCredits: [EngineAccountCredits]? = nil
+    /// Codex task tracking through Pacer's hooks; nil while Codex is not managed.
+    var codexHooks: EngineCodexHooks? = nil
     var wslAvailability: WindowsWSLAvailability?
     var remoteControlDirectory: RemoteControlDirectoryStatus?
 

@@ -128,6 +128,7 @@ public enum PacerEngine {
             sshServices: ssh, claudeRemoteServices: .live(ssh: ssh, wsl: wsl),
             codexRemoteProgressServices: demo || readOnly ? nil : .codexProgress(ssh: ssh, wsl: wsl),
             allowsLiveClaudeWeb: !demo && !readOnly, claudeWebReference: claudeReference, claudeHookServices: hookServices,
+            codexHookServices: demo || readOnly ? nil : .live(runtimeRoot: progressRoot),
             managesCodexProgress: !demo && !readOnly, managesDeepSeekProgress: !demo && !readOnly, managesLocalHarnessProgress: !demo && !readOnly,
             codexProgressPaths: .init(root: progressRoot), allowsStorageRecovery: !readOnly)
         await runtime.hello()
@@ -220,6 +221,16 @@ actor EngineRuntime {
     }
     private var claudeHookHome: URL?, claudeHookRequest: UUID?
     private var claudeHooksEnabled = false
+    private let codexHookServices: EngineCodexHookServices?
+    private var codexHookTask: Task<Void, Never>? {
+        get { ownedWork.task(.init(.setup, provider: .codex, identifier: "hooks")) }
+        set { setOwnedTask(newValue, key: .init(.setup, provider: .codex, identifier: "hooks")) }
+    }
+    private var codexHookHome: URL?, codexHookExecutable: String?, codexHookRequest: UUID?
+    private var codexHooksEnabled = false
+    /// The last setup pass; nil while one runs or Codex is not managed.
+    private var codexHookResult: CodexHookSetupResult?
+    private var codexHookTrustCheck: Date?
     private var expanded = false
     private var projectionReady = false
     private var lifecycle = ApplicationLifecycleCoordinator()
@@ -530,6 +541,7 @@ actor EngineRuntime {
          allowsLiveClaudeWeb: Bool = false,
          claudeWebReference: Bool = false,
          claudeHookServices: EngineClaudeHookServices? = nil,
+         codexHookServices: EngineCodexHookServices? = nil,
          managesCodexProgress: Bool = false,
          managesDeepSeekProgress: Bool = false,
          managesLocalHarnessProgress: Bool = false,
@@ -557,6 +569,7 @@ actor EngineRuntime {
         self.activityHostServices = activityHostServices
         self.claudeWebReference = claudeWebReference && demo
         self.claudeHookServices = claudeHookServices
+        self.codexHookServices = codexHookServices
         self.managesCodexProgress = managesCodexProgress; self.codexProgressPaths = codexProgressPaths
         self.managesDeepSeekProgress = managesDeepSeekProgress
         self.managesLocalHarnessProgress = managesLocalHarnessProgress
@@ -926,6 +939,10 @@ actor EngineRuntime {
             guard claudeHookServices != nil, enabled.contains(.claude), !demo else { failure(id: command.id, code: "claudeSetupUnavailable"); return true }
             scheduleClaudeHooks(force: true)
             publish(notices: [])
+        case "retryCodexHooks":
+            guard codexHookServices != nil, enabled.contains(.codex) else { failure(id: command.id, code: "codexHooksUnavailable"); return true }
+            scheduleCodexHooks(force: true)
+            publish(notices: [])
         case "retryCodexProgressSetup":
             guard managesCodexProgress, codexProgressRing, enabled.contains(.codex) else { failure(id: command.id, code: "codexProgressSetupUnavailable"); return true }
             scheduleCodexProgressSetup(force: true)
@@ -1280,6 +1297,7 @@ actor EngineRuntime {
         applyClaudeProgressSwitch()
         // The Dot switch installs or removes the Durable progress plugin.
         scheduleCodexProgressSetup(force: durableChanged)
+        scheduleCodexHooks()
         scheduleDeepSeekProgressSetup()
         for definition in localHarnesses.definitions { scheduleLocalHarnessProgress(definition) }
         boundWSLCompletionProfiles = wslCompletionProfiles
@@ -1525,13 +1543,8 @@ actor EngineRuntime {
     }
 
     private static func prepareProgressReporter(home: URL, paths: WindowsCodexProgressPaths, stablePath: Bool = false) async -> CodexProgressCommand? {
-        let engine = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-        let install = engine.deletingLastPathComponent().deletingLastPathComponent().path.lowercased()
-        let root = paths.root.path.lowercased()
-        guard root != install, !root.hasPrefix(install + "/") else { return nil }
-        let helper = engine.deletingLastPathComponent().appendingPathComponent("PacerInstallerHooks.exe")
-        guard let data = await WindowsSubprocess.capture(executable: helper,
-                arguments: [stablePath ? "--prepare-local-harness-progress" : "--prepare-codex-progress", paths.root.path, home.path], timeout: 8, limit: 8192),
+        guard let data = await EngineInstallerHooks.run([stablePath ? "--prepare-local-harness-progress" : "--prepare-codex-progress", paths.root.path, home.path],
+                                                        runtimeRoot: paths.root),
               let command = try? JSONDecoder().decode(CodexProgressCommand.self, from: data), paths.owns(command, home: home) else { return nil }
         return command
     }
@@ -1579,6 +1592,50 @@ actor EngineRuntime {
         // confirms that this engine manages that home.
         applyClaudeProgressSwitch(setupConfirmed: report.state == .ready)
         publish(notices: [])
+    }
+    /// Installs Pacer's Codex hooks while the Codex module is on and removes
+    /// them when it is off, as the Claude hooks are; a changed Codex home or CLI
+    /// sets up again.
+    private func scheduleCodexHooks(force: Bool = false) {
+        guard let services = codexHookServices else { return }
+        let active = enabled.contains(.codex), home = codexHome, executable = codexExecutable
+        guard force || codexHookHome != home || codexHookExecutable != executable || codexHooksEnabled != active else { return }
+        codexHookTask?.cancel()
+        let previous = codexHooksEnabled && codexHookHome != home ? codexHookHome : nil
+        codexHookHome = home; codexHookExecutable = executable; codexHooksEnabled = active
+        let request = UUID(); codexHookRequest = request
+        codexHookResult = nil; codexHookTrustCheck = nil
+        codexHookTask = Task { [weak self] in
+            if let previous { _ = await services.apply(previous, executable, false) }
+            let result = await services.apply(home, executable, active)
+            guard !Task.isCancelled else { return }
+            await self?.receiveCodexHookSetup(result, request: request)
+        }
+    }
+    private func receiveCodexHookSetup(_ result: CodexHookSetupResult, request: UUID) {
+        guard codexHookRequest == request else { return }
+        codexHookTask = nil; codexHookResult = result; codexHookTrustCheck = now()
+        if initialized { publish(notices: []) }
+    }
+    /// While the user still has to allow Pacer's hooks in Codex, their trust is
+    /// read again at most once a minute; nothing is polled once they run.
+    private func refreshCodexHookTrust() {
+        guard let services = codexHookServices, codexHooksEnabled, codexHookTask == nil, let result = codexHookResult,
+              let home = codexHookHome, let executable = codexHookExecutable, let request = codexHookRequest,
+              case .needsApproval = codexHookStatus, now().timeIntervalSince(codexHookTrustCheck ?? .distantPast) >= 60 else { return }
+        codexHookTrustCheck = now()
+        codexHookTask = Task { [weak self] in
+            let trust = await services.trust(home, executable)
+            guard !Task.isCancelled else { return }
+            await self?.receiveCodexHookSetup(.init(supportsHooks: result.supportsHooks, installed: result.installed, trust: trust ?? result.trust), request: request)
+        }
+    }
+    private var codexHookStatus: CodexHookStatus? {
+        guard codexHookServices != nil else { return nil }
+        guard codexHooksEnabled else { return .off }
+        guard let result = codexHookResult else { return nil }
+        return CodexHookStatus.evaluate(enabled: true, supportsHooks: result.supportsHooks, installed: result.installed, trust: result.trust,
+                                        lastHookEvent: nil, lastCodexTurn: nil, now: now())
     }
     /// Profile files are written off the actor, like the Codex setup.
     private func scheduleDeepSeekProgressSetup(force: Bool = false) {
@@ -2934,6 +2991,8 @@ actor EngineRuntime {
         snapshot.expandedPanel = EngineExpandedPanel(settings: panelSettings, enabled: enabled, snapshots: snapshots,
             hasBudget: hasBudget, at: date)
         snapshot.wslAvailability = demo ? .available : wslAvailability
+        snapshot.codexHooks = codexHookServices == nil ? nil : codexHookStatus.map(EngineCodexHooks.init) ?? .settingUp
+        refreshCodexHookTrust()
         snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in
             credits[provider].map { .init(provider: provider.rawValue, credits: $0, stale: accountCredits[provider]?.stale == true,
                                           presentation: HarnessCreditsPresentation(credits: $0, settings: creditSettings[provider] ?? .default, now: date)) }
@@ -2969,7 +3028,7 @@ actor EngineRuntime {
         // A reattached source may report the same rows as before sleep.
         // Send the first rebuilt projection so the host can leave its sleep UI.
         snapshotEmission = .init()
-        if !demo { scheduleClaudeHooks() }
+        if !demo { scheduleClaudeHooks(); scheduleCodexHooks(force: true) }
         quotaMonitor = quotaServices.map { services in
             CodexQuotaMonitor(services: services, seed: codexQuotaState, now: now) { [weak self] state in await self?.receiveQuota(state) }
         }

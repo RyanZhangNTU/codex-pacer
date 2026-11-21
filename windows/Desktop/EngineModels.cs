@@ -17,7 +17,11 @@ internal sealed record EngineSnapshot(
     IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
     string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
     string? WslAvailability = null, RemoteControlDirectory? RemoteControlDirectory = null,
-    IReadOnlyList<EngineAccountCredits>? AccountCredits = null);
+    IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null);
+/// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
+/// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
+/// `notRunning`, `needsCodexUpdate` or `installFailed`.
+internal sealed record CodexHooks(string State, int? Pending = null);
 /// A module's account credits as the engine knows them, with what the bill
 /// service reported; drawn the same way in Settings, Overview and the island.
 internal sealed record EngineAccountCredits(string Provider, HarnessAccountCredits Credits, bool Stale,

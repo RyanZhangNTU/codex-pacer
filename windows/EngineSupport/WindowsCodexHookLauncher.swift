@@ -48,6 +48,16 @@ public struct WindowsCodexHookLauncher: CodexHookLauncher {
         }
     }
 
+    /// Codex reports Windows paths in their `\\?\` form; the drive letter and
+    /// case may also differ from Pacer's spelling of the same folder.
+    public func samePath(_ value: String, _ expected: URL) -> Bool { Self.samePath(value, expected) }
+
+    package static func samePath(_ value: String, _ expected: URL) -> Bool {
+        let path = value.hasPrefix(#"\\?\"#) ? String(value.dropFirst(4)) : value
+        guard WindowsCodexExecutableDiscovery.absolute(path) else { return false }
+        return URL(fileURLWithPath: path).standardizedFileURL.path.caseInsensitiveCompare(expected.standardizedFileURL.path) == .orderedSame
+    }
+
     package static func windowsPath(_ url: URL) -> String {
         var path = url.standardizedFileURL.path.replacingOccurrences(of: "/", with: "\\")
         // Foundation spells a drive path "/C:/..." on some hosts.

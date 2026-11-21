@@ -31,7 +31,7 @@ public struct WindowsCodexProgressRuntime {
         do { homes = try runtime.withLock { try runtime.homes(including: explicit) } }
         catch { homes = explicit; failed = true }
         let paths = paths
-        for home in homes where CodexProgressSetup.wasConfigured(in: home) || WindowsDurableProgressSetup.wasConfigured(in: home) {
+        for home in homes where CodexProgressSetup.wasConfigured(in: home) || WindowsDurableProgressSetup.wasConfigured(in: home) || Self.hasHooks(home) {
             let status = await CodexProgressSetup.apply(home: home, reporter: nil, storage: WindowsLocalProfileStorage(), checkOnly: checkOnly, owns: {
                 paths.owns($0, home: home) || $0.isNative(named: "PacerEngine.exe", home: home)
             }) {
@@ -40,8 +40,30 @@ public struct WindowsCodexProgressRuntime {
                 }
             }
             let removedDurable = await WindowsDurableProgressSetup.apply(home: home, reporter: nil, checkOnly: checkOnly, fallbackExecutable: executable)
-            if status != nil || !removedDurable { failed = true }
+            let removedHooks = await Self.removeHooks(home: home, executable: executable, checkOnly: checkOnly)
+            if status != nil || !removedDurable || !removedHooks { failed = true }
         }
         if failed { throw WindowsClaudeRuntimeStore.Failure.referenced }
+    }
+
+    /// Pacer's Codex hook plugin, by its owned marketplace folder.
+    static func hasHooks(_ home: URL) -> Bool {
+        FileManager.default.fileExists(atPath: CodexHookPlugin.Layout(home: home).root.path)
+    }
+
+    /// Uninstalls Pacer's Codex hook plugin and its launcher; a check only
+    /// confirms Pacer still owns what it would remove.
+    static func removeHooks(home: URL, executable: String, checkOnly: Bool) async -> Bool {
+        guard hasHooks(home) else { return true }
+        let layout = CodexHookPlugin.Layout(home: home), storage = WindowsLocalProfileStorage()
+        if checkOnly {
+            guard (try? storage.validate(layout.owner)) != nil, (try? storage.read(layout.owner)) == CodexHookPlugin.ownerMarker else { return false }
+            return true
+        }
+        guard let cli = CodexClient.findExecutable(customPath: executable) ?? CodexClient.findExecutable() else { return false }
+        let client = CodexClient(executable: cli, home: home, timeout: 10)
+        let result = await CodexHookSetup.apply(home: home, enabled: false, launcher: WindowsCodexHookLauncher(), storage: storage, client: client)
+        await client.shutdown()
+        return result.installed == false
     }
 }
