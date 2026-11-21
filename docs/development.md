@@ -176,7 +176,7 @@ Ordinary updates coalesce at one second expanded and five seconds collapsed; exp
 - Subagent relationships come only from validated `parentThreadId`/source metadata and session headers; agent IDs seen elsewhere just trigger bounded discovery. A parent's running hint cannot override a child ending at the same or a later time. Tasks group under one root per host, excluding reviews.
 - A goal bound to the current request keeps it open between turns, shown as paused or limited when Codex says so, and leaves the list 15 minutes after its last turn ends without a completion card.
 - Ephemeral conversations are excluded before projection. `thread/name/updated` renames a task and its retained card without touching lifecycle.
-- Local permission requests come from the `PermissionRequest` hook, keeping only the thread, turn and kind. A nonblocking question raises attention without turning a running task into waiting. Questions clear on removal, a later user message or the turn ending.
+- Local permission requests come from the `PermissionRequest` hook, keeping only the thread, turn and kind. Codex fires it as well for a turn whose `turn_context` sends approvals to Codex's own reviewer (`approvals_reviewer` `auto_review` or `guardian_subagent`, Codex Desktop's Approve for Me); nothing waits for the user there, so such a request raises no approval. A nonblocking question raises attention without turning a running task into waiting. Questions clear on removal, a later user message or the turn ending.
 - The log reader detects accepted `request_user_input_async` calls by a hashed thread/turn/call key.
 
 ### Rates and first output
