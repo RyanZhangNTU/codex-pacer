@@ -364,4 +364,38 @@ final class CodexHookHostTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), CodexHookTrustWatch.fallback, "At the first check, not after the fallback minute")
         XCTAssertEqual(reads.value, 1)
     }
+
+    func testACodexTooOldForHooksIsSetUpAgainWhenCodexStartsAfterItsUpdate() async throws {
+        final class Codex: @unchecked Sendable {
+            private let lock = NSLock(); private var updated = false; private var passes = 0
+            func update() { lock.withLock { updated = true } }
+            func apply(_ enabled: Bool) -> CodexHookSetupResult {
+                lock.withLock {
+                    passes += 1
+                    return updated ? .init(supportsHooks: true, installed: enabled, trust: Array(repeating: "trusted", count: 7))
+                                   : .init(supportsHooks: false, installed: false, trust: nil)
+                }
+            }
+            var count: Int { lock.withLock { passes } }
+        }
+        let home = try temporaryHome("codex-update")
+        let model = try model(home: home)
+        let codex = Codex()
+        model.codexHookSetupOverride = { _, _, enabled in codex.apply(enabled) }
+        model.syncCodexHooks()
+        try await TestWait.until { model.codexHookStatus == .needsCodexUpdate }
+
+        model.codexApplicationDidLaunch("com.apple.Safari")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(codex.count, 1, "Another app starting changes nothing")
+
+        // Codex installs its update and starts again.
+        codex.update()
+        model.codexApplicationDidLaunch("com.openai.codex")
+        let running = try await TestWait.until { model.codexHookStatus == .running }
+        XCTAssertTrue(running, "The status follows the update without Retry")
+        model.codexApplicationDidLaunch("com.openai.codex")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(codex.count, 2, "A Codex that has hooks starting again sets nothing up")
+    }
 }

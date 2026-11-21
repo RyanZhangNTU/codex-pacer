@@ -536,6 +536,13 @@ final class IslandModel: ObservableObject {
         return result
     }
 
+    /// A Codex too old for hooks updates itself and starts again: its launch is
+    /// when to set the hooks up again, so the status follows without Retry.
+    func codexApplicationDidLaunch(_ bundleIdentifier: String?) {
+        guard bundleIdentifier == "com.openai.codex", codexHookStatus == .needsCodexUpdate else { return }
+        syncCodexHooks(force: true)
+    }
+
     /// The user has to act in Codex before local Codex tasks can show.
     var codexHooksNeedUser: Bool {
         switch codexHookStatus {
@@ -1911,6 +1918,10 @@ final class IslandModel: ObservableObject {
             Task { @MainActor in
                 self?.resumeAfterSleep()
             }
+        })
+        observations.append(center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            let bundle = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
+            Task { @MainActor in self?.codexApplicationDidLaunch(bundle) }
         })
         // A pinned panel behind a dark display, the lock screen or another user's session is not seen.
         for (name, blocker, blocked) in [(NSWorkspace.screensDidSleepNotification, VisibilityBlocker.displaySleep, true),
