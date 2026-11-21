@@ -310,8 +310,11 @@ public actor LocalActivityReader {
     }
 
     /// A permission request waits until its turn's log moves past it or the turn ends.
+    /// Codex fires the hook for a turn whose approvals its own reviewer takes too;
+    /// nothing waits for the user there, so nothing shows.
     private func approval(for activity: SessionActivity) -> PendingAttentionRequest? {
-        guard let thread = activity.threadID, activity.parentThreadID == nil, let request = hooks.threads[thread]?.approval,
+        guard let thread = activity.threadID, activity.parentThreadID == nil, !activity.codexReviewsApprovals,
+              let request = hooks.threads[thread]?.approval,
               [.running, .waitingForInput].contains(activity.phase),
               request.turn == nil || activity.turnID == nil || request.turn == activity.turnID,
               (activity.lastObserved ?? .distantPast) <= request.at else { return nil }

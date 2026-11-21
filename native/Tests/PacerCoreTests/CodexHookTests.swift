@@ -409,6 +409,34 @@ final class CodexHookReaderTests: XCTestCase {
         XCTAssertEqual(last?.timeIntervalSince1970 ?? 0, start.addingTimeInterval(12).timeIntervalSince1970, accuracy: 0.01)
     }
 
+    /// Codex Desktop's Approve for Me sends a turn's approvals to Codex's own reviewer, yet
+    /// Codex still fires PermissionRequest; the command then runs with no answer from the user.
+    /// A turn whose context names the user as reviewer waits for them, as before.
+    func testAPermissionRequestCodexReviewsItselfDoesNotWaitForTheUser() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-hook-reviewer-" + UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let start = Date().addingTimeInterval(-120)
+        let day = home.appendingPathComponent("sessions/2026/11/21", isDirectory: true)
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let file = day.appendingPathComponent("rollout-2026-11-21T10-00-00-\(thread).jsonl")
+        try record("session_meta", ["id": thread, "originator": "Codex Desktop", "cwd": "/fixture"], at: start).write(to: file)
+        let reader = LocalActivityReader()
+        for (index, reviewer) in ["auto_review", "user", "guardian_subagent"].enumerated() {
+            let turn = "t\(index + 1)", at = start.addingTimeInterval(Double(index) * 30)
+            let handle = try FileHandle(forWritingTo: file); try handle.seekToEnd()
+            try handle.write(contentsOf: record("event_msg", ["type": "task_started", "turn_id": turn], at: at.addingTimeInterval(1))
+                + record("turn_context", ["turn_id": turn, "model": "gpt-fixture", "approval_policy": "on-request", "approvals_reviewer": reviewer],
+                         at: at.addingTimeInterval(1.1)))
+            try handle.close()
+            try CodexHookFixture.announce([file], home: home, turn: turn, at: at.addingTimeInterval(1))
+            try CodexHookFixture.announce([file], home: home, event: "PermissionRequest", turn: turn, approval: "exec", at: at.addingTimeInterval(5))
+            let read = await reader.read(home: home, now: at.addingTimeInterval(6))
+            XCTAssertEqual(read.activities.first?.phase, .running, reviewer)
+            XCTAssertEqual(read.requests.map(\.kind), reviewer == "user" ? [.approval] : [],
+                           "\(reviewer): only a turn the user reviews waits for them")
+        }
+    }
+
     func testASpoolAppendNamingANewRolloutIsFollowedByAMetricsOnlyRead() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-hook-append-" + UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: home) }
