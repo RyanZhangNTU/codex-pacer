@@ -1556,16 +1556,28 @@ actor EngineRuntime {
         if initialized { publish(notices: notices) }
     }
     /// Codex ran turns while the spool stayed silent: hooks stopped running.
-    /// Only the reader's hook state and rollout folder dates are read.
+    /// Only the reader's hook state and rollout folder dates are read, at most
+    /// once a minute. While the hooks are reported silent, a new hook row is
+    /// checked at once, so the notice clears by itself, as on the Mac.
     private func refreshCodexHookActivity() {
-        guard codexHooksEnabled, codexHookResult?.installed == true, let home = codexHookHome, codexHookActivityRequest == nil,
-              now().timeIntervalSince(codexHookActivity.checked ?? .distantPast) >= 60 else { return }
-        let request = UUID(), date = now(), reader = codexReader
-        codexHookActivityRequest = request; codexHookActivity.checked = date
+        guard codexHooksEnabled, codexHookResult?.installed == true, let home = codexHookHome, codexHookActivityRequest == nil else { return }
+        let date = now(), due = date.timeIntervalSince(codexHookActivity.checked ?? .distantPast) >= 60
+        guard due || codexHookStatus == .notRunning else { return }
+        let request = UUID(), reader = codexReader, seen = codexHookActivity.hook
+        codexHookActivityRequest = request
+        if due { codexHookActivity.checked = date }
         Task { [weak self] in
+            if !due, await reader.lastHookRow == seen {
+                await self?.skipCodexHookActivity(request: request)
+                return
+            }
             let evidence = await reader.hookEvidence(home: home, now: date)
             await self?.receiveCodexHookActivity(hook: evidence.lastHookEvent, turn: evidence.lastCodexTurn, request: request)
         }
+    }
+    /// No hook row arrived since the silence was found; nothing to recompute.
+    private func skipCodexHookActivity(request: UUID) {
+        if codexHookActivityRequest == request { codexHookActivityRequest = nil }
     }
     private func receiveCodexHookActivity(hook: Date?, turn: Date?, request: UUID) {
         guard codexHookActivityRequest == request else { return }

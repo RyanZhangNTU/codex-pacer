@@ -160,4 +160,38 @@ final class EngineCodexHookStatusTests: XCTestCase {
         XCTAssertEqual(setups.value, ["apply"], "A failed trust read never sets the plugin up again")
         await runtime.stop()
     }
+
+    /// After approval, a turn without a hook row shows the hooks as silent; the
+    /// next hook row clears that at once, without waiting for the minute check.
+    func testANewHookRowClearsASilentHookAtOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-silent " + UUID().uuidString)
+        let home = root.appendingPathComponent("codex")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy/MM/dd"
+        let day = home.appendingPathComponent("sessions/" + formatter.string(from: Date()))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        // Codex ran a turn and no hook row followed.
+        let rollout = day.appendingPathComponent("rollout-2026-11-21T10-00-00-019a0000-0000-7000-8000-000000000051.jsonl")
+        try Data().write(to: rollout)
+        let trusted = Array(repeating: "trusted", count: CodexHookEvent.Kind.allCases.count)
+        let services = EngineCodexHookServices(apply: { _, _, enabled in
+            .init(supportsHooks: true, installed: enabled, trust: enabled ? trusted : nil)
+        }, trust: { _, _ in trusted })
+        // The clock stands still, so the minute check never comes due again.
+        let frames = HookStatusFrames(), date = Date()
+        let runtime = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, codexHookServices: services, output: { frames.append($0) })
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(home)]))
+        func state() -> String? { frames.all().last?.codexHooks?.state }
+        func warned() -> Bool { frames.all().last?.compactWarnings?.contains { $0.kind == .codexHooks } == true }
+
+        let silent = try await TestWait.until { state() == "notRunning" }
+        XCTAssertTrue(silent, "A turn without a hook row after approval is a silent hook")
+        XCTAssertTrue(warned())
+
+        try CodexHookFixture.announce([rollout], home: home, turn: "turn-1", at: date)
+        let cleared = try await TestWait.until { state() == "running" }
+        XCTAssertTrue(cleared, "The hook row clears the notice without waiting for the minute check")
+        XCTAssertFalse(warned())
+        await runtime.stop()
+    }
 }
