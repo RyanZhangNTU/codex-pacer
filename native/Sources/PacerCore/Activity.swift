@@ -102,6 +102,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var reasoningEffortReported = false
     private var reasoningEffortReportedAt: Date?
     public private(set) var isInternalReview = false
+    private var autoReviewedTurnID: String?
+    /// Whether the current turn's context names Codex as its default reviewer.
+    public var codexReviewsApprovals: Bool { turnID != nil && turnID == autoReviewedTurnID }
     enum Charge: Equatable, Sendable {
         case estimatedYuan(total: Double, peak: Double)
         case credits(Double)
@@ -740,6 +743,10 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             }
             updateModel(in: payload, effort: "effort", at: date)
             if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
+            switch payload["approvals_reviewer"] as? String {
+            case "auto_review", "guardian_subagent": autoReviewedTurnID = turnID
+            default: autoReviewedTurnID = nil
+            }
             return
         }
         if value["type"] as? String == "token_usage_record" {

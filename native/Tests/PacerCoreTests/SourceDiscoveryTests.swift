@@ -76,6 +76,44 @@ final class SourceDiscoveryTests: XCTestCase {
         XCTAssertEqual(result.activities.first?.title, "Resumed analysis")
         XCTAssertTrue(result.watchURLs.contains { $0.standardizedFileURL.path == day.standardizedFileURL.path })
     }
+    /// Codex can index a Windows rollout as `\\?\C:\...` (#276). The index reads it as
+    /// the hooks do, so a session resumed from an older day folder keeps Codex's title;
+    /// a row outside the home's rollout trees, or one Windows would read differently, is not used.
+    func testTheIndexReadsAWindowsExtendedPathAsTheHooksDo() async throws {
+        let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
+        try XCTSkipUnless(CodexHookSpool.windowsComponents(home.standardizedFileURL.path) != nil, "Windows paths only")
+        func native(_ url: URL) -> String {
+            var path = url.standardizedFileURL.path
+            if path.hasPrefix("/"), path.dropFirst().dropFirst().first == ":" { path.removeFirst() }
+            return path.replacingOccurrences(of: "/", with: "\\")
+        }
+        let day = home.appendingPathComponent("sessions/2025/01/01")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let now = Date()
+        let drive = day.appendingPathComponent("rollout-2025-01-01T00-00-00-019a0000-0000-7000-8000-000000276001.jsonl")
+        let extended = day.appendingPathComponent("rollout-2025-01-01T00-00-00-019a0000-0000-7000-8000-000000276002.jsonl")
+        for (file, turn) in [(drive, "drive"), (extended, "extended")] {
+            try record("event_msg", payload: ["type": "task_started", "turn_id": turn], at: now).write(to: file)
+        }
+        let outside = home.appendingPathComponent("elsewhere.jsonl"); try Data().write(to: outside)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(home.appendingPathComponent("state_5.sqlite").path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "CREATE TABLE threads (rollout_path TEXT, archived INTEGER, recency_at_ms INTEGER, title TEXT)", nil, nil, nil), SQLITE_OK)
+        for (path, title) in [(native(drive), "Drive path"), (#"\\?\"# + native(extended), "Extended path"),
+                              (#"\\?\"# + native(outside), "Outside the rollout trees"),
+                              (#"\\?\"# + native(day) + #"\..\01\"# + extended.lastPathComponent, "Dot segment"),
+                              (#"\\?\"# + native(extended) + ":stream", "Alternate stream")] {
+            let row = "INSERT INTO threads VALUES ('\(path.replacingOccurrences(of: "'", with: "''"))',0,123,'\(title)')"
+            XCTAssertEqual(sqlite3_exec(db, row, nil, nil, nil), SQLITE_OK)
+        }
+        sqlite3_close(db)
+        XCTAssertEqual(Set(SessionIndex.entries(home: home).compactMap(\.title)), ["Drive path", "Extended path"],
+                       "Both spellings of a rollout in the sessions tree count; nothing else does")
+        try CodexHookFixture.announce([drive, extended], home: home, at: now)
+        let result = await LocalActivityReader().read(home: home, now: now)
+        XCTAssertEqual(Set(result.activities.compactMap(\.title)), ["Drive path", "Extended path"],
+                       "The task Codex indexed with \\\\?\\ keeps its title instead of the project's name")
+    }
     func testAssignedConversationNameTakesPrecedenceOverOriginalPromptTitle() async throws {
         let home = try temp(); defer { try? FileManager.default.removeItem(at: home) }
         let day = home.appendingPathComponent("sessions/2025/01/01")

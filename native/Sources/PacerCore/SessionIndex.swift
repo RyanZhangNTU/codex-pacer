@@ -40,12 +40,14 @@ public enum SessionIndex {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else { continue }
             defer { sqlite3_finalize(statement) }
-            let root = home.appendingPathComponent("sessions").standardizedFileURL.path + "/"
             var result: [Entry] = []
             while sqlite3_step(statement) == SQLITE_ROW {
-                guard let raw = sqlite3_column_text(statement, 0) else { continue }
-                let url = URL(fileURLWithPath: String(cString: raw)).standardizedFileURL
-                if url.path.hasPrefix(root), url.pathExtension == "jsonl", manager.fileExists(atPath: url.path) {
+                // Codex can store a Windows rollout as `\\?\C:\...` or in another letter case.
+                // The hook spool's rule reads every spelling as the home's own, so a row
+                // matches the rollout its hooks name; outside the home's rollout trees, no row does.
+                guard let raw = sqlite3_column_text(statement, 0),
+                      let url = CodexHookSpool.transcript(String(cString: raw), home: home) else { continue }
+                if manager.fileExists(atPath: url.path) {
                     let name = sqlite3_column_text(statement, 1).map { String(cString: $0) }
                     let raw = sqlite3_column_text(statement, 2).map { String(cString: $0) }
                     let source = raw.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONSerialization.jsonObject(with: $0) }
