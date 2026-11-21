@@ -398,4 +398,20 @@ final class CodexHookHostTests: XCTestCase {
         try await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertEqual(codex.count, 2, "A Codex that has hooks starting again sets nothing up")
     }
+
+    func testTheCodexSetupStepsFollowTheHookStatusAsOnWindows() {
+        func steps(_ status: CodexHookStatus, desktop: Bool = true) -> CodexSetupSteps { CodexSetupSteps(status: status, opensSettings: desktop) }
+        XCTAssertEqual(steps(.off).update, .checking); XCTAssertEqual(steps(.off).allow, .waiting)
+        XCTAssertEqual(steps(.notInstalled).update, .checking, "Setup or an unknown trust is still being checked")
+        XCTAssertEqual(steps(.needsCodexUpdate).update, .needed); XCTAssertEqual(steps(.needsCodexUpdate).allow, .waiting)
+        XCTAssertEqual(steps(.needsApproval(count: 7)).update, .ready)
+        XCTAssertEqual(steps(.needsApproval(count: 7)).allow, .open, "Codex Desktop opens its settings with the guide")
+        XCTAssertEqual(steps(.needsApproval(count: 7), desktop: false).allow, .manual, "Without Codex Desktop the step says what to do")
+        XCTAssertEqual(steps(.installFailed).allow, .failed)
+        for status in [CodexHookStatus.running, .notRunning] {
+            XCTAssertEqual(steps(status).update, .ready); XCTAssertEqual(steps(status).allow, .done)
+            XCTAssertTrue(steps(status).done, "The note's button turns to Continue")
+        }
+        XCTAssertFalse(steps(.needsApproval(count: 7)).done, "Later until the hooks are allowed")
+    }
 }

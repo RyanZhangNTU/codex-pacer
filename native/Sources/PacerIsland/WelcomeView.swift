@@ -188,9 +188,20 @@ struct WelcomeView: View {
 
     /// Titles only, like the main window: what a row does sits behind ⓘ,
     /// and only a problem the user must fix shows under the title.
-    private var finishPage: some View {
-        VStack(spacing: 24) {
+    /// With Codex on, its two steps come first: without them no Codex task shows.
+    /// They make the page taller than the guide, so it scrolls then.
+    @ViewBuilder private var finishPage: some View {
+        if moduleEnabled(.codex) {
+            ScrollView(.vertical) { finishContent(codex: true).padding(.bottom, 16) }.scrollIndicators(.automatic)
+        } else {
+            finishContent(codex: false)
+        }
+    }
+
+    private func finishContent(codex: Bool) -> some View {
+        VStack(spacing: codex ? 18 : 24) {
             header(L10n.text("main.welcome.finish_title"), L10n.text("main.welcome.finish_subtitle"))
+            if codex { CodexSetupCard(model: model, welcome: true) }
             MainCard {
                 VStack(alignment: .leading, spacing: 10) {
                     WelcomeChoiceRow(symbol: "circle.dashed", tint: Color(red: 0.19, green: 0.69, blue: 0.78),
@@ -217,7 +228,7 @@ struct WelcomeView: View {
                 }
             }
         }
-        .padding(.horizontal, 56).padding(.top, 44)
+        .padding(.horizontal, 56).padding(.top, codex ? 32 : 44)
     }
 
     /// The apps that still need the user to trust Pacer's tool, and the way to their page.
