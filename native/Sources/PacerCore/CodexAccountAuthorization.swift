@@ -1,6 +1,8 @@
 import Foundation
 
-struct RemoteControlCatalogAuthorization: Sendable {
+/// The signed-in ChatGPT account behind the Codex login, for the Dot catalog only.
+/// The token stays in memory for one handshake and is never stored or shown.
+struct CodexAccountAuthorization: Sendable {
     let token: String
     let accountID: String
     let accountUserIDs: [String]

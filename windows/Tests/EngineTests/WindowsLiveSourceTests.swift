@@ -1,7 +1,6 @@
 @testable import PacerEngineSupport
 #if os(Windows)
 import Foundation
-import SQLite3
 import XCTest
 @testable import PacerCore
 
@@ -34,13 +33,15 @@ final class WindowsLiveSourceTests: XCTestCase {
         let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"; formatter.locale = Locale(identifier: "en_US_POSIX")
         return home.appendingPathComponent("sessions/" + formatter.string(from: date), isDirectory: true)
     }
-    private func session(_ home: URL, id: String, at now: Date) throws -> URL {
+    /// A rollout whose turn starts, named in the hook spool as Codex's hook does.
+    private func session(_ home: URL, id: String, at now: Date, announce: Bool = true) throws -> URL {
         let day = dayDirectory(home, at: now)
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
         let file = day.appendingPathComponent("rollout-" + id + ".jsonl")
         var bytes = try record("session_meta", payload: ["id": id, "source": "cli", "originator": "codex_cli_rs", "cwd": "C:\\synthetic"], at: now)
         bytes += try record("event_msg", payload: ["type": "task_started", "turn_id": id], at: now)
         try bytes.write(to: file)
+        if announce { try CodexHookFixture.announce([file], home: home, turn: id, at: now) }
         return file
     }
     private func appendTurn(_ event: String, to file: URL, turn: String, at date: Date) throws {
@@ -51,17 +52,6 @@ final class WindowsLiveSourceTests: XCTestCase {
     }
     private func finish(_ file: URL, id: String) throws {
         try appendTurn("task_complete", to: file, turn: id, at: Date())
-    }
-    private func indexSession(_ file: URL, in home: URL) throws {
-        var database: OpaquePointer?
-        let path = EngineCodexSourceReport.path(home.appendingPathComponent("state_1.sqlite"))
-        let opened = sqlite3_open(path, &database)
-        defer { sqlite3_close(database) }
-        XCTAssertEqual(opened, SQLITE_OK)
-        guard let database else { return }
-        XCTAssertEqual(sqlite3_exec(database, "CREATE TABLE threads (rollout_path TEXT)", nil, nil, nil), SQLITE_OK)
-        let rollout = EngineCodexSourceReport.path(file).replacingOccurrences(of: "'", with: "''")
-        XCTAssertEqual(sqlite3_exec(database, "INSERT INTO threads VALUES ('\(rollout)')", nil, nil, nil), SQLITE_OK)
     }
     private func until(_ predicate: () -> Bool, message: String) async throws {
         let started = ProcessInfo.processInfo.systemUptime
@@ -89,7 +79,7 @@ final class WindowsLiveSourceTests: XCTestCase {
 
         let created = try session(home, id: second, at: Date())
         try await until({ capture.all().last?.tasks.contains { $0.sessionID == second && $0.phase == "running" } == true },
-            message: "A new session must appear from a directory notification, before minute maintenance")
+            message: "A new session must appear from the hook spool's notification, before minute maintenance")
         try finish(created, id: second)
         try await until({ capture.all().last?.tasks.contains { $0.sessionID == second && $0.phase == "completed" && $0.unread } == true },
             message: "An appended ending must reach the engine through a write notification")
@@ -107,7 +97,9 @@ final class WindowsLiveSourceTests: XCTestCase {
         XCTAssertEqual(capture.all().count, stopped, "Stopping must cancel source notifications and the metadata clock")
     }
 
-    func testCodexFileEventsDiscoverNewAndResumedTurnsAcrossMidnight() async throws {
+    /// Hook rows name new and resumed turns; the spool's notification brings them
+    /// in at once, on either side of midnight and in a day folder made after start.
+    func testCodexHookRowsDiscoverNewAndResumedTurnsAcrossMidnight() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-watch-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let calendar = Calendar.current
@@ -118,11 +110,10 @@ final class WindowsLiveSourceTests: XCTestCase {
         let runtime = EngineRuntime(demo: false, now: { clock.now }, dismissalStore: nil, output: { capture.append($0) })
         let oldID = UUID().uuidString.lowercased()
         let oldDate = try XCTUnwrap(calendar.date(byAdding: .day, value: -7, to: beforeMidnight))
-        let oldFile = try session(root, id: oldID, at: oldDate)
+        let oldFile = try session(root, id: oldID, at: oldDate, announce: false)
         try appendTurn("task_complete", to: oldFile, turn: oldID, at: oldDate.addingTimeInterval(1))
-        try indexSession(oldFile, in: root)
         try FileManager.default.createDirectory(at: dayDirectory(root, at: beforeMidnight), withIntermediateDirectories: true)
-        // A new year's first write has to pass through a parent directory watch.
+        // The new year's day folder does not exist when the engine starts.
         XCTAssertFalse(FileManager.default.fileExists(atPath: dayDirectory(root, at: afterMidnight).path))
 
         func expectRunning(_ session: String, turn: String, since started: TimeInterval, scenario: String) async throws {
@@ -134,9 +125,9 @@ final class WindowsLiveSourceTests: XCTestCase {
                 try await Task.sleep(nanoseconds: 10_000_000)
             }
             let elapsed = ProcessInfo.processInfo.systemUptime - started
-            XCTAssertTrue(hasTurn(), "\(scenario) must appear from a file notification")
+            XCTAssertTrue(hasTurn(), "\(scenario) must appear from the spool's notification")
             XCTAssertLessThan(elapsed, 3, "\(scenario) must bypass the collapsed metrics batch")
-            if hasTurn() { print("Codex file notification, \(scenario): \(Int(elapsed * 1000)) ms") }
+            if hasTurn() { print("Codex hook notification, \(scenario): \(Int(elapsed * 1000)) ms") }
         }
 
         do {
@@ -149,13 +140,77 @@ final class WindowsLiveSourceTests: XCTestCase {
             let resumedTurn = UUID().uuidString.lowercased()
             started = ProcessInfo.processInfo.systemUptime
             try appendTurn("task_started", to: oldFile, turn: resumedTurn, at: beforeMidnight)
-            try await expectRunning(oldID, turn: resumedTurn, since: started, scenario: "indexed old rollout append")
+            try CodexHookFixture.announce([oldFile], home: root, turn: resumedTurn, at: beforeMidnight)
+            try await expectRunning(oldID, turn: resumedTurn, since: started, scenario: "resumed week-old rollout")
 
             clock.set(afterMidnight)
             let nextDayID = UUID().uuidString.lowercased()
             started = ProcessInfo.processInfo.systemUptime
             _ = try session(root, id: nextDayID, at: afterMidnight)
             try await expectRunning(nextDayID, turn: nextDayID, since: started, scenario: "first rollout of the new year while collapsed")
+            await runtime.stop()
+        } catch {
+            await runtime.stop()
+            throw error
+        }
+    }
+
+    /// Codex keeps its rollout open while it writes, and Windows reports a size
+    /// change of an open file only once it is closed or flushed to disk. While a
+    /// local turn runs, the engine reads the rollouts it follows on its clock.
+    func testARolloutCodexKeepsOpenIsReadWhileItsTurnRuns() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-open-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = LiveSnapshots(), id = UUID().uuidString.lowercased()
+        let file = try session(root, id: id, at: Date())
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, output: { capture.append($0) })
+        let writer = try FileHandle(forWritingTo: file)
+        do {
+            _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(root)]))
+            _ = await runtime.receive(try command("setExpanded", ["expanded": true]))
+            try await until({ capture.all().last?.tasks.contains { $0.sessionID == id && $0.phase == "running" } == true },
+                message: "The announced turn runs")
+            // As Codex does: append through a handle that stays open, without a hook row.
+            try writer.seekToEnd()
+            try writer.write(contentsOf: record("event_msg", payload: ["type": "task_complete", "turn_id": id], at: Date()))
+            let started = ProcessInfo.processInfo.systemUptime
+            while capture.all().last?.tasks.contains(where: { $0.sessionID == id && $0.phase == "completed" }) != true,
+                  ProcessInfo.processInfo.systemUptime - started < 10 {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            XCTAssertTrue(capture.all().last?.tasks.contains { $0.sessionID == id && $0.phase == "completed" } == true,
+                "A write to an open rollout must reach the panel while the turn runs")
+            XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 3, "The expanded panel reads every second while a turn runs")
+            try writer.close()
+            await runtime.stop()
+        } catch {
+            try? writer.close()
+            await runtime.stop()
+            throw error
+        }
+    }
+
+    /// A Codex that crashed writes no more and sends no Stop, so no file grows and
+    /// no hook row arrives. Nothing reads on a timer, so the engine reads once
+    /// when the turn's evidence expires (`LocalActivityReader.nextRunningExpiry`).
+    func testACrashedTurnStopsRunningWhenItsEvidenceExpiresWithoutAnotherEvent() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-codex-crash-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let start = Date(), clock = CodexTestClock(start), capture = LiveSnapshots(), id = UUID().uuidString.lowercased()
+        _ = try session(root, id: id, at: start)
+        let runtime = EngineRuntime(demo: false, now: { clock.now }, dismissalStore: nil, output: { capture.append($0) })
+        do {
+            _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(root)]))
+            _ = await runtime.receive(try command("setExpanded", ["expanded": true]))
+            try await until({ capture.all().last?.tasks.contains { $0.sessionID == id && $0.phase == "running" } == true },
+                message: "The announced turn runs")
+            // The clock's first checks note the files' sizes (a first sight counts as
+            // growth), and file events from the reads so far settle.
+            try await Task.sleep(nanoseconds: 8_000_000_000)
+            // Past both deadlines: a quiet log (15 minutes) and the hook's hold (three hours).
+            clock.set(start.addingTimeInterval(3 * 3600 + 16 * 60))
+            try await until({ capture.all().last?.tasks.contains { $0.sessionID == id && $0.phase == "running" } == false },
+                message: "The expired turn stops running without another file or hook event")
             await runtime.stop()
         } catch {
             await runtime.stop()

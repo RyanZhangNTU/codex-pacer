@@ -83,40 +83,6 @@ final class ResponsePerformanceTests: XCTestCase {
         meter.observeRuntime(total: 1600, last: 600, reasoning: nil, at: start.addingTimeInterval(20))
         XCTAssertEqual(meter.latest?.completedAt, start.addingTimeInterval(10))
     }
-    func testNativeFirstNonemptyOutputAndFinalUsageAreObservedBeforeCompletion() throws {
-        var projection = DesktopWireProjection(threadID: thread)
-        var activity = SessionActivity(id: thread, phaseAwareRate: true)
-        func receive(_ value: [String: Any], _ seconds: Double) throws -> [[String: Any]] {
-            let view = try JSONFieldView.document(JSONSerialization.data(withJSONObject: value))
-            let events = try projection.consume(view, owner: "owner", at: start.addingTimeInterval(seconds))
-            for event in events { activity.consumeLive(event) }
-            return events
-        }
-        _ = try receive(["type": "snapshot", "revision": 0, "conversationState": ["turns": [], "latestTokenUsageInfo": ["total": ["outputTokens": 1000]]]], 0)
-        _ = try receive(["type": "patches", "baseRevision": 0, "revision": 1, "patches": [["op": "add", "path": ["turns", 0],
-            "value": ["turnId": "turn", "status": "inProgress", "items": [["id": "answer", "type": "agentMessage", "status": "inProgress", "text": ""]]]]]], 0)
-        _ = try receive(["type": "patches", "baseRevision": 1, "revision": 2, "patches": [["op": "replace", "path": ["turns", 0, "items", 0, "text"], "value": ""]]], 1)
-        XCTAssertNil(activity.firstTokenLatency); XCTAssertNil(activity.responsePerformance)
-        let first = try receive(["type": "patches", "baseRevision": 2, "revision": 3, "patches": [["op": "replace", "path": ["turns", 0, "items", 0, "text"], "value": "PRIVATE TEXT"]]], 2)
-        XCTAssertEqual(activity.firstTokenLatency, 2)
-        XCTAssertTrue(first.contains { $0["firstTextDelta"] as? Bool == true })
-        XCTAssertFalse(String(describing: first).contains("PRIVATE TEXT"))
-        let final = try receive(["type": "patches", "baseRevision": 3, "revision": 4, "patches": [
-            ["op": "replace", "path": ["turns", 0, "items", 0, "status"], "value": "completed"],
-            ["op": "replace", "path": ["latestTokenUsageInfo"], "value": ["total": ["outputTokens": 1600], "last": ["outputTokens": 600, "reasoningOutputTokens": 200]]],
-            ["op": "replace", "path": ["turns", 0, "status"], "value": "completed"]]], 10)
-        XCTAssertEqual(activity.responsePerformance?.tokensPerSecond, 60)
-        XCTAssertEqual(activity.responsePerformance?.reasoningTokens, 200)
-        XCTAssertEqual(activity.phase, .completed)
-        let count = try XCTUnwrap(final.firstIndex { $0["method"] as? String == "thread/tokenUsage/updated" })
-        let end = try XCTUnwrap(final.firstIndex { $0["method"] as? String == "turn/completed" })
-        XCTAssertLessThan(count, end)
-        // Historical hydration can supply stage, never first-token latency.
-        var attached = SessionActivity(id: thread, phaseAwareRate: true)
-        attached.consumeLive(["method": "turn/attached", "threadId": thread, "turnId": "turn", "at": 1000.0])
-        attached.consumeLive(["method": "item/agentMessage/delta", "threadId": thread, "turnId": "turn", "at": 1002.0, "hasText": true])
-        XCTAssertNil(attached.firstTokenLatency)
-    }
     func testExactAccountingAfterReleaseUpdatesOnlyMatchingRetainedTurn() throws {
         var stream = RuntimeEventState(sourceID: "remote-ssh-discovered:test", sourceName: "SSH")
         stream.consume(["kind": "status", "connected": true])

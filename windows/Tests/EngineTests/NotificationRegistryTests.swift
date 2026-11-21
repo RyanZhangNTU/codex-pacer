@@ -83,6 +83,7 @@ final class NotificationRegistryTests: XCTestCase {
         }
         try (line("session_meta", ["id": thread, "source": "cli", "cwd": "C:/Synthetic"], date.addingTimeInterval(-10)) +
              line("event_msg", ["type": "task_started", "turn_id": "cold-turn"], date.addingTimeInterval(-10))).write(to: file)
+        try CodexHookFixture.announce([file], home: home, turn: "cold-turn", at: date.addingTimeInterval(-10))
         let configuration: [String: Any] = ["enabledProviders": ["codex"], "codexHome": home.path]
         let first = EngineRuntime(demo: false, now: { date }, dismissalStore: nil, notificationStore: store, output: { frames.append($0) })
         _ = await first.receive(try command("initialize", configuration))

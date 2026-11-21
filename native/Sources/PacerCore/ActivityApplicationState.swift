@@ -124,7 +124,7 @@ public struct ActivityApplicationState: Sendable {
             values[value.id] = value
         }
         let samples = includesDemoMetadata ? demoActivities.filter { $0.provider == provider } : []
-        for item in samples + incoming where inbox.isSourceVisible(item.sourceHostID) {
+        for item in samples + incoming {
             var value = item.canonicalized()
             if let old = values[value.id] { value.mergeDisplayMetadata(from: old) }
             values[value.id] = value

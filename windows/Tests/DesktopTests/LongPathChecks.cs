@@ -56,6 +56,17 @@ internal static class LongPathChecks
                         Row(new { type = "turn/end", seq = 3, time = milliseconds + 3, data = new { turn = 2, reason = new { kind = "completed" } } });
                 }
                 await File.WriteAllBytesAsync(file, provider == "deepseek" ? Frame(initial) : Encoding.UTF8.GetBytes(initial));
+                if (provider == "codex")
+                {
+                    // Local Codex is found only through the rollout its hook names.
+                    string spool = Path.Combine(codex, "pacer", "hooks", "events.jsonl");
+                    Directory.CreateDirectory(Path.GetDirectoryName(spool)!);
+                    await File.AppendAllTextAsync(spool, Row(new Dictionary<string, object>
+                    {
+                        ["v"] = 1, ["hook"] = 1, ["at"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, ["event"] = "UserPromptSubmit",
+                        ["thread"] = id, ["turn"] = prompt, ["transcript"] = file
+                    }));
+                }
                 await Until(() => engine.LatestSnapshot?.Tasks.Any(value => value.Provider == provider && value.SessionId == id) == true,
                     provider + " long log must be discovered and read without an explicit refresh");
                 ulong before = engine.LatestSnapshot!.Sequence;

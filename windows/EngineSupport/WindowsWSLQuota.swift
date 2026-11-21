@@ -37,7 +37,7 @@ extension WindowsWSLServices {
         return await capture(executable, args, 3, 32).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "verified" } ?? false
     }
     func readQuota(profile: WindowsWSLProfile, provider: AgentProvider,
-                   transport: @escaping ClaudeQuotaClient.Transport = { try await WindowsRemoteControlHTTP.claudeQuota($0) }) async throws -> QuotaSnapshot {
+                   transport: @escaping ClaudeQuotaClient.Transport = { try await WindowsClaudeUsageHTTP.claudeQuota($0) }) async throws -> QuotaSnapshot {
         guard registry.profile(id: profile.id, provider: provider) == profile else { throw ClaudeQuotaError.accountChanged }
         let before = try await quotaFiles(profile, provider: provider)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-wsl-identity/" + profile.id.dropFirst(4))

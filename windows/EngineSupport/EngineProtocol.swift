@@ -36,7 +36,6 @@ struct EngineCommand: Decodable {
         var sourceID: String?
         var hideProjects: Bool?
         var showEmbeddedCodexSessions: Bool?
-        var monitorRemoteControl: Bool?
         var monitorDurable: Bool?
         var monitorWSL: Bool?
         var showEmbeddedClaudeSessions: Bool?
@@ -367,8 +366,9 @@ struct EngineSnapshot: Codable, Equatable {
     let openingActivityIDs: [String]?
     var expandedPanel: EngineExpandedPanel? = nil
     var accountCredits: [EngineAccountCredits]? = nil
+    /// Codex task tracking through Pacer's hooks; nil while Codex is not managed.
+    var codexHooks: EngineCodexHooks? = nil
     var wslAvailability: WindowsWSLAvailability?
-    var remoteControlDirectory: RemoteControlDirectoryStatus?
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],
          sources: [EngineSource], quota: [EngineQuota], notices: [IslandNotice], inbox: CompletionInbox,

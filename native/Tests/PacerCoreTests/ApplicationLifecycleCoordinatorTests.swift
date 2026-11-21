@@ -45,20 +45,20 @@ final class ApplicationLifecycleCoordinatorTests: XCTestCase {
     }
     func testTickKeepsDiscoveryCadenceAndCannotCollectDuringSleep() {
         var state = Lifecycle(configuration: configuration(enabled: [.codex, .deepseek]))
-        func input(_ age: Double, connected: Bool) -> Lifecycle.Tick {
-            .init(now: date, expanded: false, codexConnected: connected, lastCodexDiscovery: date.addingTimeInterval(-age),
-                lastRemoteDiscovery: date.addingTimeInterval(-age), lastClaudeDiscovery: .distantPast, deepseekRunning: true)
+        func input(_ age: Double) -> Lifecycle.Tick {
+            .init(now: date, expanded: false, lastRemoteDiscovery: date.addingTimeInterval(-age), lastClaudeDiscovery: .distantPast,
+                  deepseekRunning: true)
         }
-        XCTAssertFalse(state.tick(input(119.999, connected: true)).actions.contains(.activity(.codex)))
-        XCTAssertTrue(state.tick(input(120, connected: true)).actions.contains(.activity(.codex)))
-        XCTAssertFalse(state.tick(input(59.999, connected: false)).actions.contains(.activity(.codex)))
-        XCTAssertTrue(state.tick(input(60, connected: false)).actions.contains(.activity(.codex)))
-        let plan = state.tick(input(30, connected: true))
+        // Local Codex is read on its hooks' events, never on a timer.
+        XCTAssertFalse(state.tick(input(3600)).actions.contains(.activity(.codex)))
+        XCTAssertFalse(state.tick(input(29.999)).actions.contains(.discoverActivityRoutes(.codex)))
+        let plan = state.tick(input(30))
         XCTAssertTrue(plan.actions.contains(.discoverActivityRoutes(.codex)))
         XCTAssertFalse(plan.actions.contains(.discoverActivityRoutes(.claude)))
         XCTAssertTrue(plan.actions.contains(.quota(.deepseek, force: false, active: true)))
+        XCTAssertTrue(state.resume().actions.contains(.activity(.codex)), "Waking reads local Codex once")
         _ = state.prepareForSleep()
-        XCTAssertEqual(state.tick(input(1000, connected: false)).actions, [.pruneActivities, .pruneHistory])
+        XCTAssertEqual(state.tick(input(1000)).actions, [.pruneActivities, .pruneHistory])
     }
     func testDemoModuleFilteringNeverResetsObservedSources() {
         var state = Lifecycle(demo: true, configuration: configuration(demo: true))

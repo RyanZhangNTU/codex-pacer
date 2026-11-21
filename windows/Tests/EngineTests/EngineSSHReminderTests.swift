@@ -3,13 +3,6 @@ import XCTest
 @testable import PacerCore
 @testable import PacerEngineSupport
 
-private actor IdleDesktopChannel: DesktopActivityChannel {
-    func start() {}
-    func discover(_ threads: [String]) {}
-    func setHosts(_ hosts: Set<String>) {}
-    func setBatchInterval(_ seconds: TimeInterval, flushPending: Bool) {}
-    func stop() {}
-}
 private final class ReminderFrames: @unchecked Sendable {
     private let lock = NSLock()
     private var snapshot: EngineSnapshot?
@@ -55,7 +48,7 @@ final class EngineSSHReminderTests: XCTestCase {
             environment: environment, resolve: { _, _ in nil })
         let frames = ReminderFrames()
         let runtime = EngineRuntime(demo: false, dismissalStore: nil,
-            desktopServices: .init(makeConnection: { _, _, _, _ in IdleDesktopChannel() }), sshServices: ssh, output: { frames.append($0) })
+            desktopServices: .init(), sshServices: ssh, output: { frames.append($0) })
         func reminders(_ warnings: [String]) -> [String: Any] { ["warnings": warnings, "lowLine": NSNull(), "spikeLine": NSNull()] }
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["codex"], "codexHome": EngineCodexSourceReport.path(home),
             "reminderSettings": reminders(["ssh"])]))

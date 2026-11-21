@@ -48,7 +48,7 @@ internal sealed partial class SettingsWindow
         if (snapshot.Connections is not { } page) return 0;
         int sources = page.Sources.Count(value => value.Module.Tone == "warning");
         int hosts = page.Hosts.Count(host => host.Modules.Any(value => value.Tone == "warning"));
-        return Math.Max(sources, hosts);
+        return Math.Max(sources, hosts) + (CodexHooksNeedUser(snapshot) ? 1 : 0);
     }
 
     /// What needs the user, with the one action that fixes it. The sidebar's

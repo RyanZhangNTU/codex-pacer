@@ -158,21 +158,9 @@ enum PacerMain {
             print("A valid --thread-id is required."); return
         }
         let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
-        let hostIndex = args.firstIndex(of: "--host-id")
-        let host = hostIndex.flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? "local"
-        guard host == "local" || host.range(of: #"^remote-control:[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else {
-            print("A valid local or Remote Control --host-id is required."); return
-        }
-        let monitor = RealtimeActivityMonitor()
-        await monitor.start(home: home, includeSSH: false, useSSHFallback: false) { _, _, _ in }
-        try? await Task.sleep(nanoseconds: 5_000_000_000)
-        let streamed = await monitor.activities()
-        var evidence: [String: SessionActivity.SubagentEvidence] = [:]
-        for value in streamed where value.sourceHostID == nil { evidence.merge(value.subagentStates) { old, new in old.observedAt > new.observedAt ? old : new } }
         let reader = LocalActivityReader()
-        let logged = await reader.read(home: home, phaseAwareRate: true, includeCoveredMetrics: true, subagentStates: evidence)
-        let merged = ActivitySourceMerger.merge(logged: logged.activities, streamed: streamed)
-        let group = ActivityTaskGroup.make(merged).first { $0.primary.threadID == thread && ($0.primary.sourceHostID ?? "local") == host }
+        let logged = await reader.read(home: home, phaseAwareRate: true)
+        let group = ActivityTaskGroup.make(logged.activities).first { $0.primary.threadID == thread && $0.primary.sourceHostID == nil }
         let now = Date()
         let summary: [String: Any] = ["observed": group != nil,
             "liveParentObserved": group?.primary.hasLiveEvidence ?? false,
@@ -182,7 +170,6 @@ enum PacerMain {
             "estimated": group?.rateIsEstimated(at: now) ?? true]
         if let bytes = try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]),
            let text = String(data: bytes, encoding: .utf8) { print(text) }
-        await monitor.shutdown()
     }
 
     private static func diagnoseEvents() async {
@@ -191,8 +178,13 @@ enum PacerMain {
         let args = CommandLine.arguments
         let index = args.firstIndex(of: "--observe-seconds")
         let seconds = index.flatMap { $0 + 1 < args.count ? Int(args[$0 + 1]) : nil }.map { min(60, max(5, $0)) } ?? 20
-        print("Local event endpoint available: \(RealtimeActivityMonitor.localEndpointAvailable(home: home))")
-        await monitor.start(home: home, useSSHFallback: !args.contains("--desktop-only")) { _, _, _ in }
+        // Local Codex reaches Pacer only through its hooks; only the spool's age is printed.
+        let reader = LocalActivityReader()
+        let local = await reader.read(home: home)
+        let lastRow = await reader.lastHookRow
+        print("Codex hook spool: \(lastRow.map { "last event \(Int(Date().timeIntervalSince($0)))s ago" } ?? "no events")")
+        print("Local Codex tasks followed: \(local.activities.count)")
+        await monitor.start(home: home) { _ in }
         try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
         let statuses = await monitor.statuses()
         for (source, status) in statuses.sorted(by: { $0.key < $1.key }) {
@@ -233,7 +225,7 @@ enum PacerMain {
             print("Internal review tasks included: \(overview.activities.filter(\.isInternalReview).count)")
             print("Fresh aggregate output rate available: \(overview.tokensPerSecond != nil)")
             let remote = RealtimeActivityMonitor()
-            await remote.start(home: home) { _, _, _ in }
+            await remote.start(home: home) { _ in }
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             let remoteActivities = await remote.activities()
             let combined = ActivityOverview(activities: local.activities + remoteActivities, at: Date())

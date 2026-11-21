@@ -121,12 +121,12 @@ final class EngineConnectionProjectionTests: XCTestCase {
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
         }
-        _ = await runtime.receive(try command("initialize", ["monitorRemoteControl": true, "monitorWSL": true]))
+        _ = await runtime.receive(try command("initialize", ["monitorWSL": true]))
         let before = try XCTUnwrap(frames.read())
         XCTAssertEqual(before.connections?.sources.count, 4); XCTAssertEqual(before.connections?.hosts.count, 1)
         XCTAssertTrue(before.connections?.sources.contains { $0.key == ClaudeCloudProjectState.sourceID } == true)
         _ = await runtime.receive(try command("refreshTaskSources"))
-        _ = await runtime.receive(try command("configure", ["monitorSSH": false, "monitorWSL": false, "monitorRemoteControl": false]))
+        _ = await runtime.receive(try command("configure", ["monitorSSH": false, "monitorWSL": false]))
         let after = try XCTUnwrap(frames.read())
         XCTAssertEqual(after.quota, before.quota); XCTAssertEqual(after.tasks, before.tasks)
         XCTAssertEqual(after.connections?.sourceCount, 4); XCTAssertEqual(before.connections?.sourceCount, 5)

@@ -15,7 +15,7 @@ final class ThreadLinkTests: XCTestCase {
 
     func testRemoteConversationLinkTargetsItsConfiguredHost() throws {
         for host in ["remote-ssh-discovered:example-host", "remote-ssh-codex-managed:studio",
-                     "remote-ssh-codex-managed:" + uuid, "remote-control:env_fixture"] {
+                     "remote-ssh-codex-managed:" + uuid] {
             let activity = SessionActivity(id: "rollout-\(uuid).jsonl", sourceHost: "example-host", sourceHostID: host)
             let url = try XCTUnwrap(activity.threadURL)
             let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))

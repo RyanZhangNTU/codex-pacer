@@ -1607,3 +1607,29 @@
 "whats_new.return_top_center_detail" = "If you often move the island, add a button to the panel's header that puts it back at the top center.";
 "whats_new.claude_app_access" = "Reminders for Claude's app access requests";
 "whats_new.claude_app_access_detail" = "When Claude Desktop asks to use an app on your computer, Pacer shows that the task is waiting for you.";
+
+/* Codex hooks */
+"codex.hooks.title" = "Codex task tracking";
+"codex.hooks.setting_up" = "Setting up Codex task tracking…";
+"codex.hooks.needs_approval" = "Allow Codex Pacer's hooks in Codex to track tasks.";
+"codex.hooks.running" = "Codex task tracking is on.";
+"codex.hooks.not_running" = "Pacer's hooks did not report Codex's latest tasks. Check them in Codex under Settings → Hooks.";
+"codex.hooks.needs_update" = "Update Codex to track its tasks.";
+"codex.hooks.failed" = "Codex task tracking could not be set up.";
+"codex.hooks.info" = "Codex asks you to review hooks before they run. Click Open Codex and trust Codex Pacer under Settings → Hooks, or click Review hooks next to a chat's message box. You only do this once; Pacer updates keep them allowed.";
+"codex.hooks.notice_title" = "Allow Pacer in Codex";
+"codex.hooks.notice_body" = "Codex now needs your approval before Pacer can track its tasks.";
+"codex.hooks.open" = "Open Codex";
+"codex.hooks.guide.title" = "Allow Pacer in Codex's settings";
+"codex.hooks.guide.step_hooks" = "Click Hooks in the sidebar.";
+"codex.hooks.guide.step_plugin" = "Click %@.";
+"codex.hooks.guide.step_trust" = "Click Trust all.";
+"codex.hooks.guide.alternative" = "Or, in any chat, click Review hooks next to the message box, then Allow all.";
+"codex.hooks.guide.done" = "Done. Codex tasks now show in Pacer.";
+"codex.hooks.guide.picture.hooks" = "Hooks";
+"codex.hooks.guide.picture.plugins" = "From Plugins";
+"codex.hooks.guide.picture.count" = "%ld hooks";
+"codex.hooks.guide.picture.review" = "%ld need review";
+"codex.hooks.guide.picture.review_one" = "%ld needs review";
+"codex.hooks.guide.picture.trust_all" = "Trust all";
+"warning.label.codexHooks" = "Codex";

@@ -1,6 +1,7 @@
 #include "CWindowsSupport.h"
 #if defined(_WIN32)
 #include "WindowsProcessInternal.h"
+#include <appmodel.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
 
@@ -58,17 +59,34 @@ int pacer_process_image(uint32_t pid, uint64_t started, pacer_process_identity *
     }
     CloseHandle(process); return valid;
 }
-int pacer_process_parents(pacer_process_identity *identities, size_t capacity) {
+static int pacer_process_rows(LPCWSTR name, pacer_process_identity *identities, size_t capacity) {
     if (identities == NULL || capacity == 0 || capacity > 8192) return -1;
     HANDLE table = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (table == INVALID_HANDLE_VALUE) return -1;
     PROCESSENTRY32W entry = {0}; entry.dwSize = sizeof(entry); size_t count = 0;
     int valid = Process32FirstW(table, &entry) != 0;
     if (valid) do {
+        if (name != NULL && CompareStringOrdinal(entry.szExeFile, -1, name, -1, TRUE) != CSTR_EQUAL) continue;
         if (count == capacity) { valid = 0; break; }
         identities[count++] = (pacer_process_identity){entry.th32ProcessID, entry.th32ParentProcessID, 0};
     } while (Process32NextW(table, &entry));
     CloseHandle(table); return valid ? (int)count : -1;
+}
+int pacer_process_parents(pacer_process_identity *identities, size_t capacity) {
+    return pacer_process_rows(NULL, identities, capacity);
+}
+int pacer_process_named(const uint16_t *name, pacer_process_identity *identities, size_t capacity) {
+    if (name == NULL || name[0] == 0) return -1;
+    return pacer_process_rows((LPCWSTR)name, identities, capacity);
+}
+int pacer_process_package_family(uint32_t pid, uint64_t started, const uint16_t *family) {
+    if (started == 0 || family == NULL || family[0] == 0) return 0;
+    HANDLE process = pacer_open_user_process(pid, PROCESS_QUERY_LIMITED_INFORMATION, started);
+    if (process == NULL) return 0;
+    WCHAR found[256]; UINT32 capacity = 256;
+    int matched = GetPackageFamilyName(process, &capacity, found) == ERROR_SUCCESS &&
+        CompareStringOrdinal(found, -1, (LPCWSTR)family, -1, TRUE) == CSTR_EQUAL;
+    CloseHandle(process); return matched;
 }
 
 static int pacer_durable_environment(WCHAR **args, int count, uint16_t *out, size_t capacity) {
@@ -175,4 +193,6 @@ int pacer_process_window(uint32_t pid, uint64_t started, int activate) {
 int pacer_process_window(uint32_t pid, uint64_t started, int activate) { return 0; }
 int pacer_process_alive(uint32_t pid, uint64_t started) { return 0; }
 int pacer_process_details(uint32_t pid, uint64_t started, pacer_process_identity *identity, uint16_t *image, size_t capacity) { return 0; }
+int pacer_process_named(const uint16_t *name, pacer_process_identity *identities, size_t capacity) { return -1; }
+int pacer_process_package_family(uint32_t pid, uint64_t started, const uint16_t *family) { return 0; }
 #endif

@@ -123,28 +123,32 @@ import SwiftUI
         return HarnessProgressGuide.pendingFloat(stage: guide.stage, name: name) != nil
     }
 
-    /// The bottom-right of the screen Settings is on, 16 points in.
-    private func place() {
-        guard let frame = screen?.visibleFrame else { return }
-        let size = measured()
-        panel.setFrame(CGRect(x: frame.maxX - size.width - 16, y: frame.minY + 16, width: size.width, height: size.height), display: true)
-    }
-
-    /// Grows or shrinks with its content, its bottom-right corner in place.
-    private func resize() {
-        let size = measured(), frame = panel.frame
-        guard size != frame.size else { return }
-        panel.setFrame(CGRect(x: frame.maxX - size.width, y: frame.minY, width: size.width, height: size.height), display: true)
-    }
+    private func place() { panel.place(on: screen, size: measured()) }
+    private func resize() { panel.resize(to: measured()) }
 
     /// The content's own height at the panel's width.
-    private func measured() -> CGSize {
-        host?.sizeThatFits(in: CGSize(width: GuideFloatContent.width, height: 4000)) ?? CGSize(width: GuideFloatContent.width, height: 120)
-    }
+    private func measured() -> CGSize { FloatPanel.measure(host, width: GuideFloatContent.width) }
 }
 
 /// A borderless panel above other windows that never takes focus.
-private final class FloatPanel: NSPanel {
+final class FloatPanel: NSPanel {
+    /// The bottom-right of the screen Settings is on, 16 points in.
+    func place(on screen: NSScreen?, size: CGSize) {
+        guard let frame = screen?.visibleFrame else { return }
+        setFrame(CGRect(x: frame.maxX - size.width - 16, y: frame.minY + 16, width: size.width, height: size.height), display: true)
+    }
+
+    /// Grows or shrinks with its content, its bottom-right corner in place.
+    func resize(to size: CGSize) {
+        guard size != frame.size else { return }
+        setFrame(CGRect(x: frame.maxX - size.width, y: frame.minY, width: size.width, height: size.height), display: true)
+    }
+
+    /// A content's own height at `width`.
+    static func measure(_ host: NSHostingController<AnyView>?, width: CGFloat) -> CGSize {
+        host?.sizeThatFits(in: CGSize(width: width, height: 4000)) ?? CGSize(width: width, height: 120)
+    }
+
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         isOpaque = false; backgroundColor = .clear; hasShadow = true
@@ -171,18 +175,7 @@ private struct GuideFloatContent: View {
         let title = waiting ? float.pending?.title : step?.title
         let next = waiting ? float.pending?.next : step?.next
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 7) {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 16, height: 16).accessibilityHidden(true)
-                Text("Pacer · " + (guide?.chip ?? "")).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
-                Spacer(minLength: 12)
-                Button { float.close() } label: {
-                    Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(L10n.text("progress_guide.float.close"))
-                .help(L10n.text("progress_guide.float.close"))
-            }
+            GuideFloatHeader(chip: guide?.chip ?? "") { float.close() }
             if let title {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     if waiting { ProgressView().controlSize(.small) }
@@ -203,10 +196,38 @@ private struct GuideFloatContent: View {
                 Text(next).font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(16)
-        .frame(width: Self.width, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(MainPalette.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(MainPalette.cardBorder))
+        .guideFloatCard(width: Self.width)
+    }
+}
+
+/// The float's top line: Pacer's icon, what it guides, and Close.
+struct GuideFloatHeader: View {
+    let chip: String
+    let close: () -> Void
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 16, height: 16).accessibilityHidden(true)
+            Text("Pacer · " + chip).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Button(action: close) {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L10n.text("progress_guide.float.close"))
+            .help(L10n.text("progress_guide.float.close"))
+        }
+    }
+}
+
+extension View {
+    /// The float's card, as tall as its content at `width`.
+    func guideFloatCard(width: CGFloat) -> some View {
+        padding(16)
+            .frame(width: width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(MainPalette.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(MainPalette.cardBorder))
     }
 }

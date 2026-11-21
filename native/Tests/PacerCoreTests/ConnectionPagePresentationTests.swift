@@ -63,18 +63,13 @@ final class ConnectionPagePresentationTests: XCTestCase {
         XCTAssertTrue(ConnectionSource.hasSSHFailure(in: [], unavailable: [unavailable]))
     }
 
-    func testOfflineWaitingAndPausedSourcesRemainDistinctAndOptionalCloudDoesNotFailSummary() {
-        let prefix = ConnectionSource.controlPrefix
+    func testPausedSourcesRemainDistinctAndOptionalCloudDoesNotFailSummary() {
         let page = ConnectionPagePresentation(enabledProviders: [.codex, .claude], statuses: [
-            .codex: ["local": status(), prefix + "offline": status(false, name: "Notebook", online: false),
-                prefix + "idle": status(false, available: nil, name: "Desktop", online: true, waiting: true)],
+            .codex: ["local": status()],
             .claude: ["local": status(), ClaudeCloudProjectState.sourceID: status(false, available: false)]])
-        XCTAssertEqual(page.state, "offline"); XCTAssertFalse(page.retry)
-        XCTAssertEqual(page.sources.first { $0.kind == L10n.text("connections.kind.remote_control") }?.name, "Notebook")
-        XCTAssertEqual(page.sources.first { $0.name == "Notebook" }?.module.state, "offline")
-        XCTAssertEqual(page.sources.first { $0.name == "Desktop" }?.module.state, "idle")
+        XCTAssertNotEqual(page.state, "retrying"); XCTAssertFalse(page.retry)
         XCTAssertEqual(page.sources.first { $0.key == ClaudeCloudProjectState.sourceID }?.module.label, L10n.text("connections.state.cloud_signed_out"))
-        XCTAssertEqual(page.sourceCount, 4, "Optional signed-out Cloud Projects do not count as a broken source")
+        XCTAssertEqual(page.sourceCount, 2, "Optional signed-out Cloud Projects do not count as sources")
     }
     func testWSLSetupFailureAndQuotaCapabilityUseOnlyTheSameSourceProvider() {
         let wsl = ConnectionSource.wslPrefix + "fixture"

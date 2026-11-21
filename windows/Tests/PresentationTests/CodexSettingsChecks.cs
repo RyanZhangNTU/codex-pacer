@@ -61,16 +61,15 @@ internal static class CodexSettingsChecks
                 "Enabling Codex progress must reach the engine and show the dashed ring");
             Toggle(progress);
             await Until(() => !session.Current.CodexProgressRing && progress.IsEnabled, "Codex progress can be turned off again");
-            // Remote Control lives on Remote, as on the Mac.
+            // Dot and Codex's hooks live on Remote, as on the Mac.
             await window.NavigateAsync("remote"); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
-            var remote = Find<CheckBox>(window, "settings.connections.remote_control");
-            Check(remote.IsEnabled && remote.IsChecked == false, "Remote Control starts disabled");
-            Toggle(remote);
-            await Until(() => session.Current.MonitorRemoteControl && remote.IsEnabled, "Enabling Remote Control must await engine acknowledgement");
-            Check(Find<Button>(window, "settings.connections.refresh_remote_control").IsVisible, "Device refresh belongs in Remote settings");
-            Toggle(remote);
-            await Until(() => !session.Current.MonitorRemoteControl && remote.IsEnabled, "Disabling Remote Control must await engine acknowledgement");
-            Check(!Find<Button>(window, "settings.connections.refresh_remote_control").IsVisible, "Disabled monitoring hides device refresh");
+            Check(Find<Button>(window, "settings.connections.codex_hooks.info").IsVisible, "Codex's hooks show on Remote while Codex is on");
+            var durable = Find<CheckBox>(window, "settings.connections.durable");
+            Check(durable.IsEnabled && durable.IsChecked == false, "Dot starts disabled");
+            Toggle(durable);
+            await Until(() => session.Current.MonitorDurable && durable.IsEnabled, "Enabling Dot must await engine acknowledgement");
+            Toggle(durable);
+            await Until(() => !session.Current.MonitorDurable && durable.IsEnabled, "Disabling Dot must await engine acknowledgement");
             await window.NavigateAsync("codex"); await window.WaitForSourceInspectionAsync(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             module = Find<CheckBox>(window, "settings.codex.enabled");
             int sourceConfigurations = configurations;

@@ -199,6 +199,7 @@ struct CompactIslandComponent: View {
             switch item.kind {
             case .fiveHour: warning = .fiveHour
             case .ssh: warning = .ssh
+            case .codexHooks: return
             case .quotaDelay: warning = .quotaDelay
             case .spike: warning = .spendSpike
             case .overBudget, .nearingBudget: warning = .budget

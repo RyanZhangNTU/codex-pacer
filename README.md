@@ -27,7 +27,7 @@
 ## Features
 
 - **Progress for every task.** Codex, Claude Code, DeepSeek Harness and WorkBuddy report how much of your request is done. Each task shows it as a ring around its icon, and the collapsed bar can show the average.
-- **Every task in one place.** Tasks on this computer, on your SSH hosts, in WSL, through Codex Remote Control and in Claude's cloud Projects, each with its stage, model, speed and turn time.
+- **Every task in one place.** Tasks on this computer, on your SSH hosts, in WSL and in Claude's cloud Projects, each with its stage, model, speed and turn time.
 - **Know when you're needed.** A task waiting for your reply or approval turns the island amber, and a finished task stays until you've seen it. System notifications are optional.
 - **Jump back in.** Click a task to open its conversation in the app that runs it.
 - **Quota with pace.** Each service's 5-hour and weekly quota on one ring, with a tick that shows whether you're ahead of or behind an even pace, and a forecast for the reset.

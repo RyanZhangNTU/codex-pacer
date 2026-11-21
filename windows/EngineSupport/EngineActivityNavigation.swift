@@ -41,7 +41,6 @@ struct ActivityNavigationServices: Sendable {
     struct Input: Sendable {
         let context: String, activity: SessionActivity, home: URL, transcript: URL?
         var cachedHost: ActivityHostApplication? = nil
-        var remoteControlHosts: Set<String> = []
         var allowsDurable = false
         var wslProfile: WindowsWSLProfile? = nil
         var remoteTarget: RemoteActivityTarget? = nil

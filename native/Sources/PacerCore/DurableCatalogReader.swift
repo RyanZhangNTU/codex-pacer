@@ -139,12 +139,11 @@ package struct DurableHistoryPoll {
     }
 
     package mutating func read(_ result: DurableCatalogReader.Result, using connection: DurableCatalogReader,
-                               ipc: [String: Date], receipts readReceipts: (Date) -> [String: DurableProgressReceipt],
+                               receipts readReceipts: (Date) -> [String: DurableProgressReceipt],
                                at now: Date) async throws -> [DurableTurnHistory] {
         polls = polls.filter { result.catalog.threadIDs.contains($0.key) }
         let candidates = result.entries.filter { entry in
             let previous = polls[entry.id]
-            guard ipc[entry.id].map({ now.timeIntervalSince($0) >= 20 }) ?? true else { return false }
             if entry.active || previous?.activeTurn != nil { return true }
             if previous?.settled == true && previous?.updatedAt == entry.updatedAt { return false }
             return entry.updatedAt.map { $0 >= since } ?? false

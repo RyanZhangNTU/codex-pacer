@@ -73,6 +73,7 @@ internal static class ProviderHomeSettingsChecks
             Check(progress.IsEnabled && progress.IsChecked == true, "The progress ring is on by default, like the built-in services' rings");
             CheckProgressGuide(window, id);
             await CheckGuideFloat(window, ui);
+            await CheckCodexHooksGuideFloat(window, ui);
             Toggle(progress);
             await PresentationWait.UntilAsync(() => progress.IsEnabled && progress.IsChecked == false
                 && session.Current.DisabledHarnessProgress.SequenceEqual(["workbuddy"]), "The progress switch saves independently of the module mode");
@@ -275,6 +276,42 @@ internal static class ProviderHomeSettingsChecks
         }
         finally { if (!closed) shown.Close(); }
         Check(AppWindows.MainWindow([]) == null, "Without the app's processes there is no window to bring forward");
+    }
+    /// The guide beside Codex while the user allows Pacer's hooks: three numbered
+    /// clicks and a picture of Codex's Hooks page with the pending count, then
+    /// a done line once the engine sees the hooks allowed.
+    private static async Task CheckCodexHooksGuideFloat(SettingsWindow settings, UiText ui)
+    {
+        var area = new System.Drawing.Rectangle(100, 80, 1600, 1000);
+        CodexHooks? hooks = new("needsApproval", 3, true);
+        var shown = new CodexHooksGuideFloat(() => hooks, () => false, ui, settings.Resources, area);
+        T Part<T>(string id) where T : FrameworkElement => Descendants(shown).OfType<T>().First(value => AutomationProperties.GetAutomationId(value) == id);
+        bool closed = false; shown.Closed += (_, _) => closed = true;
+        try
+        {
+            shown.Follow(); await Pump();
+            var handle = new System.Windows.Interop.WindowInteropHelper(shown).Handle;
+            Check(shown.IsVisible && shown.Topmost && !shown.IsActive && (NativeStyle(handle) & 0x08000000) != 0,
+                "The Codex guide floats beside Codex without taking focus");
+            Check(Part<TextBlock>("codex_hooks_guide.title").Text == ui.Text("codex.hooks.guide.title")
+                && AutomationProperties.GetName(Part<StackPanel>("codex_hooks_guide.steps")).Contains(CodexHooksGuideFloat.PluginName, StringComparison.Ordinal),
+                "It names the three clicks, with Pacer's plugin as Codex lists it");
+            string pending = ui.Text("codex.hooks.guide.picture.review").Replace("%ld", "3", StringComparison.Ordinal);
+            Check(Descendants(shown).OfType<DecorativeBorder>().Count() == 1 && Descendants(shown).OfType<TextBlock>().Any(value => value.Text == pending),
+                "Its picture shows the hooks still waiting for review");
+            var bounds = NativeBounds(handle);
+            Check(Math.Abs(bounds.Right - area.Right) <= 12 && Math.Abs(bounds.Bottom - area.Bottom) <= 12, "It sits in the corner of Settings' screen");
+            hooks = new("running");
+            shown.Follow(); await Pump();
+            Check(Part<TextBlock>("codex_hooks_guide.done").IsVisible && !Part<TextBlock>("codex_hooks_guide.title").IsVisible,
+                "Once the hooks are allowed it says so in place of the steps");
+            Check(CodexHooksGuideFloat.Phase("installFailed") == "gone" && CodexHooksGuideFloat.Phase("notInstalled") == "steps",
+                "A state the guide doesn't describe closes it");
+            Invoke(Part<Button>("codex_hooks_guide.close"));
+            await Pump();
+            Check(closed && !shown.IsVisible, "Close dismisses the Codex guide");
+        }
+        finally { if (!closed) shown.Close(); }
     }
     private static long NativeStyle(IntPtr handle) => GetWindowLongPtr(handle, -20).ToInt64();
     private static System.Drawing.Rectangle NativeBounds(IntPtr handle)

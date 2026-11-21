@@ -315,6 +315,7 @@ final class CodexQuotaMonitorTests: XCTestCase {
         let file = day.appendingPathComponent("rollout-" + identifier + ".jsonl")
         try (record("session_meta", ["id": identifier, "source": "cli", "cwd": "/synthetic"]) +
             record("event_msg", ["type": "task_started", "turn_id": identifier])).write(to: file)
+        try CodexHookFixture.announce([file], home: home, turn: identifier, at: clock.date())
         func path(_ url: URL) -> String { url.withUnsafeFileSystemRepresentation { String(cString: $0!) } }
         func command(_ method: String, _ params: [String: Any] = [:]) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["protocolVersion": 1, "id": UUID().uuidString, "method": method, "params": params])
