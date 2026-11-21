@@ -31,8 +31,11 @@ class ChangedPlatformsTests(unittest.TestCase):
                      "windows/InstallerSupport/Resources/python-runtime-lock-arm64.json", "scripts/windows/architecture.ps1",
                      "scripts/windows/stage-engine.py"):
             self.assertEqual(platforms.classify([path])[3], True, path)
-        for path in ("windows/toolchain-lock.json", "global.json", "scripts/windows/build-desktop.ps1"):
+        for path in ("windows/toolchain-lock.json", "global.json", "scripts/windows/build-desktop.ps1",
+                     "scripts/windows/build-maintenance.ps1", "windows/Maintenance/Pacer.Maintenance.csproj",
+                     "windows/Maintenance/packages.lock.json"):
             self.assertEqual(platforms.classify([path]), (False, True, True, True), path)
+        self.assertEqual(platforms.classify(["windows/Maintenance/Program.cs"]), (False, True, True, False))
         for path in ("Package.swift", "Package.resolved"):
             self.assertEqual(platforms.classify([path]), (True, True, False, True), path)
 

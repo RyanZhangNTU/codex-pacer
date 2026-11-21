@@ -38,6 +38,9 @@ INSTALLER = ("windows/Installer/", "windows/InstallerHooks/", "windows/Installer
 # compile alike for both; the develop engine cache and release.yml build ARM64 from them.
 ARM64 = ("native/Sources/CZstd/", "native/Sources/CGzip/", "windows/Native/", "windows/toolchain-lock.json",
          "windows/desktop-platform.props", "windows/Desktop/Pacer.Windows.csproj", "windows/Desktop/packages.lock.json",
+         # The maintenance tool is published self-contained for each architecture from its lock file.
+         "windows/Maintenance/Pacer.Maintenance.csproj", "windows/Maintenance/packages.lock.json",
+         "scripts/windows/build-maintenance.ps1",
          "windows/InstallerSupport/Resources/python-runtime-lock-arm64.json", "global.json", "Package.swift",
          "Package.resolved", "scripts/windows/architecture.ps1", "scripts/windows/environment.ps1",
          "scripts/windows/setup-swift.ps1", "scripts/windows/build-engine.ps1", "scripts/windows/build-desktop.ps1",
