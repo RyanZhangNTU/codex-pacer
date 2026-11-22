@@ -10,8 +10,8 @@ import PacerCore
 /// compared by device and inode (about 10 ms for a thousand processes); memory
 /// maps and working directories are never walked.
 public enum MacRolloutWriters {
-    /// `LocalActivityReader.WriterProbe` for this Mac. Nil whenever any process
-    /// could not be read, so an unreadable writer never ends a running turn.
+    /// `LocalActivityReader.WriterProbe` for this Mac. Nil whenever a process that
+    /// could be a writer could not be read, so an unreadable writer never ends a running turn.
     public static let probe: LocalActivityReader.WriterProbe = { rollout, _ in hasWriter(rollout) }
 
     static func hasWriter(_ file: URL) -> Bool? {
@@ -23,10 +23,26 @@ public enum MacRolloutWriters {
             switch writes(pid, device: target.st_dev, inode: target.st_ino) {
             case true?: return true
             case false?: continue
-            case nil: complete = false
+            // Some of macOS's own agents (routined, lsd, ScreenTimeAgent…) always refuse
+            // to show their files. They run from the sealed system volume and never write
+            // a Codex rollout, so they cannot leave the answer unknown.
+            case nil: if executablePath(pid).map(isSystemExecutable) != true { complete = false }
             }
         }
         return complete ? false : nil
+    }
+
+    /// Whether an executable lives on macOS's sealed, read-only system volume,
+    /// where no other software, Codex included, can be installed.
+    static func isSystemExecutable(_ path: String) -> Bool {
+        guard path.hasPrefix("/"), !path.contains("/../"), !path.hasPrefix("/usr/local/") else { return false }
+        return ["/System/", "/usr/", "/bin/", "/sbin/"].contains { path.hasPrefix($0) }
+    }
+
+    private static func executablePath(_ pid: pid_t) -> String? {
+        var bytes = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &bytes, UInt32(bytes.count)) > 0 else { return nil }
+        return String(cString: bytes)
     }
 
     private static func userProcesses() -> [pid_t]? {
