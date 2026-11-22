@@ -9,6 +9,9 @@ public struct ActivityTaskGroup: Sendable {
     }
     public var isRunning: Bool { members.contains { $0.phase == .running && $0.codexGoalPause == nil } }
     public var isWaiting: Bool { !isRunning && members.contains { $0.phase == .waitingForInput } }
+    func canClearUnconfirmed(requests: [PendingAttentionRequest]) -> Bool {
+        !isRunning && !isWaiting && !requests.contains { request in members.contains { $0.id == request.activity.id } }
+    }
     public func displayedRate(at now: Date) -> OutputEstimate? {
         let active = members.filter { $0.phase == .running }
         let measured = (active.isEmpty ? members : active).compactMap { $0.displayedOutputEstimate(at: now) }

@@ -343,7 +343,7 @@ actor EngineRuntime {
     static func makeCodexReader() -> LocalActivityReader {
         #if os(Windows)
         LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) },
-            writerProbe: { file, home in WindowsProcessOwnership.writers(of: file, within: home).map { !$0.isEmpty } })
+            writerProbe: { file, home in WindowsProcessOwnership.hasWriter(of: file, within: home) })
         #else
         LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
         #endif
@@ -635,7 +635,7 @@ actor EngineRuntime {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
             guard let operation = navigationState.begin(activity: entry.activity, target: entry.target, version: lifecycle.version(entry.target.provider),
-                activities: activities, inbox: inbox, active: active, scope: entry.cloudContext) else {
+                activities: activities, inbox: inbox, active: active, scope: entry.cloudContext, requests: requests) else {
                 failure(id: command.id, code: "navigationInProgress"); return true
             }
             navigationOpens[context] = operation
@@ -721,7 +721,7 @@ actor EngineRuntime {
             }
             var values = activities, retained = inbox
             guard let result = navigationState.complete(operation, outcome: .openedConversation, version: lifecycle.version(entry.target.provider), active: active,
-                activities: &values, inbox: &retained, scope: entry.cloudContext, now: navigationClock()), result.accepted else {
+                activities: &values, inbox: &retained, scope: entry.cloudContext, now: navigationClock(), requests: requests), result.accepted else {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
             inbox = retained; activities = values

@@ -10,6 +10,7 @@ public actor LocalActivityReader {
         var activity: SessionActivity
         var identity: String
         var parentCompletion: SessionActivity.SubagentEvidence?
+        var writerLostAt: Date?
         var gap: SessionActivity.CodexLogGap?
         var attention = CodexLogAttention()
     }
@@ -74,7 +75,10 @@ public actor LocalActivityReader {
             // A confirmed ending survives the parent's subscription being
             // released. A new child turn rejects this older ending normally.
             if let completion = cursor.parentCompletion { value.applySubagentEvidence(completion) }
-            if let id = value.threadID, let evidence = subagentStates[id] { value.applySubagentEvidence(evidence) }
+            if let id = value.threadID, let evidence = subagentStates[id],
+               evidence.state != "running" || evidence.observedAt > (cursor.writerLostAt ?? .distantPast) {
+                value.applySubagentEvidence(evidence)
+            }
             return value
         }
         var files: [(URL, Date)] = []
@@ -256,11 +260,14 @@ public actor LocalActivityReader {
             var expiry = max(logExpiry, hookExpiry)
             // Long before those limits, a quiet turn whose rollout no process
             // holds open any more has lost its writer: it can no longer finish.
-            if expiry > now, let writerProbe {
+            if expiry > now, !activity.awaitsCodexGoal, let writerProbe {
                 var next = max(quietSince.addingTimeInterval(Self.writerCheckDelay), writerChecks[file] ?? .distantPast)
                 if next <= now {
                     next = now.addingTimeInterval(Self.writerCheckInterval); writerChecks[file] = next
-                    if writerProbe(file, home) == false { expiry = now }
+                    if writerProbe(file, home) == false {
+                        cursors[file]?.writerLostAt = now
+                        expiry = now
+                    }
                 }
                 if expiry > now { nextRunningExpiry = min(nextRunningExpiry ?? next, next) }
             }

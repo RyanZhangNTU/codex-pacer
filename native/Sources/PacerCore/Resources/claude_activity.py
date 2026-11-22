@@ -431,6 +431,11 @@ def otlp_respond(stream,status):
     except OSError:pass
 
 class Tailer:
+    @staticmethod
+    def reset_transcript_context(cursor):
+        for key in ('context', 'contextOrder', 'deferred', 'awaiting', 'released', 'stopHookErrors', 'stopHookOrder'):
+            cursor.pop(key, None)
+
     def __init__(self, home):
         self.home = home; self.cursors = {}; self.watches = {}; self.dirty = set(); self.fd = -1; self.scans = 0
         if sys.platform.startswith('linux'):
@@ -528,13 +533,16 @@ class Tailer:
             if cursor is None: continue
             try:
                 s=file.stat();reset=s.st_ino!=cursor['inode'] or cursor['offset']>s.st_size
-                if reset: cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,context={},contextOrder=[],deferred={},discardingOversize=False)
+                if reset:
+                    self.reset_transcript_context(cursor)
+                    cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,discardingOversize=False)
                 budget=512*1024 if cursor['offset']==0 else 128*1024
                 # Large normal attachment appends must drain sequentially;
                 # the per-read budget is not an actual missing-data boundary.
                 gap=s.st_size-cursor['offset']>(budget if cursor['offset']==0 else 8*1024*1024)
                 if gap:
-                    cursor.update(offset=s.st_size-budget,fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=False)
+                    self.reset_transcript_context(cursor)
+                    cursor.update(offset=s.st_size-budget,fragment=b'',discardingOversize=False)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 fragment_start=cursor['offset']-len(cursor['fragment'])
                 with file.open('rb') as handle: handle.seek(cursor['offset']);data=handle.read(budget)
@@ -553,7 +561,7 @@ class Tailer:
                 for line in lines:
                     historical=cursor['historicalEnd'] is not None and fragment_start<cursor['historicalEnd'];fragment_start+=len(line)+1
                     if len(line)>MAX_FRAME:
-                        cursor.update(context={},contextOrder=[],deferred={})
+                        self.reset_transcript_context(cursor)
                         if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                         continue
                     if cursor['owned']: values=sanitized(line)
@@ -570,7 +578,8 @@ class Tailer:
                     # A late parent proves the owner of descendants read before it.
                     rows.extend(cursor.pop('released',[]))
                 if len(cursor['fragment'])>MAX_FRAME:
-                    cursor.update(fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=True)
+                    self.reset_transcript_context(cursor)
+                    cursor.update(fragment=b'',discardingOversize=True)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 if cursor['offset']<s.st_size:self.dirty.add(file)
                 # Keep both byte/line budgets. Complete owned records must

@@ -111,6 +111,51 @@ final class ActivityApplicationStateTests: XCTestCase {
         XCTAssertFalse(inbox.isClearableUnconfirmed(other))
     }
 
+    func testClearedUnconfirmedRowsExpireIndividuallyAndStayInTheirProfile() {
+        var state = ActivityApplicationState()
+        state.localActivities = (1...257).map { number in
+            var value = task(number)
+            value.markSourceUnavailable()
+            return value
+        }
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        XCTAssertTrue(state.markAllRead(at: now))
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        XCTAssertTrue(state.activities.isEmpty)
+        let first = state.localActivities[0]
+        state.prune(at: now.addingTimeInterval(900), retention: 0)
+        XCTAssertTrue(state.inbox.isClearableUnconfirmed(first), "An expired dismissal can be reclaimed even with unlimited completion retention")
+
+        var inbox = CompletionInbox(), remote = task(1, host: "ssh-fixture")
+        remote.markSourceUnavailable()
+        let home = FileManager.default.temporaryDirectory
+        inbox.bindSourceHomes(provider: .codex, localHome: home, remoteHomes: ["ssh-fixture": "/profile-a"])
+        XCTAssertTrue(inbox.dismiss(first)); XCTAssertTrue(inbox.dismiss(remote))
+        inbox.bindSourceHomes(provider: .codex, localHome: home, remoteHomes: ["ssh-fixture": "/profile-b"])
+        XCTAssertEqual(inbox.observe([first, remote], at: now, retention: 300).map(\.id), [remote.id])
+    }
+
+    func testOpeningAnUnconfirmedFamilyProtectsActiveMembersAndPendingRequests() {
+        var root = task(), child = task(2, parent: 1)
+        root.markSourceUnavailable()
+        var rows = [root, child], inbox = CompletionInbox()
+        func begin(_ requests: [PendingAttentionRequest] = []) -> ActivityNavigationOperation {
+            .init(activity: root, target: root, version: 0, activities: rows, inbox: inbox, requests: requests)
+        }
+        XCTAssertNil(begin().acknowledgment)
+        child.markSourceUnavailable(); rows = [root, child]
+        XCTAssertNil(begin([request(child)]).acknowledgment)
+        let operation = begin()
+        let waiting = operation.complete(.openedConversation, version: 0, active: true, activities: &rows, inbox: &inbox, requests: [request(child)])
+        XCTAssertTrue(waiting.removed.isEmpty)
+        rows = [root, task(2, parent: 1)]
+        XCTAssertTrue(operation.complete(.openedConversation, version: 0, active: true, activities: &rows, inbox: &inbox).removed.isEmpty)
+        rows = [root, child]
+        let result = begin().complete(.openedConversation, version: 0, active: true, activities: &rows, inbox: &inbox)
+        XCTAssertEqual(Set(result.removed.map(\.id)), [root.id, child.id])
+        XCTAssertTrue(rows.isEmpty)
+    }
+
     func testPerProviderNoticeBaselinesAndPendingReplySuppression() {
         var state = ActivityApplicationState()
         state.localActivities = [task()]

@@ -343,6 +343,34 @@ final class CodexHookReaderTests: XCTestCase {
         XCTAssertEqual(calls.all.filter { $0.contains(held) }.count, 1, "A log that moved again is not asked about until it is quiet again")
     }
 
+    func testWriterExitSupersedesOnlyOlderRunningHints() async throws {
+        let home = temporaryHome("pacer-child-writer-"), start = Date().addingTimeInterval(-600)
+        let file = try rollout(home, thread, start: start)
+        try CodexHookFixture.announce([file], home: home, turn: "t1", at: start)
+        func hint(at time: Date) -> [String: SessionActivity.SubagentEvidence] {
+            [thread: .init(parentThreadID: "019a0000-0000-7000-8000-000000000099", state: "running", observedAt: time)]
+        }
+        let reader = LocalActivityReader(writerProbe: { _, _ in false })
+        let lost = await reader.read(home: home, now: start.addingTimeInterval(180), subagentStates: hint(at: start))
+        XCTAssertEqual(phase(lost.activities, thread), .unknown)
+        let later = start.addingTimeInterval(240)
+        let recovered = await reader.read(home: home, now: later, subagentStates: hint(at: later))
+        XCTAssertEqual(phase(recovered.activities, thread), .running)
+    }
+
+    func testPausedGoalKeepsItsDeadlineAfterThePhysicalTurnEnds() async throws {
+        let home = temporaryHome("pacer-paused-goal-"), start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 600)
+        let file = try rollout(home, thread, start: start)
+        try CodexHookFixture.announce([file], home: home, turn: "t1", at: start)
+        try append(file, record("event_msg", ["type": "thread_goal_updated", "threadId": thread, "turnId": "t1",
+            "goal": ["status": "paused", "createdAt": start.timeIntervalSince1970, "updatedAt": start.timeIntervalSince1970 + 1]], at: start.addingTimeInterval(1)))
+        try append(file, record("event_msg", ["type": "task_complete", "turn_id": "t1"], at: start.addingTimeInterval(2)))
+        let reader = LocalActivityReader(writerProbe: { _, _ in XCTFail("A confirmed goal pause needs no writer check"); return false })
+        let result = await reader.read(home: home, now: start.addingTimeInterval(182))
+        XCTAssertNotNil(result.activities.first?.codexGoalPause)
+        XCTAssertEqual(result.activities.first?.codexGoalDeadline, start.addingTimeInterval(902))
+    }
+
     /// SessionEnd closes a turn the log never ended, and its open question with it;
     /// the thread's next turn can ask again.
     func testSessionEndClearsAPendingQuestionAndTheNextTurnCanAskAgain() async throws {

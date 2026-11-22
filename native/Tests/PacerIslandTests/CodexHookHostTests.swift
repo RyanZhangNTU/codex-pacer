@@ -156,6 +156,8 @@ final class CodexHookHostTests: XCTestCase {
         let home = try temporaryHome("codex-expiry"), model = try model(home: home)
         let start = Date().addingTimeInterval(-3 * 3600 + 5)
         let file = try rollout(first, day: "2026/11/21", home: home, at: start)
+        let writer = try FileHandle(forWritingTo: file)
+        defer { try? writer.close() }
         try announce(file, thread: first, home: home, at: start)
         model.refreshActivity()
         let appeared = try await TestWait.until { model.activities.contains { $0.threadID == self.first && $0.phase == .running } }

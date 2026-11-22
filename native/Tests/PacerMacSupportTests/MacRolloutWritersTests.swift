@@ -47,22 +47,26 @@ final class MacRolloutWritersTests: XCTestCase {
     func testProcessesWithNoFilesOrNoLifeStillGiveAnAnswer() throws {
         let url = try file()
         // Close every descriptor in the child, so it starts with no open files at all.
-        func spawn(_ arguments: [String]) -> pid_t {
+        func spawn(_ arguments: [String]) throws -> pid_t {
             var pid: pid_t = 0, attributes: posix_spawnattr_t?
-            posix_spawnattr_init(&attributes)
+            func check(_ status: Int32) throws {
+                if status != 0 { throw NSError(domain: NSPOSIXErrorDomain, code: Int(status)) }
+            }
+            try check(posix_spawnattr_init(&attributes))
             defer { posix_spawnattr_destroy(&attributes) }
-            posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+            try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)))
             let argv = arguments.map { strdup($0) } + [nil]
             defer { argv.forEach { free($0) } }
-            XCTAssertEqual(posix_spawn(&pid, arguments[0], nil, &attributes, argv, environ), 0)
-            return pid
+            try check(posix_spawn(&pid, arguments[0], nil, &attributes, argv, environ))
+            return try XCTUnwrap(pid > 0 ? pid : nil)
         }
-        let bare = spawn(["/bin/sleep", "30"])
-        let zombie = spawn(["/usr/bin/true"])
+        let bare = try spawn(["/bin/sleep", "30"])
         defer {
-            kill(bare, SIGKILL)
-            var status: Int32 = 0; waitpid(bare, &status, 0); waitpid(zombie, &status, 0)
+            _ = kill(bare, SIGKILL)
+            _ = waitpid(bare, nil, 0)
         }
+        let zombie = try spawn(["/usr/bin/true"])
+        defer { _ = waitpid(zombie, nil, 0) }
         usleep(500_000)
         XCTAssertEqual(probe(url), false)
     }

@@ -39,7 +39,7 @@ public struct CompletionInbox: Sendable {
     private var dismissed: [String: Identity] = [:]
     /// Unconfirmed tasks the user cleared. Each stays hidden while it keeps the
     /// same unconfirmed state, and shows again once it starts or ends a turn.
-    private var clearedUnconfirmed: [String: Identity] = [:]
+    private var clearedUnconfirmed: [String: (identity: Identity, expires: Date)] = [:]
     private var previous: [String: SessionActivity] = [:]
     private let dismissalStore: CompletionDismissalStore?
     private var persistedDigests: [String]
@@ -75,6 +75,7 @@ public struct CompletionInbox: Sendable {
             let changed = Set(old.keys).union(namespaces.keys).filter { old[$0] != namespaces[$0] }
             entries = entries.filter { $0.value.activity.provider != provider || !changed.contains($0.value.activity.sourceHostID ?? "local") }
             dismissed = dismissed.filter { $0.value.provider != provider || !changed.contains($0.value.sourceHostID ?? "local") }
+            clearedUnconfirmed = clearedUnconfirmed.filter { $0.value.identity.provider != provider || !changed.contains($0.value.identity.sourceHostID ?? "local") }
             previous = previous.filter { $0.value.provider != provider || !changed.contains($0.value.sourceHostID ?? "local") }
         }
         sourceNamespaces[provider] = namespaces
@@ -187,7 +188,7 @@ public struct CompletionInbox: Sendable {
     public mutating func remove(provider: AgentProvider) {
         entries = entries.filter { $0.value.activity.provider != provider }
         dismissed = dismissed.filter { $0.value.provider != provider }
-        clearedUnconfirmed = clearedUnconfirmed.filter { $0.value.provider != provider }
+        clearedUnconfirmed = clearedUnconfirmed.filter { $0.value.identity.provider != provider }
         previous = previous.filter { $0.value.provider != provider }
     }
 
@@ -205,7 +206,7 @@ public struct CompletionInbox: Sendable {
     /// can be cleared like an ending, by opening it or with Mark All Read.
     public func isClearableUnconfirmed(_ activity: SessionActivity) -> Bool {
         activity.phase == .unknown && activity.lastObserved != nil && !activity.isInternalReview &&
-            clearedUnconfirmed[activity.id] != Identity(activity)
+            clearedUnconfirmed[activity.id]?.identity != Identity(activity)
     }
 
     public var activities: [SessionActivity] {
@@ -245,9 +246,8 @@ public struct CompletionInbox: Sendable {
     public mutating func dismiss(_ activity: SessionActivity, acknowledging token: AcknowledgmentToken) -> Bool {
         guard acknowledgment(for: activity) == token else { return false }
         guard let entry = entries[activity.id] else {
-            // Not persisted: the reader drops a quiet unconfirmed task within 15 minutes anyway.
-            if clearedUnconfirmed.count >= 256 { clearedUnconfirmed.removeAll() }
-            clearedUnconfirmed[activity.id] = Identity(activity)
+            guard let expires = activity.unconfirmedDisplayDeadline else { return false }
+            clearedUnconfirmed[activity.id] = (Identity(activity), expires)
             return true
         }
         persistDismissal(entry.activity)
@@ -273,14 +273,16 @@ public struct CompletionInbox: Sendable {
     @discardableResult
     public mutating func observe(_ activities: [SessionActivity], at now: Date, retention: TimeInterval) -> [SessionActivity] {
         let incoming = activities.map(retainingCloudEnding)
-        // A cleared unconfirmed task shows again once its state changes.
-        for activity in incoming where clearedUnconfirmed[activity.id].map({ $0 != Identity(activity) }) == true {
-            clearedUnconfirmed.removeValue(forKey: activity.id)
-        }
         // A released stream may be followed by an older log baseline. Only a
         // newer state/new live turn can supersede a retained or dismissed ending.
         let current = Dictionary(incoming.filter { activity in
-            if activity.phase == .unknown, clearedUnconfirmed[activity.id] == Identity(activity) { return false }
+            if let cleared = clearedUnconfirmed[activity.id] {
+                if cleared.identity == Identity(activity), let expires = activity.unconfirmedDisplayDeadline {
+                    if expires > cleared.expires { clearedUnconfirmed[activity.id]?.expires = expires }
+                    return false
+                }
+                clearedUnconfirmed.removeValue(forKey: activity.id)
+            }
             let ended = entries[activity.id].map { Identity($0.activity) } ?? dismissed[activity.id]
             guard let ended, let endedAt = ended.changedAt else { return true }
             if activity.hasLiveEvidence, activity.liveTurnStarted, activity.turnID != ended.turnID { return true }
@@ -338,6 +340,7 @@ public struct CompletionInbox: Sendable {
         return Array(current.values)
     }
     public mutating func prune(at now: Date, retention: TimeInterval) {
+        for (id, cleared) in clearedUnconfirmed where cleared.expires <= now { clearedUnconfirmed.removeValue(forKey: id) }
         guard retention > 0 else { return }
         for (id, entry) in entries where now.timeIntervalSince(entry.activity.phaseChangedAt ?? .distantPast) >= retention {
             dismissed[id] = Identity(entry.activity)

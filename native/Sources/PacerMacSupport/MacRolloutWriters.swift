@@ -53,14 +53,19 @@ public enum MacRolloutWriters {
         errno = 0
         let size = fds.withUnsafeMutableBytes { proc_pidinfo(pid, PROC_PIDLISTFDS, 0, $0.baseAddress, Int32($0.count)) }
         guard size > 0 else { return size == 0 && errno == 0 || errno == ESRCH ? false : nil }
+        var complete = Int(size) < fds.count * stride
         let infoSize = Int32(MemoryLayout<vnode_fdinfo>.stride)
         for fd in fds.prefix(Int(size) / stride) where fd.proc_fdtype == UInt32(PROX_FDTYPE_VNODE) {
             var info = vnode_fdinfo()
-            // A descriptor closed since the listing is simply skipped.
-            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDVNODEINFO, &info, infoSize) == infoSize,
-                  info.pvi.vi_stat.vst_ino == inode, info.pvi.vi_stat.vst_dev == device else { continue }
+            errno = 0
+            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDVNODEINFO, &info, infoSize) == infoSize else {
+                if errno == ESRCH { return false }
+                if errno != EBADF { complete = false }
+                continue
+            }
+            guard info.pvi.vi_stat.vst_ino == inode, info.pvi.vi_stat.vst_dev == device else { continue }
             if info.pfi.fi_openflags & UInt32(FWRITE) != 0 { return true }
         }
-        return false
+        return complete ? false : nil
     }
 }
