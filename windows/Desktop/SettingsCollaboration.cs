@@ -23,9 +23,9 @@ internal sealed partial class SettingsWindow
 {
     private CheckBox? delegationEnabled;
     private WrapPanel? delegationStrip;
-    private StackPanel? delegationLive, delegationChecks;
+    private StackPanel? delegationLive, delegationChecks, delegationRunning;
     private FrameworkElement? delegationEditors;
-    private string? delegationSignature;
+    private string? delegationSignature, delegationRunningSignature;
     private bool delegationChecked;
     private ComboBox? delegationModel, delegationDisplay, delegationEffort, delegationFast, delegationAccess, delegationTimeout,
         delegationConcurrency, delegationInitiative, delegationLongRun;
@@ -33,8 +33,8 @@ internal sealed partial class SettingsWindow
 
     private void ClearCollaboration()
     {
-        delegationEnabled = null; delegationStrip = null; delegationLive = delegationChecks = null; delegationEditors = null;
-        delegationSignature = null; delegationModel = delegationDisplay = delegationEffort = delegationFast = delegationAccess = null;
+        delegationEnabled = null; delegationStrip = null; delegationLive = delegationChecks = delegationRunning = null; delegationEditors = null;
+        delegationSignature = delegationRunningSignature = null; delegationModel = delegationDisplay = delegationEffort = delegationFast = delegationAccess = null;
         delegationTimeout = delegationConcurrency = delegationInitiative = delegationLongRun = null; delegationFailureAlerts = null;
     }
 
@@ -137,15 +137,31 @@ internal sealed partial class SettingsWindow
         RefreshDelegationEditors(current, status, editable);
         delegationEditors!.Visibility = current.CodexDelegation ? Visibility.Visible : Visibility.Collapsed;
         // The live parts change with every snapshot; rebuild them only when what they show changed.
-        string signature = JsonSerializer.Serialize(new { status, current.CodexDelegation, current.CodexDelegationStatsDays, current.HideProjects, editable, ui.Language });
-        if (signature == delegationSignature) return;
-        delegationSignature = signature;
+        // Runs going now redraw every second, so they have their own card and signature.
+        var running = current.CodexDelegation && status?.Running is { Count: > 0 } list ? list : null;
+        string runningSignature = JsonSerializer.Serialize(new { running, status?.Limit, ui.Language });
+        string signature = JsonSerializer.Serialize(new { status = status == null ? null : status with { Running = null }, runningCount = running?.Count, current.CodexDelegation,
+            current.CodexDelegationStatsDays, current.HideProjects, editable, ui.Language });
+        if (signature != delegationSignature)
+        {
+            delegationSignature = signature;
+            BuildDelegationLive(status, current, editable);
+            delegationRunningSignature = null;
+        }
+        if (delegationRunning == null || runningSignature == delegationRunningSignature) return;
+        delegationRunningSignature = runningSignature;
+        delegationRunning.Children.Clear();
+        if (running != null) delegationRunning.Children.Add(RunningCard(running, status!.Limit));
+    }
+
+    private void BuildDelegationLive(CodexDelegationStatus? status, DesktopPreferences current, bool editable)
+    {
         BuildDelegationStrip(status, current);
-        delegationLive!.Children.Clear(); delegationChecks!.Children.Clear();
+        delegationLive!.Children.Clear(); delegationChecks!.Children.Clear(); delegationRunning = null;
         if (!current.CodexDelegation || status is not { FirstRunSeen: true }) { delegationLive.Children.Add(HowItWorks()); delegationLive.Children.Add(StartSteps(status, current, editable)); }
         if (!current.CodexDelegation) return;
         if (status is { FirstRunSeen: true } && status.RunsTotal < 3) delegationLive.Children.Add(TryIt());
-        if (status?.Running is { Count: > 0 } running) delegationLive.Children.Add(RunningCard(running, status.Limit));
+        delegationRunning = new StackPanel(); delegationLive.Children.Add(delegationRunning);
         if (status is { FirstRunSeen: true })
         {
             var stats = current.CodexDelegationStatsDays == 7 ? status.Stats7 : status.Stats30;
@@ -326,7 +342,7 @@ internal sealed partial class SettingsWindow
     private FrameworkElement RunningCard(IReadOnlyList<RunningDelegation> running, int limit)
     {
         var panel = new StackPanel();
-        panel.Children.Add(SectionTitle(ui.Text("collaboration.running.title") + "  ·  " + ui.Text("collaboration.running.limit")
+        panel.Children.Add(SectionTitle(ui.Text("collaboration.running.title") + " · " + ui.Text("collaboration.running.limit")
             .Replace("%1$d", running.Count.ToString()).Replace("%2$d", limit.ToString()).ReplaceFirst("%d", running.Count.ToString()).ReplaceFirst("%d", limit.ToString())));
         var rows = running.Select(item =>
         {

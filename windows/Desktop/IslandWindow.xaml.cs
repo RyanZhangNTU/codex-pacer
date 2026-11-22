@@ -460,11 +460,14 @@ public partial class IslandWindow : Window
     /// under it says what it is; it never shows again after Got It.
     private void ShowDelegationCoach()
     {
-        if (delegationCoach != null || !expanded || DelegationCoachPending?.Invoke() != true) return;
+        if (!expanded || DelegationCoachPending?.Invoke() != true) return;
         Dispatcher.BeginInvoke(() =>
         {
-            if (delegationCoach != null || !expanded) return;
+            if (!expanded) return;
             var target = TaskRowsIn(TaskPages).Select(row => row.FirstDelegationLine).FirstOrDefault(line => line != null);
+            // The bubble follows the first run line; it goes when that run's row is rebuilt or gone.
+            if (delegationCoach != null && ReferenceEquals(delegationCoach.PlacementTarget, target)) return;
+            CloseDelegationCoach();
             if (target == null) return;
             var title = new TextBlock { Text = ui.Text("delegation.coach.title"), FontWeight = FontWeights.SemiBold, FontSize = 12.5, Foreground = Brushes.White };
             var detail = new TextBlock { Text = ui.Text("delegation.coach.detail"), FontSize = 12, Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 6) };
@@ -860,6 +863,8 @@ public partial class IslandWindow : Window
             else if (rowsChanged) { if (!UpdatePageInPlace()) BuildPage(false, 0); panelChanged = true; }
             else if (linksChanged || openingChanged) foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
             panelChanged |= RenderPanel(snapshot);
+            // A run that starts while the panel is open gets its explanation too.
+            if (rowsChanged) ShowDelegationCoach();
         }
         // Only a new size relays the island; values redraw within their footprint.
         var size = MeasureCompactBar();
