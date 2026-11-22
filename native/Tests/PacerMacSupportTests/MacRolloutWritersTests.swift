@@ -1,11 +1,27 @@
 import Darwin
 import XCTest
 import PacerCore
-import PacerMacSupport
+@testable import PacerMacSupport
 
 /// The Mac's answer to "does any process still write this rollout?", on real files
-/// held by this test process.
+/// held by this test process. On a Mac whose own agents refuse to show their files
+/// (routined, lsd, ScreenTimeAgent…), every "no writer" answer here also proves
+/// that those agents do not leave the answer unknown.
 final class MacRolloutWritersTests: XCTestCase {
+    /// Only macOS's sealed system volume is trusted not to hold a Codex rollout;
+    /// any other program that refuses to show its files keeps the answer unknown.
+    func testOnlySystemVolumeProgramsAreTrustedNotToWriteARollout() {
+        for path in ["/usr/libexec/routined", "/System/Library/PrivateFrameworks/ScreenTimeCore.framework/Versions/A/ScreenTimeAgent",
+                     "/usr/bin/python3", "/bin/sh", "/sbin/launchd"] {
+            XCTAssertTrue(MacRolloutWriters.isSystemExecutable(path), path)
+        }
+        for path in ["/Applications/Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+                     "/usr/local/bin/codex", "/opt/homebrew/bin/node", "/Users/someone/.local/bin/codex",
+                     "/usr/../Applications/Codex.app/Contents/MacOS/Codex", "/Systematic/codex", "usr/bin/codex", ""] {
+            XCTAssertFalse(MacRolloutWriters.isSystemExecutable(path), path)
+        }
+    }
+
     private func temporaryFolder() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-writer-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
