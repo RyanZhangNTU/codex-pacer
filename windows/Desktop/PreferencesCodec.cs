@@ -152,6 +152,12 @@ internal static class PreferencesCodec
     }
     private static DesktopPreferences Normalize(DesktopPreferences value) => value with
     {
+        // Codex for Claude choices outside the lists fall back without losing the rest.
+        CodexDelegationModel = value.CodexDelegationModel is { Length: <= 80 } model ? model : "",
+        CodexDelegationEffort = DesktopPreferences.DelegationEfforts.Contains(value.CodexDelegationEffort) ? value.CodexDelegationEffort : "",
+        CodexDelegationFast = value.CodexDelegationFast is "on" or "off" ? value.CodexDelegationFast : "",
+        CodexDelegationTimeout = DesktopPreferences.DelegationTimeouts.Contains(value.CodexDelegationTimeout) ? value.CodexDelegationTimeout : 60,
+        CodexDelegationConcurrency = DesktopPreferences.DelegationConcurrency.Contains(value.CodexDelegationConcurrency) ? value.CodexDelegationConcurrency : 3,
         DisplaySelection = value.DisplaySelection is "primary" or "specified" ? value.DisplaySelection : "automatic",
         Language = value.Language is "en" or "zh-Hans" ? value.Language : "system",
         AppTheme = value.AppTheme is "light" or "dark" ? value.AppTheme : "auto",
@@ -174,7 +180,7 @@ internal static class PreferencesCodec
         DeepSeekRingPeriod = value.DeepSeekRingPeriod is "week" ? "week" : "day",
         CompactSingleTask = value.CompactSingleTask is "count" or "percent" ? value.CompactSingleTask : "stage",
         CompactMetric = value.CompactMetric is "pace" ? "pace" : "remaining",
-        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "notifications" or "codex" or "claude" or "deepseek" or "modules" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew"
+        LastSettingsPane = value.LastSettingsPane is "overview" or "history" or "general" or "appearance" or "collapsed" or "expandedPanel" or "notifications" or "codex" or "claude" or "deepseek" or "modules" or "collaboration" or "remote" or "about" or "support" or "reminders" or "connections" or "help" or "whatsNew"
             || DesktopPreferences.IsStoredHarnessPane(value.LastSettingsPane) ? value.LastSettingsPane : "overview"
     };
     internal static byte[] Encode(DesktopPreferences value, ReadOnlySpan<byte> original = default)
