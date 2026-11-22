@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "23216921f53bb0f6b0fbb45e0788a8d7cf1da846a5ec16a3b1ef5d3fcb086737",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "b2be2ac2a2790ab1bdc9eaa5bf8b63329a165311844031ea02f01f7b724d31f7",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "7cb73d44dcb9ab4615ef96f5c13798fbe0b460c70464659b90d9c1901973e6a2"
   },
   "strings": {
@@ -327,6 +327,7 @@
     "collaboration.legacy": "\u65e7\u7684 codex \u6280\u80fd",
     "collaboration.legacy_failed": "\u6ca1\u80fd\u79fb\u52a8\u8fd9\u4e2a\u6587\u4ef6\u5939\u3002\u8bf7\u5173\u6389\u6b63\u5728\u4f7f\u7528\u5b83\u7684\u7a0b\u5e8f\u518d\u8bd5\u3002",
     "collaboration.legacy_remove": "\u79fb\u5230\u56de\u6536\u7ad9",
+    "collaboration.legacy_remove_mac": "\u79fb\u5230\u5e9f\u7eb8\u7bd3",
     "collaboration.model": "\u6a21\u578b",
     "collaboration.model_hint": "\u7559\u7a7a\u5219\u8ddf\u968f Codex \u8bbe\u7f6e",
     "collaboration.section.defaults": "\u9ed8\u8ba4\u8bbe\u7f6e",

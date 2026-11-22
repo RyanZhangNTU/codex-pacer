@@ -109,6 +109,22 @@ struct ActivityBadge: View {
                         .transition(.scale.combined(with: .opacity))
                 }
             }
+            // Codex for Claude runs working for the active Claude tasks: a small
+            // number on Codex's color at the badge's lower right.
+            .overlay(alignment: .bottomTrailing) {
+                if activity.delegatedRunning > 0 {
+                    Text(activity.delegatedRunning > 9 ? "9+" : "\(activity.delegatedRunning)")
+                        .font(.system(size: 7 * k, weight: .bold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(Color.black.opacity(0.9))
+                        .padding(.horizontal, 2 * k)
+                        .frame(minWidth: 10 * k, minHeight: 10 * k)
+                        .background(Capsule().fill(AgentProvider.codex.tint))
+                        .overlay(Capsule().stroke(Color.black.opacity(0.85), lineWidth: k))
+                        .offset(x: 4 * k, y: 3 * k)
+                        .transition(.scale.combined(with: .opacity))
+                        .accessibilityLabel(L10n.text("delegation.badge", activity.delegatedRunning))
+                }
+            }
             .keyframeAnimator(initialValue: 1.0, trigger: blooms) { content, scale in
                 content.scaleEffect(scale)
             } keyframes: { _ in

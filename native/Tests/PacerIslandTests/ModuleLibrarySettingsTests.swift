@@ -26,7 +26,7 @@ final class ModuleLibrarySettingsTests: XCTestCase {
         XCTAssertEqual(library.prominent.map(\.provider), [.claude, .workbuddy], "Found or turned on, in registry order")
         XCTAssertEqual(library.collapsed.map(\.provider), [.codex, .deepseek, .workbuddyAI])
         let services = SettingsPane.groups(services: library.prominent.map(\.provider))[1]
-        XCTAssertEqual(services, [.claude, SettingsPane(provider: .workbuddy), .modules, .remote], "The library follows the services, then Remote")
+        XCTAssertEqual(services, [.claude, SettingsPane(provider: .workbuddy), .modules, .collaboration, .remote], "The library follows the services, then Collaboration and Remote")
         XCTAssertEqual(SettingsPane(stored: "codex"), .codex, "A hidden built-in page still opens from saved state")
         XCTAssertEqual(SettingsPane(stored: "harness.workbuddy")?.provider, .workbuddy)
         XCTAssertEqual(SettingsPane(stored: "modules"), .modules)

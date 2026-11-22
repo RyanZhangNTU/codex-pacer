@@ -1698,6 +1698,7 @@
 "collaboration.info.legacy" = "~/.claude/skills/codex 是 Pacer 接管之前的技能。两个都在时，Claude 会看到两个 codex 技能，可能选到旧的。移到回收站后仍可恢复。";
 "collaboration.legacy_remove" = "移到回收站";
 "collaboration.legacy_failed" = "没能移动这个文件夹。请关掉正在使用它的程序再试。";
+"collaboration.legacy_remove_mac" = "移到废纸篓";
 "collaboration.display" = "Codex 执行显示为";
 "collaboration.display.rows" = "任务下的子行";
 "collaboration.display.count" = "只显示数量";

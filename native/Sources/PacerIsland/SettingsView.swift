@@ -352,6 +352,8 @@ struct SettingsView: View {
                 onShowWelcome: onShowWelcome, openPane: { pane = $0 })
         case .support:
             SettingsSupportPane()
+        case .collaboration:
+            SettingsCollaborationPane(model: model, claudeEnabled: moduleEnabled(.claude))
         case .modules:
             SettingsModuleLibraryPane(library: library, open: { pane = SettingsPane(provider: $0) },
                 toggle: { provider in modules.setMode(moduleEnabled(provider) ? .disabled : .enabled, for: provider) })

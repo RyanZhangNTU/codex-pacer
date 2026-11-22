@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "fb2f9253db9e7a0a8afb04e32b07dca9046097fd2a65065b297c8b0949d89a52",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "c3ffc35bcb2e197fba062179d9476796e80ba15d4dbf7a5ed2ad4dd214556fb1",
     "windows/EngineSupport/Resources/Localization/en.json": "0b0b4dcd7ebc33b80bd38ad541af2e86d831515198f05708c8878108a62e3cca"
   },
   "strings": {
@@ -327,6 +327,7 @@
     "collaboration.legacy": "Earlier codex skill",
     "collaboration.legacy_failed": "Couldn't move the folder. Close anything using it and try again.",
     "collaboration.legacy_remove": "Move to Recycle Bin",
+    "collaboration.legacy_remove_mac": "Move to Trash",
     "collaboration.model": "Model",
     "collaboration.model_hint": "Leave empty to follow Codex settings",
     "collaboration.section.defaults": "Defaults",
