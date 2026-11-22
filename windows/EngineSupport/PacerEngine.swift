@@ -240,6 +240,11 @@ actor EngineRuntime {
     private var panelSettings = EngineExpandedPanelSettings()
     /// Claude's self-reported progress ring; off until the desktop turns it on.
     private var claudeProgressRing = false
+    /// Codex for Claude; off until the desktop turns it on.
+    private var codexDelegationSettings = EngineCodexDelegationSettings()
+    private var codexDelegationHome: URL?
+    private var codexDelegationLedger: (at: Date, links: [String: CodexDelegationLink])?
+    private var codexDelegationStatusCache: (at: Date, value: EngineCodexDelegationStatus)?
     private var codexProgressRing = false
     private var deepseekProgressRing = false
     private var disabledHarnessProgress: Set<AgentProvider> = []
@@ -1063,6 +1068,12 @@ actor EngineRuntime {
             if command.method == "markAllRead" { activityState.markAllRead(at: now()) }
             else if let id = command.params?.activityID { activityState.markRead(activityID: id, at: now()) }
             publish(notices: [])
+        case "stopDelegation":
+            // The runner stops Codex and tells Claude the user stopped it in Pacer.
+            guard let id = command.params?.activityID, let link = activityState.codexDelegations[id], link.status == .running,
+                  ClaudeCodexDelegation.requestStop(directory: link.directory) else {
+                failure(id: command.id, code: "notRunning"); return true
+            }
         case "demoStage":
             guard demo, let value = command.params?.demoStage, let next = DemoTaskStage(rawValue: value) else {
                 failure(id: command.id, code: "demoOnly"); return true
@@ -1187,6 +1198,7 @@ actor EngineRuntime {
         if let deepseek { deepseekHome = deepseek }
         if let executable = parameters.codexExecutable { codexExecutable = executable }
         if let value = parameters.claudeProgressRing { claudeProgressRing = value }
+        if let value = parameters.codexDelegation, value != codexDelegationSettings { codexDelegationSettings = value; codexDelegationStatusCache = nil }
         if let value = parameters.codexProgressRing { codexProgressRing = value }
         if let value = parameters.deepseekProgressRing { deepseekProgressRing = value }
         if let selectedProgress { disabledHarnessProgress = selectedProgress }
@@ -1245,6 +1257,7 @@ actor EngineRuntime {
             codexRemoteTargets = []; claudeRemoteTargets = []; claudeRemoteStatuses = [:]
         }
         applyClaudeProgressSwitch()
+        applyCodexDelegationSwitch()
         // The Dot switch installs or removes the Durable progress plugin.
         scheduleCodexProgressSetup(force: durableChanged)
         scheduleCodexHooks()
@@ -1575,6 +1588,8 @@ actor EngineRuntime {
         // Setup creates Pacer's hook folder, which the switch file needs, and
         // confirms that this engine manages that home.
         applyClaudeProgressSwitch(setupConfirmed: report.state == .ready)
+        applyCodexDelegationSwitch(setupConfirmed: report.state == .ready)
+        codexDelegationStatusCache = nil
         publish(notices: [])
     }
     /// Installs Pacer's Codex hooks while the Codex module is on and removes
@@ -1828,6 +1843,47 @@ actor EngineRuntime {
         // The switch also decides which settings entries Pacer keeps (the
         // display observer or its plugin), so a change brings them current.
         if contents(claudeHome) != before { scheduleClaudeHooks(force: true) }
+    }
+    /// Codex for Claude's settings file is its switch, written like the
+    /// progress ring's: only by an engine that manages the hooks, removed only
+    /// where this engine turned it on or its hook setup just confirmed. A
+    /// change of the switch brings the plugin's skill current.
+    private func applyCodexDelegationSwitch(setupConfirmed: Bool = false) {
+        guard claudeHookServices != nil, !demo else { return }
+        let wanted = codexDelegationSettings.enabled == true && enabled.contains(.claude)
+        if let previous = codexDelegationHome, previous != claudeHome {
+            ClaudeCodexDelegation.apply(nil, home: previous); codexDelegationHome = nil
+        }
+        let before = ClaudeCodexDelegation.isOn(home: claudeHome)
+        if wanted {
+            let codex = codexExecutable.isEmpty ? nil : codexExecutable
+            if ClaudeCodexDelegation.apply(codexDelegationSettings.settings(codex: codex), home: claudeHome) { codexDelegationHome = claudeHome }
+        } else if codexDelegationHome == claudeHome || setupConfirmed {
+            ClaudeCodexDelegation.apply(nil, home: claudeHome); codexDelegationHome = nil
+        }
+        if ClaudeCodexDelegation.isOn(home: claudeHome) != before { codexDelegationStatusCache = nil; scheduleClaudeHooks(force: true) }
+    }
+    /// The ledger, read at most once a second: a run's rollout changes as it
+    /// starts, runs and is deleted, so each change brings a reconcile anyway.
+    private func codexDelegationLinks(at date: Date) -> [String: CodexDelegationLink] {
+        guard !demo, enabled.contains(.claude), enabled.contains(.codex) else { return [:] }
+        if let cached = codexDelegationLedger, abs(date.timeIntervalSince(cached.at)) < 1 { return cached.links }
+        let links = ClaudeCodexDelegation.links(ClaudeCodexDelegation.runs(home: claudeHome))
+        codexDelegationLedger = (date, links); return links
+    }
+    private func codexDelegationStatus(at date: Date) -> EngineCodexDelegationStatus? {
+        guard !demo, enabled.contains(.claude) else { return nil }
+        if let cached = codexDelegationStatusCache, abs(date.timeIntervalSince(cached.at)) < 15 { return cached.value }
+        let summary = ClaudeCodexDelegation.summary(home: claudeHome, since: date.addingTimeInterval(-7 * 86400))
+        let legacy = ClaudeCodexDelegation.hasLegacySkill(home: claudeHome) ? ClaudeCodexDelegation.legacySkillURL(home: claudeHome).path : nil
+        let minutes = Int((summary.seconds / 60).rounded())
+        let weekText = summary.runs == 0 ? L10n.text("collaboration.week_none")
+            : L10n.text("collaboration.week", summary.runs, minutes, summary.failures) + " · " + L10n.text("collaboration.week_tokens", max(1, summary.tokens / 1000))
+        let value = EngineCodexDelegationStatus(enabled: ClaudeCodexDelegation.isOn(home: claudeHome),
+            skillInstalled: FileManager.default.fileExists(atPath: ClaudeCodexDelegation.skillURL(home: claudeHome).path),
+            legacySkill: legacy, codexFound: codexExecutableFound ?? !codexExecutable.isEmpty,
+            runs: summary.runs, failures: summary.failures, minutes: minutes, tokens: summary.tokens, weekText: weekText)
+        codexDelegationStatusCache = (date, value); return value
     }
     private static func measured(_ rows: [SessionActivity], _ performance: [SessionPerformanceUpdate]) -> [SessionActivity] {
         var result = rows
@@ -2906,6 +2962,7 @@ actor EngineRuntime {
             inbox.observe(current, at: date, retention: retention)
             update = activityState.applyDemoSnapshot(enabled: enabled, at: date, visibility: activityVisibility)
         } else {
+            activityState.codexDelegations = codexDelegationLinks(at: date)
             update = activityState.reconcile(at: date, retention: retention, visibility: activityVisibility)
         }
         notificationActivities = current
@@ -3004,7 +3061,8 @@ actor EngineRuntime {
                 hostApplications: hostTracking.labels(for: visibleActivities, activities: activities, inbox: inbox) {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
                 }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
-                progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize)
+                progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize,
+                showsDelegationRows: codexDelegationSettings.rows ?? true)
         presentationOptions.hiddenTurnCredits = hiddenTurnCredits
         let taskPresentation = selected == nil ? activityState.presentation(at: date, options: presentationOptions) :
             ActivityTaskPresentation(activities: visibleActivities, requests: visibleRequests, inbox: inbox, options: presentationOptions, at: date)
@@ -3124,6 +3182,7 @@ actor EngineRuntime {
         default: break
         }
         snapshot.codexHooks = hooks
+        snapshot.codexDelegation = codexDelegationStatus(at: date)
         refreshCodexHookActivity()
         snapshot.accountCredits = credits.isEmpty ? nil : creditModules.compactMap { provider in
             credits[provider].map { .init(provider: provider.rawValue, credits: $0, stale: accountCredits[provider]?.stale == true,

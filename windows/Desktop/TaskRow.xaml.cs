@@ -17,22 +17,32 @@ public partial class TaskRow : Button
         new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
     public double HoverProgress { get => (double)GetValue(HoverProgressProperty); set => SetValue(HoverProgressProperty, value); }
     private Action? open;
+    private Action<string>? stop;
+    private string stopLabel = "";
     private bool hovered, animations = true;
+    private readonly bool showsDelegations;
     private int hoverRevision;
     private AnimationLease? hover;
     /// Rows with one line are 38 points tall, two lines 54.
     internal const double TwoLineHeight = 54, OneLineHeight = 38;
+    /// Each Codex for Claude run under a Claude task takes one 30-point line.
+    internal const double DelegationHeight = 30, DelegationRailBottom = 4;
     internal static double RowHeight(PanelOptions? options) => options?.OneLine == true ? OneLineHeight : TwoLineHeight;
+    /// The row with the runs listed under it.
+    internal static double RowHeight(EngineTaskRow value, PanelOptions? options) => RowHeight(options) +
+        (value.Delegations is { Count: > 0 } runs ? runs.Count * DelegationHeight + DelegationRailBottom : 0);
     /// <param name="options">The panel's row style and fields; none draws every field on two lines.</param>
     /// <param name="settled">The first sight draws the icon's final state, as a row built while hidden does.</param>
-    internal TaskRow(EngineTaskRow value, PanelOptions? options = null, bool settled = false)
+    /// <param name="showsDelegations">The island lists a Claude task's Codex runs under it; Overview keeps one line per task.</param>
+    internal TaskRow(EngineTaskRow value, PanelOptions? options = null, bool settled = false, bool showsDelegations = false)
     {
-        this.settled = settled;
+        this.settled = settled; this.showsDelegations = showsDelegations;
         InitializeComponent();
         FontFamily = PacerFonts.Interface;
         var state = new TaskRowState(value, options);
         DataContext = state;
-        Height = RowHeight(options);
+        Height = showsDelegations ? RowHeight(value, options) : RowHeight(options);
+        BuildDelegations(value, options);
         // The one-line row's icon draws the 28-point face at 22.
         if (state.OneLine) Icon.LayoutTransform = new ScaleTransform(22.0 / 28, 22.0 / 28);
         Background = PacerPalette.Hover; IsEnabled = false;
@@ -63,6 +73,8 @@ public partial class TaskRow : Button
         if (previous.Value == value && previous.OneLine == (options?.OneLine == true)) return;
         var state = new TaskRowState(value, options);
         DataContext = state;
+        Height = showsDelegations ? RowHeight(value, options) : RowHeight(options);
+        BuildDelegations(value, options);
         var before = previous.Value;
         if (progressShown && (before.Symbol != value.Symbol || before.Dimmed != value.Dimmed || before.ProgressState != value.ProgressState
             || before.ProgressMode != value.ProgressMode || before.ProgressFraction != value.ProgressFraction || before.ProgressStale != value.ProgressStale
@@ -73,7 +85,73 @@ public partial class TaskRow : Button
     internal TaskStatusIcon StatusIcon => Icon;
     internal void SetOpenAction(Action? action, string help, bool animate)
     { open = action; IsEnabled = action != null; Focusable = IsEnabled; AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Icon.SetMotion(animate); }
-    internal void SetAnimations(bool value) { animations = value; Icon.SetMotion(value); if (!value) UpdateHover(); }
+    internal void SetAnimations(bool value)
+    {
+        animations = value; Icon.SetMotion(value); if (!value) UpdateHover();
+        foreach (var icon in Delegations.Children.OfType<Grid>().SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
+    }
+    /// Stop on a running Codex for Claude run's line; the island sends the run's ID.
+    internal void SetStopAction(Action<string>? action, string label) { stop = action; stopLabel = label; RefreshStopButtons(); }
+    private void RefreshStopButtons()
+    {
+        foreach (var line in Delegations.Children.OfType<Grid>())
+            if (line.Tag is EngineTaskRow run && line.Children.OfType<Button>().FirstOrDefault() is { } button)
+            {
+                button.ToolTip = stopLabel; AutomationProperties.SetName(button, stopLabel);
+                button.Visibility = stop != null && run.CanStop == true && line.IsMouseOver ? Visibility.Visible : Visibility.Hidden;
+            }
+    }
+    /// One line per run: its icon, Claude's label with the run's state, then
+    /// time, model and effort. Clicking the line opens the Claude task, like the row.
+    private void BuildDelegations(EngineTaskRow value, PanelOptions? options)
+    {
+        Delegations.Children.Clear();
+        var runs = showsDelegations ? value.Delegations : null;
+        DelegationRail.Visibility = runs is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        if (runs == null) return;
+        foreach (var run in runs)
+        {
+            var state = new TaskRowState(run, options);
+            var line = new Grid { Height = DelegationHeight, Tag = run, Background = Brushes.Transparent };
+            foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star), new GridLength(10), GridLength.Auto, new GridLength(26) })
+                line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+            var icon = new TaskStatusIcon { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                LayoutTransform = new ScaleTransform(20.0 / 28, 20.0 / 28) };
+            line.Children.Add(icon);
+            var text = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+            text.Inlines.Add(new System.Windows.Documents.Run(run.Title) { FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = state.TitleInk });
+            text.Inlines.Add(new System.Windows.Documents.Run("  " + run.Status) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.DetailInk });
+            Grid.SetColumn(text, 2); line.Children.Add(text);
+            var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Opacity = state.ModelOpacity };
+            if (run.TurnTime != null)
+                trailing.Inlines.Add(new System.Windows.Documents.Run(run.TurnTime + "  ") { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.DurationInk });
+            trailing.Inlines.Add(new System.Windows.Documents.Run(run.Model) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
+            if (run.Effort != null)
+                trailing.Inlines.Add(new System.Windows.Documents.Run(" " + run.Effort) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
+            Grid.SetColumn(trailing, 4); line.Children.Add(trailing);
+            var button = StopButton(run);
+            Grid.SetColumn(button, 5); line.Children.Add(button);
+            line.MouseEnter += (_, _) => RefreshStopButtons();
+            line.MouseLeave += (_, _) => RefreshStopButtons();
+            AutomationProperties.SetName(line, state.AccessibleName);
+            Delegations.Children.Add(line);
+            icon.Show(run, IconColor(state), false);
+            icon.SetMotion(animations);
+        }
+        RefreshStopButtons();
+    }
+    private Button StopButton(EngineTaskRow run)
+    {
+        var face = new Grid { Width = 20, Height = 20 };
+        face.Children.Add(new System.Windows.Shapes.Ellipse { Fill = PacerPalette.Hover });
+        face.Children.Add(new System.Windows.Shapes.Rectangle { Width = 7, Height = 7, RadiusX = 1.5, RadiusY = 1.5, Fill = PacerPalette.Primary });
+        var button = new Button { Content = face, Width = 20, Height = 20, Padding = new Thickness(0), BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent, Cursor = System.Windows.Input.Cursors.Hand, Visibility = Visibility.Hidden,
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, FocusVisualStyle = null };
+        button.Template = new ControlTemplate(typeof(Button)) { VisualTree = new FrameworkElementFactory(typeof(ContentPresenter)) };
+        button.Click += (_, args) => { args.Handled = true; if (run.CanStop == true) stop?.Invoke(run.Id); };
+        return button;
+    }
     internal void ApplyAppearance() => UpdateHover();
     private void UpdateHover()
     {
@@ -104,8 +182,13 @@ public partial class TaskRow : Button
             + (state.CostVisible == Visibility.Visible ? Text(row.Cost, 11, FontWeights.Medium) + (row.PeakCost ? 16 : 7) : 0);
         double detail = Text(row.Status, 11, FontWeights.Medium)
             + (state.SubagentsVisible == Visibility.Visible ? 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium) : 0)
-            + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0);
-        return 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0));
+            + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0)
+            + (state.DelegatedVisible == Visibility.Visible ? 20 + Text(row.DelegatedText, 10, FontWeights.SemiBold) : 0);
+        double runs = 0;
+        foreach (var run in showsDelegations ? row.Delegations ?? [] : [])
+            runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold) + Text("  " + run.Status, 11, FontWeights.Medium))
+                + 10 + Text((run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 26 + 6);
+        return Math.Max(runs, 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0)));
     }
 }
 
@@ -118,6 +201,11 @@ internal sealed class TaskRowState(EngineTaskRow value, PanelOptions? options = 
     public GridLength GapRow => new(OneLine ? 0 : 3);
     public GridLength DetailRow => new(OneLine ? 0 : 15);
     public Visibility SecondLineVisible => Visible(!OneLine);
+    /// The task's own line; its Codex for Claude runs follow below it.
+    public double MainHeight => TaskRow.RowHeight(choices);
+    public Visibility DelegatedVisible => Visible(Value.DelegatedText != null);
+    public Brush DelegatedInk => PacerPalette.Provider("codex");
+    public Brush DelegatedFill => DelegatedInk is SolidColorBrush solid ? PacerPalette.Ink(solid.Color.R, solid.Color.G, solid.Color.B, 40) : PacerPalette.Hover;
     /// One line shows what needs the user, or a failure, where the speed would be.
     public Visibility OneLineStatusVisible => Visible(OneLine && (Value.Attention != null || Value.Phase == "waitingForInput" || Value.Failed));
     public Visibility RateLineVisible => Visible(OneLineStatusVisible != Visibility.Visible);

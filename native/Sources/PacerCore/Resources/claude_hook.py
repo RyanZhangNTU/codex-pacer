@@ -1,9 +1,11 @@
-"""Opt-in Claude hook/statusline adapter. Stdout never changes hook decisions.
+"""Opt-in Claude hook/statusline adapter.
 
 Claude Code waits for most hooks, so this file imports only what every call
 needs; slower modules load on the paths that use them. While Pacer's progress
 ring is switched on, a typed UserPromptSubmit adds one fixed line of model
 context, and a Stop that leaves background work running is recorded as a wait.
+Stdout changes a hook decision in one case only: a Codex for Claude worktree
+whose changes were neither applied nor discarded holds the turn's end once.
 """
 import fcntl, json, os, pathlib, sys, time
 
@@ -144,15 +146,41 @@ def progress_stop(home,value):
     row={'origin':'hook','sessionId':session,'at':time.time(),'kind':'waiting','background':waited,'wakeups':wakeups}
     if ident(value.get('prompt_id')):row['promptId']=ident(value.get('prompt_id'))
     spool(home,[row])
-def watch_access(home,thread,session,item):
-    # A detached copy of this program checks the request once, after this
-    # hook has returned, so Claude never waits for the check.
+def detached(command):
     import subprocess
-    command=[sys.executable]+(['-S'] if sys.flags.no_site else [])+[os.path.abspath(sys.argv[0]),'access',str(home),thread,session,item,str(ACCESS_WAIT)]
     options={'stdin':subprocess.DEVNULL,'stdout':subprocess.DEVNULL,'stderr':subprocess.DEVNULL,'close_fds':True}
     if os.name=='nt':options['creationflags']=0x08000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     else:options['start_new_session']=True
     subprocess.Popen(command,**options)
+def codex_turn_end(home,value):
+    # Codex for Claude: a turn that stops with no background work left has
+    # ended, and Pacer's runner deletes the session's finished Codex runs in
+    # the background. A stop that waits for background work keeps them.
+    session=ident(value.get('session_id'))
+    if value.get('hook_event_name')!='Stop' or value.get('agent_id') is not None or not session:return
+    root=home/'pacer'/'codex';folder=root/'runs'/session;runner=root/'runner.py'
+    if not folder.is_dir() or not runner.is_file():return
+    tasks=value.get('background_tasks')
+    if isinstance(tasks,list) and any(isinstance(task,dict) and task.get('type') not in IDLE for task in tasks):return
+    if value.get('stop_hook_active') is not True:
+        held=[]
+        for entry in sorted(folder.iterdir()):
+            path=entry/'meta.json';meta=read_object(path)
+            if meta.get('status') in (None,'running') or not meta.get('worktree') or not meta.get('worktreeChanges'):continue
+            if meta.get('applied') or meta.get('discarded') or meta.get('warned'):continue
+            meta['warned']=True;write_object(path,meta);held.append(meta)
+        if held:
+            lines=['- thread %s: %s'%(meta.get('thread'),meta.get('worktree')) for meta in held]
+            reason='\n'.join(['Codex worktree runs still hold changes that were never applied or discarded:']+lines+[
+                "Apply what you need with the skill's apply <thread> command (or discard <thread>), then finish your turn; "
+                'the worktrees are deleted when the turn ends either way.'])
+            sys.stdout.write(json.dumps({'decision':'block','reason':reason},separators=(',',':')));sys.stdout.flush()
+            return
+    detached([sys.executable]+(['-S'] if sys.flags.no_site else [])+[str(runner),'turn-end','--session',session])
+def watch_access(home,thread,session,item):
+    # A detached copy of this program checks the request once, after this
+    # hook has returned, so Claude never waits for the check.
+    detached([sys.executable]+(['-S'] if sys.flags.no_site else [])+[os.path.abspath(sys.argv[0]),'access',str(home),thread,session,item,str(ACCESS_WAIT)])
 def access_wait(home,thread,session,item,delay):
     # The tool's end, a new prompt, a stop or the session's end removes it from
     # the waiting tools, so a request found there after the delay is still showing its dialog.
@@ -356,7 +384,7 @@ def main():
         watch=None
         try:watch=hook(home,value)
         finally:
-            for extra in (progress_context,progress_display,progress_stop):
+            for extra in (progress_context,progress_display,progress_stop,codex_turn_end):
                 try:extra(home,value)
                 except OSError:pass
         if watch:watch_access(home,*watch)

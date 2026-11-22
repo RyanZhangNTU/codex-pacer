@@ -17,7 +17,12 @@ internal sealed record EngineSnapshot(
     IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
     string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
     string? WslAvailability = null,
-    IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null);
+    IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null,
+    CodexDelegationStatus? CodexDelegation = null);
+/// Settings → Collaboration: Codex for Claude's switch, whether its skill is in
+/// Pacer's Claude plugin, the user-level skill it replaces, and the last week's runs.
+internal sealed record CodexDelegationStatus(bool Enabled, bool SkillInstalled, string? LegacySkill, bool CodexFound,
+    int Runs, int Failures, int Minutes, int Tokens, string WeekText = "");
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
 /// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
 /// `notRunning`, `needsCodexUpdate` or `installFailed`.
@@ -151,7 +156,8 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     string Model, string? Effort, double? TokensPerSecond, bool RateIsFresh, string? RatePlaceholder,
     string? TurnTime, int Subagents, bool Unread, bool Failed, bool Dimmed, string? Cost, bool PeakCost, string? RateText = null, string? SubagentText = null,
     string? ProgressState = null, double? ProgressFraction = null, bool? ProgressStale = null, string? ProgressText = null,
-    string? ProgressMode = null);
+    string? ProgressMode = null, string? DelegatedText = null, IReadOnlyList<EngineTaskRow>? Delegations = null,
+    string? ParentID = null, bool? CanStop = null);
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
     string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
     double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null,

@@ -49,7 +49,15 @@ public partial class IslandWindow
     /// Rows on one task page and their height, from the panel's choices.
     private int PageSize => Math.Clamp(panelOptions.PageSize, 3, 6);
     private double RowHeight => TaskRow.RowHeight(panelOptions);
-    private double RowsHeight(int count) => count == 0 ? 44 : Math.Min(count, PageSize) * RowHeight + (Math.Min(count, PageSize) - 1) * 2;
+    /// Every page keeps a full page's height; a page whose Claude tasks list
+    /// Codex for Claude runs grows by their lines.
+    private double RowsHeight(int count)
+    {
+        if (count == 0) return 44;
+        double full = Math.Min(count, PageSize) * RowHeight + (Math.Min(count, PageSize) - 1) * 2;
+        var shown = rows.Skip(page * PageSize).Take(PageSize).ToArray();
+        return Math.Max(full, shown.Sum(value => TaskRow.RowHeight(value, panelOptions)) + Math.Max(0, shown.Length - 1) * 2);
+    }
     private int PageCount => Math.Max(1, (rows.Count + PageSize - 1) / PageSize);
 
     /// Takes the snapshot's choices; true when rows must be rebuilt.

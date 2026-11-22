@@ -17,8 +17,8 @@ namespace CodexPacer.Windows;
 internal sealed partial class SettingsWindow
 {
     /// Every page in the Mac's order; search lists matches in this order.
-    internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "modules", "remote", "appearance", "collapsed", "expandedPanel", "notifications", "general", "about", "support"];
-    private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "modules", "remote"], ["appearance", "collapsed", "expandedPanel", "notifications", "general"]];
+    internal static readonly string[] Panes = ["overview", "history", "codex", "claude", "deepseek", "modules", "collaboration", "remote", "appearance", "collapsed", "expandedPanel", "notifications", "general", "about", "support"];
+    private static readonly string[][] PaneGroups = [["overview", "history"], ["codex", "claude", "deepseek", "modules", "collaboration", "remote"], ["appearance", "collapsed", "expandedPanel", "notifications", "general"]];
     private TextBlock? modulesMoreCount;
     private readonly Dictionary<string, TextBlock> moduleOff = new();
     private readonly Dictionary<string, Ellipse> attentionDots = new();
@@ -41,7 +41,7 @@ internal sealed partial class SettingsWindow
     };
     /// Nothing waits for a later step any more; kept so a page can be held back again.
     private static bool PendingPane(string pane) => false;
-    private static bool EnginePane(string pane) => pane is "overview" or "history" or "codex" or "claude" or "deepseek" or "modules" or "notifications" or "remote";
+    private static bool EnginePane(string pane) => pane is "overview" or "history" or "codex" or "claude" or "deepseek" or "modules" or "notifications" or "remote" or "collaboration";
     private bool PaneAvailable(string pane) => !PendingPane(pane) && ResolvePane(pane) == pane;
     /// The Mac's raw value, which names the shared search words.
     private static string MacPane(string pane) => pane == "collapsed" ? "collapsedBar" : pane;
@@ -76,7 +76,7 @@ internal sealed partial class SettingsWindow
         "codex" => "Codex",
         "claude" => "Claude",
         "deepseek" => "DeepSeek",
-        "overview" or "history" or "remote" or "notifications" or "about" or "support" or "modules" => ui.Text("main.pane." + pane),
+        "overview" or "history" or "remote" or "notifications" or "about" or "support" or "modules" or "collaboration" => ui.Text("main.pane." + pane),
         "expandedPanel" => ui.Text("settings.pane.expanded_panel"),
         _ => harnessPages.FirstOrDefault(page => page.Provider == pane).Title ?? ModuleTitle(pane)
     };
@@ -91,6 +91,7 @@ internal sealed partial class SettingsWindow
         "codex" or "claude" or "deepseek" => GuideArt.ProviderSymbol(pane),
         "remote" => "server.rack",
         "modules" => "square.on.square",
+        "collaboration" => "arrow.triangle.branch",
         "appearance" => "circle.lefthalf.filled",
         "collapsed" => "rectangle.topthird.inset.filled",
         "expandedPanel" => "text.alignleft",

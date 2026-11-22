@@ -156,11 +156,16 @@ public struct TaskPresentationOptions: Equatable, Sendable {
     public var progressRingProviders: Set<AgentProvider>
     /// Rows on one page of the expanded panel's task list.
     public var pageSize: Int
+    /// Codex for Claude runs show as rows under their Claude task; without
+    /// this, the task shows only how many there are.
+    public var showsDelegationRows: Bool
     public init(hideProjects: Bool = false, hostApplications: [String: TaskHostLabel] = [:], sourceNames: [String: String] = [:],
-                showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = [], pageSize: Int = 3) {
+                showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = [], pageSize: Int = 3,
+                showsDelegationRows: Bool = true) {
         self.hideProjects = hideProjects; self.hostApplications = hostApplications; self.sourceNames = sourceNames
         self.showsDeepSeekTurnCost = showsDeepSeekTurnCost; self.progressRingProviders = progressRingProviders
         self.pageSize = ExpandedPanelOptions.pageSizes.contains(pageSize) ? pageSize : 3
+        self.showsDelegationRows = showsDelegationRows
     }
 }
 
@@ -190,14 +195,30 @@ public struct ActivityTaskRowPresentation: Sendable {
         return cost
     }
     public let progressRing: TaskProgressRing?
+    /// Set on a Codex for Claude run's row: its ledger entry.
+    public let delegation: CodexDelegationLink?
+    /// The Codex for Claude runs of this Claude task that Pacer has not cleaned up yet.
+    public let delegatedCount: Int
+    /// Their rows, oldest first, when `TaskPresentationOptions.showsDelegationRows` is on.
+    public let delegations: [ActivityTaskRowPresentation]
+    public var delegatedCountText: String { L10n.text("delegation.badge", delegatedCount) }
+    /// A run the user can stop from its row.
+    public var canStopDelegation: Bool { delegation?.status == .running && phase == .running }
     public var rateText: String? { rate.map { String(format: "%.1f", $0.value) } }
     public var subagentText: String { String(subagents) }
     public init(activity: SessionActivity, group: ActivityTaskGroup? = nil, attention: PendingAttentionRequest.Kind? = nil,
                 unread: Bool, options: TaskPresentationOptions = .init(), at now: Date) {
         self.activity = activity; self.attention = attention; self.unread = unread
+        delegation = activity.codexDelegation
+        let delegated = group?.delegations ?? []
+        delegatedCount = delegated.count
+        delegations = options.showsDelegationRows ? delegated.map {
+            ActivityTaskRowPresentation(activity: $0, unread: false, options: options, at: now)
+        } : []
         phase = group?.isRunning == true ? .running : group?.isWaiting == true ? .waitingForInput : activity.observedPhase(at: now)
-        title = Self.title(activity, hideProjects: options.hideProjects)
+        title = activity.codexDelegation.map(Self.delegationTitle) ?? Self.title(activity, hideProjects: options.hideProjects)
         var text = phase == .completed ? activity.endingLabel : activity.detail(at: now)
+        if let link = activity.codexDelegation { text = Self.delegationStatus(link, phase: phase, detail: text) }
         if group?.isRunning == true, activity.phase != .running, !activity.turnFailed { text = L10n.text("activity.running_long") }
         if let attention {
             if phase != .running { text = attention.label }
@@ -238,6 +259,24 @@ public struct ActivityTaskRowPresentation: Sendable {
     }
     public static func title(_ activity: SessionActivity, hideProjects: Bool) -> String {
         activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project)
+    }
+    /// Claude's label for the run, or its mode. Codex's own thread title would
+    /// be the start of Claude's brief.
+    public static func delegationTitle(_ link: CodexDelegationLink) -> String { link.label ?? modeText(link.mode) }
+    static func modeText(_ mode: ClaudeCodexDelegation.Mode) -> String { L10n.text("delegation.mode." + mode.rawValue) }
+    /// Mode, access and what the run is doing; a finished run says how it ended.
+    static func delegationStatus(_ link: CodexDelegationLink, phase: ActivityPhase, detail: String) -> String {
+        let access = L10n.text(link.worktree ? "delegation.worktree" : link.write ? "delegation.write" : "delegation.read_only")
+        let state: String
+        switch link.status {
+        case .running: state = detail
+        case .ok: state = L10n.text("delegation.status.ok")
+        case .failed: state = L10n.text("delegation.status.failed")
+        case .timedOut: state = L10n.text("delegation.status.timedOut")
+        case .stopped: state = L10n.text("delegation.status.stopped")
+        }
+        let parts = link.label == nil ? [access, state] : [modeText(link.mode), access, state]
+        return parts.joined(separator: " · ")
     }
     private static func creditAmount(_ value: Double) -> String {
         if value > 0 && value < 0.01 { return "<0.01 " + L10n.text("harness.credit_unit") }

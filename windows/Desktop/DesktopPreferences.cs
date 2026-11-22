@@ -91,6 +91,20 @@ internal sealed record DesktopPreferences
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; } = true;
+    // Settings → Collaboration: Codex for Claude, off until the user turns it
+    // on. Empty model and effort, and an empty fast choice, follow Codex's own
+    // configuration; the runner applies these when Claude leaves them out.
+    public bool CodexDelegation { get; init; }
+    public bool CodexDelegationRows { get; init; } = true;
+    public string CodexDelegationModel { get; init; } = "";
+    public string CodexDelegationEffort { get; init; } = "";
+    public string CodexDelegationFast { get; init; } = "";
+    public bool CodexDelegationWrite { get; init; }
+    public int CodexDelegationTimeout { get; init; } = 60;
+    public int CodexDelegationConcurrency { get; init; } = 3;
+    internal static readonly string[] DelegationEfforts = ["", "low", "medium", "high", "xhigh", "max", "ultra"];
+    internal static readonly int[] DelegationTimeouts = [15, 30, 60, 120, 240];
+    internal static readonly int[] DelegationConcurrency = [1, 2, 3, 4, 6];
     public bool CodexProgressRing { get; init; } = true;
     // A module's progress ring is on unless listed here, like the built-in rings.
     public string[] DisabledHarnessProgress { get; init; } = [];
@@ -122,6 +136,8 @@ internal sealed record DesktopPreferences
         && (DisplaySelection != "specified" || DisplayID is not ("" or "0") || DisplayName.Length > 0)
         && Appearances.Contains(IslandAppearance)
         && ExpandedQuotaStyle is "split" or "classic"
+        && CodexDelegationModel.Length <= 80 && DelegationEfforts.Contains(CodexDelegationEffort) && CodexDelegationFast is "" or "on" or "off"
+        && DelegationTimeouts.Contains(CodexDelegationTimeout) && DelegationConcurrency.Contains(CodexDelegationConcurrency)
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)
         && (CompactComponentOptions == null || Encoding.UTF8.GetByteCount(CompactComponentOptions) <= CompactChoices.ByteLimit)
         && (IslandDisplayPlaces == null || Encoding.UTF8.GetByteCount(IslandDisplayPlaces) <= IslandScreenMemory.ByteLimit)
@@ -217,6 +233,12 @@ internal sealed record DesktopPreferences
             showEmbeddedClaudeSessions = ShowEmbeddedClaudeSessions,
             showClaudeCloudProjects = ShowClaudeCloudProjects,
             claudeProgressRing = ClaudeProgressRing,
+            codexDelegation = new
+            {
+                enabled = CodexDelegation, rows = CodexDelegationRows, model = CodexDelegationModel, effort = CodexDelegationEffort,
+                fast = CodexDelegationFast == "" ? (bool?)null : CodexDelegationFast == "on", write = CodexDelegationWrite,
+                timeoutMinutes = CodexDelegationTimeout, maxConcurrent = CodexDelegationConcurrency
+            },
             codexProgressRing = CodexProgressRing,
             deepseekProgressRing = DeepSeekProgressRing,
             disabledHarnessProgress = DisabledHarnessProgress,

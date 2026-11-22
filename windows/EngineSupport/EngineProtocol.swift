@@ -45,6 +45,8 @@ struct EngineCommand: Decodable {
         var reminderSettings: EngineReminderSettings?
         var expandedPanel: EngineExpandedPanelSettings?
         var claudeProgressRing: Bool?
+        /// Settings → Collaboration: Codex for Claude.
+        var codexDelegation: EngineCodexDelegationSettings?
         var codexProgressRing: Bool?
         var deepseekProgressRing: Bool?
         /// Modules whose progress ring is off. A ring is on unless listed.
@@ -356,6 +358,41 @@ struct EngineNotice: Codable, Equatable {
     }
 }
 
+/// Codex for Claude's settings from the host. Absent values keep the defaults.
+struct EngineCodexDelegationSettings: Codable, Equatable, Sendable {
+    var enabled: Bool?
+    /// Runs show as rows under their Claude task; false shows only their count.
+    var rows: Bool?
+    var model: String?
+    var effort: String?
+    var fast: Bool?
+    var write: Bool?
+    var timeoutMinutes: Int?
+    var maxConcurrent: Int?
+    func settings(codex: String?) -> ClaudeCodexDelegation.Settings {
+        .init(codex: codex, model: model.flatMap { $0.isEmpty ? nil : String($0.prefix(80)) },
+              effort: effort.flatMap { $0.isEmpty ? nil : String($0.prefix(16)) }, fast: fast,
+              sandbox: write == true ? .workspaceWrite : .readOnly, timeoutMinutes: timeoutMinutes ?? 60, maxConcurrent: maxConcurrent ?? 3)
+    }
+}
+
+/// What Settings → Collaboration shows about Codex for Claude.
+struct EngineCodexDelegationStatus: Codable, Equatable {
+    let enabled: Bool
+    /// The skill is in Pacer's Claude plugin; new Claude sessions load it.
+    let skillInstalled: Bool
+    /// The user-level skill from before Pacer managed it, while it is still there.
+    let legacySkill: String?
+    let codexFound: Bool
+    /// The last seven days, from the runner's stats: no task content.
+    let runs: Int
+    let failures: Int
+    let minutes: Int
+    let tokens: Int
+    /// The same, worded: "12 runs · 48 min · 1 failed · 3100 K tokens".
+    let weekText: String
+}
+
 struct EngineNavigationFailure: Codable, Equatable {
     let id: String
     let message: String
@@ -398,6 +435,8 @@ struct EngineSnapshot: Codable, Equatable {
     var accountCredits: [EngineAccountCredits]? = nil
     /// Codex task tracking through Pacer's hooks; nil while Codex is not managed.
     var codexHooks: EngineCodexHooks? = nil
+    /// Settings → Collaboration; nil while the Claude module is off.
+    var codexDelegation: EngineCodexDelegationStatus? = nil
     var wslAvailability: WindowsWSLAvailability?
 
     init(sequence: UInt64, demo: Bool, activities: [SessionActivity], requests: [PendingAttentionRequest],

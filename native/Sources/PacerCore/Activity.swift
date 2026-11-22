@@ -48,6 +48,11 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private(set) var hostLaunchAt: Date?
     public private(set) var rolloutURL: URL?
     public var isIgnoredCodexSession: Bool { codexOrigin?.ignored == true }
+    /// Set by `ActivityApplicationState` on a Codex thread a Codex for Claude
+    /// run started: it belongs to that Claude task.
+    public var codexDelegation: CodexDelegationLink?
+    /// A Codex for Claude executor thread or one of its sub-threads, linked or not.
+    public var isCodexDelegation: Bool { codexDelegation != nil || codexOrigin?.delegated == true }
     /// Set on tasks that run in a Claude cloud Project.
     public private(set) var claudeCloud: ClaudeCloudContext?
     /// The same place on claude.ai, for when Claude Desktop cannot open it.

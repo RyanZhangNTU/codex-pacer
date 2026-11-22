@@ -89,10 +89,28 @@ public struct ClaudeHookInstaller {
         let needsMigration: Bool
         do { needsMigration = try migrated(value, home: home) != nil }
         catch { needsMigration = true }
-        status.updateAvailable = configured && (needsMigration || installedScriptOutdated(home: home) ||
-            progressRingOn(home: home) && pluginOutdated(home: home))
+        status.updateAvailable = configured && (needsMigration || installedScriptOutdated(home: home) || pluginOutdated(home: home))
         return status
     }
+    /// Turns Codex for Claude on with these settings, or off with nil. The
+    /// settings file is the switch: the runner refuses new runs without it,
+    /// and the plugin carries the skill only while it exists. Turning off
+    /// keeps the runner, so runs already filed are still cleaned up.
+    public func setCodexDelegation(home: URL, settings: ClaudeCodexDelegation.Settings?) throws {
+        try safe(home)
+        let root = ClaudeCodexDelegation.root(home: home), config = ClaudeCodexDelegation.configURL(home: home)
+        try safe(home.appendingPathComponent("pacer")); try safe(root); try safe(config)
+        if let settings {
+            for folder in [home.appendingPathComponent("pacer"), root] where !storage.isDirectory(folder) { try storage.createDirectory(folder, permissions: 0o700) }
+            let data = settings.data()
+            if (try? storage.read(config)) != data { try storage.replace(config, with: data, permissions: 0o600) }
+        } else if storage.exists(config) { try storage.remove(config) }
+        // Hooks installed earlier pick up the plugin's skill now; otherwise the next install does.
+        _ = migrate(home: home)
+    }
+    public func codexDelegationOn(home: URL) -> Bool { storage.exists(ClaudeCodexDelegation.configURL(home: home)) }
+    /// The command Claude runs for Codex for Claude.
+    public func codexRunnerCommand(home: URL) -> String { ClaudeCodexDelegation.command(python: python, home: home) }
     @discardableResult public func install(home: URL) throws -> Status {
         try safe(home)
         let existing = try settings(home: home), directory = home.appendingPathComponent("pacer"), manifestURL = directory.appendingPathComponent("installation.json")
@@ -112,8 +130,8 @@ public struct ClaudeHookInstaller {
         manifest["addedEnvironment"] = added
         setDisplayObserver(&hooks, wanted: conflict != .none || !ClaudeTelemetryRules.configured(env), home: home)
         value["hooks"] = hooks
-        let wantsPlugin = progressRingOn(home: home)
-        try setPlugin(&value, manifest: &manifest, wanted: wantsPlugin, home: home)
+        let wantsPlugin = progressRingOn(home: home) || codexDelegationOn(home: home)
+        try setPlugin(&value, manifest: &manifest, wanted: wantsPlugin, progressTool: progressRingOn(home: home), home: home)
         let previousLine = value["statusLine"]
         if let previousLine, !(previousLine is [String: Any]) { throw Failure.invalidSettings }
         let previousCommand = (previousLine as? [String: Any])?["command"] as? String
@@ -129,7 +147,7 @@ public struct ClaudeHookInstaller {
         try storage.createDirectory(directory, permissions: 0o700)
         try safe(directory); try safe(home.appendingPathComponent("settings.json")); try safe(manifestURL)
         try writeScript(home: home)
-        if wantsPlugin { try writePlugin(home: home) }
+        try writePlugin(home: home)
         try writeInstallation(value, manifest: manifest, home: home, expected: existing.bytes)
         return details(home: home)
     }
@@ -141,7 +159,7 @@ public struct ClaudeHookInstaller {
               let existing = try? settings(home: home) else { return false }
         var changed = false
         if installedScriptOutdated(home: home), (try? writeScript(home: home)) != nil { changed = true }
-        if progressRingOn(home: home), pluginOutdated(home: home) {
+        if pluginOutdated(home: home) {
             guard (try? writePlugin(home: home)) != nil else { return changed }
             changed = true
         }
@@ -160,7 +178,7 @@ public struct ClaudeHookInstaller {
             if remaining.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = remaining }
         }
         if hooks.isEmpty { value.removeValue(forKey: "hooks") } else { value["hooks"] = hooks }
-        try setPlugin(&value, manifest: &manifest, wanted: false, home: home)
+        try setPlugin(&value, manifest: &manifest, wanted: false, progressTool: false, home: home)
         if var env = value["env"] as? [String: Any],
            let added = manifest["addedEnvironment"] as? [String: String] {
             let originalCount = env.count
@@ -206,7 +224,8 @@ public struct ClaudeHookInstaller {
             setDisplayObserver(&hooks, wanted: wantsDisplay, home: home)
         }
         result["hooks"] = hooks
-        try setPlugin(&result, manifest: &manifest, wanted: progressRingOn(home: home), home: home)
+        try setPlugin(&result, manifest: &manifest, wanted: progressRingOn(home: home) || codexDelegationOn(home: home),
+            progressTool: progressRingOn(home: home), home: home)
         if var line = value["statusLine"] as? [String: Any], line["command"] as? String != statusLineCommand(home: home),
            ownsStatusLine(line["command"] as? String, home: home) {
             line["command"] = statusLineCommand(home: home); result["statusLine"] = line
@@ -275,7 +294,7 @@ public struct ClaudeHookInstaller {
     public static let progressTool = "mcp__plugin_pacer_pacer__report_progress"
     private static let marketplace = "pacer", pluginKey = "pacer@pacer"
     private func pluginRoot(home: URL) -> URL { home.appendingPathComponent("pacer/plugin") }
-    private func setPlugin(_ value: inout [String: Any], manifest: inout [String: Any], wanted: Bool, home: URL) throws {
+    private func setPlugin(_ value: inout [String: Any], manifest: inout [String: Any], wanted: Bool, progressTool: Bool, home: URL) throws {
         guard value["extraKnownMarketplaces"] == nil || value["extraKnownMarketplaces"] is [String: Any],
               value["enabledPlugins"] == nil || value["enabledPlugins"] is [String: Any],
               value["permissions"] == nil || value["permissions"] is [String: Any] else {
@@ -300,10 +319,14 @@ public struct ClaudeHookInstaller {
             if enabled[Self.pluginKey] as? Bool != true, owned["enabledPrevious"] == nil {
                 owned["enabledPrevious"] = enabled[Self.pluginKey] ?? NSNull(); enabled[Self.pluginKey] = true
             }
-            if !allow.contains(Self.progressTool), owned["permissionAdded"] == nil {
+            // The progress tool is pre-approved only while the ring asks for it.
+            if progressTool, !allow.contains(Self.progressTool), owned["permissionAdded"] == nil {
                 allow.append(Self.progressTool); owned["permissionAdded"] = true
+            } else if !progressTool, owned["permissionAdded"] as? Bool == true {
+                if let index = allow.firstIndex(of: Self.progressTool) { allow.remove(at: index) }
+                owned.removeValue(forKey: "permissionAdded")
             }
-            if !owned.isEmpty { manifest["progressPlugin"] = owned }
+            if owned.isEmpty { manifest.removeValue(forKey: "progressPlugin") } else { manifest["progressPlugin"] = owned }
         } else {
             guard !owned.isEmpty else { return }
             // A user who repointed the namespace now owns its dependent entries.
@@ -323,28 +346,53 @@ public struct ClaudeHookInstaller {
         if allow.isEmpty { permissions.removeValue(forKey: "allow") } else { permissions["allow"] = allow }
         place("permissions", permissions, in: &value)
     }
+    /// The plugin's files for what is switched on: the progress tool's server
+    /// while the ring is on, the `codex` skill and its runner while Codex for
+    /// Claude is on. Nil when neither is on.
     private func pluginFiles(home: URL) -> [(url: URL, data: Data)]? {
-        guard let resource = L10n.sharedResourceBundle.url(forResource: "claude_progress_mcp", withExtension: "py"),
-              let server = try? Data(contentsOf: resource) else { return nil }
+        let ring = progressRingOn(home: home), delegation = codexDelegationOn(home: home)
+        guard ring || delegation else { return nil }
         let root = pluginRoot(home: home), plugin = root.appendingPathComponent("pacer"), script = plugin.appendingPathComponent("progress_mcp.py")
+        let description = "Codex Pacer's progress ring and Codex for Claude."
         let catalog: [String: Any] = ["name": Self.marketplace, "owner": ["name": "Codex Pacer"],
-            "plugins": [["name": "pacer", "source": "./pacer", "description": "Reports progress to Pacer's progress ring."]]]
-        let manifest: [String: Any] = ["name": "pacer", "version": "1.0.0", "description": "Reports progress to Pacer's progress ring.",
-            "mcpServers": ["pacer": ["command": python, "args": ["-S", script.path, "--home", home.path]]]]
+            "plugins": [["name": "pacer", "source": "./pacer", "description": description]]]
+        var manifest: [String: Any] = ["name": "pacer", "version": "1.0.0", "description": description]
+        if ring { manifest["mcpServers"] = ["pacer": ["command": python, "args": ["-S", script.path, "--home", home.path]]] }
         guard let catalogData = try? JSONSerialization.data(withJSONObject: catalog, options: [.prettyPrinted, .sortedKeys]),
               let manifestData = try? JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]) else { return nil }
-        return [(root.appendingPathComponent(".claude-plugin/marketplace.json"), catalogData),
-                (plugin.appendingPathComponent(".claude-plugin/plugin.json"), manifestData), (script, server)]
+        var files = [(root.appendingPathComponent(".claude-plugin/marketplace.json"), catalogData),
+                     (plugin.appendingPathComponent(".claude-plugin/plugin.json"), manifestData)]
+        if ring {
+            guard let resource = L10n.sharedResourceBundle.url(forResource: "claude_progress_mcp", withExtension: "py"),
+                  let server = try? Data(contentsOf: resource) else { return nil }
+            files.append((script, server))
+        }
+        if delegation {
+            guard let runner = ClaudeCodexDelegation.runnerScript(),
+                  let skill = ClaudeCodexDelegation.skill(command: codexRunnerCommand(home: home)) else { return nil }
+            files += [(ClaudeCodexDelegation.runnerURL(home: home), runner), (ClaudeCodexDelegation.skillURL(home: home), skill)]
+        }
+        return files
     }
     private func writePlugin(home: URL) throws {
-        guard let files = pluginFiles(home: home) else { throw Failure.invalidSettings }
+        let skill = ClaudeCodexDelegation.skillURL(home: home)
+        if !codexDelegationOn(home: home), storage.exists(skill) { try safe(skill); try storage.remove(skill) }
+        guard let files = pluginFiles(home: home) else {
+            if progressRingOn(home: home) || codexDelegationOn(home: home) { throw Failure.invalidSettings }
+            return
+        }
         let root = pluginRoot(home: home), plugin = root.appendingPathComponent("pacer")
-        for folder in [root, root.appendingPathComponent(".claude-plugin"), plugin, plugin.appendingPathComponent(".claude-plugin")] {
+        var folders = [root, root.appendingPathComponent(".claude-plugin"), plugin, plugin.appendingPathComponent(".claude-plugin")]
+        if codexDelegationOn(home: home) {
+            folders += [plugin.appendingPathComponent("skills"), skill.deletingLastPathComponent(), ClaudeCodexDelegation.root(home: home)]
+        }
+        for folder in folders {
             try safe(folder); if !storage.isDirectory(folder) { try storage.createDirectory(folder, permissions: 0o700) }
         }
         for file in files where (try? storage.read(file.url)) != file.data { try safe(file.url); try storage.replace(file.url, with: file.data, permissions: 0o600) }
     }
     private func pluginOutdated(home: URL) -> Bool {
+        if !codexDelegationOn(home: home), storage.exists(ClaudeCodexDelegation.skillURL(home: home)) { return true }
         guard let files = pluginFiles(home: home) else { return false }
         return files.contains { (try? storage.read($0.url)) != $0.data }
     }

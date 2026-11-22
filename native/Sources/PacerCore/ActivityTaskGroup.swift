@@ -1,11 +1,20 @@
 import Foundation
 
 /// One user conversation and its observed descendants, scoped to one host.
+/// A Claude task also holds the Codex threads its Codex for Claude runs started.
 public struct ActivityTaskGroup: Sendable {
     public let primary: SessionActivity
     public let members: [SessionActivity]
     public var runningSubagentCount: Int {
-        members.filter { $0.id != primary.id && $0.phase == .running }.count
+        members.filter { $0.id != primary.id && $0.phase == .running && !$0.isCodexDelegation }.count
+    }
+    /// The Codex threads this task's Codex for Claude runs started, oldest first.
+    /// Their sub-threads count with them, not on their own.
+    public var delegations: [SessionActivity] {
+        members.filter { $0.id != primary.id && $0.codexDelegation != nil }.sorted {
+            let left = $0.codexDelegation!.started, right = $1.codexDelegation!.started
+            return left == right ? $0.id < $1.id : left < right
+        }
     }
     public var isRunning: Bool { members.contains { $0.phase == .running && $0.codexGoalPause == nil } }
     public var isWaiting: Bool { !isRunning && members.contains { $0.phase == .waitingForInput } }
@@ -41,6 +50,8 @@ public struct ActivityTaskGroup: Sendable {
             var current = activity, seen = Set<String>()
             for _ in 0..<64 {
                 guard seen.insert(current.id).inserted else { return seen.min()! }
+                // A Codex for Claude thread belongs to the Claude task that started it.
+                if let owner = current.codexDelegation?.parentID, let next = nodes[owner] { current = next; continue }
                 guard let parent = current.parentThreadID,
                       let next = nodes[current.provider.activityID(sessionID: parent, sourceHostID: current.sourceHostID)] else { return current.id }
                 current = next
