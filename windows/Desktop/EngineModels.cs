@@ -162,7 +162,7 @@ internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOn
     string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
     double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null,
     IReadOnlyList<EngineTaskShare>? ProgressTasks = null, double? ProgressAverage = null, bool? ProgressAverageStale = null,
-    string? ProgressAverageProvider = null, int? ProgressReported = null, bool? ProgressSegments = null);
+    string? ProgressAverageProvider = null, int? ProgressReported = null, bool? ProgressSegments = null, int? DelegatedRunning = null);
 // One running task's share of the badge's multi-task ring.
 internal sealed record EngineTaskShare(string Provider, double? Fraction, bool Stale);
 internal sealed record WalletSpan(double Start, double End);

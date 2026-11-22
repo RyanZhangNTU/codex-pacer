@@ -86,6 +86,14 @@ public sealed class ActivityBadge : Grid
     internal (bool Composed, bool FallbackClock, long Uploads, IntPtr Window) RotationScheduling => (orbit != null && rotating, spin != null, orbit?.Uploads ?? 0, orbit?.WindowHandle ?? IntPtr.Zero);
     internal void InjectOrbitDeviceLoss() => orbit?.InjectDeviceLoss();
     internal bool HasEndingMarker => ending.Visibility == Visibility.Visible;
+    /// Codex for Claude runs working for the active Claude tasks: a small
+    /// number on Codex's color at the badge's lower right.
+    private readonly Border delegated = new() { Height = 10, MinWidth = 10, CornerRadius = new CornerRadius(5), Padding = new Thickness(2, 0, 2, 0),
+        BorderBrush = PacerPalette.Ink(0, 0, 0, 217), BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed,
+        HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, -4, -3) };
+    private readonly TextBlock delegatedText = new() { FontSize = 7, FontWeight = FontWeights.Bold, Foreground = PacerPalette.Ink(0, 0, 0, 230),
+        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, -1, 0, 0) };
+    internal string DelegatedText => delegated.Visibility == Visibility.Visible ? delegatedText.Text : "";
     /// The endless loops' rate: full while the panel is open, a recognisable but
     /// cheaper rate while only the collapsed bar shows them.
     internal const int OpenFrameRate = 30, CollapsedFrameRate = 12;
@@ -126,6 +134,7 @@ public sealed class ActivityBadge : Grid
         clipped.Children.Add(paint);
         estimate.Children.Add(estimateArc); estimate.Children.Add(estimateFlow); estimate.Children.Add(estimateStep);
         Children.Add(halo); Children.Add(track); Children.Add(clipped); Children.Add(segments); Children.Add(segmentBreath); Children.Add(estimate); Children.Add(core); Children.Add(ending);
+        delegated.Child = delegatedText; Children.Add(delegated);
         SizeChanged += (_, _) => UpdateClip();
         IsVisibleChanged += (_, _) => { UpdateRotation(); if (!IsVisible) StopTransient(); UpdateSegmentBreath(); };
         Loaded += (_, _) =>
@@ -220,6 +229,9 @@ public sealed class ActivityBadge : Grid
         halo.Visibility = value.Attention != null ? Visibility.Visible : Visibility.Collapsed;
         ending.Background = EndingInk(value);
         ending.Visibility = choice.EndMark && value.Ending != null && !value.EndingIsCore ? Visibility.Visible : Visibility.Collapsed;
+        delegated.Background = PacerPalette.Provider("codex");
+        delegatedText.Text = value.DelegatedRunning is > 9 ? "9+" : value.DelegatedRunning?.ToString() ?? "";
+        delegated.Visibility = value.DelegatedRunning is > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (reduce) StopTransient();
         else if (IsVisible && previous != null)
         {

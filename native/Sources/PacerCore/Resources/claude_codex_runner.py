@@ -196,6 +196,8 @@ def resolve_codex():
     if isinstance(chosen, str) and chosen:
         candidates.append(chosen)
     for path in candidates:
+        if WINDOWS and re.match(r'^/[A-Za-z]:[\\/]', path):
+            path = path[1:]
         if os.path.isfile(path):
             return [path]
     if not WINDOWS:

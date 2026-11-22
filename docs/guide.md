@@ -142,6 +142,7 @@ Click the gear in the expanded island to open the main window.
 | **History** | Each service's quota over the current period, and the last 7 days of DeepSeek spend and WorkBuddy credits. |
 | **Codex, Claude, DeepSeek, WorkBuddy** | Turn each service on or off. Every service page starts with the same status: **Task monitoring** (whether Pacer reads its tasks on this computer), **Account** and **Usage**; then what it shows, its usage settings if it has any, and custom folders. Only services found on this computer, or turned on, are listed. |
 | **Module Library** | Every service Pacer can follow. Those found on this computer come first; the rest are folded away. Turn any of them on or off, or follow the link to get one. |
+| **Collaboration** | Codex for Claude: the switch, its status, how runs show, the defaults Claude uses and the last week's runs. |
 | **Remote** | Tasks on other machines: SSH hosts and, on Windows, WSL. |
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
 | **Collapsed Bar** | What the bar shows and each item's options. |
@@ -158,6 +159,7 @@ Changes apply right away. When an update is available, it shows in the sidebar a
 - It reads the logs your agents already write and keeps only what the island shows: task titles, stages, timing and token counts. It never keeps your prompts or replies.
 - Sign-ins happen in Pacer's own window. Pacer never reads other apps' passwords or browser cookies.
 - **Hide Project Names** replaces task titles on screen and in notifications.
+- Codex for Claude's runs are deleted when Claude's turn ends. Pacer keeps only how many ran, for how long and how many tokens they used.
 
 ## Troubleshooting
 

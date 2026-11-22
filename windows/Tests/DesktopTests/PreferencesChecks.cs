@@ -92,8 +92,28 @@ internal static class PreferencesChecks
             using (var config = JsonDocument.Parse(JsonSerializer.Serialize(independentlyHidden.EngineConfiguration())))
                 Check(config.RootElement.GetProperty("showEmbeddedCodexSessions").GetBoolean() && !config.RootElement.GetProperty("showEmbeddedClaudeSessions").GetBoolean(),
                     "The acknowledged engine configuration carries both Mac preference keys independently");
+            // Codex for Claude is off until turned on; its defaults reach the engine, and choices outside the lists cannot be saved.
+            Check(!original.CodexDelegation && original.CodexDelegationRows && original.CodexDelegationTimeout == 60 && original.CodexDelegationConcurrency == 3,
+                "Codex for Claude starts off, with rows, a 60-minute limit and three runs at once");
+            var delegation = original with { CodexDelegation = true, CodexDelegationRows = false, CodexDelegationEffort = "high", CodexDelegationFast = "off",
+                CodexDelegationWrite = true, CodexDelegationTimeout = 120, CodexDelegationConcurrency = 2, CodexDelegationModel = "gpt-6.2-sol" };
+            Check(store.Save(delegation) && store.Load().Value is { CodexDelegation: true, CodexDelegationRows: false, CodexDelegationEffort: "high",
+                CodexDelegationFast: "off", CodexDelegationWrite: true, CodexDelegationTimeout: 120, CodexDelegationConcurrency: 2, CodexDelegationModel: "gpt-6.2-sol" },
+                "Codex for Claude's choices survive a restart");
+            using (var config = JsonDocument.Parse(JsonSerializer.Serialize(delegation.EngineConfiguration())))
+            {
+                var value = config.RootElement.GetProperty("codexDelegation");
+                Check(value.GetProperty("enabled").GetBoolean() && !value.GetProperty("rows").GetBoolean() && !value.GetProperty("fast").GetBoolean()
+                    && value.GetProperty("effort").GetString() == "high" && value.GetProperty("timeoutMinutes").GetInt32() == 120
+                    && value.GetProperty("maxConcurrent").GetInt32() == 2 && value.GetProperty("write").GetBoolean(),
+                    "Codex for Claude's choices reach the engine");
+            }
+            Check(!store.Save(original with { CodexDelegationTimeout = 45 }) && !store.Save(original with { CodexDelegationEffort = "turbo" })
+                && !store.Save(original with { CodexDelegationFast = "maybe" }) && !store.Save(original with { CodexDelegationConcurrency = 9 }),
+                "Codex for Claude choices outside the lists cannot be saved");
+            Check(store.Save(original), "Restore the original settings after Codex for Claude");
             // Every main-window page reopens where it was; older names are kept for the window to map.
-            foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "modules", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
+            foreach (string pane in new[] { "overview", "history", "general", "appearance", "collapsed", "notifications", "codex", "claude", "deepseek", "modules", "collaboration", "remote", "about", "support", "reminders", "connections", "help", "whatsNew" })
                 Check(store.Save(original with { LastSettingsPane = pane }) && store.Load().Value.LastSettingsPane == pane, "The settings page survives a save: " + pane);
             Check(store.Save(original with { LastSettingsPane = "future-page" }) && store.Load().Value.LastSettingsPane == "overview", "An unknown page opens Overview, as on the Mac");
             Check(store.Save(original with { LastSettingsPane = "harness.workbuddy", DisabledHarnessProgress = ["workbuddy"],

@@ -123,6 +123,12 @@ public partial class TaskRow : Button
             text.Inlines.Add(new System.Windows.Documents.Run("  " + run.Status) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.DetailInk });
             Grid.SetColumn(text, 2); line.Children.Add(text);
             var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Opacity = state.ModelOpacity };
+            // Speed, time, model and effort, as on a task row's two lines.
+            if (run.RateText != null)
+            {
+                trailing.Inlines.Add(new System.Windows.Documents.Run(run.RateText) { FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = state.RateInk });
+                trailing.Inlines.Add(new System.Windows.Documents.Run(" t/s" + (run.TurnTime != null ? " · " : "  ")) { FontSize = 10, FontWeight = FontWeights.Medium, Foreground = PacerPalette.Secondary });
+            }
             if (run.TurnTime != null)
                 trailing.Inlines.Add(new System.Windows.Documents.Run(run.TurnTime + "  ") { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.DurationInk });
             trailing.Inlines.Add(new System.Windows.Documents.Run(run.Model) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
@@ -163,8 +169,18 @@ public partial class TaskRow : Button
         hover = new(animation, clock => ApplyAnimationClock(HoverProgressProperty, clock), () => { if (revision == hoverRevision) hover = null; });
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new RowPeer(this);
+    /// The row reads as one button; a running Codex for Claude run adds its Stop
+    /// button, which screen readers reach without hovering.
     private sealed class RowPeer(TaskRow owner) : ButtonAutomationPeer(owner)
-    { protected override List<AutomationPeer>? GetChildrenCore() => null; }
+    {
+        protected override List<AutomationPeer>? GetChildrenCore()
+        {
+            var stops = owner.StopButtons().Select(button => UIElementAutomationPeer.CreatePeerForElement(button)).OfType<AutomationPeer>().ToList();
+            return stops.Count == 0 ? null : stops;
+        }
+    }
+    private IEnumerable<Button> StopButtons() => stop == null ? [] : Delegations.Children.OfType<Grid>()
+        .Where(line => line.Tag is EngineTaskRow { CanStop: true }).SelectMany(line => line.Children.OfType<Button>());
     internal double IdealWidth()
     {
         var state = (TaskRowState)DataContext;
@@ -187,7 +203,8 @@ public partial class TaskRow : Button
         double runs = 0;
         foreach (var run in showsDelegations ? row.Delegations ?? [] : [])
             runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold) + Text("  " + run.Status, 11, FontWeights.Medium))
-                + 10 + Text((run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 26 + 6);
+                + 10 + Text((run.RateText == null ? "" : run.RateText + " t/s · ") + (run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model
+                    + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 26 + 6);
         return Math.Max(runs, 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0)));
     }
 }

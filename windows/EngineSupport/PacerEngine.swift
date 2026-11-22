@@ -1856,7 +1856,8 @@ actor EngineRuntime {
         }
         let before = ClaudeCodexDelegation.isOn(home: claudeHome)
         if wanted {
-            let codex = codexExecutable.isEmpty ? nil : codexExecutable
+            // The runner starts the same Codex program Pacer found, also the one inside Codex Desktop.
+            let codex = CodexClient.findExecutable(customPath: codexExecutable)?.path ?? (codexExecutable.isEmpty ? nil : codexExecutable)
             if ClaudeCodexDelegation.apply(codexDelegationSettings.settings(codex: codex), home: claudeHome) { codexDelegationHome = claudeHome }
         } else if codexDelegationHome == claudeHome || setupConfirmed {
             ClaudeCodexDelegation.apply(nil, home: claudeHome); codexDelegationHome = nil

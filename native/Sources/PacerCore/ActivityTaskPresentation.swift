@@ -101,6 +101,9 @@ public struct HeaderActivity: Equatable, Sendable {
         guard choice != .service, !reported.isEmpty else { return .services }
         return choice == .segments && showsSegments ? .segments : .average
     }
+    /// Codex for Claude runs working for the active Claude tasks; the badge
+    /// shows the number on Codex's color.
+    public var delegatedRunning = 0
     public var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
     public var showsEndingMark: Bool { ending != nil && !endingIsCore }
     public static func countText(_ count: Int) -> String { count > 99 ? "99+" : String(count) }
@@ -275,7 +278,8 @@ public struct ActivityTaskRowPresentation: Sendable {
         case .timedOut: state = L10n.text("delegation.status.timedOut")
         case .stopped: state = L10n.text("delegation.status.stopped")
         }
-        let parts = link.label == nil ? [access, state] : [modeText(link.mode), access, state]
+        // A plain task says nothing about its mode; a review or follow-up does, unless its title already is the mode.
+        let parts = link.label == nil || link.mode == .task ? [access, state] : [modeText(link.mode), access, state]
         return parts.joined(separator: " · ")
     }
     private static func creditAmount(_ value: Double) -> String {
@@ -415,7 +419,9 @@ public struct ActivityTaskPresentation: Sendable {
             let ring = unfinished(row.progressRing)
             return HeaderActivity.TaskShare(provider: row.activity.provider, fraction: ring?.fraction, stale: ring?.stale ?? false)
         }
-        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress,
+        var value = HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress,
             tasks: tasks)
+        value.delegatedRunning = groups.filter { $0.isRunning || $0.isWaiting }.flatMap(\.delegations).filter { $0.phase == .running }.count
+        return value
     }
 }
