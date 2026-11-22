@@ -1696,6 +1696,7 @@
 "collaboration.skill_off" = "未开启";
 "collaboration.legacy" = "旧的 codex 技能";
 "collaboration.info.legacy" = "~/.claude/skills/codex 是 Pacer 接管之前的技能。两个都在时，Claude 会看到两个 codex 技能，可能选到旧的。移到回收站后仍可恢复。";
+"collaboration.info.legacy_mac" = "~/.claude/skills/codex 是 Pacer 接管之前的技能。两个都在时，Claude 会看到两个 codex 技能，可能选到旧的。移到废纸篓后仍可恢复。";
 "collaboration.legacy_remove" = "移到回收站";
 "collaboration.legacy_failed" = "没能移动这个文件夹。请关掉正在使用它的程序再试。";
 "collaboration.legacy_remove_mac" = "移到废纸篓";

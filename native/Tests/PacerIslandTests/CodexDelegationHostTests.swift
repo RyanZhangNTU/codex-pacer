@@ -1,3 +1,4 @@
+import UserNotifications
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
@@ -64,6 +65,73 @@ final class CodexDelegationHostTests: XCTestCase {
         XCTAssertEqual([fallback.timeoutMinutes, fallback.maxConcurrent], [60, 3])
         XCTAssertFalse(CodexDelegationPreferences.validModel("-x"))
         XCTAssertTrue(CodexDelegationPreferences.validModel("gpt-5.5-codex"))
+
+        // Version 2's choices: Claude starts runs only when asked, failures alert, long runs do not, 30 days of statistics.
+        let fresh = CodexDelegationPreferences()
+        XCTAssertEqual(fresh.initiative, .ask); XCTAssertTrue(fresh.failureAlerts)
+        XCTAssertEqual([fresh.longRunMinutes, fresh.statsDays], [0, 30]); XCTAssertFalse(fresh.coachShown)
+        defaults.set("eager", forKey: CodexDelegationPreferences.initiativeKey)
+        defaults.set(45, forKey: CodexDelegationPreferences.longRunKey)
+        defaults.set(14, forKey: CodexDelegationPreferences.statsDaysKey)
+        let invalid = CodexDelegationPreferences(defaults: defaults)
+        XCTAssertEqual(invalid.initiative, .ask)
+        XCTAssertEqual([invalid.longRunMinutes, invalid.statsDays], [0, 30])
+        var review = CodexDelegationPreferences(); review.initiative = .review
+        XCTAssertEqual(review.settings(codex: nil).initiative, .review)
+        XCTAssertNil(CodexDelegationPreferences().settings(codex: nil).initiative, "Asking is the default, stored as no value")
+    }
+
+    func testChangingTheInitiativeBringsTheSkillCurrent() throws {
+        let fixture = try fixture(), model = fixture.model, home = fixture.home
+        try FileManager.default.createDirectory(at: home.appendingPathComponent("pacer"), withIntermediateDirectories: true)
+        var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.save(to: fixture.defaults)
+        XCTAssertTrue(model.applyCodexDelegationSwitch(home: home))
+        XCTAssertFalse(model.applyCodexDelegationSwitch(home: home))
+        chosen.initiative = .suggest; chosen.save(to: fixture.defaults)
+        XCTAssertTrue(model.applyCodexDelegationSwitch(home: home), "The initiative is written into the skill, so the hooks are brought current")
+        XCTAssertEqual(try stored(home).initiative, .suggest)
+    }
+
+    func testTheOneTimeHintStaysClosedOnceDismissed() throws {
+        let fixture = try fixture()
+        XCTAssertTrue(fixture.model.showsDelegationCoach)
+        fixture.model.dismissDelegationCoach()
+        XCTAssertFalse(fixture.model.showsDelegationCoach)
+        XCTAssertTrue(CodexDelegationPreferences(defaults: fixture.defaults).coachShown)
+    }
+
+    func testAFailedRunNotifiesOnlyWhileFailureAlertsAreOn() async throws {
+        let fixture = try fixture(codex: .enabled), model = fixture.model, now = Date()
+        fixture.defaults.set(true, forKey: "systemNotifications")
+        var delivered: [UNNotificationRequest] = []
+        model.notifications = NotificationDelivery(defaults: fixture.defaults, authorizationStatus: { .authorized }, addRequest: { delivered.append($0) })
+        try FileManager.default.createDirectory(at: fixture.home.appendingPathComponent("pacer"), withIntermediateDirectories: true)
+        var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.save(to: fixture.defaults)
+        model.applyCodexDelegationSwitch(home: model.claudeHome)
+        let session = "00000000-0000-4000-8000-000000000003"
+        func file(_ name: String, status: String) throws -> URL {
+            let run = ClaudeCodexDelegation.runsURL(home: fixture.home).appendingPathComponent(session).appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: ["created": now.addingTimeInterval(-30).timeIntervalSince1970, "label": "Check the parser",
+                "mode": "task", "status": status, "reason": "quota"]).write(to: run.appendingPathComponent("meta.json"))
+            return run
+        }
+        let first = try file("run-1", status: "running")
+        model.receiveClaudeUpdate([DemoScenario.claudeTask(stage: .thinking, at: now)], statuses: [:], requests: [])
+        model.applyCodexDelegationPreferences()
+        XCTAssertTrue(delivered.isEmpty, "The first look at the ledger is a baseline")
+        _ = try file("run-1", status: "failed")
+        model.applyCodexDelegationPreferences()
+        try await TestWait.until { delivered.count == 1 }
+        XCTAssertEqual(delivered.first?.identifier, "pacer-delegation:" + first.path + ":failed")
+
+        chosen.failureAlerts = false; chosen.save(to: fixture.defaults)
+        _ = try file("run-2", status: "running")
+        model.applyCodexDelegationPreferences()
+        _ = try file("run-2", status: "failed")
+        model.applyCodexDelegationPreferences()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(delivered.count, 1, "With failure alerts off, a failed run says nothing")
     }
 
     func testTheSwitchWritesTheChoicesAndRemovesOnlyItsOwnFile() throws {

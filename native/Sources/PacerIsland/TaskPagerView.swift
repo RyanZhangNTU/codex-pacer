@@ -91,6 +91,11 @@ struct TaskPagerView: View {
             })
             .accessibilityElement(children: .contain)
             .accessibilityLabel(pagination.isPaginated ? L10n.text("activity.page_region") : L10n.text("activity.task_list"))
+            // The first time the open panel lists a Codex for Claude run, also when it starts while the panel is open.
+            if model.showsDelegationCoach, pageRows.contains(where: { !$0.delegations.isEmpty }) {
+                DelegationCoachBubble { model.dismissDelegationCoach() }
+                    .transition(.opacity)
+            }
         }
         .onChange(of: tasks.map(\.id)) { _, _ in
             page = pagination.clampedPage(page)

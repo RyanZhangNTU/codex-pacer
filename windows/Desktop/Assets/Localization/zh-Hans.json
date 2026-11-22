@@ -346,6 +346,7 @@
     "collaboration.info.defaults": "Claude 没有指定时使用。跟随 Codex 设置即使用 Codex 自己的配置。",
     "collaboration.info.initiative": "只在我要求时：你开口 Claude 才调用。可以提议：Claude 觉得需要第二意见时会先问你。大改动后自动复核：一轮改动超过三个文件或约 100 行时，Claude 收尾前先请 Codex 审查。后两个会多花 Codex 额度。对之后新开的 Claude 会话生效。",
     "collaboration.info.legacy": "~/.claude/skills/codex 是 Pacer 接管之前的技能。两个都在时，Claude 会看到两个 codex 技能，可能选到旧的。移到回收站后仍可恢复。",
+    "collaboration.info.legacy_mac": "~/.claude/skills/codex 是 Pacer 接管之前的技能。两个都在时，Claude 会看到两个 codex 技能，可能选到旧的。移到废纸篓后仍可恢复。",
     "collaboration.initiative": "主动程度",
     "collaboration.initiative.ask": "只在我要求时",
     "collaboration.initiative.review": "大改动后自动复核",

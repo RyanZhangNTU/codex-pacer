@@ -1214,6 +1214,8 @@ final class IslandModel: ObservableObject {
             ClaudeCodexDelegation.apply(nil, home: previous); codexDelegationHome = nil
         }
         let before = ClaudeCodexDelegation.isOn(home: home)
+        let config = ClaudeCodexDelegation.configURL(home: home)
+        let initiative = ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.initiative
         if wanted {
             // The runner starts the Codex program Pacer found, also the one inside Codex Desktop.
             let codex = CodexClient.findExecutable(customPath: defaults.string(forKey: "codexExecutable") ?? "")?.path
@@ -1221,7 +1223,9 @@ final class IslandModel: ObservableObject {
         } else if codexDelegationHome == home || setupConfirmed {
             ClaudeCodexDelegation.apply(nil, home: home); codexDelegationHome = nil
         }
+        // The switch and the initiative are written into the plugin's skill.
         return ClaudeCodexDelegation.isOn(home: home) != before
+            || ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.initiative != initiative
     }
     /// Settings → Collaboration changed: the runner's choices are written at
     /// once, the skill follows the switch, and the task list follows the display.
@@ -2642,13 +2646,33 @@ final class IslandModel: ObservableObject {
         applyActivityUpdate(activityState.update()); present(notices)
     }
     private var codexDelegationLedger: (at: Date, links: [String: CodexDelegationLink])?
+    /// The ledger's runs as last read, for Codex for Claude's notices and Collaboration.
+    private(set) var codexDelegationRuns: [ClaudeCodexDelegation.Run] = []
+    private var codexDelegationNoticePolicy = CodexDelegationNoticePolicy()
+    var codexDelegationStatsCache: (at: Date, rows: [CodexDelegationStatistics.Row])?
+    var runningDelegationsCache: (key: RunningDelegationKey, value: [RunningDelegation])?
+    /// Collaboration's self-check: Codex's version, sign-in and model catalog.
+    @Published var codexDelegationCheck = CodexDelegationCheck()
     /// Codex for Claude's ledger, read at most once a second: a run's rollout
     /// changes as it starts, runs and is deleted, so each change combines anyway.
     private func codexDelegationLinks(at date: Date) -> [String: CodexDelegationLink] {
-        guard !demo, isModuleEnabled(.claude), isModuleEnabled(.codex) else { return [:] }
+        guard !demo, isModuleEnabled(.claude), isModuleEnabled(.codex) else { codexDelegationRuns = []; return [:] }
         if let cached = codexDelegationLedger, abs(date.timeIntervalSince(cached.at)) < 1 { return cached.links }
-        let links = ClaudeCodexDelegation.links(ClaudeCodexDelegation.runs(home: claudeHome))
+        codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome)
+        let links = ClaudeCodexDelegation.links(codexDelegationRuns)
         codexDelegationLedger = (date, links); return links
+    }
+    /// Failed, long and first-finished runs, from the ledger just read; the
+    /// first look is a baseline. Collaboration's two alert choices decide.
+    private func codexDelegationNotices(at date: Date) -> [IslandNotice] {
+        guard !demo, ClaudeCodexDelegation.isOn(home: claudeHome) else { return [] }
+        let preferences = CodexDelegationPreferences(defaults: defaults)
+        let titles = Dictionary(activityState.activities.filter { $0.provider == .claude }.map {
+            ($0.id, ActivityTaskRowPresentation.title($0, hideProjects: hideProjects)) }, uniquingKeysWith: { first, _ in first })
+        let finished = codexDelegationStatisticsRows(at: date).filter { $0.status != "refused" }
+        return codexDelegationNoticePolicy.notices(codexDelegationRuns, titles: titles, failures: preferences.failureAlerts,
+            longRunMinutes: preferences.longRunMinutes > 0 ? preferences.longRunMinutes : nil,
+            firstRunFinished: finished.count == 1 && finished[0].status == "ok", at: date)
     }
     /// Asks a running Codex for Claude run's runner to stop it; the runner
     /// stops Codex and tells Claude the user stopped it in Pacer.
@@ -2664,7 +2688,7 @@ final class IslandModel: ObservableObject {
         applyActivityUpdate(update)
         if RuntimeDiagnostics.enabled { RuntimeDiagnostics.record("ui", source: "combined", activities: update.activities) }
         if oldHeight != panelContentHeight { onLayoutChange?() }
-        present(update.notices); onStatusChange?()
+        present(update.notices + codexDelegationNotices(at: now)); onStatusChange?()
     }
     func rememberFirstOutput(_ latency: TimeInterval?, reportedAt: Date?) {
         activityState.rememberFirstOutput(latency, reportedAt: reportedAt, at: now)

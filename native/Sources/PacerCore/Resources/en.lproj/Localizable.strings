@@ -1696,6 +1696,7 @@
 "collaboration.skill_off" = "Off";
 "collaboration.legacy" = "Earlier codex skill";
 "collaboration.info.legacy" = "~/.claude/skills/codex is the skill from before Pacer managed this. While both are there, Claude sees two codex skills and may pick the old one. The Recycle Bin keeps it recoverable.";
+"collaboration.info.legacy_mac" = "~/.claude/skills/codex is the skill from before Pacer managed this. While both are there, Claude sees two codex skills and may pick the old one. The Trash keeps it recoverable.";
 "collaboration.legacy_remove" = "Move to Recycle Bin";
 "collaboration.legacy_failed" = "Couldn't move the folder. Close anything using it and try again.";
 "collaboration.legacy_remove_mac" = "Move to Trash";

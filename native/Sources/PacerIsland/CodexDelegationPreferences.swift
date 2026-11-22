@@ -14,6 +14,12 @@ struct CodexDelegationPreferences: Equatable {
     static let writeKey = "codexDelegationWrite"
     static let timeoutKey = "codexDelegationTimeout"
     static let concurrencyKey = "codexDelegationConcurrency"
+    static let initiativeKey = "codexDelegationInitiative"
+    static let failureAlertsKey = "codexDelegationFailureAlerts"
+    static let longRunKey = "codexDelegationLongRun"
+    static let coachShownKey = "codexDelegationCoachShown"
+    static let statsDaysKey = "codexDelegationStatsDays"
+    static let longRunChoices = [0, 10, 20, 30, 60]
     static let efforts = ["", "low", "medium", "high", "xhigh", "max", "ultra"]
     static let fastChoices = ["", "on", "off"]
 
@@ -26,6 +32,15 @@ struct CodexDelegationPreferences: Equatable {
     var write = false
     var timeoutMinutes = 60
     var maxConcurrent = 3
+    /// How freely Claude starts runs; written into the skill.
+    var initiative = ClaudeCodexDelegation.Settings.Initiative.ask
+    /// Notices: a failed or timed-out run (on), a run longer than these minutes (0 is off).
+    var failureAlerts = true
+    var longRunMinutes = 0
+    /// The island's one-time hint about run lines was dismissed.
+    var coachShown = false
+    /// Collaboration's statistics show this many days: 7 or 30.
+    var statsDays = 30
 
     init() {}
     init(defaults: UserDefaults) {
@@ -37,6 +52,11 @@ struct CodexDelegationPreferences: Equatable {
         write = defaults.bool(forKey: Self.writeKey)
         timeoutMinutes = (defaults.object(forKey: Self.timeoutKey) as? Int).filter { ClaudeCodexDelegation.Settings.timeoutChoices.contains($0) } ?? 60
         maxConcurrent = (defaults.object(forKey: Self.concurrencyKey) as? Int).filter { ClaudeCodexDelegation.Settings.concurrencyChoices.contains($0) } ?? 3
+        initiative = defaults.string(forKey: Self.initiativeKey).flatMap(ClaudeCodexDelegation.Settings.Initiative.init) ?? .ask
+        failureAlerts = defaults.object(forKey: Self.failureAlertsKey) as? Bool ?? true
+        longRunMinutes = (defaults.object(forKey: Self.longRunKey) as? Int).filter { Self.longRunChoices.contains($0) } ?? 0
+        coachShown = defaults.bool(forKey: Self.coachShownKey)
+        statsDays = (defaults.object(forKey: Self.statsDaysKey) as? Int).filter { [7, 30].contains($0) } ?? 30
     }
 
     func save(to defaults: UserDefaults) {
@@ -44,6 +64,9 @@ struct CodexDelegationPreferences: Equatable {
         defaults.set(model, forKey: Self.modelKey); defaults.set(effort, forKey: Self.effortKey)
         defaults.set(fast, forKey: Self.fastKey); defaults.set(write, forKey: Self.writeKey)
         defaults.set(timeoutMinutes, forKey: Self.timeoutKey); defaults.set(maxConcurrent, forKey: Self.concurrencyKey)
+        defaults.set(initiative.rawValue, forKey: Self.initiativeKey); defaults.set(failureAlerts, forKey: Self.failureAlertsKey)
+        defaults.set(longRunMinutes, forKey: Self.longRunKey); defaults.set(coachShown, forKey: Self.coachShownKey)
+        defaults.set(statsDays, forKey: Self.statsDaysKey)
     }
 
     /// A model slug: letters, digits and the punctuation Codex uses in them.
@@ -55,7 +78,7 @@ struct CodexDelegationPreferences: Equatable {
     func settings(codex: String?) -> ClaudeCodexDelegation.Settings {
         .init(codex: codex, model: model.isEmpty ? nil : String(model.prefix(80)), effort: effort.isEmpty ? nil : effort,
               fast: fast.isEmpty ? nil : fast == "on", sandbox: write ? .workspaceWrite : .readOnly,
-              timeoutMinutes: timeoutMinutes, maxConcurrent: maxConcurrent)
+              timeoutMinutes: timeoutMinutes, maxConcurrent: maxConcurrent, initiative: initiative)
     }
 }
 

@@ -346,6 +346,7 @@
     "collaboration.info.defaults": "Used when Claude doesn't name them. Following Codex uses Codex's own configuration.",
     "collaboration.info.initiative": "Only when asked: Claude starts Codex only when you ask. May suggest: Claude says when a second opinion would help and waits for your yes. Review larger changes: before finishing a turn that changed more than three files or about 100 lines, Claude has Codex review them. The last two use more of your Codex quota. New Claude sessions follow the change.",
     "collaboration.info.legacy": "~/.claude/skills/codex is the skill from before Pacer managed this. While both are there, Claude sees two codex skills and may pick the old one. The Recycle Bin keeps it recoverable.",
+    "collaboration.info.legacy_mac": "~/.claude/skills/codex is the skill from before Pacer managed this. While both are there, Claude sees two codex skills and may pick the old one. The Trash keeps it recoverable.",
     "collaboration.initiative": "Initiative",
     "collaboration.initiative.ask": "Only when I ask",
     "collaboration.initiative.review": "Review larger changes",

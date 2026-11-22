@@ -39,8 +39,9 @@ struct DelegationList: View {
     }
 }
 
-/// One run: its icon with the ring, Claude's label and the run's state, then
-/// speed, time, model and effort. Stop appears on hover while it runs.
+/// One run: its icon (state and progress ring), Claude's label, then speed,
+/// time, model and effort. Mode, access and the rest wait in the hover card;
+/// Stop appears on hover while it runs.
 struct DelegationLineView: View {
     let presentation: ActivityTaskRowPresentation
     let enabled: Bool
@@ -59,6 +60,7 @@ struct DelegationLineView: View {
         HStack(spacing: 4) {
             Button(action: open) { content(measuring: false) }
                 .buttonStyle(.plain).disabled(!enabled)
+                .help(detailCard)
                 .accessibilityLabel(accessibilityText)
                 .accessibilityHint(L10n.text(enabled ? "common.open_chat" : "activity.no_link"))
                 // VoiceOver reaches Stop without hovering, as an action of the line.
@@ -99,10 +101,8 @@ struct DelegationLineView: View {
                     .frame(width: 20, height: 20)
                     .accessibilityHidden(true)
             }
-            (Text(presentation.title).font(.system(size: 12, weight: .semibold))
-                .foregroundColor(presentation.dimmed ? PacerPalette.secondary : PacerPalette.primary)
-             + Text("  " + presentation.status).font(.system(size: 11, weight: .medium))
-                .foregroundColor(TaskRowView.detailColor(presentation)))
+            Text(presentation.title).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(presentation.dimmed ? PacerPalette.secondary : PacerPalette.primary)
                 .lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: measuring ? Self.measuredLabelWidth : .infinity, alignment: .leading)
             trailing
@@ -146,10 +146,42 @@ struct DelegationLineView: View {
         .accessibilityHidden(true)
     }
 
+    /// The hover card: the run's label, then Core's label and value pairs.
+    private var detailCard: String {
+        ([presentation.title] + presentation.delegationDetail.map { $0.label + "  " + $0.value }).joined(separator: "\n")
+    }
+
     private var accessibilityText: String {
-        let model = [presentation.model, presentation.effort.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         let speed = presentation.rateText.map { $0 + " t/s" }
-        return [AgentProvider.codex.displayName, presentation.title, presentation.status, presentation.progressRing?.accessibilityText,
-                presentation.turnTime, speed, model].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+        return ([AgentProvider.codex.displayName, presentation.title, presentation.progressRing?.accessibilityText, presentation.turnTime, speed]
+            .compactMap { $0 } + presentation.delegationDetail.map { $0.label + " " + $0.value })
+            .filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+}
+
+/// Codex for Claude's one-time explanation, under the first page that lists a
+/// run: what the line is, and that hovering shows details or Stop. It never
+/// shows again after Got It.
+struct DelegationCoachBubble: View {
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(L10n.text("delegation.coach.title")).font(.system(size: 12.5, weight: .semibold))
+            Text(L10n.text("delegation.coach.detail")).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            Button(L10n.text("delegation.coach.ok"), action: dismiss)
+                .buttonStyle(.plain).font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 10).padding(.vertical, 3)
+                .background(Capsule().fill(Color.white.opacity(0.22)))
+                .padding(.top, 4)
+                .accessibilityIdentifier("island.delegation.coach.ok")
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: 300, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(red: 0.165, green: 0.365, blue: 0.69)))
+        .padding(.leading, IslandMetrics.rowInset + 13).padding(.top, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.text("delegation.coach.title"))
     }
 }
