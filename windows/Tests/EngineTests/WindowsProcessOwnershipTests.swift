@@ -38,9 +38,20 @@ final class WindowsProcessOwnershipTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: holder.file), original, "Ownership inspection cannot change the source")
         }
     }
+    /// The fixture's DACL lets its owner query and stop it but not duplicate its
+    /// handles. An elevated runner (GitHub's Windows images) can open it anyway,
+    /// so the test asks Windows first and checks the answer for that case: a
+    /// writer it cannot inspect is unknown, one it can inspect is found.
     func testInaccessibleWriterDoesNotProveAbsence() throws {
         let holder = try Holder("file-write-private"); defer { holder.stop() }
-        XCTAssertNil(WindowsProcessOwnership.hasWriter(of: holder.file, within: holder.root))
+        let access = DWORD(PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION) | DWORD(SYNCHRONIZE)
+        let inspectable = OpenProcess(access, false, holder.pid).map { CloseHandle($0); return true } ?? false
+        let answer = WindowsProcessOwnership.hasWriter(of: holder.file, within: holder.root)
+        if inspectable {
+            XCTAssertEqual(answer, true, "This runner can duplicate the fixture's handles, so its writer is found")
+        } else {
+            XCTAssertNil(answer, "A writer Pacer cannot inspect never proves the rollout has none")
+        }
     }
     func testSameFilenameAndAnAtomicReplacementDoNotInheritTheOldWriter() throws {
         let holder = try Holder("file-write"); defer { holder.stop() }
