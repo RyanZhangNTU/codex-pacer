@@ -158,7 +158,7 @@ enum PacerMain {
             print("A valid --thread-id is required."); return
         }
         let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex")
-        let reader = LocalActivityReader()
+        let reader = LocalActivityReader(writerProbe: MacRolloutWriters.probe)
         let logged = await reader.read(home: home, phaseAwareRate: true)
         let group = ActivityTaskGroup.make(logged.activities).first { $0.primary.threadID == thread && $0.primary.sourceHostID == nil }
         let now = Date()
@@ -179,7 +179,7 @@ enum PacerMain {
         let index = args.firstIndex(of: "--observe-seconds")
         let seconds = index.flatMap { $0 + 1 < args.count ? Int(args[$0 + 1]) : nil }.map { min(60, max(5, $0)) } ?? 20
         // Local Codex reaches Pacer only through its hooks; only the spool's age is printed.
-        let reader = LocalActivityReader()
+        let reader = LocalActivityReader(writerProbe: MacRolloutWriters.probe)
         let local = await reader.read(home: home)
         let lastRow = await reader.lastHookRow
         print("Codex hook spool: \(lastRow.map { "last event \(Int(Date().timeIntervalSince($0)))s ago" } ?? "no events")")
@@ -219,7 +219,7 @@ enum PacerMain {
             print("Reset expiry details complete: \(snapshot.resetCredits?.hasCompleteDetails == true)")
             print("Credit balance available: \(snapshot.credits?.amount != nil || snapshot.credits?.unlimited == true)")
             print("Legacy rate-limit request used: \(await client.usesLegacyRateLimitRequest())")
-            let local = await LocalActivityReader().read(home: home)
+            let local = await LocalActivityReader(writerProbe: MacRolloutWriters.probe).read(home: home)
             let overview = ActivityOverview(activities: local.activities, at: Date())
             print("User task states: \(overview.running.count) running, \(overview.waiting.count) waiting")
             print("Internal review tasks included: \(overview.activities.filter(\.isInternalReview).count)")

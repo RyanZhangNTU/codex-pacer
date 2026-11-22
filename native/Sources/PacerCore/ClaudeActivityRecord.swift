@@ -6,7 +6,7 @@ struct ClaudeTranscriptFields {
     let values: [String: JSONFieldView]
     init?(_ bytes: Data) {
         guard let document = try? JSONFieldView.document(bytes, maximumBytes: ClaudeActivityRecord.maximumBytes),
-              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort", "attachment"]) else { return nil }
+              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort", "attachment", "toolUseID"]) else { return nil }
         self.values = values
     }
 }
@@ -50,7 +50,22 @@ enum ClaudeActivityRecord {
         guard let fields = ClaudeTranscriptFields(bytes) else { return [] }
         return transcript(fields, sessionID: sessionID, parentID: parentID, promptID: promptID)
     }
-    static func transcript(_ parsed: ClaudeTranscriptFields, sessionID: String, parentID: String? = nil, promptID: String? = nil) -> [Data] {
+    /// The Stop hook error attachment a transcript writes before its stop summary:
+    /// the stop's tool-use ID, and whether the hook blocked the stop (Claude goes
+    /// on working) or only failed (the turn still ends).
+    static func stopHookError(_ parsed: ClaudeTranscriptFields) -> (stop: String, blocked: Bool)? {
+        guard parsed.values["type"]?.matchesStringLiteral("attachment") == true,
+              let attachment = parsed.values["attachment"].flatMap({ try? $0.fields(["type", "hookEvent", "toolUseID"]) }),
+              attachment["hookEvent"]?.matchesStringLiteral("Stop") == true,
+              let stop = identifier(attachment["toolUseID"]?.string()) else { return nil }
+        if attachment["type"]?.matchesStringLiteral("hook_blocking_error") == true { return (stop, true) }
+        if attachment["type"]?.matchesStringLiteral("hook_non_blocking_error") == true { return (stop, false) }
+        return nil
+    }
+    /// - Parameter stopHookFailuresOnly: every error in this record's stop summary
+    ///   is a Stop hook that failed without blocking, so the turn still ended.
+    static func transcript(_ parsed: ClaudeTranscriptFields, sessionID: String, parentID: String? = nil, promptID: String? = nil,
+                           stopHookFailuresOnly: Bool = false) -> [Data] {
         let fields = parsed.values
         guard let kind = fields["type"]?.string(),
               let session = identifier(fields["sessionId"]?.string() ?? sessionID), session == (parentID ?? sessionID) else { return [] }
@@ -207,8 +222,11 @@ enum ClaudeActivityRecord {
         if kind == "result", let subtype = fields["subtype"]?.string(), ["success", "error_during_execution", "error_max_turns", "interrupted"].contains(subtype) {
             var value = base; value["kind"] = subtype == "success" ? "stop" : subtype == "interrupted" ? "interrupt" : "failure"; result.append(value)
         }
+        // A blocking Stop hook makes Claude go on working, so its errors keep the
+        // turn open. A hook that only failed (a missing script, a crash) does not.
         if kind == "system", fields["subtype"]?.string() == "stop_hook_summary", fields["preventedContinuation"]?.boolean() == false,
-           let errors = fields["hookErrors"], errors.isArray, (try? errors.countElements(maximumCount: 64)) == 0,
+           let errors = fields["hookErrors"], errors.isArray, let count = try? errors.countElements(maximumCount: 64),
+           count == 0 || stopHookFailuresOnly,
            let context = fields["hookAdditionalContext"], context.isArray, (try? context.countElements(maximumCount: 64)) == 0 {
             var value = base; value["kind"] = "stopVerified"; result.append(value)
         }

@@ -263,7 +263,7 @@ public struct ActivityApplicationState: Sendable {
         let activeRoots = Set(ActivityTaskGroup.make(shown).filter(\.isRunning).map { $0.primary.id })
         let combined = shown.filter {
             !$0.isInternalReview && (activeRoots.contains($0.id) || ![.completed, .interrupted].contains($0.phase)) &&
-                (activeRoots.contains($0.id) || [.running, .waitingForInput].contains($0.phase) || now.timeIntervalSince($0.lastObserved ?? .distantPast) < 900)
+                (activeRoots.contains($0.id) || [.running, .waitingForInput].contains($0.phase) || now < ($0.unconfirmedDisplayDeadline ?? .distantPast))
         } + inbox.activities.filter { !activeRoots.contains($0.id) && !hidden.contains($0.id) }
         replaceActivities(combined, at: now)
         let tasks = taskGroups().filter { !($0.isRunning && [.completed, .interrupted].contains($0.primary.phase)) }.map(\.primary)
@@ -317,7 +317,7 @@ public struct ActivityApplicationState: Sendable {
     public func nextDisplayDeadline(at now: Date, retention: TimeInterval, progressRingProviders: Set<AgentProvider> = []) -> Date? {
         var dates = activities.compactMap(\.rateExpiresAt) + activities.compactMap(\.codexGoalDeadline)
         dates += activities.filter { ![.running, .waitingForInput, .completed, .interrupted].contains($0.phase) }
-            .compactMap { $0.lastObserved?.addingTimeInterval(900) }
+            .compactMap(\.unconfirmedDisplayDeadline)
         if retention > 0 { dates += inbox.activities.compactMap { $0.phaseChangedAt?.addingTimeInterval(retention) } }
         for value in activities where value.phase == .running {
             if let start = value.turnStartedAt, start <= now {

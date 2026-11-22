@@ -551,6 +551,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
     }
 
+    var unconfirmedDisplayDeadline: Date? { lastObserved?.addingTimeInterval(15 * 60) }
     public func observedPhase(at now: Date = Date()) -> ActivityPhase {
         if [.completed, .interrupted].contains(phase) { return phase }
         guard lastObserved != nil else { return .unknown }

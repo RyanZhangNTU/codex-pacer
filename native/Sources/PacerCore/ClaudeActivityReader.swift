@@ -209,13 +209,16 @@ struct ClaudeActivityReader {
                                let stamp = parsed.values["timestamp"]?.string(limit: 80), let at = ClaudeActivityRecord.date(stamp),
                                at.timeIntervalSince1970 >= boundary.timeIntervalSince1970 - 0.001 { historical = false }
                             let prompt = cursor.context.promptID(for: parsed, sessionID: cursor.session, parentID: cursor.parent)
+                            cursor.context.noteStopHookError(parsed)
+                            let failuresOnly = cursor.context.stopHookFailuresOnly(parsed)
                             if prompt == nil, cursor.context.awaitedParent != nil {
                                 let owned = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent,
-                                    promptID: ClaudeTranscriptContext.pendingOwner)
+                                    promptID: ClaudeTranscriptContext.pendingOwner, stopHookFailuresOnly: failuresOnly)
                                 sanitized = ClaudeTranscriptContext.unowned(owned)
                                 cursor.context.deferLast(owned, historical: historical)
                             } else {
-                                sanitized = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent, promptID: prompt)
+                                sanitized = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent, promptID: prompt,
+                                    stopHookFailuresOnly: failuresOnly)
                             }
                         } else { sanitized = [] }
                     }

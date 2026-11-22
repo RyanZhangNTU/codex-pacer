@@ -24,33 +24,43 @@ public struct ActivityNavigationOperation: Sendable {
     public let scope: String?
 
     public init(activity: SessionActivity, target: SessionActivity, version: UInt64,
-                activities: [SessionActivity], inbox: CompletionInbox, scope: String? = nil) {
+                activities: [SessionActivity], inbox: CompletionInbox, scope: String? = nil, requests: [PendingAttentionRequest] = [],
+                group: ActivityTaskGroup? = nil) {
         id = UUID(); self.activity = activity; self.target = target; self.version = version; self.scope = scope
         source = inbox.sourceToken(for: activity)
-        acknowledgment = inbox.acknowledgment(for: activity)
-        descendants = acknowledgment == nil ? [] : Self.descendants(for: activity, activities: activities, inbox: inbox)
+        let token = inbox.acknowledgment(for: activity)
+        let group = group ?? token.flatMap { _ in Self.group(containing: activity, in: activities) }
+        let canClearUnconfirmed = group?.canClearUnconfirmed(requests: requests) == true
+        acknowledgment = activity.phase == .unknown && !canClearUnconfirmed ? nil : token
+        if acknowledgment != nil, let group, activity.parentThreadID == nil, Self.sameLifecycle(group.primary, activity) {
+            descendants = Self.descendants(for: activity, group: group, inbox: inbox, includeUnconfirmed: canClearUnconfirmed)
+        } else { descendants = [] }
+    }
+    private static func group(containing activity: SessionActivity, in activities: [SessionActivity]) -> ActivityTaskGroup? {
+        let id = activity.canonicalized().id
+        return ActivityTaskGroup.make(activities).first { $0.members.contains { $0.id == id } }
     }
     public static func sameLifecycle(_ left: SessionActivity, _ right: SessionActivity) -> Bool {
         left.canonicalized().id == right.canonicalized().id && left.provider == right.provider && left.sourceHostID == right.sourceHostID &&
             left.parentThreadID == right.parentThreadID && left.turnID == right.turnID && left.turnStartedAt == right.turnStartedAt &&
             left.phase == right.phase && left.phaseChangedAt == right.phaseChangedAt && left.turnFailed == right.turnFailed
     }
-    private static func descendants(for parent: SessionActivity, activities: [SessionActivity], inbox: CompletionInbox) -> [Descendant] {
-        guard parent.parentThreadID == nil, let group = ActivityTaskGroup.make(activities).first(where: {
-            $0.primary.id == parent.canonicalized().id
-        }), sameLifecycle(group.primary, parent) else { return [] }
+    private static func descendants(for parent: SessionActivity, group: ActivityTaskGroup, inbox: CompletionInbox, includeUnconfirmed: Bool) -> [Descendant] {
+        func eligible(_ member: SessionActivity) -> Bool {
+            [.completed, .interrupted].contains(member.phase) || (includeUnconfirmed && inbox.isClearableUnconfirmed(member))
+        }
         let source = inbox.sourceToken(for: parent)
         let members = Dictionary(group.members.map { ($0.canonicalized().id, $0) }, uniquingKeysWith: { _, latest in latest })
         return group.members.compactMap { child in
             guard child.id != parent.id, !child.isInternalReview, child.provider == parent.provider, child.sourceHostID == parent.sourceHostID,
-                  child.turnID != nil, child.turnStartedAt != nil, [.completed, .interrupted].contains(child.phase),
+                  eligible(child), child.phase == .unknown || (child.turnID != nil && child.turnStartedAt != nil),
                   let token = inbox.acknowledgment(for: child), inbox.sourceToken(for: child) == source else { return nil }
             var current = child, ancestors: [SessionActivity] = [], seen = Set<String>()
             for _ in 0..<64 {
                 guard seen.insert(current.id).inserted, let parentSession = current.parentThreadID,
                       let ancestor = members[current.provider.activityID(sessionID: parentSession, sourceHostID: current.sourceHostID)],
                       ancestor.provider == parent.provider, ancestor.sourceHostID == parent.sourceHostID,
-                      [.completed, .interrupted].contains(ancestor.phase) else { return nil }
+                      eligible(ancestor) else { return nil }
                 ancestors.append(ancestor)
                 if ancestor.id == parent.id { return Descendant(activity: child, token: token, source: source, ancestors: ancestors) }
                 current = ancestor
@@ -62,7 +72,7 @@ public struct ActivityNavigationOperation: Sendable {
         active && self.version == version && inbox.isCurrentSource(source) && (activity.claudeCloud == nil || self.scope == scope)
     }
     public func complete(_ outcome: ActivityOpenOutcome, version: UInt64, active: Bool, activities: inout [SessionActivity],
-                         inbox: inout CompletionInbox, remoteSourceIDs: Set<String> = [], scope: String? = nil) -> Result {
+                         inbox: inout CompletionInbox, remoteSourceIDs: Set<String> = [], scope: String? = nil, requests: [PendingAttentionRequest] = []) -> Result {
         guard isCurrent(version: version, active: active, inbox: inbox, scope: scope) else {
             return .init(accepted: false, removed: [], failure: nil)
         }
@@ -77,11 +87,17 @@ public struct ActivityNavigationOperation: Sendable {
             }
         }
         var removed: [SessionActivity] = []
+        let checksUnconfirmed = acknowledgment != nil && (activity.phase == .unknown || descendants.contains { $0.activity.phase == .unknown })
+        let currentGroup = checksUnconfirmed ? Self.group(containing: activity, in: activities) : nil
+        let canClearUnconfirmed = currentGroup?.canClearUnconfirmed(requests: requests) == true
+        if activity.phase == .unknown, !canClearUnconfirmed || currentGroup?.members.contains(where: { Self.sameLifecycle($0, activity) }) != true {
+            return .init(accepted: true, removed: [], failure: nil)
+        }
         if acknowledgment.map({ inbox.dismiss(activity, acknowledging: $0) }) == true {
             removed.append(activity)
             let current = Dictionary(activities.map { ($0.canonicalized().id, $0) }, uniquingKeysWith: { _, latest in latest })
             for descendant in descendants {
-                guard inbox.isCurrentSource(descendant.source),
+                guard descendant.activity.phase != .unknown || canClearUnconfirmed, inbox.isCurrentSource(descendant.source),
                       let child = current[descendant.activity.canonicalized().id], Self.sameLifecycle(child, descendant.activity),
                       descendant.ancestors.allSatisfy({ ancestor in current[ancestor.canonicalized().id].map { Self.sameLifecycle($0, ancestor) } ?? false }),
                       inbox.dismiss(descendant.activity, acknowledging: descendant.token) else { continue }
@@ -110,9 +126,9 @@ public struct ActivityNavigationState: Sendable {
     public var openingActivityIDs: Set<String> { Set(operations.keys) }
     public init() {}
     public mutating func begin(activity: SessionActivity, target: SessionActivity, version: UInt64, activities: [SessionActivity],
-                               inbox: CompletionInbox, active: Bool, scope: String? = nil) -> ActivityNavigationOperation? {
+                               inbox: CompletionInbox, active: Bool, scope: String? = nil, requests: [PendingAttentionRequest] = []) -> ActivityNavigationOperation? {
         guard active, operations[activity.id] == nil else { return nil }
-        let operation = ActivityNavigationOperation(activity: activity, target: target, version: version, activities: activities, inbox: inbox, scope: scope)
+        let operation = ActivityNavigationOperation(activity: activity, target: target, version: version, activities: activities, inbox: inbox, scope: scope, requests: requests)
         operations[activity.id] = operation; failure = nil
         return operation
     }
@@ -126,11 +142,12 @@ public struct ActivityNavigationState: Sendable {
     }
     public mutating func complete(_ operation: ActivityNavigationOperation, outcome: ActivityOpenOutcome, version: UInt64, active: Bool,
                                   activities: inout [SessionActivity], inbox: inout CompletionInbox, remoteSourceIDs: Set<String> = [],
-                                  scope: String? = nil, now: TimeInterval, errorDuration: TimeInterval = TaskRowInteraction.navigationErrorDuration) -> ActivityNavigationOperation.Result? {
+                                  scope: String? = nil, now: TimeInterval, errorDuration: TimeInterval = TaskRowInteraction.navigationErrorDuration,
+                                  requests: [PendingAttentionRequest] = []) -> ActivityNavigationOperation.Result? {
         guard owns(operation) else { return nil }
         abandon(operation)
         let result = operation.complete(outcome, version: version, active: active, activities: &activities, inbox: &inbox,
-            remoteSourceIDs: remoteSourceIDs, scope: scope)
+            remoteSourceIDs: remoteSourceIDs, scope: scope, requests: requests)
         if let message = result.failure { showFailure(message, now: now, duration: errorDuration) }
         return result
     }

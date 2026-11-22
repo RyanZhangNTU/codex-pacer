@@ -57,6 +57,7 @@ All your tasks share one list. Tasks that need you come first, then running task
 
 - **Click a task** to open its conversation in the app that runs it.
 - **A finished task** stays as a card until you open it, or until its retention time passes (30 minutes by default, set on the task list in **Expanded Panel**). **Mark All as Read** clears every finished card at once.
+- **A task whose status is unconfirmed** (Pacer lost track of it, for example because the app running it quit or crashed) clears the same way: open it, or use **Mark All as Read**. It comes back if the task starts working again.
 - **Agents a task starts** are grouped under it.
 - **App buttons** in the header open Codex, Claude, DeepSeek Harness or WorkBuddy directly. Buttons you take out of the header wait in the **⋯** menu, beside **Refresh** and **Quit**.
 - With more tasks than fit on a page (three by default), use the arrows to page through them.

@@ -59,31 +59,55 @@ int pacer_handle_capture_names(const uint16_t *name) {
     if (snapshot != NULL) PssFreeSnapshot(GetCurrentProcess(), snapshot);
     CloseHandle(process); return found;
 }
-static int pacer_has_write_handle(HANDLE process, const FILE_ID_INFO *wanted, PacerQueryObject query) {
+// A handle can close and be reused after the snapshot. Check the live copy's rights and file ID.
+static int pacer_matches_write_handle(HANDLE process, const PSS_HANDLE_ENTRY *entry, const FILE_ID_INFO *wanted, PacerQueryObject query) {
+    HANDLE copy = NULL;
+    if (!DuplicateHandle(process, entry->Handle, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        DWORD error = GetLastError();
+        // Regular disk files support duplication. PSS also reports nonduplicable
+        // kernel objects without basic information.
+        if (error == ERROR_INVALID_HANDLE || (error == ERROR_NOT_SUPPORTED && !(entry->Flags & PSS_HANDLE_HAVE_BASIC_INFORMATION))) return 0;
+        return -1;
+    }
+    PUBLIC_OBJECT_BASIC_INFORMATION rights = {0}; ULONG length = 0;
+    FILE_ID_INFO found;
+    int matched = 0;
+    if (query(copy, ObjectBasicInformation, &rights, sizeof(rights), &length) < 0) matched = -1;
+    else if ((rights.GrantedAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA)) && GetFileType(copy) == FILE_TYPE_DISK) {
+        matched = GetFileInformationByHandleEx(copy, FileIdInfo, &found, sizeof(found)) ? pacer_same_file(wanted, &found) : -1;
+    }
+    CloseHandle(copy); return matched;
+}
+
+static int pacer_has_write_handle(HANDLE process, const FILE_ID_INFO *wanted, PacerQueryObject query, int prove_absence) {
     HPSS snapshot = NULL; HPSSWALK marker = NULL;
     DWORD status = pacer_capture_handles(process, &snapshot);
     if (status != ERROR_SUCCESS) return -1;
-    int matched = 0;
+    int matched = -1, incomplete = 0, missing_rights = 0;
     PSS_HANDLE_INFORMATION counts;
     if (PssQuerySnapshot(snapshot, PSS_QUERY_HANDLE_INFORMATION, &counts, sizeof(counts)) != ERROR_SUCCESS || counts.HandlesCaptured > 8192 ||
-        PssWalkMarkerCreate(NULL, &marker) != ERROR_SUCCESS) { matched = -1; goto done; }
-    PSS_HANDLE_ENTRY entry;
-    size_t walked = 0;
-    while ((status = PssWalkSnapshot(snapshot, PSS_WALK_HANDLES, marker, &entry, sizeof(entry))) == ERROR_SUCCESS && walked++ < 8192) {
-        if (!(entry.Flags & PSS_HANDLE_HAVE_BASIC_INFORMATION) || !(entry.GrantedAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA))) continue;
-        HANDLE copy = NULL;
-        if (!DuplicateHandle(process, entry.Handle, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS)) continue;
-        // Confirm the duplicated handle's current rights as well. The target
-        // may have closed and reused the numeric handle after the snapshot.
-        PUBLIC_OBJECT_BASIC_INFORMATION rights = {0}; ULONG length = 0;
-        FILE_ID_INFO found;
-        if (query(copy, ObjectBasicInformation, &rights, sizeof(rights), &length) >= 0 &&
-            (rights.GrantedAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA)) && GetFileType(copy) == FILE_TYPE_DISK &&
-            GetFileInformationByHandleEx(copy, FileIdInfo, &found, sizeof(found)) && pacer_same_file(wanted, &found)) matched = 1;
-        CloseHandle(copy);
-        if (matched == 1) break;
+        PssWalkMarkerCreate(NULL, &marker) != ERROR_SUCCESS) goto done;
+
+    // Inspect known write handles first. Only a negative presence check needs
+    // the entries without access information, using the same snapshot.
+    for (int pass = 0; pass < 2; pass++) {
+        PSS_HANDLE_ENTRY entry;
+        size_t walked = 0;
+        while ((status = PssWalkSnapshot(snapshot, PSS_WALK_HANDLES, marker, &entry, sizeof(entry))) == ERROR_SUCCESS && walked++ < 8192) {
+            if (entry.Flags & PSS_HANDLE_HAVE_BASIC_INFORMATION) {
+                if (pass == 1 || !(entry.GrantedAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA))) continue;
+            } else if (pass == 0) {
+                missing_rights = 1; continue;
+            }
+            int result = pacer_matches_write_handle(process, &entry, wanted, query);
+            if (result == 1) { matched = 1; goto done; }
+            if (result < 0) incomplete = 1;
+        }
+        if (status != ERROR_NO_MORE_ITEMS) goto done;
+        if (pass == 1 || !prove_absence || !missing_rights) break;
+        if (PssWalkMarkerSeekToBeginning(marker) != ERROR_SUCCESS) goto done;
     }
-    if (matched == 0 && status != ERROR_NO_MORE_ITEMS) matched = -1;
+    matched = prove_absence && incomplete ? -1 : 0;
 done:
     if (marker != NULL) PssWalkMarkerFree(marker);
     PssFreeSnapshot(GetCurrentProcess(), snapshot); return matched;
@@ -117,8 +141,8 @@ static int pacer_file_under(HANDLE file, LPCWSTR home, FILE_ID_INFO *root_id) {
     if (paths != NULL) HeapFree(GetProcessHeap(), 0, paths);
     CloseHandle(root); return valid;
 }
-static int pacer_writers_within(const uint16_t *home, const uint16_t *path, pacer_process_identity *writers, size_t capacity) {
-    if (path == NULL || writers == NULL || capacity == 0 || capacity > 64) return -1;
+static int pacer_writers_within(const uint16_t *home, const uint16_t *path, pacer_process_identity *writers, size_t capacity, int presence_only) {
+    if (path == NULL || (!presence_only && (writers == NULL || capacity == 0 || capacity > 64))) return -1;
     PacerQueryObject query = (PacerQueryObject)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryObject");
     if (query == NULL) return -1;
     FILE_ID_INFO wanted;
@@ -138,9 +162,13 @@ static int pacer_writers_within(const uint16_t *home, const uint16_t *path, pace
         if (candidate.dwProcessId == GetCurrentProcessId()) continue;
         uint64_t started = ((uint64_t)candidate.ProcessStartTime.dwHighDateTime << 32) | candidate.ProcessStartTime.dwLowDateTime;
         HANDLE process = pacer_open_user_process(candidate.dwProcessId, PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE, started);
-        if (process == NULL) continue;
-        int found = pacer_has_write_handle(process, &wanted, query);
+        if (process == NULL) {
+            if (presence_only) unknown = 1;
+            continue;
+        }
+        int found = pacer_has_write_handle(process, &wanted, query, presence_only);
         if (found == 1 && pacer_process_start(process) == started) {
+            if (presence_only) { matches = 1; CloseHandle(process); break; }
             if (matches == capacity) { unknown = 1; CloseHandle(process); break; }
             writers[matches++] = (pacer_process_identity){candidate.dwProcessId, 0, started};
         } else if (found < 0) unknown = 1;
@@ -151,7 +179,7 @@ static int pacer_writers_within(const uint16_t *home, const uint16_t *path, pace
     if (check != INVALID_HANDLE_VALUE) {
         FILE_ID_INFO current_root;
         int scoped = home == NULL || (pacer_file_under(check, (LPCWSTR)home, &current_root) && pacer_same_file(&root_id, &current_root));
-        if (pacer_same_file(&wanted, &current) && scoped && !unknown) result = (int)matches;
+        if (pacer_same_file(&wanted, &current) && scoped && (!unknown || (presence_only && matches))) result = (int)matches;
         CloseHandle(check);
     }
 done:
@@ -170,12 +198,16 @@ int pacer_source_file_stamp(const uint16_t *home, const uint16_t *path, pacer_so
     }
     CloseHandle(file); return valid;
 }
-int pacer_file_writers(const uint16_t *path, pacer_process_identity *writers, size_t capacity) { return pacer_writers_within(NULL, path, writers, capacity); }
+int pacer_file_writers(const uint16_t *path, pacer_process_identity *writers, size_t capacity) { return pacer_writers_within(NULL, path, writers, capacity, 0); }
 int pacer_scoped_file_writers(const uint16_t *home, const uint16_t *path, pacer_process_identity *writers, size_t capacity) {
     if (home == NULL) return -1;
-    return pacer_writers_within(home, path, writers, capacity);
+    return pacer_writers_within(home, path, writers, capacity, 0);
+}
+int pacer_scoped_file_has_writer(const uint16_t *home, const uint16_t *path) {
+    return home == NULL ? -1 : pacer_writers_within(home, path, NULL, 0, 1);
 }
 #else
+int pacer_scoped_file_has_writer(const uint16_t *home, const uint16_t *path) { return -1; }
 int pacer_handle_capture_names(const uint16_t *name) { return -1; }
 int pacer_same_directory(const uint16_t *first, const uint16_t *second) { return 0; }
 int pacer_source_file_stamp(const uint16_t *home, const uint16_t *path, pacer_source_file_identity *stamp) { return 0; }

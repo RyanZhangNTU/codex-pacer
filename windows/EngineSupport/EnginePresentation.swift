@@ -10,6 +10,8 @@ struct EnginePresentation: Codable, Equatable {
     let rowCapacity: Int
     let pageCount: Int
     let header: EngineHeader
+    /// Whether Mark All Read has anything to clear: an unread ending or an unconfirmed task.
+    let canMarkRead: Bool
 
     init(activities: [SessionActivity], requests: [PendingAttentionRequest], inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = []) {
@@ -21,6 +23,7 @@ struct EnginePresentation: Codable, Equatable {
         taskCountText = value.taskCountText
         pageSize = value.pagination.pageSize; rowCapacity = value.pagination.rowCapacity; pageCount = value.pagination.pageCount
         header = EngineHeader(value.header(symbol: EngineTaskRow.symbol), endingProvider: value.pendingCompletions.first?.provider)
+        canMarkRead = !value.readableCompletions.isEmpty
     }
 
 }

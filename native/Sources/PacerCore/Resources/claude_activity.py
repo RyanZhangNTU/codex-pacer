@@ -90,7 +90,7 @@ def unowned_rows(owned):
             row=dict(row,unownedTurn=True);del row['promptId'];rows.append(row)
     return rows
 
-def transcript_record(value, owner, parent=None, prompt=None):
+def transcript_record(value, owner, parent=None, prompt=None, failures_only=False):
     # The tailer shares this one decoded line with its ID-only parent context.
     # No parsed record is stored on a cursor; only IDs enter its context.
     if not isinstance(value, dict): return []
@@ -184,8 +184,39 @@ def transcript_record(value, owner, parent=None, prompt=None):
         if message.get('stop_reason', value.get('stop_reason')) in ('end_turn', 'stop_sequence', 'refusal'): rows.append(dict(base, kind='stopRequested'))
     if kind == 'result' and value.get('subtype') in ('success', 'error_during_execution', 'error_max_turns', 'interrupted'):
         subtype = value['subtype']; rows.append(dict(base, kind='stop' if subtype == 'success' else 'interrupt' if subtype == 'interrupted' else 'failure'))
-    if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and value.get('hookErrors')==[] and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
+    # A blocking Stop hook makes Claude go on working, so its errors keep the turn
+    # open. A hook that only failed (a missing script, a crash) does not.
+    errors=value.get('hookErrors')
+    if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and (errors==[] or (failures_only and isinstance(errors,list))) and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
     return rows
+
+def stop_hook_error(value):
+    # The Stop hook error attachment written before its stop summary: the stop's
+    # tool-use ID, and whether the hook blocked the stop or only failed.
+    attachment=value.get('attachment') if isinstance(value,dict) and value.get('type')=='attachment' else None
+    if not isinstance(attachment,dict) or attachment.get('hookEvent')!='Stop':return None
+    stop=ident(attachment.get('toolUseID'))
+    if not stop:return None
+    if attachment.get('type')=='hook_blocking_error':return stop,True
+    if attachment.get('type')=='hook_non_blocking_error':return stop,False
+    return None
+
+def note_stop_hook_error(cursor,value):
+    error=stop_hook_error(value)
+    if not error:return
+    stops=cursor.setdefault('stopHookErrors',{});order=cursor.setdefault('stopHookOrder',[])
+    if error[0] not in stops:
+        order.append(error[0])
+        if len(order)>16:stops.pop(order.pop(0),None)
+    blocked,failures=stops.get(error[0],(False,0))
+    stops[error[0]]=(True,failures) if error[1] else (blocked,failures+1)
+
+def stop_hook_failures_only(cursor,value):
+    # Every error of this stop summary is a Stop hook that failed without blocking.
+    if not isinstance(value,dict) or value.get('subtype')!='stop_hook_summary':return False
+    stop=ident(value.get('toolUseID'));errors=value.get('hookErrors')
+    entry=(cursor.get('stopHookErrors') or {}).get(stop) if stop else None
+    return bool(entry) and not entry[0] and isinstance(errors,list) and 0<len(errors)<=entry[1]
 
 ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded','progress','background','wakeups','wake','agents'}
 KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request','progress','waiting'}
@@ -400,6 +431,11 @@ def otlp_respond(stream,status):
     except OSError:pass
 
 class Tailer:
+    @staticmethod
+    def reset_transcript_context(cursor):
+        for key in ('context', 'contextOrder', 'deferred', 'awaiting', 'released', 'stopHookErrors', 'stopHookOrder'):
+            cursor.pop(key, None)
+
     def __init__(self, home):
         self.home = home; self.cursors = {}; self.watches = {}; self.dirty = set(); self.fd = -1; self.scans = 0
         if sys.platform.startswith('linux'):
@@ -497,13 +533,16 @@ class Tailer:
             if cursor is None: continue
             try:
                 s=file.stat();reset=s.st_ino!=cursor['inode'] or cursor['offset']>s.st_size
-                if reset: cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,context={},contextOrder=[],deferred={},discardingOversize=False)
+                if reset:
+                    self.reset_transcript_context(cursor)
+                    cursor.update(inode=s.st_ino,offset=0,fragment=b'',historicalEnd=s.st_size,discardingOversize=False)
                 budget=512*1024 if cursor['offset']==0 else 128*1024
                 # Large normal attachment appends must drain sequentially;
                 # the per-read budget is not an actual missing-data boundary.
                 gap=s.st_size-cursor['offset']>(budget if cursor['offset']==0 else 8*1024*1024)
                 if gap:
-                    cursor.update(offset=s.st_size-budget,fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=False)
+                    self.reset_transcript_context(cursor)
+                    cursor.update(offset=s.st_size-budget,fragment=b'',discardingOversize=False)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 fragment_start=cursor['offset']-len(cursor['fragment'])
                 with file.open('rb') as handle: handle.seek(cursor['offset']);data=handle.read(budget)
@@ -522,7 +561,7 @@ class Tailer:
                 for line in lines:
                     historical=cursor['historicalEnd'] is not None and fragment_start<cursor['historicalEnd'];fragment_start+=len(line)+1
                     if len(line)>MAX_FRAME:
-                        cursor.update(context={},contextOrder=[],deferred={})
+                        self.reset_transcript_context(cursor)
                         if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                         continue
                     if cursor['owned']: values=sanitized(line)
@@ -530,15 +569,17 @@ class Tailer:
                         try: value=json.loads(line)
                         except (ValueError,UnicodeError): continue
                         prompt=self.prompt_context_record(value,cursor)
+                        note_stop_hook_error(cursor,value);only=stop_hook_failures_only(cursor,value)
                         if prompt is None and cursor.get('awaiting'):
-                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER)
+                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER,only)
                             values=unowned_rows(owned);self.defer_record(cursor,owned,historical)
-                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt)
+                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt,only)
                     rows.extend(dict(row,historical=historical) for row in values)
                     # A late parent proves the owner of descendants read before it.
                     rows.extend(cursor.pop('released',[]))
                 if len(cursor['fragment'])>MAX_FRAME:
-                    cursor.update(fragment=b'',context={},contextOrder=[],deferred={},discardingOversize=True)
+                    self.reset_transcript_context(cursor)
+                    cursor.update(fragment=b'',discardingOversize=True)
                     if not cursor['owned']:rows.append({'kind':'discontinuity','origin':'reader','sessionId':cursor['session'],'at':time.time()})
                 if cursor['offset']<s.st_size:self.dirty.add(file)
                 # Keep both byte/line budgets. Complete owned records must

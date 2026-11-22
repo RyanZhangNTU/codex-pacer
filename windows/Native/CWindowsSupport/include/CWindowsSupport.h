@@ -87,6 +87,8 @@ int pacer_file_writers(const uint16_t *path, pacer_process_identity *writers, si
 // process whose name ends with `name`; 0 when it does not, -1 when it failed.
 int pacer_handle_capture_names(const uint16_t *name);
 int pacer_scoped_file_writers(const uint16_t *home, const uint16_t *path, pacer_process_identity *writers, size_t capacity);
+/* 1 for a verified writer, 0 after a complete search, -1 when unresolved. */
+int pacer_scoped_file_has_writer(const uint16_t *home, const uint16_t *path);
 typedef struct { uint64_t file_volume, file_low, file_high, root_volume, root_low, root_high; } pacer_source_file_identity;
 int pacer_source_file_stamp(const uint16_t *home, const uint16_t *path, pacer_source_file_identity *stamp);
 int pacer_same_directory(const uint16_t *first, const uint16_t *second);

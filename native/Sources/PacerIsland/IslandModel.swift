@@ -1484,7 +1484,7 @@ final class IslandModel: ObservableObject {
     private var claudeQuotaOwnerID = UUID()
     private var claudeQuotaReceiptID: UUID?
     private var claudeQuotaStarting = false
-    let reader = LocalActivityReader()
+    let reader = LocalActivityReader(writerProbe: MacRolloutWriters.probe)
     private let realtimeMonitor = RealtimeActivityMonitor()
     private let durableMonitor: MacDurableMonitor
     /// SSH tasks and Dot tasks, which arrive separately and show together.
@@ -2049,7 +2049,7 @@ final class IslandModel: ObservableObject {
     func open(_ activity: SessionActivity) {
         guard canOpen(activity), let target = conversationTarget(for: activity), let open = onOpenActivity,
               let operation = navigation.begin(activity: activity, target: target, version: UInt64(sourceGeneration(for: activity.provider)),
-                activities: activities, inbox: completionInbox, active: acceptsNavigation(activity), scope: navigationScope(for: activity)) else { return }
+                activities: activities, inbox: completionInbox, active: acceptsNavigation(activity), scope: navigationScope(for: activity), requests: pendingInputRequests) else { return }
         clearNavigationError()
         launchOwnedWork(.init(.navigation, provider: activity.provider, identifier: operation.id.uuidString)) { [weak self] _ in
             guard let self else { return }
@@ -2060,7 +2060,7 @@ final class IslandModel: ObservableObject {
             var values = self.activities, inbox = self.completionInbox
             guard let result = self.navigation.complete(operation, outcome: outcome, version: UInt64(self.sourceGeneration(for: activity.provider)),
                 active: self.acceptsNavigation(activity), activities: &values, inbox: &inbox, remoteSourceIDs: Set(self.claudeRemoteTargets.map(\.id)),
-                scope: self.navigationScope(for: activity), now: self.navigationClock(), errorDuration: self.navigationErrorDuration), result.accepted else { return }
+                scope: self.navigationScope(for: activity), now: self.navigationClock(), errorDuration: self.navigationErrorDuration, requests: self.pendingInputRequests), result.accepted else { return }
             self.completionInbox = inbox
             if !result.removed.isEmpty { self.activities = values }
             if result.failure != nil { self.publishNavigationFailure() }

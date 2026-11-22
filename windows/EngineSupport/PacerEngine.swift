@@ -338,7 +338,16 @@ actor EngineRuntime {
     private var deepseekHome: URL
     private let defaultDeepseekHome: URL
     private let sourceSettings: CodexSourceSettingsServices
-    private var codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
+    private var codexReader = EngineRuntime.makeCodexReader()
+    /// Every Codex reader asks Windows which processes still hold a quiet turn's rollout for writing.
+    static func makeCodexReader() -> LocalActivityReader {
+        #if os(Windows)
+        LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) },
+            writerProbe: { file, home in WindowsProcessOwnership.hasWriter(of: file, within: home) })
+        #else
+        LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
+        #endif
+    }
     private var navigation = ActivityNavigationRegistry()
     private var notificationNavigation = ActivityNavigationRegistry()
     private var notificationActivities: [SessionActivity] = []
@@ -626,7 +635,7 @@ actor EngineRuntime {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
             guard let operation = navigationState.begin(activity: entry.activity, target: entry.target, version: lifecycle.version(entry.target.provider),
-                activities: activities, inbox: inbox, active: active, scope: entry.cloudContext) else {
+                activities: activities, inbox: inbox, active: active, scope: entry.cloudContext, requests: requests) else {
                 failure(id: command.id, code: "navigationInProgress"); return true
             }
             navigationOpens[context] = operation
@@ -712,7 +721,7 @@ actor EngineRuntime {
             }
             var values = activities, retained = inbox
             guard let result = navigationState.complete(operation, outcome: .openedConversation, version: lifecycle.version(entry.target.provider), active: active,
-                activities: &values, inbox: &retained, scope: entry.cloudContext, now: navigationClock()), result.accepted else {
+                activities: &values, inbox: &retained, scope: entry.cloudContext, now: navigationClock(), requests: requests), result.accepted else {
                 failure(id: command.id, code: "staleActivityOpen"); return true
             }
             inbox = retained; activities = values
@@ -1220,7 +1229,7 @@ actor EngineRuntime {
         if let value = parameters.reminderSettings { reminderSettings = value }
         if let value = parameters.expandedPanel { panelSettings = value }
         if let minutes = parameters.retentionMinutes { retention = minutes == 0 ? .infinity : Double(minutes) * 60 }
-        if changesCodex { codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) }) }
+        if changesCodex { codexReader = Self.makeCodexReader() }
         if changesClaude { resetClaudeLocalSource() }
         if changesDeepSeek {
             harnessActivities.remove(.deepseek); deepseekUsage = DeepSeekLocalUsage()
@@ -2013,7 +2022,7 @@ actor EngineRuntime {
             desktopBinding = UUID(); stopDurable(); durableAccountScope = nil
             bindCodexCompletionSources()
             desktopState = nil; pendingDesktopEndings = [:]
-            codexReader = LocalActivityReader(fileMetadata: { WindowsFileSystem().metadata($0) })
+            codexReader = Self.makeCodexReader()
             codexQuotaState = nil; codexQuota = nil; codexQuotaFailed = false; codexQuotaRefreshing = false
             activityState.codexAttention = .init()
         case .claude:
