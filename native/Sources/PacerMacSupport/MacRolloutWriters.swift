@@ -42,17 +42,17 @@ public enum MacRolloutWriters {
         return pids.prefix(Int(size) / stride).filter { $0 > 0 }
     }
 
-    /// Whether `pid` holds the file open for writing; false when it does not or
-    /// has exited, nil when it could not be read.
+    /// Whether `pid` holds the file open for writing; false when it does not, has
+    /// no open files or has exited (a zombie answers as exited), nil when it could not be read.
     private static func writes(_ pid: pid_t, device: dev_t, inode: ino_t) -> Bool? {
         let stride = MemoryLayout<proc_fdinfo>.stride
         errno = 0
         let needed = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
-        guard needed > 0 else { return errno == ESRCH ? false : nil }
+        guard needed > 0 else { return needed == 0 && errno == 0 || errno == ESRCH ? false : nil }
         var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(needed) / stride + 16)
         errno = 0
         let size = fds.withUnsafeMutableBytes { proc_pidinfo(pid, PROC_PIDLISTFDS, 0, $0.baseAddress, Int32($0.count)) }
-        guard size > 0 else { return errno == ESRCH ? false : nil }
+        guard size > 0 else { return size == 0 && errno == 0 || errno == ESRCH ? false : nil }
         let infoSize = Int32(MemoryLayout<vnode_fdinfo>.stride)
         for fd in fds.prefix(Int(size) / stride) where fd.proc_fdtype == UInt32(PROX_FDTYPE_VNODE) {
             var info = vnode_fdinfo()
