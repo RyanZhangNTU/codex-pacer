@@ -1,5 +1,6 @@
 import XCTest
 @testable import PacerCore
+import PacerMacSupport
 
 final class CodexHookTests: XCTestCase {
     private let thread = "019a0000-0000-7000-8000-000000000001"
@@ -341,6 +342,24 @@ final class CodexHookReaderTests: XCTestCase {
         try append(files[1], record("event_msg", ["type": "token_count", "turn_id": "t1"], at: start.addingTimeInterval(230)))
         _ = await reader.read(home: home, now: start.addingTimeInterval(250))
         XCTAssertEqual(calls.all.filter { $0.contains(held) }.count, 1, "A log that moved again is not asked about until it is quiet again")
+    }
+
+    /// The Mac's own probe, on a real open file: Codex holds a loaded thread's
+    /// rollout open for reading and writing, and the turn runs while it does.
+    func testOnTheMacAQuietTurnRunsWhileItsRolloutIsHeldForWriting() async throws {
+        let home = temporaryHome("pacer-hook-mac-writer-"), start = Date().addingTimeInterval(-3600)
+        let held = "019a0000-0000-7000-8000-000000000044"
+        let file = try rollout(home, held, start: start)
+        try CodexHookFixture.announce([file], home: home, turn: "t1", at: start)
+        let codex = try FileHandle(forUpdating: file)
+        let reader = LocalActivityReader(writerProbe: MacRolloutWriters.probe)
+
+        let quiet = await reader.read(home: home, now: start.addingTimeInterval(180))
+        XCTAssertEqual(phase(quiet.activities, held), .running, "A writer still holds the rollout")
+
+        try codex.close()
+        let gone = await reader.read(home: home, now: start.addingTimeInterval(240))
+        XCTAssertEqual(phase(gone.activities, held), .unknown, "Its writer closed the rollout without ending the turn")
     }
 
     /// SessionEnd closes a turn the log never ended, and its open question with it;

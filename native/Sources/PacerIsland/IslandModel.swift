@@ -1484,7 +1484,7 @@ final class IslandModel: ObservableObject {
     private var claudeQuotaOwnerID = UUID()
     private var claudeQuotaReceiptID: UUID?
     private var claudeQuotaStarting = false
-    let reader = LocalActivityReader()
+    let reader = LocalActivityReader(writerProbe: MacRolloutWriters.probe)
     private let realtimeMonitor = RealtimeActivityMonitor()
     private let durableMonitor: MacDurableMonitor
     /// SSH tasks and Dot tasks, which arrive separately and show together.
