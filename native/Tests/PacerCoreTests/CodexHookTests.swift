@@ -301,6 +301,48 @@ final class CodexHookReaderTests: XCTestCase {
         XCTAssertEqual(phase(late.activities, active), .running)
     }
 
+    /// A Codex killed or shut down mid-turn sends nothing more. Once the turn's log
+    /// has been quiet for two minutes, Pacer asks whether any process still holds
+    /// its rollout open; none means the writer is gone, long before the hook's limit.
+    func testAQuietTurnWhoseRolloutNoProcessHoldsStopsRunning() async throws {
+        final class Calls: @unchecked Sendable {
+            private let lock = NSLock(); private var names: [String] = []
+            func note(_ name: String) { lock.lock(); names.append(name); lock.unlock() }
+            var all: [String] { lock.lock(); defer { lock.unlock() }; return names }
+        }
+        let home = temporaryHome("pacer-hook-writer-"), start = Date().addingTimeInterval(-3600)
+        let lost = "019a0000-0000-7000-8000-000000000041", held = "019a0000-0000-7000-8000-000000000042"
+        let unknown = "019a0000-0000-7000-8000-000000000043"
+        let files = try [lost, held, unknown].map { try rollout(home, $0, start: start) }
+        try CodexHookFixture.announce(files, home: home, turn: "t1", at: start)
+        let calls = Calls()
+        let reader = LocalActivityReader(writerProbe: { file, _ in
+            calls.note(file.lastPathComponent)
+            if file.lastPathComponent.contains(lost) { return false }
+            return file.lastPathComponent.contains(held) ? true : nil
+        })
+
+        let early = await reader.read(home: home, now: start.addingTimeInterval(60))
+        for thread in [lost, held, unknown] { XCTAssertEqual(phase(early.activities, thread), .running) }
+        XCTAssertTrue(calls.all.isEmpty, "A log quiet for a minute is a tool still running")
+
+        let quiet = await reader.read(home: home, now: start.addingTimeInterval(180))
+        XCTAssertEqual(phase(quiet.activities, lost), .unknown, "No process holds the rollout: the writer is gone")
+        XCTAssertEqual(phase(quiet.activities, held), .running, "Codex still holds the rollout")
+        XCTAssertEqual(phase(quiet.activities, unknown), .running, "An unanswered probe keeps the earlier limits")
+        XCTAssertEqual(calls.all.count, 3)
+
+        let soon = await reader.read(home: home, now: start.addingTimeInterval(200))
+        XCTAssertEqual(calls.all.count, 3, "Asked at most once a minute")
+        let next = await reader.nextRunningExpiry
+        XCTAssertEqual(next, start.addingTimeInterval(240), "The next read is due when the next probe is")
+        XCTAssertEqual(phase(soon.activities, held), .running)
+
+        try append(files[1], record("event_msg", ["type": "token_count", "turn_id": "t1"], at: start.addingTimeInterval(230)))
+        _ = await reader.read(home: home, now: start.addingTimeInterval(250))
+        XCTAssertEqual(calls.all.filter { $0.contains(held) }.count, 1, "A log that moved again is not asked about until it is quiet again")
+    }
+
     /// SessionEnd closes a turn the log never ended, and its open question with it;
     /// the thread's next turn can ask again.
     func testSessionEndClearsAPendingQuestionAndTheNextTurnCanAskAgain() async throws {

@@ -32,14 +32,27 @@ public actor LocalActivityReader {
     private let startupBytes = 512 * 1024
 
     private let fileMetadata: (@Sendable (URL) -> PlatformFileMetadata?)?
-    public init(fileMetadata: (@Sendable (URL) -> PlatformFileMetadata?)? = nil) { self.fileMetadata = fileMetadata }
+    /// Whether any process still holds a rollout (inside a Codex home) open for
+    /// writing; nil when the platform cannot tell. Codex keeps a running thread's
+    /// rollout open, so none means the writer is gone (crashed, killed, shut down).
+    public typealias WriterProbe = @Sendable (_ rollout: URL, _ home: URL) -> Bool?
+    private let writerProbe: WriterProbe?
+    /// When each quiet running rollout may be asked about its writer again.
+    private var writerChecks: [URL: Date] = [:]
+    /// A turn's log must be this quiet before its writer is asked about, and is
+    /// asked at most this often: a long tool call writes nothing for a while.
+    static let writerCheckDelay: TimeInterval = 120
+    static let writerCheckInterval: TimeInterval = 60
+    public init(fileMetadata: (@Sendable (URL) -> PlatformFileMetadata?)? = nil, writerProbe: WriterProbe? = nil) {
+        self.fileMetadata = fileMetadata; self.writerProbe = writerProbe
+    }
     private func signature(_ url: URL) -> (identity: String, size: UInt64)? {
         if let fileMetadata { return fileMetadata(url).map { ($0.identity, $0.size) } }
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = (attributes[.size] as? NSNumber)?.uint64Value else { return nil }
         return (String((attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0), size)
     }
-    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll(); hooks.reset(); nextRunningExpiry = nil }
+    public func reset() { cursors.removeAll(); metadata.removeAll(); originSizes.removeAll(); ignoredIDs.removeAll(); hooks.reset(); writerChecks.removeAll(); nextRunningExpiry = nil }
     /// The next time a running cursor needs a read even if its file stays quiet.
     public private(set) var nextRunningExpiry: Date?
     /// The newest hook row, for telling a silent hook from an idle Codex.
@@ -233,13 +246,25 @@ public actor LocalActivityReader {
         // crashed does neither. Every read checks, including a file that did not
         // change, so a turn already followed cannot run on forever.
         nextRunningExpiry = nil
+        writerChecks = writerChecks.filter { cursors[$0.key] != nil }
         for (file, cursor) in cursors {
             let activity = closedBySessionEnd(projected(cursor))
-            guard [.running, .waitingForInput].contains(activity.phase) else { continue }
-            let logExpiry = (activity.lastObserved ?? .distantPast).addingTimeInterval(Self.quietLimit)
+            guard [.running, .waitingForInput].contains(activity.phase) else { writerChecks.removeValue(forKey: file); continue }
+            let quietSince = activity.lastObserved ?? .distantPast
+            let logExpiry = quietSince.addingTimeInterval(Self.quietLimit)
             let hookExpiry = openHookDate(for: activity)?.addingTimeInterval(Self.hookOpenLimit) ?? .distantPast
-            let expiry = max(logExpiry, hookExpiry)
-            if expiry <= now { cursors[file]?.activity.markUnconfirmed() }
+            var expiry = max(logExpiry, hookExpiry)
+            // Long before those limits, a quiet turn whose rollout no process
+            // holds open any more has lost its writer: it can no longer finish.
+            if expiry > now, let writerProbe {
+                var next = max(quietSince.addingTimeInterval(Self.writerCheckDelay), writerChecks[file] ?? .distantPast)
+                if next <= now {
+                    next = now.addingTimeInterval(Self.writerCheckInterval); writerChecks[file] = next
+                    if writerProbe(file, home) == false { expiry = now }
+                }
+                if expiry > now { nextRunningExpiry = min(nextRunningExpiry ?? next, next) }
+            }
+            if expiry <= now { cursors[file]?.activity.markUnconfirmed(); writerChecks.removeValue(forKey: file) }
             else { nextRunningExpiry = min(nextRunningExpiry ?? expiry, expiry) }
         }
         // Parent hints affect the published view and cursor selection, never

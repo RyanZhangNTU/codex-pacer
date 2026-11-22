@@ -290,6 +290,7 @@ public struct ActivityTaskPresentation: Sendable {
     public let rows: [ActivityTaskRowPresentation]
     public let pagination: TaskPagination
     public let pendingCompletions: [SessionActivity]
+    /// What Mark All Read clears: unread endings, then unconfirmed tasks on the list.
     public let readableCompletions: [SessionActivity]
     public let requests: [PendingAttentionRequest]
     public var taskCountText: String { String(rows.count) }
@@ -322,8 +323,11 @@ public struct ActivityTaskPresentation: Sendable {
         }
         pagination = TaskPagination(itemCount: displayed.count, pageSize: options.pageSize)
         pendingCompletions = inbox.unreadActivities.filter { roots.contains($0.id) }
-        let readable = Set(groups.filter { !$0.isRunning && !$0.isWaiting && attention($0.primary) == nil }.flatMap { $0.members.map(\.id) })
-        readableCompletions = inbox.unreadActivities.filter { readable.contains($0.id) }
+        let readableGroups = groups.filter { !$0.isRunning && !$0.isWaiting && attention($0.primary) == nil }
+        let readable = Set(readableGroups.flatMap { $0.members.map(\.id) }), shown = Set(displayed.map(\.id))
+        // Unconfirmed tasks on the list clear with the endings.
+        let unconfirmed = readableGroups.filter { shown.contains($0.primary.id) }.flatMap(\.members).filter(inbox.isClearableUnconfirmed)
+        readableCompletions = inbox.unreadActivities.filter { readable.contains($0.id) } + unconfirmed.sorted { $0.id < $1.id }
     }
     public func attentionKind(for activity: SessionActivity) -> PendingAttentionRequest.Kind? { Self.attentionKind(activity, groups: groups, requests: requests) }
     public static func attentionKind(_ activity: SessionActivity, groups: [ActivityTaskGroup], requests: [PendingAttentionRequest]) -> PendingAttentionRequest.Kind? {

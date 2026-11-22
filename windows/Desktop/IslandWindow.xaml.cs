@@ -799,7 +799,8 @@ public partial class IslandWindow : Window
         UpdateAppButtons();
         UpdateProgressHint(snapshot);
         if (snapshot.Presentation is not EnginePresentation presentation) { SetStatus(ui.Text("windows.restart_required")); return; }
-        MarkReadButton.IsEnabled = presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
+        // Core decides what Mark All Read clears: unread endings and unconfirmed tasks.
+        MarkReadButton.IsEnabled = presentation.CanMarkRead ?? presentation.Rows.Any(row => row.Unread && row.Phase is "completed" or "interrupted");
         UpdateCompactBar();
         // New row choices redraw the page even when the rows are the same.
         bool choicesChanged = ApplyPanelChoices(snapshot);

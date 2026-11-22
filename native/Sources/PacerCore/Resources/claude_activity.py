@@ -90,7 +90,7 @@ def unowned_rows(owned):
             row=dict(row,unownedTurn=True);del row['promptId'];rows.append(row)
     return rows
 
-def transcript_record(value, owner, parent=None, prompt=None):
+def transcript_record(value, owner, parent=None, prompt=None, failures_only=False):
     # The tailer shares this one decoded line with its ID-only parent context.
     # No parsed record is stored on a cursor; only IDs enter its context.
     if not isinstance(value, dict): return []
@@ -184,8 +184,39 @@ def transcript_record(value, owner, parent=None, prompt=None):
         if message.get('stop_reason', value.get('stop_reason')) in ('end_turn', 'stop_sequence', 'refusal'): rows.append(dict(base, kind='stopRequested'))
     if kind == 'result' and value.get('subtype') in ('success', 'error_during_execution', 'error_max_turns', 'interrupted'):
         subtype = value['subtype']; rows.append(dict(base, kind='stop' if subtype == 'success' else 'interrupt' if subtype == 'interrupted' else 'failure'))
-    if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and value.get('hookErrors')==[] and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
+    # A blocking Stop hook makes Claude go on working, so its errors keep the turn
+    # open. A hook that only failed (a missing script, a crash) does not.
+    errors=value.get('hookErrors')
+    if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and (errors==[] or (failures_only and isinstance(errors,list))) and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
     return rows
+
+def stop_hook_error(value):
+    # The Stop hook error attachment written before its stop summary: the stop's
+    # tool-use ID, and whether the hook blocked the stop or only failed.
+    attachment=value.get('attachment') if isinstance(value,dict) and value.get('type')=='attachment' else None
+    if not isinstance(attachment,dict) or attachment.get('hookEvent')!='Stop':return None
+    stop=ident(attachment.get('toolUseID'))
+    if not stop:return None
+    if attachment.get('type')=='hook_blocking_error':return stop,True
+    if attachment.get('type')=='hook_non_blocking_error':return stop,False
+    return None
+
+def note_stop_hook_error(cursor,value):
+    error=stop_hook_error(value)
+    if not error:return
+    stops=cursor.setdefault('stopHookErrors',{});order=cursor.setdefault('stopHookOrder',[])
+    if error[0] not in stops:
+        order.append(error[0])
+        if len(order)>16:stops.pop(order.pop(0),None)
+    blocked,failures=stops.get(error[0],(False,0))
+    stops[error[0]]=(True,failures) if error[1] else (blocked,failures+1)
+
+def stop_hook_failures_only(cursor,value):
+    # Every error of this stop summary is a Stop hook that failed without blocking.
+    if not isinstance(value,dict) or value.get('subtype')!='stop_hook_summary':return False
+    stop=ident(value.get('toolUseID'));errors=value.get('hookErrors')
+    entry=(cursor.get('stopHookErrors') or {}).get(stop) if stop else None
+    return bool(entry) and not entry[0] and isinstance(errors,list) and 0<len(errors)<=entry[1]
 
 ALLOWED_RECORD = {'kind','origin','sessionId','promptId','parentId','itemId','at','project','title','model','effort','attention','agentId','parentAgentId','agentTool','agentStatus','requestId','messageId','toolIds','startedAt','outputTokens','durationMs','ttftMs','firstContentMs','partial','index','displayTurnId','hasText','promptOwned','engineInterrupt','typedInterruptMarker','unownedTurn','embedded','progress','background','wakeups','wake','agents'}
 KINDS = {'metadata','prompt','toolStart','toolEnd','thinking','response','responseDelta','modelBlock','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','stopRequested','failure','interrupt','subagentStart','subagentStop','unavailable','request','progress','waiting'}
@@ -530,10 +561,11 @@ class Tailer:
                         try: value=json.loads(line)
                         except (ValueError,UnicodeError): continue
                         prompt=self.prompt_context_record(value,cursor)
+                        note_stop_hook_error(cursor,value);only=stop_hook_failures_only(cursor,value)
                         if prompt is None and cursor.get('awaiting'):
-                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER)
+                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER,only)
                             values=unowned_rows(owned);self.defer_record(cursor,owned,historical)
-                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt)
+                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt,only)
                     rows.extend(dict(row,historical=historical) for row in values)
                     # A late parent proves the owner of descendants read before it.
                     rows.extend(cursor.pop('released',[]))

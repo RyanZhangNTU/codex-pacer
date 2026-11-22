@@ -145,7 +145,7 @@ internal sealed record EngineNoticeAction(string Kind, string Title, string? Ref
 internal sealed record EngineNotificationActivation(string Kind, EngineActivityLink? Link);
 
 internal sealed record EnginePresentation(IReadOnlyList<EngineTaskRow> Rows, int PageSize, int RowCapacity,
-    int PageCount, EngineHeader Header, string? TaskCountText = null);
+    int PageCount, EngineHeader Header, string? TaskCountText = null, bool? CanMarkRead = null);
 internal sealed record EngineTaskRow(string Id, string Provider, string Title, string Status,
     string? Source, string? SourceLabel, string? SourceKind, string Phase, string Symbol, string? Attention,
     string Model, string? Effort, double? TokensPerSecond, bool RateIsFresh, string? RatePlaceholder,
