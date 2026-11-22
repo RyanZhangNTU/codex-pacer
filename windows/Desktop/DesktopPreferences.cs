@@ -102,9 +102,18 @@ internal sealed record DesktopPreferences
     public bool CodexDelegationWrite { get; init; }
     public int CodexDelegationTimeout { get; init; } = 60;
     public int CodexDelegationConcurrency { get; init; } = 3;
+    // How freely Claude starts runs (`ask`, `suggest`, `review`), the two alerts,
+    // the island's one-time explanation and the statistics' period.
+    public string CodexDelegationInitiative { get; init; } = "ask";
+    public bool CodexDelegationFailureAlerts { get; init; } = true;
+    public int CodexDelegationLongRun { get; init; }
+    public bool CodexDelegationCoachShown { get; init; }
+    public int CodexDelegationStatsDays { get; init; } = 30;
     internal static readonly string[] DelegationEfforts = ["", "low", "medium", "high", "xhigh", "max", "ultra"];
     internal static readonly int[] DelegationTimeouts = [15, 30, 60, 120, 240];
     internal static readonly int[] DelegationConcurrency = [1, 2, 3, 4, 6];
+    internal static readonly string[] DelegationInitiatives = ["ask", "suggest", "review"];
+    internal static readonly int[] DelegationLongRuns = [0, 10, 20, 30, 60];
     public bool CodexProgressRing { get; init; } = true;
     // A module's progress ring is on unless listed here, like the built-in rings.
     public string[] DisabledHarnessProgress { get; init; } = [];
@@ -138,6 +147,8 @@ internal sealed record DesktopPreferences
         && ExpandedQuotaStyle is "split" or "classic"
         && CodexDelegationModel.Length <= 80 && DelegationEfforts.Contains(CodexDelegationEffort) && CodexDelegationFast is "" or "on" or "off"
         && DelegationTimeouts.Contains(CodexDelegationTimeout) && DelegationConcurrency.Contains(CodexDelegationConcurrency)
+        && DelegationInitiatives.Contains(CodexDelegationInitiative) && DelegationLongRuns.Contains(CodexDelegationLongRun)
+        && CodexDelegationStatsDays is 7 or 30
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)
         && (CompactComponentOptions == null || Encoding.UTF8.GetByteCount(CompactComponentOptions) <= CompactChoices.ByteLimit)
         && (IslandDisplayPlaces == null || Encoding.UTF8.GetByteCount(IslandDisplayPlaces) <= IslandScreenMemory.ByteLimit)
@@ -237,7 +248,8 @@ internal sealed record DesktopPreferences
             {
                 enabled = CodexDelegation, rows = CodexDelegationRows, model = CodexDelegationModel, effort = CodexDelegationEffort,
                 fast = CodexDelegationFast == "" ? (bool?)null : CodexDelegationFast == "on", write = CodexDelegationWrite,
-                timeoutMinutes = CodexDelegationTimeout, maxConcurrent = CodexDelegationConcurrency
+                timeoutMinutes = CodexDelegationTimeout, maxConcurrent = CodexDelegationConcurrency, initiative = CodexDelegationInitiative,
+                failureAlerts = CodexDelegationFailureAlerts, longRunMinutes = CodexDelegationLongRun
             },
             codexProgressRing = CodexProgressRing,
             deepseekProgressRing = DeepSeekProgressRing,

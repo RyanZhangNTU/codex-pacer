@@ -165,6 +165,112 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertNotNil(ClaudeCodexDelegation.runnerScript())
     }
 
+    func testStatisticsCountThePeriodAndKeepNoContent() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        func row(_ daysAgo: Double, _ status: String, seconds: Double = 60, mode: String = "task", model: String? = "gpt-6.2-sol", label: String? = "Review login",
+                 project: String? = "codex-pacer", reason: String? = nil) -> CodexDelegationStatistics.Row {
+            .init(at: now.addingTimeInterval(-daysAgo * 86400), seconds: seconds, status: status, mode: mode, model: model, effort: "high", fast: false,
+                  reason: reason, label: label, project: project, input: 10_000, cached: 6_000, output: 1_000)
+        }
+        let rows = [row(0, "ok", seconds: 300, mode: "review"), row(1, "ok"), row(2, "stopped"), row(3, "failed", reason: "login"),
+                    row(4, "refused", seconds: 0, reason: "concurrency"), row(10, "ok"), row(40, "ok")]
+        let week = CodexDelegationStatistics(rows: rows, days: 7, at: now, calendar: calendar)
+        XCTAssertEqual(week.runs, 4, "Refused runs never ran; older rows are outside the week")
+        XCTAssertEqual(week.chart.count, 7)
+        XCTAssertEqual(week.chart.reduce(0) { $0 + $1.ok + $1.stopped + $1.failed }, 4)
+        XCTAssertEqual(week.kpis[1].value, "50%", "Two of four runs finished")
+        XCTAssertEqual(week.breakdowns.first?.shares.map(\.count).reduce(0, +), 4)
+        XCTAssertTrue(week.breakdowns[1].shares.contains { $0.name == "Sol 6.2" }, "Models read as on the task rows")
+        XCTAssertTrue(week.breakdowns.contains { $0.title == L10n.text("collaboration.stats.by_reason") }, "Failures and refusals have reasons")
+        XCTAssertEqual(week.recent.count, rows.count)
+        XCTAssertEqual(week.recent.first?.title, "Review login")
+        XCTAssertEqual(week.recent.first?.project, "codex-pacer")
+        let hidden = CodexDelegationStatistics(rows: rows, days: 30, hideProjects: true, at: now, calendar: calendar)
+        XCTAssertEqual(hidden.runs, 5)
+        XCTAssertNil(hidden.recent.first?.project, "Hide Project Names hides labels and projects")
+        XCTAssertEqual(hidden.recent.first?.title, L10n.text("delegation.mode.review"))
+        XCTAssertFalse(hidden.breakdowns.contains { $0.title == L10n.text("collaboration.stats.by_project") })
+
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-delegation-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(at: ClaudeCodexDelegation.root(home: home), withIntermediateDirectories: true)
+        try Data((#"{"at":1800000000,"seconds":12.5,"status":"ok","mode":"review","label":"Check it","project":"demo","input":5,"output":2}"# + "\n").utf8)
+            .write(to: ClaudeCodexDelegation.statsURL(home: home))
+        XCTAssertEqual(CodexDelegationStatistics.rows(home: home).first?.label, "Check it")
+        XCTAssertTrue(CodexDelegationStatistics.clearHistory(home: home))
+        let cleared = try XCTUnwrap(CodexDelegationStatistics.rows(home: home).first)
+        XCTAssertNil(cleared.label); XCTAssertNil(cleared.project); XCTAssertEqual(cleared.seconds, 12.5, "Clearing history keeps the numbers")
+    }
+
+    func testRunRowsStaySimpleAndTheHoverCardHoldsTheDetail() {
+        let claude = DemoScenario.claudeTask(stage: .thinking, at: now)
+        var state = ActivityApplicationState()
+        state.replaceHarness(.claude, with: .init(activities: [claude]))
+        var codex = run(1); codex.applyRuntime(["method": "metadata", "threadId": thread(1), "at": now.timeIntervalSince1970, "model": "gpt-6.2-astra", "reasoningEffort": "low"])
+        state.localActivities = [codex]
+        var link = link(to: claude); link.fast = true
+        state.codexDelegations = [codex.id: link]
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        let child = try? XCTUnwrap(state.presentation(at: now).rows.first?.delegations.first)
+        XCTAssertEqual(child?.model, "Astra 6.2")
+        let detail = Dictionary(uniqueKeysWithValues: (child?.delegationDetail ?? []).map { ($0.label, $0.value) })
+        XCTAssertEqual(detail[L10n.text("delegation.detail.mode")], L10n.text("delegation.mode.review") + " · " + L10n.text("delegation.read_only"))
+        XCTAssertTrue(detail[L10n.text("delegation.detail.model")]?.contains(L10n.text("delegation.detail.fast")) == true)
+        XCTAssertNil(detail[L10n.text("delegation.detail.result")], "A running run has no result yet")
+
+        var ended = link; ended = CodexDelegationLink(parentID: link.parentID, label: link.label, mode: link.mode, write: true, worktree: false,
+            status: .ok, started: link.started, directory: link.directory)
+        ended.ended = now; ended.commands = 7; ended.changedFiles = 2; ended.usage = .init(input: 52_311, cached: 40_960, output: 2_210)
+        let lines = ActivityTaskRowPresentation.delegationDetail(ended, activity: codex, phase: .completed, model: "Astra 6.2", effort: "Low", at: now)
+        let values = Dictionary(uniqueKeysWithValues: lines.map { ($0.label, $0.value) })
+        XCTAssertEqual(values[L10n.text("delegation.detail.result")], L10n.text("delegation.status.ok"))
+        XCTAssertEqual(values[L10n.text("delegation.detail.work")], L10n.text("delegation.detail.commands", 7) + " · " + L10n.text("delegation.detail.files", 2))
+        XCTAssertTrue(values[L10n.text("delegation.detail.tokens")]?.contains("52K") == true)
+        XCTAssertEqual(ClaudeCodexDelegation.compactCount(940), "940")
+        XCTAssertEqual(ClaudeCodexDelegation.compactCount(2_210), "2.2K")
+        XCTAssertEqual(ClaudeCodexDelegation.compactCount(4_200_000), "4.2M")
+    }
+
+    func testNoticesFollowFailuresLongRunsAndTheFirstFinish() {
+        func run(_ status: ClaudeCodexDelegation.Status, minutes: Double = 1, reason: String? = nil, folder: String = "run-1") -> ClaudeCodexDelegation.Run {
+            var value = ClaudeCodexDelegation.Run(session: "00000000-0000-4000-8000-000000000003", thread: thread(1), childThreads: [], mode: .task,
+                label: "Find the race", write: false, worktree: false, status: status, created: now.addingTimeInterval(-minutes * 60), ended: nil,
+                directory: URL(fileURLWithPath: "/synthetic/" + folder))
+            value.reason = reason; return value
+        }
+        var policy = CodexDelegationNoticePolicy()
+        XCTAssertTrue(policy.notices([run(.running)], titles: [:], failures: true, longRunMinutes: nil, firstRunFinished: false, at: now).isEmpty,
+            "The first look is a baseline")
+        let failed = policy.notices([run(.failed, reason: "login")], titles: [:], failures: true, longRunMinutes: nil, firstRunFinished: false, at: now)
+        XCTAssertEqual(failed.map(\.title), [L10n.text("delegation.notice.failed")])
+        XCTAssertTrue(failed[0].detail.contains(L10n.text("delegation.reason.login")))
+        XCTAssertTrue(policy.notices([run(.failed, reason: "login")], titles: [:], failures: true, longRunMinutes: nil, firstRunFinished: false, at: now).isEmpty,
+            "A failure is announced once")
+        var quiet = CodexDelegationNoticePolicy()
+        _ = quiet.notices([run(.running, folder: "a")], titles: [:], failures: false, longRunMinutes: 20, firstRunFinished: false, at: now)
+        XCTAssertTrue(quiet.notices([run(.timedOut, folder: "a")], titles: [:], failures: false, longRunMinutes: 20, firstRunFinished: false, at: now).isEmpty,
+            "Failure alerts can be off")
+        var long = CodexDelegationNoticePolicy()
+        _ = long.notices([], titles: [:], failures: true, longRunMinutes: 20, firstRunFinished: false, at: now)
+        XCTAssertEqual(long.notices([run(.running, minutes: 25, folder: "b")], titles: [:], failures: true, longRunMinutes: 20, firstRunFinished: false, at: now).count, 1)
+        XCTAssertTrue(long.notices([run(.running, minutes: 26, folder: "b")], titles: [:], failures: true, longRunMinutes: 20, firstRunFinished: false, at: now).isEmpty)
+        var first = CodexDelegationNoticePolicy()
+        _ = first.notices([run(.running, folder: "c")], titles: [:], failures: true, longRunMinutes: nil, firstRunFinished: false, at: now)
+        XCTAssertEqual(first.notices([run(.ok, folder: "c")], titles: [:], failures: true, longRunMinutes: nil, firstRunFinished: true, at: now).map(\.title),
+            [L10n.text("delegation.notice.first")])
+    }
+
+    func testTheSkillFollowsTheChosenInitiative() throws {
+        let ask = try XCTUnwrap(ClaudeCodexDelegation.skill(command: "RUNNER").map { String(decoding: $0, as: UTF8.self) })
+        let review = try XCTUnwrap(ClaudeCodexDelegation.skill(command: "RUNNER", initiative: .review).map { String(decoding: $0, as: UTF8.self) })
+        XCTAssertTrue(ask.contains("start a run only when the user asks"))
+        XCTAssertTrue(review.contains("RUNNER review --uncommitted"))
+        XCTAssertFalse(review.contains("{{"), "Every placeholder is filled")
+        let settings = ClaudeCodexDelegation.Settings(initiative: .suggest)
+        XCTAssertEqual(ClaudeCodexDelegation.settings(settings.data())?.initiative, .suggest)
+        XCTAssertNil(ClaudeCodexDelegation.Settings().initiative, "The default is left out of the file")
+    }
+
     func testTheExecutorClientIsRecognizedAsDelegated() {
         XCTAssertEqual(CodexSessionOrigin.classify(originator: ClaudeCodexDelegation.originator, cwd: nil)?.delegated, true)
         XCTAssertEqual(CodexSessionOrigin.classify(originator: "codex_exec", cwd: nil)?.delegated, false)

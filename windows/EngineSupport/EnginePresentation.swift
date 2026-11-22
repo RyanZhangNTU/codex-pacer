@@ -68,6 +68,8 @@ struct EngineTaskRow: Codable, Equatable {
     /// On a run's row: the Claude task it opens, and whether Stop shows.
     var parentID: String? = nil
     var canStop: Bool? = nil
+    /// The run's hover card: label and value pairs.
+    var detailLines: [[String]]? = nil
 
     init(group: ActivityTaskGroup, attention: PendingAttentionRequest.Kind?, inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
@@ -88,7 +90,10 @@ struct EngineTaskRow: Codable, Equatable {
         progressStale = value.progressRing?.stale; progressText = value.progressRing?.accessibilityText
         if value.delegatedCount > 0 { delegatedText = value.delegatedCountText }
         if !value.delegations.isEmpty { delegations = value.delegations.map(EngineTaskRow.init) }
-        if let link = value.delegation { parentID = link.parentID; canStop = value.canStopDelegation }
+        if let link = value.delegation {
+            parentID = link.parentID; canStop = value.canStopDelegation
+            detailLines = value.delegationDetail.map { [$0.label, $0.value] }
+        }
     }
     static func symbol(_ activity: SessionActivity, attention: PendingAttentionRequest.Kind?) -> String {
         symbol(TaskSymbol.symbol(for: activity, attention: attention))

@@ -369,10 +369,16 @@ struct EngineCodexDelegationSettings: Codable, Equatable, Sendable {
     var write: Bool?
     var timeoutMinutes: Int?
     var maxConcurrent: Int?
+    /// `ask` (default), `suggest` or `review`: written into the skill.
+    var initiative: String?
+    /// Notices: a failed run (on unless false), a run longer than these minutes (off when absent).
+    var failureAlerts: Bool?
+    var longRunMinutes: Int?
     func settings(codex: String?) -> ClaudeCodexDelegation.Settings {
         .init(codex: codex, model: model.flatMap { $0.isEmpty ? nil : String($0.prefix(80)) },
               effort: effort.flatMap { $0.isEmpty ? nil : String($0.prefix(16)) }, fast: fast,
-              sandbox: write == true ? .workspaceWrite : .readOnly, timeoutMinutes: timeoutMinutes ?? 60, maxConcurrent: maxConcurrent ?? 3)
+              sandbox: write == true ? .workspaceWrite : .readOnly, timeoutMinutes: timeoutMinutes ?? 60, maxConcurrent: maxConcurrent ?? 3,
+              initiative: initiative.flatMap(ClaudeCodexDelegation.Settings.Initiative.init) ?? .ask)
     }
 }
 
@@ -391,6 +397,31 @@ struct EngineCodexDelegationStatus: Codable, Equatable {
     let tokens: Int
     /// The same, worded: "12 runs · 48 min · 1 failed · 3100 K tokens".
     let weekText: String
+    /// Any run was ever filed; the get-started checklist and try-it card follow this.
+    var firstRunSeen = false
+    var runsTotal = 0
+    /// The self-check: `ok`, `missing` or `unknown` sign-in, and the program's version.
+    var login: String? = nil
+    var version: String? = nil
+    var checking: Bool? = nil
+    /// Codex's model catalog for the model picker, and the model its configuration names.
+    var models: [EngineCodexModel]? = nil
+    var defaultModel: String? = nil
+    /// Runs going now, across Claude sessions, and how many may run at once.
+    var running: [EngineRunningDelegation] = []
+    var limit = 3
+    var stats7: CodexDelegationStatistics? = nil
+    var stats30: CodexDelegationStatistics? = nil
+    /// Codex threads another Codex process kept from being deleted, still queued.
+    var pending = 0
+    var runsFolder: String? = nil
+    /// Codex's quota windows now, such as "5h 63% · 7d 71%".
+    var quotaText: String? = nil
+}
+struct EngineCodexModel: Codable, Equatable { let slug: String; let name: String }
+struct EngineRunningDelegation: Codable, Equatable {
+    let parentTitle: String
+    let row: EngineTaskRow
 }
 
 struct EngineNavigationFailure: Codable, Equatable {

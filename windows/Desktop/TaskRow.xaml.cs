@@ -90,6 +90,8 @@ public partial class TaskRow : Button
         animations = value; Icon.SetMotion(value); if (!value) UpdateHover();
         foreach (var icon in Delegations.Children.OfType<Grid>().SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
     }
+    /// The first Codex for Claude run's line, where the island's one-time explanation points.
+    internal FrameworkElement? FirstDelegationLine => Delegations.Children.OfType<Grid>().FirstOrDefault();
     /// Stop on a running Codex for Claude run's line; the island sends the run's ID.
     internal void SetStopAction(Action<string>? action, string label) { stop = action; stopLabel = label; RefreshStopButtons(); }
     private void RefreshStopButtons()
@@ -101,8 +103,9 @@ public partial class TaskRow : Button
                 button.Visibility = stop != null && run.CanStop == true && line.IsMouseOver ? Visibility.Visible : Visibility.Hidden;
             }
     }
-    /// One line per run: its icon, Claude's label with the run's state, then
-    /// time, model and effort. Clicking the line opens the Claude task, like the row.
+    /// One line per run: its icon (state and progress ring), Claude's label,
+    /// speed and time, model and effort. Mode, access and the rest wait in the
+    /// hover card. Clicking the line opens the Claude task, like the row.
     private void BuildDelegations(EngineTaskRow value, PanelOptions? options)
     {
         Delegations.Children.Clear();
@@ -118,10 +121,10 @@ public partial class TaskRow : Button
             var icon = new TaskStatusIcon { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                 LayoutTransform = new ScaleTransform(20.0 / 28, 20.0 / 28) };
             line.Children.Add(icon);
-            var text = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-            text.Inlines.Add(new System.Windows.Documents.Run(run.Title) { FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = state.TitleInk });
-            text.Inlines.Add(new System.Windows.Documents.Run("  " + run.Status) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.DetailInk });
+            var text = new TextBlock { Text = run.Title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = state.TitleInk,
+                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             Grid.SetColumn(text, 2); line.Children.Add(text);
+            if (run.DetailLines is { Count: > 0 } lines) line.ToolTip = DetailCard(run.Title, lines);
             var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Opacity = state.ModelOpacity };
             // Speed, time, model and effort, as on a task row's two lines.
             if (run.RateText != null)
@@ -145,6 +148,26 @@ public partial class TaskRow : Button
             icon.SetMotion(animations);
         }
         RefreshStopButtons();
+    }
+    /// The hover card: the run's label, then label and value pairs from Core.
+    private static ToolTip DetailCard(string title, IReadOnlyList<IReadOnlyList<string>> lines)
+    {
+        var grid = new Grid { MaxWidth = 300 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition());
+        var heading = new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, FontSize = 12.5, Margin = new Thickness(0, 0, 0, 6), TextWrapping = TextWrapping.Wrap };
+        Grid.SetColumnSpan(heading, 2); grid.Children.Add(heading);
+        int row = 1;
+        foreach (var pair in lines.Where(pair => pair.Count == 2))
+        {
+            grid.RowDefinitions.Add(new RowDefinition());
+            var label = new TextBlock { Text = pair[0], FontSize = 11.5, Foreground = PacerPalette.Secondary, Margin = new Thickness(0, 1, 12, 1) };
+            var value = new TextBlock { Text = pair[1], FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 1, 0, 1) };
+            Grid.SetRow(label, row); Grid.SetRow(value, row); Grid.SetColumn(value, 1);
+            grid.Children.Add(label); grid.Children.Add(value); row++;
+        }
+        return new ToolTip { Content = grid, Padding = new Thickness(10, 8, 10, 8), Placement = System.Windows.Controls.Primitives.PlacementMode.Mouse };
     }
     private Button StopButton(EngineTaskRow run)
     {
@@ -202,7 +225,7 @@ public partial class TaskRow : Button
             + (state.DelegatedVisible == Visibility.Visible ? 20 + Text(row.DelegatedText, 10, FontWeights.SemiBold) : 0);
         double runs = 0;
         foreach (var run in showsDelegations ? row.Delegations ?? [] : [])
-            runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold) + Text("  " + run.Status, 11, FontWeights.Medium))
+            runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold))
                 + 10 + Text((run.RateText == null ? "" : run.RateText + " t/s · ") + (run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model
                     + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 26 + 6);
         return Math.Max(runs, 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0)));

@@ -207,6 +207,14 @@ public struct ActivityTaskRowPresentation: Sendable {
     public var delegatedCountText: String { L10n.text("delegation.badge", delegatedCount) }
     /// A run the user can stop from its row.
     public var canStopDelegation: Bool { delegation?.status == .running && phase == .running }
+    /// What a run's hover card lists: mode and access, model, start and time,
+    /// Codex's own estimate, and once it ended, how and with how much work.
+    /// The run's row itself shows only its label, speed, time and model.
+    public let delegationDetail: [DelegationDetailLine]
+    public struct DelegationDetailLine: Equatable, Sendable {
+        public let label: String
+        public let value: String
+    }
     public var rateText: String? { rate.map { String(format: "%.1f", $0.value) } }
     public var subagentText: String { String(subagents) }
     public init(activity: SessionActivity, group: ActivityTaskGroup? = nil, attention: PendingAttentionRequest.Kind? = nil,
@@ -259,6 +267,37 @@ public struct ActivityTaskRowPresentation: Sendable {
         }
         progressRing = TaskProgressRing.make(activity, phase: phase, enabled: options.progressRingProviders.contains(activity.provider), at: now,
             hasAttention: attention != nil, waitingForDependents: group?.isRunning == true && [.completed, .interrupted].contains(activity.phase))
+        if let link = activity.codexDelegation {
+            delegationDetail = Self.delegationDetail(link, activity: activity, phase: phase, model: model, effort: effort, at: now)
+        } else { delegationDetail = [] }
+    }
+    static func delegationDetail(_ link: CodexDelegationLink, activity: SessionActivity, phase: ActivityPhase,
+                                 model: String, effort: String?, at now: Date) -> [DelegationDetailLine] {
+        func line(_ key: String, _ value: String) -> DelegationDetailLine { .init(label: L10n.text("delegation.detail." + key), value: value) }
+        let access = L10n.text(link.worktree ? "delegation.worktree" : link.write ? "delegation.write" : "delegation.read_only")
+        var lines = [line("mode", modeText(link.mode) + " · " + access)]
+        let speed = link.fast.map { L10n.text($0 ? "delegation.detail.fast" : "delegation.detail.standard") }
+        lines.append(line("model", ([model] + [effort, speed].compactMap { $0 }).joined(separator: " · ")))
+        let clock = L10n.format(link.started, Date.FormatStyle().hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+        let finished = link.status.finished
+        let elapsed = max(0, (finished ? (link.ended ?? now) : now).timeIntervalSince(link.started))
+        lines.append(line("started", clock + " · " + L10n.text(finished ? "delegation.detail.took" : "delegation.detail.running_for")
+            + " " + CompactDuration.text(elapsed)))
+        if !finished, let report = activity.currentProgress { lines.append(line("progress", L10n.text("delegation.detail.progress_value", report.percent))) }
+        if finished {
+            lines.append(line("result", L10n.text("delegation.status." + link.status.rawValue)))
+            var work: [String] = []
+            if let commands = link.commands { work.append(L10n.text("delegation.detail.commands", commands)) }
+            if let files = link.changedFiles { work.append(L10n.text("delegation.detail.files", files)) }
+            if !work.isEmpty { lines.append(line("work", work.joined(separator: " · "))) }
+            if let usage = link.usage {
+                let cached = usage.input > 0 ? Int((Double(usage.cached) / Double(usage.input) * 100).rounded()) : 0
+                lines.append(line("tokens", L10n.text("delegation.detail.in") + " " + ClaudeCodexDelegation.compactCount(usage.input)
+                    + " (" + L10n.text("delegation.detail.cached", cached) + ") · " + L10n.text("delegation.detail.out") + " "
+                    + ClaudeCodexDelegation.compactCount(usage.output)))
+            }
+        }
+        return lines
     }
     public static func title(_ activity: SessionActivity, hideProjects: Bool) -> String {
         activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project)

@@ -104,4 +104,8 @@ The runner prints the error and the stderr tail, and exits non-zero (124 means i
 - `resume` of a thread from an earlier turn: it was deleted; start a fresh run with the earlier result in the brief
 - Codex not found, or the feature turned off: the user fixes it in Pacer (Settings → Collaboration)
 
-Usage counts against the user's Codex (ChatGPT) quota, so don't start Codex runs the user didn't ask for. You may suggest one when a second opinion would clearly help.
+## 6. When to start a run
+
+{{INITIATIVE}}
+
+`{{RUN}} doctor` checks everything a run needs (Codex, its sign-in, the ledger, this skill) without calling a model.

@@ -22,7 +22,20 @@ internal sealed record EngineSnapshot(
 /// Settings → Collaboration: Codex for Claude's switch, whether its skill is in
 /// Pacer's Claude plugin, the user-level skill it replaces, and the last week's runs.
 internal sealed record CodexDelegationStatus(bool Enabled, bool SkillInstalled, string? LegacySkill, bool CodexFound,
-    int Runs, int Failures, int Minutes, int Tokens, string WeekText = "");
+    int Runs, int Failures, int Minutes, int Tokens, string WeekText = "", bool FirstRunSeen = false, int RunsTotal = 0,
+    string? Login = null, string? Version = null, bool? Checking = null, IReadOnlyList<CodexModelChoice>? Models = null, string? DefaultModel = null,
+    IReadOnlyList<RunningDelegation>? Running = null, int Limit = 3, DelegationStatistics? Stats7 = null, DelegationStatistics? Stats30 = null,
+    int Pending = 0, string? RunsFolder = null, string? QuotaText = null);
+internal sealed record CodexModelChoice(string Slug, string Name);
+internal sealed record RunningDelegation(string ParentTitle, EngineTaskRow Row);
+/// Worded in Core for both hosts: the KPI tiles, one column per day, the shares and the recent runs.
+internal sealed record DelegationStatistics(int Days, int Runs, IReadOnlyList<DelegationKpi> Kpis, IReadOnlyList<DelegationDay> Chart, int ChartMax,
+    IReadOnlyList<DelegationBreakdown> Breakdowns, IReadOnlyList<DelegationRecent> Recent, string Summary);
+internal sealed record DelegationKpi(string Title, string Value, string? Note, string? Tone);
+internal sealed record DelegationDay(string Label, int Ok, int Stopped, int Failed);
+internal sealed record DelegationBreakdown(string Title, IReadOnlyList<DelegationShare> Shares);
+internal sealed record DelegationShare(string Name, int Count, double Fraction);
+internal sealed record DelegationRecent(string Time, string Title, string? Project, string Detail, string Duration, string Result, string Tone);
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
 /// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
 /// `notRunning`, `needsCodexUpdate` or `installFailed`.
@@ -157,7 +170,7 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     string? TurnTime, int Subagents, bool Unread, bool Failed, bool Dimmed, string? Cost, bool PeakCost, string? RateText = null, string? SubagentText = null,
     string? ProgressState = null, double? ProgressFraction = null, bool? ProgressStale = null, string? ProgressText = null,
     string? ProgressMode = null, string? DelegatedText = null, IReadOnlyList<EngineTaskRow>? Delegations = null,
-    string? ParentID = null, bool? CanStop = null);
+    string? ParentID = null, bool? CanStop = null, IReadOnlyList<IReadOnlyList<string>>? DetailLines = null);
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
     string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
     double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null,

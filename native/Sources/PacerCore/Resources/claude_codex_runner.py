@@ -106,7 +106,7 @@ class Options:
 
 def parse(argv):
     o = Options()
-    modes = ('task', 'resume', 'review', 'models', 'runs', 'stop', 'apply', 'discard', 'cleanup', 'turn-end', 'sweep')
+    modes = ('task', 'resume', 'review', 'models', 'runs', 'stop', 'apply', 'discard', 'cleanup', 'turn-end', 'sweep', 'doctor')
     i = 0
     if argv and argv[0] in modes:
         o.mode = argv[0]; i = 1
@@ -612,14 +612,38 @@ def find_run(thread):
     return (owned or any_run or [None])[0]
 
 
+def failure_reason(errors, tail):
+    """A failure's kind for Pacer's statistics and alerts, never its text."""
+    text = (' '.join(errors) + ' ' + ''.join(tail)).lower()
+    if any(word in text for word in ('not logged in', 'login', 'unauthorized', '401', 'authentication')):
+        return 'login'
+    if any(word in text for word in ('usage limit', 'rate limit', '429', 'quota')):
+        return 'quota'
+    if 'model' in text and any(word in text for word in ('not found', 'unsupported', 'does not exist', 'not supported', 'invalid')):
+        return 'model'
+    return 'other'
+
+
+def project_name(folder):
+    root = toplevel(folder) or folder
+    return os.path.basename(os.path.normpath(root))[:80] if root else None
+
+
 def record_stats(meta):
+    """One line per finished or refused run: what Pacer's statistics count.
+    Claude's label and the project folder's name are kept for the recent-runs
+    list, which the user can clear; never the brief or Codex's output."""
     usage = meta.get('usage') or {}
     row = {'at': round(time.time(), 3), 'seconds': meta.get('seconds'), 'status': meta.get('status'), 'mode': meta.get('mode'),
-           'input': usage.get('input_tokens'), 'cached': usage.get('cached_input_tokens'), 'output': usage.get('output_tokens')}
+           'input': usage.get('input_tokens'), 'cached': usage.get('cached_input_tokens'), 'output': usage.get('output_tokens'),
+           'model': meta.get('model'), 'effort': meta.get('effort'), 'fast': meta.get('fast'), 'write': meta.get('write'),
+           'worktree': bool(meta.get('worktree')), 'commands': meta.get('commands'), 'changed': meta.get('changedFiles'),
+           'reason': meta.get('reason'), 'stoppedBy': meta.get('stoppedBy'), 'label': meta.get('label'), 'project': meta.get('project')}
+    row = {key: value for key, value in row.items() if value is not None}
     try:
-        if STATS.exists() and STATS.stat().st_size > 512 * 1024:
-            # Keep the last 30 days.
-            horizon = time.time() - 30 * 86400
+        if STATS.exists() and STATS.stat().st_size > 1024 * 1024:
+            # Keep the last 90 days.
+            horizon = time.time() - 90 * 86400
             kept = []
             for line in STATS.read_text(encoding='utf-8').splitlines():
                 try:
@@ -785,6 +809,35 @@ def list_models(o):
         print('%s | efforts %s (default %s) | %s' % (model.get('slug'), efforts, model.get('default_reasoning_level'), fast))
 
 
+def doctor():
+    """Pacer's self-check: everything a run needs, without calling a model.
+    Prints one JSON object."""
+    codex = resolve_codex()
+    version = login = None
+    if codex:
+        result = run_quiet(codex + ['--version'], timeout=30)
+        if result is not None and result.returncode == 0:
+            version = (result.stdout.decode('utf-8', 'replace').strip().split() or [None])[-1]
+        result = run_quiet(codex + ['login', 'status'], timeout=30)
+        login = 'unknown' if result is None else 'ok' if result.returncode == 0 else 'missing'
+    try:
+        RUNS.mkdir(parents=True, exist_ok=True)
+        probe = RUNS / ('.probe-' + os.urandom(4).hex())
+        probe.write_text('ok', encoding='utf-8'); probe.unlink()
+        ledger = True
+    except OSError:
+        ledger = False
+    finally:
+        try:
+            RUNS.rmdir()
+        except OSError:
+            pass
+    skill = ROOT.parent / 'plugin' / 'pacer' / 'skills' / 'codex' / 'SKILL.md'
+    print(json.dumps({'codex': {'found': bool(codex), 'path': codex[0] if codex else None, 'version': version}, 'login': login,
+                      'ledger': ledger, 'skill': skill.is_file(), 'config': CONFIG.is_file(), 'pending': pending_count(),
+                      'python': '%d.%d.%d' % sys.version_info[:3]}, ensure_ascii=False))
+
+
 def pending_count():
     try:
         return len(set(PENDING.read_text(encoding='utf-8').split()))
@@ -926,16 +979,20 @@ def run_job(o):
     limit = settings.get('maxConcurrent')
     limit = limit if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else 3
     running = all_running()
+
+    def refuse(reason, message):
+        record_stats({'status': 'refused', 'reason': reason, 'mode': o.mode, 'label': o.label, 'project': project_name(cwd), 'seconds': 0})
+        fail(message, 4)
     if len(running) >= limit:
-        fail('%d Codex run(s) are already running, the most Pacer allows at once (Settings → Collaboration). '
-             'Wait for one to finish, then run this again.' % len(running), 4)
+        refuse('concurrency', '%d Codex run(s) are already running, the most Pacer allows at once (Settings → Collaboration). '
+               'Wait for one to finish, then run this again.' % len(running))
     if o.write and not o.worktree and not (origin or {}).get('worktree'):
         root = toplevel(cwd)
         if root:
             for run in running:
                 if run.get('write') and not run.get('worktree') and run.get('root') and os.path.normcase(run['root']) == os.path.normcase(root):
-                    fail('another Codex run (thread %s) is already changing files in %s. Wait for it to finish, or run this one '
-                         'with --worktree so its changes stay apart.' % (run.get('thread') or '?', root), 4)
+                    refuse('writer', 'another Codex run (thread %s) is already changing files in %s. Wait for it to finish, or run this one '
+                           'with --worktree so its changes stay apart.' % (run.get('thread') or '?', root))
 
     sweep(codex, current=SESSION)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -945,6 +1002,7 @@ def run_job(o):
         'thread': resume_id, 'owned': o.mode != 'resume', 'childThreads': [], 'cwd': (origin or {}).get('cwd') or cwd,
         'root': toplevel(cwd) if o.write else None, 'write': bool(o.write), 'worktree': (origin or {}).get('worktree'),
         'model': o.model, 'effort': o.effort, 'fast': o.fast, 'applied': False, 'discarded': False, 'warned': False,
+        'project': project_name(cwd),
     }
     save(meta)
     before = snapshot(cwd) if o.write and not o.worktree and not (origin or {}).get('worktree') else None
@@ -1052,8 +1110,15 @@ def run_job(o):
             relative = os.path.relpath(name, cwd) if os.path.isabs(name) else name
             changed.append(kind + ' ' + (relative.replace(os.sep, '/') if not relative.startswith('..') else name))
     status = 'ok' if ok else 'stopped' if stopped else 'timedOut' if timed_out else 'failed'
+    try:
+        by = stop_file.read_text(encoding='utf-8').strip()
+    except OSError:
+        by = ''
+    reason = None if ok else 'stopped' if stopped else 'timeout' if timed_out else failure_reason(events.errors, tail)
     meta.update(status=status, exitCode=exit_code, seconds=round(seconds, 1), ended=round(time.time(), 3), model=model, effort=effort,
-                fast=o.fast, usage=events.usage, commands=events.commands, changedFiles=len(changed),
+                fast=o.fast if o.fast is not None else (defaults.get('service_tier') == FAST_TIER if 'service_tier' in defaults else None),
+                usage=events.usage, commands=events.commands, changedFiles=len(changed), reason=reason,
+                stoppedBy=(by if by in ('pacer', 'claude', 'sweep') else 'claude') if stopped else None,
                 childThreads=sorted(child_threads(meta['thread'], index)) if meta.get('thread') else [])
     if meta.get('worktree'):
         meta['worktreeChanges'] = worktree_changes(meta)
@@ -1061,10 +1126,6 @@ def run_job(o):
     record_stats(meta)
 
     run = runner_command()
-    try:
-        by = stop_file.read_text(encoding='utf-8').strip()
-    except OSError:
-        by = ''
     reason = {'pacer': 'stopped by the user in Pacer', 'claude': 'stopped', 'sweep': 'stopped because its Claude session ended'}
     label = {'ok': 'ok', 'stopped': reason.get(by, 'stopped'),
              'timedOut': 'timed out after %g min' % o.timeout, 'failed': 'failed (exit %s)' % exit_code}[status]
@@ -1127,6 +1188,8 @@ def main():
             cleanup_now(o.session, quiet=True)
     elif o.mode == 'sweep':
         sweep(resolve_codex())
+    elif o.mode == 'doctor':
+        doctor()
     else:
         sys.exit(run_job(o))
 

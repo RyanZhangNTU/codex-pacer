@@ -35,6 +35,8 @@ public enum ModelDisplay {
             return (provider == nil || provider == .claude ? "" : "Claude ") + families[0].capitalized + " " + numbers.joined(separator: ".")
         }
         if parts.first == "gpt", parts.count >= 2, parts[1].first?.isNumber == true {
+            // The current families read by name first: `gpt-6.2-sol` → Sol 6.2.
+            if parts.count == 3, ["luna", "terra", "sol", "astra"].contains(parts[2]) { return parts[2].capitalized + " " + parts[1] }
             let suffix = parts.dropFirst(2).map { ["mini", "nano"].contains($0) || $0.contains(where: \.isNumber) ? $0 : $0.capitalized }
             return (["GPT-" + parts[1]] + suffix).joined(separator: " ")
         }
