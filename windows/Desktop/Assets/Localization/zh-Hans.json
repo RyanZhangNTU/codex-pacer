@@ -323,6 +323,7 @@
     "collaboration.legacy": "旧的 codex 技能",
     "collaboration.legacy_failed": "没能移动这个文件夹。请关掉正在使用它的程序再试。",
     "collaboration.legacy_remove": "移到回收站",
+    "collaboration.legacy_remove_mac": "移到废纸篓",
     "collaboration.model": "模型",
     "collaboration.model_hint": "留空则跟随 Codex 设置",
     "collaboration.section.defaults": "默认设置",

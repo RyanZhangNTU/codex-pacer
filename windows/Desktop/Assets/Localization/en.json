@@ -323,6 +323,7 @@
     "collaboration.legacy": "Earlier codex skill",
     "collaboration.legacy_failed": "Couldn't move the folder. Close anything using it and try again.",
     "collaboration.legacy_remove": "Move to Recycle Bin",
+    "collaboration.legacy_remove_mac": "Move to Trash",
     "collaboration.model": "Model",
     "collaboration.model_hint": "Leave empty to follow Codex settings",
     "collaboration.section.defaults": "Defaults",
