@@ -19,23 +19,15 @@ internal sealed record EngineSnapshot(
     string? WslAvailability = null,
     IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null,
     CodexDelegationStatus? CodexDelegation = null);
-/// Settings → Collaboration: Codex for Claude's switch, whether its skill is in
-/// Pacer's Claude plugin, the user-level skill it replaces, and the last week's runs.
+/// Settings → Collaboration, the Claude → Codex pair: the switch, whether its
+/// skill is in Pacer's Claude plugin, the user-level skill it replaces, and
+/// Codex's self-check: sign-in, version, model catalog and what its own
+/// configuration picks for model, effort and fast mode.
 internal sealed record CodexDelegationStatus(bool Enabled, bool SkillInstalled, string? LegacySkill, bool CodexFound,
-    int Runs, int Failures, int Minutes, int Tokens, string WeekText = "", bool FirstRunSeen = false, int RunsTotal = 0,
     string? Login = null, string? Version = null, bool? Checking = null, IReadOnlyList<CodexModelChoice>? Models = null, string? DefaultModel = null,
-    IReadOnlyList<RunningDelegation>? Running = null, int Limit = 3, DelegationStatistics? Stats7 = null, DelegationStatistics? Stats30 = null,
-    int Pending = 0, string? RunsFolder = null, string? QuotaText = null);
-internal sealed record CodexModelChoice(string Slug, string Name);
-internal sealed record RunningDelegation(string ParentTitle, EngineTaskRow Row);
-/// Worded in Core for both hosts: the KPI tiles, one column per day, the shares and the recent runs.
-internal sealed record DelegationStatistics(int Days, int Runs, IReadOnlyList<DelegationKpi> Kpis, IReadOnlyList<DelegationDay> Chart, int ChartMax,
-    IReadOnlyList<DelegationBreakdown> Breakdowns, IReadOnlyList<DelegationRecent> Recent, string Summary);
-internal sealed record DelegationKpi(string Title, string Value, string? Note, string? Tone);
-internal sealed record DelegationDay(string Label, int Ok, int Stopped, int Failed);
-internal sealed record DelegationBreakdown(string Title, IReadOnlyList<DelegationShare> Shares);
-internal sealed record DelegationShare(string Name, int Count, double Fraction);
-internal sealed record DelegationRecent(string Time, string Title, string? Project, string Detail, string Duration, string Result, string Tone);
+    string? DefaultEffort = null, bool? DefaultFast = null, int Limit = 3, int Pending = 0, string? RunsFolder = null, string? QuotaText = null);
+/// A model from Codex's catalog, with the efforts it supports and its own default effort.
+internal sealed record CodexModelChoice(string Slug, string Name, IReadOnlyList<string>? Efforts = null, string? DefaultEffort = null);
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
 /// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
 /// `notRunning`, `needsCodexUpdate` or `installFailed`.

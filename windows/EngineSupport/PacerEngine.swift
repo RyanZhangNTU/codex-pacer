@@ -248,7 +248,7 @@ actor EngineRuntime {
     /// The quota left last written for the runner's quota floor.
     private var codexDelegationQuotaWritten: (left: Double?, at: Date?)?
     private var codexDelegationStatusCache: (at: Date, value: EngineCodexDelegationStatus)?
-    private var codexDelegationCheck: (checking: Bool, login: String?, version: String?, models: [EngineCodexModel]?, defaultModel: String?) = (false, nil, nil, nil, nil)
+    private var codexDelegationCheck = CodexDelegationCheck()
     private var codexProgressRing = false
     private var deepseekProgressRing = false
     private var disabledHarnessProgress: Set<AgentProvider> = []
@@ -1909,6 +1909,7 @@ actor EngineRuntime {
         value.login = codexDelegationCheck.login; value.version = codexDelegationCheck.version
         value.checking = codexDelegationCheck.checking ? true : nil
         value.models = codexDelegationCheck.models; value.defaultModel = codexDelegationCheck.defaultModel
+        value.defaultEffort = codexDelegationCheck.defaultEffort; value.defaultFast = codexDelegationCheck.defaultFast
         // Runs going now change every second; they come from the task list.
         value.running = presentation.rows.flatMap { row in
             row.delegations.filter { $0.phase == .running }.map { EngineRunningDelegation(parentTitle: row.title, row: EngineTaskRow($0)) }
@@ -1924,10 +1925,21 @@ actor EngineRuntime {
         value.quotaText = windows.isEmpty ? nil : windows.map { $0.label + " " + String(Int($0.remainingPercent!.rounded())) + "%" }.joined(separator: " · ")
         return value
     }
-    /// The Collaboration page's self-check: Codex's version, its sign-in and
-    /// its model catalog, from the program Pacer found. No model is called.
+    /// The Collaboration page's self-check: Codex's version, its sign-in, its
+    /// model catalog and what its configuration picks for model, effort and
+    /// fast mode, from the program Pacer found. No model is called.
+    struct CodexDelegationCheck: Equatable {
+        var checking = false
+        var login: String?
+        var version: String?
+        var models: [EngineCodexModel]?
+        var defaultModel: String?
+        var defaultEffort: String?
+        var defaultFast: Bool?
+    }
     private func checkCodexDelegation() {
-        guard !codexDelegationCheck.checking, let executable = CodexClient.findExecutable(customPath: codexExecutable) else {
+        // A demo never runs the user's Codex; its Collaboration page has no status.
+        guard !demo, !codexDelegationCheck.checking, let executable = CodexClient.findExecutable(customPath: codexExecutable) else {
             if CodexClient.findExecutable(customPath: codexExecutable) == nil { codexDelegationCheck.login = nil; codexDelegationCheck.version = nil }
             return
         }
@@ -1940,37 +1952,53 @@ actor EngineRuntime {
             let login = await WindowsSubprocess.capture(executable: executable, arguments: ["login", "status"], timeout: 20, limit: 4096)
             let catalog = await WindowsSubprocess.capture(executable: executable, arguments: ["debug", "models"], timeout: 60, limit: 1024 * 1024)
             let models = catalog.flatMap(Self.codexModels)
-            let configured = Self.configuredModel(home: home)
-            await self?.receiveCodexDelegationCheck(version: version, login: version == nil ? "unknown" : login == nil ? "missing" : "ok",
-                                                    models: models, defaultModel: configured)
+            let check = Self.codexDelegationDefaults(home: home, models: models,
+                login: version == nil ? "unknown" : login == nil ? "missing" : "ok", version: version)
+            await self?.receiveCodexDelegationCheck(check)
         }
     }
-    private func receiveCodexDelegationCheck(version: String?, login: String, models: [EngineCodexModel]?, defaultModel: String?) {
-        codexDelegationCheck = (false, login, version, models, defaultModel)
+    private func receiveCodexDelegationCheck(_ check: CodexDelegationCheck) {
+        codexDelegationCheck = check
         publish(notices: [])
     }
+    /// What the runner follows by default: config.toml's model, effort and
+    /// service tier, else the catalog's first model and that model's own effort.
+    static func codexDelegationDefaults(home: URL, models: [EngineCodexModel]?, login: String, version: String?) -> CodexDelegationCheck {
+        let model = configuredValue("model", home: home)
+        let effort = configuredValue("model_reasoning_effort", home: home)
+            ?? models?.first { $0.slug == model }?.defaultEffort ?? models?.first?.defaultEffort
+        let tier = configuredValue("service_tier", home: home)
+        return CodexDelegationCheck(checking: false, login: login, version: version, models: models, defaultModel: model ?? models?.first?.slug,
+                                    defaultEffort: effort, defaultFast: tier.map { $0 == "priority" || $0 == "fast" } ?? false)
+    }
+    /// The efforts Settings → Collaboration offers, as on the Mac.
+    static let codexDelegationEfforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
     static func codexModels(_ data: Data) -> [EngineCodexModel]? {
         guard let value = try? JSONSerialization.jsonObject(with: data) else { return nil }
         let list = (value as? [[String: Any]]) ?? ((value as? [String: Any])?["models"] as? [[String: Any]]) ?? []
         let models = list.prefix(64).compactMap { model -> EngineCodexModel? in
             guard let slug = model["slug"] as? String, slug.utf8.count <= 80, [nil, "list"].contains(model["visibility"] as? String) else { return nil }
-            return EngineCodexModel(slug: slug, name: ModelDisplay.name(slug, provider: .codex))
+            let efforts = ((model["supported_reasoning_levels"] as? [Any]) ?? []).prefix(12).compactMap { level -> String? in
+                let effort = (level as? [String: Any])?["effort"] as? String ?? level as? String
+                return effort.flatMap { codexDelegationEfforts.contains($0) ? $0 : nil }
+            }
+            let fallback = (model["default_reasoning_level"] as? String).flatMap { codexDelegationEfforts.contains($0) ? $0 : nil }
+            return EngineCodexModel(slug: slug, name: ModelDisplay.name(slug, provider: .codex), efforts: efforts.isEmpty ? nil : efforts, defaultEffort: fallback)
         }
         return models.isEmpty ? nil : models
     }
-    /// The top-level `model = "…"` of Codex's config.toml, which the runner follows by default.
-    static func configuredModel(home: URL) -> String? {
+    /// A top-level `key = "…"` of Codex's config.toml.
+    static func configuredValue(_ key: String, home: URL) -> String? {
         guard let text = try? String(contentsOf: home.appendingPathComponent("config.toml"), encoding: .utf8) else { return nil }
         for line in text.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("[") { break }
-            guard trimmed.hasPrefix("model"), let equals = trimmed.firstIndex(of: "=") else { continue }
-            let key = trimmed[..<equals].trimmingCharacters(in: .whitespaces)
-            guard key == "model" else { continue }
+            guard trimmed.hasPrefix(key), let equals = trimmed.firstIndex(of: "=") else { continue }
+            guard trimmed[..<equals].trimmingCharacters(in: .whitespaces) == key else { continue }
             let raw = trimmed[trimmed.index(after: equals)...].trimmingCharacters(in: .whitespaces)
             guard raw.hasPrefix("\""), let end = raw.dropFirst().firstIndex(of: "\"") else { return nil }
-            let slug = String(raw[raw.index(after: raw.startIndex)..<end])
-            return slug.isEmpty || slug.utf8.count > 80 ? nil : slug
+            let value = String(raw[raw.index(after: raw.startIndex)..<end])
+            return value.isEmpty || value.utf8.count > 80 ? nil : value
         }
         return nil
     }

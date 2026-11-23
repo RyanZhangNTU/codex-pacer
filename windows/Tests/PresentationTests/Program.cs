@@ -97,6 +97,7 @@ internal static class Program
                 if (All("display")) { await Attempt(nameof(DisplayWindowChecks), () => DisplayWindowChecks.Run(output)); if (!All("idle")) await Attempt(nameof(OcclusionSchedulingChecks), () => OcclusionSchedulingChecks.Run()); }
                 if (All("collapsed")) await Attempt("Compact TPS geometry", () => CollapsedLayoutChecks.CheckRateGeometry(projections));
                 if (All("collapsed")) await Attempt(nameof(CompactStatusMotionChecks), () => CompactStatusMotionChecks.Run());
+                if (All("island") || Has("collaboration")) await Attempt(nameof(DelegationRowChecks), () => DelegationRowChecks.Run(output));
                 // Native mouse and keyboard input on an owned synthetic island; the cursor is restored afterwards.
                 // Hosted CI desktops do not deliver synthesized input, so this stays an explicit local group.
                 if (Has("position"))
@@ -138,6 +139,7 @@ internal static class Program
                             await Attempt(nameof(ProviderHomeSettingsChecks.RunTaskModule), () => ProviderHomeSettingsChecks.RunTaskModule(language, dark));
                             await Attempt(nameof(DeepSeekSettingsChecks), () => DeepSeekSettingsChecks.Run(language, dark, output)); await Attempt(nameof(ReminderSettingsChecks), () => ReminderSettingsChecks.Run(language, dark, output));
                         }
+                        if (All("settings") || Has("collaboration")) await Attempt(nameof(CollaborationSettingsChecks), () => CollaborationSettingsChecks.Run(language, dark, output));
                         if (Has("ssh")) await Attempt(nameof(SettingsPresentationChecks), () => SettingsPresentationChecks.Run(language, dark, output));
                         if (All("collapsed")) foreach (bool motion in new[] { false, true }) await Attempt(nameof(CollapsedLayoutChecks), () => CollapsedLayoutChecks.Run(language, dark, motion, output));
                         if (All("panel")) await Attempt(nameof(ExpandedPanelChecks), () => ExpandedPanelChecks.Run(language, dark, output));

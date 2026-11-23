@@ -270,8 +270,6 @@ public partial class App : Application
             });
         }
         island.SaveIslandPlacement = edit => settingsSession.ChangeAsync(edit);
-        island.DelegationCoachPending = () => !demo && !settingsSession.Current.CodexDelegationCoachShown;
-        island.DelegationCoachDismissed = () => settingsSession.ChangeAsync(value => value with { CodexDelegationCoachShown = true });
         notificationActions = new NotificationActions(engineReady.Task, () => quitting || settingsSession.Current.SystemNotifications != true, island.Reveal,
             () => engine.SendAsync("snoozeDeepSeekSpike"), OpenNotificationLink, notificationLifetime.Token, () => applications.Open("deepseek"),
             (kind, reference) => engine.QueryAsync<EngineNotificationActivation>("activateNotification", new { context = reference, notificationAction = kind }),

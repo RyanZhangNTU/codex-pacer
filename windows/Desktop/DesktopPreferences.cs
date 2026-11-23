@@ -91,29 +91,77 @@ internal sealed record DesktopPreferences
     public bool ShowEmbeddedClaudeSessions { get; init; } = true;
     public bool ShowClaudeCloudProjects { get; init; } = true;
     public bool ClaudeProgressRing { get; init; } = true;
-    // Settings → Collaboration: Codex for Claude, off until the user turns it
-    // on. Empty model and effort, and an empty fast choice, follow Codex's own
-    // configuration; the runner applies these when Claude leaves them out.
+    // Settings → Collaboration, the Claude → Codex pair, off until the user turns
+    // it on. PreferencesCodec stores these under the Mac's per-pair keys
+    // (`collaboration.claude>codex.*`); keys from earlier builds are ignored.
+    // Model, effort and fast mode follow Codex until the user picks one, and a
+    // pick is kept while they follow Codex again. The runner applies these.
     public bool CodexDelegation { get; init; }
-    public bool CodexDelegationRows { get; init; } = true;
+    public string CodexDelegationTrigger { get; init; } = "ask";
+    public bool CodexDelegationFollowModel { get; init; } = true;
     public string CodexDelegationModel { get; init; } = "";
-    public string CodexDelegationEffort { get; init; } = "";
-    public string CodexDelegationFast { get; init; } = "";
-    public bool CodexDelegationWrite { get; init; }
-    public int CodexDelegationTimeout { get; init; } = 60;
+    public bool CodexDelegationFollowEffort { get; init; } = true;
+    public string CodexDelegationEffort { get; init; } = "high";
+    public bool CodexDelegationFollowFast { get; init; } = true;
+    public bool CodexDelegationFast { get; init; }
+    public string CodexDelegationRecords { get; init; } = "turn";
+    public int CodexDelegationRecordsHours { get; init; } = 24;
+    public string CodexDelegationSandbox { get; init; } = "workspace-write-network";
+    public bool CodexDelegationWorktree { get; init; }
+    public string CodexDelegationInstructions { get; init; } = "";
+    public bool CodexDelegationMemory { get; init; }
     public int CodexDelegationConcurrency { get; init; } = 3;
-    // How freely Claude starts runs (`ask`, `suggest`, `review`), the two alerts,
-    // the island's one-time explanation and the statistics' period.
-    public string CodexDelegationInitiative { get; init; } = "ask";
-    public bool CodexDelegationFailureAlerts { get; init; } = true;
-    public int CodexDelegationLongRun { get; init; }
-    public bool CodexDelegationCoachShown { get; init; }
-    public int CodexDelegationStatsDays { get; init; } = 30;
-    internal static readonly string[] DelegationEfforts = ["", "low", "medium", "high", "xhigh", "max", "ultra"];
-    internal static readonly int[] DelegationTimeouts = [15, 30, 60, 120, 240];
-    internal static readonly int[] DelegationConcurrency = [1, 2, 3, 4, 6];
-    internal static readonly string[] DelegationInitiatives = ["ask", "suggest", "review"];
-    internal static readonly int[] DelegationLongRuns = [0, 10, 20, 30, 60];
+    // Percent of Codex quota left below which runs don't start; 0 never holds them back.
+    public int CodexDelegationQuotaFloor { get; init; }
+    internal static readonly string[] DelegationTriggers = ["ask", "command"];
+    internal static readonly string[] DelegationEfforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
+    internal static readonly string[] DelegationRecords = ["turn", "timed", "keep"];
+    internal static readonly int[] DelegationRecordsHours = [2, 6, 12, 24, 48, 72, 168];
+    internal static readonly string[] DelegationSandboxes = ["read-only", "workspace-write", "workspace-write-network", "danger-full-access"];
+    internal static readonly int[] DelegationConcurrency = [1, 2, 3, 4];
+    internal static readonly int[] DelegationQuotaFloors = [0, 10, 20];
+    internal const int DelegationInstructionsLimit = 4000;
+    /// A model slug: letters, digits and the punctuation Codex uses in them.
+    internal static bool ValidDelegationModel(string? value) => value != null
+        && (value.Length == 0 || System.Text.RegularExpressions.Regex.IsMatch(value, @"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}\z"));
+    /// Standing instructions: at most 4000 characters, lines and tabs but no other control characters.
+    internal static bool ValidDelegationInstructions(string? value) => value is { Length: <= DelegationInstructionsLimit }
+        && !value.Any(c => char.IsControl(c) && c is not ('\n' or '\r' or '\t'));
+    internal static string CleanDelegationInstructions(string? value)
+    {
+        string text = new((value ?? "").Where(c => !char.IsControl(c) || c is '\n' or '\r' or '\t').ToArray());
+        text = text.Trim();
+        return text.Length <= DelegationInstructionsLimit ? text : text[..DelegationInstructionsLimit];
+    }
+    /// Every Collaboration choice but the pair's switch back to its default.
+    internal DesktopPreferences RestoringDelegationDefaults()
+    {
+        var initial = new DesktopPreferences();
+        return this with
+        {
+            CodexDelegationTrigger = initial.CodexDelegationTrigger, CodexDelegationFollowModel = initial.CodexDelegationFollowModel,
+            CodexDelegationModel = initial.CodexDelegationModel, CodexDelegationFollowEffort = initial.CodexDelegationFollowEffort,
+            CodexDelegationEffort = initial.CodexDelegationEffort, CodexDelegationFollowFast = initial.CodexDelegationFollowFast,
+            CodexDelegationFast = initial.CodexDelegationFast, CodexDelegationRecords = initial.CodexDelegationRecords,
+            CodexDelegationRecordsHours = initial.CodexDelegationRecordsHours, CodexDelegationSandbox = initial.CodexDelegationSandbox,
+            CodexDelegationWorktree = initial.CodexDelegationWorktree, CodexDelegationInstructions = initial.CodexDelegationInstructions,
+            CodexDelegationMemory = initial.CodexDelegationMemory, CodexDelegationConcurrency = initial.CodexDelegationConcurrency,
+            CodexDelegationQuotaFloor = initial.CodexDelegationQuotaFloor
+        };
+    }
+    /// Whether every Collaboration choice besides the switch is at its default.
+    internal bool DelegationIsDefault => RestoringDelegationDefaults() == this;
+    /// Whether every advanced choice (access, context, limits) is at its default.
+    internal bool DelegationAdvancedIsDefault
+    {
+        get
+        {
+            var initial = new DesktopPreferences();
+            return CodexDelegationSandbox == initial.CodexDelegationSandbox && CodexDelegationWorktree == initial.CodexDelegationWorktree
+                && CodexDelegationInstructions.Length == 0 && CodexDelegationMemory == initial.CodexDelegationMemory
+                && CodexDelegationConcurrency == initial.CodexDelegationConcurrency && CodexDelegationQuotaFloor == initial.CodexDelegationQuotaFloor;
+        }
+    }
     public bool CodexProgressRing { get; init; } = true;
     // A module's progress ring is on unless listed here, like the built-in rings.
     public string[] DisabledHarnessProgress { get; init; } = [];
@@ -145,10 +193,10 @@ internal sealed record DesktopPreferences
         && (DisplaySelection != "specified" || DisplayID is not ("" or "0") || DisplayName.Length > 0)
         && Appearances.Contains(IslandAppearance)
         && ExpandedQuotaStyle is "split" or "classic"
-        && CodexDelegationModel.Length <= 80 && DelegationEfforts.Contains(CodexDelegationEffort) && CodexDelegationFast is "" or "on" or "off"
-        && DelegationTimeouts.Contains(CodexDelegationTimeout) && DelegationConcurrency.Contains(CodexDelegationConcurrency)
-        && DelegationInitiatives.Contains(CodexDelegationInitiative) && DelegationLongRuns.Contains(CodexDelegationLongRun)
-        && CodexDelegationStatsDays is 7 or 30
+        && DelegationTriggers.Contains(CodexDelegationTrigger) && ValidDelegationModel(CodexDelegationModel) && DelegationEfforts.Contains(CodexDelegationEffort)
+        && DelegationRecords.Contains(CodexDelegationRecords) && DelegationRecordsHours.Contains(CodexDelegationRecordsHours)
+        && DelegationSandboxes.Contains(CodexDelegationSandbox) && ValidDelegationInstructions(CodexDelegationInstructions)
+        && DelegationConcurrency.Contains(CodexDelegationConcurrency) && DelegationQuotaFloors.Contains(CodexDelegationQuotaFloor)
         && (CompactLayout == null || Encoding.UTF8.GetByteCount(CompactLayout) <= 8192)
         && (CompactComponentOptions == null || Encoding.UTF8.GetByteCount(CompactComponentOptions) <= CompactChoices.ByteLimit)
         && (IslandDisplayPlaces == null || Encoding.UTF8.GetByteCount(IslandDisplayPlaces) <= IslandScreenMemory.ByteLimit)
@@ -244,12 +292,16 @@ internal sealed record DesktopPreferences
             showEmbeddedClaudeSessions = ShowEmbeddedClaudeSessions,
             showClaudeCloudProjects = ShowClaudeCloudProjects,
             claudeProgressRing = ClaudeProgressRing,
+            // What follows Codex goes as null; the engine writes the runner's config.json from this.
             codexDelegation = new
             {
-                enabled = CodexDelegation, rows = CodexDelegationRows, model = CodexDelegationModel, effort = CodexDelegationEffort,
-                fast = CodexDelegationFast == "" ? (bool?)null : CodexDelegationFast == "on", write = CodexDelegationWrite,
-                timeoutMinutes = CodexDelegationTimeout, maxConcurrent = CodexDelegationConcurrency, initiative = CodexDelegationInitiative,
-                failureAlerts = CodexDelegationFailureAlerts, longRunMinutes = CodexDelegationLongRun
+                enabled = CodexDelegation, trigger = CodexDelegationTrigger,
+                model = CodexDelegationFollowModel || CodexDelegationModel.Length == 0 ? null : CodexDelegationModel,
+                effort = CodexDelegationFollowEffort ? null : CodexDelegationEffort,
+                fast = CodexDelegationFollowFast ? (bool?)null : CodexDelegationFast,
+                records = CodexDelegationRecords, recordsHours = CodexDelegationRecordsHours, sandbox = CodexDelegationSandbox,
+                worktree = CodexDelegationWorktree, instructions = CodexDelegationInstructions, memory = CodexDelegationMemory,
+                maxConcurrent = CodexDelegationConcurrency, quotaFloor = CodexDelegationQuotaFloor == 0 ? (int?)null : CodexDelegationQuotaFloor
             },
             codexProgressRing = CodexProgressRing,
             deepseekProgressRing = DeepSeekProgressRing,

@@ -90,8 +90,6 @@ public partial class TaskRow : Button
         animations = value; Icon.SetMotion(value); if (!value) UpdateHover();
         foreach (var icon in Delegations.Children.OfType<Grid>().SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
     }
-    /// The first Codex for Claude run's line, where the island's one-time explanation points.
-    internal FrameworkElement? FirstDelegationLine => Delegations.Children.OfType<Grid>().FirstOrDefault();
     /// Stop on a running Codex for Claude run's line; the island sends the run's ID.
     internal void SetStopAction(Action<string>? action, string label) { stop = action; stopLabel = label; RefreshStopButtons(); }
     private void RefreshStopButtons()
@@ -99,13 +97,14 @@ public partial class TaskRow : Button
         foreach (var line in Delegations.Children.OfType<Grid>())
             if (line.Tag is EngineTaskRow run && line.Children.OfType<Button>().FirstOrDefault() is { } button)
             {
-                button.ToolTip = stopLabel; AutomationProperties.SetName(button, stopLabel);
+                AutomationProperties.SetName(button, stopLabel);
                 button.Visibility = stop != null && run.CanStop == true && line.IsMouseOver ? Visibility.Visible : Visibility.Hidden;
             }
     }
     /// One line per run: its icon (state and progress ring), Claude's label,
-    /// speed and time, model and effort. Mode, access and the rest wait in the
-    /// hover card. Clicking the line opens the Claude task, like the row.
+    /// speed and time, model and effort, always on the line; no hover card.
+    /// Screen readers get the run's details as help text. Clicking the line
+    /// opens the Claude task, like the row.
     private void BuildDelegations(EngineTaskRow value, PanelOptions? options)
     {
         Delegations.Children.Clear();
@@ -124,7 +123,6 @@ public partial class TaskRow : Button
             var text = new TextBlock { Text = run.Title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = state.TitleInk,
                 VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             Grid.SetColumn(text, 2); line.Children.Add(text);
-            if (run.DetailLines is { Count: > 0 } lines) line.ToolTip = DetailCard(run.Title, lines);
             var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Opacity = state.ModelOpacity };
             // Speed, time, model and effort, as on a task row's two lines.
             if (run.RateText != null)
@@ -143,31 +141,13 @@ public partial class TaskRow : Button
             line.MouseEnter += (_, _) => RefreshStopButtons();
             line.MouseLeave += (_, _) => RefreshStopButtons();
             AutomationProperties.SetName(line, state.AccessibleName);
+            if (run.DetailLines is { Count: > 0 } lines)
+                AutomationProperties.SetHelpText(line, string.Join(", ", lines.Where(pair => pair.Count == 2).Select(pair => pair[0] + " " + pair[1])));
             Delegations.Children.Add(line);
             icon.Show(run, IconColor(state), false);
             icon.SetMotion(animations);
         }
         RefreshStopButtons();
-    }
-    /// The hover card: the run's label, then label and value pairs from Core.
-    private static ToolTip DetailCard(string title, IReadOnlyList<IReadOnlyList<string>> lines)
-    {
-        var grid = new Grid { MaxWidth = 300 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition());
-        var heading = new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, FontSize = 12.5, Margin = new Thickness(0, 0, 0, 6), TextWrapping = TextWrapping.Wrap };
-        Grid.SetColumnSpan(heading, 2); grid.Children.Add(heading);
-        int row = 1;
-        foreach (var pair in lines.Where(pair => pair.Count == 2))
-        {
-            grid.RowDefinitions.Add(new RowDefinition());
-            var label = new TextBlock { Text = pair[0], FontSize = 11.5, Foreground = PacerPalette.Secondary, Margin = new Thickness(0, 1, 12, 1) };
-            var value = new TextBlock { Text = pair[1], FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 1, 0, 1) };
-            Grid.SetRow(label, row); Grid.SetRow(value, row); Grid.SetColumn(value, 1);
-            grid.Children.Add(label); grid.Children.Add(value); row++;
-        }
-        return new ToolTip { Content = grid, Padding = new Thickness(10, 8, 10, 8), Placement = System.Windows.Controls.Primitives.PlacementMode.Mouse };
     }
     private Button StopButton(EngineTaskRow run)
     {

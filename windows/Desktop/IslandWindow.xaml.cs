@@ -451,46 +451,6 @@ public partial class IslandWindow : Window
         pointerDown = null;
     }
     private void OnClosing(object? sender, CancelEventArgs e) { if (!AllowClose) { e.Cancel = true; visibleRequested = false; ApplyFullscreenVisibility(); } else StopPresentation(); }
-    /// Codex for Claude's one-time explanation: whether it is still due, and
-    /// how the user's "Got It" is remembered. The app supplies both.
-    internal Func<bool>? DelegationCoachPending { get; set; }
-    internal Func<Task>? DelegationCoachDismissed { get; set; }
-    private System.Windows.Controls.Primitives.Popup? delegationCoach;
-    /// The first time the open panel lists a Codex for Claude run, a bubble
-    /// under it says what it is; it never shows again after Got It.
-    private void ShowDelegationCoach()
-    {
-        if (!expanded || DelegationCoachPending?.Invoke() != true) return;
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (!expanded) return;
-            var target = TaskRowsIn(TaskPages).Select(row => row.FirstDelegationLine).FirstOrDefault(line => line != null);
-            // The bubble follows the first run line; it goes when that run's row is rebuilt or gone.
-            if (delegationCoach != null && ReferenceEquals(delegationCoach.PlacementTarget, target)) return;
-            CloseDelegationCoach();
-            if (target == null) return;
-            var title = new TextBlock { Text = ui.Text("delegation.coach.title"), FontWeight = FontWeights.SemiBold, FontSize = 12.5, Foreground = Brushes.White };
-            var detail = new TextBlock { Text = ui.Text("delegation.coach.detail"), FontSize = 12, Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 6) };
-            var ok = new Button { Content = ui.Text("delegation.coach.ok"), HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(10, 2, 10, 3) };
-            AutomationProperties.SetAutomationId(ok, "island.delegation.coach.ok");
-            var content = new StackPanel(); content.Children.Add(title); content.Children.Add(detail); content.Children.Add(ok);
-            var bubble = new Border { Child = content, Width = 280, Padding = new Thickness(12, 10, 12, 10), CornerRadius = new CornerRadius(12),
-                Background = new SolidColorBrush(Color.FromRgb(42, 93, 176)), Margin = new Thickness(0, 6, 0, 0) };
-            AutomationProperties.SetName(bubble, ui.Text("delegation.coach.title"));
-            delegationCoach = new System.Windows.Controls.Primitives.Popup { Child = bubble, PlacementTarget = target, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
-                AllowsTransparency = true, StaysOpen = true, IsOpen = true };
-            ok.Click += async (_, _) =>
-            {
-                CloseDelegationCoach();
-                if (DelegationCoachDismissed != null) await DelegationCoachDismissed();
-            };
-        }, System.Windows.Threading.DispatcherPriority.Loaded);
-    }
-    private void CloseDelegationCoach()
-    {
-        if (delegationCoach == null) return;
-        delegationCoach.IsOpen = false; delegationCoach = null;
-    }
     private void SetExpanded(bool value, bool snap = false)
     {
         if (value && (updateInputSuspended || move?.Active == true)) return;
@@ -500,7 +460,7 @@ public partial class IslandWindow : Window
         expanded = value;
         // A collapsed island skipped the panel's snapshots; it is built once, before it is measured.
         // Rows kept from a hidden panel resume their loops once they show.
-        if (value) { RefreshDirtyPanel(); RefreshRowMotion(); ShowDelegationCoach(); } else CloseDelegationCoach();
+        if (value) { RefreshDirtyPanel(); RefreshRowMotion(); }
         PaceBadges();
         UIElementAutomationPeer.FromElement(this)?.RaisePropertyChangedEvent(ExpandCollapsePatternIdentifiers.ExpandCollapseStateProperty,
             value ? ExpandCollapseState.Collapsed : ExpandCollapseState.Expanded,
@@ -863,8 +823,6 @@ public partial class IslandWindow : Window
             else if (rowsChanged) { if (!UpdatePageInPlace()) BuildPage(false, 0); panelChanged = true; }
             else if (linksChanged || openingChanged) foreach (var row in TaskRowsIn(TaskPages)) BindTaskAction(row);
             panelChanged |= RenderPanel(snapshot);
-            // A run that starts while the panel is open gets its explanation too.
-            if (rowsChanged) ShowDelegationCoach();
         }
         // Only a new size relays the island; values redraw within their footprint.
         var size = MeasureCompactBar();
@@ -888,7 +846,6 @@ public partial class IslandWindow : Window
         if (!PanelLive) { panelDirty = true; return; }
         if (rebuildRows) BuildPage(false, 0);
         RenderPanel(latest);
-        ShowDelegationCoach();
     }
     /// The page shows the same tasks in the same order: each row takes its new
     /// values in place, keeping its control and motion. Otherwise it is rebuilt.

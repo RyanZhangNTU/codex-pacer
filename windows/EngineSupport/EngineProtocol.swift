@@ -418,7 +418,13 @@ struct EngineCodexDelegationStatus: Codable, Equatable {
     /// Codex's quota windows now, such as "5h 63% · 7d 71%".
     var quotaText: String? = nil
 }
-struct EngineCodexModel: Codable, Equatable { let slug: String; let name: String }
+/// A model from Codex's catalog, with the efforts it supports and its own default effort.
+struct EngineCodexModel: Codable, Equatable {
+    let slug: String
+    let name: String
+    var efforts: [String]? = nil
+    var defaultEffort: String? = nil
+}
 struct EngineRunningDelegation: Codable, Equatable {
     let parentTitle: String
     let row: EngineTaskRow

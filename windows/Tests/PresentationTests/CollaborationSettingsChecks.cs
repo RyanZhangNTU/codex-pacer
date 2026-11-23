@@ -1,0 +1,101 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
+using System.Windows.Controls;
+using System.Windows.Threading;
+using CodexPacer.Windows;
+
+/// Settings → Collaboration with a demo engine and synthetic preferences: the
+/// pair card and its switch, the basic choices with Follow Codex | Pick and
+/// Restore Defaults, the advanced choices folded away, ⓘ that open on click,
+/// and no hover popups anywhere on the page.
+internal static class CollaborationSettingsChecks
+{
+    internal static async Task Run(string language, bool dark, string output)
+    {
+        await using var engine = new EngineClient();
+        var preferences = new DesktopPreferences { IslandAppearance = "classic", LastSettingsPane = "collaboration", ProviderModes = new()
+            { ["codex"] = "enabled", ["claude"] = "enabled", ["deepseek"] = "enabled" } };
+        var session = new PreferencesSession(preferences, async value => await engine.SendAsync("configure", value), _ => true);
+        UiText ui = UiText.For(language == "zh-Hans");
+        var window = new SettingsWindow(ui, session, new Startup(), true, dark, engine) { ShowActivated = false, IsHitTestVisible = false };
+        string name = language + (dark ? "-dark" : "-light");
+        try
+        {
+            await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, preferences.EngineConfiguration(), referenceFixture: true);
+            window.Show(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            await Until(() => Find<CheckBox>(window, "settings.collaboration.enabled").IsEnabled, "The pair's switch opens once the Claude module is known");
+            Check(Find<TextBlock>(window, "settings.subtitle").Text == ui.Text("main.subtitle.collaboration"), "The page says what it is for");
+            var toggle = Find<CheckBox>(window, "settings.collaboration.enabled");
+            Check(toggle.IsChecked == false && !Find<Button>(window, "settings.collaboration.restore").IsEnabled,
+                "The pair starts off, and Restore Defaults has nothing to restore");
+            Check(Find<RadioButton>(window, "settings.collaboration.model.follow").IsChecked == true
+                && Find<RadioButton>(window, "settings.collaboration.effort.follow").IsChecked == true
+                && Find<RadioButton>(window, "settings.collaboration.fast.follow").IsChecked == true
+                && !Find<ComboBox>(window, "settings.collaboration.effort").IsVisible && !Find<ComboBox>(window, "settings.collaboration.records_hours").IsVisible,
+                "Model, effort and fast mode follow Codex, and their pickers wait until the user picks");
+            var advanced = Find<Expander>(window, "settings.collaboration.advanced");
+            Check(!advanced.IsExpanded && advanced.Tag as string == ui.Text("collab.advanced.summary") && !Find<ComboBox>(window, "settings.collaboration.sandbox").IsVisible,
+                "The advanced choices fold into one row with a summary");
+            Check(!Descendants(Find<ScrollViewer>(window, "settings.content")).OfType<FrameworkElement>().Any(value => value.ToolTip != null),
+                "Nothing on the page explains itself on hover");
+            window.CapturePreview(Path.Combine(output, "settings-" + name + "-collaboration.png"));
+
+            Toggle(toggle);
+            await Until(() => session.Current.CodexDelegation && toggle.IsEnabled, "The pair's switch saves and reaches the engine");
+            Select(Find<RadioButton>(window, "settings.collaboration.effort.pick"));
+            await Until(() => !session.Current.CodexDelegationFollowEffort && Find<ComboBox>(window, "settings.collaboration.effort").IsVisible,
+                "Picking an effort shows its menu");
+            Select(Find<RadioButton>(window, "settings.collaboration.records.timed"));
+            await Until(() => session.Current.CodexDelegationRecords == "timed" && Find<ComboBox>(window, "settings.collaboration.records_hours").IsVisible
+                && (string?)Find<ComboBox>(window, "settings.collaboration.records_hours").SelectedValue == "24", "Timed records show their hours, a day by default");
+            var info = Find<Button>(window, "settings.collaboration.records_row.info");
+            Check(AutomationProperties.GetItemStatus(info) == ui.Text("main.info_hidden"), "ⓘ starts closed");
+            Invoke(info); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            Check(AutomationProperties.GetItemStatus(info) == ui.Text("main.info_shown")
+                && Descendants(window).OfType<TextBlock>().Any(value => value.IsVisible && value.Text == ui.Text("collab.info.records")),
+                "ⓘ opens its explanation under the row on click");
+            ((IExpandCollapseProvider)new ExpanderAutomationPeer(advanced).GetPattern(PatternInterface.ExpandCollapse)).Expand();
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            var sandbox = Find<ComboBox>(window, "settings.collaboration.sandbox");
+            Check(sandbox.IsVisible && (string?)sandbox.SelectedValue == "workspace-write-network" && Find<RadioButton>(window, "settings.collaboration.location.project").IsEnabled,
+                "Expanded, the access choices show, writing in the project with network by default");
+            sandbox.SelectedValue = "read-only";
+            await Until(() => session.Current.CodexDelegationSandbox == "read-only" && !Find<RadioButton>(window, "settings.collaboration.location.worktree").IsEnabled
+                && advanced.Tag as string == ui.Text("collab.advanced.summary_changed"), "A read-only run has no work location, and the summary says something changed");
+            Check(Find<TextBlock>(window, "settings.collaboration.instructions").Text == ui.Text("collab.instructions.none"), "No standing instructions reads as not set");
+            await Until(() => Find<Button>(window, "settings.collaboration.restore").IsEnabled, "Changed choices can be restored");
+            window.CapturePreview(Path.Combine(output, "settings-" + name + "-collaboration-changed.png"));
+            Invoke(Find<Button>(window, "settings.collaboration.restore"));
+            await Until(() => session.Current.DelegationIsDefault && session.Current.CodexDelegation && toggle.IsChecked == true,
+                "Restore Defaults resets the pair's choices and keeps its switch");
+            Check(Find<RadioButton>(window, "settings.collaboration.effort.follow").IsChecked == true && !Find<ComboBox>(window, "settings.collaboration.effort").IsVisible,
+                "Restored choices follow Codex again");
+            Toggle(toggle);
+            await Until(() => !session.Current.CodexDelegation && toggle.IsEnabled, "The pair can be turned off again");
+            Console.WriteLine("PASS collaboration settings " + name + ": pair switch, follow and pick, records, info, advanced and restore");
+        }
+        catch
+        {
+            try { window.CapturePreview(Path.Combine(output, "failed-settings-" + name + "-collaboration.png")); } catch { }
+            throw;
+        }
+        finally { window.AllowClose = true; window.Close(); }
+    }
+    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement
+        => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);
+    private static void Toggle(CheckBox check) => ((IToggleProvider)new CheckBoxAutomationPeer(check).GetPattern(PatternInterface.Toggle)).Toggle();
+    private static void Select(RadioButton choice) => ((ISelectionItemProvider)new RadioButtonAutomationPeer(choice).GetPattern(PatternInterface.SelectionItem)).Select();
+    private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+    private static async Task Until(Func<bool> condition, string message)
+    { var clock = Stopwatch.StartNew(); while (!condition() && clock.Elapsed < PresentationWait.Limit) await Task.Delay(25); Check(condition(), message); await Dispatcher.Yield(DispatcherPriority.ContextIdle); }
+    private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
+    private sealed class Startup : IStartupRegistration
+    { public StartupRegistrationState Read() => new(false, true); public bool Set(bool enabled) => true; }
+}

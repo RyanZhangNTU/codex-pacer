@@ -24,8 +24,22 @@ internal static class PreferencesCodec
         ["deepSeekWeeklyBudget"] = "deepseekWeeklyBudget", ["deepSeekRingPeriod"] = "deepseekRingPeriod",
         ["deepSeekSpeedSource"] = "deepseekSpeedSource", ["deepSeekShowsTurnCost"] = "deepseekShowsTurnCost",
         ["deepSeekLowBalanceLine"] = "deepseekLowBalanceLine", ["deepSeekSpikeLimit"] = "deepseekSpikeLimit",
-        ["deepSeekProgressRing"] = "deepseekProgressRing"
+        ["deepSeekProgressRing"] = "deepseekProgressRing",
+        // Settings → Collaboration keeps each pair's choices under its own keys, as on the Mac.
+        ["codexDelegation"] = DelegationPair + "enabled", ["codexDelegationTrigger"] = DelegationPair + "trigger",
+        ["codexDelegationFollowModel"] = DelegationPair + "followModel", ["codexDelegationModel"] = DelegationPair + "model",
+        ["codexDelegationFollowEffort"] = DelegationPair + "followEffort", ["codexDelegationEffort"] = DelegationPair + "effort",
+        ["codexDelegationFollowFast"] = DelegationPair + "followFast", ["codexDelegationFast"] = DelegationPair + "fast",
+        ["codexDelegationRecords"] = DelegationPair + "records", ["codexDelegationRecordsHours"] = DelegationPair + "recordsHours",
+        ["codexDelegationSandbox"] = DelegationPair + "sandbox", ["codexDelegationWorktree"] = DelegationPair + "worktree",
+        ["codexDelegationInstructions"] = DelegationPair + "instructions", ["codexDelegationMemory"] = DelegationPair + "memory",
+        ["codexDelegationConcurrency"] = DelegationPair + "concurrency", ["codexDelegationQuotaFloor"] = DelegationPair + "quotaFloor"
     };
+    private const string DelegationPair = "collaboration.claude>codex.";
+    /// Codex for Claude keys from builds before the pairs; ignored, and dropped at the next save.
+    private static readonly string[] EarlierDelegationKeys = ["codexDelegation", "codexDelegationRows", "codexDelegationModel", "codexDelegationEffort",
+        "codexDelegationFast", "codexDelegationWrite", "codexDelegationTimeout", "codexDelegationConcurrency", "codexDelegationInitiative",
+        "codexDelegationFailureAlerts", "codexDelegationLongRun", "codexDelegationCoachShown", "codexDelegationStatsDays"];
     private static string Key(string property) => Keys.GetValueOrDefault(property, property);
     internal static DesktopPreferences Decode(ReadOnlySpan<byte> bytes)
     {
@@ -152,15 +166,16 @@ internal static class PreferencesCodec
     }
     private static DesktopPreferences Normalize(DesktopPreferences value) => value with
     {
-        // Codex for Claude choices outside the lists fall back without losing the rest.
-        CodexDelegationModel = value.CodexDelegationModel is { Length: <= 80 } model ? model : "",
-        CodexDelegationEffort = DesktopPreferences.DelegationEfforts.Contains(value.CodexDelegationEffort) ? value.CodexDelegationEffort : "",
-        CodexDelegationFast = value.CodexDelegationFast is "on" or "off" ? value.CodexDelegationFast : "",
-        CodexDelegationTimeout = DesktopPreferences.DelegationTimeouts.Contains(value.CodexDelegationTimeout) ? value.CodexDelegationTimeout : 60,
+        // Collaboration choices outside the lists fall back to their defaults without losing the rest.
+        CodexDelegationTrigger = value.CodexDelegationTrigger is "command" ? "command" : "ask",
+        CodexDelegationModel = DesktopPreferences.ValidDelegationModel(value.CodexDelegationModel) ? value.CodexDelegationModel : "",
+        CodexDelegationEffort = DesktopPreferences.DelegationEfforts.Contains(value.CodexDelegationEffort) ? value.CodexDelegationEffort : "high",
+        CodexDelegationRecords = DesktopPreferences.DelegationRecords.Contains(value.CodexDelegationRecords) ? value.CodexDelegationRecords : "turn",
+        CodexDelegationRecordsHours = DesktopPreferences.DelegationRecordsHours.Contains(value.CodexDelegationRecordsHours) ? value.CodexDelegationRecordsHours : 24,
+        CodexDelegationSandbox = DesktopPreferences.DelegationSandboxes.Contains(value.CodexDelegationSandbox) ? value.CodexDelegationSandbox : "workspace-write-network",
+        CodexDelegationInstructions = DesktopPreferences.CleanDelegationInstructions(value.CodexDelegationInstructions),
         CodexDelegationConcurrency = DesktopPreferences.DelegationConcurrency.Contains(value.CodexDelegationConcurrency) ? value.CodexDelegationConcurrency : 3,
-        CodexDelegationInitiative = DesktopPreferences.DelegationInitiatives.Contains(value.CodexDelegationInitiative) ? value.CodexDelegationInitiative : "ask",
-        CodexDelegationLongRun = DesktopPreferences.DelegationLongRuns.Contains(value.CodexDelegationLongRun) ? value.CodexDelegationLongRun : 0,
-        CodexDelegationStatsDays = value.CodexDelegationStatsDays is 7 ? 7 : 30,
+        CodexDelegationQuotaFloor = DesktopPreferences.DelegationQuotaFloors.Contains(value.CodexDelegationQuotaFloor) ? value.CodexDelegationQuotaFloor : 0,
         DisplaySelection = value.DisplaySelection is "primary" or "specified" ? value.DisplaySelection : "automatic",
         Language = value.Language is "en" or "zh-Hans" ? value.Language : "system",
         AppTheme = value.AppTheme is "light" or "dark" ? value.AppTheme : "auto",
@@ -202,6 +217,7 @@ internal static class PreferencesCodec
             string key = Key(property.Key);
             if (property.Value == null) root.Remove(key); else root[key] = property.Value.DeepClone();
         }
+        foreach (string key in EarlierDelegationKeys) root.Remove(key);
         if (NamedDisplayFallback(root)) root.Remove("displaySelection");
         if (value.DisplaySelection == "specified")
         {
