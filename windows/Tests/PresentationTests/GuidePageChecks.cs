@@ -343,13 +343,21 @@ internal static class GuidePageChecks
             Check(labels.All(label => grid.Contains(label.Bounds)), "Every label of the " + view + " diagram stays inside its grid");
             var crossing = labels.SelectMany((first, index) => labels.Skip(index + 1).Where(second => first.Bounds.IntersectsWith(second.Bounds)).Select(second => first.Text + " / " + second.Text)).ToArray();
             Check(crossing.Length == 0, "No two labels of the " + view + " diagram overlap: " + string.Join(", ", crossing));
+            // The numbered notes sit on the figure's tint, itself laid over the card.
+            var fill = ((SolidColorBrush)Find<Border>(settings, "help.collaboration.figure").Background).Color; var card = ((SolidColorBrush)settings.Resources["SettingsCard"]).Color;
+            byte Mix(byte over, byte under) => (byte)Math.Round(under + (over - under) * fill.A / 255.0);
+            var tint = Color.FromRgb(Mix(fill.R, card.R), Mix(fill.G, card.G), Mix(fill.B, card.B));
+            string[] notes = Enumerable.Range(1, 3).SelectMany(note => ui.Text("help.collaboration." + view + "." + note).Split('\n')).ToArray();
+            var drawn = labels.Where(label => notes.Contains(label.Text)).ToArray();
+            Check(drawn.Length == notes.Length && drawn.All(label => Contrast(((SolidColorBrush)label.Ink).Color, tint) >= 4.5),
+                "The " + view + " diagram's numbered notes read at 4.5:1 on its tint");
         }
         string[] pacerSteps = ["brief", "start", "progress", "done", "ended", "clear"];
         Check(Drawn().Contains("Pacer") && pacerSteps.All(step => Drawn().Contains(ui.Text("help.collaboration." + step))),
             "Pacer has its own lane, and each step it takes is labeled: the brief, the start, live progress, the result, and the cleanup after the chat ends");
         Check(Drawn().Count(text => text == ui.Text("help.collaboration.interact")) == 2 && Drawn().Contains(ui.Text("help.collaboration.deliver")),
             "You keep interacting with Claude while Codex works, and Claude delivers the result");
-        Laid("Pacer");
+        Laid("pacer");
         var peer = UIElementAutomationPeer.CreatePeerForElement(diagram);
         Check(peer.GetAutomationControlType() == AutomationControlType.Image && peer.GetChildren() == null && peer.GetName() == ui.Text("help.collaboration.pacer.summary"),
             "The diagram reads as one picture that tells Pacer's whole sequence");

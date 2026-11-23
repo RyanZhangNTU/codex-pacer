@@ -23,7 +23,8 @@ internal sealed class CollaborationDiagram : Viewbox
 {
     internal const double GridWidth = 420, GridHeight = 422;
     private const double You = 30, Claude = 118, Pacer = 240, Codex = 370;
-    private const string Good = "SettingsTintCodex", Bad = "SettingsWarning";
+    /// The notes' inks, each readable at 4.5:1 on its own tinted figure.
+    private const string Good = "SettingsTintCodexOnSoft", Bad = "SettingsNoticeText";
     private readonly UiText ui;
     private readonly Canvas canvas = new() { Width = GridWidth, Height = GridHeight };
 
@@ -34,8 +35,8 @@ internal sealed class CollaborationDiagram : Viewbox
     }
 
     internal bool ThroughPacer { get; private set; }
-    /// Every label as drawn, with its box on the grid; read by the presentation checks.
-    internal IEnumerable<(string Text, Rect Bounds)> Labels => canvas.Children.OfType<Words>().Select(words => (words.Text, words.Bounds));
+    /// Every label as drawn, with its box on the grid and its ink; read by the presentation checks.
+    internal IEnumerable<(string Text, Rect Bounds, Brush Ink)> Labels => canvas.Children.OfType<Words>().Select(words => (words.Text, words.Bounds, words.Ink));
 
     internal void Show(bool throughPacer)
     {
@@ -82,7 +83,7 @@ internal sealed class CollaborationDiagram : Viewbox
         Labelled(Claude, Pacer - 6, 148, T("brief")); Labelled(Pacer + 6, Codex - 6, 148, T("start"));
         Mark(256, 172, "1", T("pacer.1"), Good);
         // 2 Codex works in the background; you keep interacting with Claude; Pacer watches the subtask live.
-        Bar(Pacer, 148, 132, "SettingsPrimary"); Bar(Codex, 148, 128, Good);
+        Bar(Pacer, 148, 132, "SettingsPrimary"); Bar(Codex, 148, 128, "SettingsTintCodex");
         foreach (double y in new double[] { 206, 246 })
         {
             Label((You + Claude) / 2, y - 10, T("interact"), 10.5, "SettingsSecondary"); Arrow(You, Claude - 2, y, dashed: true, both: true);
