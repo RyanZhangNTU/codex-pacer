@@ -1754,7 +1754,7 @@
 "collab.sandbox.workspace-write" = "Write in project";
 "collab.sandbox.workspace-write-network" = "Write in project, with network";
 "collab.sandbox.danger-full-access" = "Full access";
-"collab.info.sandbox" = "Read-only: can only read files.\nWrite in project: can change files inside the project, without network access.\nWrite in project, with network: also reaches the network, for example to install dependencies or run tests that need it.\nFull access: can change any file on this Mac and reach the network. Nobody confirms anything while Codex runs, so choose it with care.\nCode reviews are always read-only. Each call sets this on Codex's command line, Codex's sandbox enforces it, and Codex's own permission settings don't apply.";
+"collab.info.sandbox" = "Read-only: can only read files.\nWrite in project: can change files inside the project, without network access.\nWrite in project, with network: also reaches the network, for example to install dependencies or run tests that need it.\nFull access: can change any file on this computer and reach the network. Nobody confirms anything while Codex runs, so choose it with care.\nCode reviews are always read-only. Each call sets this on Codex's command line, Codex's sandbox enforces it, and Codex's own permission settings don't apply.";
 "collab.location" = "Where Codex works";
 "collab.location.project" = "Current project";
 "collab.location.worktree" = "Separate worktree";
