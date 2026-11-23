@@ -210,6 +210,7 @@ struct ClaudeActivityReader {
                                at.timeIntervalSince1970 >= boundary.timeIntervalSince1970 - 0.001 { historical = false }
                             let prompt = cursor.context.promptID(for: parsed, sessionID: cursor.session, parentID: cursor.parent)
                             cursor.context.noteStopHookError(parsed)
+                            cursor.context.noteTimestamp(parsed)
                             let failuresOnly = cursor.context.stopHookFailuresOnly(parsed)
                             if prompt == nil, cursor.context.awaitedParent != nil {
                                 let owned = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent,
@@ -219,6 +220,8 @@ struct ClaudeActivityReader {
                             } else {
                                 sanitized = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent, promptID: prompt,
                                     stopHookFailuresOnly: failuresOnly)
+                                    + ClaudeActivityRecord.sessionClosed(parsed, sessionID: cursor.session, parentID: cursor.parent,
+                                        latestTimestamp: cursor.context.latestTimestamp)
                             }
                         } else { sanitized = [] }
                     }

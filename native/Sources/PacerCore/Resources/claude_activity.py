@@ -129,6 +129,9 @@ def transcript_record(value, owner, parent=None, prompt=None, failures_only=Fals
     origin=value.get('origin');origin=origin if isinstance(origin,dict) else {}
     human=origin.get('kind')=='human' and origin.get('producer')!='session-task'
     legacy='origin' not in value and 'promptSource' not in value and 'turnOrigin' not in value
+    # A prompt given to `claude -p` or through the Agent SDK. Wakes, task
+    # notifications and system turns carry other origins.
+    sdk='origin' not in value and value.get('promptSource')=='sdk' and value.get('turnOrigin')=='sdk'
     if kind=='user' and message.get('role')=='user' and origin.get('kind')=='task-notification' and origin.get('producer')=='session-task' and ('runId' not in origin or ident(origin['runId'])) and value.get('turnOrigin')!='human':
         text=content if isinstance(content,str) else content[0].get('text') if isinstance(content,list) and len(content)==1 and isinstance(content[0],dict) and content[0].get('type')=='text' else None
         notification=agent_notification(text)
@@ -143,7 +146,7 @@ def transcript_record(value, owner, parent=None, prompt=None, failures_only=Fals
         if source is not None and not (isinstance(source,dict) and source.get('kind')=='task-notification' and source.get('producer')=='session-task'):return []
         notification=agent_notification(attachment.get('prompt'))
         return [dict(base,kind='agentNotification',agentId=notification[0],itemId=notification[1],agentStatus=notification[2])] if notification else []
-    if kind=='user' and not human and not legacy:return []
+    if kind=='user' and not human and not legacy and not sdk:return []
     if kind=='user' and 'origin' not in value and 'promptSource' not in value and 'turnOrigin' not in value and value.get('isMeta') is not False and value.get('isSynthetic') is not False and ident(value.get('promptId')) and isinstance(content,list) and len(content)==1:
         marker=content[0]
         if isinstance(marker,dict) and marker.get('type')=='text' and marker.get('text') in ('[Request interrupted by user]','[Request interrupted by user for tool use]'):
@@ -181,7 +184,9 @@ def transcript_record(value, owner, parent=None, prompt=None, failures_only=Fals
             row=dict(base, kind='toolStart', itemId=item, attention='input' if name == 'AskUserQuestion' else 'approval' if name == 'ExitPlanMode' else 'none')
             if name in AGENT_TOOLS:row['agentTool']=True
             rows.append(row)
-        if message.get('stop_reason', value.get('stop_reason')) in ('end_turn', 'stop_sequence', 'refusal'): rows.append(dict(base, kind='stopRequested'))
+        if message.get('stop_reason', value.get('stop_reason')) in ('end_turn', 'stop_sequence', 'refusal'):
+            # A request that failed for good ends the turn with a generated error reply.
+            rows.append(dict(base, kind='stopRequested', apiError=True) if value.get('isApiErrorMessage') is True else dict(base, kind='stopRequested'))
     if kind == 'result' and value.get('subtype') in ('success', 'error_during_execution', 'error_max_turns', 'interrupted'):
         subtype = value['subtype']; rows.append(dict(base, kind='stop' if subtype == 'success' else 'interrupt' if subtype == 'interrupted' else 'failure'))
     # A blocking Stop hook makes Claude go on working, so its errors keep the turn
@@ -200,6 +205,15 @@ def stop_hook_error(value):
     if attachment.get('type')=='hook_blocking_error':return stop,True
     if attachment.get('type')=='hook_non_blocking_error':return stop,False
     return None
+
+def session_closed(value,cursor):
+    # Claude Code appends cost-state to a main transcript when the process
+    # writing that session shuts down. It has no time of its own, so the
+    # transcript's latest record dates it; a resume starts with a new prompt.
+    if cursor['parent'] or not isinstance(value,dict) or value.get('type')!='cost-state':return []
+    if ident(value.get('sessionId',cursor['session']))!=cursor['session']:return []
+    at=stamp(cursor.get('latestStamp'))
+    return [{'origin':'transcript','kind':'sessionClosed','sessionId':cursor['session'],'at':at}] if at is not None else []
 
 def note_stop_hook_error(cursor,value):
     error=stop_hook_error(value)
@@ -433,7 +447,7 @@ def otlp_respond(stream,status):
 class Tailer:
     @staticmethod
     def reset_transcript_context(cursor):
-        for key in ('context', 'contextOrder', 'deferred', 'awaiting', 'released', 'stopHookErrors', 'stopHookOrder'):
+        for key in ('context', 'contextOrder', 'deferred', 'awaiting', 'released', 'stopHookErrors', 'stopHookOrder', 'latestStamp'):
             cursor.pop(key, None)
 
     def __init__(self, home):
@@ -570,10 +584,11 @@ class Tailer:
                         except (ValueError,UnicodeError): continue
                         prompt=self.prompt_context_record(value,cursor)
                         note_stop_hook_error(cursor,value);only=stop_hook_failures_only(cursor,value)
+                        if isinstance(value,dict) and isinstance(value.get('timestamp'),str) and len(value['timestamp'])<=80:cursor['latestStamp']=value['timestamp']
                         if prompt is None and cursor.get('awaiting'):
                             owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER,only)
                             values=unowned_rows(owned);self.defer_record(cursor,owned,historical)
-                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt,only)
+                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt,only)+session_closed(value,cursor)
                     rows.extend(dict(row,historical=historical) for row in values)
                     # A late parent proves the owner of descendants read before it.
                     rows.extend(cursor.pop('released',[]))

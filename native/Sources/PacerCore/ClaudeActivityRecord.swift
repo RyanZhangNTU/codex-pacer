@@ -6,7 +6,7 @@ struct ClaudeTranscriptFields {
     let values: [String: JSONFieldView]
     init?(_ bytes: Data) {
         guard let document = try? JSONFieldView.document(bytes, maximumBytes: ClaudeActivityRecord.maximumBytes),
-              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort", "attachment", "toolUseID"]) else { return nil }
+              let values = try? document.fields(["type", "subtype", "timestamp", "sessionId", "uuid", "parentUuid", "promptId", "cwd", "agentId", "isMeta", "isSynthetic", "message", "toolUseResult", "durationMs", "sessionTitle", "customTitle", "is_error", "stop_reason", "preventedContinuation", "requestId", "serverClassifierRequest", "origin", "promptSource", "turnOrigin", "hookErrors", "hookAdditionalContext", "entrypoint", "mcpMeta", "effort", "perTurnEffort", "attachment", "toolUseID", "isApiErrorMessage"]) else { return nil }
         self.values = values
     }
 }
@@ -62,6 +62,17 @@ enum ClaudeActivityRecord {
         if attachment["type"]?.matchesStringLiteral("hook_non_blocking_error") == true { return (stop, false) }
         return nil
     }
+    /// Claude Code appends `cost-state` to a main transcript when the process
+    /// writing that session shuts down, also after a headless run that loaded no
+    /// hooks. The record has no time of its own, so the transcript's latest
+    /// record dates it; a later resume starts again with a new prompt.
+    static func sessionClosed(_ parsed: ClaudeTranscriptFields, sessionID: String, parentID: String?, latestTimestamp: String?) -> [Data] {
+        guard parentID == nil, parsed.values["type"]?.matchesStringLiteral("cost-state") == true,
+              let session = identifier(parsed.values["sessionId"]?.string() ?? sessionID), session == sessionID,
+              let stamp = latestTimestamp, let at = date(stamp),
+              let row = encode(["origin": "transcript", "kind": "sessionClosed", "sessionId": session, "at": at.timeIntervalSince1970]) else { return [] }
+        return [row]
+    }
     /// - Parameter stopHookFailuresOnly: every error in this record's stop summary
     ///   is a Stop hook that failed without blocking, so the turn still ended.
     static func transcript(_ parsed: ClaudeTranscriptFields, sessionID: String, parentID: String? = nil, promptID: String? = nil,
@@ -101,6 +112,10 @@ enum ClaudeActivityRecord {
         let originFields = fields["origin"].flatMap { try? $0.fields(["kind", "producer", "runId"]) }
         let humanOrigin = originFields?["kind"]?.matchesStringLiteral("human") == true && originFields?["producer"]?.matchesStringLiteral("session-task") != true
         let legacyHuman = fields["origin"] == nil && fields["promptSource"] == nil && fields["turnOrigin"] == nil
+        // A prompt given to `claude -p` or through the Agent SDK. Wakes, task
+        // notifications and system turns carry other origins.
+        let sdkPrompt = fields["origin"] == nil && fields["promptSource"]?.matchesStringLiteral("sdk") == true
+            && fields["turnOrigin"]?.matchesStringLiteral("sdk") == true
         if kind == "user", message["role"]?.matchesStringLiteral("user") == true,
            originFields?["kind"]?.matchesStringLiteral("task-notification") == true,
            originFields?["producer"]?.matchesStringLiteral("session-task") == true,
@@ -135,7 +150,7 @@ enum ClaudeActivityRecord {
             value["itemId"] = notification.itemID; value["agentStatus"] = notification.status
             return [encode(value)].compactMap { $0 }
         }
-        if kind == "user", !humanOrigin, !legacyHuman { return [] }
+        if kind == "user", !humanOrigin, !legacyHuman, !sdkPrompt { return [] }
         // Verified in the bundled Claude Code 2.1.293 schema and a controlled
         // Desktop Esc test. Human prompts are never matched against a marker.
         if kind == "user", fields["origin"] == nil, fields["promptSource"] == nil, fields["turnOrigin"] == nil,
@@ -167,7 +182,7 @@ enum ClaudeActivityRecord {
             }
         }
         if kind == "user", fields["isMeta"]?.boolean() != true, fields["isSynthetic"]?.boolean() != true,
-           humanOrigin || legacyHuman,
+           humanOrigin || legacyHuman || sdkPrompt,
            toolEnds.isEmpty, let id = identifier(fields["promptId"]?.string() ?? fields["uuid"]?.string()) {
             var value = base; value["kind"] = "prompt"; value["promptId"] = id; result.append(value)
         }
@@ -216,7 +231,11 @@ enum ClaudeActivityRecord {
                 // Claude persists one API response per content block, and all
                 // blocks can carry the same end_turn. A thinking block is not
                 // an observed task ending; the post-hook summary verifies it.
-                var value = base; value["kind"] = "stopRequested"; result.append(value)
+                var value = base; value["kind"] = "stopRequested"
+                // A request that failed for good (sign-in, quota) ends the turn
+                // with a generated error reply; a hook would report StopFailure.
+                if fields["isApiErrorMessage"]?.boolean() == true { value["apiError"] = true }
+                result.append(value)
             }
         }
         if kind == "result", let subtype = fields["subtype"]?.string(), ["success", "error_during_execution", "error_max_turns", "interrupted"].contains(subtype) {
@@ -290,6 +309,17 @@ struct ClaudeActivityState: Sendable {
     /// aborts that turn's foreground agents and keeps background ones running,
     /// so only a child run that no background launch claims ends with it.
     private var rootInterrupts: [String: Double] = [:]
+    /// The model's own ending (`end_turn`) of each turn that nothing followed
+    /// yet. A Stop hook can still continue that turn, so only its summary
+    /// confirms the ending; a session that loaded no hooks never writes one.
+    private struct ModelStop: Sendable { let turn: String; let at: Double; let failed: Bool }
+    private var modelStops: [String: ModelStop] = [:]
+    /// When the process behind each hookless root shut down (`cost-state`).
+    /// Claude Code ends every agent of a session that exits, background ones too.
+    private var rootClosures: [String: Double] = [:]
+    /// How long a hookless turn stays running after the model ended it with
+    /// nothing following, the same age at which a baseline tail is unconfirmed.
+    static let quietModelStopLimit: TimeInterval = 900
     private var excludedSessions: Set<String> = []
     private(set) var unmatchedRequests = 0
     private(set) var status = RuntimeStreamStatus()
@@ -316,8 +346,9 @@ struct ClaudeActivityState: Sendable {
             sessions.removeValue(forKey: id); hooks.remove(id); historicalRunning.remove(id); metrics.removeValue(forKey: id)
             observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id)
             agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id)
-            agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id)
+            agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id); modelStops.removeValue(forKey: id)
         }
+        rootClosures = rootClosures.filter { !excludedSessions.contains($0.key) }
         agentCompletions = agentCompletions.filter { !excludedSessions.contains($0.value.parent) }
         agentEnds = agentEnds.filter { !excludedSessions.contains($0.value.parent) }
         agentLaunches = agentLaunches.filter { !excludedSessions.contains($0.value.parent) }
@@ -347,6 +378,15 @@ struct ClaudeActivityState: Sendable {
             }
             guard now.timeIntervalSince(observed) > 900 else { continue }
             sessions[id]?.markSourceUnavailable(); unconfirmedBaseline.removeValue(forKey: id)
+        }
+        // A live turn of a session without hooks that the model ended and that
+        // stays quiet is unconfirmed like a baseline tail; its own new records
+        // bring it back. A long tool call or reply is not a model ending.
+        for (id, stop) in modelStops {
+            guard let value = sessions[id], value.turnID == stop.turn, !hooks.contains(id),
+                  [.running, .waitingForInput].contains(value.phase) else { modelStops.removeValue(forKey: id); continue }
+            guard now.timeIntervalSince1970 - stop.at > Self.quietModelStopLimit else { continue }
+            sessions[id]?.markSourceUnavailable(); modelStops.removeValue(forKey: id)
         }
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
     }
@@ -392,7 +432,7 @@ struct ClaudeActivityState: Sendable {
         status.attachedThreads = sessions.values.filter { [.running, .waitingForInput].contains($0.phase) }.count
         if sessions.count > 128 {
             for id in sessions.keys.sorted(by: { (sessions[$0]?.lastObserved ?? .distantPast) > (sessions[$1]?.lastObserved ?? .distantPast) }).dropFirst(128) {
-                sessions.removeValue(forKey: id); hooks.remove(id); metrics.removeValue(forKey: id); historicalRunning.remove(id); observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id); agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id); agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id)
+                sessions.removeValue(forKey: id); hooks.remove(id); metrics.removeValue(forKey: id); historicalRunning.remove(id); observedMeters.removeValue(forKey: id); typedInterruptPrompts.removeValue(forKey: id); agentCompletions.removeValue(forKey: id); agentEnds.removeValue(forKey: id); agentLaunches.removeValue(forKey: id); previousRunStarts.removeValue(forKey: id); modelStops.removeValue(forKey: id)
             }
         }
     }
@@ -578,13 +618,24 @@ struct ClaudeActivityState: Sendable {
         }
         guard date >= (value.lastObserved ?? .distantPast) else { return }
         if origin == "hook" { hooks.insert(key) }
-        if kind == "stopRequested" { return }
+        if kind == "stopRequested" {
+            if origin == "transcript", record["unownedTurn"] as? Bool != true, !hooks.contains(key),
+               [.running, .waitingForInput].contains(value.phase), let turn = value.turnID,
+               (ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? turn) == turn {
+                modelStops[key] = ModelStop(turn: turn, at: seconds, failed: record["apiError"] as? Bool == true)
+            }
+            return
+        }
         if record["unownedTurn"] as? Bool == true, kind != "metadata" {
             return
         }
         if origin == "transcript", hooks.contains(key), !["stopVerified", "failure", "interrupt", "thinking", "response"].contains(kind) { return }
         if !["prompt", "subagentStart"].contains(kind), let incoming = ClaudeActivityRecord.identifier(record["promptId"] as? String),
            let current = value.turnID, incoming != current { return }
+        if kind == "sessionClosed" {
+            if origin == "transcript" { closeSession(key, thread: thread, at: seconds, now: now, attaching: attaching) }
+            return
+        }
         var turn = ClaudeActivityRecord.identifier(record["promptId"] as? String) ?? value.turnID
         if kind == "interrupt", record["engineInterrupt"] as? Bool == true {
             guard turn == value.turnID, typedInterruptPrompts[key] != turn else { return }
@@ -625,6 +676,8 @@ struct ClaudeActivityState: Sendable {
         }
         let item = ClaudeActivityRecord.identifier(record["itemId"] as? String) ?? "event-" + String(Int(seconds * 1000))
         let earlierTurn = value.turnID, earlierStart = value.turnStartedAt
+        // Anything newer of the turn means the model's ending did not end it.
+        modelStops.removeValue(forKey: key)
         switch kind {
         case "prompt":
             if value.turnID != turn { agentEnds.removeValue(forKey: key) }
@@ -733,6 +786,19 @@ struct ClaudeActivityState: Sendable {
             childTurn: launch.childTurn, background: true)
         applyAgentCompletion(childKey, now: now)
     }
+    /// The Claude Code process behind a session without hooks shut down, so its
+    /// turn cannot go on. A turn the model had ended is complete, or failed when
+    /// that ending was a request error; any other is unconfirmed, as after a
+    /// SessionEnd hook. Its child runs end once the read that applied their
+    /// records is done (`endOutlivedChildren`).
+    private mutating func closeSession(_ key: String, thread: String, at seconds: Double, now: Date, attaching: Bool) {
+        guard let value = sessions[key], value.parentThreadID == nil else { return }
+        Self.note(&rootClosures, thread, at: seconds)
+        guard [.running, .waitingForInput].contains(value.phase), let turn = value.turnID else { return }
+        let stop = modelStops[key].flatMap { $0.turn == turn ? $0 : nil }
+        consumeRecord(["kind": stop.map { $0.failed ? "failure" : "stop" } ?? "unavailable", "origin": "sessionClosed", "sessionId": thread,
+                       "promptId": turn, "at": seconds], now: now, attaching: attaching)
+    }
     private static func note(_ times: inout [String: Double], _ root: String, at seconds: Double) {
         guard seconds > times[root] ?? 0 else { return }
         times[root] = seconds
@@ -746,13 +812,16 @@ struct ClaudeActivityState: Sendable {
     /// foreground agent reports no result. An ended turn is retired, so later
     /// records of that run cannot reopen it.
     private mutating func endOutlivedChildren(_ keys: [String], now: Date, historical: Bool) {
-        guard !agentsIdle.isEmpty || !rootInterrupts.isEmpty else { return }
+        guard !agentsIdle.isEmpty || !rootInterrupts.isEmpty || !rootClosures.isEmpty else { return }
         for key in keys {
             guard let child = sessions[key], let parent = child.parentThreadID, let thread = child.threadID,
                   [.running, .waitingForInput].contains(child.phase), let turn = child.turnID,
                   let start = child.turnStartedAt?.timeIntervalSince1970 else { continue }
             let root = rootThread(thread), kind: String
             if agentsIdle[root].map({ start <= $0 }) == true { kind = "subagentStop" }
+            // The process is gone. A run whose model had ended it is complete.
+            else if rootClosures[root].map({ start <= $0 }) == true, let stop = modelStops[key], stop.turn == turn { kind = stop.failed ? "failure" : "subagentStop" }
+            else if rootClosures[root].map({ start <= $0 }) == true { kind = "unavailable" }
             else if rootInterrupts[root].map({ start <= $0 }) == true,
                     agentLaunches[key].flatMap({ boundAgentCompletion($0, to: child) }) == nil { kind = "interrupt" }
             else { continue }
