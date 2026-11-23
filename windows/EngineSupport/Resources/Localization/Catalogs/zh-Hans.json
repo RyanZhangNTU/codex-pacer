@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "e382937298bce5e027189d708f9cb2472e12b97cad323da9f8c285ca3216f717",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "1df88fcb6b9e218f75c6b1381b1a1ee09be847a82f46f99532fdb12347bee5f6",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -1010,6 +1010,7 @@
     "main.appearance.quota_style": "\u989d\u5ea6\u6837\u5f0f",
     "main.attention.codex_cli": "\u627e\u4e0d\u5230 CLI \u65f6\u65e0\u6cd5\u8bfb\u53d6 Codex \u989d\u5ea6",
     "main.attention.quota_waits": "\u5904\u7406\u4e4b\u524d\uff0c\u989d\u5ea6\u4e0d\u4f1a\u66f4\u65b0",
+    "main.beta": "Beta",
     "main.claude.cloud": "\u4e91\u7aef\u9879\u76ee",
     "main.claude.ring": "\u4efb\u52a1\u8fdb\u5ea6\u5706\u73af",
     "main.collapsed.add": "\u6dfb\u52a0",

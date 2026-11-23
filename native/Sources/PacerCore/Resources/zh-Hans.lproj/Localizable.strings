@@ -1684,6 +1684,7 @@
 "delegation.status.stopped" = "已停止";
 "delegation.stop" = "停止这次 Codex 执行";
 "main.pane.collaboration" = "协作";
+"main.beta" = "Beta";
 "main.search.collaboration" = "Codex Claude 调用 协作 技能 委派 第二意见 审查";
 "collaboration.codex_for_claude" = "Claude 调用 Codex";
 "collaboration.legacy_failed" = "没能移动这个文件夹。请关掉正在使用它的程序再试。";

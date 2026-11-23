@@ -32,6 +32,10 @@ internal static class CollaborationSettingsChecks
             window.Show(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             await Until(() => Find<CheckBox>(window, "settings.collaboration.enabled").IsEnabled, "The pair's switch opens once the Claude module is known");
             Check(Find<TextBlock>(window, "settings.subtitle").Text == ui.Text("main.subtitle.collaboration"), "The page says what it is for");
+            var beta = Find<Border>(window, "settings.pane.collaboration.beta");
+            Check(beta.IsVisible && ((TextBlock)beta.Child).Text == ui.Text("main.beta") && beta.ActualHeight == 16
+                && AutomationProperties.GetItemStatus(Find<RadioButton>(window, "settings.pane.collaboration")) == ui.Text("main.beta"),
+                "Collaboration's sidebar row carries a Beta badge at its end, and screen readers hear it");
             var toggle = Find<CheckBox>(window, "settings.collaboration.enabled");
             Check(toggle.IsChecked == false && !Find<Button>(window, "settings.collaboration.restore").IsEnabled,
                 "The pair starts off, and Restore Defaults has nothing to restore");

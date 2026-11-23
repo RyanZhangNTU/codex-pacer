@@ -1684,6 +1684,7 @@
 "delegation.status.stopped" = "Stopped";
 "delegation.stop" = "Stop this Codex run";
 "main.pane.collaboration" = "Collaboration";
+"main.beta" = "Beta";
 "main.search.collaboration" = "codex claude delegate skill hand off second opinion review";
 "collaboration.codex_for_claude" = "Codex for Claude";
 "collaboration.legacy_failed" = "Couldn't move the folder. Close anything using it and try again.";

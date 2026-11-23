@@ -1006,6 +1006,7 @@
     "main.appearance.quota_style": "额度样式",
     "main.attention.codex_cli": "找不到 CLI 时无法读取 Codex 额度",
     "main.attention.quota_waits": "处理之前，额度不会更新",
+    "main.beta": "Beta",
     "main.claude.cloud": "云端项目",
     "main.claude.ring": "任务进度圆环",
     "main.collapsed.add": "添加",

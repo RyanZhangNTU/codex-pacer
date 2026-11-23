@@ -197,6 +197,7 @@ internal sealed partial class SettingsWindow
             result.SetResourceReference(ForegroundProperty, "SettingsPrimary");
             // A result is the row it leads to: its Off label, its attention dot and, for the open page, the selection.
             var end = new StackPanel { Orientation = Orientation.Horizontal };
+            if (BetaPane(pane)) end.Children.Add(BetaBadge("search." + pane));
             if (moduleOff.TryGetValue(pane, out var off) && off.Visibility == Visibility.Visible)
             { var copy = Label(off.Text, 11); copy.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); end.Children.Add(copy); }
             if (attentionDots.TryGetValue(pane, out var dot) && dot.Visibility == Visibility.Visible)
@@ -232,6 +233,7 @@ internal sealed partial class SettingsWindow
             modulesMoreCount = Label("", 11); modulesMoreCount.Visibility = Visibility.Collapsed;
             modulesMoreCount.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary"); end.Children.Add(modulesMoreCount);
         }
+        if (BetaPane(pane)) end.Children.Add(BetaBadge(pane));
         if (pane is "claude" or "codex" or "remote" || HarnessPane(pane))
         {
             // Amber only says that something needs the user.
@@ -241,10 +243,24 @@ internal sealed partial class SettingsWindow
         }
         button.Content = RowContent(pane, button, end);
         Identify(button, "settings.pane." + pane, title);
+        if (BetaPane(pane)) AutomationProperties.SetItemStatus(button, ui.Text("main.beta"));
         string? tip = PendingPane(pane) ? "windows.main.pane_later" : EnginePane(pane) && engine == null ? "windows.settings.pane_pending" : null;
         if (tip != null) { button.ToolTip = ui.Text(tip); ToolTipService.SetShowOnDisabled(button, true); }
         button.Checked += async (_, _) => { if (!synchronizing && button.IsChecked == true) await NavigateAsync(pane); };
         navigation[pane] = button; return button;
+    }
+
+    /// Pages still in beta: Collaboration, Pacer 5.0's companion feature.
+    private static bool BetaPane(string pane) => pane == "collaboration";
+    /// A small violet-to-blue capsule with white type, the same in both themes.
+    private Border BetaBadge(string id)
+    {
+        var text = new TextBlock { Text = ui.Text("main.beta"), FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White,
+            VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+        var badge = new Border { Child = text, Height = 16, CornerRadius = new CornerRadius(8), Padding = new Thickness(7, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center,
+            Background = new LinearGradientBrush(Color.FromRgb(124, 58, 237), Color.FromRgb(37, 99, 235), new Point(0, 0.5), new Point(1, 0.5)) };
+        Identify(badge, "settings.pane." + id + ".beta", ui.Text("main.beta"));
+        return badge;
     }
 
     /// Icon, title and an optional trailing note; the title follows the row's text color.

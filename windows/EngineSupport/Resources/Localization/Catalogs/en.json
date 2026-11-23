@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "29aa60df8e507cc87f595187f8e8fa4b2f2d7ac396cb64435e280bed57ffbd64",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "696f59d336b2d0ee2ae1f99544d16e06f827b9503d9e4588070ce88c579ab073",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -1010,6 +1010,7 @@
     "main.appearance.quota_style": "Quota Style",
     "main.attention.codex_cli": "Codex quota needs the CLI",
     "main.attention.quota_waits": "Quota won't update until then",
+    "main.beta": "Beta",
     "main.claude.cloud": "Cloud Projects",
     "main.claude.ring": "Progress Ring",
     "main.collapsed.add": "Add",

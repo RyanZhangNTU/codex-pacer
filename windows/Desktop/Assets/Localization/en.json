@@ -1006,6 +1006,7 @@
     "main.appearance.quota_style": "Quota Style",
     "main.attention.codex_cli": "Codex quota needs the CLI",
     "main.attention.quota_waits": "Quota won't update until then",
+    "main.beta": "Beta",
     "main.claude.cloud": "Cloud Projects",
     "main.claude.ring": "Progress Ring",
     "main.collapsed.add": "Add",
