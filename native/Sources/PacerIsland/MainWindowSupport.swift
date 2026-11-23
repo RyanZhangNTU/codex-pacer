@@ -288,7 +288,9 @@ struct MainWindowSidebar: View {
                 icon(pane)
                 Text(pane.title).font(.system(size: 13)).lineLimit(1)
                 Spacer(minLength: 4)
-                if pane == .modules, hiddenModules > 0 {
+                if pane == .collaboration {
+                    BetaTag()
+                } else if pane == .modules, hiddenModules > 0 {
                     Text(L10n.text("modules.sidebar_more", hiddenModules)).font(.system(size: 11)).foregroundStyle(.secondary)
                 } else if isDisabled(pane) {
                     Text(L10n.text("settings.module_off")).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -350,5 +352,19 @@ struct MainWindowSidebar: View {
             .accessibilityAddTraits(aboutSelected ? .isSelected : [])
             row(.support)
         }
+    }
+}
+
+/// A page still in preview: a small purple-to-blue capsule with "Beta",
+/// alike in light and dark. VoiceOver reads it with the row.
+struct BetaTag: View {
+    private static let purple = Color(red: 0x7C / 255, green: 0x3A / 255, blue: 0xED / 255)
+    private static let blue = Color(red: 0x25 / 255, green: 0x63 / 255, blue: 0xEB / 255)
+
+    var body: some View {
+        Text(L10n.text("main.beta")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+            .padding(.horizontal, 7).frame(height: 16)
+            .background(LinearGradient(colors: [Self.purple, Self.blue], startPoint: .leading, endPoint: .trailing), in: Capsule())
+            .fixedSize()
     }
 }
