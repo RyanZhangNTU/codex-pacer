@@ -7,9 +7,10 @@
  <Button.Template>
   <ControlTemplate TargetType="{x:Type local:TaskRow}">
    <Grid>
-    <Border CornerRadius="12" Background="{TemplateBinding Background}" Opacity="{TemplateBinding HoverProgress}" IsHitTestVisible="False"/>
+    <!-- The task's own highlight covers its row only; each Codex run under it highlights on its own, as on the Mac. -->
+    <Border CornerRadius="12" Background="{TemplateBinding Background}" Opacity="{TemplateBinding HoverProgress}" IsHitTestVisible="False" VerticalAlignment="Top" Height="{Binding MainHeight}"/>
     <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
-    <Border x:Name="Focus" CornerRadius="12" BorderThickness="1" BorderBrush="Transparent" IsHitTestVisible="False"/>
+    <Border x:Name="Focus" CornerRadius="12" BorderThickness="1" BorderBrush="Transparent" IsHitTestVisible="False" VerticalAlignment="Top" Height="{Binding MainHeight}"/>
    </Grid>
    <ControlTemplate.Triggers>
     <MultiTrigger><MultiTrigger.Conditions><Condition Property="local:DesktopAppearance.HighContrast" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
@@ -61,8 +62,11 @@
   </Grid>
  </Border>
  <!-- Codex for Claude runs of this Claude task, built in code. Clicking one opens this task. -->
- <Border x:Name="DelegationRail" Margin="22,0,6,4" Padding="12,0,0,0" BorderThickness="1.5,0,0,0" BorderBrush="{DynamicResource Island.Tertiary}" Visibility="Collapsed">
-  <StackPanel x:Name="Delegations"/>
+ <!-- Runs fills the row's width so the pointer anywhere below the task's own row is on the runs, not the task. -->
+ <Border x:Name="Runs" Background="Transparent" Padding="22,0,6,4" Visibility="Collapsed">
+  <Border x:Name="DelegationRail" Padding="12,0,0,0" BorderThickness="1.5,0,0,0" BorderBrush="{DynamicResource Island.Tertiary}">
+   <StackPanel x:Name="Delegations"/>
+  </Border>
  </Border>
  </StackPanel>
 </Button>

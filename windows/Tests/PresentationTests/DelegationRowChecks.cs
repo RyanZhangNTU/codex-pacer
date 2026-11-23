@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using CodexPacer.Windows;
@@ -48,10 +49,28 @@ internal static class DelegationRowChecks
             Check(Line(lines[1]).Contains("74.0") && Line(lines[1]).Contains("4:05") && Line(lines[1]).Contains("medium"),
                 "A finished run keeps its final speed and time on the line");
             var stops = lines.Select(line => line.Children.OfType<Button>().Single()).ToList();
-            Check(stops.All(button => button.Visibility == Visibility.Hidden), "Stop shows only while the line is hovered");
+            Check(stops.All(button => button.Visibility == Visibility.Hidden) && lines.All(line => TaskRow.StopState(line) == (false, false)),
+                "Stop shows only while the line is hovered, and the readings are whole until then");
+            // No room is kept for Stop: it lies over the readings' end, inside the line.
+            var readings = lines.Select(line => line.Children.OfType<TextBlock>().Single(text => Grid.GetColumn(text) == 4)).ToList();
+            Check(lines.Zip(readings).All(pair => pair.First.ActualWidth - (pair.Second.TranslatePoint(new Point(pair.Second.ActualWidth, 0), pair.First).X) < 8)
+                && lines.All(line => line.ColumnDefinitions.Count == 5) && stops.All(button => Grid.GetColumn(button) + Grid.GetColumnSpan(button) == 5),
+                "The readings reach the line's end, and Stop shares their place instead of keeping its own");
             Check(AutomationProperties.GetHelpText(lines[0]).Contains("Review · Read-only") && AutomationProperties.GetHelpText(lines[1]).Length == 0,
                 "Screen readers get the run's details without hovering");
             Check(stopped == null, "Nothing stops a run without a click");
+            // The task and its runs are separate targets: the task's highlight covers its own row only,
+            // and each run line has its own, hidden until that line is hovered.
+            row.SetOpenAction(() => { }, "Open", false);
+            MouseEventArgs Pointer(System.Windows.RoutedEvent kind) => new(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = kind };
+            row.RaiseEvent(Pointer(Mouse.MouseEnterEvent)); window.UpdateLayout();
+            var taskHighlight = Descendants(row).OfType<Border>().First(border => border.Opacity == 1 && border.Background == row.Background);
+            Check(row.HoverProgress == 1 && Math.Abs(taskHighlight.ActualHeight - TaskRow.RowHeight(null)) < 0.5
+                && row.ActualHeight > taskHighlight.ActualHeight + TaskRow.DelegationHeight, "The task's highlight covers its own row, not the runs under it");
+            Check(lines.All(line => !TaskRow.LineHighlighted(line)), "A run line lights up only while it is hovered, never with its task");
+            row.Runs.RaiseEvent(Pointer(Mouse.MouseEnterEvent));
+            Check(row.HoverProgress == 0, "Moving onto the task's Codex runs leaves the task itself unhighlighted");
+            row.RaiseEvent(Pointer(Mouse.MouseLeaveEvent));
             var bitmap = new RenderTargetBitmap((int)Math.Ceiling(surface.ActualWidth), (int)Math.Ceiling(surface.ActualHeight), 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(surface);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));

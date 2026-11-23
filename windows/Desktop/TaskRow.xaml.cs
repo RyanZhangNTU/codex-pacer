@@ -47,8 +47,12 @@ public partial class TaskRow : Button
         if (state.OneLine) Icon.LayoutTransform = new ScaleTransform(22.0 / 28, 22.0 / 28);
         Background = PacerPalette.Hover; IsEnabled = false;
         Click += (_, _) => { if (IsEnabled) open?.Invoke(); };
-        MouseEnter += (_, _) => { hovered = true; UpdateHover(); };
+        // The task highlights while the pointer is on its own row; over the Codex runs under it,
+        // only the run under the pointer lights up.
+        MouseEnter += (_, _) => { hovered = !Runs.IsMouseOver; UpdateHover(); };
         MouseLeave += (_, _) => { hovered = false; UpdateHover(); };
+        Runs.MouseEnter += (_, _) => { hovered = false; UpdateHover(); };
+        Runs.MouseLeave += (_, _) => { hovered = IsMouseOver; UpdateHover(); };
         Unloaded += (_, _) => { hovered = false; hoverRevision++; hover?.Dispose(); hover = null; HoverProgress = 0; };
         Loaded += (_, _) => { ApplyAppearance(); if (!progressShown) { progressShown = true; ShowProgress(); } };
     }
@@ -98,9 +102,28 @@ public partial class TaskRow : Button
             if (line.Tag is EngineTaskRow run && line.Children.OfType<Button>().FirstOrDefault() is { } button)
             {
                 AutomationProperties.SetName(button, stopLabel);
-                button.Visibility = stop != null && run.CanStop == true && line.IsMouseOver ? Visibility.Visible : Visibility.Hidden;
+                bool shown = stop != null && run.CanStop == true && line.IsMouseOver;
+                button.Visibility = shown ? Visibility.Visible : Visibility.Hidden;
+                // No room is kept for Stop: it lies over the line's end, and the readings fade out beneath it.
+                if (line.Children.OfType<TextBlock>().FirstOrDefault(text => Grid.GetColumn(text) == ReadingsColumn) is { } readings)
+                    readings.OpacityMask = shown ? FadeUnderStop(readings.ActualWidth) : null;
             }
     }
+    private const int ReadingsColumn = 4;
+    /// Opaque up to a little before Stop, clear under it.
+    private static Brush? FadeUnderStop(double width)
+    {
+        if (width <= 0) return null;
+        double clear = Math.Clamp((width - StopCover) / width, 0, 1), fade = Math.Clamp((width - StopCover - 10) / width, 0, 1);
+        return new LinearGradientBrush(new GradientStopCollection { new(Colors.Black, 0), new(Colors.Black, fade), new(Colors.Transparent, clear), new(Colors.Transparent, 1) },
+            new Point(0, 0.5), new Point(1, 0.5));
+    }
+    /// How much of the line's end Stop covers: its 20-point face and a little air.
+    internal const double StopCover = 24;
+    /// Whether a run line's Stop shows, and whether its readings fade under it; read by the presentation checks.
+    internal static (bool Stop, bool Faded) StopState(Grid line) =>
+        (line.Children.OfType<Button>().FirstOrDefault()?.Visibility == Visibility.Visible,
+         line.Children.OfType<TextBlock>().FirstOrDefault(text => Grid.GetColumn(text) == ReadingsColumn)?.OpacityMask != null);
     /// One line per run: its icon (state and progress ring), Claude's label,
     /// speed and time, model and effort, always on the line; no hover card.
     /// Screen readers get the run's details as help text. Clicking the line
@@ -109,21 +132,25 @@ public partial class TaskRow : Button
     {
         Delegations.Children.Clear();
         var runs = showsDelegations ? value.Delegations : null;
-        DelegationRail.Visibility = runs is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        Runs.Visibility = runs is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
         if (runs == null) return;
         foreach (var run in runs)
         {
             var state = new TaskRowState(run, options);
             var line = new Grid { Height = DelegationHeight, Tag = run, Background = Brushes.Transparent };
-            foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star), new GridLength(10), GridLength.Auto, new GridLength(26) })
+            // Icon, gap, label, gap, readings; Stop has no column of its own and lies over the readings' end on hover.
+            foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star), new GridLength(10), GridLength.Auto })
                 line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+            // The line's own highlight, a smaller rounded fill than the task's, as on the Mac.
+            var highlight = new Border { CornerRadius = new CornerRadius(8), Background = PacerPalette.Hover, Opacity = 0, IsHitTestVisible = false, Margin = new Thickness(-4, 0, 0, 0) };
+            Grid.SetColumnSpan(highlight, 5); line.Children.Add(highlight);
             var icon = new TaskStatusIcon { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                 LayoutTransform = new ScaleTransform(20.0 / 28, 20.0 / 28) };
             line.Children.Add(icon);
             var text = new TextBlock { Text = run.Title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = state.TitleInk,
                 VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             Grid.SetColumn(text, 2); line.Children.Add(text);
-            var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Opacity = state.ModelOpacity };
+            var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Opacity = state.ModelOpacity, Margin = new Thickness(0, 0, 4, 0) };
             // Speed, time, model and effort, as on a task row's two lines.
             if (run.RateText != null)
             {
@@ -135,11 +162,11 @@ public partial class TaskRow : Button
             trailing.Inlines.Add(new System.Windows.Documents.Run(run.Model) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
             if (run.Effort != null)
                 trailing.Inlines.Add(new System.Windows.Documents.Run(" " + run.Effort) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
-            Grid.SetColumn(trailing, 4); line.Children.Add(trailing);
-            var button = StopButton(run);
-            Grid.SetColumn(button, 5); line.Children.Add(button);
-            line.MouseEnter += (_, _) => RefreshStopButtons();
-            line.MouseLeave += (_, _) => RefreshStopButtons();
+            Grid.SetColumn(trailing, ReadingsColumn); line.Children.Add(trailing);
+            var button = StopButton(run); button.Margin = new Thickness(0, 0, 2, 0);
+            Grid.SetColumn(button, 2); Grid.SetColumnSpan(button, 3); line.Children.Add(button);
+            line.MouseEnter += (_, _) => { RefreshStopButtons(); RefreshLineHighlight(line); };
+            line.MouseLeave += (_, _) => { RefreshStopButtons(); RefreshLineHighlight(line); };
             AutomationProperties.SetName(line, state.AccessibleName);
             if (run.DetailLines is { Count: > 0 } lines)
                 AutomationProperties.SetHelpText(line, string.Join(", ", lines.Where(pair => pair.Count == 2).Select(pair => pair[0] + " " + pair[1])));
@@ -149,6 +176,14 @@ public partial class TaskRow : Button
         }
         RefreshStopButtons();
     }
+    /// A run line lights up only while it is hovered and the task can be opened.
+    private void RefreshLineHighlight(Grid line)
+    {
+        if (line.Children.OfType<Border>().FirstOrDefault() is { } highlight)
+            highlight.Opacity = line.IsMouseOver && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0;
+    }
+    /// Whether a run line shows its highlight; read by the presentation checks.
+    internal static bool LineHighlighted(Grid line) => line.Children.OfType<Border>().FirstOrDefault()?.Opacity > 0;
     private Button StopButton(EngineTaskRow run)
     {
         var face = new Grid { Width = 20, Height = 20 };
@@ -207,7 +242,7 @@ public partial class TaskRow : Button
         foreach (var run in showsDelegations ? row.Delegations ?? [] : [])
             runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold))
                 + 10 + Text((run.RateText == null ? "" : run.RateText + " t/s · ") + (run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model
-                    + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 26 + 6);
+                    + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 4 + 6);
         return Math.Max(runs, 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0)));
     }
 }
