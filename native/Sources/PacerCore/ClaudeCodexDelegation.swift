@@ -271,7 +271,9 @@ public enum ClaudeCodexDelegation {
         guard let url = L10n.sharedResourceBundle.url(forResource: "claude_codex_skill", withExtension: "md"),
               let template = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         let invocation = trigger == .command ? "disable-model-invocation: true\n" : ""
-        return Data(template.replacingOccurrences(of: "{{INVOCATION}}", with: invocation).replacingOccurrences(of: "{{RUN}}", with: command).utf8)
+        // A Windows checkout may carry CRLF; the skill's header is written with LF either way.
+        return Data(template.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "{{INVOCATION}}", with: invocation)
+            .replacingOccurrences(of: "{{RUN}}", with: command).utf8)
     }
     /// The settings the host last wrote, if any.
     public static func settings(_ data: Data?) -> Settings? { data.flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } }
