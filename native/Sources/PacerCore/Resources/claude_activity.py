@@ -90,7 +90,7 @@ def unowned_rows(owned):
             row=dict(row,unownedTurn=True);del row['promptId'];rows.append(row)
     return rows
 
-def transcript_record(value, owner, parent=None, prompt=None, failures_only=False):
+def transcript_record(value, owner, parent=None, prompt=None, failures_only=False, at=None):
     # The tailer shares this one decoded line with its ID-only parent context.
     # No parsed record is stored on a cursor; only IDs enter its context.
     if not isinstance(value, dict): return []
@@ -101,7 +101,7 @@ def transcript_record(value, owner, parent=None, prompt=None, failures_only=Fals
     if agent and agent not in (owner,'agent-'+owner):return []
     if value.get('type')=='custom-title' and isinstance(value.get('customTitle'),str):
         return [{'origin':'transcript','sessionId':owner,'at':time.time(),'kind':'metadata','title':value['customTitle'][:240]}]
-    at = stamp(value.get('timestamp'))
+    if at is None:at = stamp(value.get('timestamp'))
     if at is None: return []
     if value.get('serverClassifierRequest') is True:return []
     base = {'origin': 'transcript', 'sessionId': owner, 'at': at}
@@ -160,7 +160,10 @@ def transcript_record(value, owner, parent=None, prompt=None, failures_only=Fals
             elif block_kind in ('text', 'thinking'): model_kinds.add(block_kind)
     if kind == 'user' and not ends and not value.get('isMeta') and not value.get('isSynthetic'):
         prompt = ident(value.get('promptId')) or ident(value.get('uuid'))
-        if prompt: rows.append(dict(base, kind='prompt', promptId=prompt))
+        if prompt:
+            row=dict(base,kind='prompt',promptId=prompt)
+            if sdk:row['sdkPrompt']=True
+            rows.append(row)
     for item in ends: rows.append(dict(base, kind='toolEnd', itemId=item))
     response=value.get('toolUseResult')
     child,status=agent_launch(response) if isinstance(response,dict) else (None,None)
@@ -192,7 +195,12 @@ def transcript_record(value, owner, parent=None, prompt=None, failures_only=Fals
     # A blocking Stop hook makes Claude go on working, so its errors keep the turn
     # open. A hook that only failed (a missing script, a crash) does not.
     errors=value.get('hookErrors')
-    if kind=='system' and value.get('subtype')=='stop_hook_summary' and value.get('preventedContinuation') is False and (errors==[] or (failures_only and isinstance(errors,list))) and value.get('hookAdditionalContext')==[]:rows.append(dict(base,kind='stopVerified'))
+    if kind=='system' and value.get('subtype')=='stop_hook_summary':
+        verified=value.get('preventedContinuation') is False and (errors==[] or (failures_only and isinstance(errors,list))) and value.get('hookAdditionalContext')==[]
+        rows.append(dict(base,kind='stopVerified' if verified else 'stopUnconfirmed'))
+    elif kind=='attachment':
+        error=stop_hook_error(value)
+        if error and error[1]:rows.append(dict(base,kind='stopUnconfirmed'))
     return rows
 
 def stop_hook_error(value):
@@ -206,14 +214,16 @@ def stop_hook_error(value):
     if attachment.get('type')=='hook_non_blocking_error':return stop,False
     return None
 
-def session_closed(value,cursor):
-    # Claude Code appends cost-state to a main transcript when the process
-    # writing that session shuts down. It has no time of its own, so the
-    # transcript's latest record dates it; a resume starts with a new prompt.
+def cost_checkpoint(value,cursor,file_ended_at=None):
     if cursor['parent'] or not isinstance(value,dict) or value.get('type')!='cost-state':return []
-    if ident(value.get('sessionId',cursor['session']))!=cursor['session']:return []
-    at=stamp(cursor.get('latestStamp'))
-    return [{'origin':'transcript','kind':'sessionClosed','sessionId':cursor['session'],'at':at}] if at is not None else []
+    if ident(value.get('sessionId'))!=cursor['session']:return []
+    at=cursor.get('latestStamp')
+    if at is None:return []
+    row={'origin':'transcript','kind':'costCheckpoint','sessionId':cursor['session'],'at':at}
+    if file_ended_at is not None:row['fileEndedAt']=file_ended_at
+    if cursor.get('registered'):row['registered']=True
+    if cursor.get('registrationEndedAt') is not None:row['registrationEndedAt']=cursor['registrationEndedAt']
+    return [row]
 
 def note_stop_hook_error(cursor,value):
     error=stop_hook_error(value)
@@ -470,6 +480,26 @@ class Tailer:
     def modified(self, path):
         try: return path.stat().st_mtime
         except OSError: return 0
+    def registrations(self):
+        import uuid
+        cache=getattr(self,'registration_cache',{})
+        updated={}
+        try:
+            with os.scandir(str(self.home/'sessions')) as entries:
+                for entry in entries:
+                    if not re.fullmatch(r'[1-9][0-9]{0,9}\.json',entry.name):continue
+                    if len(updated)>=256 or not entry.is_file(follow_symlinks=False):return None
+                    info=entry.stat(follow_symlinks=False)
+                    if info.st_size>65536:return None
+                    signature=(info.st_ino,info.st_size,info.st_mtime_ns)
+                    prior=cache.get(entry.name)
+                    if prior and prior[0]==signature:updated[entry.name]=prior;continue
+                    with open(entry.path,'rb') as handle:record=json.loads(handle.read(65537))
+                    if not isinstance(record,dict) or record.get('pid')!=int(entry.name[:-5]):return None
+                    updated[entry.name]=(signature,str(uuid.UUID(record['sessionId'])))
+        except (OSError,ValueError,TypeError,KeyError,AttributeError):return None
+        self.registration_cache=updated
+        return set(row[1] for row in updated.values())
     def discover(self):
         self.scans += 1; root = self.home / 'projects'; candidates = []; dirs = [self.home, root, self.home/'pacer']
         for project in sorted(self.entries(root, 256), key=self.modified, reverse=True)[:64]:
@@ -491,7 +521,18 @@ class Tailer:
             if file not in desired: self.cursors.pop(file,None)
         for file, session, parent, owned in selected:
             if file not in self.cursors: self.cursors[file] = {'inode':0,'offset':0,'fragment':b'','session':session,'parent':parent,'owned':owned,'historicalEnd':None};self.dirty.add(file)
+        registered=self.registrations()
+        if registered is not None:
+            for file,cursor in self.cursors.items():
+                if cursor['parent'] or cursor['owned']:continue
+                present=cursor['session'] in registered
+                if present==cursor.get('registered',False):continue
+                at=time.time()
+                cursor['registered']=present;cursor['registrationEndedAt']=None if present else at
+                cursor['registrationRow']={'origin':'reader','kind':'registrationStarted' if present else 'registrationEnded','sessionId':cursor['session'],'at':at}
+                self.dirty.add(file)
         watches = desired.union(dirs[:4])
+        if (self.home/'sessions').is_dir():watches.add(self.home/'sessions')
         for wd,path in list(self.watches.items()):
             if path not in watches:
                 self.watches.pop(wd,None)
@@ -499,7 +540,9 @@ class Tailer:
         if self.fd >= 0:
             existing = set(self.watches.values())
             for path in watches-existing:
-                wd = self.libc.inotify_add_watch(self.fd,os.fsencode(str(path)),0x2|0x8|0x40|0x80|0x100|0x200|0x400|0x800)
+                mask=0x40|0x80|0x100|0x200|0x400|0x800
+                if path!=self.home/'sessions':mask|=0x2|0x8
+                wd = self.libc.inotify_add_watch(self.fd,os.fsencode(str(path)),mask)
                 if wd >= 0: self.watches[wd] = path
     def drain(self):
         discover = False
@@ -545,6 +588,7 @@ class Tailer:
             if owned_backlog and cursor is not None and not cursor['owned']:continue
             self.dirty.discard(file)
             if cursor is None: continue
+            if 'registrationRow' in cursor:rows.append(cursor.pop('registrationRow'))
             try:
                 s=file.stat();reset=s.st_ino!=cursor['inode'] or cursor['offset']>s.st_size
                 if reset:
@@ -584,11 +628,13 @@ class Tailer:
                         except (ValueError,UnicodeError): continue
                         prompt=self.prompt_context_record(value,cursor)
                         note_stop_hook_error(cursor,value);only=stop_hook_failures_only(cursor,value)
-                        if isinstance(value,dict) and isinstance(value.get('timestamp'),str) and len(value['timestamp'])<=80:cursor['latestStamp']=value['timestamp']
+                        at=stamp(value.get('timestamp')) if isinstance(value,dict) else None
+                        if not cursor['parent'] and at is not None and at<=time.time()+300 and ident(value.get('sessionId',cursor['session']))==cursor['session']:
+                            cursor['latestStamp']=max(at,cursor.get('latestStamp',at))
                         if prompt is None and cursor.get('awaiting'):
-                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER,only)
+                            owned=transcript_record(value,cursor['session'],cursor['parent'],PENDING_OWNER,only,at)
                             values=unowned_rows(owned);self.defer_record(cursor,owned,historical)
-                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt,only)+session_closed(value,cursor)
+                        else:values=transcript_record(value,cursor['session'],cursor['parent'],prompt,only,at)+cost_checkpoint(value,cursor,s.st_mtime if fragment_start==s.st_size else None)
                     rows.extend(dict(row,historical=historical) for row in values)
                     # A late parent proves the owner of descendants read before it.
                     rows.extend(cursor.pop('released',[]))
@@ -695,7 +741,7 @@ def main():
     except (IndexError,ValueError):interval=5
     pending=[];pending_due=None
     # Only the first reply of a turn is urgent; later streaming text waits for the batch.
-    urgent={'prompt','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
+    urgent={'costCheckpoint','registrationEnded','prompt','progress','waiting','toolStart','toolEnd','agentResult','agentNotification','approval','input','attentionCleared','stop','stopVerified','failure','interrupt','subagentStart','subagentStop','unavailable'}
     turn_ends={'prompt','stop','stopVerified','failure','interrupt'};replying=set()
     def is_urgent(row):
         kind=row.get('kind');session=row.get('sessionId')

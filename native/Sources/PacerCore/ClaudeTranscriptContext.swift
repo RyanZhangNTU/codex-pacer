@@ -33,11 +33,12 @@ struct ClaudeTranscriptContext: Sendable {
     private(set) var awaitedParent: String?
     private(set) var parentLookups = 0
     var deferredRows: Int { waiting.values.joined().reduce(0) { $0 + $1.rows.count } }
-    /// The latest record time read, which dates a `cost-state` record.
-    private(set) var latestTimestamp: String?
+    private(set) var latestTimestamp: Date?
 
-    mutating func noteTimestamp(_ parsed: ClaudeTranscriptFields) {
-        if let stamp = parsed.values["timestamp"]?.string(limit: 80) { latestTimestamp = stamp }
+    mutating func noteTimestamp(_ parsed: ClaudeTranscriptFields, session: String, now: Date) {
+        guard let timestamp = parsed.timestamp, timestamp <= now.addingTimeInterval(300),
+              ClaudeActivityRecord.identifier(parsed.values["sessionId"]?.string() ?? session) == session else { return }
+        latestTimestamp = max(latestTimestamp ?? timestamp, timestamp)
     }
 
     /// Stop hook errors read before their stop summary, by the stop's tool-use ID.
