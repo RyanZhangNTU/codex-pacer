@@ -120,6 +120,9 @@ public enum ClaudeCodexDelegation {
         let folder = home.appendingPathComponent("pacer"), root = root(home: home), file = configURL(home: home)
         func kind(_ url: URL) -> FileAttributeType? { (try? fileManager.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType }
         guard let settings else {
+            // The quota reading only serves runs; it goes with the switch.
+            let quota = quotaURL(home: home)
+            if kind(quota) == .typeRegular { try? fileManager.removeItem(at: quota) }
             guard kind(file) != nil else { return true }
             return kind(file) == .typeRegular && (try? fileManager.removeItem(at: file)) != nil
         }

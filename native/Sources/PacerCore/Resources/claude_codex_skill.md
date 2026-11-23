@@ -9,7 +9,7 @@ allowed-tools: Bash({{RUN}}:*)
 
 Codex Pacer runs Codex for you: one `codex exec` process per call, with the settings the user chose in Pacer (Settings → Collaboration). The user sees each run under this Claude task in Pacer, with its progress, speed and model, and can stop it there.
 
-Call the runner with the Bash tool, exactly as written (`--help` lists every option):
+Call the runner with the Bash tool, exactly as written and always with `run_in_background: true` (`--help` lists every option):
 
 ```bash
 {{RUN}} [task|resume <thread>] [options] -l "<label>" -f <brief-file>
@@ -41,8 +41,8 @@ Codex sees nothing of this conversation. Write a self-contained brief to a temp 
 
 ## Running
 
-- Short work (a lookup, a small review): run in the foreground with `--timeout 9` and a Bash timeout of 600000 ms, so the runner stops Codex cleanly before the Bash tool's 10-minute limit.
-- Longer work, or several jobs at once: use `run_in_background: true` and wait for the completion notification rather than polling.
+- Start every run (task, resume and review) in the background with `run_in_background: true`, then wait for its completion notification rather than polling or sleeping. You stay free to keep working or to answer in the meantime, and Pacer shows the run's progress. Several runs can go at once the same way.
+- Read the run's output when the notification arrives; it ends with Codex's final message.
 - `-C <dir>` sets Codex's working root (default: the current directory).
 - Pacer limits how many runs go at once, allows one writing run per repository outside a worktree, and can hold runs back when Codex's quota is low. When it refuses, the runner says why and exits with 4.
 - Don't edit the files a writing run is working on while it runs.
@@ -68,7 +68,7 @@ follow up: {{RUN}} resume 01a1… -f <brief>
 
 ## When a run fails
 
-The runner prints the error and the stderr tail and exits non-zero (124: hit `--timeout`; 130: stopped; 3: Codex or this feature unavailable; 4: refused by Pacer's limits). Usual causes:
+The runner prints the error and the stderr tail and exits non-zero (124: hit its time limit; 130: stopped; 3: Codex or this feature unavailable; 4: refused by Pacer's limits). Usual causes:
 
 - not logged in: the user runs `codex login`
 - unknown model slug, or an effort that model doesn't support: check `models`

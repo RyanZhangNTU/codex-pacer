@@ -163,8 +163,10 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertTrue(ClaudeCodexDelegation.writeQuota(remainingPercent: nil, home: home))
         XCTAssertFalse(FileManager.default.fileExists(atPath: ClaudeCodexDelegation.quotaURL(home: home).path), "No reading removes it")
 
+        XCTAssertTrue(ClaudeCodexDelegation.writeQuota(remainingPercent: 40, home: home, at: now))
         XCTAssertTrue(ClaudeCodexDelegation.apply(nil, home: home))
         XCTAssertFalse(ClaudeCodexDelegation.isOn(home: home))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ClaudeCodexDelegation.quotaURL(home: home).path), "Turning it off drops the quota reading")
 
         let plain = ClaudeCodexDelegation.command(python: "C:\\Pacer\\python.exe", home: URL(fileURLWithPath: "/Users/someone/.claude"))
         XCTAssertTrue(plain.hasPrefix("C:/Pacer/python.exe -S "), plain)
@@ -216,6 +218,8 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         for skill in [ask, command] {
             XCTAssertFalse(skill.contains("{{"), "Every placeholder is filled")
             XCTAssertFalse(skill.contains("Reply in your own words"), "The skill says how to use the tool, not how Claude replies")
+            XCTAssertTrue(skill.contains("run_in_background: true"), "Runs go in the background, so Claude is never blocked on Codex")
+            XCTAssertFalse(skill.contains("--timeout 9"), "No foreground runs under the Bash tool's limit")
         }
         let settings = ClaudeCodexDelegation.Settings(trigger: .command)
         XCTAssertEqual(ClaudeCodexDelegation.settings(settings.data())?.trigger, .command)
