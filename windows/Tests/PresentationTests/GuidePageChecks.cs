@@ -351,6 +351,9 @@ internal static class GuidePageChecks
             var drawn = labels.Where(label => notes.Contains(label.Text)).ToArray();
             Check(drawn.Length == notes.Length && drawn.All(label => Contrast(((SolidColorBrush)label.Ink).Color, tint) >= 4.5),
                 "The " + view + " diagram's numbered notes read at 4.5:1 on its tint");
+            // Each number is drawn on a dot of its note's ink.
+            var dot = ((SolidColorBrush)drawn[0].Ink).Color; var numbers = labels.Where(label => label.Text is "1" or "2" or "3").ToArray();
+            Check(numbers.Length == 3 && numbers.All(label => Contrast(((SolidColorBrush)label.Ink).Color, dot) >= 4.5), "The " + view + " diagram's numbers read at 4.5:1 on their dots");
         }
         string[] pacerSteps = ["brief", "start", "progress", "done", "ended", "clear"];
         Check(Drawn().Contains("Pacer") && pacerSteps.All(step => Drawn().Contains(ui.Text("help.collaboration." + step))),
