@@ -46,8 +46,8 @@ WINDOWS = os.name == 'nt'
 NO_WINDOW = 0x08000000
 
 USAGE = """Usage (RUN is the command your skill gives):
-  RUN [task] [options] (-f <brief-file> | <prompt text>)
-  RUN resume <thread-id|last> [options] (-f <file> | <text>)
+  RUN [task] [options] (-f - <<'EOF' … EOF | -f <brief-file> | <prompt text>)
+  RUN resume <thread-id|last> [options] (-f - | -f <file> | <text>)
   RUN review (--uncommitted | --base <branch> | --commit <sha>) [--title <t>] [options] [-f <file>]
   RUN models [--json]        models, efforts, fast tiers and config defaults
   RUN runs                   this Claude session's runs
@@ -57,14 +57,14 @@ USAGE = """Usage (RUN is the command your skill gives):
   RUN cleanup                delete this session's finished runs now
 
 Options:
-  -f, --prompt-file <file>  UTF-8 brief for Codex (preferred over inline text)
+  -f, --prompt-file <file>  UTF-8 brief for Codex; - reads it from standard input
   -l, --label <text>        a few words Pacer shows for this run, e.g. "Review login changes"
   -m, --model <slug>        model, e.g. gpt-6.2-sol (see: models)
   -e, --effort <level>      """ + ' | '.join(KNOWN_EFFORTS) + """
       --fast | --no-fast    force the Fast service tier on or off
       --write | --read-only let Codex change files (up to Pacer's file access) or not
-      --worktree            run in a new Codex-managed git worktree (with --write)
-  -C, --cd <dir>            working root (default: current directory)
+      --worktree            run in a new Codex-managed git worktree (with --write; needs a git repository)
+  -C, --cd <dir>            working root (default: current directory; need not be a git repository)
   -i, --image <file>        attach an image (task/resume; repeatable)
       --timeout <minutes>   stop the job after this long (default: 360)
       --dry-run             print the codex command line and exit
@@ -127,7 +127,7 @@ def runner_command():
 class Options:
     def __init__(self):
         self.mode = 'task'; self.target = None; self.model = None; self.effort = None; self.fast = None
-        self.write = None; self.worktree = False; self.cd = None; self.images = []; self.timeout = None
+        self.write = None; self.worktree = False; self.worktree_setting = False; self.cd = None; self.images = []; self.timeout = None
         self.prompt_file = None; self.review = None; self.title = None; self.dry_run = False; self.text = []
         self.label = None; self.json = False; self.session = None
         self.level = 'read-only'; self.memory = False
@@ -197,7 +197,7 @@ def parse(argv):
     if o.write is None:
         o.write = o.mode != 'review' and allowed != 'read-only'
     if o.write and not o.worktree and o.mode == 'task' and settings.get('worktree') is True:
-        o.worktree = True
+        o.worktree = o.worktree_setting = True
     o.level = allowed if o.write else 'read-only'
     o.memory = settings.get('memory') is True
     if o.model is None and isinstance(settings.get('model'), str) and settings['model']:
@@ -214,6 +214,12 @@ def parse(argv):
 
 
 def read_prompt(o):
+    if o.prompt_file == '-':
+        # A quoted heredoc keeps the brief out of the project and away from shell quoting.
+        try:
+            return sys.stdin.buffer.read().decode('utf-8-sig', 'replace')
+        except (OSError, ValueError) as error:
+            fail('cannot read the brief from standard input: ' + str(error))
     if o.prompt_file:
         try:
             with open(o.prompt_file, 'r', encoding='utf-8-sig') as handle:
@@ -392,8 +398,9 @@ def codex_args(o, last_file, has_prompt, resume_id):
         args += ['-c', 'sandbox_workspace_write.network_access=true']
     if o.worktree:
         args.append('--worktree')
-    if not o.write:
-        args.append('--skip-git-repo-check')
+    # Pacer sets file access on every call, so a folder that isn't a git
+    # repository (a scratch workspace, a plain folder) is fine to work in.
+    args.append('--skip-git-repo-check')
     if o.mode != 'review':
         for image in o.images:
             args += ['-i', image]
@@ -524,11 +531,39 @@ def toplevel(folder):
     return value.strip() if value else None
 
 
+SKIP_FOLDERS = {'node_modules', 'venv', '__pycache__'}
+SCAN_FILES, SCAN_DEPTH = 5000, 8
+
+
+def folder_snapshot(folder):
+    """Outside a repository: every file's size and time, skipping hidden and
+    dependency folders, or None when the tree passes SCAN_FILES files."""
+    base = os.path.abspath(folder)
+    entries = {}
+    for current, folders, files in os.walk(base):
+        relative = os.path.relpath(current, base)
+        depth = 0 if relative == '.' else relative.count(os.sep) + 1
+        folders[:] = [name for name in folders if name not in SKIP_FOLDERS and not name.startswith('.')] if depth < SCAN_DEPTH else []
+        for name in files:
+            path = os.path.join(current, name)
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            entries[os.path.relpath(path, base).replace(os.sep, '/')] = ('', '%d:%d' % (stat.st_size, stat.st_mtime_ns))
+            if len(entries) > SCAN_FILES:
+                return None
+    return {'root': base, 'entries': entries, 'plain': True}
+
+
 def snapshot(folder):
-    """Every dirty or untracked file with a cheap signature, or None outside a
-    repository. Two snapshots catch edits made through shell commands."""
+    """Every dirty or untracked file with a cheap signature; outside a
+    repository, every file (folder_snapshot). Two snapshots catch edits made
+    through shell commands."""
     root = toplevel(folder)
-    status = git(folder, ['status', '--porcelain=v1', '-z', '--untracked-files=all']) if root else None
+    if not root:
+        return folder_snapshot(folder) if folder and os.path.isdir(folder) else None
+    status = git(folder, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
     if status is None:
         return None
     entries = {}
@@ -554,6 +589,12 @@ def snapshot(folder):
 def changed_between(before, after):
     changed = []
     old = before['entries'] if before else {}
+    if after.get('plain'):
+        # A plain folder: added, modified and deleted files.
+        for name, now in after['entries'].items():
+            if old.get(name) != now:
+                changed.append(('M ' if name in old else 'A ') + name)
+        return changed + ['D ' + name for name in old if name not in after['entries']]
     for name, now in after['entries'].items():
         if old.get(name) != now:
             changed.append(now[0] + ' ' + name)
@@ -1039,6 +1080,17 @@ def run_job(o):
         resume_id = origin.get('thread')
     codex = resolve_codex() or fail('Codex not found. Install it (npm install -g @openai/codex) or set its path in Pacer.', 3)
     cwd = os.path.abspath(o.cd or (origin or {}).get('worktree') or (origin or {}).get('cwd') or os.getcwd())
+    # Outside a git repository a task runs in place; reviews and explicit worktrees need one.
+    repo = toplevel(cwd)
+    in_place = None
+    if not repo:
+        if o.mode == 'review':
+            fail('review needs a git repository and %s is not one; pass -C <repository>, or run a task that names the files instead.' % cwd)
+        if o.worktree and not o.worktree_setting:
+            fail('--worktree needs a git repository and %s is not one; run without --worktree.' % cwd)
+        if o.worktree:
+            o.worktree = False
+            in_place = 'not a git repository, so Codex worked in place'
     run_dir = session_dir() / (time.strftime('%Y%m%d-%H%M%S') + '-' + o.mode + '-' + str(os.getpid()))
     last_file = str(run_dir / 'last.md')
     args = codex_args(o, last_file, bool(prompt), resume_id)
@@ -1062,12 +1114,12 @@ def run_job(o):
         refuse('concurrency', '%d Codex run(s) are already running, the most Pacer allows at once (Settings → Collaboration). '
                'Wait for one to finish, then run this again.' % len(running))
     if o.write and not o.worktree and not (origin or {}).get('worktree'):
-        root = toplevel(cwd)
-        if root:
-            for run in running:
-                if run.get('write') and not run.get('worktree') and run.get('root') and os.path.normcase(run['root']) == os.path.normcase(root):
-                    refuse('writer', 'another Codex run (thread %s) is already changing files in %s. Wait for it to finish, or run this one '
-                           'with --worktree so its changes stay apart.' % (run.get('thread') or '?', root))
+        # One writer per repository, or per folder outside one.
+        root = repo or cwd
+        for run in running:
+            if run.get('write') and not run.get('worktree') and run.get('root') and os.path.normcase(run['root']) == os.path.normcase(root):
+                refuse('writer', 'another Codex run (thread %s) is already changing files in %s. Wait for it to finish%s.'
+                       % (run.get('thread') or '?', root, ', or run this one with --worktree so its changes stay apart' if repo else ''))
 
     sweep(codex, current=SESSION)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1075,7 +1127,7 @@ def run_job(o):
         'v': 1, 'dir': str(run_dir), 'session': SESSION, 'owner': {'pid': OWNER}, 'runner': {'pid': os.getpid()},
         'status': 'running', 'mode': o.mode, 'label': o.label, 'created': round(time.time(), 3), 'timeoutMinutes': o.timeout,
         'thread': resume_id, 'owned': o.mode != 'resume', 'childThreads': [], 'cwd': (origin or {}).get('cwd') or cwd,
-        'root': toplevel(cwd) if o.write else None, 'write': bool(o.write), 'worktree': (origin or {}).get('worktree'),
+        'root': (repo or cwd) if o.write else None, 'write': bool(o.write), 'worktree': (origin or {}).get('worktree'),
         'model': o.model, 'effort': o.effort, 'fast': o.fast, 'applied': False, 'discarded': False, 'warned': False,
         'project': project_name(cwd),
     }
@@ -1211,6 +1263,8 @@ def run_job(o):
     print('thread %s%s · commands %d' % (meta.get('thread') or '?', tokens, events.commands))
     if o.worktree or (origin or {}).get('worktree'):
         print('worktree: %s' % (meta.get('worktree') or "(not found; check Codex's message)"))
+    elif in_place:
+        print('worktree: none (%s)' % in_place)
     if o.write:
         print('changed files (%d): %s' % (len(changed), ', '.join(changed)) if changed else 'changed files: none')
     keep, hours = records(settings)
@@ -1218,7 +1272,7 @@ def run_job(o):
                                          'timed': 'deleted with the thread %d h after the run' % hours,
                                          'keep': 'the thread stays in Codex history'}[keep]))
     if meta.get('thread'):
-        print('follow up: %s resume %s -f <brief>' % (run, meta['thread']))
+        print('follow up: %s resume %s -f - <<\'EOF\' … EOF' % (run, meta['thread']))
     for error in events.errors:
         print('error: ' + error)
     warnings = list(dict.fromkeys(events.warnings))

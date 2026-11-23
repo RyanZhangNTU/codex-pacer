@@ -220,6 +220,12 @@ final class ClaudeCodexDelegationTests: XCTestCase {
             XCTAssertFalse(skill.contains("Reply in your own words"), "The skill says how to use the tool, not how Claude replies")
             XCTAssertTrue(skill.contains("run_in_background: true"), "Runs go in the background, so Claude is never blocked on Codex")
             XCTAssertFalse(skill.contains("--timeout 9"), "No foreground runs under the Bash tool's limit")
+            XCTAssertTrue(skill.contains("-f - <<'EOF'"), "The brief goes on standard input, never into a file in the user's project")
+            XCTAssertTrue(skill.unicodeScalars.allSatisfy(\.isASCII), "The skill is English only, to keep the user's tokens down")
+            let description = skill.split(separator: "\n").first { $0.hasPrefix("description: ") }.map(String.init) ?? ""
+            XCTAssertTrue(description.hasPrefix("description: Hands ") && description.count <= 400,
+                          "A short third-person description, well under the 1,024-character limit, loaded in every session")
+            XCTAssertTrue(description.contains("only when the user explicitly asks"), "Claude starts Codex only when the user asks")
         }
         let settings = ClaudeCodexDelegation.Settings(trigger: .command)
         XCTAssertEqual(ClaudeCodexDelegation.settings(settings.data())?.trigger, .command)
