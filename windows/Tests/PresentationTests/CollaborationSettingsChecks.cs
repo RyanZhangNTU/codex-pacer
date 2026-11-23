@@ -72,6 +72,9 @@ internal static class CollaborationSettingsChecks
             Check(Find<TextBlock>(window, "settings.collaboration.instructions").Text == ui.Text("collab.instructions.none"), "No standing instructions reads as not set");
             await Until(() => Find<Button>(window, "settings.collaboration.restore").IsEnabled, "Changed choices can be restored");
             window.CapturePreview(Path.Combine(output, "settings-" + name + "-collaboration-changed.png"));
+            var scroller = Find<ScrollViewer>(window, "settings.content"); scroller.ScrollToEnd(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            window.CapturePreview(Path.Combine(output, "settings-" + name + "-collaboration-advanced.png"));
+            scroller.ScrollToTop(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             Invoke(Find<Button>(window, "settings.collaboration.restore"));
             await Until(() => session.Current.DelegationIsDefault && session.Current.CodexDelegation && toggle.IsChecked == true,
                 "Restore Defaults resets the pair's choices and keeps its switch");

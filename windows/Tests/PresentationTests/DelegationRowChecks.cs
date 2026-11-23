@@ -28,8 +28,9 @@ internal static class DelegationRowChecks
             "Opus 5.5", "high", null, false, null, "1:20", 0, false, false, false, null, false, DelegatedText: "Codex 2", Delegations: [running, finished]);
         var row = new TaskRow(parent, showsDelegations: true); row.SetAnimations(false);
         string? stopped = null; row.SetStopAction(id => stopped = id, "Stop this Codex run");
-        var window = new Window { Content = row, Width = 460, Height = TaskRow.RowHeight(parent, null) + 40, ShowActivated = false, ShowInTaskbar = false,
-            Background = new SolidColorBrush(Color.FromRgb(18, 19, 22)) };
+        // The island's dark surface, so the capture reads as it would on screen.
+        var surface = new Border { Child = row, Padding = new Thickness(12), Background = new SolidColorBrush(Color.FromRgb(18, 19, 22)) };
+        var window = new Window { Content = surface, Width = 460, Height = TaskRow.RowHeight(parent, null) + 60, ShowActivated = false, ShowInTaskbar = false };
         window.Show();
         try
         {
@@ -38,7 +39,9 @@ internal static class DelegationRowChecks
             var lines = Descendants(row).OfType<Grid>().Where(line => line.Tag is EngineTaskRow).ToList();
             Check(lines.Count == 2, "Each Codex run has its own line under its Claude task");
             Check(!lines.SelectMany(SelfAndDescendants).OfType<FrameworkElement>().Any(value => value.ToolTip != null), "A run line carries no hover popup, Stop included");
-            string Line(Grid line) => string.Join(" ", Descendants(line).OfType<TextBlock>().Select(text => text.Text));
+            // The trailing readings are runs of one text block.
+            string Line(Grid line) => string.Join(" ", line.Children.OfType<TextBlock>().Select(text =>
+                text.Inlines.Count > 0 ? string.Concat(text.Inlines.OfType<System.Windows.Documents.Run>().Select(run => run.Text)) : text.Text));
             Check(Line(lines[0]).Contains("Review the login change") && Line(lines[0]).Contains("86.0") && Line(lines[0]).Contains("t/s")
                 && Line(lines[0]).Contains("1:20") && Line(lines[0]).Contains("Sol 6.2") && Line(lines[0]).Contains("high"),
                 "A running run shows its speed, time, model and effort on the line");
@@ -49,8 +52,8 @@ internal static class DelegationRowChecks
             Check(AutomationProperties.GetHelpText(lines[0]).Contains("Review · Read-only") && AutomationProperties.GetHelpText(lines[1]).Length == 0,
                 "Screen readers get the run's details without hovering");
             Check(stopped == null, "Nothing stops a run without a click");
-            var bitmap = new RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth), (int)Math.Ceiling(window.ActualHeight), 96, 96, PixelFormats.Pbgra32);
-            bitmap.Render((Visual)window.Content!);
+            var bitmap = new RenderTargetBitmap((int)Math.Ceiling(surface.ActualWidth), (int)Math.Ceiling(surface.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(surface);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var file = File.Create(Path.Combine(output, "island-delegation-rows.png"))) encoder.Save(file);
             Console.WriteLine("PASS Codex for Claude rows: on-line readings, final speed and time, hover-only Stop, details for screen readers, no hover popups");
