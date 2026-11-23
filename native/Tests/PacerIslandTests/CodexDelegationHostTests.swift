@@ -1,4 +1,3 @@
-import UserNotifications
 import XCTest
 @testable import PacerCore
 @testable import PacerIsland
@@ -44,94 +43,51 @@ final class CodexDelegationHostTests: XCTestCase {
 
     func testStoredChoicesBecomeTheRunnersDefaultsAndInvalidOnesFallBack() throws {
         let fixture = try fixture(), defaults = fixture.defaults
-        XCTAssertEqual(CodexDelegationPreferences(defaults: defaults), CodexDelegationPreferences(), "Off, with rows and Codex's own choices, until chosen")
+        XCTAssertEqual(CodexDelegationPreferences(defaults: defaults), CodexDelegationPreferences(), "Off, following Codex, until chosen")
+        XCTAssertEqual(CodexDelegationPreferences().settings(codex: nil), .init(), "The defaults follow Codex and write in the project with network")
         var chosen = CodexDelegationPreferences()
-        chosen.enabled = true; chosen.rows = false; chosen.model = "gpt-5.5-codex"; chosen.effort = "high"; chosen.fast = "on"
-        chosen.write = true; chosen.timeoutMinutes = 120; chosen.maxConcurrent = 2
+        chosen.enabled = true; chosen.trigger = .command
+        chosen.followModel = false; chosen.model = "gpt-5.5-codex"; chosen.followEffort = false; chosen.effort = "xhigh"
+        chosen.followFast = false; chosen.fast = true; chosen.records = .timed; chosen.recordsHours = 6
+        chosen.sandbox = .readOnly; chosen.worktree = true; chosen.instructions = "Answer in English."; chosen.memory = true
+        chosen.maxConcurrent = 2; chosen.quotaFloor = 20
         chosen.save(to: defaults)
         XCTAssertEqual(CodexDelegationPreferences(defaults: defaults), chosen)
         XCTAssertEqual(chosen.settings(codex: "/usr/local/bin/codex"),
-            .init(codex: "/usr/local/bin/codex", model: "gpt-5.5-codex", effort: "high", fast: true, sandbox: .workspaceWrite,
-                  timeoutMinutes: 120, maxConcurrent: 2))
-        XCTAssertEqual(CodexDelegationPreferences().settings(codex: nil), .init(), "Empty choices follow Codex's configuration")
+            .init(codex: "/usr/local/bin/codex", model: "gpt-5.5-codex", effort: "xhigh", fast: true, trigger: .command, records: .timed,
+                  recordsHours: 6, sandbox: .readOnly, worktree: true, instructions: "Answer in English.", memory: true, maxConcurrent: 2, quotaFloor: 20))
+        var following = chosen; following.followModel = true; following.followEffort = true; following.followFast = true
+        let settings = following.settings(codex: nil)
+        XCTAssertNil(settings.model); XCTAssertNil(settings.effort); XCTAssertNil(settings.fast)
+        XCTAssertEqual(following.model, "gpt-5.5-codex", "A pick is remembered while following Codex")
+        XCTAssertEqual(chosen.restoringDefaults(), { var value = CodexDelegationPreferences(); value.enabled = true; return value }(),
+                       "Restoring the defaults keeps the switch")
 
         defaults.set("rm -rf", forKey: CodexDelegationPreferences.modelKey)
         defaults.set("turbo", forKey: CodexDelegationPreferences.effortKey)
-        defaults.set("maybe", forKey: CodexDelegationPreferences.fastKey)
-        defaults.set(7, forKey: CodexDelegationPreferences.timeoutKey)
-        defaults.set(5, forKey: CodexDelegationPreferences.concurrencyKey)
+        defaults.set("later", forKey: CodexDelegationPreferences.triggerKey)
+        defaults.set("forever", forKey: CodexDelegationPreferences.recordsKey)
+        defaults.set(5, forKey: CodexDelegationPreferences.recordsHoursKey)
+        defaults.set("root", forKey: CodexDelegationPreferences.sandboxKey)
+        defaults.set(6, forKey: CodexDelegationPreferences.concurrencyKey)
+        defaults.set(15, forKey: CodexDelegationPreferences.quotaFloorKey)
         let fallback = CodexDelegationPreferences(defaults: defaults)
-        XCTAssertEqual([fallback.model, fallback.effort, fallback.fast], ["", "", ""])
-        XCTAssertEqual([fallback.timeoutMinutes, fallback.maxConcurrent], [60, 3])
+        XCTAssertEqual([fallback.model, fallback.effort], ["", "high"])
+        XCTAssertEqual(fallback.trigger, .ask); XCTAssertEqual(fallback.records, .turn); XCTAssertEqual(fallback.sandbox, .workspaceWriteNetwork)
+        XCTAssertEqual([fallback.recordsHours, fallback.maxConcurrent, fallback.quotaFloor], [24, 3, 0])
         XCTAssertFalse(CodexDelegationPreferences.validModel("-x"))
         XCTAssertTrue(CodexDelegationPreferences.validModel("gpt-5.5-codex"))
-
-        // Version 2's choices: Claude starts runs only when asked, failures alert, long runs do not, 30 days of statistics.
-        let fresh = CodexDelegationPreferences()
-        XCTAssertEqual(fresh.initiative, .ask); XCTAssertTrue(fresh.failureAlerts)
-        XCTAssertEqual([fresh.longRunMinutes, fresh.statsDays], [0, 30]); XCTAssertFalse(fresh.coachShown)
-        defaults.set("eager", forKey: CodexDelegationPreferences.initiativeKey)
-        defaults.set(45, forKey: CodexDelegationPreferences.longRunKey)
-        defaults.set(14, forKey: CodexDelegationPreferences.statsDaysKey)
-        let invalid = CodexDelegationPreferences(defaults: defaults)
-        XCTAssertEqual(invalid.initiative, .ask)
-        XCTAssertEqual([invalid.longRunMinutes, invalid.statsDays], [0, 30])
-        var review = CodexDelegationPreferences(); review.initiative = .review
-        XCTAssertEqual(review.settings(codex: nil).initiative, .review)
-        XCTAssertNil(CodexDelegationPreferences().settings(codex: nil).initiative, "Asking is the default, stored as no value")
     }
 
-    func testChangingTheInitiativeBringsTheSkillCurrent() throws {
+    func testChangingTheTriggerBringsTheSkillCurrent() throws {
         let fixture = try fixture(), model = fixture.model, home = fixture.home
         try FileManager.default.createDirectory(at: home.appendingPathComponent("pacer"), withIntermediateDirectories: true)
         var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.save(to: fixture.defaults)
         XCTAssertTrue(model.applyCodexDelegationSwitch(home: home))
         XCTAssertFalse(model.applyCodexDelegationSwitch(home: home))
-        chosen.initiative = .suggest; chosen.save(to: fixture.defaults)
-        XCTAssertTrue(model.applyCodexDelegationSwitch(home: home), "The initiative is written into the skill, so the hooks are brought current")
-        XCTAssertEqual(try stored(home).initiative, .suggest)
-    }
-
-    func testTheOneTimeHintStaysClosedOnceDismissed() throws {
-        let fixture = try fixture()
-        XCTAssertTrue(fixture.model.showsDelegationCoach)
-        fixture.model.dismissDelegationCoach()
-        XCTAssertFalse(fixture.model.showsDelegationCoach)
-        XCTAssertTrue(CodexDelegationPreferences(defaults: fixture.defaults).coachShown)
-    }
-
-    func testAFailedRunNotifiesOnlyWhileFailureAlertsAreOn() async throws {
-        let fixture = try fixture(codex: .enabled), model = fixture.model, now = Date()
-        fixture.defaults.set(true, forKey: "systemNotifications")
-        var delivered: [UNNotificationRequest] = []
-        model.notifications = NotificationDelivery(defaults: fixture.defaults, authorizationStatus: { .authorized }, addRequest: { delivered.append($0) })
-        try FileManager.default.createDirectory(at: fixture.home.appendingPathComponent("pacer"), withIntermediateDirectories: true)
-        var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.save(to: fixture.defaults)
-        model.applyCodexDelegationSwitch(home: model.claudeHome)
-        let session = "00000000-0000-4000-8000-000000000003"
-        func file(_ name: String, status: String) throws -> URL {
-            let run = ClaudeCodexDelegation.runsURL(home: fixture.home).appendingPathComponent(session).appendingPathComponent(name)
-            try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
-            try JSONSerialization.data(withJSONObject: ["created": now.addingTimeInterval(-30).timeIntervalSince1970, "label": "Check the parser",
-                "mode": "task", "status": status, "reason": "quota"]).write(to: run.appendingPathComponent("meta.json"))
-            return run
-        }
-        let first = try file("run-1", status: "running")
-        model.receiveClaudeUpdate([DemoScenario.claudeTask(stage: .thinking, at: now)], statuses: [:], requests: [])
-        model.applyCodexDelegationPreferences()
-        XCTAssertTrue(delivered.isEmpty, "The first look at the ledger is a baseline")
-        _ = try file("run-1", status: "failed")
-        model.applyCodexDelegationPreferences()
-        try await TestWait.until { delivered.count == 1 }
-        XCTAssertEqual(delivered.first?.identifier, "pacer-delegation:" + first.path + ":failed")
-
-        chosen.failureAlerts = false; chosen.save(to: fixture.defaults)
-        _ = try file("run-2", status: "running")
-        model.applyCodexDelegationPreferences()
-        _ = try file("run-2", status: "failed")
-        model.applyCodexDelegationPreferences()
-        try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertEqual(delivered.count, 1, "With failure alerts off, a failed run says nothing")
+        chosen.trigger = .command; chosen.save(to: fixture.defaults)
+        XCTAssertTrue(model.applyCodexDelegationSwitch(home: home), "The trigger is written into the skill, so the hooks are brought current")
+        XCTAssertEqual(try stored(home).trigger, .command)
     }
 
     func testTheSwitchWritesTheChoicesAndRemovesOnlyItsOwnFile() throws {
@@ -146,12 +102,12 @@ final class CodexDelegationHostTests: XCTestCase {
         XCTAssertTrue(model.applyCodexDelegationSwitch(home: home, setupConfirmed: true))
         XCTAssertFalse(exists(config))
 
-        var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.effort = "high"; chosen.timeoutMinutes = 30
+        var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.followEffort = false; chosen.effort = "high"; chosen.records = .keep
         chosen.save(to: defaults)
         XCTAssertTrue(model.applyCodexDelegationSwitch(home: home))
         XCTAssertEqual(try stored(home).effort, "high")
-        XCTAssertEqual(try stored(home).timeoutMinutes, 30)
-        XCTAssertEqual(try stored(home).sandbox, .readOnly)
+        XCTAssertEqual(try stored(home).records, .keep)
+        XCTAssertEqual(try stored(home).sandbox, .workspaceWriteNetwork)
         chosen.effort = "low"; chosen.save(to: defaults)
         XCTAssertFalse(model.applyCodexDelegationSwitch(home: home), "A changed choice is no switch change")
         XCTAssertEqual(try stored(home).effort, "low", "but the runner reads it at once")
@@ -206,9 +162,5 @@ final class CodexDelegationHostTests: XCTestCase {
         XCTAssertTrue(line.canStopDelegation)
         XCTAssertTrue(model.stopDelegation(line.activity))
         XCTAssertTrue(exists(run.appendingPathComponent("stop")), "The runner stops Codex when it sees this")
-
-        fixture.defaults.set(false, forKey: CodexDelegationPreferences.rowsKey)
-        XCTAssertEqual(model.taskPresentation.rows.first?.delegations.count, 0, "Count only")
-        XCTAssertEqual(model.taskPresentation.rows.first?.delegatedCount, 1)
     }
 }

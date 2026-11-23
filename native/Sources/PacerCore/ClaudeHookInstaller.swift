@@ -370,7 +370,7 @@ public struct ClaudeHookInstaller {
         if delegation {
             guard let runner = ClaudeCodexDelegation.runnerScript(),
                   let skill = ClaudeCodexDelegation.skill(command: codexRunnerCommand(home: home),
-                    initiative: ClaudeCodexDelegation.settings(try? storage.read(ClaudeCodexDelegation.configURL(home: home)))?.initiative ?? .ask)
+                    trigger: ClaudeCodexDelegation.settings(try? storage.read(ClaudeCodexDelegation.configURL(home: home)))?.trigger ?? .ask)
             else { return nil }
             files += [(ClaudeCodexDelegation.runnerURL(home: home), runner), (ClaudeCodexDelegation.skillURL(home: home), skill)]
         }

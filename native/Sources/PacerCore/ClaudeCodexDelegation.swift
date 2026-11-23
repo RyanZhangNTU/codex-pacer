@@ -7,7 +7,7 @@ import Foundation
 /// identifiers, times, parameters and status, never the brief or Codex's
 /// output. Pacer reads that ledger to show each run under its Claude task,
 /// and Pacer's Claude hook starts the runner's cleanup when a turn ends with
-/// no background work left. Executor threads carry `originator` as their
+/// no background work left; what it deletes follows `Settings.records`. Executor threads carry `originator` as their
 /// Codex client name, so a thread whose ledger entry is gone never shows on
 /// its own.
 public enum ClaudeCodexDelegation {
@@ -16,40 +16,100 @@ public enum ClaudeCodexDelegation {
     public static func configURL(home: URL) -> URL { root(home: home).appendingPathComponent("config.json") }
     public static func runnerURL(home: URL) -> URL { root(home: home).appendingPathComponent("runner.py") }
     public static func runsURL(home: URL) -> URL { root(home: home).appendingPathComponent("runs", isDirectory: true) }
-    public static func statsURL(home: URL) -> URL { root(home: home).appendingPathComponent("stats.jsonl") }
+    /// The least Codex quota left, which the runner checks against `Settings.quotaFloor`.
+    public static func quotaURL(home: URL) -> URL { root(home: home).appendingPathComponent("quota.json") }
     /// The skill inside Pacer's Claude plugin (`pacer@pacer`), named `pacer:codex` in Claude.
     public static func skillURL(home: URL) -> URL { home.appendingPathComponent("pacer/plugin/pacer/skills/codex/SKILL.md") }
     /// The user-level skill this feature replaces, from before Pacer managed it.
     public static func legacySkillURL(home: URL) -> URL { home.appendingPathComponent("skills/codex", isDirectory: true) }
 
-    /// What the runner applies when Claude leaves an option out. Nil model,
-    /// effort and fast mode follow the user's Codex configuration.
+    /// Settings → Collaboration for Claude → Codex, as the runner reads them
+    /// from `config.json`. Nil model, effort and fast mode follow the user's
+    /// Codex configuration; Claude can name them for one run, and can lower
+    /// file access for one run but never raise it.
     public struct Settings: Codable, Equatable, Sendable {
-        public enum Sandbox: String, Codable, Sendable, CaseIterable { case readOnly = "read-only", workspaceWrite = "workspace-write" }
-        /// How freely Claude starts runs: only when asked (the default), may
-        /// suggest one, or reviews larger changes with Codex before finishing.
-        public enum Initiative: String, Codable, Sendable, CaseIterable { case ask, suggest, review }
+        /// When Claude uses Codex: when the user asks for it, or only through `/pacer:codex`.
+        public enum Trigger: String, Codable, Sendable, CaseIterable { case ask, command }
+        /// How long the Codex threads Pacer starts stay: until Claude's turn
+        /// ends, `recordsHours` after the run, or in Codex's history.
+        public enum Records: String, Codable, Sendable, CaseIterable { case turn, timed, keep }
+        /// The most a run may change: Codex's sandbox, project writes with or
+        /// without network, or full access.
+        public enum Sandbox: String, Codable, Sendable, CaseIterable {
+            case readOnly = "read-only", workspaceWrite = "workspace-write"
+            case workspaceWriteNetwork = "workspace-write-network", fullAccess = "danger-full-access"
+        }
         public var codex: String?
         public var model: String?
         public var effort: String?
         public var fast: Bool?
+        public var trigger: Trigger
+        public var records: Records
+        public var recordsHours: Int
         public var sandbox: Sandbox
-        public var timeoutMinutes: Int
+        /// Writing runs start in their own Codex worktree.
+        public var worktree: Bool
+        /// The user's standing instructions, added to every brief.
+        public var instructions: String?
+        /// Codex's memories are read and written.
+        public var memory: Bool
         public var maxConcurrent: Int
-        public var initiative: Initiative?
-        public static let timeoutChoices = [15, 30, 60, 120, 240]
-        public static let concurrencyChoices = [1, 2, 3, 4, 6]
-        public init(codex: String? = nil, model: String? = nil, effort: String? = nil, fast: Bool? = nil,
-                    sandbox: Sandbox = .readOnly, timeoutMinutes: Int = 60, maxConcurrent: Int = 3, initiative: Initiative = .ask) {
-            self.codex = codex; self.model = model; self.effort = effort; self.fast = fast; self.sandbox = sandbox
-            self.timeoutMinutes = Self.timeoutChoices.contains(timeoutMinutes) ? timeoutMinutes : 60
+        /// Percent of Codex quota left below which runs don't start; nil never holds them back.
+        public var quotaFloor: Int?
+        public static let recordsHourChoices = [2, 6, 12, 24, 48, 72, 168]
+        public static let concurrencyChoices = [1, 2, 3, 4]
+        public static let quotaFloorChoices = [10, 20]
+        public static let instructionsLimit = 4000
+
+        public init(codex: String? = nil, model: String? = nil, effort: String? = nil, fast: Bool? = nil, trigger: Trigger = .ask,
+                    records: Records = .turn, recordsHours: Int = 24, sandbox: Sandbox = .workspaceWriteNetwork, worktree: Bool = false,
+                    instructions: String? = nil, memory: Bool = false, maxConcurrent: Int = 3, quotaFloor: Int? = nil) {
+            self.codex = codex; self.model = model; self.effort = effort; self.fast = fast; self.trigger = trigger; self.records = records
+            self.recordsHours = Self.recordsHourChoices.contains(recordsHours) ? recordsHours : 24
+            self.sandbox = sandbox; self.worktree = worktree; self.memory = memory
+            let text = instructions?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            self.instructions = text.isEmpty ? nil : String(text.prefix(Self.instructionsLimit))
             self.maxConcurrent = Self.concurrencyChoices.contains(maxConcurrent) ? maxConcurrent : 3
-            self.initiative = initiative == .ask ? nil : initiative
+            self.quotaFloor = quotaFloor.flatMap { Self.quotaFloorChoices.contains($0) ? $0 : nil }
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case codex, model, effort, fast, trigger, records, recordsHours, sandbox, worktree, instructions, memory, maxConcurrent, quotaFloor
+        }
+        /// Missing or unknown values fall back to the defaults, so a file from
+        /// an earlier build still reads.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            func value<T: Decodable>(_ key: CodingKeys, _ type: T.Type) -> T? { (try? c.decodeIfPresent(type, forKey: key)) ?? nil }
+            self.init(codex: value(.codex, String.self), model: value(.model, String.self), effort: value(.effort, String.self),
+                      fast: value(.fast, Bool.self), trigger: value(.trigger, String.self).flatMap(Trigger.init) ?? .ask,
+                      records: value(.records, String.self).flatMap(Records.init) ?? .turn, recordsHours: value(.recordsHours, Int.self) ?? 24,
+                      sandbox: value(.sandbox, String.self).flatMap(Sandbox.init) ?? .workspaceWriteNetwork,
+                      worktree: value(.worktree, Bool.self) ?? false, instructions: value(.instructions, String.self),
+                      memory: value(.memory, Bool.self) ?? false, maxConcurrent: value(.maxConcurrent, Int.self) ?? 3,
+                      quotaFloor: value(.quotaFloor, Int.self))
         }
         public func data() -> Data {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
             return (try? encoder.encode(self)) ?? Data("{}".utf8)
         }
+    }
+
+    /// Writes the least Codex quota left (percent, any window) for the
+    /// runner's quota floor, or removes it with nil. Only once the feature's
+    /// folder exists; never follows a symbolic link.
+    @discardableResult
+    public static func writeQuota(remainingPercent: Double?, home: URL, at date: Date = Date(), fileManager: FileManager = .default) -> Bool {
+        let root = root(home: home), file = quotaURL(home: home)
+        guard (try? fileManager.attributesOfItem(atPath: root.path))?[.type] as? FileAttributeType == .typeDirectory else { return false }
+        if let type = (try? fileManager.attributesOfItem(atPath: file.path))?[.type] as? FileAttributeType, type != .typeRegular { return false }
+        guard let remainingPercent, remainingPercent.isFinite else {
+            return !fileManager.fileExists(atPath: file.path) || (try? fileManager.removeItem(at: file)) != nil
+        }
+        let value: [String: Any] = ["remainingPercent": (min(100, max(0, remainingPercent)) * 10).rounded() / 10,
+                                    "at": (date.timeIntervalSince1970 * 1000).rounded() / 1000]
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return false }
+        return (try? data.write(to: file, options: .atomic)) != nil
     }
 
     /// Writes the settings, the feature's switch, or removes them with nil.
@@ -187,29 +247,6 @@ public enum ClaudeCodexDelegation {
         (try? Data("pacer".utf8).write(to: directory.appendingPathComponent("stop"))) != nil
     }
 
-    /// Runs, time and tokens over the last week, from the runner's stats file.
-    public struct Summary: Equatable, Sendable {
-        public var runs = 0
-        public var failures = 0
-        public var seconds: Double = 0
-        public var tokens = 0
-        public init() {}
-    }
-    public static func summary(home: URL, since: Date) -> Summary {
-        var summary = Summary()
-        guard let data = try? Data(contentsOf: statsURL(home: home)), data.count < 4 << 20,
-              let text = String(data: data, encoding: .utf8) else { return summary }
-        for line in text.split(whereSeparator: \.isNewline) {
-            guard let value = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let at = value["at"] as? Double, Date(timeIntervalSince1970: at) >= since else { continue }
-            summary.runs += 1
-            if value["status"] as? String != "ok" { summary.failures += 1 }
-            summary.seconds += max(0, value["seconds"] as? Double ?? 0)
-            summary.tokens += max(0, value["input"] as? Int ?? 0) + max(0, value["output"] as? Int ?? 0)
-        }
-        return summary
-    }
-
     /// The user-level skill this feature replaces is the folder Pacer's earlier
     /// guide installed: a `codex` skill whose runner is `codex-run.mjs`.
     public static func hasLegacySkill(home: URL, fileManager: FileManager = .default) -> Bool {
@@ -228,21 +265,13 @@ public enum ClaudeCodexDelegation {
         }
         return [shell(python), "-S", shell(runnerURL(home: home).path)].joined(separator: " ")
     }
-    /// The skill Claude loads, with the runner command and the user's chosen
-    /// initiative written in.
-    public static func skill(command: String, initiative: Settings.Initiative = .ask) -> Data? {
+    /// The skill Claude loads, with the runner command written in. With the
+    /// `command` trigger Claude can't start it by itself; only `/pacer:codex` does.
+    public static func skill(command: String, trigger: Settings.Trigger = .ask) -> Data? {
         guard let url = L10n.sharedResourceBundle.url(forResource: "claude_codex_skill", withExtension: "md"),
               let template = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-        let rule: String
-        switch initiative {
-        case .ask:
-            rule = "Usage counts against the user's Codex (ChatGPT) quota, so start a run only when the user asks for one. You may mention that a second opinion would help, without starting it."
-        case .suggest:
-            rule = "Usage counts against the user's Codex (ChatGPT) quota. The user lets you suggest a run when a second opinion, a parallel investigation or a review would clearly help: say why in one sentence and wait for their yes before starting it."
-        case .review:
-            rule = "Usage counts against the user's Codex (ChatGPT) quota. The user asks for one automatic check: before you finish a turn in which you changed more than three files or about 100 lines, run `{{RUN}} review --uncommitted -l \"<label>\"`, verify its findings and report them. Start other runs only when the user asks."
-        }
-        return Data(template.replacingOccurrences(of: "{{INITIATIVE}}", with: rule).replacingOccurrences(of: "{{RUN}}", with: command).utf8)
+        let invocation = trigger == .command ? "disable-model-invocation: true\n" : ""
+        return Data(template.replacingOccurrences(of: "{{INVOCATION}}", with: invocation).replacingOccurrences(of: "{{RUN}}", with: command).utf8)
     }
     /// The settings the host last wrote, if any.
     public static func settings(_ data: Data?) -> Settings? { data.flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } }

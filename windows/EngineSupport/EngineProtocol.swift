@@ -358,27 +358,36 @@ struct EngineNotice: Codable, Equatable {
     }
 }
 
-/// Codex for Claude's settings from the host. Absent values keep the defaults.
+/// Codex for Claude's settings from the host (Settings → Collaboration, the
+/// Claude → Codex pair). Absent values keep the defaults; keys from earlier
+/// builds are ignored. Nil or empty model and effort, and a nil fast mode,
+/// follow Codex's configuration.
 struct EngineCodexDelegationSettings: Codable, Equatable, Sendable {
     var enabled: Bool?
-    /// Runs show as rows under their Claude task; false shows only their count.
-    var rows: Bool?
+    /// `ask` (default) or `command`: written into the skill.
+    var trigger: String?
     var model: String?
     var effort: String?
     var fast: Bool?
-    var write: Bool?
-    var timeoutMinutes: Int?
+    /// `turn` (default), `timed` or `keep`, and the hours for `timed`.
+    var records: String?
+    var recordsHours: Int?
+    /// `read-only`, `workspace-write`, `workspace-write-network` (default) or `danger-full-access`.
+    var sandbox: String?
+    var worktree: Bool?
+    var instructions: String?
+    var memory: Bool?
     var maxConcurrent: Int?
-    /// `ask` (default), `suggest` or `review`: written into the skill.
-    var initiative: String?
-    /// Notices: a failed run (on unless false), a run longer than these minutes (off when absent).
-    var failureAlerts: Bool?
-    var longRunMinutes: Int?
+    /// 10 or 20 percent; absent never holds runs back.
+    var quotaFloor: Int?
     func settings(codex: String?) -> ClaudeCodexDelegation.Settings {
-        .init(codex: codex, model: model.flatMap { $0.isEmpty ? nil : String($0.prefix(80)) },
-              effort: effort.flatMap { $0.isEmpty ? nil : String($0.prefix(16)) }, fast: fast,
-              sandbox: write == true ? .workspaceWrite : .readOnly, timeoutMinutes: timeoutMinutes ?? 60, maxConcurrent: maxConcurrent ?? 3,
-              initiative: initiative.flatMap(ClaudeCodexDelegation.Settings.Initiative.init) ?? .ask)
+        typealias Settings = ClaudeCodexDelegation.Settings
+        return .init(codex: codex, model: model.flatMap { $0.isEmpty ? nil : String($0.prefix(80)) },
+                     effort: effort.flatMap { $0.isEmpty ? nil : String($0.prefix(16)) }, fast: fast,
+                     trigger: trigger.flatMap(Settings.Trigger.init) ?? .ask, records: records.flatMap(Settings.Records.init) ?? .turn,
+                     recordsHours: recordsHours ?? 24, sandbox: sandbox.flatMap(Settings.Sandbox.init) ?? .workspaceWriteNetwork,
+                     worktree: worktree ?? false, instructions: instructions, memory: memory ?? false,
+                     maxConcurrent: maxConcurrent ?? 3, quotaFloor: quotaFloor)
     }
 }
 
@@ -390,16 +399,6 @@ struct EngineCodexDelegationStatus: Codable, Equatable {
     /// The user-level skill from before Pacer managed it, while it is still there.
     let legacySkill: String?
     let codexFound: Bool
-    /// The last seven days, from the runner's stats: no task content.
-    let runs: Int
-    let failures: Int
-    let minutes: Int
-    let tokens: Int
-    /// The same, worded: "12 runs · 48 min · 1 failed · 3100 K tokens".
-    let weekText: String
-    /// Any run was ever filed; the get-started checklist and try-it card follow this.
-    var firstRunSeen = false
-    var runsTotal = 0
     /// The self-check: `ok`, `missing` or `unknown` sign-in, and the program's version.
     var login: String? = nil
     var version: String? = nil
@@ -407,11 +406,12 @@ struct EngineCodexDelegationStatus: Codable, Equatable {
     /// Codex's model catalog for the model picker, and the model its configuration names.
     var models: [EngineCodexModel]? = nil
     var defaultModel: String? = nil
+    /// What Codex's configuration picks for effort and fast mode.
+    var defaultEffort: String? = nil
+    var defaultFast: Bool? = nil
     /// Runs going now, across Claude sessions, and how many may run at once.
     var running: [EngineRunningDelegation] = []
     var limit = 3
-    var stats7: CodexDelegationStatistics? = nil
-    var stats30: CodexDelegationStatistics? = nil
     /// Codex threads another Codex process kept from being deleted, still queued.
     var pending = 0
     var runsFolder: String? = nil

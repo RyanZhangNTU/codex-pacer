@@ -24,7 +24,10 @@ struct ClaudeQuotaReadDependencies {
 @MainActor
 final class IslandModel: ObservableObject {
     @Published private var codexQuota: QuotaSnapshot? {
-        didSet { if oldValue?.windows.count != codexQuota?.windows.count { onLayoutChange?() } }
+        didSet {
+            if oldValue?.windows.count != codexQuota?.windows.count { onLayoutChange?() }
+            if oldValue != codexQuota { writeCodexDelegationQuota() }
+        }
     }
     @Published var activities: [SessionActivity] = [] {
         didSet {
@@ -290,7 +293,7 @@ final class IslandModel: ObservableObject {
         var options = TaskPresentationOptions(hideProjects: hideProjects, hostApplications: hosts,
             sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost,
             progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize,
-            showsDelegationRows: defaults.object(forKey: CodexDelegationPreferences.rowsKey) as? Bool ?? true)
+            showsDelegationRows: true)
         options.hiddenTurnCredits = hiddenTurnCredits
         return options
     }
@@ -1215,7 +1218,7 @@ final class IslandModel: ObservableObject {
         }
         let before = ClaudeCodexDelegation.isOn(home: home)
         let config = ClaudeCodexDelegation.configURL(home: home)
-        let initiative = ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.initiative
+        let trigger = ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.trigger
         if wanted {
             // The runner starts the Codex program Pacer found, also the one inside Codex Desktop.
             let codex = CodexClient.findExecutable(customPath: defaults.string(forKey: "codexExecutable") ?? "")?.path
@@ -1223,9 +1226,18 @@ final class IslandModel: ObservableObject {
         } else if codexDelegationHome == home || setupConfirmed {
             ClaudeCodexDelegation.apply(nil, home: home); codexDelegationHome = nil
         }
-        // The switch and the initiative are written into the plugin's skill.
+        writeCodexDelegationQuota()
+        // The switch and the trigger are written into the plugin's skill.
         return ClaudeCodexDelegation.isOn(home: home) != before
-            || ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.initiative != initiative
+            || ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.trigger != trigger
+    }
+    /// The least Codex quota left, for the runner's quota floor, while Codex
+    /// for Claude is on. Its time is when Pacer read the quota, so an old
+    /// reading stops holding runs back.
+    func writeCodexDelegationQuota() {
+        guard !demo, let home = codexDelegationHome, ClaudeCodexDelegation.isOn(home: home) else { return }
+        let left = codexQuota?.windows.compactMap(\.remainingPercent).min()
+        ClaudeCodexDelegation.writeQuota(remainingPercent: left, home: home, at: codexQuota?.capturedAt ?? Date())
     }
     /// Settings → Collaboration changed: the runner's choices are written at
     /// once, the skill follows the switch, and the task list follows the display.
@@ -2646,11 +2658,8 @@ final class IslandModel: ObservableObject {
         applyActivityUpdate(activityState.update()); present(notices)
     }
     private var codexDelegationLedger: (at: Date, links: [String: CodexDelegationLink])?
-    /// The ledger's runs as last read, for Codex for Claude's notices and Collaboration.
+    /// The ledger's runs as last read.
     private(set) var codexDelegationRuns: [ClaudeCodexDelegation.Run] = []
-    private var codexDelegationNoticePolicy = CodexDelegationNoticePolicy()
-    var codexDelegationStatsCache: (at: Date, rows: [CodexDelegationStatistics.Row])?
-    var runningDelegationsCache: (key: RunningDelegationKey, value: [RunningDelegation])?
     /// Collaboration's self-check: Codex's version, sign-in and model catalog.
     @Published var codexDelegationCheck = CodexDelegationCheck()
     /// Codex for Claude's ledger, read at most once a second: a run's rollout
@@ -2661,18 +2670,6 @@ final class IslandModel: ObservableObject {
         codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome)
         let links = ClaudeCodexDelegation.links(codexDelegationRuns)
         codexDelegationLedger = (date, links); return links
-    }
-    /// Failed, long and first-finished runs, from the ledger just read; the
-    /// first look is a baseline. Collaboration's two alert choices decide.
-    private func codexDelegationNotices(at date: Date) -> [IslandNotice] {
-        guard !demo, ClaudeCodexDelegation.isOn(home: claudeHome) else { return [] }
-        let preferences = CodexDelegationPreferences(defaults: defaults)
-        let titles = Dictionary(activityState.activities.filter { $0.provider == .claude }.map {
-            ($0.id, ActivityTaskRowPresentation.title($0, hideProjects: hideProjects)) }, uniquingKeysWith: { first, _ in first })
-        let finished = codexDelegationStatisticsRows(at: date).filter { $0.status != "refused" }
-        return codexDelegationNoticePolicy.notices(codexDelegationRuns, titles: titles, failures: preferences.failureAlerts,
-            longRunMinutes: preferences.longRunMinutes > 0 ? preferences.longRunMinutes : nil,
-            firstRunFinished: finished.count == 1 && finished[0].status == "ok", at: date)
     }
     /// Asks a running Codex for Claude run's runner to stop it; the runner
     /// stops Codex and tells Claude the user stopped it in Pacer.
@@ -2688,7 +2685,7 @@ final class IslandModel: ObservableObject {
         applyActivityUpdate(update)
         if RuntimeDiagnostics.enabled { RuntimeDiagnostics.record("ui", source: "combined", activities: update.activities) }
         if oldHeight != panelContentHeight { onLayoutChange?() }
-        present(update.notices + codexDelegationNotices(at: now)); onStatusChange?()
+        present(update.notices); onStatusChange?()
     }
     func rememberFirstOutput(_ latency: TimeInterval?, reportedAt: Date?) {
         activityState.rememberFirstOutput(latency, reportedAt: reportedAt, at: now)

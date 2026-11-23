@@ -1,72 +1,89 @@
 import Foundation
 import PacerCore
 
-/// Settings → Collaboration: Codex for Claude, off until the user turns it on.
-/// The same choices as Windows' `CodexDelegation*` preferences. Empty model and
-/// effort, and an empty fast choice, follow Codex's own configuration; the
-/// runner applies these when Claude leaves them out.
+/// Settings → Collaboration for one pair, Claude → Codex, off until the user
+/// turns it on. Keys carry the pair, so later pairs get their own; keys from
+/// earlier builds are ignored. Model, effort and fast mode follow Codex until
+/// the user picks one, and a pick is remembered while they follow Codex again.
+/// The runner applies these from `config.json`.
 struct CodexDelegationPreferences: Equatable {
-    static let enabledKey = "codexDelegation"
-    static let rowsKey = "codexDelegationRows"
-    static let modelKey = "codexDelegationModel"
-    static let effortKey = "codexDelegationEffort"
-    static let fastKey = "codexDelegationFast"
-    static let writeKey = "codexDelegationWrite"
-    static let timeoutKey = "codexDelegationTimeout"
-    static let concurrencyKey = "codexDelegationConcurrency"
-    static let initiativeKey = "codexDelegationInitiative"
-    static let failureAlertsKey = "codexDelegationFailureAlerts"
-    static let longRunKey = "codexDelegationLongRun"
-    static let coachShownKey = "codexDelegationCoachShown"
-    static let statsDaysKey = "codexDelegationStatsDays"
-    static let longRunChoices = [0, 10, 20, 30, 60]
-    static let efforts = ["", "low", "medium", "high", "xhigh", "max", "ultra"]
-    static let fastChoices = ["", "on", "off"]
+    static let pair = "collaboration.claude>codex."
+    static let enabledKey = pair + "enabled"
+    static let triggerKey = pair + "trigger"
+    static let modelKey = pair + "model", followModelKey = pair + "followModel"
+    static let effortKey = pair + "effort", followEffortKey = pair + "followEffort"
+    static let fastKey = pair + "fast", followFastKey = pair + "followFast"
+    static let recordsKey = pair + "records", recordsHoursKey = pair + "recordsHours"
+    static let sandboxKey = pair + "sandbox"
+    static let worktreeKey = pair + "worktree"
+    static let instructionsKey = pair + "instructions"
+    static let memoryKey = pair + "memory"
+    static let concurrencyKey = pair + "concurrency"
+    static let quotaFloorKey = pair + "quotaFloor"
+    static let efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
+
+    typealias Settings = ClaudeCodexDelegation.Settings
 
     var enabled = false
-    /// Runs show as rows under their Claude task; false shows only their count.
-    var rows = true
+    var trigger = Settings.Trigger.ask
+    var followModel = true
     var model = ""
-    var effort = ""
-    var fast = ""
-    var write = false
-    var timeoutMinutes = 60
+    var followEffort = true
+    var effort = "high"
+    var followFast = true
+    var fast = false
+    var records = Settings.Records.turn
+    var recordsHours = 24
+    var sandbox = Settings.Sandbox.workspaceWriteNetwork
+    var worktree = false
+    var instructions = ""
+    var memory = false
     var maxConcurrent = 3
-    /// How freely Claude starts runs; written into the skill.
-    var initiative = ClaudeCodexDelegation.Settings.Initiative.ask
-    /// Notices: a failed or timed-out run (on), a run longer than these minutes (0 is off).
-    var failureAlerts = true
-    var longRunMinutes = 0
-    /// The island's one-time hint about run lines was dismissed.
-    var coachShown = false
-    /// Collaboration's statistics show this many days: 7 or 30.
-    var statsDays = 30
+    /// Percent of quota left below which runs don't start; 0 never holds them back.
+    var quotaFloor = 0
 
     init() {}
     init(defaults: UserDefaults) {
         enabled = defaults.bool(forKey: Self.enabledKey)
-        rows = defaults.object(forKey: Self.rowsKey) as? Bool ?? true
+        trigger = defaults.string(forKey: Self.triggerKey).flatMap(Settings.Trigger.init) ?? .ask
+        followModel = defaults.object(forKey: Self.followModelKey) as? Bool ?? true
         model = defaults.string(forKey: Self.modelKey).filter(Self.validModel) ?? ""
-        effort = defaults.string(forKey: Self.effortKey).filter { Self.efforts.contains($0) } ?? ""
-        fast = defaults.string(forKey: Self.fastKey).filter { Self.fastChoices.contains($0) } ?? ""
-        write = defaults.bool(forKey: Self.writeKey)
-        timeoutMinutes = (defaults.object(forKey: Self.timeoutKey) as? Int).filter { ClaudeCodexDelegation.Settings.timeoutChoices.contains($0) } ?? 60
-        maxConcurrent = (defaults.object(forKey: Self.concurrencyKey) as? Int).filter { ClaudeCodexDelegation.Settings.concurrencyChoices.contains($0) } ?? 3
-        initiative = defaults.string(forKey: Self.initiativeKey).flatMap(ClaudeCodexDelegation.Settings.Initiative.init) ?? .ask
-        failureAlerts = defaults.object(forKey: Self.failureAlertsKey) as? Bool ?? true
-        longRunMinutes = (defaults.object(forKey: Self.longRunKey) as? Int).filter { Self.longRunChoices.contains($0) } ?? 0
-        coachShown = defaults.bool(forKey: Self.coachShownKey)
-        statsDays = (defaults.object(forKey: Self.statsDaysKey) as? Int).filter { [7, 30].contains($0) } ?? 30
+        followEffort = defaults.object(forKey: Self.followEffortKey) as? Bool ?? true
+        effort = defaults.string(forKey: Self.effortKey).filter { Self.efforts.contains($0) } ?? "high"
+        followFast = defaults.object(forKey: Self.followFastKey) as? Bool ?? true
+        fast = defaults.bool(forKey: Self.fastKey)
+        records = defaults.string(forKey: Self.recordsKey).flatMap(Settings.Records.init) ?? .turn
+        recordsHours = (defaults.object(forKey: Self.recordsHoursKey) as? Int).filter { Settings.recordsHourChoices.contains($0) } ?? 24
+        sandbox = defaults.string(forKey: Self.sandboxKey).flatMap(Settings.Sandbox.init) ?? .workspaceWriteNetwork
+        worktree = defaults.bool(forKey: Self.worktreeKey)
+        instructions = String((defaults.string(forKey: Self.instructionsKey) ?? "").prefix(Settings.instructionsLimit))
+        memory = defaults.bool(forKey: Self.memoryKey)
+        maxConcurrent = (defaults.object(forKey: Self.concurrencyKey) as? Int).filter { Settings.concurrencyChoices.contains($0) } ?? 3
+        quotaFloor = (defaults.object(forKey: Self.quotaFloorKey) as? Int).filter { Settings.quotaFloorChoices.contains($0) } ?? 0
     }
 
     func save(to defaults: UserDefaults) {
-        defaults.set(enabled, forKey: Self.enabledKey); defaults.set(rows, forKey: Self.rowsKey)
-        defaults.set(model, forKey: Self.modelKey); defaults.set(effort, forKey: Self.effortKey)
-        defaults.set(fast, forKey: Self.fastKey); defaults.set(write, forKey: Self.writeKey)
-        defaults.set(timeoutMinutes, forKey: Self.timeoutKey); defaults.set(maxConcurrent, forKey: Self.concurrencyKey)
-        defaults.set(initiative.rawValue, forKey: Self.initiativeKey); defaults.set(failureAlerts, forKey: Self.failureAlertsKey)
-        defaults.set(longRunMinutes, forKey: Self.longRunKey); defaults.set(coachShown, forKey: Self.coachShownKey)
-        defaults.set(statsDays, forKey: Self.statsDaysKey)
+        defaults.set(enabled, forKey: Self.enabledKey); defaults.set(trigger.rawValue, forKey: Self.triggerKey)
+        defaults.set(followModel, forKey: Self.followModelKey); defaults.set(model, forKey: Self.modelKey)
+        defaults.set(followEffort, forKey: Self.followEffortKey); defaults.set(effort, forKey: Self.effortKey)
+        defaults.set(followFast, forKey: Self.followFastKey); defaults.set(fast, forKey: Self.fastKey)
+        defaults.set(records.rawValue, forKey: Self.recordsKey); defaults.set(recordsHours, forKey: Self.recordsHoursKey)
+        defaults.set(sandbox.rawValue, forKey: Self.sandboxKey); defaults.set(worktree, forKey: Self.worktreeKey)
+        defaults.set(instructions, forKey: Self.instructionsKey); defaults.set(memory, forKey: Self.memoryKey)
+        defaults.set(maxConcurrent, forKey: Self.concurrencyKey); defaults.set(quotaFloor, forKey: Self.quotaFloorKey)
+    }
+
+    /// Everything but the switch back to its default; the switch stays.
+    func restoringDefaults() -> Self {
+        var value = Self(); value.enabled = enabled; return value
+    }
+    /// Whether every choice besides the switch is at its default.
+    var isDefault: Bool { restoringDefaults() == self }
+    /// Whether every advanced choice is at its default.
+    var advancedIsDefault: Bool {
+        let base = Self()
+        return sandbox == base.sandbox && worktree == base.worktree && instructions.isEmpty && memory == base.memory
+            && maxConcurrent == base.maxConcurrent && quotaFloor == base.quotaFloor
     }
 
     /// A model slug: letters, digits and the punctuation Codex uses in them.
@@ -75,10 +92,11 @@ struct CodexDelegationPreferences: Equatable {
     }
 
     /// What the runner reads from `config.json`, with the Codex program Pacer found.
-    func settings(codex: String?) -> ClaudeCodexDelegation.Settings {
-        .init(codex: codex, model: model.isEmpty ? nil : String(model.prefix(80)), effort: effort.isEmpty ? nil : effort,
-              fast: fast.isEmpty ? nil : fast == "on", sandbox: write ? .workspaceWrite : .readOnly,
-              timeoutMinutes: timeoutMinutes, maxConcurrent: maxConcurrent, initiative: initiative)
+    func settings(codex: String?) -> Settings {
+        .init(codex: codex, model: followModel || model.isEmpty ? nil : String(model.prefix(80)), effort: followEffort ? nil : effort,
+              fast: followFast ? nil : fast, trigger: trigger, records: records, recordsHours: recordsHours, sandbox: sandbox,
+              worktree: worktree, instructions: instructions, memory: memory, maxConcurrent: maxConcurrent,
+              quotaFloor: quotaFloor == 0 ? nil : quotaFloor)
     }
 }
 

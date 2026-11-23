@@ -245,9 +245,9 @@ actor EngineRuntime {
     private var codexDelegationHome: URL?
     private var codexDelegationLedger: (at: Date, links: [String: CodexDelegationLink])?
     private var codexDelegationRuns: [ClaudeCodexDelegation.Run] = []
-    private var codexDelegationStatsRows: (at: Date, rows: [CodexDelegationStatistics.Row])?
+    /// The quota left last written for the runner's quota floor.
+    private var codexDelegationQuotaWritten: (left: Double?, at: Date?)?
     private var codexDelegationStatusCache: (at: Date, value: EngineCodexDelegationStatus)?
-    private var codexDelegationNotices = CodexDelegationNoticePolicy()
     private var codexDelegationCheck: (checking: Bool, login: String?, version: String?, models: [EngineCodexModel]?, defaultModel: String?) = (false, nil, nil, nil, nil)
     private var codexProgressRing = false
     private var deepseekProgressRing = false
@@ -1075,8 +1075,8 @@ actor EngineRuntime {
         case "checkCodexDelegation":
             checkCodexDelegation(); publish(notices: [])
         case "clearDelegationHistory":
-            CodexDelegationStatistics.clearHistory(home: claudeHome)
-            codexDelegationStatsRows = nil; codexDelegationStatusCache = nil; publish(notices: [])
+            // Pacer keeps no Codex for Claude history any more; older hosts may still ask.
+            publish(notices: [])
         case "reinstallDelegationSkill":
             codexDelegationStatusCache = nil; scheduleClaudeHooks(force: true)
         case "stopDelegation":
@@ -1867,7 +1867,7 @@ actor EngineRuntime {
         }
         let config = ClaudeCodexDelegation.configURL(home: claudeHome)
         let before = ClaudeCodexDelegation.isOn(home: claudeHome)
-        let initiative = ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.initiative
+        let trigger = ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.trigger
         if wanted {
             // The runner starts the same Codex program Pacer found, also the one inside Codex Desktop.
             let codex = CodexClient.findExecutable(customPath: codexExecutable)?.path ?? (codexExecutable.isEmpty ? nil : codexExecutable)
@@ -1875,9 +1875,10 @@ actor EngineRuntime {
         } else if codexDelegationHome == claudeHome || setupConfirmed {
             ClaudeCodexDelegation.apply(nil, home: claudeHome); codexDelegationHome = nil
         }
-        // The switch and the initiative are written into the plugin's skill.
+        codexDelegationQuotaWritten = nil
+        // The switch and the trigger are written into the plugin's skill.
         if ClaudeCodexDelegation.isOn(home: claudeHome) != before
-            || ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.initiative != initiative {
+            || ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.trigger != trigger {
             codexDelegationStatusCache = nil; scheduleClaudeHooks(force: true)
         }
     }
@@ -1890,40 +1891,15 @@ actor EngineRuntime {
         let links = ClaudeCodexDelegation.links(codexDelegationRuns)
         codexDelegationLedger = (date, links); return links
     }
-    /// Failed, long and first-finished runs, from the ledger just read.
-    private func codexDelegationNoticesNow(at date: Date) -> [IslandNotice] {
-        guard !demo, ClaudeCodexDelegation.isOn(home: claudeHome) else { return [] }
-        let titles = Dictionary(activityState.activities.filter { $0.provider == .claude }.map {
-            ($0.id, ActivityTaskRowPresentation.title($0, hideProjects: hideProjects)) }, uniquingKeysWith: { first, _ in first })
-        let finished = codexDelegationStatisticsRows(at: date).filter { $0.status != "refused" }
-        return codexDelegationNotices.notices(codexDelegationRuns, titles: titles, failures: codexDelegationSettings.failureAlerts ?? true,
-            longRunMinutes: codexDelegationSettings.longRunMinutes.flatMap { $0 > 0 ? $0 : nil },
-            firstRunFinished: finished.count == 1 && finished[0].status == "ok", at: date)
-    }
-    /// The runner's stats file, read at most every five seconds.
-    private func codexDelegationStatisticsRows(at date: Date) -> [CodexDelegationStatistics.Row] {
-        if let cached = codexDelegationStatsRows, abs(date.timeIntervalSince(cached.at)) < 5 { return cached.rows }
-        let rows = CodexDelegationStatistics.rows(home: claudeHome)
-        codexDelegationStatsRows = (date, rows); return rows
-    }
     private func codexDelegationStatus(at date: Date, presentation: ActivityTaskPresentation,
                                        codexQuota: QuotaSnapshot?) -> EngineCodexDelegationStatus? {
         guard !demo, enabled.contains(.claude) else { return nil }
         var value: EngineCodexDelegationStatus
         if let cached = codexDelegationStatusCache, abs(date.timeIntervalSince(cached.at)) < 15 { value = cached.value } else {
-            let rows = codexDelegationStatisticsRows(at: date)
-            let stats7 = CodexDelegationStatistics(rows: rows, days: 7, hideProjects: hideProjects, at: date)
             let legacy = ClaudeCodexDelegation.hasLegacySkill(home: claudeHome) ? ClaudeCodexDelegation.legacySkillURL(home: claudeHome).path : nil
-            let ran = rows.filter { $0.status != "refused" }
             value = EngineCodexDelegationStatus(enabled: ClaudeCodexDelegation.isOn(home: claudeHome),
                 skillInstalled: FileManager.default.fileExists(atPath: ClaudeCodexDelegation.skillURL(home: claudeHome).path),
-                legacySkill: legacy, codexFound: codexExecutableFound ?? !codexExecutable.isEmpty,
-                runs: stats7.runs, failures: ran.filter { $0.at >= date.addingTimeInterval(-7 * 86400) && !["ok", "stopped"].contains($0.status) }.count,
-                minutes: 0, tokens: 0, weekText: stats7.summary)
-            value.stats7 = stats7
-            value.stats30 = CodexDelegationStatistics(rows: rows, days: 30, hideProjects: hideProjects, at: date)
-            value.firstRunSeen = !rows.isEmpty || !codexDelegationRuns.isEmpty
-            value.runsTotal = ran.count
+                legacySkill: legacy, codexFound: codexExecutableFound ?? !codexExecutable.isEmpty)
             value.pending = (try? String(contentsOf: ClaudeCodexDelegation.root(home: claudeHome).appendingPathComponent("pending-deletes.txt"), encoding: .utf8))
                 .map { Set($0.split(whereSeparator: \.isWhitespace)).count } ?? 0
             value.runsFolder = ClaudeCodexDelegation.root(home: claudeHome).path
@@ -1936,6 +1912,13 @@ actor EngineRuntime {
         // Runs going now change every second; they come from the task list.
         value.running = presentation.rows.flatMap { row in
             row.delegations.filter { $0.phase == .running }.map { EngineRunningDelegation(parentTitle: row.title, row: EngineTaskRow($0)) }
+        }
+        // The least quota left, for the runner's quota floor, written when it changes.
+        let left = codexQuota?.windows.compactMap(\.remainingPercent).min()
+        if value.enabled, codexDelegationQuotaWritten?.left != left || codexDelegationQuotaWritten?.at != codexQuota?.capturedAt {
+            if ClaudeCodexDelegation.writeQuota(remainingPercent: left, home: claudeHome, at: codexQuota?.capturedAt ?? date) {
+                codexDelegationQuotaWritten = (left, codexQuota?.capturedAt)
+            }
         }
         let windows = (codexQuota?.windows ?? []).filter { $0.remainingPercent != nil }.sorted { ($0.durationMinutes ?? 0) < ($1.durationMinutes ?? 0) }
         value.quotaText = windows.isEmpty ? nil : windows.map { $0.label + " " + String(Int($0.remainingPercent!.rounded())) + "%" }.joined(separator: " · ")
@@ -3073,7 +3056,7 @@ actor EngineRuntime {
         }
         notificationActivities = current
         projectionReady = true
-        publish(notices: update.notices + (demo ? [] : codexDelegationNoticesNow(at: date)))
+        publish(notices: update.notices)
         trackActivityHosts()
     }
 
@@ -3168,7 +3151,7 @@ actor EngineRuntime {
                     .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop)
                 }, showsDeepSeekTurnCost: deepseekSettings.showsTurnCost,
                 progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize,
-                showsDelegationRows: codexDelegationSettings.rows ?? true)
+                showsDelegationRows: true)
         presentationOptions.hiddenTurnCredits = hiddenTurnCredits
         let taskPresentation = selected == nil ? activityState.presentation(at: date, options: presentationOptions) :
             ActivityTaskPresentation(activities: visibleActivities, requests: visibleRequests, inbox: inbox, options: presentationOptions, at: date)

@@ -4,8 +4,7 @@ Claude Code waits for most hooks, so this file imports only what every call
 needs; slower modules load on the paths that use them. While Pacer's progress
 ring is switched on, a typed UserPromptSubmit adds one fixed line of model
 context, and a Stop that leaves background work running is recorded as a wait.
-Stdout changes a hook decision in one case only: a Codex for Claude worktree
-whose changes were neither applied nor discarded holds the turn's end once.
+It never changes a hook decision.
 """
 import fcntl, json, os, pathlib, sys, time
 
@@ -154,28 +153,15 @@ def detached(command):
     subprocess.Popen(command,**options)
 def codex_turn_end(home,value):
     # Codex for Claude: a turn that stops with no background work left has
-    # ended, and Pacer's runner deletes the session's finished Codex runs in
-    # the background. A stop that waits for background work keeps them.
+    # ended, and Pacer's runner cleans the session's finished Codex runs in the
+    # background as the user's record setting says. A stop that waits for
+    # background work keeps them.
     session=ident(value.get('session_id'))
     if value.get('hook_event_name')!='Stop' or value.get('agent_id') is not None or not session:return
     root=home/'pacer'/'codex';folder=root/'runs'/session;runner=root/'runner.py'
     if not folder.is_dir() or not runner.is_file():return
     tasks=value.get('background_tasks')
     if isinstance(tasks,list) and any(isinstance(task,dict) and task.get('type') not in IDLE for task in tasks):return
-    if value.get('stop_hook_active') is not True:
-        held=[]
-        for entry in sorted(folder.iterdir()):
-            path=entry/'meta.json';meta=read_object(path)
-            if meta.get('status') in (None,'running') or not meta.get('worktree') or not meta.get('worktreeChanges'):continue
-            if meta.get('applied') or meta.get('discarded') or meta.get('warned'):continue
-            meta['warned']=True;write_object(path,meta);held.append(meta)
-        if held:
-            lines=['- thread %s: %s'%(meta.get('thread'),meta.get('worktree')) for meta in held]
-            reason='\n'.join(['Codex worktree runs still hold changes that were never applied or discarded:']+lines+[
-                "Apply what you need with the skill's apply <thread> command (or discard <thread>), then finish your turn; "
-                'the worktrees are deleted when the turn ends either way.'])
-            sys.stdout.write(json.dumps({'decision':'block','reason':reason},separators=(',',':')));sys.stdout.flush()
-            return
     detached([sys.executable]+(['-S'] if sys.flags.no_site else [])+[str(runner),'turn-end','--session',session])
 def watch_access(home,thread,session,item):
     # A detached copy of this program checks the request once, after this

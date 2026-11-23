@@ -108,9 +108,9 @@ Spend made elsewhere on your account, such as web searches or another device, is
 
 **Claude Code.** Task tracking sets itself up when the Claude module is on. Restart running Claude Code sessions once afterwards. With **Show Claude cloud Projects** on, Pacer also follows your cloud Project threads and tells you when one ends or waits for you.
 
-**Codex for Claude.** Turn it on in **Settings → Collaboration**, and Claude Code can hand a task, an investigation, a review or a fix to Codex through Pacer's `/pacer:codex` skill. Just ask Claude, for example "have Codex review this change". Each run shows under the Claude task that started it, with its progress, speed and model; hover over it for details, or to stop a running one. When Claude's turn ends with no background work left, Pacer deletes Codex's sessions, worktrees and output, so Claude keeps whatever matters in its reply or the project.
+**Codex for Claude.** Turn it on in **Settings → Collaboration**, and Claude Code can hand a task, an investigation, a review or a fix to Codex through Pacer's `/pacer:codex` skill. Just ask Claude, for example "have Codex review this change". Claude works and replies as it always does; Pacer only adds the tool. Each run shows under the Claude task that started it, with its progress, speed and model; hover over a running one to stop it.
 
-The Collaboration page shows how it works and three steps to start, phrases to try, the runs going now, statistics for the last 7 or 30 days (runs, success rate, time, tokens, what they were used for, models and projects) and the recent runs. It also sets the model, reasoning effort, fast mode, access, longest run and how many run at once, used when Claude doesn't name them, and how freely Claude may start a run: only when you ask (the default), may suggest one, or review larger changes with Codex before finishing. Pacer can alert you when a run fails or runs long, and **Run Self-Check** checks Codex and its sign-in without using any quota. Changes apply to Claude sessions started afterwards.
+The Collaboration page lists the pairs, each with its switch; Claude calls Codex is the first. Its basic settings choose when Claude may call Codex, the model, reasoning effort and fast mode (or follow Codex's own), and when the conversations Pacer leaves in Codex are cleared. The advanced settings set Codex's file access, whether it works in the project or a separate worktree, standing instructions added to every request, Codex's memories, how many runs go at once and a quota floor below which Claude won't start new runs.
 
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
 
@@ -144,7 +144,7 @@ Click the gear in the expanded island to open the main window.
 | **History** | Each service's quota over the current period, and the last 7 days of DeepSeek spend and WorkBuddy credits. |
 | **Codex, Claude, DeepSeek, WorkBuddy** | Turn each service on or off. Every service page starts with the same status: **Task monitoring** (whether Pacer reads its tasks on this computer), **Account** and **Usage**; then what it shows, its usage settings if it has any, and custom folders. Only services found on this computer, or turned on, are listed. |
 | **Module Library** | Every service Pacer can follow. Those found on this computer come first; the rest are folded away. Turn any of them on or off, or follow the link to get one. |
-| **Collaboration** | Codex for Claude: the switch, its status, how runs show, the defaults Claude uses and the last week's runs. |
+| **Collaboration** | Pairs like Claude calls Codex: the switch, and how Codex runs for Claude. |
 | **Remote** | Tasks on other machines: SSH hosts and, on Windows, WSL. |
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
 | **Collapsed Bar** | What the bar shows and each item's options. |
@@ -161,7 +161,7 @@ Changes apply right away. When an update is available, it shows in the sidebar a
 - It reads the logs your agents already write and keeps only what the island shows: task titles, stages, timing and token counts. It never keeps your prompts or replies.
 - Sign-ins happen in Pacer's own window. Pacer never reads other apps' passwords or browser cookies.
 - **Hide Project Names** replaces task titles on screen and in notifications.
-- Codex for Claude's runs are deleted when Claude's turn ends. Pacer keeps only how many ran, for how long and how many tokens they used.
+- Codex for Claude's conversations are cleared when Claude's turn ends, unless you choose a later time or to keep them. Pacer keeps no history of the runs.
 
 ## Troubleshooting
 

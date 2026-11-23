@@ -7,12 +7,17 @@ there is the run's ledger entry: identifiers, times, parameters and status,
 never the brief or Codex's output, which stay beside it. Pacer reads the
 ledger to show each run under its Claude task.
 
-When the Claude turn ends with no background work left, Pacer's Claude hook
-starts `turn-end`, which deletes every finished run of the session: its Codex
-threads and the sub-threads they spawned (`codex delete --force`), its Codex
-worktree and its run folder. Pacer itself runs `sweep` now and then, which
-retries deletions another Codex process blocked and cleans runs whose Claude
-process is gone.
+How long a run's Codex threads stay is the user's choice in Pacer (config.json
+`records`): `turn` deletes every finished run when the Claude turn ends (Pacer's
+Claude hook starts `turn-end` once the turn ends with no background work left),
+`timed` deletes them `recordsHours` after they end, and `keep` leaves the
+threads in Codex's history. Deleting a run removes its Codex threads and the
+sub-threads they spawned (`codex delete --force`), its Codex worktree and its
+run folder. A worktree that still holds changes nobody applied or discarded
+stays until its Claude session is gone; then its changes are saved as a patch
+under <root>/patches before the worktree is removed. Pacer itself runs `sweep`
+now and then, which retries deletions another Codex process blocked, deletes
+expired runs and cleans runs whose Claude process is gone.
 
 Pacer rewrites this file with each release. Python 3.9 or later, standard
 library only.
@@ -23,13 +28,18 @@ from pathlib import Path
 ROOT = Path(os.path.abspath(__file__)).parent
 RUNS = ROOT / 'runs'
 PENDING = ROOT / 'pending-deletes.txt'
-STATS = ROOT / 'stats.jsonl'
+QUOTA = ROOT / 'quota.json'
+PATCHES = ROOT / 'patches'
 CONFIG = ROOT / 'config.json'
 ORIGINATOR = 'Codex Pacer'
 KNOWN_EFFORTS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 FAST_TIER, STANDARD_TIER = 'priority', 'default'
 MAX_PRINT = 20000
 STALE = 48 * 3600
+SAFETY_MINUTES = 360.0  # a stuck Codex process; there is no user setting for this
+LEVELS = ('read-only', 'workspace-write', 'workspace-write-network', 'danger-full-access')
+RECORD_HOURS = (2, 6, 12, 24, 48, 72, 168)
+MAX_INSTRUCTIONS = 4000
 UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 SAFE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
 WINDOWS = os.name == 'nt'
@@ -52,13 +62,14 @@ Options:
   -m, --model <slug>        model, e.g. gpt-6.2-sol (see: models)
   -e, --effort <level>      """ + ' | '.join(KNOWN_EFFORTS) + """
       --fast | --no-fast    force the Fast service tier on or off
-      --write | --read-only workspace-write or read-only sandbox
+      --write | --read-only let Codex change files (up to Pacer's file access) or not
       --worktree            run in a new Codex-managed git worktree (with --write)
   -C, --cd <dir>            working root (default: current directory)
   -i, --image <file>        attach an image (task/resume; repeatable)
-      --timeout <minutes>   stop the job after this long
+      --timeout <minutes>   stop the job after this long (default: 360)
       --dry-run             print the codex command line and exit
-Defaults for model, effort, fast mode, sandbox and timeout come from Pacer's settings.
+Defaults for model, effort, fast mode, file access and work location come from
+Pacer's settings; a run never gets more file access than they allow.
 """
 
 
@@ -87,6 +98,23 @@ def config():
         return {}
 
 
+def level(settings):
+    value = settings.get('sandbox')
+    return value if value in LEVELS else 'workspace-write-network'
+
+
+def records(settings):
+    """How long finished runs stay: ('turn'|'timed'|'keep', hours)."""
+    mode = settings.get('records') if settings.get('records') in ('turn', 'timed', 'keep') else 'turn'
+    hours = settings.get('recordsHours')
+    return mode, (hours if hours in RECORD_HOURS else 24)
+
+
+def instructions(settings):
+    value = settings.get('instructions')
+    return value.strip()[:MAX_INSTRUCTIONS] if isinstance(value, str) else ''
+
+
 def runner_command():
     def quoted(part):
         part = part.replace('\\', '/')
@@ -102,6 +130,10 @@ class Options:
         self.write = None; self.worktree = False; self.cd = None; self.images = []; self.timeout = None
         self.prompt_file = None; self.review = None; self.title = None; self.dry_run = False; self.text = []
         self.label = None; self.json = False; self.session = None
+        self.level = 'read-only'; self.memory = False
+
+
+MAINTENANCE = ('models', 'runs', 'stop', 'apply', 'discard', 'cleanup', 'turn-end', 'sweep', 'doctor')
 
 
 def parse(argv):
@@ -150,18 +182,24 @@ def parse(argv):
         i += 1
     settings = config()
     if o.timeout is None:
-        minutes = settings.get('timeoutMinutes')
-        o.timeout = float(minutes) if isinstance(minutes, (int, float)) and not isinstance(minutes, bool) and minutes > 0 else 60.0
+        o.timeout = SAFETY_MINUTES
     if o.timeout <= 0:
         fail('--timeout must be a positive number of minutes')
     if o.mode == 'review' and not o.review:
         fail('review needs --uncommitted, --base <branch> or --commit <sha>')
     if o.mode == 'review' and o.write:
         fail('review is read-only; drop --write')
+    allowed = level(settings)
     if o.worktree:
         o.write = True
+    if o.write and allowed == 'read-only' and o.mode not in MAINTENANCE:
+        fail('file access is read-only in Pacer (Settings → Collaboration); run without --write, or ask the user to allow writing there.', 4)
     if o.write is None:
-        o.write = o.mode != 'review' and settings.get('sandbox') == 'workspace-write'
+        o.write = o.mode != 'review' and allowed != 'read-only'
+    if o.write and not o.worktree and o.mode == 'task' and settings.get('worktree') is True:
+        o.worktree = True
+    o.level = allowed if o.write else 'read-only'
+    o.memory = settings.get('memory') is True
     if o.model is None and isinstance(settings.get('model'), str) and settings['model']:
         o.model = settings['model']
     if o.effort is None and isinstance(settings.get('effort'), str) and settings['effort']:
@@ -339,14 +377,19 @@ def codex_args(o, last_file, has_prompt, resume_id):
     args = ['exec']
     if o.mode in ('resume', 'review'):
         args.append(o.mode)
-    args += ['--json', '-o', last_file, '--disable', 'memories']
+    args += ['--json', '-o', last_file]
+    if not o.memory:
+        args += ['--disable', 'memories']
     if o.model:
         args += ['-m', o.model]
     if o.effort:
         args += ['-c', 'model_reasoning_effort="' + o.effort + '"']
     if o.fast is not None:
         args += ['-c', 'service_tier="' + (FAST_TIER if o.fast else STANDARD_TIER) + '"']
-    args += ['-c', 'sandbox_mode="' + ('workspace-write' if o.write else 'read-only') + '"', '-c', 'approval_policy="never"']
+    sandbox = 'danger-full-access' if o.level == 'danger-full-access' else 'workspace-write' if o.write else 'read-only'
+    args += ['-c', 'sandbox_mode="' + sandbox + '"', '-c', 'approval_policy="never"']
+    if o.write and o.level == 'workspace-write-network':
+        args += ['-c', 'sandbox_workspace_write.network_access=true']
     if o.worktree:
         args.append('--worktree')
     if not o.write:
@@ -629,37 +672,6 @@ def project_name(folder):
     return os.path.basename(os.path.normpath(root))[:80] if root else None
 
 
-def record_stats(meta):
-    """One line per finished or refused run: what Pacer's statistics count.
-    Claude's label and the project folder's name are kept for the recent-runs
-    list, which the user can clear; never the brief or Codex's output."""
-    usage = meta.get('usage') or {}
-    row = {'at': round(time.time(), 3), 'seconds': meta.get('seconds'), 'status': meta.get('status'), 'mode': meta.get('mode'),
-           'input': usage.get('input_tokens'), 'cached': usage.get('cached_input_tokens'), 'output': usage.get('output_tokens'),
-           'model': meta.get('model'), 'effort': meta.get('effort'), 'fast': meta.get('fast'), 'write': meta.get('write'),
-           'worktree': bool(meta.get('worktree')), 'commands': meta.get('commands'), 'changed': meta.get('changedFiles'),
-           'reason': meta.get('reason'), 'stoppedBy': meta.get('stoppedBy'), 'label': meta.get('label'), 'project': meta.get('project')}
-    row = {key: value for key, value in row.items() if value is not None}
-    try:
-        if STATS.exists() and STATS.stat().st_size > 1024 * 1024:
-            # Keep the last 90 days.
-            horizon = time.time() - 90 * 86400
-            kept = []
-            for line in STATS.read_text(encoding='utf-8').splitlines():
-                try:
-                    if json.loads(line).get('at', 0) >= horizon:
-                        kept.append(line)
-                except ValueError:
-                    continue
-            temporary = STATS.with_name('stats.jsonl.' + os.urandom(6).hex() + '.tmp')
-            temporary.write_text(''.join(line + '\n' for line in kept), encoding='utf-8')
-            os.replace(temporary, STATS)
-        with open(STATS, 'a', encoding='utf-8') as handle:
-            handle.write(json.dumps(row, separators=(',', ':')) + '\n')
-    except OSError:
-        pass
-
-
 def worktree_changes(run):
     tree = run.get('worktree')
     if not tree or not os.path.isdir(tree):
@@ -692,8 +704,35 @@ def retry_pending(codex):
     add_pending(delete_threads(codex, threads))
 
 
-def clean_session(session, codex):
-    """Deletes the finished runs of one Claude session; running ones stay."""
+def pending_worktree(run):
+    """A worktree whose changes nobody applied or discarded yet."""
+    return bool(run.get('worktree')) and not run.get('applied') and not run.get('discarded') \
+        and os.path.isdir(run['worktree']) and worktree_changes(run) > 0
+
+
+def save_patch(run):
+    """Keeps a worktree's unapplied changes as <root>/patches/<project>-<time>-<thread>.patch."""
+    tree = run.get('worktree')
+    git(tree, ['add', '-A'])
+    result = run_quiet(['git', 'diff', '--cached', '--binary', 'HEAD'], cwd=tree, timeout=120)
+    if result is None or result.returncode != 0 or not result.stdout.strip():
+        return None
+    name = '%s-%s-%s.patch' % (re.sub(r'[^A-Za-z0-9._-]+', '-', run.get('project') or 'project')[:40],
+                               time.strftime('%Y%m%d-%H%M%S', time.localtime(run.get('created') or time.time())),
+                               (run.get('thread') or 'run')[:8])
+    try:
+        PATCHES.mkdir(parents=True, exist_ok=True)
+        (PATCHES / name).write_bytes(result.stdout)
+        return PATCHES / name
+    except OSError:
+        return None
+
+
+def clean_session(session, codex, why):
+    """Deletes the finished runs of one Claude session that its record setting
+    lets go. `why`: `turn` (the turn ended), `now` (Claude asked for cleanup),
+    `alive` or `gone` (a sweep, with the session's Claude process running or not).
+    Running runs always stay."""
     folder = session_dir(session)
     if not folder.is_dir():
         return 0, 0
@@ -708,23 +747,37 @@ def clean_session(session, codex):
         except OSError:
             pass
         lock.touch()
+    keep, hours = records(config())
     deleted = kept = 0
     try:
         runs = load_runs(session)
         busy = set(run.get('thread') for run in runs if is_running(run) and run.get('thread'))
-        doomed = []
+        doomed, dropped = [], []
         for run in runs:
             if is_running(run) or (run.get('thread') and run.get('thread') in busy):
                 kept += 1
-            else:
+                continue
+            if pending_worktree(run):
+                if why != 'gone':
+                    kept += 1
+                    continue
+                save_patch(run)
+            expired = keep == 'turn' or (keep == 'timed' and (run.get('ended') or run.get('created') or 0) + hours * 3600 <= time.time())
+            if why == 'now' or (why in ('turn', 'gone') and keep == 'turn') or (why in ('alive', 'gone') and keep == 'timed' and expired):
                 doomed.append(run)
+            elif why == 'gone' and keep == 'keep':
+                dropped.append(run)  # its threads stay in Codex history
+            else:
+                if why == 'gone':
+                    remove_worktree(run)
+                kept += 1
         threads = []
         for run in doomed:
             for thread in (run.get('childThreads') or []) + ([run['thread']] if run.get('thread') else []):
                 if thread not in threads:
                     threads.append(thread)
         add_pending(delete_threads(codex, threads))
-        for run in doomed:
+        for run in doomed + dropped:
             remove_worktree(run)
             shutil.rmtree(run['dir'], ignore_errors=True)
             if os.path.exists(run['dir']):
@@ -753,9 +806,9 @@ def request_stop(run, by):
 
 
 def sweep(codex, current=None):
-    """Retries blocked deletions, then cleans sessions whose Claude process is
-    gone or that are older than two days. Their running jobs are stopped
-    first and cleaned by a later sweep."""
+    """Retries blocked deletions, deletes runs whose time is up, then cleans
+    sessions whose Claude process is gone or that are older than two days.
+    Their running jobs are stopped first and cleaned by a later sweep."""
     retry_pending(codex)
     for session in sessions():
         if session == current:
@@ -770,11 +823,13 @@ def sweep(codex, current=None):
         newest = max(run.get('created') or 0 for run in runs)
         owners = [run.get('owner', {}).get('pid') for run in runs if isinstance(run.get('owner'), dict)]
         if any(alive(pid) for pid in owners) and time.time() - newest < STALE:
+            if records(config())[0] == 'timed':
+                clean_session(session, codex, 'alive')
             continue
         for run in runs:
             if is_running(run):
                 request_stop(run, 'sweep')
-        clean_session(session, codex)
+        clean_session(session, codex, 'gone')
     try:
         RUNS.rmdir()
     except OSError:
@@ -895,7 +950,7 @@ def apply_run(thread):
     applied = run_quiet(['git', 'apply', '--whitespace=nowarn', str(patch)], cwd=run.get('cwd'), timeout=120)
     if applied is None or applied.returncode != 0:
         detail = applied.stdout.decode('utf-8', 'replace').strip() if applied is not None else ''
-        fail('git apply failed in %s:\n%s\npatch kept until the turn ends: %s' % (run.get('cwd'), detail, patch), 1)
+        fail('git apply failed in %s:\n%s\npatch kept in the run folder: %s' % (run.get('cwd'), detail, patch), 1)
     run['applied'] = True; save(run)
     print('applied %d file(s) to %s: %s' % (len(files), run.get('cwd'), ', '.join(files)))
 
@@ -905,12 +960,12 @@ def discard_run(thread):
     if not run:
         fail('no run with thread %s in this Claude session' % thread)
     run['discarded'] = True; save(run)
-    print('marked for deletion at the end of the turn: %s%s' % (thread, ' (worktree %s)' % run['worktree'] if run.get('worktree') else ''))
+    print('discarded: %s%s; deleted at the next cleanup' % (thread, ' (worktree %s)' % run['worktree'] if run.get('worktree') else ''))
 
 
-def cleanup_now(session, quiet=False):
+def cleanup_now(session, why='now', quiet=False):
     codex = resolve_codex()
-    deleted, kept = clean_session(session, codex)
+    deleted, kept = clean_session(session, codex, why)
     sweep(codex, current=session)
     if not quiet:
         pending = pending_count()
@@ -951,12 +1006,28 @@ class Events:
         return None
 
 
+def quota_left():
+    """The least Codex quota left in any window, in percent, from the snapshot
+    Pacer writes; None when it is missing or older than ten minutes."""
+    try:
+        value = json.loads(QUOTA.read_text(encoding='utf-8'))
+        left, at = value.get('remainingPercent'), value.get('at')
+        if isinstance(left, (int, float)) and isinstance(at, (int, float)) and 0 <= time.time() - at < 600:
+            return float(left)
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
 def run_job(o):
     prompt = read_prompt(o).strip()
     if o.mode != 'review' and not prompt:
         fail('no prompt: pass -f <brief-file> or prompt text')
     if not CONFIG.exists():
         fail('Codex for Claude is turned off in Pacer (Settings → Collaboration).', 3)
+    standing = instructions(config())
+    if standing:
+        prompt = (prompt + '\n\n' if prompt else '') + 'Standing instructions from the user (set in Codex Pacer):\n' + standing
     resume_id = None
     origin = None
     if o.mode == 'resume':
@@ -981,8 +1052,12 @@ def run_job(o):
     running = all_running()
 
     def refuse(reason, message):
-        record_stats({'status': 'refused', 'reason': reason, 'mode': o.mode, 'label': o.label, 'project': project_name(cwd), 'seconds': 0})
         fail(message, 4)
+    floor = settings.get('quotaFloor')
+    left = quota_left() if floor in (10, 20) else None
+    if left is not None and left < floor:
+        refuse('quota', 'Codex has %d%% of its quota left, below the %d%% the user set in Pacer (Settings → Collaboration). '
+               'Tell the user; this run did not start.' % (left, floor))
     if len(running) >= limit:
         refuse('concurrency', '%d Codex run(s) are already running, the most Pacer allows at once (Settings → Collaboration). '
                'Wait for one to finish, then run this again.' % len(running))
@@ -1084,7 +1159,8 @@ def run_job(o):
     fast = ('config (%s)' % defaults.get('service_tier', 'standard')) if o.fast is None else ('on' if o.fast else 'off')
     model = context.get('model') or o.model or defaults.get('model') or '?'
     effort = context.get('effort') or o.effort or defaults.get('model_reasoning_effort') or 'model default'
-    sandbox = 'workspace-write' if o.write else 'read-only'
+    sandbox = {'read-only': 'read-only', 'workspace-write': 'workspace-write', 'workspace-write-network': 'workspace-write + network',
+               'danger-full-access': 'full access'}[o.level]
     try:
         final = Path(last_file).read_text(encoding='utf-8').strip()
     except OSError:
@@ -1123,7 +1199,6 @@ def run_job(o):
     if meta.get('worktree'):
         meta['worktreeChanges'] = worktree_changes(meta)
     save(meta)
-    record_stats(meta)
 
     run = runner_command()
     reason = {'pacer': 'stopped by the user in Pacer', 'claude': 'stopped', 'sweep': 'stopped because its Claude session ended'}
@@ -1138,9 +1213,12 @@ def run_job(o):
         print('worktree: %s' % (meta.get('worktree') or "(not found; check Codex's message)"))
     if o.write:
         print('changed files (%d): %s' % (len(changed), ', '.join(changed)) if changed else 'changed files: none')
-    print('output: %s (deleted with the thread when this Claude turn ends)' % run_dir)
+    keep, hours = records(settings)
+    print('output: %s (%s)' % (run_dir, {'turn': 'deleted with the thread when this Claude turn ends',
+                                         'timed': 'deleted with the thread %d h after the run' % hours,
+                                         'keep': 'the thread stays in Codex history'}[keep]))
     if meta.get('thread'):
-        print('follow up this turn: %s resume %s -f <brief>' % (run, meta['thread']))
+        print('follow up: %s resume %s -f <brief>' % (run, meta['thread']))
     for error in events.errors:
         print('error: ' + error)
     warnings = list(dict.fromkeys(events.warnings))
@@ -1185,7 +1263,7 @@ def main():
     elif o.mode == 'turn-end':
         # Started detached by Pacer's Claude hook once a turn ends with no background work.
         if o.session:
-            cleanup_now(o.session, quiet=True)
+            cleanup_now(o.session, why='turn', quiet=True)
     elif o.mode == 'sweep':
         sweep(resolve_codex())
     elif o.mode == 'doctor':
