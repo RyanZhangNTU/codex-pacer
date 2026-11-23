@@ -1161,7 +1161,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
               let eventTurn = event["turnId"] as? String, !eventTurn.isEmpty else { return }
         guard !retiredTurns.contains(eventTurn) else { return }
         if method == "turn/completed" {
-            guard turnID == eventTurn || (turnID == nil && liveStatusOnly), [.running, .waitingForInput].contains(phase) else { return }
+            let confirmedAfterQuiet = provider == .claude && phase == .unknown && turnID == eventTurn && event["confirmedAfterQuiet"] as? Bool == true
+            guard turnID == eventTurn || (turnID == nil && liveStatusOnly),
+                  [.running, .waitingForInput].contains(phase) || confirmedAfterQuiet else { return }
             let status = event["status"] as? String
             isHistoricalCompletion = false
             identifyTurn(eventTurn); liveStatusOnly = false

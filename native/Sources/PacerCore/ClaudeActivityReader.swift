@@ -7,11 +7,13 @@ struct ClaudeActivityReader {
         var identity: String?; var created: Date?; var hasRead = false
         var offset: UInt64 = 0; var fragment = Data(); var session: String; var parent: String?
         var sanitized: Bool; var historicalEnd: UInt64?; var liveAfter: Date?
+        var registered = false; var registrationEndedAt: Double?
         var context = ClaudeTranscriptContext(); var discardingOversize = false
     }
     private let files: any PlatformFileSystem
     private let clock: @Sendable () -> Date
     private var cursors: [URL: Cursor] = [:]
+    private var registrations = ClaudeTranscriptRegistrations()
     private var observationStarted: Date?
     private var observedFiles: Set<URL> = []
     static let initialReadBudget = 512 * 1024
@@ -32,6 +34,7 @@ struct ClaudeActivityReader {
         self.files = files; self.clock = clock
     }
     mutating func reset() {
+        registrations = ClaudeTranscriptRegistrations()
         cursors.removeAll(); discoveryDirectories.removeAll(); observationStarted = nil; observedFiles.removeAll()
         scans = 0; fileReads = 0; bytesRead = 0; transcriptDocumentParses = 0
     }
@@ -109,6 +112,16 @@ struct ClaudeActivityReader {
                 let boundary = !initialObservation && !observedFiles.contains(url) ? observationStarted : nil
                 cursors[url] = Cursor(session: session, parent: parent, sanitized: sanitized, historicalEnd: nil, liveAfter: boundary)
             }
+            if let registered = registrations.sessions(home: home, files: files) {
+                for (url, cursor) in cursors where !cursor.sanitized && cursor.parent == nil {
+                    let present = registered.contains(cursor.session)
+                    guard present != cursor.registered else { continue }
+                    cursors[url]?.registered = present
+                    cursors[url]?.registrationEndedAt = present ? nil : now.timeIntervalSince1970
+                    if let row = ClaudeActivityRecord.encode(["kind": present ? "registrationStarted" : "registrationEnded",
+                            "origin": "reader", "sessionId": cursor.session, "at": now.timeIntervalSince1970]) { records.append(row) }
+                }
+            }
             for url in seenFiles {
                 if observedFiles.count >= 4096 {
                     // Advancing the boundary keeps evicted paths historical.
@@ -119,7 +132,7 @@ struct ClaudeActivityReader {
             // Vnode directory watches are not recursive. Retain each selected
             // root's project and nearest existing session/subagent parent so
             // later creation at either level triggers the same discovery path.
-            var directories = [home, root, spool].map(nearestExistingDirectory)
+            var directories = [home, root, spool, home.appendingPathComponent("sessions")].map(nearestExistingDirectory)
             for (file, _, session, parent, sanitized) in selected where !sanitized {
                 let project = parent == nil ? file.deletingLastPathComponent() :
                     file.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -206,10 +219,11 @@ struct ClaudeActivityReader {
                         transcriptDocumentParses += 1
                         if let parsed = ClaudeTranscriptFields(Data(line)) {
                             if historical, let boundary = cursor.liveAfter,
-                               let stamp = parsed.values["timestamp"]?.string(limit: 80), let at = ClaudeActivityRecord.date(stamp),
+                               let at = parsed.timestamp,
                                at.timeIntervalSince1970 >= boundary.timeIntervalSince1970 - 0.001 { historical = false }
                             let prompt = cursor.context.promptID(for: parsed, sessionID: cursor.session, parentID: cursor.parent)
                             cursor.context.noteStopHookError(parsed)
+                            if cursor.parent == nil { cursor.context.noteTimestamp(parsed, session: cursor.session, now: now) }
                             let failuresOnly = cursor.context.stopHookFailuresOnly(parsed)
                             if prompt == nil, cursor.context.awaitedParent != nil {
                                 let owned = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent,
@@ -219,6 +233,10 @@ struct ClaudeActivityReader {
                             } else {
                                 sanitized = ClaudeActivityRecord.transcript(parsed, sessionID: cursor.session, parentID: cursor.parent, promptID: prompt,
                                     stopHookFailuresOnly: failuresOnly)
+                                    + ClaudeActivityRecord.costCheckpoint(parsed, sessionID: cursor.session, parentID: cursor.parent,
+                                        latestTimestamp: cursor.context.latestTimestamp, fileEndedAt: fragmentStart == size ? metadata.modified : nil,
+                                        registered: cursor.registered,
+                                        registrationEndedAt: cursor.registrationEndedAt)
                             }
                         } else { sanitized = [] }
                     }
