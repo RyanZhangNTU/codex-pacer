@@ -135,7 +135,10 @@ internal sealed partial class SettingsWindow
 
     private void BuildDelegationBasic()
     {
+        // A quiet gray link, as on the Mac; it fades while there is nothing to restore.
         delegationRestore = new Button { Content = ui.Text("common.restore_defaults"), Style = (Style)FindResource("SettingsLink"), FontSize = 12 };
+        delegationRestore.SetResourceReference(ForegroundProperty, "SettingsSecondary");
+        delegationRestore.IsEnabledChanged += (sender, _) => { if (sender is Button link) link.Opacity = link.IsEnabled ? 1 : 0.45; };
         Identify(delegationRestore, "settings.collaboration.restore", ui.Text("common.restore_defaults"));
         // Only this pair's choices go back; its switch stays.
         delegationRestore.Click += async (_, _) => await Change(p => p.RestoringDelegationDefaults());
