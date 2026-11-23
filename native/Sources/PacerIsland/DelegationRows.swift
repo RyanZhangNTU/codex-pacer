@@ -130,7 +130,7 @@ struct DelegationLineView: View {
         .monospacedDigit().lineLimit(1).fixedSize()
     }
 
-    /// Shown on hover; VoiceOver uses the line's Stop action instead.
+    /// Shown on hover, with no tooltip; VoiceOver uses the line's Stop action instead.
     private var stopButton: some View {
         Button(action: stop) {
             ZStack {
@@ -141,7 +141,6 @@ struct DelegationLineView: View {
         }
         .buttonStyle(.plain)
         .opacity(hovered ? 1 : 0).allowsHitTesting(hovered)
-        .help(L10n.text("delegation.stop"))
         .accessibilityHidden(true)
     }
 
