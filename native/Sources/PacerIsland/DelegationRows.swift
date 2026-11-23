@@ -40,8 +40,9 @@ struct DelegationList: View {
 }
 
 /// One run: its icon (state and progress ring), Claude's label, then speed,
-/// time, model and effort, always on the line; no hover card. Stop appears on
-/// hover while it runs.
+/// time, model and effort, always on the line and reaching its end; no hover
+/// card. While it runs, hovering lays Stop over the line's end, and the
+/// numbers under it fade out.
 struct DelegationLineView: View {
     let presentation: ActivityTaskRowPresentation
     let enabled: Bool
@@ -53,26 +54,25 @@ struct DelegationLineView: View {
 
     /// The label and state stop widening the panel here, as on Windows.
     static let measuredLabelWidth: CGFloat = 220
-    /// What surrounds a line's content: the rail and its inset before it, Stop and the margins after it.
-    private static let outerWidth: CGFloat = IslandMetrics.rowInset + 13 + 12 + 4 + 20 + 2 + 6
+    /// What surrounds a line's content: the rail and its inset before it, the margins after it.
+    /// Stop takes no room of its own.
+    private static let outerWidth: CGFloat = IslandMetrics.rowInset + 13 + 12 + 2 + 6
+    /// Stop's size, and how far the numbers fade before it.
+    private static let stopSize: CGFloat = 20, fadeWidth: CGFloat = 10
+    private var showsStop: Bool { hovered && presentation.canStopDelegation }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Button(action: open) { content(measuring: false) }
-                .buttonStyle(.plain).disabled(!enabled)
-                .accessibilityLabel(accessibilityText)
-                .accessibilityHint(L10n.text(enabled ? "common.open_chat" : "activity.no_link"))
-                // VoiceOver reaches Stop without hovering, as an action of the line.
-                .accessibilityActions {
-                    if presentation.canStopDelegation { Button(L10n.text("delegation.stop"), action: stop) }
-                }
-            if presentation.canStopDelegation {
-                stopButton
-            } else {
-                Color.clear.frame(width: 20, height: 20).accessibilityHidden(true)
+        Button(action: open) { content(measuring: false) }
+            .buttonStyle(.plain).disabled(!enabled)
+            .mask { fade }
+            .accessibilityLabel(accessibilityText)
+            .accessibilityHint(L10n.text(enabled ? "common.open_chat" : "activity.no_link"))
+            // VoiceOver reaches Stop without hovering, as an action of the line.
+            .accessibilityActions {
+                if presentation.canStopDelegation { Button(L10n.text("delegation.stop"), action: stop) }
             }
-        }
-        .padding(.trailing, 2)
+            .overlay(alignment: .trailing) { if showsStop { stopButton.transition(.opacity) } }
+            .padding(.trailing, 2)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovered && enabled ? PacerPalette.hover : .clear))
         .background {
             // The panel widens to show a run's state, like a task row's title.
@@ -130,17 +130,27 @@ struct DelegationLineView: View {
         .monospacedDigit().lineLimit(1).fixedSize()
     }
 
-    /// Shown on hover, with no tooltip; VoiceOver uses the line's Stop action instead.
+    /// The whole line, or with Stop showing, the line fading out just before it.
+    private var fade: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+            if showsStop {
+                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: Self.fadeWidth)
+                Color.clear.frame(width: Self.stopSize)
+            }
+        }
+    }
+
+    /// Shown on hover over the line's end, with no tooltip; VoiceOver uses the line's Stop action instead.
     private var stopButton: some View {
         Button(action: stop) {
             ZStack {
                 Circle().fill(PacerPalette.hover)
                 RoundedRectangle(cornerRadius: 1.5, style: .continuous).fill(PacerPalette.primary).frame(width: 7, height: 7)
             }
-            .frame(width: 20, height: 20).contentShape(Circle())
+            .frame(width: Self.stopSize, height: Self.stopSize).contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .opacity(hovered ? 1 : 0).allowsHitTesting(hovered)
         .accessibilityHidden(true)
     }
 
