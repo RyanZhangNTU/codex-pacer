@@ -39,6 +39,23 @@ final class CollaborationDiagramTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testNotesReadOnTheirTintInLightAndDark() {
+        for light in [true, false] {
+            for tone in [CollaborationDiagram.Tone.good, .bad] {
+                let figure = CollaborationDiagram.figure(tone, light: light), note = CollaborationDiagram.note(tone, light: light)
+                let name = "\(tone) \(light ? "light" : "dark")"
+                XCTAssertGreaterThanOrEqual(CollaborationDiagram.contrast(note, figure), 4.5, name + ": the notes on the figure")
+                XCTAssertGreaterThanOrEqual(CollaborationDiagram.contrast(CollaborationDiagram.card(light: light), note), 4.5,
+                                            name + ": a mark's number on its dot")
+            }
+        }
+        // The Codex work bar keeps Codex's own color; only the notes change.
+        let pacer = CollaborationDiagram.elements(throughPacer: true) { $0 }
+        XCTAssertTrue(pacer.contains(.bar(x: CollaborationDiagram.codex, y: 148, height: 128, ink: .good)))
+        XCTAssertTrue(pacer.contains(.dot(center: CGPoint(x: 256, y: 172), ink: .goodNote)))
+    }
+
     func testOnlyPacersViewHasItsLane() {
         let pacer = CollaborationDiagram.elements(throughPacer: true) { $0 }
         let typical = CollaborationDiagram.elements(throughPacer: false) { $0 }

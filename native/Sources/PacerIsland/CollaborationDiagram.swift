@@ -11,7 +11,8 @@ enum CollaborationDiagram {
     static let size = CGSize(width: 420, height: 422)
     static let you: CGFloat = 30, claude: CGFloat = 118, pacer: CGFloat = 240, codex: CGFloat = 370
 
-    enum Ink: Equatable { case primary, secondary, good, bad, card, waiting, idle }
+    /// `good` is Codex's own color, for its work bar; notes, dots and crosses use the readable `goodNote` and `bad`.
+    enum Ink: Equatable { case primary, secondary, good, goodNote, bad, card, waiting, idle }
     enum Anchor: Equatable { case start, middle, end }
     enum Weight: Equatable { case regular, semibold, bold }
     enum Participant: Equatable { case claude, pacer, codex }
@@ -81,7 +82,7 @@ enum CollaborationDiagram {
             labelled(you, claude - 2, 106, "ask")
             // 1 Claude hands Pacer a task brief; Pacer starts Codex with your model and access.
             labelled(claude, pacer - 6, 148, "brief"); labelled(pacer + 6, codex - 6, 148, "start")
-            mark(256, 172, "1", "pacer.1", .good)
+            mark(256, 172, "1", "pacer.1", .goodNote)
             // 2 Codex works in the background; you keep interacting with Claude; Pacer watches the subtask live.
             items += [.bar(x: pacer, y: 148, height: 132, ink: .primary), .bar(x: codex, y: 148, height: 128, ink: .good)]
             for y: CGFloat in [206, 246] {
@@ -89,7 +90,7 @@ enum CollaborationDiagram {
             }
             label((pacer + codex) / 2, 200, text("progress"), 10.5, .secondary)
             for y: CGFloat in [208, 228, 248] { arrow(codex - 6, pacer + 6, y, dashed: true) }
-            mark(136, 215, "2", "pacer.2", .good)
+            mark(136, 215, "2", "pacer.2", .goodNote)
             // Codex finishes; Pacer hands the result to Claude, who delivers it.
             labelled(codex - 6, pacer + 6, 276, "done"); labelled(pacer - 6, claude + 2, 276, "result")
             labelled(claude, you + 2, 310, "deliver")
@@ -97,8 +98,8 @@ enum CollaborationDiagram {
             items.append(.bar(x: pacer, y: 336, height: 44, ink: .primary))
             labelled(claude, pacer - 6, 342, "ended")
             labelled(pacer + 6, codex - 12, 374, "clear")
-            cross(codex, 374, 7, 7, .good)
-            mark(256, 400, "3", "pacer.3", .good)
+            cross(codex, 374, 7, 7, .goodNote)
+            mark(256, 400, "3", "pacer.3", .goodNote)
         } else {
             items += [.lifeline(x: you, end: 320), .lifeline(x: claude, end: 320), .lifeline(x: codex, end: 362)]
             labelled(you, claude - 2, 106, "ask")
@@ -121,10 +122,50 @@ enum CollaborationDiagram {
         return items
     }
 
-    /// Codex's color and the warning amber in the window's tone, so both read on light Settings too.
-    static func good(_ scheme: ColorScheme) -> Color { AgentProvider.codex.shade(light: scheme == .light) }
-    static func bad(_ scheme: ColorScheme) -> Color {
-        scheme == .light ? Color(red: 178 / 255, green: 106 / 255, blue: 0) : Color(red: 1.0, green: 0.74, blue: 0.38)
+    // MARK: Colors
+
+    enum Tone { case good, bad }
+    /// How strongly a view's tone tints its figure over the card.
+    static let tintOpacity: CGFloat = 0.1
+    /// Normal text needs 4.5:1; the bold notes are too small to count as large.
+    static let readableContrast = 4.5
+
+    /// Codex's color in the window's tone (it follows the accent), or the warning amber.
+    static func base(_ tone: Tone, light: Bool) -> NSColor {
+        switch tone {
+        case .good: NSColor(AgentProvider.codex.shade(light: light)).usingColorSpace(.sRGB) ?? .systemTeal
+        case .bad: light ? NSColor(srgbRed: 178 / 255, green: 106 / 255, blue: 0, alpha: 1) : NSColor(srgbRed: 1, green: 0.74, blue: 0.38, alpha: 1)
+        }
+    }
+    /// The card the figure sits on (`MainPalette.card`).
+    static func card(light: Bool) -> NSColor { light ? .white : NSColor(srgbRed: 0.141, green: 0.141, blue: 0.157, alpha: 1) }
+    /// The figure's fill: the card with its tone laid over it.
+    static func figure(_ tone: Tone, light: Bool) -> NSColor { mix(card(light: light), base(tone, light: light), tintOpacity) }
+    /// The tone darkened (light) or lightened (dark) just enough to read on its figure.
+    static func note(_ tone: Tone, light: Bool) -> NSColor {
+        let start = base(tone, light: light), background = figure(tone, light: light), target: NSColor = light ? .black : .white
+        for step in 0...40 {
+            let candidate = mix(start, target, CGFloat(step) / 40)
+            if contrast(candidate, background) >= readableContrast + 0.05 { return candidate }
+        }
+        return target
+    }
+
+    static func mix(_ first: NSColor, _ second: NSColor, _ amount: CGFloat) -> NSColor {
+        let a = first.usingColorSpace(.sRGB) ?? first, b = second.usingColorSpace(.sRGB) ?? second
+        return NSColor(srgbRed: a.redComponent + (b.redComponent - a.redComponent) * amount,
+                       green: a.greenComponent + (b.greenComponent - a.greenComponent) * amount,
+                       blue: a.blueComponent + (b.blueComponent - a.blueComponent) * amount, alpha: 1)
+    }
+    /// WCAG contrast between two opaque colors.
+    static func contrast(_ first: NSColor, _ second: NSColor) -> Double {
+        func luminance(_ color: NSColor) -> Double {
+            let c = color.usingColorSpace(.sRGB) ?? color
+            func channel(_ value: CGFloat) -> Double { let v = Double(value); return v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+            return 0.2126 * channel(c.redComponent) + 0.7152 * channel(c.greenComponent) + 0.0722 * channel(c.blueComponent)
+        }
+        let (high, low) = (max(luminance(first), luminance(second)), min(luminance(first), luminance(second)))
+        return (high + 0.05) / (low + 0.05)
     }
 
     static func summary(throughPacer: Bool) -> String {
@@ -166,8 +207,9 @@ struct CollaborationDiagramView: View {
         switch ink {
         case .primary: .primary
         case .secondary: .secondary
-        case .good: CollaborationDiagram.good(scheme)
-        case .bad: CollaborationDiagram.bad(scheme)
+        case .good: Color(nsColor: CollaborationDiagram.base(.good, light: scheme == .light))
+        case .goodNote: Color(nsColor: CollaborationDiagram.note(.good, light: scheme == .light))
+        case .bad: Color(nsColor: CollaborationDiagram.note(.bad, light: scheme == .light))
         case .card: MainPalette.card
         case .waiting: Color.primary.opacity(0.28)
         case .idle: Color.primary.opacity(0.14)
@@ -243,7 +285,7 @@ struct CollaborationHelp: View {
                 CollaborationDiagramView(throughPacer: throughPacer)
             }
             .padding(EdgeInsets(top: 8, leading: 8, bottom: 6, trailing: 8))
-            .background((throughPacer ? CollaborationDiagram.good(scheme) : CollaborationDiagram.bad(scheme)).opacity(0.1),
+            .background(Color(nsColor: CollaborationDiagram.figure(throughPacer ? .good : .bad, light: scheme == .light)),
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .frame(maxWidth: 520)
         }
