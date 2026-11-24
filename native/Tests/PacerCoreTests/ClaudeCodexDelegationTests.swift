@@ -741,7 +741,8 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         let checks = #"""
         import json, os, subprocess, sys, threading, time
         from pathlib import Path
-        root = Path.cwd()
+        # Windows runners hand out an 8.3 temp folder (RUNNER~1); git reports long paths.
+        root = Path.cwd().resolve()
         os.environ.update(CLAUDE_PID='', CLAUDE_CODE_SESSION_ID='fixture', CODEX_HOME=str(root / 'codex'))
         sys.path.insert(0, str(root))
         import runner as r
