@@ -60,6 +60,35 @@ final class EngineClaudeHookSetupTests: XCTestCase {
         XCTAssertTrue(ready)
         await runtime.stop()
     }
+    func testDelegationExportsOnlyAnExplicitCodexHome() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("pacer"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = EngineRuntime(demo: false, dismissalStore: nil, claudeHookServices: .init { _, _ in .init(.ready) },
+            installationDetection: { .init(codexInstalled: false, claudeInstalled: true, deepseekInstalled: false) }, output: { _ in })
+        let path = EngineCodexSourceReport.path(root)
+        func settings() throws -> ClaudeCodexDelegation.Settings {
+            try JSONDecoder().decode(ClaudeCodexDelegation.Settings.self, from: Data(contentsOf: ClaudeCodexDelegation.configURL(home: root)))
+        }
+        _ = await runtime.receive(try command("initialize", ["enabledProviders": ["claude"], "claudeHome": path,
+            "codexDelegation": ["enabled": true]]))
+        XCTAssertFalse(ClaudeCodexDelegation.isOn(home: root))
+        _ = await runtime.receive(try command("configure", ["enabledProviders": ["claude", "codex"]]))
+        XCTAssertNil(try settings().codexHome)
+        _ = await runtime.receive(try command("configure", ["codexHome": path]))
+        XCTAssertEqual(try settings().codexHome, path)
+        for provider in ["claude", "codex"] {
+            _ = await runtime.receive(try command("configure", ["enabledProviders": [provider]]))
+            XCTAssertFalse(ClaudeCodexDelegation.isOn(home: root))
+            _ = await runtime.receive(try command("configure", ["enabledProviders": ["claude", "codex"]]))
+            XCTAssertEqual(try settings().codexHome, path)
+        }
+        _ = await runtime.receive(try command("configure", ["hideProjects": true]))
+        XCTAssertEqual(try settings().codexHome, path)
+        _ = await runtime.receive(try command("configure", ["codexHome": ""]))
+        XCTAssertNil(try settings().codexHome)
+        await runtime.stop()
+    }
     func testProgressSwitchFollowsTheManagedHomeAndNeverTouchesAnotherOne() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-progress-switch-" + UUID().uuidString)
         let passed = root.appendingPathComponent("passed"), managed = root.appendingPathComponent("managed")

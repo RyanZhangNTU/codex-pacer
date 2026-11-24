@@ -7,6 +7,10 @@ extension ProcessOwnership {
                              parent: (pid_t) -> pid_t? = parentProcess) -> pid_t? {
         findOwner(of: pid, currentProcess: currentProcess, isApplication: isApplication, parent: parent)
     }
+    public static func hasExited(_ pid: Int) -> Bool {
+        guard pid > 0, let id = pid_t(exactly: pid) else { return false }
+        return kill(id, 0) == -1 && errno == ESRCH
+    }
     public static func processStartDate(_ pid: pid_t) -> Date? {
         information(pid).map {
             let start = $0.kp_proc.p_starttime

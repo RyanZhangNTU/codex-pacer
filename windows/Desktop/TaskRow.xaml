@@ -7,19 +7,23 @@
  <Button.Template>
   <ControlTemplate TargetType="{x:Type local:TaskRow}">
    <Grid>
-    <Border CornerRadius="12" Background="{TemplateBinding Background}" Opacity="{TemplateBinding HoverProgress}" IsHitTestVisible="False"/>
+    <!-- The task's own highlight covers its row only; each Codex run under it highlights on its own, as on the Mac. -->
+    <Border CornerRadius="12" Background="{TemplateBinding Background}" Opacity="{TemplateBinding HoverProgress}" IsHitTestVisible="False" VerticalAlignment="Top" Height="{Binding MainHeight}"/>
     <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
-    <Border x:Name="Focus" CornerRadius="12" BorderThickness="1" BorderBrush="Transparent" IsHitTestVisible="False"/>
+    <Border x:Name="Focus" CornerRadius="12" BorderThickness="1" BorderBrush="Transparent" IsHitTestVisible="False" VerticalAlignment="Top" Height="{Binding MainHeight}"/>
    </Grid>
    <ControlTemplate.Triggers>
-    <MultiTrigger><MultiTrigger.Conditions><Condition Property="local:DesktopAppearance.HighContrast" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
+    <MultiTrigger><MultiTrigger.Conditions><Condition Property="local:DesktopAppearance.HighContrast" Value="True"/><Condition Property="IsMouseOver" Value="True"/><Condition Property="Focusable" Value="True"/></MultiTrigger.Conditions>
      <Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
     </MultiTrigger>
-    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/></Trigger>
+    <MultiTrigger><MultiTrigger.Conditions><Condition Property="Focusable" Value="True"/><Condition Property="IsKeyboardFocused" Value="True"/></MultiTrigger.Conditions>
+     <Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+    </MultiTrigger>
    </ControlTemplate.Triggers>
   </ControlTemplate>
  </Button.Template>
- <Border CornerRadius="12" Padding="9,8" Background="Transparent">
+ <StackPanel VerticalAlignment="Top">
+ <Border CornerRadius="12" Padding="9,8" Background="Transparent" Height="{Binding MainHeight}">
   <Grid VerticalAlignment="Center">
    <Grid.ColumnDefinitions><ColumnDefinition Width="{Binding IconColumn}"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
    <local:TaskStatusIcon x:Name="Icon" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -44,6 +48,9 @@
       <local:IconGlyph Symbol="{Binding SourceSymbol}" Ink="{DynamicResource Island.Secondary}" Width="11" Height="11" Margin="0,0,3,0" VerticalAlignment="Center" Visibility="{Binding SourceIconVisible}"/>
       <TextBlock Text="{Binding Value.SourceLabel}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Island.Secondary}"/>
      </StackPanel>
+     <Border Margin="8,0,0,0" Padding="6,0,6,1" CornerRadius="7" Height="14" VerticalAlignment="Center" Background="{Binding DelegatedFill}" Visibility="{Binding DelegatedVisible}">
+      <TextBlock Text="{Binding Value.DelegatedText}" FontSize="10" FontWeight="SemiBold" Foreground="{Binding DelegatedInk}" VerticalAlignment="Center"/>
+     </Border>
     </StackPanel>
     <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="{Binding ModelOpacity}" Visibility="{Binding SecondLineVisible}">
      <StackPanel Orientation="Horizontal" Margin="0,0,7,0" Visibility="{Binding CostVisible}">
@@ -56,4 +63,12 @@
    </Grid>
   </Grid>
  </Border>
+ <!-- Codex for Claude runs of this Claude task, built in code. Clicking one opens this task. -->
+ <!-- Runs fills the row's width so the pointer anywhere below the task's own row is on the runs, not the task. -->
+ <Border x:Name="Runs" Background="Transparent" Padding="22,0,6,4" Visibility="Collapsed">
+  <Border x:Name="DelegationRail" Padding="12,0,0,0" BorderThickness="1.5,0,0,0" BorderBrush="{DynamicResource Island.Tertiary}">
+   <StackPanel x:Name="Delegations"/>
+  </Border>
+ </Border>
+ </StackPanel>
 </Button>

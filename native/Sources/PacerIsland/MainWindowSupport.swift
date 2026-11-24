@@ -17,13 +17,13 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
     static let overview = Self("overview"), history = Self("history"), codex = Self("codex"), claude = Self("claude"), deepseek = Self("deepseek")
     static let remote = Self("remote"), appearance = Self("appearance"), collapsedBar = Self("collapsedBar"), expandedPanel = Self("expandedPanel")
     static let notifications = Self("notifications"), general = Self("general"), about = Self("about"), support = Self("support")
-    static let modules = Self("modules")
+    static let modules = Self("modules"), collaboration = Self("collaboration")
     static let defaultsKey = "settingsPane"
     /// The sidebar's groups, in order; About and Support sit in its footer.
     /// Services lists the modules found here or turned on, in registry order;
     /// the module library holds the rest.
     static func groups(services: [AgentProvider]) -> [[Self]] {
-        [[.overview, .history], services.map(Self.init(provider:)) + [.modules, .remote],
+        [[.overview, .history], services.map(Self.init(provider:)) + [.modules, .collaboration, .remote],
          [.appearance, .collapsedBar, .expandedPanel, .notifications, .general]]
     }
     static func pages(services: [AgentProvider]) -> [Self] { groups(services: services).flatMap { $0 } + [.about, .support] }
@@ -79,6 +79,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
         case .deepseek: AgentProvider.deepseek.displayName
         case .remote: L10n.text("main.pane.remote")
         case .modules: L10n.text("main.pane.modules")
+        case .collaboration: L10n.text("main.pane.collaboration")
         case .appearance: L10n.text("settings.pane.appearance")
         case .collapsedBar: L10n.text("settings.pane.collapsed")
         case .expandedPanel: L10n.text("settings.pane.expanded_panel")
@@ -100,6 +101,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
         case .deepseek: AgentProvider.deepseek.glyph
         case .remote: "server.rack"
         case .modules: "square.on.square"
+        case .collaboration: "arrow.triangle.branch"
         case .appearance: "circle.lefthalf.filled"
         case .collapsedBar: "rectangle.topthird.inset.filled"
         case .expandedPanel: "text.alignleft"
@@ -132,6 +134,7 @@ struct SettingsPane: RawRepresentable, Hashable, Identifiable {
         case .collapsedBar, .expandedPanel: Color(red: 0.2, green: 0.22, blue: 0.27)
         case .notifications: Color(red: 1, green: 0.3, blue: 0.29)
         case .remote: Color(red: 0.16, green: 0.5, blue: 1)
+        case .collaboration: Color(red: 0.1, green: 0.62, blue: 0.6)
         case .support: Color(red: 0.96, green: 0.36, blue: 0.42)
         case .overview, .history, .general, .about, .modules: Color(white: 0.52)
         default: harness?.brand ?? .gray
@@ -285,7 +288,9 @@ struct MainWindowSidebar: View {
                 icon(pane)
                 Text(pane.title).font(.system(size: 13)).lineLimit(1)
                 Spacer(minLength: 4)
-                if pane == .modules, hiddenModules > 0 {
+                if pane == .collaboration {
+                    BetaTag()
+                } else if pane == .modules, hiddenModules > 0 {
                     Text(L10n.text("modules.sidebar_more", hiddenModules)).font(.system(size: 11)).foregroundStyle(.secondary)
                 } else if isDisabled(pane) {
                     Text(L10n.text("settings.module_off")).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -347,5 +352,19 @@ struct MainWindowSidebar: View {
             .accessibilityAddTraits(aboutSelected ? .isSelected : [])
             row(.support)
         }
+    }
+}
+
+/// A page still in preview: a small purple-to-blue capsule with "Beta",
+/// alike in light and dark. VoiceOver reads it with the row.
+struct BetaTag: View {
+    private static let purple = Color(red: 0x7C / 255, green: 0x3A / 255, blue: 0xED / 255)
+    private static let blue = Color(red: 0x25 / 255, green: 0x63 / 255, blue: 0xEB / 255)
+
+    var body: some View {
+        Text(L10n.text("main.beta")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+            .padding(.horizontal, 7).frame(height: 16)
+            .background(LinearGradient(colors: [Self.purple, Self.blue], startPoint: .leading, endPoint: .trailing), in: Capsule())
+            .fixedSize()
     }
 }

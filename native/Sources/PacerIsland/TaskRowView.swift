@@ -46,28 +46,33 @@ struct TaskRowView: View {
         // A cloud run's first output is only known when its turn ends.
         return activity.claudeCloud != nil && phase == .running ? speed : speed + "  ·  " + latencyText
     }
-    private var color: Color {
-        if attention != nil { return PacerPalette.attention }
+    private var color: Color { Self.color(presentation) }
+    private var detailColor: Color { Self.detailColor(presentation) }
+    private var face: TaskStatusIconNSView.Face { Self.face(presentation) }
+    /// The icon's ink, shared with the Codex for Claude lines under a row.
+    static func color(_ row: ActivityTaskRowPresentation) -> Color {
+        let activity = row.activity
+        if row.attention != nil { return PacerPalette.attention }
         if activity.turnFailed { return PacerPalette.danger }
         if activity.codexGoalPause != nil { return PacerPalette.paused }
-        if dimmed { return PacerPalette.secondary }
-        switch phase {
+        if row.dimmed { return PacerPalette.secondary }
+        switch row.phase {
         case .waitingForInput: return PacerPalette.attention
         case .interrupted: return PacerPalette.paused
         case .running, .completed: return activity.provider.tint
         default: return PacerPalette.secondary
         }
     }
-    private var detailColor: Color {
-        if attention != nil || phase == .waitingForInput { return PacerPalette.attention }
-        return activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
+    static func detailColor(_ row: ActivityTaskRowPresentation) -> Color {
+        if row.attention != nil || row.phase == .waitingForInput { return PacerPalette.attention }
+        return row.activity.turnFailed ? PacerPalette.danger : PacerPalette.secondary
     }
     /// A working stage shows its glyph over an orb; a request for the user or
     /// an ending fills a disc, greyed once read; an unknown state draws a moon.
-    private var face: TaskStatusIconNSView.Face {
-        let symbol = presentation.symbol
+    static func face(_ row: ActivityTaskRowPresentation) -> TaskStatusIconNSView.Face {
+        let symbol = row.symbol
         switch symbol {
-        case .approval, .input, .completed, .interrupted, .failed: return .solid(symbol, read: dimmed)
+        case .approval, .input, .completed, .interrupted, .failed: return .solid(symbol, read: row.dimmed)
         case .unknown: return .plain(symbol)
         default: return .working(symbol)
         }
@@ -100,7 +105,7 @@ struct TaskRowView: View {
 
     private var accessibilityText: String {
         let state = [unread ? L10n.text("common.not_viewed") : nil, status, progressRing?.accessibilityText, turnTime,
-                     subagents > 0 ? subagentText : nil]
+                     subagents > 0 ? subagentText : nil, presentation.delegatedCount > 0 ? presentation.delegatedCountText : nil]
         let model = [modelLabel, effortLabel.map { L10n.text("model.effort_help", $0) }].compactMap { $0 }.joined(separator: " ")
         return activity.provider.displayName + ", " + L10n.text("activity.row_accessibility", name,
             state.compactMap { $0 }.joined(separator: ", "), sourceName ?? L10n.text("common.local")) + ", " + model + (activity.claudeCloud == nil || rate != nil ? ", " + performanceText : "")
@@ -121,6 +126,7 @@ struct TaskRowView: View {
             HStack(spacing: 8) {
                 statusIcon(measuring: measuring)
                 title(measuring: measuring)
+                if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
                 if statusLeads {
                     Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(detailColor).lineLimit(1).fixedSize()
                 } else if showsRateLine {
@@ -182,6 +188,8 @@ struct TaskRowView: View {
     private var statusLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(status).foregroundStyle(detailColor).lineLimit(1).layoutPriority(1)
+            // Codex for Claude runs this Claude task holds.
+            if presentation.delegatedCount > 0 { DelegatedCountChip(text: presentation.delegatedCountText) }
             if subagents > 0, options.shows(.subagents) {
                 HStack(spacing: 3) {
                     Image(systemName: "person.2").font(.system(size: 9, weight: .semibold))

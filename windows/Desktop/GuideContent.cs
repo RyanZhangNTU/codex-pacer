@@ -331,8 +331,19 @@ internal sealed class GuideContent : StackPanel
                 var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
                 var ringRow = ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings);
                 ringRow.Children.Add(TrustNote());
+                var delegation = Switch(ui.Text("collaboration.codex_for_claude"), "welcome.collaboration", () => session.Current.CodexDelegation,
+                    value => Preference(p => p with { CodexDelegation = value }));
+                var delegationRow = ChoiceRow(GuideArt.Tile(GuideArt.ProviderSymbol("codex"), Color.FromRgb(17, 128, 109), 28), ui.Text("welcome.collaboration.title"),
+                    ui.Text("welcome.collaboration.subtitle") + " " + ui.Text("welcome.collaboration.later"), null, delegation);
+                refresh.Add(() =>
+                {
+                    var modules = snapshot()?.Modules;
+                    delegationRow.Visibility = modules != null && modules.Any(value => value.Provider == "claude" && value.Enabled)
+                        && modules.Any(value => value.Provider == "codex" && value.Enabled) ? Visibility.Visible : Visibility.Collapsed;
+                });
                 var choices = Group(54,
                     ringRow,
+                    delegationRow,
                     ChoiceRow(GuideArt.Tile("bell.badge", Color.FromRgb(255, 77, 74), 28), ui.Text("settings.system_notifications"), ui.Text("main.welcome.notifications_info"), notificationProblem, notification),
                     ChoiceRow(GuideArt.Tile("power", Color.FromRgb(51, 189, 102), 28), ui.Text("settings.open_at_login"), ui.Text("main.welcome.login_info"), loginProblem, Login(ui.Text("settings.open_at_login"), "welcome.startup")),
                     ChoiceRow(GuideArt.Tile("rectangle.topthird.inset.filled", Color.FromRgb(51, 56, 69), 28), ui.Text("welcome.layout.title"), ui.Text("main.welcome.layout_info"), null, layout));
@@ -829,7 +840,7 @@ internal sealed class GuideContent : StackPanel
         var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) }; var topic = new StackPanel(); var footer = Text(ui.Text("help.enable.detail"), 11.5);
         footer.Margin = new Thickness(4, 8, 4, 0); footer.SetResourceReference(TextBlock.ForegroundProperty, "SettingsSecondary");
         AutomationProperties.SetName(chips, ui.Text("settings.pane.help"));
-        foreach (string id in new[] { "collapsed", "expanded" }.Concat(providers))
+        foreach (string id in new[] { "collapsed", "expanded", "collaboration" }.Concat(providers))
         {
             bool module = providers.Contains(id);
             string name = id switch
@@ -872,12 +883,43 @@ internal sealed class GuideContent : StackPanel
                 // Three icons stand for all, as on the Mac, so the swatch stays roomy as modules are added.
                 HelpRow("help.app_buttons", providers.Take(3).Select(provider => (UIElement)ProviderIcon.CreateLaunch(provider, 14)).ToArray()),
                 HelpRow("help.read", Mark("checkmark.rectangle.stack")), HelpRow("help.pace", PaceSample())));
+        else if (id == "collaboration") target.Children.Add(CollaborationHelp());
         else
         {
             var details = new StackPanel(); ModuleHelp(details, id);
             target.Children.Add(Group(HelpInset, details.Children.Cast<UIElement>().ToArray().Select(child => { details.Children.Remove(child); return child; }).ToArray()));
         }
         Refresh();
+    }
+    /// How Claude and Codex work together, one diagram at a time: through Pacer first,
+    /// the typical way a switch away, each on its own tint.
+    private Border CollaborationHelp()
+    {
+        var diagram = new CollaborationDiagram(ui) { HorizontalAlignment = HorizontalAlignment.Stretch };
+        AutomationProperties.SetAutomationId(diagram, "help.collaboration.diagram");
+        var caption = Text("", 11.5); caption.Margin = new Thickness(4, 0, 4, 4);
+        var drawing = new StackPanel(); drawing.Children.Add(caption); drawing.Children.Add(diagram);
+        var figure = new Border { CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 8, 8, 6), MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Center, Child = drawing };
+        Identify(figure, "help.collaboration.figure", ui.Text("help.section.collaboration"));
+        void Show(bool pacer)
+        {
+            diagram.Show(pacer); caption.Text = ui.Text(pacer ? "help.collaboration.pacer.caption" : "help.collaboration.typical.caption");
+            figure.SetResourceReference(Border.BackgroundProperty, pacer ? "SettingsTintCodexSoft" : "SettingsNoticeFill");
+        }
+        var choices = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var (value, label) in new[] { ("pacer", "Pacer"), ("typical", ui.Text("help.collaboration.typical")) })
+        {
+            var choice = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), GroupName = "help.collaboration.view", Content = label, IsChecked = value == "pacer" };
+            Identify(choice, "help.collaboration.view." + value, ui.Text("help.collaboration.view") + ": " + label);
+            choice.Checked += (_, _) => Show(value == "pacer");
+            choices.Children.Add(choice);
+        }
+        var view = new Border { Child = choices, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 12) };
+        view.SetResourceReference(Border.BackgroundProperty, "SettingsFill"); AutomationProperties.SetName(view, ui.Text("help.collaboration.view"));
+        Show(true);
+        var content = new StackPanel { Margin = new Thickness(14) }; content.Children.Add(view); content.Children.Add(figure);
+        Identify(content, "help.collaboration", ui.Text("help.section.collaboration"));
+        return Group(0, content);
     }
     /// The services' colors fold away behind one row with a palette; opening it
     /// lists each service with its icon, name and color, as on the Mac.

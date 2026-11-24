@@ -88,10 +88,14 @@ struct ActivityBadge: View {
                 if segmented {
                     TaskSegmentsRing(tasks: activity.tasks, scale: k, animates: !reduceMotion && !layoutProbe).transition(.opacity)
                 } else if !activity.orbit.isEmpty || estimate != nil {
+                    // Codex for Claude runs show in Codex's color: a comet beside the
+                    // services' comets, or light along the stretch an estimate has not reached.
+                    let helpers = activity.delegatedRunning
                     ActivityOrbit(segments: AgentProvider.allCases.map { provider in
-                        ActivityOrbit.Segment(color: NSColor(provider.tint), weight: activity.orbit[provider] ?? 0)
-                    }, progress: estimate, ink: estimateInk, lineWidth: 2 * k, light: PacerPalette.light,
-                        animates: !reduceMotion && !layoutProbe)
+                        ActivityOrbit.Segment(color: NSColor(provider.tint),
+                            weight: (activity.orbit[provider] ?? 0) + (provider == .codex && estimate == nil ? helpers : 0))
+                    }, progress: estimate, helpers: estimate == nil ? 0 : helpers, ink: estimateInk, lineWidth: 2 * k,
+                        light: PacerPalette.light, animates: !reduceMotion && !layoutProbe)
                     .transition(.opacity)
                 }
             }
@@ -216,7 +220,9 @@ struct TaskSegmentsRing: View {
     let animates: Bool
 
     var body: some View {
-        TaskSegmentsLayer(segments: tasks.map { TaskSegmentsView.Segment(color: NSColor($0.provider.tint), fraction: $0.fraction, stale: $0.stale) },
+        TaskSegmentsLayer(segments: tasks.map {
+            TaskSegmentsView.Segment(color: NSColor($0.provider.tint), fraction: $0.fraction, stale: $0.stale, helpers: $0.helpers)
+        },
             scale: scale, animates: animates)
             .frame(width: 20 * scale, height: 20 * scale)
             .accessibilityHidden(true)
@@ -240,9 +246,13 @@ final class TaskSegmentsView: NSView {
         /// The task's estimate; nil breathes.
         let fraction: Double?
         let stale: Bool
+        /// Codex for Claude runs working for the task: Codex's light travels
+        /// the stretch of its arc the estimate has not reached.
+        var helpers = 0
     }
-    private struct Lane {
+    @MainActor private struct Lane {
         let track = CAShapeLayer(), fill = CAShapeLayer(), breath = CAShapeLayer()
+        let helper = HelperFlow()
         var layers: [CAShapeLayer] { [track, fill, breath] }
     }
     static let trackOpacity = 0.26, staleOpacity: Float = 0.45
@@ -269,14 +279,18 @@ final class TaskSegmentsView: NSView {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         while lanes.count < segments.count {
             let lane = Lane()
-            for shape in lane.layers {
+            for shape in [lane.track, lane.fill, lane.breath] {
                 shape.fillColor = nil; shape.lineCap = .butt; shape.strokeStart = 0
-                layer?.addSublayer(shape)
             }
+            (lane.layers + lane.helper.layers).forEach { layer?.addSublayer($0) }
             lane.breath.opacity = 0
             lanes.append(lane)
         }
-        while lanes.count > segments.count { lanes.removeLast().layers.forEach { $0.removeFromSuperlayer() } }
+        while lanes.count > segments.count {
+            let lane = lanes.removeLast()
+            (lane.layers + lane.helper.layers).forEach { $0.removeFromSuperlayer() }
+        }
+        let span = (1 - Self.gap * Double(segments.count)) / Double(max(1, segments.count))
         for (index, (lane, segment)) in zip(lanes, segments).enumerated() {
             lane.track.strokeColor = segment.color.withAlphaComponent(Self.trackOpacity).cgColor
             lane.fill.strokeColor = segment.color.cgColor
@@ -286,6 +300,11 @@ final class TaskSegmentsView: NSView {
             let shown = index < previous.count && !reshaped ? Double((lane.fill.presentation() ?? lane.fill).strokeEnd) : target
             lane.fill.strokeEnd = target
             lane.fill.opacity = segment.stale ? Self.staleOpacity : 1
+            // The arc is a share of the circle: the gap keeps its size in it, and the light turns in circle shares.
+            let free = segment.helpers > 0 ? HelperFlow.freeStretch(after: target, gap: HelperFlow.gap / span) : nil
+            let laneStart = Self.gap / 2 + Double(index) * (span + Self.gap)
+            lane.helper.set(stretch: free, circle: free.map { .init(start: laneStart + $0.start * span, end: laneStart + $0.end * span) },
+                            animates: animates)
             // A new estimate eases from the value on screen, as the badge's arc does.
             if animates, abs(target - shown) > 0.0005 {
                 let sweep = CABasicAnimation(keyPath: "strokeEnd")
@@ -316,6 +335,7 @@ final class TaskSegmentsView: NSView {
                     endAngle: .pi / 2 - (start + span) * 2 * .pi, clockwise: true)
             }
             for shape in lane.layers { shape.frame = bounds; shape.path = path }
+            lane.helper.place(frame: bounds, path: path, lineWidth: 1.8 * scale, downward: flipped, pathTerms: { ($0 - start) / span })
         }
         CATransaction.commit()
     }
@@ -339,6 +359,7 @@ final class TaskSegmentsView: NSView {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         for (lane, segment) in zip(lanes, segments) {
+            lane.helper.refresh(live: live, now: now)
             if live && segment.fraction == nil {
                 if lane.breath.animation(forKey: "breath") == nil {
                     lane.breath.add(TaskStatusIconNSView.stepBreath(on: lane.breath, now: now), forKey: "breath")
@@ -349,6 +370,56 @@ final class TaskSegmentsView: NSView {
     /// The lanes that breathe now, by index; read by tests.
     var breathingLanes: [Int] { lanes.indices.filter { lanes[$0].breath.animation(forKey: "breath") != nil } }
     var fillFractions: [Double] { lanes.map { Double($0.fill.strokeEnd) } }
+    /// Each lane's stretch Codex's light travels, or nil; read by tests.
+    var helperStretches: [ClosedRange<Double>?] { lanes.map(\.helper.shownStretch) }
+    var helpersTravel: Bool { lanes.contains { $0.helper.travels } }
+}
+
+/// Codex for Claude runs: Codex's light travels the free stretch of a ring,
+/// from just past the estimate's head to just before the top, on the clock of
+/// the light along an estimate's arc, so the two move together. With Reduce
+/// Motion the stretch keeps a faint Codex tint instead.
+@MainActor final class HelperFlow {
+    struct Stretch: Equatable { let start, end: Double }
+    /// Kept clear past the estimate's head and before the top, as a share of the circle.
+    static let gap = 0.035
+    private let tint = CAShapeLayer()
+    private let light = ArcLight(color: NSColor(AgentProvider.codex.tint), peak: 1)
+    var layers: [CALayer] { [tint, light.layer] }
+    private var stretch: Stretch?, circle: Stretch?
+    private var animates = true
+
+    init() {
+        tint.fillColor = nil; tint.lineCap = .butt; tint.strokeStart = 0; tint.strokeEnd = 0
+        tint.strokeColor = NSColor(AgentProvider.codex.tint).withAlphaComponent(0.4).cgColor
+        tint.isHidden = true
+    }
+
+    /// The stretch after `fraction`, in the path's own terms, or nil when too short to read.
+    static func freeStretch(after fraction: Double, gap: Double) -> Stretch? {
+        let end = 1 - gap, start = max(0, fraction) + gap
+        return end - start < 2 * gap ? nil : Stretch(start: start, end: end)
+    }
+
+    /// `stretch` in the path's terms; `circle`, the same stretch in circle shares
+    /// when the path covers only part of the circle.
+    func set(stretch: Stretch?, circle: Stretch? = nil, animates: Bool) {
+        self.stretch = stretch; self.circle = stretch == nil ? nil : circle ?? stretch; self.animates = animates
+        tint.strokeStart = stretch?.start ?? 0; tint.strokeEnd = stretch?.end ?? 0
+        tint.isHidden = stretch == nil || animates
+    }
+    func place(frame: CGRect, path: CGPath, lineWidth: CGFloat, downward: Bool, pathTerms: @escaping (Double) -> Double = { $0 }) {
+        tint.frame = frame; tint.path = path; tint.lineWidth = lineWidth
+        light.place(frame: frame, path: path, lineWidth: lineWidth, downward: downward, pathTerms: pathTerms)
+    }
+    func refresh(live: Bool, now: CFTimeInterval = CACurrentMediaTime()) {
+        light.refresh(circle.map { ($0.start, $0.end) }, live: live && animates, now: now)
+    }
+    var travels: Bool { light.travels }
+    var shownStretch: ClosedRange<Double>? { stretch.map { $0.start...$0.end } }
+    var tinted: Bool { !tint.isHidden }
+    /// The light's window keyframes, in path shares; read by tests.
+    var windowKeyframes: (starts: [Double], ends: [Double])? { light.windowKeyframes }
 }
 
 /// A comet that circles the badge while work runs. Core Animation drives it in
@@ -373,6 +444,8 @@ struct ActivityOrbit: NSViewRepresentable {
     }
     let segments: [Segment]
     var progress: Progress? = nil
+    /// Codex for Claude runs, shown as light along the stretch the estimate has not reached.
+    var helpers = 0
     /// The estimate's color when it is not the first running service's.
     var ink: NSColor? = nil
     var lineWidth: CGFloat = 2
@@ -414,7 +487,7 @@ struct ActivityOrbit: NSViewRepresentable {
 
     func makeNSView(context: Context) -> ActivityOrbitView { ActivityOrbitView() }
     func updateNSView(_ view: ActivityOrbitView, context: Context) {
-        view.update(segments: segments, progress: progress, ink: ink, lineWidth: lineWidth, light: light, animates: animates)
+        view.update(segments: segments, progress: progress, helpers: helpers, ink: ink, lineWidth: lineWidth, light: light, animates: animates)
     }
 }
 
@@ -431,7 +504,10 @@ final class ActivityOrbitView: NSView {
     private let comet = CAGradientLayer()
     private let estimate = CALayer()
     private let arcGlow = CAShapeLayer(), arc = CAShapeLayer(), step = CAShapeLayer()
-    private let flowBands = [CAShapeLayer(), CAShapeLayer()]
+    private let flowLight = ArcLight(color: .white, peak: 0.6)
+    /// Codex for Claude runs: Codex's light along the stretch the estimate has not reached.
+    private let helper = HelperFlow()
+    private var helpers = 0
     private var segments: [ActivityOrbit.Segment] = []
     private var progress: ActivityOrbit.Progress?
     private var flowFraction: Double?
@@ -452,13 +528,14 @@ final class ActivityOrbitView: NSView {
         comet.startPoint = CGPoint(x: 0.5, y: 0.5)
         comet.endPoint = CGPoint(x: 0.5, y: 0)
         ring.addSublayer(comet)
-        for shape in [arcGlow, arc, step] + flowBands {
+        for shape in [arcGlow, arc, step] {
             shape.fillColor = nil; shape.lineWidth = lineWidth; shape.strokeStart = 0; shape.strokeEnd = 0
             estimate.addSublayer(shape)
         }
         arc.lineCap = .round; arcGlow.lineCap = .round; arcGlow.lineWidth = 2 * lineWidth; arcGlow.opacity = 0.22
-        for (band, alpha) in zip(flowBands, [0.3, 0.45]) { band.strokeColor = NSColor.white.withAlphaComponent(alpha).cgColor }
+        estimate.addSublayer(flowLight.layer)
         step.opacity = 0
+        for (index, layer) in helper.layers.enumerated() { estimate.insertSublayer(layer, at: UInt32(index)) }
         estimate.isHidden = true
         layer?.addSublayer(track)
         layer?.addSublayer(ring)
@@ -469,15 +546,16 @@ final class ActivityOrbitView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func update(segments: [ActivityOrbit.Segment], progress: ActivityOrbit.Progress? = nil, ink: NSColor? = nil,
+    func update(segments: [ActivityOrbit.Segment], progress: ActivityOrbit.Progress? = nil, helpers: Int = 0, ink: NSColor? = nil,
                 lineWidth: CGFloat = 2, light: Bool = PacerPalette.light, animates: Bool) {
         let restyle = ink != self.ink || lineWidth != self.lineWidth || light != self.light
-        guard segments != self.segments || progress != self.progress || animates != self.animates || restyle else { return }
+        guard segments != self.segments || progress != self.progress || helpers != self.helpers || animates != self.animates || restyle else { return }
+        self.helpers = helpers
         if restyle {
             self.ink = ink; self.lineWidth = lineWidth; self.light = light
             CATransaction.begin(); CATransaction.setDisableActions(true)
             track.strokeColor = PacerPalette.overlayInk(0.1).cgColor
-            for shape in [track, ringMask, arc, step] + flowBands { shape.lineWidth = lineWidth }
+            for shape in [track, ringMask, arc, step] { shape.lineWidth = lineWidth }
             arcGlow.lineWidth = 2 * lineWidth
             CATransaction.commit()
             needsLayout = true
@@ -510,7 +588,7 @@ final class ActivityOrbitView: NSView {
             fade(estimate, to: progress == nil ? 0 : 1)
         }
         estimate.opacity = progress == nil ? 0 : 1
-        guard let progress else { return }
+        guard let progress else { helper.set(stretch: nil, animates: animates); return }
         arc.strokeColor = ink; arcGlow.strokeColor = ink
         step.strokeColor = ink.copy(alpha: 0.38 * ink.alpha) ?? ink
         arc.opacity = progress.stale ? 0.45 : 1; arcGlow.opacity = progress.stale ? 0 : 0.22
@@ -518,6 +596,9 @@ final class ActivityOrbitView: NSView {
         let shown = previous == nil ? 0 : Double((arc.presentation() ?? arc).strokeEnd)
         for shape in [arc, arcGlow] { shape.strokeEnd = target }
         step.strokeStart = target; step.strokeEnd = min(1, target + TaskStatusIconNSView.stepLengths[0])
+        // Codex's light keeps clear of a long step's breath past the head.
+        let breath = progress.longStep ? TaskStatusIconNSView.stepLengths[0] : 0
+        helper.set(stretch: helpers > 0 ? HelperFlow.freeStretch(after: target + breath, gap: HelperFlow.gap) : nil, animates: animates)
         guard animates, abs(target - shown) > 0.0005 else { return }
         let duration = 0.3 + 0.3 * abs(target - shown), timing = CAMediaTimingFunction(controlPoints: 0.33, 1, 0.68, 1)
         func ease(_ shape: CAShapeLayer, _ key: String, from: Double, to: Double) {
@@ -558,7 +639,10 @@ final class ActivityOrbitView: NSView {
         } else {
             arcPath.addArc(center: center, radius: radius, startAngle: .pi / 2, endAngle: .pi / 2 - 2 * .pi, clockwise: true)
         }
-        for shape in [arcGlow, arc, step] + flowBands { shape.frame = bounds; shape.path = arcPath }
+        for shape in [arcGlow, arc, step] { shape.frame = bounds; shape.path = arcPath }
+        let downward = layer?.contentsAreFlipped() == true
+        flowLight.place(frame: bounds, path: arcPath, lineWidth: lineWidth, downward: downward)
+        helper.place(frame: bounds, path: arcPath, lineWidth: lineWidth, downward: downward)
         // A square covering the diagonal keeps the rotating gradient under every edge of a wide capsule.
         let side = hypot(bounds.width, bounds.height)
         comet.bounds = CGRect(x: 0, y: 0, width: side, height: side)
@@ -602,6 +686,7 @@ final class ActivityOrbitView: NSView {
         // Occlusion pauses the orbit; a window whose state is not computed yet still starts it.
         let live = animates && window.map { $0.occlusionState.contains(.visible) || !$0.isVisible } == true
         refreshEstimateLoops(live: live)
+        helper.refresh(live: live && progress != nil)
         guard live, progress == nil, segments.contains(where: { $0.weight > 0 }) else {
             comet.removeAnimation(forKey: "orbit")
             return
@@ -623,15 +708,8 @@ final class ActivityOrbitView: NSView {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         let flow = progress.flatMap { live && !$0.longStep && !$0.stale && $0.fraction > 0.04 && $0.fraction < 0.9995 ? $0.fraction : nil }
-        if flow != flowFraction {
-            flowBands.forEach { $0.removeAnimation(forKey: "travel") }
-            flowFraction = flow
-            if let flow {
-                for (band, length) in zip(flowBands, TaskStatusIconNSView.flowLengths) {
-                    band.add(TaskStatusIconNSView.flowAnimation(fraction: flow, length: length, on: band, now: now), forKey: "travel")
-                }
-            }
-        }
+        flowFraction = flow
+        flowLight.refresh(flow.map { (0, $0) }, live: flow != nil, now: now)
         let longStep = progress.map { $0.longStep && $0.fraction < 0.9995 } == true
         step.opacity = longStep ? 0.55 : 0
         if live && longStep {
@@ -640,10 +718,14 @@ final class ActivityOrbitView: NSView {
     }
     /// The estimate's loops, as `layer.key`; read by tests.
     var estimateAnimationKeys: Set<String> {
-        Set([("flow", flowBands[0]), ("step", step), ("orbit", comet)].flatMap { name, layer in
+        Set([("flow", flowLight.gradient), ("step", step), ("orbit", comet)].flatMap { name, layer in
             (layer.animationKeys() ?? []).filter { !$0.hasPrefix("sweep") }.map { name + "." + $0 }
         })
     }
     var showsEstimate: Bool { !estimate.isHidden && progress != nil }
     var estimateFraction: Double { Double(arc.strokeEnd) }
+    /// The stretch Codex's light travels, or nil; read by tests.
+    var helperStretch: ClosedRange<Double>? { helper.shownStretch }
+    var helperTravels: Bool { helper.travels }
+    var helperTinted: Bool { helper.tinted }
 }

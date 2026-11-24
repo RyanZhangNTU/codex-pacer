@@ -24,7 +24,10 @@ struct ClaudeQuotaReadDependencies {
 @MainActor
 final class IslandModel: ObservableObject {
     @Published private var codexQuota: QuotaSnapshot? {
-        didSet { if oldValue?.windows.count != codexQuota?.windows.count { onLayoutChange?() } }
+        didSet {
+            if oldValue?.windows.count != codexQuota?.windows.count { onLayoutChange?() }
+            if oldValue != codexQuota { writeCodexDelegationQuota() }
+        }
     }
     @Published var activities: [SessionActivity] = [] {
         didSet {
@@ -289,7 +292,8 @@ final class IslandModel: ObservableObject {
             remoteSourceIDs: Set(claudeRemoteTargets.map(\.id))) { .init(name: $0.name, isClaudeDesktop: $0.isClaudeDesktop) }
         var options = TaskPresentationOptions(hideProjects: hideProjects, hostApplications: hosts,
             sourceNames: streamStatuses.compactMapValues(\.sourceName), showsDeepSeekTurnCost: showsDeepSeekTurnCost,
-            progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize)
+            progressRingProviders: progressRingProviders, pageSize: panelOptions.pageSize,
+            showsDelegationRows: true)
         options.hiddenTurnCredits = hiddenTurnCredits
         return options
     }
@@ -404,16 +408,21 @@ final class IslandModel: ObservableObject {
     private func ensureClaudeHooks(home: URL, generation: Int) async {
         guard generation == claudeGeneration else { return }
         if claudeLocalSetup != .ready { claudeLocalSetup = .configuring }
-        // A switch that Pacer's folder can already hold is set up in the same pass.
+        // Switches that Pacer's folder can already hold are set up in the same pass.
         applyClaudeProgressSwitch(home: home)
+        applyCodexDelegationSwitch(home: home)
         var result = await installClaudeHooks(home: home)
         guard generation == claudeGeneration else { return }
-        // Setup creates Pacer's hook folder, which the switch file needs, and
+        // Setup creates Pacer's hook folder, which the switch files need, and
         // confirms that Pacer manages this home.
-        if result == .current || result == .installed, applyClaudeProgressSwitch(home: home, setupConfirmed: true) {
-            let again = await installClaudeHooks(home: home)
-            guard generation == claudeGeneration else { return }
-            if again != .current { result = again }
+        if result == .current || result == .installed {
+            let ring = applyClaudeProgressSwitch(home: home, setupConfirmed: true)
+            let delegation = applyCodexDelegationSwitch(home: home, setupConfirmed: true)
+            if ring || delegation {
+                let again = await installClaudeHooks(home: home)
+                guard generation == claudeGeneration else { return }
+                if again != .current { result = again }
+            }
         }
         var conflict = ClaudeTelemetryConflict.none
         if result == .current || result == .installed {
@@ -1192,12 +1201,62 @@ final class IslandModel: ObservableObject {
         }
         return FileManager.default.contents(atPath: flag) != before
     }
-    /// Follows the setting and the module outside a source restart, which
-    /// applies the switch as part of its own setup.
-    private func syncClaudeProgressSwitch() {
+    /// The Claude home where this app turned Codex for Claude on.
+    private var codexDelegationHome: URL?
+    /// Codex for Claude's settings file is its switch, written like the ring's:
+    /// only by an app that manages the hooks, removed only where this app turned
+    /// it on or its hook setup just confirmed. Each pass also writes the current
+    /// choices. Returns whether the switch turned on or off: the plugin's skill
+    /// follows it, so a change brings the hooks current.
+    @discardableResult
+    func applyCodexDelegationSwitch(home: URL, setupConfirmed: Bool = false) -> Bool {
+        guard !demo else { return false }
+        let preferences = CodexDelegationPreferences(defaults: defaults)
+        let wanted = preferences.enabled && isModuleEnabled(.claude) && isModuleEnabled(.codex)
+        if let previous = codexDelegationHome, previous != home {
+            ClaudeCodexDelegation.apply(nil, home: previous); codexDelegationHome = nil
+        }
+        let before = ClaudeCodexDelegation.isOn(home: home)
+        let config = ClaudeCodexDelegation.configURL(home: home)
+        let trigger = ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.trigger
+        if wanted {
+            // The runner starts the Codex program Pacer found, also the one inside Codex Desktop.
+            let codex = CodexClient.findExecutable(customPath: defaults.string(forKey: "codexExecutable") ?? "")?.path
+            var settings = preferences.settings(codex: codex)
+            if let custom = defaults.string(forKey: "codexHome"), !custom.isEmpty { settings.codexHome = self.home.path }
+            settings.command = ClaudeHookInstaller.codexRunnerCommand(home: home)
+            if ClaudeCodexDelegation.apply(settings, home: home) { codexDelegationHome = home }
+        } else if codexDelegationHome == home || setupConfirmed {
+            ClaudeCodexDelegation.apply(nil, home: home); codexDelegationHome = nil
+        }
+        writeCodexDelegationQuota()
+        // The switch and the trigger are written into the plugin's skill.
+        return ClaudeCodexDelegation.isOn(home: home) != before
+            || ClaudeCodexDelegation.settings(FileManager.default.contents(atPath: config.path))?.trigger != trigger
+    }
+    /// The least Codex quota left, for the runner's quota floor, while Codex
+    /// for Claude is on. Its time is when Pacer read the quota, so an old
+    /// reading stops holding runs back.
+    func writeCodexDelegationQuota() {
+        guard !demo, let home = codexDelegationHome, ClaudeCodexDelegation.isOn(home: home) else { return }
+        let left = codexQuota?.windows.compactMap(\.remainingPercent).min()
+        ClaudeCodexDelegation.writeQuota(remainingPercent: left, home: home, at: codexQuota?.capturedAt ?? Date())
+    }
+    /// Settings → Collaboration changed: the runner's choices are written at
+    /// once, the skill follows the switch, and the task list follows the display.
+    func applyCodexDelegationPreferences() {
+        syncClaudeProgressSwitch()
+        codexDelegationLedger = nil
+        combineActivities()
+        refreshProgressPresentation()
+    }
+    /// Follows the settings and the module outside a source restart, which
+    /// applies the switches as part of its own setup.
+    func syncClaudeProgressSwitch() {
         guard !demo, !stopped else { return }
         let home = claudeHome
-        guard applyClaudeProgressSwitch(home: home), isModuleEnabled(.claude), !sleeping else { return }
+        let ring = applyClaudeProgressSwitch(home: home), delegation = applyCodexDelegationSwitch(home: home)
+        guard ring || delegation, isModuleEnabled(.claude), !sleeping else { return }
         let generation = claudeGeneration
         launchOwnedWork(.init(.setup, provider: .claude, identifier: "local")) { [weak self] _ in
             await self?.ensureClaudeHooks(home: home, generation: generation)
@@ -2601,8 +2660,30 @@ final class IslandModel: ObservableObject {
         let notices = activityState.observeAttentionRequests(requests, visibility: activityVisibility)
         applyActivityUpdate(activityState.update()); present(notices)
     }
+    private var codexDelegationLedger: (at: Date, links: [String: CodexDelegationLink])?
+    /// The ledger's runs as last read.
+    private(set) var codexDelegationRuns: [ClaudeCodexDelegation.Run] = []
+    /// Collaboration's self-check: Codex's version, sign-in and model catalog.
+    @Published var codexDelegationCheck = CodexDelegationCheck()
+    /// Codex for Claude's ledger, read at most once a second: a run's rollout
+    /// changes as it starts, runs and is deleted, so each change combines anyway.
+    private func codexDelegationLinks(at date: Date) -> [String: CodexDelegationLink] {
+        guard !demo, isModuleEnabled(.claude), isModuleEnabled(.codex) else { codexDelegationRuns = []; return [:] }
+        if let cached = codexDelegationLedger, abs(date.timeIntervalSince(cached.at)) < 1 { return cached.links }
+        codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome, runnerExited: ProcessOwnership.hasExited)
+        let links = ClaudeCodexDelegation.links(codexDelegationRuns)
+        codexDelegationLedger = (date, links); return links
+    }
+    /// Asks a running Codex for Claude run's runner to stop it; the runner
+    /// stops Codex and tells Claude the user stopped it in Pacer.
+    @discardableResult
+    func stopDelegation(_ activity: SessionActivity) -> Bool {
+        guard let link = activityState.codexDelegation(for: activity), link.status == .running else { return false }
+        return ClaudeCodexDelegation.requestStop(directory: link.directory)
+    }
     private func combineActivities() {
         let oldHeight = panelContentHeight
+        activityState.codexDelegations = codexDelegationLinks(at: now)
         let update = activityState.reconcile(at: now, retention: completedRetention, visibility: activityVisibility)
         applyActivityUpdate(update)
         if RuntimeDiagnostics.enabled { RuntimeDiagnostics.record("ui", source: "combined", activities: update.activities) }

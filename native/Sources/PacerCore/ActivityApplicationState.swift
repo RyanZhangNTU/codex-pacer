@@ -98,6 +98,22 @@ public struct ActivityApplicationState: Sendable {
     private var cachedOverview: (at: Date, value: ActivityOverview)?
     private var cachedPresentation: (at: Date, options: TaskPresentationOptions, value: ActivityTaskPresentation)?
     public init(inbox: CompletionInbox = CompletionInbox()) { self.inbox = inbox }
+    /// Codex for Claude's ledger, keyed by Codex activity ID
+    /// (`ClaudeCodexDelegation.links`). The next reconcile applies it.
+    public var codexDelegations: [String: CodexDelegationLink] = [:]
+    /// The ledger entry a Codex thread or one of its sub-threads belongs to.
+    /// The runner names a run's sub-threads only once it ends, so until then
+    /// a sub-thread finds the run through its parent.
+    public func codexDelegation(for activity: SessionActivity) -> CodexDelegationLink? {
+        guard activity.provider == .codex else { return nil }
+        if let link = codexDelegations[activity.canonicalized().id] { return link }
+        return activity.parentThreadID.flatMap { codexDelegations[AgentProvider.codex.activityID(sessionID: $0, sourceHostID: activity.sourceHostID)] }
+    }
+    /// The ledger entry for a row a host shows by ID, such as the one Stop
+    /// names; a review run's row is its sub-thread, found through its parent.
+    public func codexDelegation(forActivityID id: String) -> CodexDelegationLink? {
+        activities.first { $0.id == id || $0.canonicalized().id == id }.flatMap(codexDelegation(for:)) ?? codexDelegations[id]
+    }
 
     public mutating func replaceHarness(_ provider: AgentProvider, with snapshot: HarnessActivity) {
         if provider == .codex {
@@ -133,8 +149,12 @@ public struct ActivityApplicationState: Sendable {
         if provider == .codex, rows.contains(where: { $0.parentThreadID != nil }) { return CodexSessionOrigin.inheriting(rows) }
         return rows
     }
+    /// Ignored Codex threads, and Codex for Claude threads no ledger entry
+    /// names any more: their runs were cleaned up, or never filed.
     public var ignoredCodexActivityIDs: Set<String> {
-        excludedCodexActivityIDs.union(knownActivities(for: .codex).filter(\.isIgnoredCodexSession).map(\.id))
+        excludedCodexActivityIDs.union(knownActivities(for: .codex).filter {
+            $0.isIgnoredCodexSession || ($0.isCodexDelegation && codexDelegation(for: $0) == nil)
+        }.map(\.id))
     }
     public func hiddenActivityIDs(_ visibility: ActivityVisibilityOptions) -> Set<String> {
         hiddenActivityIDs(visibility, ignoring: ignoredCodexActivityIDs)
@@ -154,6 +174,17 @@ public struct ActivityApplicationState: Sendable {
         // A retained completion may still be present before its collector's first update.
         for provider in HarnessRegistry.legacyIDs where provider != .codex && harnesses[provider] == nil && !visibility.embeddedProviders.contains(provider) {
             hidden.formUnion(EmbeddedSessionVisibility.embeddedActivityIDs(knownActivities(for: provider)))
+        }
+        // A Codex for Claude thread shows exactly when its Claude task shows,
+        // whatever the embedded-app preference says about Codex.
+        let delegated = knownActivities(for: .codex).filter(\.isCodexDelegation)
+        if !delegated.isEmpty {
+            let claude = Set(knownActivities(for: .claude).map(\.id))
+            for value in delegated {
+                if let owner = codexDelegation(for: value)?.parentID, claude.contains(owner), !hidden.contains(owner), !ignored.contains(value.id) {
+                    hidden.remove(value.id)
+                } else { hidden.insert(value.id) }
+            }
         }
         return hidden
     }
@@ -250,11 +281,13 @@ public struct ActivityApplicationState: Sendable {
         let previous = Dictionary(activities.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         let merged = sourceRows.compactMap { row -> SessionActivity? in
             guard !ignored.contains(row.id), !row.codexGoalExpired(at: now) else { return nil }
+            var row = row
+            if row.provider == .codex { row.codexDelegation = codexDelegation(for: row) }
             guard let old = previous[row.id] else { return row }
-            var row = row; row.mergeDisplayMetadata(from: old)
+            row.mergeDisplayMetadata(from: old)
             return row
         }
-        let observed = inbox.observe(ActivityTaskGroup.make(merged).flatMap(\.members), at: now, retention: retention)
+        let observed = inbox.observe(Array(ActivityTaskGroup.nodes(in: merged).values), at: now, retention: retention)
         codex.releaseVisibleEndings(inbox: inbox)
         for ending in inbox.activities where ending.claudeCloud?.readInClaude == true { inbox.dismiss(ending) }
         let hidden = hiddenActivityIDs(visibility, ignoring: ignored)
@@ -264,7 +297,11 @@ public struct ActivityApplicationState: Sendable {
         let combined = shown.filter {
             !$0.isInternalReview && (activeRoots.contains($0.id) || ![.completed, .interrupted].contains($0.phase)) &&
                 (activeRoots.contains($0.id) || [.running, .waitingForInput].contains($0.phase) || now < ($0.unconfirmedDisplayDeadline ?? .distantPast))
-        } + inbox.activities.filter { !activeRoots.contains($0.id) && !hidden.contains($0.id) }
+        } + inbox.activities.filter { !activeRoots.contains($0.id) && !hidden.contains($0.id) }.map { ending in
+            // A retained ending carries the run's current ledger status.
+            guard let link = codexDelegation(for: ending) else { return ending }
+            var value = ending; value.codexDelegation = link; return value
+        }
         replaceActivities(combined, at: now)
         let tasks = taskGroups().filter { !($0.isRunning && [.completed, .interrupted].contains($0.primary.phase)) }.map(\.primary)
         let grouped = Dictionary(grouping: tasks, by: \.provider)

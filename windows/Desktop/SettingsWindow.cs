@@ -447,6 +447,7 @@ internal sealed partial class SettingsWindow : Window
             ClearAppearance();
             ClearCodex();
             ClearClaude();
+            ClearCollaboration();
             ClearProviderHome();
             ClearDeepSeek();
             ClearHarnessPage();
@@ -473,6 +474,7 @@ internal sealed partial class SettingsWindow : Window
                 case "expandedPanel": BuildExpandedPanel(); break;
                 case "remote": BuildConnections(); break;
                 case "modules": BuildModules(); break;
+                case "collaboration": BuildCollaboration(); break;
                 default:
                     if (HarnessPane(activePane))
                     {
@@ -525,6 +527,7 @@ internal sealed partial class SettingsWindow : Window
             RefreshAppearance();
             RefreshCodex();
             RefreshClaude();
+            RefreshCollaboration();
             RefreshDeepSeek();
             RefreshProviderHome();
             RefreshReminders();

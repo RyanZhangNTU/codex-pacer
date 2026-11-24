@@ -4,13 +4,15 @@ import Foundation
 /// Names rollouts in Pacer's hook spool, as Codex's hooks do when a turn starts,
 /// so `LocalActivityReader` follows them. Rows carry only identifiers and paths.
 enum CodexHookFixture {
+    /// `thread` names another thread than the rollout's own, as Codex's hook
+    /// does for a review: the run's thread with its review sub-thread's rollout.
     static func announce(_ rollouts: [URL], home: URL, event: String = "UserPromptSubmit", turn: String? = nil,
-                         approval: String? = nil, at date: Date = Date()) throws {
+                         approval: String? = nil, thread named: String? = nil, at date: Date = Date()) throws {
         let folder = CodexHookSpool.folder(home: home)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var data = (try? Data(contentsOf: CodexHookSpool.current(home: home))) ?? Data()
         for url in rollouts {
-            let row: [String: Any] = ["v": 1, "hook": 1, "at": date.timeIntervalSince1970, "event": event, "thread": thread(of: url),
+            let row: [String: Any] = ["v": 1, "hook": 1, "at": date.timeIntervalSince1970, "event": event, "thread": named ?? thread(of: url),
                                       "turn": turn ?? NSNull(), "agent": NSNull(), "agentType": NSNull(), "transcript": url.path,
                                       "agentTranscript": NSNull(), "approval": approval ?? NSNull(), "reason": NSNull()]
             data += try JSONSerialization.data(withJSONObject: row) + Data([10])

@@ -70,6 +70,7 @@
   "windows.claude.local_logs": "Local task logs",
   "windows.claude.local_help": "Tracks local Claude activity, tool events and requests for input.",
   "windows.claude.retry_setup": "Retry setup",
+  "windows.collab.legacy_remove": "Move to Recycle Bin",
   "windows.claude.setup_ready": "Claude activity is ready.",
   "windows.claude.setup_slow": "These paths require PowerShell. Each tool event may take an extra 150 to 400 ms to start.",
   "windows.claude.setup_working": "Setting up Claude activity…",

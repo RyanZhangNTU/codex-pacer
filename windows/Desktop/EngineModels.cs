@@ -17,7 +17,17 @@ internal sealed record EngineSnapshot(
     IReadOnlyList<ClaudeRemoteSetup>? ClaudeRemoteSetups = null, ConnectionPage? Connections = null, string? CodexProgressSetup = null,
     string? DeepSeekProgressSetup = null, EngineExpandedPanel? ExpandedPanel = null,
     string? WslAvailability = null,
-    IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null);
+    IReadOnlyList<EngineAccountCredits>? AccountCredits = null, CodexHooks? CodexHooks = null,
+    CodexDelegationStatus? CodexDelegation = null);
+/// Settings → Collaboration, the Claude → Codex pair: the switch, whether its
+/// skill is in Pacer's Claude plugin, the user-level skill it replaces, and
+/// Codex's self-check: sign-in, version, model catalog and what its own
+/// configuration picks for model, effort and fast mode.
+internal sealed record CodexDelegationStatus(bool Enabled, bool SkillInstalled, string? LegacySkill, bool CodexFound,
+    string? Login = null, string? Version = null, bool? Checking = null, IReadOnlyList<CodexModelChoice>? Models = null, string? DefaultModel = null,
+    string? DefaultEffort = null, bool? DefaultFast = null, int Limit = 3, int Pending = 0, string? RunsFolder = null, string? QuotaText = null);
+/// A model from Codex's catalog, with the efforts it supports and its own default effort.
+internal sealed record CodexModelChoice(string Slug, string Name, IReadOnlyList<string>? Efforts = null, string? DefaultEffort = null);
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,
 /// `needsApproval` (Pending of Pacer's hooks still to allow in Codex), `running`,
 /// `notRunning`, `needsCodexUpdate` or `installFailed`.
@@ -151,14 +161,17 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     string Model, string? Effort, double? TokensPerSecond, bool RateIsFresh, string? RatePlaceholder,
     string? TurnTime, int Subagents, bool Unread, bool Failed, bool Dimmed, string? Cost, bool PeakCost, string? RateText = null, string? SubagentText = null,
     string? ProgressState = null, double? ProgressFraction = null, bool? ProgressStale = null, string? ProgressText = null,
-    string? ProgressMode = null);
+    string? ProgressMode = null, string? DelegatedText = null, IReadOnlyList<EngineTaskRow>? Delegations = null,
+    string? ParentID = null, bool? CanStop = null, IReadOnlyList<IReadOnlyList<string>>? DetailLines = null,
+    string? DelegationsFolded = null);
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
     string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
     double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null,
     IReadOnlyList<EngineTaskShare>? ProgressTasks = null, double? ProgressAverage = null, bool? ProgressAverageStale = null,
-    string? ProgressAverageProvider = null, int? ProgressReported = null, bool? ProgressSegments = null);
-// One running task's share of the badge's multi-task ring.
-internal sealed record EngineTaskShare(string Provider, double? Fraction, bool Stale);
+    string? ProgressAverageProvider = null, int? ProgressReported = null, bool? ProgressSegments = null, int? DelegatedRunning = null,
+    string? DelegatedText = null);
+// One running task's share of the badge's multi-task ring, with the Codex for Claude runs working for it.
+internal sealed record EngineTaskShare(string Provider, double? Fraction, bool Stale, int? Helpers = null);
 internal sealed record WalletSpan(double Start, double End);
 internal sealed record EngineWallet(string State, double? Balance, string Whole, string Cents, string Subtitle,
     string? Compact, IReadOnlyList<double> Hourly, IReadOnlyList<WalletSpan> Peak, double Angle, bool PeakNow,

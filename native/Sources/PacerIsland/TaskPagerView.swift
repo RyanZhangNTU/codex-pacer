@@ -17,8 +17,15 @@ struct TaskPagerView: View {
     private var pagination: TaskPagination { model.taskPresentation.pagination }
     private var currentPage: Int { pagination.clampedPage(page) }
     private var pageRows: [ActivityTaskRowPresentation] { Array(model.taskPresentation.rows[pagination.range(on: currentPage)]) }
+    /// Every page keeps a full page's height; a page whose Claude tasks list
+    /// Codex for Claude runs grows by their lines.
     private var pageHeight: CGFloat {
-        CGFloat(pagination.rowCapacity) * rowHeight + CGFloat(max(0, pagination.rowCapacity - 1)) * rowSpacing
+        let full = CGFloat(pagination.rowCapacity) * rowHeight + CGFloat(max(0, pagination.rowCapacity - 1)) * rowSpacing
+        let rows = pageRows
+        return max(full, rows.map(height).reduce(0, +) + CGFloat(max(0, rows.count - 1)) * rowSpacing)
+    }
+    private func height(_ row: ActivityTaskRowPresentation) -> CGFloat {
+        rowHeight + DelegationList.height(row.delegations.count, folded: row.foldedDelegations != nil)
     }
 
     var header: some View {
@@ -54,12 +61,19 @@ struct TaskPagerView: View {
                 VStack(spacing: rowSpacing) {
                     ForEach(pageRows, id: \.activity.id) { row in
                         let activity = row.activity
-                        TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
-                            enabled: model.canOpen(activity), accent: model.taskAccent,
-                            costHelp: model.deepseekCostHelp(activity), options: model.panelOptions) {
-                                model.open(activity)
+                        VStack(spacing: 0) {
+                            TaskRowView(presentation: row, group: model.taskGroup(for: activity), now: model.now,
+                                enabled: model.canOpen(activity), accent: model.taskAccent,
+                                costHelp: model.deepseekCostHelp(activity), options: model.panelOptions) {
+                                    model.open(activity)
+                                }
+                                .frame(height: rowHeight)
+                            if !row.delegations.isEmpty || row.foldedDelegations != nil {
+                                DelegationList(rows: row.delegations, folded: row.foldedDelegations, enabled: model.canOpen(activity),
+                                               open: { model.open(activity) }, stop: { model.stopDelegation($0) })
                             }
-                            .frame(height: rowHeight)
+                        }
+                        .frame(height: height(row), alignment: .top)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)

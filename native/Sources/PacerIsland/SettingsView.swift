@@ -193,6 +193,7 @@ struct SettingsView: View {
             switch pane {
             case .remote: PageHeader(title: pane.title, subtitle: SettingsConnectionsPane.summaryText(model))
             case .notifications: PageHeader(title: pane.title, subtitle: L10n.text("main.subtitle.notifications"))
+            case .collaboration: PageHeader(title: pane.title, subtitle: L10n.text("main.subtitle.collaboration"))
             case .expandedPanel: PageHeader(title: pane.title, subtitle: L10n.text("main.panel.subtitle")) {
                 // Only an edited panel has something to restore.
                 if panelLayout != nil { Button(L10n.text("main.panel.restore")) { panelLayout = nil }.buttonStyle(.main) }
@@ -352,6 +353,8 @@ struct SettingsView: View {
                 onShowWelcome: onShowWelcome, openPane: { pane = $0 })
         case .support:
             SettingsSupportPane()
+        case .collaboration:
+            SettingsCollaborationPane(model: model, claudeEnabled: moduleEnabled(.claude), codexEnabled: moduleEnabled(.codex), openPane: { pane = $0 })
         case .modules:
             SettingsModuleLibraryPane(library: library, open: { pane = SettingsPane(provider: $0) },
                 toggle: { provider in modules.setMode(moduleEnabled(provider) ? .disabled : .enabled, for: provider) })

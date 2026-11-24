@@ -7,7 +7,12 @@ import Foundation
 public struct CodexSessionOrigin: Equatable, Sendable {
     public let embedded: Bool
     public let ignored: Bool
-    public init(embedded: Bool, ignored: Bool) { self.embedded = embedded; self.ignored = ignored }
+    /// Started by Codex for Claude (`ClaudeCodexDelegation.originator`): shown
+    /// only under the Claude task whose ledger names it.
+    public let delegated: Bool
+    public init(embedded: Bool, ignored: Bool, delegated: Bool = false) {
+        self.embedded = embedded; self.ignored = ignored; self.delegated = delegated
+    }
     public static let officialClients = ["Codex Desktop", "codex_cli_rs", "codex-tui", "codex_vscode",
                                          "codex_exec", "codex_atlas", "codex_chatgpt_desktop"]
 
@@ -22,7 +27,7 @@ public struct CodexSessionOrigin: Equatable, Sendable {
         // Its Codex ACP adapter ignores ephemeral, so these rollouts exist.
         let translation = parts.suffix(2).map(String.init) == ["zotero-chat", "translate"]
         let catalog = parts.last?.hasPrefix("zotero-chat-catalog.") == true
-        return Self(embedded: embedded, ignored: embedded && (translation || catalog))
+        return Self(embedded: embedded, ignored: embedded && (translation || catalog), delegated: originator == ClaudeCodexDelegation.originator)
     }
 
     static func sanitized(_ values: [String: Any]) -> Self? {

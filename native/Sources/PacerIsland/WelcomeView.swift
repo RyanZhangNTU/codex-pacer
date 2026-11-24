@@ -24,6 +24,7 @@ struct WelcomeView: View {
     @State private var modules = ProviderModules.load()
     @State private var showsMoreModules = false
     @AppStorage(IslandModel.claudeProgressRingKey) private var claudeRing = true
+    @AppStorage(CodexDelegationPreferences.enabledKey) private var codexDelegation = false
     @AppStorage(IslandModel.codexProgressRingKey) private var codexRing = true
     @AppStorage(IslandModel.deepseekProgressRingKey) private var deepseekRing = true
     /// Read so a mode chosen here, or a drag of the island, redraws the cards.
@@ -209,6 +210,14 @@ struct WelcomeView: View {
                         Toggle(L10n.text("main.claude.ring"), isOn: ringsBinding).labelsHidden().toggleStyle(.switch)
                     }
                     if ringsBinding.wrappedValue { progressNote }
+                }
+                if codex && moduleEnabled(.claude) {
+                    WelcomeChoiceRow(symbol: SettingsPane.collaboration.symbol, tint: Color(red: 0.067, green: 0.5, blue: 0.43),
+                                     title: L10n.text("welcome.collaboration.title"),
+                                     info: L10n.text("welcome.collaboration.subtitle") + " " + L10n.text("welcome.collaboration.later")) {
+                        Toggle(L10n.text("collaboration.codex_for_claude"), isOn: $codexDelegation).labelsHidden().toggleStyle(.switch)
+                    }
+                    .onChange(of: codexDelegation) { _, _ in model.applyCodexDelegationPreferences() }
                 }
                 WelcomeChoiceRow(symbol: SettingsPane.notifications.tileSymbol, tint: SettingsPane.notifications.tint,
                                  title: L10n.text("settings.system_notifications"), info: L10n.text("main.welcome.notifications_info"),

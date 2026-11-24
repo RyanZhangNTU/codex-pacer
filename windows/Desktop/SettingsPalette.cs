@@ -28,7 +28,10 @@ internal static class SettingsPalette
             resources["SettingsTileLocked"] = DesktopAppearance.Ink(colors.Disabled);
             resources["SettingsChipOnText"] = DesktopAppearance.Ink(colors.HighlightText);
             foreach (string name in new[] { "Codex", "Claude", "DeepSeek", "Neutral" })
-            { resources["SettingsTint" + name] = DesktopAppearance.Ink(colors.Text); resources["SettingsTint" + name + "Soft"] = DesktopAppearance.Ink(colors.Control); }
+            {
+                resources["SettingsTint" + name] = resources["SettingsTint" + name + "OnSoft"] = DesktopAppearance.Ink(colors.Text);
+                resources["SettingsTint" + name + "Soft"] = DesktopAppearance.Ink(colors.Control);
+            }
             resources["SettingsKnob"] = resources["SettingsSelectionText"] = DesktopAppearance.Ink(colors.HighlightText);
             resources["SettingsSidebarSelectionText"] = DesktopAppearance.Ink(colors.HighlightText); return;
         }
@@ -112,12 +115,14 @@ internal static class SettingsPalette
         resources["SettingsChipOn"] = new SolidColorBrush(chip);
         resources["SettingsChipOnStroke"] = new SolidColorBrush(Color.FromArgb(89, tint.R, tint.G, tint.B));
         resources["SettingsChipOnText"] = new SolidColorBrush(Readable(tint, chip, dark));
-        // Each service's ink on the cards, deeper than the island's so it reads on white, and its soft tile.
+        // Each service's ink on the cards, deeper than the island's so it reads on white, its soft tile,
+        // and its ink for words on that tile, moved just far enough for 4.5:1 there.
         void Tint(string name, Color light, Color night)
         {
             Color ink = dark ? night : light;
             resources["SettingsTint" + name] = new SolidColorBrush(ink);
             resources["SettingsTint" + name + "Soft"] = new SolidColorBrush(dark ? Color.FromArgb(51, ink.R, ink.G, ink.B) : Blend(ink, 0.12, Colors.White));
+            resources["SettingsTint" + name + "OnSoft"] = new SolidColorBrush(Readable(ink, Blend(ink, dark ? 0.2 : 0.12, dark ? card : Colors.White), dark));
         }
         Tint("Codex", Color.FromRgb(14, 140, 120), Color.FromRgb(125, 214, 196));
         Tint("Claude", Color.FromRgb(196, 88, 31), Color.FromRgb(242, 156, 107));

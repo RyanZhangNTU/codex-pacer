@@ -52,8 +52,10 @@ public struct HeaderActivity: Equatable, Sendable {
         public let fraction: Double?
         /// The estimate has not changed for `TaskProgressRing.staleInterval`.
         public let stale: Bool
-        public init(provider: AgentProvider, fraction: Double?, stale: Bool = false) {
-            self.provider = provider; self.fraction = fraction.map { min(1, max(0, $0)) }; self.stale = stale
+        /// Codex for Claude runs working for this task.
+        public var helpers = 0
+        public init(provider: AgentProvider, fraction: Double?, stale: Bool = false, helpers: Int = 0) {
+            self.provider = provider; self.fraction = fraction.map { min(1, max(0, $0)) }; self.stale = stale; self.helpers = max(0, helpers)
         }
     }
     /// Every running task: a task waiting for the user turns the badge amber
@@ -101,6 +103,10 @@ public struct HeaderActivity: Equatable, Sendable {
         guard choice != .service, !reported.isEmpty else { return .services }
         return choice == .segments && showsSegments ? .segments : .average
     }
+    /// Codex for Claude runs working for the active Claude tasks. Their comets
+    /// circle the badge's ring in Codex's color: beside the services' comets,
+    /// or in the stretch an estimate has not reached.
+    public var delegatedRunning = 0
     public var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
     public var showsEndingMark: Bool { ending != nil && !endingIsCore }
     public static func countText(_ count: Int) -> String { count > 99 ? "99+" : String(count) }
@@ -156,11 +162,16 @@ public struct TaskPresentationOptions: Equatable, Sendable {
     public var progressRingProviders: Set<AgentProvider>
     /// Rows on one page of the expanded panel's task list.
     public var pageSize: Int
+    /// Codex for Claude runs show as rows under their Claude task; without
+    /// this, the task shows only how many there are.
+    public var showsDelegationRows: Bool
     public init(hideProjects: Bool = false, hostApplications: [String: TaskHostLabel] = [:], sourceNames: [String: String] = [:],
-                showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = [], pageSize: Int = 3) {
+                showsDeepSeekTurnCost: Bool = true, progressRingProviders: Set<AgentProvider> = [], pageSize: Int = 3,
+                showsDelegationRows: Bool = true) {
         self.hideProjects = hideProjects; self.hostApplications = hostApplications; self.sourceNames = sourceNames
         self.showsDeepSeekTurnCost = showsDeepSeekTurnCost; self.progressRingProviders = progressRingProviders
         self.pageSize = ExpandedPanelOptions.pageSizes.contains(pageSize) ? pageSize : 3
+        self.showsDelegationRows = showsDelegationRows
     }
 }
 
@@ -190,14 +201,67 @@ public struct ActivityTaskRowPresentation: Sendable {
         return cost
     }
     public let progressRing: TaskProgressRing?
+    /// Set on a Codex for Claude run's row: its ledger entry.
+    public let delegation: CodexDelegationLink?
+    /// The Codex for Claude runs of this Claude task still running.
+    public let delegatedCount: Int
+    /// Its run lines, oldest first, when `TaskPresentationOptions.showsDelegationRows` is on:
+    /// every running run, then the most recent ended ones, `delegationLineLimit` lines in all.
+    public let delegations: [ActivityTaskRowPresentation]
+    /// The older ended runs folded into one line above them.
+    public let foldedDelegations: FoldedDelegations?
+    public var delegatedCountText: String { L10n.text("delegation.badge", delegatedCount) }
+    /// How many run lines a Claude task shows; running runs always show, up to the runs allowed at once.
+    public static let delegationLineLimit = 3
+    public struct FoldedDelegations: Equatable, Sendable {
+        public let ended: Int
+        /// Failed or timed out, and stopped; a stopped run was stopped on purpose, so it is no failure.
+        public let failed: Int, stopped: Int
+        public var text: String {
+            if failed > 0 { return L10n.text("delegation.folded_failed", ended, failed) }
+            return L10n.text(stopped > 0 ? "delegation.folded_ended" : "delegation.folded", ended)
+        }
+    }
+    /// A run is running while its ledger says so and Codex has not ended its thread.
+    static func isRunningDelegation(_ activity: SessionActivity) -> Bool {
+        activity.codexDelegation?.status == .running && ![.completed, .interrupted].contains(activity.phase)
+    }
+    /// Every running run and the most recent ended ones, up to `delegationLineLimit`, oldest first.
+    static func shownDelegations(_ runs: [SessionActivity]) -> [SessionActivity] {
+        let running = Set(runs.filter(isRunningDelegation).map(\.id))
+        let recent = Set(runs.filter { !running.contains($0.id) }.suffix(max(0, delegationLineLimit - running.count)).map(\.id))
+        return runs.filter { running.contains($0.id) || recent.contains($0.id) }
+    }
+    /// A run the user can stop from its row.
+    public var canStopDelegation: Bool { delegation?.status == .running && phase == .running }
+    /// What a run's hover card lists: mode and access, model, start and time,
+    /// Codex's own estimate, and once it ended, how and with how much work.
+    /// The run's row itself shows only its label, speed, time and model.
+    public let delegationDetail: [DelegationDetailLine]
+    public struct DelegationDetailLine: Equatable, Sendable {
+        public let label: String
+        public let value: String
+    }
     public var rateText: String? { rate.map { String(format: "%.1f", $0.value) } }
     public var subagentText: String { String(subagents) }
     public init(activity: SessionActivity, group: ActivityTaskGroup? = nil, attention: PendingAttentionRequest.Kind? = nil,
                 unread: Bool, options: TaskPresentationOptions = .init(), at now: Date) {
         self.activity = activity; self.attention = attention; self.unread = unread
+        delegation = activity.codexDelegation
+        let delegated = group?.delegations ?? []
+        delegatedCount = delegated.filter(Self.isRunningDelegation).count
+        if options.showsDelegationRows {
+            let shown = Self.shownDelegations(delegated), ids = Set(shown.map(\.id))
+            delegations = shown.map { ActivityTaskRowPresentation(activity: $0, unread: false, options: options, at: now) }
+            let folded = delegated.filter { !ids.contains($0.id) }
+            foldedDelegations = folded.isEmpty ? nil : FoldedDelegations(ended: folded.count,
+                failed: folded.filter { [.failed, .timedOut].contains($0.codexDelegation?.status) }.count,
+                stopped: folded.filter { $0.codexDelegation?.status == .stopped }.count)
+        } else { delegations = []; foldedDelegations = nil }
         phase = group?.isRunning == true ? .running : group?.isWaiting == true ? .waitingForInput : activity.observedPhase(at: now)
         title = Self.title(activity, hideProjects: options.hideProjects)
         var text = phase == .completed ? activity.endingLabel : activity.detail(at: now)
+        if let link = activity.codexDelegation { text = Self.delegationStatus(link, title: title, phase: phase, detail: text) }
         if group?.isRunning == true, activity.phase != .running, !activity.turnFailed { text = L10n.text("activity.running_long") }
         if let attention {
             if phase != .running { text = attention.label }
@@ -235,9 +299,62 @@ public struct ActivityTaskRowPresentation: Sendable {
         }
         progressRing = TaskProgressRing.make(activity, phase: phase, enabled: options.progressRingProviders.contains(activity.provider), at: now,
             hasAttention: attention != nil, waitingForDependents: group?.isRunning == true && [.completed, .interrupted].contains(activity.phase))
+        if let link = activity.codexDelegation {
+            delegationDetail = Self.delegationDetail(link, activity: activity, phase: phase, model: model, effort: effort, at: now)
+        } else { delegationDetail = [] }
+    }
+    static func delegationDetail(_ link: CodexDelegationLink, activity: SessionActivity, phase: ActivityPhase,
+                                 model: String, effort: String?, at now: Date) -> [DelegationDetailLine] {
+        func line(_ key: String, _ value: String) -> DelegationDetailLine { .init(label: L10n.text("delegation.detail." + key), value: value) }
+        let access = L10n.text(link.worktree ? "delegation.worktree" : link.write ? "delegation.write" : "delegation.read_only")
+        var lines = [line("mode", modeText(link.mode) + " · " + access)]
+        let speed = link.fast.map { L10n.text($0 ? "delegation.detail.fast" : "delegation.detail.standard") }
+        lines.append(line("model", ([model] + [effort, speed].compactMap { $0 }).joined(separator: " · ")))
+        let clock = L10n.format(link.started, Date.FormatStyle().hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+        let finished = phase != .running && link.status.finished
+        let end = finished ? (link.ended ?? activity.phaseChangedAt ?? link.started) : now
+        let elapsed = max(0, end.timeIntervalSince(link.started))
+        lines.append(line("started", clock + " · " + L10n.text(finished ? "delegation.detail.took" : "delegation.detail.running_for")
+            + " " + CompactDuration.text(elapsed)))
+        if !finished, let report = activity.currentProgress { lines.append(line("progress", L10n.text("delegation.detail.progress_value", report.percent))) }
+        if finished {
+            lines.append(line("result", L10n.text("delegation.status." + link.status.rawValue)))
+            var work: [String] = []
+            if let commands = link.commands { work.append(L10n.text("delegation.detail.commands", commands)) }
+            if let files = link.changedFiles { work.append(L10n.text("delegation.detail.files", files)) }
+            if !work.isEmpty { lines.append(line("work", work.joined(separator: " · "))) }
+            if let usage = link.usage {
+                let cached = usage.input > 0 ? Int((Double(usage.cached) / Double(usage.input) * 100).rounded()) : 0
+                lines.append(line("tokens", L10n.text("delegation.detail.in") + " " + ClaudeCodexDelegation.compactCount(usage.input)
+                    + " (" + L10n.text("delegation.detail.cached", cached) + ") · " + L10n.text("delegation.detail.out") + " "
+                    + ClaudeCodexDelegation.compactCount(usage.output)))
+            }
+        }
+        return lines
     }
     public static func title(_ activity: SessionActivity, hideProjects: Bool) -> String {
-        activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project)
+        if let link = activity.codexDelegation { return hideProjects ? modeText(link.mode) : delegationTitle(link) }
+        return activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project)
+    }
+    /// Claude's label for the run, or its mode. Codex's own thread title would
+    /// be the start of Claude's brief.
+    public static func delegationTitle(_ link: CodexDelegationLink) -> String { link.label ?? modeText(link.mode) }
+    static func modeText(_ mode: ClaudeCodexDelegation.Mode) -> String { L10n.text("delegation.mode." + mode.rawValue) }
+    /// Mode, access and what the run is doing; a finished run says how it ended.
+    static func delegationStatus(_ link: CodexDelegationLink, title: String, phase: ActivityPhase, detail: String) -> String {
+        let access = L10n.text(link.worktree ? "delegation.worktree" : link.write ? "delegation.write" : "delegation.read_only")
+        let state: String
+        switch phase == .running ? .running : link.status {
+        case .running: state = detail
+        case .ok: state = L10n.text("delegation.status.ok")
+        case .failed: state = L10n.text("delegation.status.failed")
+        case .timedOut: state = L10n.text("delegation.status.timedOut")
+        case .stopped: state = L10n.text("delegation.status.stopped")
+        }
+        // A plain task says nothing about its mode; a review or follow-up does, unless its title already is the mode.
+        let mode = modeText(link.mode)
+        let parts = title == mode || link.mode == .task ? [access, state] : [mode, access, state]
+        return parts.joined(separator: " · ")
     }
     private static func creditAmount(_ value: Double) -> String {
         if value > 0 && value < 0.01 { return "<0.01 " + L10n.text("harness.credit_unit") }
@@ -298,6 +415,9 @@ public struct ActivityTaskPresentation: Sendable {
                 groups: [ActivityTaskGroup]? = nil, overview: ActivityOverview? = nil,
                 options: TaskPresentationOptions = .init(), at now: Date) {
         let groups = groups ?? ActivityTaskGroup.make(activities)
+        let known = Set(groups.flatMap { $0.members.map(\.id) })
+        let orphans = Set(activities.filter { $0.isCodexDelegation && !known.contains($0.id) }.map(\.id))
+        let requests = orphans.isEmpty ? requests : requests.filter { !orphans.contains($0.activity.id) }
         self.groups = groups; self.requests = requests
         self.overview = overview ?? ActivityOverview(groups: groups, at: now)
         func attention(_ activity: SessionActivity) -> PendingAttentionRequest.Kind? { Self.attentionKind(activity, groups: groups, requests: requests) }
@@ -305,7 +425,7 @@ public struct ActivityTaskPresentation: Sendable {
             $0.isRunning || $0.isWaiting || $0.primary.codexGoalPause != nil || [.completed, .interrupted].contains($0.primary.phase) ||
                 now < ($0.primary.unconfirmedDisplayDeadline ?? .distantPast)
         }.map(\.primary)
-        let known = Set(groups.flatMap { $0.members.map(\.id) }), roots = Set(groups.filter { !$0.isRunning }.map { $0.primary.id })
+        let roots = Set(groups.filter { !$0.isRunning }.map { $0.primary.id })
         var ids = Set(displayed.map(\.id))
         for request in requests where !known.contains(request.activity.id) && ids.insert(request.activity.id).inserted { displayed.append(request.activity) }
         displayed.sort {
@@ -374,9 +494,13 @@ public struct ActivityTaskPresentation: Sendable {
         let running = Set(overview.running.map(\.id))
         let tasks = rows.filter { running.contains($0.activity.id) }.map { row in
             let ring = unfinished(row.progressRing)
-            return HeaderActivity.TaskShare(provider: row.activity.provider, fraction: ring?.fraction, stale: ring?.stale ?? false)
+            let helpers = groups.first { $0.primary.id == row.activity.id }?.delegations.filter(ActivityTaskRowPresentation.isRunningDelegation).count ?? 0
+            return HeaderActivity.TaskShare(provider: row.activity.provider, fraction: ring?.fraction, stale: ring?.stale ?? false, helpers: helpers)
         }
-        return HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress,
+        var value = HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress,
             tasks: tasks)
+        value.delegatedRunning = groups.filter { $0.isRunning || $0.isWaiting }.flatMap(\.delegations)
+            .filter(ActivityTaskRowPresentation.isRunningDelegation).count
+        return value
     }
 }

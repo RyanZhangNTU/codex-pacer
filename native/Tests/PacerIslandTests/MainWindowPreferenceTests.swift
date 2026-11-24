@@ -28,7 +28,7 @@ final class MainWindowPreferenceTests: XCTestCase {
         }
         defaults.set("removed", forKey: SettingsPane.defaultsKey)
         XCTAssertEqual(SettingsPane.load(from: defaults), .overview)
-        XCTAssertEqual(SettingsPane.groups(services: services)[1], [.codex, .claude, .deepseek, SettingsPane(provider: workBuddy), .modules, .remote])
+        XCTAssertEqual(SettingsPane.groups(services: services)[1], [.codex, .claude, .deepseek, SettingsPane(provider: workBuddy), .modules, .collaboration, .remote])
         XCTAssertFalse(SettingsPane.pages(services: HarnessRegistry.legacyIDs).contains(SettingsPane(provider: workBuddy)),
                        "A module the library keeps folded is not in the sidebar")
     }

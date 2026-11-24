@@ -88,6 +88,16 @@ internal static class GuidePageChecks
                 "The last page finishes with Done");
             Check(Find<StackPanel>(window, "welcome.codexSetup").IsVisible && Has(window, "guide.codexSetup.allow.state"),
                 "With Codex on, the last page leads with Codex's two steps");
+            var delegation = Find<CheckBox>(window, "welcome.collaboration");
+            Check(delegation.IsVisible, "The welcome guide offers delegation with both modules on");
+            var both = snapshot;
+            foreach (string provider in new[] { "codex", "claude" })
+            {
+                snapshot = both with { Modules = both.Modules!.Select(module => module with { Enabled = module.Provider != provider }).ToArray() };
+                body.Refresh();
+                Check(!delegation.IsVisible, "The welcome switch is hidden when " + provider + " is off");
+            }
+            snapshot = both; body.Refresh();
             var rings = Find<CheckBox>(window, "welcome.rings"); Toggle(rings);
             await Until(() => !session.Current.ClaudeProgressRing && !session.Current.CodexProgressRing && !session.Current.DeepSeekProgressRing && rings.IsEnabled);
             Toggle(rings);
@@ -264,6 +274,7 @@ internal static class GuidePageChecks
                 Check(Has(settings, "help." + provider + (provider == "deepseek" ? ".balance" : ".quota")) && !Has(settings, "help.hover") && enable.Visibility == Visibility.Visible,
                     "Module topics show only their own samples and how to turn modules on or off");
             }
+            await CheckCollaborationHelp(settings, ui, enable, Path.Combine(output, "pages-help-collaboration-" + language + (dark ? "-dark" : "-light")));
             Select(Find<RadioButton>(settings, "help.topic.collapsed")); await Pump();
             appearance.Set(appearance.Current with { HighContrast = true }); await Pump(); settings.UpdateLayout();
             CheckHelpProviderText(settings, appearance.Current.Colors.Text);
@@ -324,6 +335,53 @@ internal static class GuidePageChecks
         }
         finally { settings.AllowClose = true; settings.Close(); }
         Console.WriteLine("PASS guide pages " + language + (dark ? "-dark" : "-light") + ": welcome, history, read-only help/support, links, keyboard and UIA");
+    }
+    /// Help → Collaboration: one sequence diagram at a time, Pacer's way first and the typical way a switch away,
+    /// every label inside the grid and clear of the others in both languages.
+    private static async Task CheckCollaborationHelp(SettingsWindow settings, UiText ui, TextBlock footer, string capture)
+    {
+        Select(Find<RadioButton>(settings, "help.topic.collaboration")); await Pump(); settings.UpdateLayout();
+        var diagram = SelfAndDescendants(settings).OfType<CollaborationDiagram>().Single();
+        Check(diagram.ThroughPacer && Find<RadioButton>(settings, "help.collaboration.view.pacer").IsChecked == true
+            && footer.Visibility != Visibility.Visible && !Has(settings, "help.hover") && !Has(settings, "help.move"), "Collaboration opens on Pacer's way, alone in its card");
+        Find<FrameworkElement>(settings, "help.collaboration.figure").BringIntoView(); await Pump(); settings.UpdateLayout();
+        settings.CapturePreview(capture + ".png");
+        string[] Drawn() => diagram.Labels.Select(label => label.Text).ToArray();
+        void Laid(string view)
+        {
+            var labels = diagram.Labels.ToArray(); var grid = new Rect(0, 0, CollaborationDiagram.GridWidth, CollaborationDiagram.GridHeight);
+            Check(labels.All(label => grid.Contains(label.Bounds)), "Every label of the " + view + " diagram stays inside its grid");
+            var crossing = labels.SelectMany((first, index) => labels.Skip(index + 1).Where(second => first.Bounds.IntersectsWith(second.Bounds)).Select(second => first.Text + " / " + second.Text)).ToArray();
+            Check(crossing.Length == 0, "No two labels of the " + view + " diagram overlap: " + string.Join(", ", crossing));
+            // The numbered notes sit on the figure's tint, itself laid over the card.
+            var fill = ((SolidColorBrush)Find<Border>(settings, "help.collaboration.figure").Background).Color; var card = ((SolidColorBrush)settings.Resources["SettingsCard"]).Color;
+            byte Mix(byte over, byte under) => (byte)Math.Round(under + (over - under) * fill.A / 255.0);
+            var tint = Color.FromRgb(Mix(fill.R, card.R), Mix(fill.G, card.G), Mix(fill.B, card.B));
+            string[] notes = Enumerable.Range(1, 3).SelectMany(note => ui.Text("help.collaboration." + view + "." + note).Split('\n')).ToArray();
+            var drawn = labels.Where(label => notes.Contains(label.Text)).ToArray();
+            Check(drawn.Length == notes.Length && drawn.All(label => Contrast(((SolidColorBrush)label.Ink).Color, tint) >= 4.5),
+                "The " + view + " diagram's numbered notes read at 4.5:1 on its tint");
+            // Each number is drawn on a dot of its note's ink.
+            var dot = ((SolidColorBrush)drawn[0].Ink).Color; var numbers = labels.Where(label => label.Text is "1" or "2" or "3").ToArray();
+            Check(numbers.Length == 3 && numbers.All(label => Contrast(((SolidColorBrush)label.Ink).Color, dot) >= 4.5), "The " + view + " diagram's numbers read at 4.5:1 on their dots");
+        }
+        string[] pacerSteps = ["brief", "start", "progress", "done", "ended", "clear"];
+        Check(Drawn().Contains("Pacer") && pacerSteps.All(step => Drawn().Contains(ui.Text("help.collaboration." + step))),
+            "Pacer has its own lane, and each step it takes is labeled: the brief, the start, live progress, the result, and the cleanup after the chat ends");
+        Check(Drawn().Count(text => text == ui.Text("help.collaboration.interact")) == 2 && Drawn().Contains(ui.Text("help.collaboration.deliver")),
+            "You keep interacting with Claude while Codex works, and Claude delivers the result");
+        Laid("pacer");
+        var peer = UIElementAutomationPeer.CreatePeerForElement(diagram);
+        Check(peer.GetAutomationControlType() == AutomationControlType.Image && peer.GetChildren() == null && peer.GetName() == ui.Text("help.collaboration.pacer.summary"),
+            "The diagram reads as one picture that tells Pacer's whole sequence");
+        Select(Find<RadioButton>(settings, "help.collaboration.view.typical")); await Pump(); settings.UpdateLayout();
+        Check(!diagram.ThroughPacer && !Drawn().Contains("Pacer") && Drawn().Contains(ui.Text("help.collaboration.run")) && Drawn().Contains(ui.Text("help.collaboration.blocked"))
+            && !pacerSteps.Any(step => Drawn().Contains(ui.Text("help.collaboration." + step))) && peer.GetName() == ui.Text("help.collaboration.typical.summary"),
+            "The typical way drops Pacer's lane: Claude runs Codex directly and you can't interact while it waits");
+        Laid("typical");
+        settings.CapturePreview(capture + "-typical.png");
+        Select(Find<RadioButton>(settings, "help.collaboration.view.pacer")); await Pump();
+        Check(diagram.ThroughPacer && peer.GetName() == ui.Text("help.collaboration.pacer.summary"), "Switching back shows Pacer's way again");
     }
     private static void CheckHelpProviderText(SettingsWindow window, Color expected)
     {

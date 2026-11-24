@@ -61,6 +61,18 @@ struct EngineTaskRow: Codable, Equatable {
     let progressFraction: Double?
     let progressStale: Bool?
     let progressText: String?
+    /// Codex for Claude, on a Claude task: how many runs are still running ("Codex 2"),
+    /// and the run lines when the list shows them: every running run, then the most
+    /// recent ended ones. Absent without runs.
+    var delegatedText: String? = nil
+    var delegations: [EngineTaskRow]? = nil
+    /// The older ended runs, folded into one line above the others ("2 more finished").
+    var delegationsFolded: String? = nil
+    /// On a run's row: the Claude task it opens, and whether Stop shows.
+    var parentID: String? = nil
+    var canStop: Bool? = nil
+    /// The run's hover card: label and value pairs.
+    var detailLines: [[String]]? = nil
 
     init(group: ActivityTaskGroup, attention: PendingAttentionRequest.Kind?, inbox: CompletionInbox,
          hideProjects: Bool, at now: Date, showsDeepSeekTurnCost: Bool = true) {
@@ -79,6 +91,13 @@ struct EngineTaskRow: Codable, Equatable {
         progressState = value.progressRing?.state.rawValue; progressMode = value.progressRing?.mode.rawValue
         progressFraction = value.progressRing?.fraction
         progressStale = value.progressRing?.stale; progressText = value.progressRing?.accessibilityText
+        if value.delegatedCount > 0 { delegatedText = value.delegatedCountText }
+        if !value.delegations.isEmpty { delegations = value.delegations.map(EngineTaskRow.init) }
+        delegationsFolded = value.foldedDelegations?.text
+        if let link = value.delegation {
+            parentID = link.parentID; canStop = value.canStopDelegation
+            detailLines = value.delegationDetail.map { [$0.label, $0.value] }
+        }
     }
     static func symbol(_ activity: SessionActivity, attention: PendingAttentionRequest.Kind?) -> String {
         symbol(TaskSymbol.symbol(for: activity, attention: attention))
@@ -125,6 +144,10 @@ struct EngineHeader: Codable, Equatable {
     let progressAverageProvider: String?
     let progressReported: Int?
     let progressSegments: Bool?
+    /// Codex for Claude runs working for the active Claude tasks; absent without any.
+    /// The badge draws them in Codex's color and names them with `delegatedText`.
+    var delegatedRunning: Int? = nil
+    var delegatedText: String? = nil
 
     init(groups: [ActivityTaskGroup], requests: [PendingAttentionRequest], inbox: CompletionInbox, at now: Date) {
         self.init(ActivityTaskPresentation(activities: groups.flatMap(\.members), requests: requests, inbox: inbox,
@@ -140,6 +163,9 @@ struct EngineHeader: Codable, Equatable {
         if case .completed(let provider)? = value.ending { endingProvider = provider.rawValue }
         else { endingProvider = suppliedProvider?.rawValue }
         endingIsCore = value.endingIsCore
+        if value.delegatedRunning > 0 {
+            delegatedRunning = value.delegatedRunning; delegatedText = L10n.text("delegation.badge", value.delegatedRunning)
+        }
         if case .symbol(let glyph) = value.core { coreSymbol = glyph } else { coreSymbol = nil }
         progressFraction = value.progress?.fraction
         // Waiting for background work holds the light like a long step: the request goes on, the agent does not.
@@ -159,5 +185,10 @@ struct EngineTaskShare: Codable, Equatable {
     let provider: String
     let fraction: Double?
     let stale: Bool
-    init(_ value: HeaderActivity.TaskShare) { provider = value.provider.rawValue; fraction = value.fraction; stale = value.stale }
+    /// Codex for Claude runs working for this task; absent without any.
+    var helpers: Int? = nil
+    init(_ value: HeaderActivity.TaskShare) {
+        provider = value.provider.rawValue; fraction = value.fraction; stale = value.stale
+        if value.helpers > 0 { helpers = value.helpers }
+    }
 }

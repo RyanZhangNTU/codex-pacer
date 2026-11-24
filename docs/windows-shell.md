@@ -17,7 +17,7 @@ python scripts/windows/build-shell-resources.py --check
 ```
 
 - `test-presentation.ps1 -Group` takes one or more groups. `all` runs the groups in `AllGroups` (`windows/Tests/PresentationTests/Program.cs`); CI splits them across three jobs, and the platform contract checks that each group sits in exactly one job. Add a new group to both places.
-- Groups outside `all` run only when named: `deepseek`, `displaySettings`, `persistence`, `position`, `progress`, `quotaIdle` and `ssh`. `position` moves the real pointer and restores it afterwards.
+- Groups outside `all` run only when named: `collaboration` (Settings → Collaboration and Codex for Claude's island rows, also part of `settings` and `island`), `deepseek`, `displaySettings`, `persistence`, `position`, `progress`, `quotaIdle` and `ssh`. `position` moves the real pointer and restores it afterwards.
 - Screen tests use offline engines and synthetic data, never real accounts. Close other screen tests first; captures go to the ignored `output/windows` and are not committed.
 - `package-preview.ps1` writes the unsigned ZIP and its SHA-256 under `output/windows` and, unless `-BuildOnly`, checks the extracted app with a restricted environment, Unicode paths, a demo capture and single-instance activation. The portable ZIP is for development only; keep the whole folder (Engine, Maintenance, resources and runtimes) together.
 - Which CI jobs run on a pull request is described in [continuous integration](development.md#continuous-integration); packaging and publishing a release in [the release workflow](releasing.md). ARM64 is compiled and packaged in CI but never run.

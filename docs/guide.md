@@ -108,6 +108,10 @@ Spend made elsewhere on your account, such as web searches or another device, is
 
 **Claude Code.** Task tracking sets itself up when the Claude module is on. Restart running Claude Code sessions once afterwards. With **Show Claude cloud Projects** on, Pacer also follows your cloud Project threads and tells you when one ends or waits for you.
 
+**Codex for Claude.** Enable both the Claude and Codex modules, then turn on **Claude calls Codex** in **Settings → Collaboration**. Claude Code can hand a task, an investigation, a review or a fix to Codex through Pacer's `/pacer:codex` skill. Just ask Claude, for example "have Codex review this change". Claude works and replies as it always does; Pacer only adds the tool. Each run shows under the Claude task that started it, with its progress, speed and model; hover over a running one to stop it. While Codex works, a green light runs around the task ring in the collapsed bar. A task shows up to three runs, the ones still working first; older finished runs fold into one line. **Help → Collaboration** draws how Claude, Pacer and Codex work together, and switches to the typical way, where Claude runs Codex itself, for comparison.
+
+The Collaboration page lists the pairs, each with its switch; Claude calls Codex is the first. Its basic settings choose when Claude may call Codex, the model, reasoning effort and fast mode (or follow Codex's own), and when the conversations Pacer leaves in Codex are cleared. The advanced settings set Codex's file access, whether it works in the project or a separate worktree, standing instructions added to every request, Codex's memories, how many runs go at once and a quota floor below which Claude won't start new runs.
+
 **DeepSeek Harness.** Pacer follows local Harness sessions, their speed and cost.
 
 **WorkBuddy.** Pacer follows WorkBuddy's tasks on this computer: running work, questions waiting for you and finished turns. Click a task to return to its conversation. To see your credits, click **Sign In** on the WorkBuddy page; the window closes by itself once you're signed in. The page lists this month's credits, extra credits and the total, then what each kind has left and when it refreshes or expires. The **⋯** menu next to the account refreshes, switches account or signs out. History shows the credits you used each day of the last week. WorkBuddy AI, the international version, works the same way on its own page and account.
@@ -140,6 +144,7 @@ Click the gear in the expanded island to open the main window.
 | **History** | Each service's quota over the current period, and the last 7 days of DeepSeek spend and WorkBuddy credits. |
 | **Codex, Claude, DeepSeek, WorkBuddy** | Turn each service on or off. Every service page starts with the same status: **Task monitoring** (whether Pacer reads its tasks on this computer), **Account** and **Usage**; then what it shows, its usage settings if it has any, and custom folders. Only services found on this computer, or turned on, are listed. |
 | **Module Library** | Every service Pacer can follow. Those found on this computer come first; the rest are folded away. Turn any of them on or off, or follow the link to get one. |
+| **Collaboration** | Pairs like Claude calls Codex: the switch, and how Codex runs for Claude. |
 | **Remote** | Tasks on other machines: SSH hosts and, on Windows, WSL. |
 | **Appearance** | Theme, accent color, the island's material and size, Island or Free Move, and which display it uses. |
 | **Collapsed Bar** | What the bar shows and each item's options. |
@@ -156,6 +161,7 @@ Changes apply right away. When an update is available, it shows in the sidebar a
 - It reads the logs your agents already write and keeps only what the island shows: task titles, stages, timing and token counts. It never keeps your prompts or replies.
 - Sign-ins happen in Pacer's own window. Pacer never reads other apps' passwords or browser cookies.
 - **Hide Project Names** replaces task titles on screen and in notifications.
+- Codex for Claude's conversations are cleared when Claude's turn ends, unless you choose a later time or to keep them. Pacer keeps no history of the runs.
 
 ## Troubleshooting
 

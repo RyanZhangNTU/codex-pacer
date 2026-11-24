@@ -17,28 +17,46 @@ public partial class TaskRow : Button
         new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
     public double HoverProgress { get => (double)GetValue(HoverProgressProperty); set => SetValue(HoverProgressProperty, value); }
     private Action? open;
+    private Action<string>? stop;
+    private string stopLabel = "";
     private bool hovered, animations = true;
+    private readonly bool showsDelegations;
     private int hoverRevision;
     private AnimationLease? hover;
     /// Rows with one line are 38 points tall, two lines 54.
     internal const double TwoLineHeight = 54, OneLineHeight = 38;
+    /// Each Codex for Claude run under a Claude task takes one 30-point line, the
+    /// older ended runs folded together a 22-point one; the rail ends 4 points below the last.
+    internal const double DelegationHeight = 30, FoldedHeight = 22, DelegationRailBottom = 4;
     internal static double RowHeight(PanelOptions? options) => options?.OneLine == true ? OneLineHeight : TwoLineHeight;
+    /// The row with the runs listed under it.
+    internal static double RowHeight(EngineTaskRow value, PanelOptions? options)
+    {
+        int runs = value.Delegations?.Count ?? 0; bool folded = value.DelegationsFolded != null;
+        return RowHeight(options) + (runs == 0 && !folded ? 0 : runs * DelegationHeight + (folded ? FoldedHeight : 0) + DelegationRailBottom);
+    }
     /// <param name="options">The panel's row style and fields; none draws every field on two lines.</param>
     /// <param name="settled">The first sight draws the icon's final state, as a row built while hidden does.</param>
-    internal TaskRow(EngineTaskRow value, PanelOptions? options = null, bool settled = false)
+    /// <param name="showsDelegations">The island lists a Claude task's Codex runs under it; Overview keeps one line per task.</param>
+    internal TaskRow(EngineTaskRow value, PanelOptions? options = null, bool settled = false, bool showsDelegations = false)
     {
-        this.settled = settled;
+        this.settled = settled; this.showsDelegations = showsDelegations;
         InitializeComponent();
         FontFamily = PacerFonts.Interface;
         var state = new TaskRowState(value, options);
         DataContext = state;
-        Height = RowHeight(options);
+        Height = showsDelegations ? RowHeight(value, options) : RowHeight(options);
+        BuildDelegations(value, options);
         // The one-line row's icon draws the 28-point face at 22.
         if (state.OneLine) Icon.LayoutTransform = new ScaleTransform(22.0 / 28, 22.0 / 28);
-        Background = PacerPalette.Hover; IsEnabled = false;
+        Background = PacerPalette.Hover; IsEnabled = false; Focusable = false;
         Click += (_, _) => { if (IsEnabled) open?.Invoke(); };
-        MouseEnter += (_, _) => { hovered = true; UpdateHover(); };
+        // The task highlights while the pointer is on its own row; over the Codex runs under it,
+        // only the run under the pointer lights up.
+        MouseEnter += (_, _) => { hovered = !Runs.IsMouseOver; UpdateHover(); };
         MouseLeave += (_, _) => { hovered = false; UpdateHover(); };
+        Runs.MouseEnter += (_, _) => { hovered = false; UpdateHover(); };
+        Runs.MouseLeave += (_, _) => { hovered = IsMouseOver; UpdateHover(); };
         Unloaded += (_, _) => { hovered = false; hoverRevision++; hover?.Dispose(); hover = null; HoverProgress = 0; };
         Loaded += (_, _) => { ApplyAppearance(); if (!progressShown) { progressShown = true; ShowProgress(); } };
     }
@@ -63,6 +81,8 @@ public partial class TaskRow : Button
         if (previous.Value == value && previous.OneLine == (options?.OneLine == true)) return;
         var state = new TaskRowState(value, options);
         DataContext = state;
+        Height = showsDelegations ? RowHeight(value, options) : RowHeight(options);
+        BuildDelegations(value, options);
         var before = previous.Value;
         if (progressShown && (before.Symbol != value.Symbol || before.Dimmed != value.Dimmed || before.ProgressState != value.ProgressState
             || before.ProgressMode != value.ProgressMode || before.ProgressFraction != value.ProgressFraction || before.ProgressStale != value.ProgressStale
@@ -72,21 +92,177 @@ public partial class TaskRow : Button
     /// The row's status icon; read by the presentation checks.
     internal TaskStatusIcon StatusIcon => Icon;
     internal void SetOpenAction(Action? action, string help, bool animate)
-    { open = action; IsEnabled = action != null; Focusable = IsEnabled; AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Icon.SetMotion(animate); }
-    internal void SetAnimations(bool value) { animations = value; Icon.SetMotion(value); if (!value) UpdateHover(); }
+    {
+        open = action; Focusable = action != null; UpdateEnabled();
+        AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Icon.SetMotion(animate);
+        foreach (var line in Delegations.Children.OfType<Grid>()) RefreshLineHighlight(line);
+    }
+    // Disabling the whole row also disables its Stop buttons.
+    private void UpdateEnabled() => IsEnabled = open != null || StopButtons().Any();
+    internal void SetAnimations(bool value)
+    {
+        animations = value; Icon.SetMotion(value); if (!value) UpdateHover();
+        foreach (var icon in Delegations.Children.OfType<Grid>().SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
+    }
+    /// Stop on a running Codex for Claude run's line; the island sends the run's ID.
+    internal void SetStopAction(Action<string>? action, string label) { stop = action; stopLabel = label; UpdateEnabled(); RefreshStopButtons(); }
+    private void RefreshStopButtons()
+    {
+        foreach (var line in Delegations.Children.OfType<Grid>())
+            if (line.Tag is EngineTaskRow run && line.Children.OfType<Button>().FirstOrDefault() is { } button)
+            {
+                AutomationProperties.SetName(button, stopLabel);
+                bool shown = stop != null && run.CanStop == true && line.IsMouseOver;
+                button.Visibility = shown ? Visibility.Visible : Visibility.Hidden;
+                // No room is kept for Stop: it lies over the line's end, and the readings fade out beneath it.
+                if (line.Children.OfType<TextBlock>().FirstOrDefault(text => Grid.GetColumn(text) == ReadingsColumn) is { } readings)
+                    readings.OpacityMask = shown ? FadeUnderStop(readings.ActualWidth) : null;
+            }
+    }
+    private const int ReadingsColumn = 4;
+    /// Opaque up to a little before Stop, clear under it.
+    private static Brush? FadeUnderStop(double width)
+    {
+        if (width <= 0) return null;
+        double clear = Math.Clamp((width - StopCover) / width, 0, 1), fade = Math.Clamp((width - StopCover - 10) / width, 0, 1);
+        return new LinearGradientBrush(new GradientStopCollection { new(Colors.Black, 0), new(Colors.Black, fade), new(Colors.Transparent, clear), new(Colors.Transparent, 1) },
+            new Point(0, 0.5), new Point(1, 0.5));
+    }
+    /// How much of the line's end Stop covers: its 20-point face and a little air.
+    internal const double StopCover = 24;
+    /// Whether a run line's Stop shows, and whether its readings fade under it; read by the presentation checks.
+    internal static (bool Stop, bool Faded) StopState(Grid line) =>
+        (line.Children.OfType<Button>().FirstOrDefault()?.Visibility == Visibility.Visible,
+         line.Children.OfType<TextBlock>().FirstOrDefault(text => Grid.GetColumn(text) == ReadingsColumn)?.OpacityMask != null);
+    /// One line per run: its icon (state and progress ring), Claude's label,
+    /// speed and time, model and effort, always on the line; no hover card.
+    /// Screen readers get the run's details as help text. Clicking the line
+    /// opens the Claude task, like the row. Every running run and the most
+    /// recent ended ones show; the older ended runs fold into one short line
+    /// above them that says how many, and how many failed.
+    private void BuildDelegations(EngineTaskRow value, PanelOptions? options)
+    {
+        Delegations.Children.Clear();
+        var runs = showsDelegations ? value.Delegations : null;
+        string? folded = showsDelegations ? value.DelegationsFolded : null;
+        Runs.Visibility = runs is { Count: > 0 } || folded != null ? Visibility.Visible : Visibility.Collapsed;
+        if (folded != null) Delegations.Children.Add(FoldedLine(folded));
+        if (runs == null) return;
+        foreach (var run in runs)
+        {
+            var state = new TaskRowState(run, options);
+            var line = new Grid { Height = DelegationHeight, Tag = run, Background = Brushes.Transparent };
+            // Icon, gap, label, gap, readings; Stop has no column of its own and lies over the readings' end on hover.
+            foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star), new GridLength(10), GridLength.Auto })
+                line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+            // The line's own highlight, a smaller rounded fill than the task's, as on the Mac.
+            var highlight = new Border { CornerRadius = new CornerRadius(8), Background = PacerPalette.Hover, Opacity = 0, IsHitTestVisible = false, Margin = new Thickness(-4, 0, 0, 0) };
+            Grid.SetColumnSpan(highlight, 5); line.Children.Add(highlight);
+            var icon = new TaskStatusIcon { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                LayoutTransform = new ScaleTransform(20.0 / 28, 20.0 / 28) };
+            line.Children.Add(icon);
+            var text = new TextBlock { Text = run.Title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = state.TitleInk,
+                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+            Grid.SetColumn(text, 2); line.Children.Add(text);
+            var trailing = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Opacity = state.ModelOpacity, Margin = new Thickness(0, 0, 4, 0) };
+            // Speed, time, model and effort, as on a task row's two lines.
+            if (run.RateText != null)
+            {
+                trailing.Inlines.Add(new System.Windows.Documents.Run(run.RateText) { FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = state.RateInk });
+                trailing.Inlines.Add(new System.Windows.Documents.Run(" t/s" + (run.TurnTime != null ? " · " : "  ")) { FontSize = 10, FontWeight = FontWeights.Medium, Foreground = PacerPalette.Secondary });
+            }
+            if (run.TurnTime != null)
+                trailing.Inlines.Add(new System.Windows.Documents.Run(run.TurnTime + "  ") { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.DurationInk });
+            trailing.Inlines.Add(new System.Windows.Documents.Run(run.Model) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
+            if (run.Effort != null)
+                trailing.Inlines.Add(new System.Windows.Documents.Run(" " + run.Effort) { FontSize = 11, FontWeight = FontWeights.Medium, Foreground = state.ProviderInk });
+            Grid.SetColumn(trailing, ReadingsColumn); line.Children.Add(trailing);
+            var button = StopButton(run); button.Margin = new Thickness(0, 0, 2, 0);
+            Grid.SetColumn(button, 2); Grid.SetColumnSpan(button, 3); line.Children.Add(button);
+            line.MouseEnter += (_, _) => { RefreshStopButtons(); RefreshLineHighlight(line); };
+            line.MouseLeave += (_, _) => { RefreshStopButtons(); RefreshLineHighlight(line); };
+            AutomationProperties.SetName(line, state.AccessibleName);
+            if (run.DetailLines is { Count: > 0 } lines)
+                AutomationProperties.SetHelpText(line, string.Join(", ", lines.Where(pair => pair.Count == 2).Select(pair => pair[0] + " " + pair[1])));
+            Delegations.Children.Add(line);
+            icon.Show(run, IconColor(state), false);
+            icon.SetMotion(animations);
+        }
+        RefreshStopButtons();
+    }
+    /// Marks the folded line among the run lines; read by the presentation checks.
+    internal const string FoldedTag = "folded";
+    /// The older ended runs as one quiet line: an ellipsis in the icon column and
+    /// how many, and how many failed. Clicking it opens the Claude task, like a run line.
+    private Grid FoldedLine(string text)
+    {
+        var line = new Grid { Height = FoldedHeight, Tag = FoldedTag, Background = Brushes.Transparent };
+        foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star) })
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+        var highlight = new Border { CornerRadius = new CornerRadius(7), Background = PacerPalette.Hover, Opacity = 0, IsHitTestVisible = false, Margin = new Thickness(-4, 0, 0, 0) };
+        Grid.SetColumnSpan(highlight, 3); line.Children.Add(highlight);
+        var dots = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        for (int index = 0; index < 3; index++)
+        {
+            var dot = new System.Windows.Shapes.Ellipse { Width = 2.4, Height = 2.4, Margin = new Thickness(index == 0 ? 0 : 1.4, 0, 0, 0) };
+            dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Island.Tertiary");
+            dots.Children.Add(dot);
+        }
+        line.Children.Add(dots);
+        var label = new TextBlock { Text = text, FontSize = 11, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis };
+        label.SetResourceReference(TextBlock.ForegroundProperty, "Island.Secondary");
+        Grid.SetColumn(label, 2); line.Children.Add(label);
+        line.MouseEnter += (_, _) => RefreshLineHighlight(line);
+        line.MouseLeave += (_, _) => RefreshLineHighlight(line);
+        AutomationProperties.SetName(line, text);
+        return line;
+    }
+    /// A run line lights up only while it is hovered and the task can be opened.
+    private void RefreshLineHighlight(Grid line)
+    {
+        if (line.Children.OfType<Border>().FirstOrDefault() is { } highlight)
+            highlight.Opacity = line.IsMouseOver && open != null && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0;
+    }
+    /// Whether a run line shows its highlight; read by the presentation checks.
+    internal static bool LineHighlighted(Grid line) => line.Children.OfType<Border>().FirstOrDefault()?.Opacity > 0;
+    private Button StopButton(EngineTaskRow run)
+    {
+        var face = new Grid { Width = 20, Height = 20 };
+        face.Children.Add(new System.Windows.Shapes.Ellipse { Fill = PacerPalette.Hover });
+        face.Children.Add(new System.Windows.Shapes.Rectangle { Width = 7, Height = 7, RadiusX = 1.5, RadiusY = 1.5, Fill = PacerPalette.Primary });
+        var button = new Button { Content = face, Width = 20, Height = 20, Padding = new Thickness(0), BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent, Cursor = System.Windows.Input.Cursors.Hand, Visibility = Visibility.Hidden,
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, FocusVisualStyle = null };
+        button.Template = new ControlTemplate(typeof(Button)) { VisualTree = new FrameworkElementFactory(typeof(ContentPresenter)) };
+        button.Click += (_, args) => { args.Handled = true; if (run.CanStop == true) stop?.Invoke(run.Id); };
+        return button;
+    }
     internal void ApplyAppearance() => UpdateHover();
     private void UpdateHover()
     {
-        double target = hovered && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0, from = HoverProgress; int revision = ++hoverRevision;
+        double target = hovered && open != null && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0, from = HoverProgress; int revision = ++hoverRevision;
         hover?.Dispose(); hover = null; HoverProgress = target;
-        if (!animations || from == target) return;
+        if (!animations || open == null || from == target) return;
         var timing = NativeTaskRowTiming.Shared;
         var animation = new DoubleAnimation(from, target, TimeSpan.FromSeconds(timing.Duration)) { EasingFunction = timing.Ease };
         hover = new(animation, clock => ApplyAnimationClock(HoverProgressProperty, clock), () => { if (revision == hoverRevision) hover = null; });
     }
     protected override AutomationPeer OnCreateAutomationPeer() => new RowPeer(this);
+    /// The row reads as one button; a running Codex for Claude run adds its Stop
+    /// button, which screen readers reach without hovering.
     private sealed class RowPeer(TaskRow owner) : ButtonAutomationPeer(owner)
-    { protected override List<AutomationPeer>? GetChildrenCore() => null; }
+    {
+        public override object? GetPattern(PatternInterface pattern) =>
+            pattern == PatternInterface.Invoke && owner.open == null && owner.IsEnabled ? null : base.GetPattern(pattern);
+        protected override List<AutomationPeer>? GetChildrenCore()
+        {
+            var stops = owner.StopButtons().Select(button => UIElementAutomationPeer.CreatePeerForElement(button)).OfType<AutomationPeer>().ToList();
+            return stops.Count == 0 ? null : stops;
+        }
+    }
+    private IEnumerable<Button> StopButtons() => stop == null ? [] : Delegations.Children.OfType<Grid>()
+        .Where(line => line.Tag is EngineTaskRow { CanStop: true }).SelectMany(line => line.Children.OfType<Button>());
     internal double IdealWidth()
     {
         var state = (TaskRowState)DataContext;
@@ -104,8 +280,14 @@ public partial class TaskRow : Button
             + (state.CostVisible == Visibility.Visible ? Text(row.Cost, 11, FontWeights.Medium) + (row.PeakCost ? 16 : 7) : 0);
         double detail = Text(row.Status, 11, FontWeights.Medium)
             + (state.SubagentsVisible == Visibility.Visible ? 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium) : 0)
-            + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0);
-        return 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0));
+            + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0)
+            + (state.DelegatedVisible == Visibility.Visible ? 20 + Text(row.DelegatedText, 10, FontWeights.SemiBold) : 0);
+        double runs = showsDelegations && row.DelegationsFolded != null ? 22 + 12 + 20 + 8 + Text(row.DelegationsFolded, 11, FontWeights.Medium) + 6 : 0;
+        foreach (var run in showsDelegations ? row.Delegations ?? [] : [])
+            runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold))
+                + 10 + Text((run.RateText == null ? "" : run.RateText + " t/s · ") + (run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model
+                    + (run.Effort == null ? "" : " " + run.Effort), 11, FontWeights.Medium) + 4 + 6);
+        return Math.Max(runs, 28 + 10 + 18 + Math.Max(title, detail + (model > 0 ? 16 + model : 0)));
     }
 }
 
@@ -118,6 +300,11 @@ internal sealed class TaskRowState(EngineTaskRow value, PanelOptions? options = 
     public GridLength GapRow => new(OneLine ? 0 : 3);
     public GridLength DetailRow => new(OneLine ? 0 : 15);
     public Visibility SecondLineVisible => Visible(!OneLine);
+    /// The task's own line; its Codex for Claude runs follow below it.
+    public double MainHeight => TaskRow.RowHeight(choices);
+    public Visibility DelegatedVisible => Visible(Value.DelegatedText != null);
+    public Brush DelegatedInk => PacerPalette.Provider("codex");
+    public Brush DelegatedFill => DelegatedInk is SolidColorBrush solid ? PacerPalette.Ink(solid.Color.R, solid.Color.G, solid.Color.B, 40) : PacerPalette.Hover;
     /// One line shows what needs the user, or a failure, where the speed would be.
     public Visibility OneLineStatusVisible => Visible(OneLine && (Value.Attention != null || Value.Phase == "waitingForInput" || Value.Failed));
     public Visibility RateLineVisible => Visible(OneLineStatusVisible != Visibility.Visible);
