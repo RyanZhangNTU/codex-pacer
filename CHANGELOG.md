@@ -4,15 +4,15 @@
 
 - Mac and Windows: Codex for Claude (Beta). Turn on **Claude calls Codex** in **Settings → Collaboration**, and Claude Code can hand a task, an investigation, a review or a fix to Codex through Pacer's `/pacer:codex` skill. Just ask Claude, for example "have Codex review this change", or type `/pacer:codex`; the trigger can be set to the command only.
 - Mac and Windows: Pacer starts Codex with your settings: model, reasoning effort and fast mode follow Codex or take your own choice, and file access, work location (the project or a separate worktree), standing instructions, Codex memories, runs at once and a quota floor sit under Advanced.
-- Mac and Windows: Each Codex run shows under the Claude task that started it, with its progress, speed, time and model; hover over a running one to stop it. A task shows up to three runs, the running ones first; older finished runs fold into one line. While Codex works, a green light runs around the task's ring in the collapsed bar.
+- Mac and Windows: Each Codex run shows under the Claude task that started it, with its progress, speed, time and model; hover over a running one to stop it. A task shows up to three runs, always including the ones still running; older finished runs fold into one line. While Codex works, a green light runs around the task's ring in the collapsed bar.
 - Mac and Windows: When Claude's turn ends, Pacer clears the runs from Codex's history, so it keeps only your own chats. **Session records** can instead clear them after a set time or keep them.
 - Mac and Windows: The first time you open Collaboration, a short guide shows what happens in a looping demo and walks you through three steps that tick as you go. **How It Works** next to Pairs brings it back, and **Help → Collaboration** shows the same guide.
-- Mac and Windows: The light that runs along progress rings fades smoothly from its head instead of moving as two bands.
-- Mac and Windows: A task waiting for its own background work shows 0 t/s instead of its last speed.
-- Mac and Windows: A Claude task no longer stays "Writing a reply" when a Stop hook fails without blocking it, such as a removed plugin's hook that still loads.
-- Mac and Windows: A Codex task whose Codex crashed or was closed in the middle of a turn stops showing as running within minutes instead of up to three hours.
-- Mac and Windows: **Mark All as Read** and opening a task also clear tasks whose status is unconfirmed.
-- Mac and Windows: Claude tasks run from scripts without your Claude settings, such as some `claude -p` runs, no longer stay running after they finish, and neither do their subagents.
+- Mac and Windows: The light that runs along progress rings now moves smoothly.
+- Mac and Windows: A task waiting for its background work no longer shows its last speed.
+- Mac and Windows: Claude tasks no longer stay on "Writing a reply" after they finish.
+- Mac and Windows: Codex tasks no longer keep showing as running after Codex quits.
+- Mac and Windows: **Mark All as Read** and opening a task no longer leave some tasks behind.
+- Mac and Windows: Claude tasks started from scripts no longer keep running after they finish.
 
 ## 4.6.2
 
