@@ -57,12 +57,76 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertEqual(counted.first?.delegations.count, 0)
 
         // A sub-thread the run spawned belongs to it, not to Claude's subagents.
+        // The ledger names it only once the run ends; until then it finds the run
+        // through its parent. The run keeps one line, its own thread's.
         state.localActivities = [codex, run(2, parent: 1)]
         state.reconcile(at: now, retention: 300, visibility: visible)
         rows = state.presentation(at: now).rows
         XCTAssertEqual(rows.map(\.activity.id), [claude.id])
         XCTAssertEqual(rows[0].subagents, 0)
         XCTAssertEqual(rows[0].delegatedCount, 1)
+        XCTAssertEqual(rows[0].delegations.map(\.activity.threadID), [thread(1)])
+        state.codexDelegations = [codex.id: link(to: claude), run(2).id: link(to: claude)]
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        XCTAssertEqual(state.presentation(at: now).rows.first?.delegations.map(\.activity.threadID), [thread(1)])
+    }
+
+    /// `codex exec review` works in a `review` sub-thread, and Codex's hook names
+    /// the run's thread with that sub-thread's rollout. Until the run ends the
+    /// ledger knows only the run's thread. The run still shows, once, under Claude.
+    func testAReviewRunShowsThroughItsReviewSubThread() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-delegation-review-" + UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let now = Date(), start = now.addingTimeInterval(-60)
+        let folder = home.appendingPathComponent("sessions/2026/11/24", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        func record(_ type: String, _ payload: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": ISO8601DateFormatter().string(from: start), "payload": payload]) + Data([10])
+        }
+        func meta(_ id: Int, review: Bool) -> [String: Any] {
+            var value: [String: Any] = ["id": thread(id), "originator": ClaudeCodexDelegation.originator, "cwd": "/fixture",
+                                        "source": "exec", "thread_source": "user"]
+            if review {
+                value["source"] = ["subagent": "review"]; value["thread_source"] = "subagent"
+                value["parent_thread_id"] = thread(1); value["session_id"] = thread(1)
+            }
+            return value
+        }
+        for (id, review) in [(1, false), (2, true)] {
+            try (record("session_meta", meta(id, review: review)) + record("event_msg", ["type": "task_started", "turn_id": "t1"]))
+                .write(to: folder.appendingPathComponent("rollout-2026-11-24T09-33-00-\(thread(id)).jsonl"))
+        }
+        try CodexHookFixture.announce([folder.appendingPathComponent("rollout-2026-11-24T09-33-00-\(thread(2)).jsonl")], home: home,
+                                      turn: "t1", thread: thread(1), at: start)
+        let read = await LocalActivityReader().read(home: home, now: now)
+        let review = try XCTUnwrap(read.activities.first { $0.threadID == thread(2) }, "The review sub-thread is followed")
+        XCTAssertTrue(review.isCodexReviewRun)
+        XCTAssertFalse(review.isInternalReview, "A delegated review's sub-thread is the run, not Codex's own review")
+
+        let claude = DemoScenario.claudeTask(stage: .thinking, at: now)
+        var state = ActivityApplicationState()
+        state.replaceHarness(.claude, with: .init(activities: [claude]))
+        state.localActivities = read.activities
+        state.codexDelegations = [AgentProvider.codex.activityID(sessionID: thread(1)): link(to: claude)]
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        var rows = state.presentation(at: now).rows
+        XCTAssertEqual(rows.map(\.activity.id), [claude.id], "The review is no task of its own")
+        XCTAssertEqual(rows[0].delegations.map(\.title), ["Review login changes"])
+        XCTAssertEqual(rows[0].delegations.first?.phase, .running)
+        XCTAssertEqual(rows[0].delegations.first?.canStopDelegation, true)
+
+        // Should the run's own thread show too, the review sub-thread still stands for the run.
+        state.localActivities = read.activities + [run(1)]
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        rows = state.presentation(at: now).rows
+        XCTAssertEqual(rows.first?.delegations.map(\.activity.threadID), [thread(2)])
+
+        // A review sub-thread the user's own Codex starts stays Codex's internal work.
+        var own = SessionActivity(id: AgentProvider.codex.activityID(sessionID: thread(3)))
+        var payload = meta(3, review: true); payload["originator"] = "codex-tui"
+        own.consume(["type": "session_meta", "timestamp": ISO8601DateFormatter().string(from: start), "payload": payload])
+        XCTAssertTrue(own.isInternalReview)
+        XCTAssertFalse(own.isCodexReviewRun)
     }
 
     func testRunsLeaveWithTheirLedgerEntryOrTheirClaudeTask() {

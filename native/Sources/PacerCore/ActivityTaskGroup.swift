@@ -8,10 +8,24 @@ public struct ActivityTaskGroup: Sendable {
     public var runningSubagentCount: Int {
         members.filter { $0.id != primary.id && $0.phase == .running && !$0.isCodexDelegation }.count
     }
-    /// The Codex threads this task's Codex for Claude runs started, oldest first.
-    /// Their sub-threads count with them, not on their own.
+    /// One thread per Codex for Claude run this task started, oldest first.
+    /// A run's sub-threads count with it, not on their own. A review run works
+    /// in a sub-thread; that sub-thread is the run.
     public var delegations: [SessionActivity] {
-        members.filter { $0.id != primary.id && $0.codexDelegation != nil }.sorted {
+        let linked = members.filter { $0.id != primary.id && $0.codexDelegation != nil }
+        let ids = Set(linked.map(\.id))
+        // The review sub-thread first, then the run's own thread, then any other sub-thread.
+        func rank(_ value: SessionActivity) -> Int {
+            if value.isCodexReviewRun { return 0 }
+            return value.parentThreadID.map { ids.contains(value.provider.activityID(sessionID: $0, sourceHostID: value.sourceHostID)) } == true ? 2 : 1
+        }
+        var runs: [URL: SessionActivity] = [:]
+        for value in linked.sorted(by: { $0.id < $1.id }) {
+            let directory = value.codexDelegation!.directory
+            if let kept = runs[directory], rank(kept) <= rank(value) { continue }
+            runs[directory] = value
+        }
+        return runs.values.sorted {
             let left = $0.codexDelegation!.started, right = $1.codexDelegation!.started
             return left == right ? $0.id < $1.id : left < right
         }

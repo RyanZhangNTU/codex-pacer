@@ -102,6 +102,8 @@ public struct ActivityApplicationState: Sendable {
     /// (`ClaudeCodexDelegation.links`). The next reconcile applies it.
     public var codexDelegations: [String: CodexDelegationLink] = [:]
     /// The ledger entry a Codex thread or one of its sub-threads belongs to.
+    /// The runner names a run's sub-threads only once it ends, so until then
+    /// a sub-thread finds the run through its parent.
     public func codexDelegation(for activity: SessionActivity) -> CodexDelegationLink? {
         guard activity.provider == .codex else { return nil }
         if let link = codexDelegations[activity.canonicalized().id] { return link }
@@ -275,7 +277,7 @@ public struct ActivityApplicationState: Sendable {
         let merged = sourceRows.compactMap { row -> SessionActivity? in
             guard !ignored.contains(row.id), !row.codexGoalExpired(at: now) else { return nil }
             var row = row
-            if row.provider == .codex { row.codexDelegation = codexDelegations[row.canonicalized().id] }
+            if row.provider == .codex { row.codexDelegation = codexDelegation(for: row) }
             guard let old = previous[row.id] else { return row }
             row.mergeDisplayMetadata(from: old)
             return row
@@ -292,7 +294,7 @@ public struct ActivityApplicationState: Sendable {
                 (activeRoots.contains($0.id) || [.running, .waitingForInput].contains($0.phase) || now < ($0.unconfirmedDisplayDeadline ?? .distantPast))
         } + inbox.activities.filter { !activeRoots.contains($0.id) && !hidden.contains($0.id) }.map { ending in
             // A retained ending carries the run's current ledger status.
-            guard ending.provider == .codex, let link = codexDelegations[ending.canonicalized().id] else { return ending }
+            guard let link = codexDelegation(for: ending) else { return ending }
             var value = ending; value.codexDelegation = link; return value
         }
         replaceActivities(combined, at: now)

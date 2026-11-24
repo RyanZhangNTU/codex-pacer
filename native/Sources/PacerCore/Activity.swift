@@ -106,7 +106,14 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     // A reported null is different from a source that never reported effort.
     private var reasoningEffortReported = false
     private var reasoningEffortReportedAt: Date?
-    public private(set) var isInternalReview = false
+    /// Codex's own reviewers: approval auto-reviews, and the sub-thread a
+    /// `/review` works in. A Codex for Claude review run works in such a
+    /// sub-thread too; there it is the run itself, so it is not one.
+    public var isInternalReview: Bool { autoReviewThread || (reviewSubthread && codexOrigin?.delegated != true) }
+    private var autoReviewThread = false
+    private var reviewSubthread = false
+    /// The sub-thread a Codex for Claude review run works in.
+    public var isCodexReviewRun: Bool { reviewSubthread && codexOrigin?.delegated == true }
     private var autoReviewedTurnID: String?
     /// Whether the current turn's context names Codex as its default reviewer.
     public var codexReviewsApprovals: Bool { turnID != nil && turnID == autoReviewedTurnID }
@@ -725,8 +732,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let subagent = rawSubagent as? [String: Any]
             let role = (subagent?["other"] as? String)?.lowercased()
             let threadSource = (payload["thread_source"] as? String)?.lowercased()
-            isInternalReview = isInternalReview || rawSubagent as? String == "review" || subagent?["review"] != nil ||
-                ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
+            reviewSubthread = reviewSubthread || rawSubagent as? String == "review" || subagent?["review"] != nil
+            autoReviewThread = autoReviewThread || ["guardian", "auto_review", "autoreview"].contains(role ?? "") ||
                 ["guardian_review", "auto_review", "autoreview"].contains(threadSource ?? "")
             if let cwd = payload["cwd"] as? String { project = URL(fileURLWithPath: cwd).lastPathComponent }
             return
@@ -748,7 +755,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
                 beginCodexTurn(contextTurn, root: payload["root_turn_id"], at: date)
             }
             updateModel(in: payload, effort: "effort", at: date)
-            if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
+            if modelName?.lowercased().hasPrefix("codex-auto-review") == true { autoReviewThread = true }
             switch payload["approvals_reviewer"] as? String {
             case "auto_review", "guardian_subagent": autoReviewedTurnID = turnID
             default: autoReviewedTurnID = nil
@@ -819,7 +826,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             beginCodexTurn(eventTurn, root: payload["root_turn_id"] ?? (payload["turn_attribution"] as? [String: Any])?["root_turn_id"], at: date)
             if let context = payload["_model_context"] as? [String: Any] {
                 updateModel(in: context, effort: "effort", at: date)
-                if modelName?.lowercased().hasPrefix("codex-auto-review") == true { isInternalReview = true }
+                if modelName?.lowercased().hasPrefix("codex-auto-review") == true { autoReviewThread = true }
             }
             logTurnStart = date
             if retainedLatency == nil, let ms = payload["first_output_latency_ms"] as? Double,
@@ -1107,7 +1114,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
             let source = (event["source"] as? String ?? "").lowercased().replacingOccurrences(of: "_", with: "")
             if provider == .codex {
                 let model = configured ? event["model"] as? String : modelName
-                isInternalReview = isInternalReview || ["guardianreview", "autoreview", "subagentreview"].contains(source) ||
+                reviewSubthread = reviewSubthread || source == "subagentreview"
+                autoReviewThread = autoReviewThread || ["guardianreview", "autoreview"].contains(source) ||
                     model?.lowercased().hasPrefix("codex-auto-review") == true
             }
             return
