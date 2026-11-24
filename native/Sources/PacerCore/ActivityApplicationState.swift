@@ -109,6 +109,11 @@ public struct ActivityApplicationState: Sendable {
         if let link = codexDelegations[activity.canonicalized().id] { return link }
         return activity.parentThreadID.flatMap { codexDelegations[AgentProvider.codex.activityID(sessionID: $0, sourceHostID: activity.sourceHostID)] }
     }
+    /// The ledger entry for a row a host shows by ID, such as the one Stop
+    /// names; a review run's row is its sub-thread, found through its parent.
+    public func codexDelegation(forActivityID id: String) -> CodexDelegationLink? {
+        activities.first { $0.id == id || $0.canonicalized().id == id }.flatMap(codexDelegation(for:)) ?? codexDelegations[id]
+    }
 
     public mutating func replaceHarness(_ provider: AgentProvider, with snapshot: HarnessActivity) {
         if provider == .codex {

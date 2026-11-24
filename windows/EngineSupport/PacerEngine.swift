@@ -1080,8 +1080,9 @@ actor EngineRuntime {
         case "reinstallDelegationSkill":
             codexDelegationStatusCache = nil; scheduleClaudeHooks(force: true)
         case "stopDelegation":
-            // The runner stops Codex and tells Claude the user stopped it in Pacer.
-            guard let id = command.params?.activityID, let link = activityState.codexDelegations[id], link.status == .running,
+            // The runner stops Codex and tells Claude the user stopped it in Pacer. A review run's row is
+            // its review sub-thread, which the ledger names only once the run ends.
+            guard let id = command.params?.activityID, let link = activityState.codexDelegation(forActivityID: id), link.status == .running,
                   ClaudeCodexDelegation.requestStop(directory: link.directory) else {
                 failure(id: command.id, code: "notRunning"); return true
             }

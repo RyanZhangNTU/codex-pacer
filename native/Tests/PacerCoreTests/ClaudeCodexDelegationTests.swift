@@ -114,6 +114,10 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertEqual(rows[0].delegations.map(\.title), ["Review login changes"])
         XCTAssertEqual(rows[0].delegations.first?.phase, .running)
         XCTAssertEqual(rows[0].delegations.first?.canStopDelegation, true)
+        // Stop names the row it shows, the review sub-thread, before the ledger lists that sub-thread.
+        let shown = try XCTUnwrap(rows[0].delegations.first?.activity.id)
+        XCTAssertNil(state.codexDelegations[shown])
+        XCTAssertEqual(state.codexDelegation(forActivityID: shown)?.parentID, claude.id, "Stop finds a running review run by its row")
 
         // Should the run's own thread show too, the review sub-thread still stands for the run.
         state.localActivities = read.activities + [run(1)]
