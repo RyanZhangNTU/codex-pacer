@@ -417,6 +417,10 @@ struct EngineCodexDelegationStatus: Codable, Equatable {
     var runsFolder: String? = nil
     /// Codex's quota windows now, such as "5h 63% · 7d 71%".
     var quotaText: String? = nil
+    /// The ledger holds a run now, and one that ended; absent otherwise. The
+    /// app keeps each once seen, for the Collaboration guide's steps.
+    var seenRun: Bool? = nil
+    var seenEnded: Bool? = nil
 }
 /// A model from Codex's catalog, with the efforts it supports and its own default effort.
 struct EngineCodexModel: Codable, Equatable {

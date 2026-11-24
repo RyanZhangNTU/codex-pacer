@@ -1922,6 +1922,8 @@ actor EngineRuntime {
         value.checking = codexDelegationCheck.checking ? true : nil
         value.models = codexDelegationCheck.models; value.defaultModel = codexDelegationCheck.defaultModel
         value.defaultEffort = codexDelegationCheck.defaultEffort; value.defaultFast = codexDelegationCheck.defaultFast
+        let sighting = ClaudeCodexDelegation.Sighting(runs: codexDelegationRuns)
+        value.seenRun = sighting.ran ? true : nil; value.seenEnded = sighting.finished ? true : nil
         // Runs going now change every second; they come from the task list.
         value.running = presentation.rows.flatMap { row in
             row.delegations.filter { $0.phase == .running }.map { EngineRunningDelegation(parentTitle: row.title, row: EngineTaskRow($0)) }

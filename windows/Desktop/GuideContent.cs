@@ -891,35 +891,13 @@ internal sealed class GuideContent : StackPanel
         }
         Refresh();
     }
-    /// How Claude and Codex work together, one diagram at a time: through Pacer first,
-    /// the typical way a switch away, each on its own tint.
-    private Border CollaborationHelp()
+    /// How Claude calls Codex: the same card as Settings → Collaboration's guide,
+    /// a looping demo beside the three steps, with a way to the settings.
+    private CollaborationIntro CollaborationHelp()
     {
-        var diagram = new CollaborationDiagram(ui) { HorizontalAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetAutomationId(diagram, "help.collaboration.diagram");
-        var caption = Text("", 11.5); caption.Margin = new Thickness(4, 0, 4, 4);
-        var drawing = new StackPanel(); drawing.Children.Add(caption); drawing.Children.Add(diagram);
-        var figure = new Border { CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 8, 8, 6), MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Center, Child = drawing };
-        Identify(figure, "help.collaboration.figure", ui.Text("help.section.collaboration"));
-        void Show(bool pacer)
-        {
-            diagram.Show(pacer); caption.Text = ui.Text(pacer ? "help.collaboration.pacer.caption" : "help.collaboration.typical.caption");
-            figure.SetResourceReference(Border.BackgroundProperty, pacer ? "SettingsTintCodexSoft" : "SettingsNoticeFill");
-        }
-        var choices = new StackPanel { Orientation = Orientation.Horizontal };
-        foreach (var (value, label) in new[] { ("pacer", "Pacer"), ("typical", ui.Text("help.collaboration.typical")) })
-        {
-            var choice = new RadioButton { Style = (Style)FindResource("SettingsSegmentChoice"), GroupName = "help.collaboration.view", Content = label, IsChecked = value == "pacer" };
-            Identify(choice, "help.collaboration.view." + value, ui.Text("help.collaboration.view") + ": " + label);
-            choice.Checked += (_, _) => Show(value == "pacer");
-            choices.Children.Add(choice);
-        }
-        var view = new Border { Child = choices, Padding = new Thickness(2), CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 12) };
-        view.SetResourceReference(Border.BackgroundProperty, "SettingsFill"); AutomationProperties.SetName(view, ui.Text("help.collaboration.view"));
-        Show(true);
-        var content = new StackPanel { Margin = new Thickness(14) }; content.Children.Add(view); content.Children.Add(figure);
-        Identify(content, "help.collaboration", ui.Text("help.section.collaboration"));
-        return Group(0, content);
+        var card = new CollaborationIntro(ui, help: true);
+        card.OpenSettings += () => settings("collaboration");
+        return card;
     }
     /// The services' colors fold away behind one row with a palette; opening it
     /// lists each service with its icon, name and color, as on the Mac.

@@ -117,6 +117,11 @@ internal sealed record DesktopPreferences
     public int CodexDelegationConcurrency { get; init; } = 3;
     // Percent of Codex quota left below which runs don't start; 0 never holds them back.
     public int CodexDelegationQuotaFloor { get; init; }
+    // The Collaboration guide: closed for good, and what it has seen of the
+    // ledger (a run, one that ended), kept once seen. Restore Defaults leaves them.
+    public bool CodexDelegationIntroDone { get; init; }
+    public bool CodexDelegationIntroRan { get; init; }
+    public bool CodexDelegationIntroFinished { get; init; }
     internal static readonly string[] DelegationTriggers = ["ask", "command"];
     internal static readonly string[] DelegationEfforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
     internal static readonly string[] DelegationRecords = ["turn", "timed", "keep"];

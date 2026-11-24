@@ -32,9 +32,13 @@ internal sealed partial class SettingsWindow
     private TextBlock? delegationModelDefault, delegationEffortDefault, delegationFastDefault, delegationInstructions;
     private Expander? delegationAdvancedRow;
     private readonly Dictionary<string, RadioButton> delegationSegments = new();
+    private CollaborationIntro? collaborationIntro;
+    private Button? collaborationIntroReopen;
+    private bool collaborationIntroSaved;
 
     private void ClearCollaboration()
     {
+        collaborationIntro = null; collaborationIntroReopen = null; collaborationIntroSaved = false;
         pairSwitch = delegationMemory = null; pairProblem = delegationAdvanced = null; pairProblemSignature = legacyIssue = null;
         delegationRestore = delegationInstructionsEdit = null;
         delegationTrigger = delegationModel = delegationEffort = delegationFast = delegationHours = delegationSandbox = delegationConcurrency = delegationQuotaFloor = null;
@@ -45,8 +49,30 @@ internal sealed partial class SettingsWindow
     private void BuildCollaboration()
     {
         paneSubtitle.Text = ui.Text("main.subtitle.collaboration"); paneSubtitle.Visibility = Visibility.Visible;
+        // The first-run guide opens by itself until it is closed or its three steps are done;
+        // How It Works brings it back.
+        var intro = collaborationIntro = new CollaborationIntro(ui, help: false) { Margin = new Thickness(0, 0, 0, 22) };
+        var reopen = collaborationIntroReopen = new Button { Content = ui.Text("collab.intro.reopen"), Style = (Style)FindResource("SettingsLink"), FontSize = 12 };
+        reopen.SetResourceReference(ForegroundProperty, "SettingsLinkText");
+        Identify(reopen, "settings.collaboration.intro.reopen", ui.Text("collab.intro.reopen"));
+        void ShowIntro(bool shown)
+        {
+            intro.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
+            reopen.Visibility = shown ? Visibility.Collapsed : Visibility.Visible;
+        }
+        ShowIntro(!session.Current.CodexDelegationIntroDone);
+        intro.Dismissed += async () =>
+        {
+            ShowIntro(false); reopen.Focus();
+            if (!session.Current.CodexDelegationIntroDone) await Change(p => p with { CodexDelegationIntroDone = true });
+        };
+        reopen.Click += (_, _) => { ShowIntro(true); intro.Finish?.Focus(); };
+        intro.TurnOn += async () => await Change(p => p with { CodexDelegation = true });
+        intro.Fix += async kind => await RunPairAction(kind);
+        intro.Demo.SetMotion(appearance.Current.Animations);
+        form.Children.Add(intro);
         // Pairs sit two to a row; Claude → Codex is the only one so far.
-        form.Children.Add(SectionTitle(ui.Text("collab.pairs")));
+        form.Children.Add(SectionHeader(ui.Text("collab.pairs"), reopen));
         var pairs = new UniformGrid { Columns = 2, Margin = new Thickness(0, 0, 0, 22) };
         pairs.Children.Add(PairCard());
         form.Children.Add(pairs);
@@ -110,26 +136,30 @@ internal sealed partial class SettingsWindow
         line.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning");
         Identify(line, "settings.collaboration.pair.reason", value.Text); AutomationProperties.SetLiveSetting(line, AutomationLiveSetting.Polite);
         pairProblem.Children.Add(line);
-        string? label = value.Action switch
-        {
-            "legacy" => ui.Text("windows.collab.legacy_remove"), "codex" => ui.Text("collab.go_codex"),
-            "signIn" => ui.Text("collab.open_codex"), "retry" => ui.Text("collab.retry"), _ => null
-        };
-        if (label == null) return;
+        if (PairActionLabel(value.Action) is not { } label) return;
         var action = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0), IsEnabled = usable };
         Identify(action, "settings.collaboration.pair.action", label);
         string kind = value.Action!;
-        action.Click += async (_, _) =>
-        {
-            switch (kind)
-            {
-                case "legacy": RemoveLegacySkill(); break;
-                case "codex": await NavigateAsync("codex"); break;
-                case "signIn": OpenCodexApplication(); break;
-                case "retry": await SendDelegation("reinstallDelegationSkill"); break;
-            }
-        };
+        action.Click += async (_, _) => await RunPairAction(kind);
         pairProblem.Children.Add(action);
+    }
+
+    private string? PairActionLabel(string? kind) => kind switch
+    {
+        "legacy" => ui.Text("windows.collab.legacy_remove"), "codex" => ui.Text("collab.go_codex"),
+        "signIn" => ui.Text("collab.open_codex"), "retry" => ui.Text("collab.retry"), _ => null
+    };
+
+    /// The one step that fixes what keeps the pair from working, from its card or the guide.
+    private async Task RunPairAction(string kind)
+    {
+        switch (kind)
+        {
+            case "legacy": RemoveLegacySkill(); break;
+            case "codex": await NavigateAsync("codex"); break;
+            case "signIn": OpenCodexApplication(); break;
+            case "retry": await SendDelegation("reinstallDelegationSkill"); break;
+        }
     }
 
     // ---------------------------------------------------------------- basic
@@ -401,6 +431,7 @@ internal sealed partial class SettingsWindow
         bool editable = usable && claude && codex;
         pairSwitch.IsChecked = current.CodexDelegation; pairSwitch.IsEnabled = editable;
         RefreshPairProblem(status, claude, codex, current, usable);
+        RefreshCollaborationIntro(status, claude, codex, current, editable, usable);
         delegationRestore!.IsEnabled = editable && !current.DelegationIsDefault;
         delegationTrigger!.SelectedValue = current.CodexDelegationTrigger;
 
@@ -450,6 +481,26 @@ internal sealed partial class SettingsWindow
         foreach (var editor in new Control[] { delegationTrigger, delegationModel, delegationModelField, delegationEffort, delegationFast, delegationHours,
                      delegationSandbox, delegationInstructionsEdit!, delegationMemory, delegationConcurrency, delegationQuotaFloor })
             editor.IsEnabled = editable;
+    }
+
+    /// The guide's steps: the pair is on with nothing keeping it from working, Codex
+    /// has been called, and a run has ended. Runs are kept once seen (App records
+    /// them); the snapshot covers the moment before that preference lands.
+    private void RefreshCollaborationIntro(CodexDelegationStatus? status, bool claude, bool codex, DesktopPreferences current, bool editable, bool usable)
+    {
+        if (collaborationIntro == null) return;
+        var problem = PairProblem(status, claude, codex, current);
+        bool finished = current.CodexDelegationIntroFinished || status?.SeenEnded == true;
+        var state = new CollaborationIntroState(current.CodexDelegation && problem == null,
+            finished || current.CodexDelegationIntroRan || status?.SeenRun == true, finished, current.CodexDelegationTrigger == "command",
+            problem?.Text, problem?.Action, PairActionLabel(problem?.Action), editable, usable);
+        collaborationIntro.Update(state);
+        // All three steps done: the card says Done this time and no longer opens by itself.
+        if (state.AllDone && collaborationIntro.Visibility == Visibility.Visible && !current.CodexDelegationIntroDone && !collaborationIntroSaved)
+        {
+            collaborationIntroSaved = true;
+            _ = Change(p => p with { CodexDelegationIntroDone = true });
+        }
     }
 
     /// The earlier user-level skill goes to the Recycle Bin, where the user can

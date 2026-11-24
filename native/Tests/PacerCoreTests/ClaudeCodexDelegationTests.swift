@@ -820,6 +820,20 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0)
     }
 
+    /// The Collaboration guide ticks its steps from the ledger: any run means
+    /// Codex was called, and a run in any ending means one finished.
+    func testTheGuideSeesARunAndOneThatEnded() {
+        func run(_ status: ClaudeCodexDelegation.Status) -> ClaudeCodexDelegation.Run {
+            .init(session: "fixture", thread: nil, childThreads: [], mode: .review, label: nil, write: false, worktree: false, status: status,
+                  created: now, ended: status.finished ? now : nil, directory: FileManager.default.temporaryDirectory.appendingPathComponent("pacer-no-run"))
+        }
+        XCTAssertEqual(ClaudeCodexDelegation.Sighting(runs: []), .init())
+        XCTAssertEqual(ClaudeCodexDelegation.Sighting(runs: [run(.running)]), .init(ran: true, finished: false))
+        for ending in [ClaudeCodexDelegation.Status.ok, .failed, .timedOut, .stopped] {
+            XCTAssertEqual(ClaudeCodexDelegation.Sighting(runs: [run(.running), run(ending)]), .init(ran: true, finished: true), ending.rawValue)
+        }
+    }
+
     func testSettingsSwitchQuotaAndRunnerCommand() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pacer-delegation-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
