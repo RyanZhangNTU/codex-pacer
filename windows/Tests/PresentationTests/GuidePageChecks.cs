@@ -88,6 +88,16 @@ internal static class GuidePageChecks
                 "The last page finishes with Done");
             Check(Find<StackPanel>(window, "welcome.codexSetup").IsVisible && Has(window, "guide.codexSetup.allow.state"),
                 "With Codex on, the last page leads with Codex's two steps");
+            var delegation = Find<CheckBox>(window, "welcome.collaboration");
+            Check(delegation.IsVisible, "The welcome guide offers delegation with both modules on");
+            var both = snapshot;
+            foreach (string provider in new[] { "codex", "claude" })
+            {
+                snapshot = both with { Modules = both.Modules!.Select(module => module with { Enabled = module.Provider != provider }).ToArray() };
+                body.Refresh();
+                Check(!delegation.IsVisible, "The welcome switch is hidden when " + provider + " is off");
+            }
+            snapshot = both; body.Refresh();
             var rings = Find<CheckBox>(window, "welcome.rings"); Toggle(rings);
             await Until(() => !session.Current.ClaudeProgressRing && !session.Current.CodexProgressRing && !session.Current.DeepSeekProgressRing && rings.IsEnabled);
             Toggle(rings);

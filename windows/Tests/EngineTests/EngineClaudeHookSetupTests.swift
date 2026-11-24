@@ -72,9 +72,17 @@ final class EngineClaudeHookSetupTests: XCTestCase {
         }
         _ = await runtime.receive(try command("initialize", ["enabledProviders": ["claude"], "claudeHome": path,
             "codexDelegation": ["enabled": true]]))
+        XCTAssertFalse(ClaudeCodexDelegation.isOn(home: root))
+        _ = await runtime.receive(try command("configure", ["enabledProviders": ["claude", "codex"]]))
         XCTAssertNil(try settings().codexHome)
         _ = await runtime.receive(try command("configure", ["codexHome": path]))
         XCTAssertEqual(try settings().codexHome, path)
+        for provider in ["claude", "codex"] {
+            _ = await runtime.receive(try command("configure", ["enabledProviders": [provider]]))
+            XCTAssertFalse(ClaudeCodexDelegation.isOn(home: root))
+            _ = await runtime.receive(try command("configure", ["enabledProviders": ["claude", "codex"]]))
+            XCTAssertEqual(try settings().codexHome, path)
+        }
         _ = await runtime.receive(try command("configure", ["hideProjects": true]))
         XCTAssertEqual(try settings().codexHome, path)
         _ = await runtime.receive(try command("configure", ["codexHome": ""]))

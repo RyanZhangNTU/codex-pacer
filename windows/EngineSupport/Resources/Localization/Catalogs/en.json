@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f9c1712985657a95015627658e12cccd71fcf0a7ee3bb93333d979cbde9712da",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f1ba7bf54213500320c3daff15ade36d6a96a3f234298d5a3f70ae57bd650809",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -340,6 +340,7 @@
     "collab.quota_floor.none": "None",
     "collab.reason.claude_off": "The Claude module is off",
     "collab.reason.codex_missing": "Codex wasn't found",
+    "collab.reason.codex_off": "The Codex module is off",
     "collab.reason.legacy": "An earlier Codex skill is still in Claude",
     "collab.reason.setup": "The Claude plugin isn't set up yet",
     "collab.reason.signed_out": "Codex isn't signed in",

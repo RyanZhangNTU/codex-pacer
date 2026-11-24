@@ -612,6 +612,16 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         configure()
         assert Path(str(trace)+'.cwd').read_text().strip() == str(sub)
         assert Path(str(trace)+'.home').read_text().strip() == settings['codexHome']
+        # The fake commits both its new file and a rename already staged before the run.
+        git('mv', 'base', 'renamed base')
+        env.update(TEST_TREE=str(repo), ADD_FILE='committed')
+        output = call('-C','sub','brief')
+        assert 'changed files (2):' in output and 'A committed' in output and 'R100 base renamed base' in output
+        assert 'reverted' not in output and r.find_run(thread)['changedFiles'] == 2
+        env['ADD_FILE'] = 'clean-to-clean'
+        assert 'changed files (1): A clean-to-clean' in call('brief')
+        assert r.find_run(thread)['changedFiles'] == 1
+        del env['ADD_FILE']
         # Start two writers together. The admitted child waits for a signal.
         for limit, message in [(1,'most Pacer allows'), (3,'already changing')]:
             configure(maxConcurrent=limit)
@@ -721,6 +731,92 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         try process.run(); process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0)
         #endif
+    }
+
+    func testKilledWorktreeRunnerCanBeListedAppliedAndCleanedUp() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try XCTUnwrap(ClaudeCodexDelegation.runnerScript()).write(to: root.appendingPathComponent("runner.py"))
+        let checks = #"""
+        import json, os, subprocess, sys, threading, time
+        from pathlib import Path
+        root = Path.cwd()
+        os.environ.update(CLAUDE_PID='', CLAUDE_CODE_SESSION_ID='fixture', CODEX_HOME=str(root / 'codex'))
+        sys.path.insert(0, str(root))
+        import runner as r
+        repo, tree = root / 'repo', root / 'worktree'
+        repo.mkdir()
+        def git(*args):
+            subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', *args], cwd=repo, check=True)
+        git('init', '-q')
+        git('commit', '--allow-empty', '-qm', 'base')
+        thread = '12345678-1234-1234-1234-123456789abc'
+        rollout = r.codex_home() / 'sessions' / time.strftime('%Y/%m/%d') / (thread + '.jsonl')
+        rollout.parent.mkdir(parents=True)
+        r.CONFIG.write_text(json.dumps(dict(records='turn', sandbox='workspace-write')))
+        # The fake stays alive until the runner dies, including on hosts without Windows job objects.
+        fake = """import json, os, sys, time
+        if sys.argv[1] == 'exec':
+            parent = os.getppid()
+            print(json.dumps(dict(type='thread.started', thread_id=%r)), flush=True)
+            for _ in range(300):
+                if os.getppid() != parent: break
+                time.sleep(.1)
+        """ % thread
+        driver = "import os,sys; sys.path.insert(0,os.getcwd()); import runner as r; r.resolve_codex=lambda: [sys.executable,'-c',%r]; r.main()" % fake
+        command = [sys.executable, '-S', '-c', driver]
+        def call(*args):
+            return subprocess.check_output(command + list(args), encoding='utf-8', timeout=15)
+        def wait_for(field, worker):
+            deadline = time.monotonic() + 12
+            while time.monotonic() < deadline and worker.poll() is None:
+                run = r.find_run(thread)
+                if run and run.get(field): return run
+                time.sleep(.05)
+            raise AssertionError('runner did not record ' + field)
+        for action in ('recorded', 'apply', 'cleanup'):
+            git('worktree', 'add', '--detach', '-q', str(tree))
+            (tree / action).write_text(action)
+            context = json.dumps(dict(type='turn_context', payload=dict(cwd=str(tree))))
+            worker = subprocess.Popen(command + ['--worktree', '-C', str(repo), 'brief'])
+            try:
+                run = wait_for('thread', worker)
+                assert run['worktreeRequested'] and run['worktree'] is None
+                if action == 'recorded':
+                    rollout.write_text(context)
+                    run = wait_for('worktree', worker)
+                    assert Path(run['worktree']) == tree and run['status'] == 'running'
+            finally:
+                worker.kill()
+                worker.wait(timeout=10)
+            assert ' · stopped · ' in call('runs')
+            if r.WINDOWS and action == 'recorded':
+                with (Path(run['dir']) / 'meta.json').open('rb') as reader:
+                    release = threading.Timer(.1, reader.close)
+                    release.start()
+                    try: r.save(run)
+                    finally: release.join()
+            if action != 'recorded': rollout.write_text(context)
+            if action == 'cleanup':
+                os.environ['CODEX_HOME'] = str(root / 'other-home')
+                call('cleanup')
+                assert tree.is_dir() and Path(r.find_run(thread)['worktree']) == tree
+                call('sweep')
+                assert any('+cleanup' in path.read_text() for path in r.PATCHES.glob('*.patch'))
+            else:
+                assert 'applied 1 file(s)' in call('apply', thread)
+                assert (repo / action).read_text() == action
+                call('cleanup')
+            assert not tree.exists() and not r.load_runs()
+            rollout.unlink()
+        """#
+        let process = Process()
+        process.arguments = ["-S", "-c", checks]; process.currentDirectoryURL = root
+        let fixture = try PythonFixture.prepare(process)
+        defer { fixture.remove() }
+        try process.run(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
     }
 
     func testSettingsSwitchQuotaAndRunnerCommand() throws {

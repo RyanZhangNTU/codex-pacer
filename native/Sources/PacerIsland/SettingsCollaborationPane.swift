@@ -10,9 +10,10 @@ import SwiftUI
 /// what keeps it from working.
 struct SettingsCollaborationPane: View {
     let model: IslandModel
-    /// The switch and the choices need the Claude module; the page stays readable without it.
     let claudeEnabled: Bool
+    let codexEnabled: Bool
     let openPane: (SettingsPane) -> Void
+    private var modulesEnabled: Bool { claudeEnabled && codexEnabled }
     @State private var preferences = CodexDelegationPreferences(defaults: .standard)
     @State private var workbench = CodexDelegationWorkbench()
     @State private var check = CodexDelegationCheck()
@@ -71,7 +72,7 @@ struct SettingsCollaborationPane: View {
             }
             Spacer(minLength: 8)
             Toggle(L10n.text("collab.pair.claude_codex"), isOn: binding(\.enabled))
-                .labelsHidden().toggleStyle(.switch).disabled(!claudeEnabled)
+                .labelsHidden().toggleStyle(.switch).disabled(!modulesEnabled)
         }
         .padding(14)
         .background(MainPalette.card, in: shape)
@@ -82,12 +83,13 @@ struct SettingsCollaborationPane: View {
     /// What keeps the pair from working, with the one step that fixes it.
     private var problem: (text: String, action: AnyView?)? {
         if !claudeEnabled { return (L10n.text("collab.reason.claude_off"), nil) }
+        if !codexEnabled { return (L10n.text("collab.reason.codex_off"), codexSettingsButton) }
         if let legacy = workbench.legacySkill {
             return (legacyIssue ?? L10n.text("collab.reason.legacy"),
                     AnyView(Button(L10n.text("collab.legacy_remove")) { removeLegacySkill(legacy) }.buttonStyle(.main)))
         }
         if !workbench.codexFound {
-            return (L10n.text("collab.reason.codex_missing"), AnyView(Button(L10n.text("collab.go_codex")) { openPane(.codex) }.buttonStyle(.main)))
+            return (L10n.text("collab.reason.codex_missing"), codexSettingsButton)
         }
         if check.login == "missing" {
             return (L10n.text("collab.reason.signed_out"), AnyView(Button(L10n.text("collab.open_codex")) { model.openCodexApplication() }.buttonStyle(.main)))
@@ -100,12 +102,16 @@ struct SettingsCollaborationPane: View {
         return nil
     }
 
+    private var codexSettingsButton: AnyView {
+        AnyView(Button(L10n.text("collab.go_codex")) { openPane(.codex) }.buttonStyle(.main))
+    }
+
     // MARK: Basic
 
     private var basic: some View {
         let restore = Button(L10n.text("common.restore_defaults")) { update { $0 = $0.restoringDefaults() } }
             .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-            .disabled(!claudeEnabled || preferences.isDefault)
+            .disabled(!modulesEnabled || preferences.isDefault)
         return MainCard(title: L10n.text("collab.basic"), titleTrailing: AnyView(restore)) {
             CardRow(title: L10n.text("collab.trigger"), info: L10n.text("collab.info.trigger")) {
                 menu("collab.trigger", binding(\.trigger), Settings.Trigger.allCases.map { ($0, L10n.text("collab.trigger." + $0.rawValue)) })
@@ -132,7 +138,7 @@ struct SettingsCollaborationPane: View {
                 }
                 MainSegmented(options: Settings.Records.allCases.map { ($0, L10n.text("collab.records." + $0.rawValue)) },
                               selection: binding(\.records), label: L10n.text("collab.records"))
-                    .disabled(!claudeEnabled)
+                    .disabled(!modulesEnabled)
             }
         }
     }
@@ -141,7 +147,7 @@ struct SettingsCollaborationPane: View {
 
     private func followSegment(_ key: String, follow: Binding<Bool>) -> some View {
         MainSegmented(options: [(true, L10n.text("collab.follow")), (false, L10n.text("collab.pick"))], selection: follow, label: L10n.text(key))
-            .disabled(!claudeEnabled)
+            .disabled(!modulesEnabled)
     }
 
     /// Picking a model starts from Codex's own, the first time.
@@ -182,7 +188,7 @@ struct SettingsCollaborationPane: View {
                 .focused($modelFocused).onSubmit(commitModel)
                 .onChange(of: modelFocused) { _, focused in if !focused { commitModel() } }
                 .onDisappear(perform: commitModel)
-                .disabled(!claudeEnabled)
+                .disabled(!modulesEnabled)
         }
     }
 
@@ -218,7 +224,7 @@ struct SettingsCollaborationPane: View {
                 CardRow(title: L10n.text("collab.location"), info: L10n.text("collab.info.location")) {
                     MainSegmented(options: [(false, L10n.text("collab.location.project")), (true, L10n.text("collab.location.worktree"))],
                                   selection: binding(\.worktree), label: L10n.text("collab.location"))
-                        .disabled(!claudeEnabled || preferences.sandbox == .readOnly)
+                        .disabled(!modulesEnabled || preferences.sandbox == .readOnly)
                 }
             }
             MainCard(title: L10n.text("collab.section.context")) {
@@ -226,11 +232,11 @@ struct SettingsCollaborationPane: View {
                     Text(preferences.instructions.isEmpty ? L10n.text("collab.instructions.none") : preferences.instructions)
                         .font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).frame(maxWidth: 220, alignment: .trailing)
                     Button(L10n.text("collab.edit")) { instructionsDraft = preferences.instructions; editingInstructions = true }
-                        .buttonStyle(.main).disabled(!claudeEnabled)
+                        .buttonStyle(.main).disabled(!modulesEnabled)
                         .popover(isPresented: $editingInstructions, arrowEdge: .bottom) { instructionsEditor }
                 }
                 CardToggle(title: L10n.text("collab.memory"), info: L10n.text("collab.info.memory"), isOn: binding(\.memory))
-                    .disabled(!claudeEnabled)
+                    .disabled(!modulesEnabled)
             }
             MainCard(title: L10n.text("collab.section.limits")) {
                 CardRow(title: L10n.text("collab.concurrency"), detail: L10n.text("collab.concurrency.hint")) {
@@ -275,7 +281,7 @@ struct SettingsCollaborationPane: View {
     // MARK: State
 
     private func menu<Value: Hashable>(_ key: String, _ selection: Binding<Value>, _ options: [(Value, String)]) -> some View {
-        OutlineMenu(title: L10n.text(key), selection: selection, options: options).disabled(!claudeEnabled)
+        OutlineMenu(title: L10n.text(key), selection: selection, options: options).disabled(!modulesEnabled)
     }
 
     private func refresh() {

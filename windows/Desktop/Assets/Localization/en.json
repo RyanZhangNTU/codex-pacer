@@ -336,6 +336,7 @@
     "collab.quota_floor.none": "None",
     "collab.reason.claude_off": "The Claude module is off",
     "collab.reason.codex_missing": "Codex wasn't found",
+    "collab.reason.codex_off": "The Codex module is off",
     "collab.reason.legacy": "An earlier Codex skill is still in Claude",
     "collab.reason.setup": "The Claude plugin isn't set up yet",
     "collab.reason.signed_out": "Codex isn't signed in",

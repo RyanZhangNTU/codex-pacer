@@ -331,13 +331,16 @@ internal sealed class GuideContent : StackPanel
                 var layout = Button(ui.Text("welcome.go"), "welcome.collapsed", () => settings("collapsed"));
                 var ringRow = ChoiceRow(GuideArt.Tile("circle.circle", Color.FromRgb(48, 176, 199), 28), ui.Text("main.claude.ring"), ui.Text("main.welcome.ring_info"), null, rings);
                 ringRow.Children.Add(TrustNote());
-                // Pacer 5.0's companion feature, offered where Claude is on; Settings → Collaboration has the rest.
-                bool claudeOn = snapshot()?.Modules?.Any(value => value.Provider == "claude" && value.Enabled) == true;
                 var delegation = Switch(ui.Text("collaboration.codex_for_claude"), "welcome.collaboration", () => session.Current.CodexDelegation,
                     value => Preference(p => p with { CodexDelegation = value }));
                 var delegationRow = ChoiceRow(GuideArt.Tile(GuideArt.ProviderSymbol("codex"), Color.FromRgb(17, 128, 109), 28), ui.Text("welcome.collaboration.title"),
                     ui.Text("welcome.collaboration.subtitle") + " " + ui.Text("welcome.collaboration.later"), null, delegation);
-                delegationRow.Visibility = claudeOn ? Visibility.Visible : Visibility.Collapsed;
+                refresh.Add(() =>
+                {
+                    var modules = snapshot()?.Modules;
+                    delegationRow.Visibility = modules != null && modules.Any(value => value.Provider == "claude" && value.Enabled)
+                        && modules.Any(value => value.Provider == "codex" && value.Enabled) ? Visibility.Visible : Visibility.Collapsed;
+                });
                 var choices = Group(54,
                     ringRow,
                     delegationRow,

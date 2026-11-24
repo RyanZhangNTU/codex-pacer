@@ -446,11 +446,11 @@ def run_quiet(command, cwd=None, timeout=60):
 # ---------------------------------------------------------------- Codex threads
 
 
-def rollout_index():
+def rollout_index(at=None, home=None):
     index = {}
-    root = codex_home() / 'sessions'
+    root = (Path(home) if home else codex_home()) / 'sessions'
     seen = set()
-    now = time.time()
+    now = at or time.time()
     for offset in (0, -1, -2, 1):
         stamp = now + offset * 86400
         for parts in (time.localtime(stamp), time.gmtime(stamp)):
@@ -602,7 +602,8 @@ def snapshot(folder):
         except OSError:
             signature = 'missing'
         entries[name] = (code, signature)
-    return {'root': root, 'entries': entries}
+    head = (git(root, ['rev-parse', '--verify', 'HEAD']) or '').strip() or None
+    return {'root': root, 'entries': entries, 'head': head}
 
 
 def change_path(name, cwd):
@@ -614,26 +615,65 @@ def change_path(name, cwd):
 
 
 def changed_between(before, after):
-    changed = []
     old = before['entries'] if before else {}
     if after.get('plain'):
         # A plain folder: added, modified and deleted files.
+        changed = []
         for name, now in after['entries'].items():
             if old.get(name) != now:
                 changed.append(('M ' if name in old else 'A ') + name)
         return changed + ['D ' + name for name in old if name not in after['entries']]
+    by_path = {}
+    renamed = set()
+    if before and after.get('head') and before.get('head') != after['head']:
+        root = after['root']
+        # An unborn branch starts at the empty tree (in the repository's hash format).
+        base = before.get('head') or (git(root, ['hash-object', '-t', 'tree', '--stdin']) or '').strip()
+        diff = git(root, ['diff', '--name-status', '-z', base, after['head'], '--'])
+        if diff is None:
+            return None
+        fields = iter(diff.split('\0')[:-1])
+        for code in fields:
+            name = next(fields)
+            if code.startswith(('R', 'C')):
+                source, name = name, next(fields)
+                if code.startswith('R'):
+                    renamed.add(source)
+                by_path[name] = ' '.join((code, source, name))
+            else:
+                by_path[name] = code + ' ' + name
     for name, now in after['entries'].items():
         if old.get(name) != now:
-            changed.append(now[0] + ' ' + name)
+            by_path.setdefault(name, now[0] + ' ' + name)
     for name in old:
-        if name not in after['entries']:
-            changed.append('reverted ' + name)
-    return changed
+        if name not in after['entries'] and name not in renamed:
+            by_path.setdefault(name, 'reverted ' + name)
+    return list(by_path.values())
 
 
 def worktree_paths(folder):
     out = git(folder, ['worktree', 'list', '--porcelain']) or ''
     return [os.path.normcase(os.path.abspath(line[9:].strip())) for line in out.splitlines() if line.startswith('worktree ')]
+
+
+def record_worktree(run, context=None, persist=True):
+    """Records a worktree run's tree from its thread's rollout. Returns whether
+    the thread's folder is known, as a worktree or not, so a lookup can stop."""
+    # Older ledgers only recorded the starting revision for worktree runs.
+    if run.get('worktree') or not run.get('worktreeRequested', run.get('worktreeBase')) or not run.get('thread'):
+        return bool(run.get('worktree'))
+    if context is None:
+        index = rollout_index(run.get('created'), run.get('codexHome'))
+        context = turn_context(index.get(run['thread'])) or {}
+    if not context.get('cwd'):
+        return False
+    tree = toplevel(context['cwd'])
+    repo = toplevel(run['cwd']) if tree and run.get('cwd') else None
+    if repo and os.path.normcase(tree) != os.path.normcase(repo) and os.path.normcase(tree) in worktree_paths(repo):
+        run['worktree'] = tree
+        if persist:
+            save(run)
+    return True
 
 
 def remove_worktree(run):
@@ -663,7 +703,18 @@ def save(meta):
     temporary = folder / ('meta.json.' + os.urandom(6).hex() + '.tmp')
     with open(temporary, 'w', encoding='utf-8') as handle:
         json.dump({key: value for key, value in meta.items() if key != 'dir'}, handle, ensure_ascii=False, indent=1)
-    os.replace(temporary, folder / 'meta.json')
+    target = folder / 'meta.json'
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            os.replace(temporary, target)
+            return
+        except PermissionError as error:
+            # A Windows reader can hold the old file open without sharing delete access.
+            if getattr(error, 'winerror', None) not in (5, 32, 33) or time.monotonic() >= deadline:
+                temporary.unlink(missing_ok=True)
+                raise
+            time.sleep(0.025)
 
 
 def load_runs(session=None):
@@ -874,6 +925,7 @@ def clean_session(session, codex, why, stopped_at=None):
             expired = (latest.get('ended') or latest.get('created') or 0) + hours * 3600 <= time.time()
             delete = why == 'now' or (keep == 'turn' and why in ('turn', 'gone')) or (keep == 'timed' and expired)
             if why == 'gone' or delete:
+                record_worktree(latest)
                 if pending_worktree(latest) and (why != 'gone' or not save_patch(latest)):
                     kept += len(group)
                     continue
@@ -1024,7 +1076,12 @@ def list_runs():
         print('no Codex runs in this Claude session')
         return
     for run in runs:
-        state = 'running' if is_running(run) else run.get('status', '?')
+        state = run.get('status', '?')
+        pid = (run.get('runner') or {}).get('pid')
+        if state == 'running' and pid and not alive(pid):
+            state = 'stopped'
+        elif state == 'unknown' and is_running(run):
+            state = 'running'
         tree = ''
         if run.get('worktree'):
             tree = ' · worktree %s%s' % (run['worktree'], ' (applied)' if run.get('applied') else ' (discarded)' if run.get('discarded') else '')
@@ -1044,10 +1101,12 @@ def stop_run(thread):
 
 def apply_run(thread):
     run = find_run(thread)
+    if run and is_running(run):
+        fail('that run is still in progress')
+    if run:
+        record_worktree(run)
     if not run or not run.get('worktree'):
         fail('no worktree run with thread %s in this Claude session' % thread)
-    if is_running(run):
-        fail('that run is still in progress')
     tree = run['worktree']
     if not os.path.isdir(tree):
         fail('worktree is gone: ' + tree, 1)
@@ -1235,6 +1294,7 @@ def run_job(o):
             fail('thread %s was not started in this Claude session (threads are deleted when a turn ends; start a fresh run with the earlier result in the brief)' % o.target)
         if is_running(origin):
             fail('that thread is still running; wait for it to finish')
+        record_worktree(origin, persist=False)  # the resumed run records the path at admission
         resume_id = origin.get('thread')
     cwd = os.path.abspath(o.cd or (origin or {}).get('worktree') or (origin or {}).get('cwd') or os.getcwd())
     # Outside a git repository a task runs in place; reviews and explicit worktrees need one.
@@ -1288,6 +1348,9 @@ def run_job(o):
         'project': os.path.basename(os.path.normpath(repo or cwd))[:80],
         'worktreeBase': base, 'appliedTree': (origin or {}).get('appliedTree'),
     }
+    meta['worktreeRequested'] = o.worktree or bool((origin or {}).get('worktreeRequested') or base)
+    if meta['worktreeRequested']:
+        meta['codexHome'] = str(codex_home().absolute())
     with admission_lock():
         if resume_id:
             if cleanup_in_progress(session_dir() / '.cleanup.lock'):
@@ -1339,6 +1402,7 @@ def run_job(o):
                 pass
         threading.Thread(target=feed, daemon=True).start()
     tail = []
+    meta_lock = threading.Lock()
 
     def read_errors():
         with open(run_dir / 'stderr.log', 'wb') as log:
@@ -1353,14 +1417,16 @@ def run_job(o):
                 log.write(chunk)
                 thread = events.handle(chunk.decode('utf-8', 'replace'))
                 if thread and not meta.get('thread'):
-                    meta['thread'] = thread
-                    save(meta)  # at once, so cleanup finds the thread even if this process dies
+                    with meta_lock:
+                        meta['thread'] = thread
+                        save(meta)  # at once, so cleanup finds the thread even if this process dies
     readers = [threading.Thread(target=read_errors, daemon=True), threading.Thread(target=read_events, daemon=True)]
     for reader in readers:
         reader.start()
     timed_out = stopped = False
     deadline = started + o.timeout * 60
     stop_file = run_dir / 'stop'
+    next_lookup = 0
     try:
         while child.poll() is None:
             if stop_requested or stop_file.exists():
@@ -1371,6 +1437,11 @@ def run_job(o):
                 timed_out = True
                 kill_tree(child)
                 break
+            # The thread's folder is set when it starts: once the rollout names it, stop reading the rollout.
+            if meta['worktreeRequested'] and not meta['worktree'] and meta['thread'] and next_lookup is not None and time.monotonic() >= next_lookup:
+                with meta_lock:
+                    known = record_worktree(meta)
+                next_lookup = None if known else time.monotonic() + 3
             time.sleep(0.25)
     except KeyboardInterrupt:
         stopped = True
@@ -1396,13 +1467,12 @@ def run_job(o):
     except OSError:
         final = ''
     changed = None
-    if o.worktree:
-        tree = toplevel(context['cwd']) if context.get('cwd') else None
-        if tree and os.path.normcase(tree) != os.path.normcase(repo) and os.path.normcase(tree) in worktree_paths(cwd):
-            meta['worktree'] = tree
+    with meta_lock:
+        record_worktree(meta, context)
     if meta.get('worktree'):
         changed = worktree_changes(meta)
-        meta['worktreeChanges'] = len(changed) if changed is not None else None
+        with meta_lock:
+            meta['worktreeChanges'] = len(changed) if changed is not None else None
     elif before:
         after = snapshot(cwd)
         if after:
@@ -1417,12 +1487,13 @@ def run_job(o):
     except OSError:
         by = ''
     reason = None if ok else 'stopped' if stopped else 'timeout' if timed_out else failure_reason(events.errors, tail)
-    meta.update(status=status, exitCode=exit_code, seconds=round(seconds, 1), ended=round(time.time(), 3), model=model, effort=effort,
-                fast=o.fast if o.fast is not None else (defaults.get('service_tier') == FAST_TIER if 'service_tier' in defaults else None),
-                usage=events.usage, commands=events.commands, changedFiles=len(changed), reason=reason,
-                stoppedBy=(by if by in ('pacer', 'claude', 'sweep') else 'claude') if stopped else None,
-                childThreads=sorted(child_threads(meta['thread'], index)) if meta.get('thread') else [])
-    save(meta)
+    with meta_lock:
+        meta.update(status=status, exitCode=exit_code, seconds=round(seconds, 1), ended=round(time.time(), 3), model=model, effort=effort,
+                    fast=o.fast if o.fast is not None else (defaults.get('service_tier') == FAST_TIER if 'service_tier' in defaults else None),
+                    usage=events.usage, commands=events.commands, changedFiles=len(changed), reason=reason,
+                    stoppedBy=(by if by in ('pacer', 'claude', 'sweep') else 'claude') if stopped else None,
+                    childThreads=sorted(child_threads(meta['thread'], index)) if meta.get('thread') else [])
+        save(meta)
 
     run = runner_command()
     reason = {'pacer': 'stopped by the user in Pacer', 'claude': 'stopped', 'sweep': 'stopped because its Claude session ended'}

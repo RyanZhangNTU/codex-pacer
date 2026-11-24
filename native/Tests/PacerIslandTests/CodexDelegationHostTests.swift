@@ -95,7 +95,7 @@ final class CodexDelegationHostTests: XCTestCase {
     }
 
     func testChangingTheTriggerBringsTheSkillCurrent() throws {
-        let fixture = try fixture(), model = fixture.model, home = fixture.home
+        let fixture = try fixture(codex: .enabled), model = fixture.model, home = fixture.home
         try FileManager.default.createDirectory(at: home.appendingPathComponent("pacer"), withIntermediateDirectories: true)
         var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.save(to: fixture.defaults)
         XCTAssertTrue(model.applyCodexDelegationSwitch(home: home))
@@ -106,7 +106,7 @@ final class CodexDelegationHostTests: XCTestCase {
     }
 
     func testTheSwitchWritesTheChoicesAndRemovesOnlyItsOwnFile() throws {
-        let fixture = try fixture(), model = fixture.model, home = fixture.home, defaults = fixture.defaults
+        let fixture = try fixture(codex: .enabled), model = fixture.model, home = fixture.home, defaults = fixture.defaults
         try FileManager.default.createDirectory(at: home.appendingPathComponent("pacer"), withIntermediateDirectories: true)
         let config = ClaudeCodexDelegation.configURL(home: home)
         // A leftover stays until setup confirms that Pacer manages this home.
@@ -135,13 +135,13 @@ final class CodexDelegationHostTests: XCTestCase {
             XCTAssertNil(json["codexHome"], "A shell-launched runner inherits its own CODEX_HOME")
         }
 
-        ProviderModules(codexMode: .disabled, claudeMode: .disabled).save(to: defaults)
+        ProviderModules(codexMode: .enabled, claudeMode: .disabled).save(to: defaults)
         model.applySettings(sourceChanged: false)
         XCTAssertFalse(exists(config), "Turning the Claude module off turns the switch off")
     }
 
     func testLocalSetupInstallsTheSkillWhileOnAndRemovesItWhenOff() async throws {
-        let fixture = try fixture(), model = fixture.model, home = fixture.home
+        let fixture = try fixture(codex: .enabled), model = fixture.model, home = fixture.home
         var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.save(to: fixture.defaults)
         model.retryClaudeLocalSetup()
         try await TestWait.until { model.claudeLocalSetup == .ready && self.exists(ClaudeCodexDelegation.skillURL(home: home)) }
@@ -152,6 +152,19 @@ final class CodexDelegationHostTests: XCTestCase {
         XCTAssertFalse(command.contains("\""), "A path without spaces needs no quotes")
         let allowed = skill.split(separator: "\n").first { $0.hasPrefix("allowed-tools:") }.map(String.init)
         XCTAssertEqual(allowed, "allowed-tools: Bash(" + command + ":*)", "Claude runs the Mac's runner command without asking")
+
+        for provider in [AgentProvider.codex, .claude] {
+            var modules = ProviderModules.load(from: fixture.defaults)
+            modules.setMode(.disabled, for: provider); modules.save(to: fixture.defaults)
+            model.applySettings(sourceChanged: false)
+            XCTAssertFalse(exists(ClaudeCodexDelegation.configURL(home: home)))
+            try await TestWait.until { !self.exists(ClaudeCodexDelegation.skillURL(home: home)) }
+            XCTAssertTrue(CodexDelegationPreferences(defaults: fixture.defaults).enabled)
+            modules.setMode(.enabled, for: provider); modules.save(to: fixture.defaults)
+            model.applySettings(sourceChanged: false)
+            try await TestWait.until { model.claudeLocalSetup == .ready && self.exists(ClaudeCodexDelegation.skillURL(home: home)) }
+            XCTAssertTrue(exists(ClaudeCodexDelegation.configURL(home: home)))
+        }
 
         chosen.enabled = false; chosen.save(to: fixture.defaults)
         model.applyCodexDelegationPreferences()

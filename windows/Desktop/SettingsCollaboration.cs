@@ -86,9 +86,10 @@ internal sealed partial class SettingsWindow
     }
 
     /// What keeps the pair from working, with the one step that fixes it.
-    private (string Text, string? Action)? PairProblem(CodexDelegationStatus? status, bool claude, DesktopPreferences current)
+    private (string Text, string? Action)? PairProblem(CodexDelegationStatus? status, bool claude, bool codex, DesktopPreferences current)
     {
         if (!claude) return (ui.Text("collab.reason.claude_off"), null);
+        if (!codex) return (ui.Text("collab.reason.codex_off"), "codex");
         // A folder just moved to the Recycle Bin is gone before the engine's next look.
         if (status?.LegacySkill is { Length: > 0 } legacy && Directory.Exists(legacy)) return (legacyIssue ?? ui.Text("collab.reason.legacy"), "legacy");
         if (status?.CodexFound == false) return (ui.Text("collab.reason.codex_missing"), "codex");
@@ -97,9 +98,9 @@ internal sealed partial class SettingsWindow
         return null;
     }
 
-    private void RefreshPairProblem(CodexDelegationStatus? status, bool claude, DesktopPreferences current, bool usable)
+    private void RefreshPairProblem(CodexDelegationStatus? status, bool claude, bool codex, DesktopPreferences current, bool usable)
     {
-        var problem = PairProblem(status, claude, current);
+        var problem = PairProblem(status, claude, codex, current);
         string signature = problem == null ? "" : problem.Value.Text + "|" + problem.Value.Action + "|" + usable;
         if (signature == pairProblemSignature) return;
         pairProblemSignature = signature;
@@ -394,12 +395,12 @@ internal sealed partial class SettingsWindow
         var status = snapshot?.CodexDelegation;
         var current = session.Current;
         bool claude = snapshot?.Modules?.FirstOrDefault(module => module.Provider == "claude")?.Enabled == true;
+        bool codex = snapshot?.Modules?.FirstOrDefault(module => module.Provider == "codex")?.Enabled == true;
         bool connected = !providerConnectionClosed && !engine.IsConnectionClosed && snapshot != null;
         bool usable = connected && !busy && !session.RequiresRestart;
-        // The switch and the choices need the Claude module; the page stays readable without it.
-        bool editable = usable && claude;
+        bool editable = usable && claude && codex;
         pairSwitch.IsChecked = current.CodexDelegation; pairSwitch.IsEnabled = editable;
-        RefreshPairProblem(status, claude, current, usable);
+        RefreshPairProblem(status, claude, codex, current, usable);
         delegationRestore!.IsEnabled = editable && !current.DelegationIsDefault;
         delegationTrigger!.SelectedValue = current.CodexDelegationTrigger;
 

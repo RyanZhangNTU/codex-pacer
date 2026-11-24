@@ -336,6 +336,7 @@
     "collab.quota_floor.none": "不限",
     "collab.reason.claude_off": "Claude 模块已关闭",
     "collab.reason.codex_missing": "未找到 Codex",
+    "collab.reason.codex_off": "Codex 模块已关闭",
     "collab.reason.legacy": "Claude 里还有旧版的 Codex 技能",
     "collab.reason.setup": "Claude 插件尚未安装好",
     "collab.reason.signed_out": "Codex 未登录",

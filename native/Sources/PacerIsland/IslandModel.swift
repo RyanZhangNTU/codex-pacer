@@ -1212,7 +1212,7 @@ final class IslandModel: ObservableObject {
     func applyCodexDelegationSwitch(home: URL, setupConfirmed: Bool = false) -> Bool {
         guard !demo else { return false }
         let preferences = CodexDelegationPreferences(defaults: defaults)
-        let wanted = preferences.enabled && isModuleEnabled(.claude)
+        let wanted = preferences.enabled && isModuleEnabled(.claude) && isModuleEnabled(.codex)
         if let previous = codexDelegationHome, previous != home {
             ClaudeCodexDelegation.apply(nil, home: previous); codexDelegationHome = nil
         }

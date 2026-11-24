@@ -108,7 +108,7 @@ SSH 主机上的 Codex 任务（以及 Windows 上 WSL 里的 Codex 任务）也
 
 **Claude Code。** 开启 Claude 模块后，任务追踪会自动配置好；之后把正在运行的 Claude Code 会话重启一次即可。打开“显示 Claude 云端项目”后，Pacer 还会跟随你的云端项目线程，在结束或等你时提醒你。
 
-**Claude 调用 Codex。** 在“设置 → 协作”里打开后，Claude Code 就能通过 Pacer 的 `/pacer:codex` 技能，把任务、调查、审查或修改交给 Codex。直接跟 Claude 说就行，比如“让 Codex 审一下这个改动”。Claude 的工作方式和回复都不变，Pacer 只是多给它一件工具。每次执行都显示在发起它的 Claude 任务下面，带进度、速度和模型；鼠标移到正在运行的那一行上可以停止。Codex 工作时，折叠栏的任务圆环上会有一道绿光在走。一个任务下最多显示三次执行，正在运行的一定显示，更早结束的会收成一行。“帮助 → 协作”用图示画出 Claude、Pacer 和 Codex 怎么配合，还能切换到 Claude 自己运行 Codex 的常见做法作对比。
+**Claude 调用 Codex。** 先启用 Claude 和 Codex 模块，再到“设置 → 协作”打开“Claude 调用 Codex”。Claude Code 就能通过 Pacer 的 `/pacer:codex` 技能，把任务、调查、审查或修改交给 Codex。直接跟 Claude 说就行，比如“让 Codex 审一下这个改动”。Claude 的工作方式和回复都不变，Pacer 只是多给它一件工具。每次执行都显示在发起它的 Claude 任务下面，带进度、速度和模型；鼠标移到正在运行的那一行上可以停止。Codex 工作时，折叠栏的任务圆环上会有一道绿光在走。一个任务下最多显示三次执行，正在运行的一定显示，更早结束的会收成一行。“帮助 → 协作”用图示画出 Claude、Pacer 和 Codex 怎么配合，还能切换到 Claude 自己运行 Codex 的常见做法作对比。
 
 协作页先列出协作组合，每个都有自己的开关，“Claude 调用 Codex”是第一个。基本设置决定 Claude 什么时候可以调用 Codex、用哪个模型、思考强度和快速模式（也可以跟随 Codex 自己的设置），以及 Pacer 在 Codex 里留下的对话什么时候清理。高级设置包括 Codex 的文件权限、在当前项目还是独立工作树里修改、每次附加的固定指令、Codex 记忆、同时运行的数量，以及额度低于多少时不再调用。
 

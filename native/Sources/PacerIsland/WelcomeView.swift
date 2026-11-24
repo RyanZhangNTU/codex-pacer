@@ -211,8 +211,7 @@ struct WelcomeView: View {
                     }
                     if ringsBinding.wrappedValue { progressNote }
                 }
-                // Pacer 5.0's companion feature, offered where Claude is on; Settings → Collaboration has the rest.
-                if moduleEnabled(.claude) {
+                if codex && moduleEnabled(.claude) {
                     WelcomeChoiceRow(symbol: SettingsPane.collaboration.symbol, tint: Color(red: 0.067, green: 0.5, blue: 0.43),
                                      title: L10n.text("welcome.collaboration.title"),
                                      info: L10n.text("welcome.collaboration.subtitle") + " " + L10n.text("welcome.collaboration.later")) {

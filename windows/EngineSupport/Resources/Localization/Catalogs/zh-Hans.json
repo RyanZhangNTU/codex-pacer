@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "d4f514028ecd96b8e10c5e9619381aee52e510d5fbffb7cd470e3c03bcf489de",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "b032174a89c11f7d4011886425d68f63467018510b639c867d2bee9b951db12a",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -340,6 +340,7 @@
     "collab.quota_floor.none": "\u4e0d\u9650",
     "collab.reason.claude_off": "Claude \u6a21\u5757\u5df2\u5173\u95ed",
     "collab.reason.codex_missing": "\u672a\u627e\u5230 Codex",
+    "collab.reason.codex_off": "Codex \u6a21\u5757\u5df2\u5173\u95ed",
     "collab.reason.legacy": "Claude \u91cc\u8fd8\u6709\u65e7\u7248\u7684 Codex \u6280\u80fd",
     "collab.reason.setup": "Claude \u63d2\u4ef6\u5c1a\u672a\u5b89\u88c5\u597d",
     "collab.reason.signed_out": "Codex \u672a\u767b\u5f55",

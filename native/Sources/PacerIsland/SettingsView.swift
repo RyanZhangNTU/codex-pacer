@@ -354,7 +354,7 @@ struct SettingsView: View {
         case .support:
             SettingsSupportPane()
         case .collaboration:
-            SettingsCollaborationPane(model: model, claudeEnabled: moduleEnabled(.claude), openPane: { pane = $0 })
+            SettingsCollaborationPane(model: model, claudeEnabled: moduleEnabled(.claude), codexEnabled: moduleEnabled(.codex), openPane: { pane = $0 })
         case .modules:
             SettingsModuleLibraryPane(library: library, open: { pane = SettingsPane(provider: $0) },
                 toggle: { provider in modules.setMode(moduleEnabled(provider) ? .disabled : .enabled, for: provider) })

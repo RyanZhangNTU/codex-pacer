@@ -1865,7 +1865,7 @@ actor EngineRuntime {
     /// change of the switch brings the plugin's skill current.
     private func applyCodexDelegationSwitch(setupConfirmed: Bool = false) {
         guard claudeHookServices != nil, !demo else { return }
-        let wanted = codexDelegationSettings.enabled == true && enabled.contains(.claude)
+        let wanted = codexDelegationSettings.enabled == true && enabled.contains(.claude) && enabled.contains(.codex)
         if let previous = codexDelegationHome, previous != claudeHome {
             ClaudeCodexDelegation.apply(nil, home: previous); codexDelegationHome = nil
         }
@@ -2123,6 +2123,7 @@ actor EngineRuntime {
                     wslNeedsReconcile = true
                 }
                 enabled = next; projectionReady = false
+                applyCodexDelegationSwitch()
                 for definition in localHarnesses.definitions { scheduleLocalHarnessProgress(definition) }
                 let plan = lifecycle.settings(lifecycleConfiguration)
                 for provider in plan.changedProviders { resetSourceState(provider) }

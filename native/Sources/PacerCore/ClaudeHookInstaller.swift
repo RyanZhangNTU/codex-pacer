@@ -193,6 +193,7 @@ public struct ClaudeHookInstaller {
         }
         guard try settings(home: home).bytes == existing.bytes else { throw Failure.changedSettings }
         try write(value, to: home.appendingPathComponent("settings.json"))
+        try removeCodexSkill(home: home)
         // Keep the sanitized spool/metadata for late accounting. Only settings
         // entries owned by Pacer are removed; no transcript is touched.
         try? storage.remove(manifestURL)
@@ -376,9 +377,20 @@ public struct ClaudeHookInstaller {
         }
         return files
     }
+    private func removeCodexSkill(home: URL) throws {
+        let skill = ClaudeCodexDelegation.skillURL(home: home)
+        guard storage.exists(skill) else { return }
+        var folder = home
+        for part in skill.pathComponents.dropFirst(home.pathComponents.count) {
+            folder.appendPathComponent(part)
+            try safe(folder)
+        }
+        guard !storage.isDirectory(skill) else { throw Failure.unsafePath }
+        try storage.remove(skill)
+    }
     private func writePlugin(home: URL) throws {
         let skill = ClaudeCodexDelegation.skillURL(home: home)
-        if !codexDelegationOn(home: home), storage.exists(skill) { try safe(skill); try storage.remove(skill) }
+        if !codexDelegationOn(home: home) { try removeCodexSkill(home: home) }
         guard let files = pluginFiles(home: home) else {
             if progressRingOn(home: home) || codexDelegationOn(home: home) { throw Failure.invalidSettings }
             return

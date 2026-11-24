@@ -30,7 +30,7 @@ internal static class CollaborationSettingsChecks
         {
             await engine.StartAsync(Path.Combine(AppContext.BaseDirectory, "Engine/PacerEngine.exe"), true, language, preferences.EngineConfiguration(), referenceFixture: true);
             window.Show(); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
-            await Until(() => Find<CheckBox>(window, "settings.collaboration.enabled").IsEnabled, "The pair's switch opens once the Claude module is known");
+            await Until(() => Find<CheckBox>(window, "settings.collaboration.enabled").IsEnabled, "Both modules are on");
             Check(Find<TextBlock>(window, "settings.subtitle").Text == ui.Text("main.subtitle.collaboration"), "The page says what it is for");
             var beta = Find<Border>(window, "settings.pane.collaboration.beta");
             Check(beta.IsVisible && ((TextBlock)beta.Child).Text == ui.Text("main.beta") && beta.ActualHeight == 16
@@ -53,6 +53,18 @@ internal static class CollaborationSettingsChecks
 
             Toggle(toggle);
             await Until(() => session.Current.CodexDelegation && toggle.IsEnabled, "The pair's switch saves and reaches the engine");
+            await session.ChangeAsync(p => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = "disabled" } });
+            await Until(() => engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "codex" && !module.Enabled) == true && !toggle.IsEnabled,
+                "Turning Codex off disables the pair");
+            Check(toggle.IsChecked == true && !Find<ComboBox>(window, "settings.collaboration.trigger").IsEnabled,
+                "The saved switch stays on and the choices are disabled");
+            var codexPage = Find<Button>(window, "settings.collaboration.pair.action");
+            Check(Find<TextBlock>(window, "settings.collaboration.pair.reason").Text == ui.Text("collab.reason.codex_off")
+                && codexPage.IsEnabled && Equals(codexPage.Content, ui.Text("collab.go_codex")),
+                "The card explains how to turn Codex on");
+            await session.ChangeAsync(p => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = "enabled" } });
+            await Until(() => toggle.IsEnabled && toggle.IsChecked == true && Find<ComboBox>(window, "settings.collaboration.trigger").IsEnabled,
+                "Turning Codex on restores the saved choice");
             Select(Find<RadioButton>(window, "settings.collaboration.effort.pick"));
             await Until(() => !session.Current.CodexDelegationFollowEffort && Find<ComboBox>(window, "settings.collaboration.effort").IsVisible,
                 "Picking an effort shows its menu");

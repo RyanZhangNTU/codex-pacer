@@ -1744,6 +1744,7 @@
 "collab.pairs" = "协作组合";
 "collab.pair.claude_codex" = "Claude 调用 Codex";
 "collab.reason.claude_off" = "Claude 模块已关闭";
+"collab.reason.codex_off" = "Codex 模块已关闭";
 "collab.reason.codex_missing" = "未找到 Codex";
 "collab.reason.signed_out" = "Codex 未登录";
 "collab.reason.setup" = "Claude 插件尚未安装好";
