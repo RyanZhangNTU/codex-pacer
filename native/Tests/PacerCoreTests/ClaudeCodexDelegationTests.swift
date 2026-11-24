@@ -285,6 +285,66 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertEqual(state.taskGroups().first?.delegations.map(\.id), [worker.id])
     }
 
+    /// A Claude task shows every running run and the most recent ended ones,
+    /// three lines at most; older ended runs fold into one line. Its chip
+    /// counts only the runs still running. A run the ledger says ended shows
+    /// that ending even when Codex's thread never said so, as after a stop.
+    func testRunLinesStayWithinTheLimitAndOlderEndedRunsFold() throws {
+        let claude = DemoScenario.claudeTask(stage: .thinking, at: now)
+        func ledger(_ number: Int, _ status: ClaudeCodexDelegation.Status, ended: Bool = true) -> CodexDelegationLink {
+            var value = CodexDelegationLink(parentID: claude.id, label: "Run \(number)", mode: .task, write: false, worktree: false, status: status,
+                started: now.addingTimeInterval(Double(number) - 60),
+                directory: FileManager.default.temporaryDirectory.appendingPathComponent("pacer-run-\(number)"))
+            if ended { value.ended = now.addingTimeInterval(-2) }
+            return value
+        }
+        // Three finished runs, one stopped while Codex's thread still looked busy, one running.
+        let runs = [run(1, ended: true), run(2, ended: true), run(3, ended: true), run(4), run(5)]
+        let links = [ledger(1, .ok), ledger(2, .ok), ledger(3, .ok), ledger(4, .stopped), ledger(5, .running, ended: false)]
+        var state = ActivityApplicationState()
+        state.replaceHarness(.claude, with: .init(activities: [claude]))
+        state.localActivities = runs
+        state.codexDelegations = Dictionary(uniqueKeysWithValues: zip(runs.map(\.id), links))
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        var row = try XCTUnwrap(state.presentation(at: now).rows.first)
+        XCTAssertEqual(row.delegations.map(\.title), ["Run 3", "Run 4", "Run 5"], "The running run and the two most recent ended ones, oldest first")
+        XCTAssertEqual(row.foldedDelegations, .init(ended: 2, failed: 0, stopped: 0))
+        XCTAssertEqual(row.foldedDelegations?.text, L10n.text("delegation.folded", 2))
+        XCTAssertEqual(row.delegatedCount, 1, "The chip counts the runs still running")
+        let stopped = row.delegations[1]
+        XCTAssertEqual(stopped.symbol, .interrupted, "A stopped run says so, not an unknown state")
+        XCTAssertEqual(stopped.phase, .interrupted)
+        XCTAssertFalse(stopped.canStopDelegation)
+        XCTAssertTrue(row.delegations[2].canStopDelegation)
+        XCTAssertEqual(state.presentation(at: now).header(symbol: \.rawValue).delegatedRunning, 1)
+
+        // A thread Codex never started a turn in has no state of its own; the ledger's ending stands in.
+        var silent = SessionActivity(id: AgentProvider.codex.activityID(sessionID: thread(20)))
+        silent.setCodexOrigin(.init(embedded: true, ignored: false, delegated: true))
+        silent.codexDelegation = ledger(20, .stopped)
+        XCTAssertEqual(silent.phase, .interrupted)
+        XCTAssertEqual(TaskSymbol.symbol(for: silent), .interrupted)
+
+        // Running runs always show, up to the four allowed at once; every ended run folds behind them.
+        let busy = (6...9).map { run($0) }
+        state.localActivities = runs + busy
+        state.codexDelegations.merge(zip(busy.map(\.id), (6...9).map { ledger($0, .running, ended: false) })) { _, new in new }
+        state.codexDelegations[runs[0].id] = ledger(1, .failed)
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        row = try XCTUnwrap(state.presentation(at: now).rows.first)
+        XCTAssertEqual(row.delegations.map(\.title), ["Run 5", "Run 6", "Run 7", "Run 8", "Run 9"])
+        XCTAssertEqual(row.foldedDelegations, .init(ended: 4, failed: 1, stopped: 1))
+        XCTAssertEqual(row.foldedDelegations?.text, L10n.text("delegation.folded_failed", 4, 1), "A failure is never folded away unsaid")
+        XCTAssertEqual(row.delegatedCount, 5)
+        XCTAssertEqual(ActivityTaskRowPresentation.FoldedDelegations(ended: 2, failed: 0, stopped: 1).text, L10n.text("delegation.folded_ended", 2),
+                       "A stopped run ended on purpose: no failure, but not finished either")
+
+        // Count only: no lines and nothing folded; the chip still counts the running runs.
+        let counted = try XCTUnwrap(state.presentation(at: now, options: .init(showsDelegationRows: false)).rows.first)
+        XCTAssertTrue(counted.delegations.isEmpty); XCTAssertNil(counted.foldedDelegations)
+        XCTAssertEqual(counted.delegatedCount, 5)
+    }
+
     func testRunsLeaveWithTheirLedgerEntryOrTheirClaudeTask() {
         let claude = DemoScenario.claudeTask(stage: .thinking, at: now)
         var state = ActivityApplicationState()

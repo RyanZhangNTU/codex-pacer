@@ -1699,6 +1699,9 @@
 "monitoring.not_found" = "Not found";
 "monitoring.unreadable" = "Can’t read";
 "delegation.badge" = "Codex %d";
+"delegation.folded" = "%d more finished";
+"delegation.folded_ended" = "%d more ended";
+"delegation.folded_failed" = "%1$d more ended · %2$d failed";
 "delegation.mode.task" = "Task";
 "delegation.mode.review" = "Review";
 "delegation.mode.resume" = "Follow-up";

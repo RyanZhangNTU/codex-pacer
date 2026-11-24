@@ -1,7 +1,7 @@
 import SwiftUI
 import PacerCore
 
-/// "Codex 2" after a Claude task's state: the Codex for Claude runs it holds.
+/// "Codex 2" after a Claude task's state: its Codex for Claude runs still running.
 struct DelegatedCountChip: View {
     let text: String
 
@@ -16,18 +16,26 @@ struct DelegatedCountChip: View {
 }
 
 /// A Claude task's Codex for Claude runs, one line each, on a rail under the
-/// task's own row. Clicking a line opens the Claude task, like its row.
+/// task's own row: every running run and the most recent ended ones, three
+/// lines at most, with the older ended runs folded into one short line above
+/// them. Clicking any line opens the Claude task, like its row.
 struct DelegationList: View {
     let rows: [ActivityTaskRowPresentation]
+    var folded: ActivityTaskRowPresentation.FoldedDelegations? = nil
     let enabled: Bool
     let open: () -> Void
     let stop: (SessionActivity) -> Void
-    /// Each run takes one 30-point line; the rail ends 4 points below the last.
-    static let lineHeight: CGFloat = 30, railBottom: CGFloat = 4
-    static func height(_ count: Int) -> CGFloat { count == 0 ? 0 : CGFloat(count) * lineHeight + railBottom }
+    /// Each run takes one 30-point line, the folded runs a 22-point one; the rail ends 4 points below the last.
+    static let lineHeight: CGFloat = 30, foldedHeight: CGFloat = 22, railBottom: CGFloat = 4
+    static func height(_ count: Int, folded: Bool = false) -> CGFloat {
+        count == 0 && !folded ? 0 : CGFloat(count) * lineHeight + (folded ? foldedHeight : 0) + railBottom
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            if let folded {
+                FoldedRunsLine(text: folded.text, enabled: enabled, open: open).frame(height: Self.foldedHeight)
+            }
             ForEach(rows, id: \.activity.id) { row in
                 DelegationLineView(presentation: row, enabled: enabled, open: open, stop: { stop(row.activity) })
                     .frame(height: Self.lineHeight)
@@ -36,6 +44,36 @@ struct DelegationList: View {
         .padding(.leading, 12)
         .overlay(alignment: .leading) { Rectangle().fill(PacerPalette.tertiary.opacity(0.7)).frame(width: 1.5) }
         .padding(.leading, IslandMetrics.rowInset + 13).padding(.trailing, 6).padding(.bottom, Self.railBottom)
+    }
+}
+
+/// The older ended runs as one quiet line: how many, and how many failed.
+struct FoldedRunsLine: View {
+    let text: String
+    let enabled: Bool
+    let open: () -> Void
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 8) {
+                Image(systemName: "ellipsis").font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(PacerPalette.tertiary).frame(width: 20).accessibilityHidden(true)
+                Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(PacerPalette.secondary)
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.leading, 2).padding(.trailing, 2)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!enabled)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovered && enabled ? PacerPalette.hover : .clear))
+        .onHover { hovered = $0 }
+        .animation(reduceMotion ? nil : .easeOut(duration: TaskRowInteraction.hoverDuration), value: hovered)
+        .accessibilityLabel(text)
+        .accessibilityHint(L10n.text(enabled ? "common.open_chat" : "activity.no_link"))
     }
 }
 

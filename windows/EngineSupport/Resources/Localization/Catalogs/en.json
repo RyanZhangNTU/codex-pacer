@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "369fa7c7b81e37b06e4caa703b4d53dfd07ca529800744e7add1781ef8f89b44",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "f9c1712985657a95015627658e12cccd71fcf0a7ee3bb93333d979cbde9712da",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -658,6 +658,9 @@
     "delegation.detail.tokens": "Tokens",
     "delegation.detail.took": "took",
     "delegation.detail.work": "Work",
+    "delegation.folded": "%d more finished",
+    "delegation.folded_ended": "%d more ended",
+    "delegation.folded_failed": "%1$d more ended \u00b7 %2$d failed",
     "delegation.mode.resume": "Follow-up",
     "delegation.mode.review": "Review",
     "delegation.mode.task": "Task",

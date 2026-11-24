@@ -52,7 +52,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     /// run started: it belongs to that Claude task.
     public var codexDelegation: CodexDelegationLink? {
         didSet {
-            guard let link = codexDelegation, link.status.finished, phase == .running else { return }
+            // Not only a thread still running: one Codex never started a turn in,
+            // or whose state is unknown, takes the ledger's ending too, not a moon.
+            guard let link = codexDelegation, link.status.finished, [.running, .waitingForInput, .unknown].contains(phase) else { return }
             // A resume can start before the ledger cache receives its new running entry.
             if let end = link.ended, let start = turnStartedAt, start > end { return }
             phase = link.status == .ok ? .completed : .interrupted

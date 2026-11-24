@@ -24,7 +24,9 @@ struct TaskPagerView: View {
         let rows = pageRows
         return max(full, rows.map(height).reduce(0, +) + CGFloat(max(0, rows.count - 1)) * rowSpacing)
     }
-    private func height(_ row: ActivityTaskRowPresentation) -> CGFloat { rowHeight + DelegationList.height(row.delegations.count) }
+    private func height(_ row: ActivityTaskRowPresentation) -> CGFloat {
+        rowHeight + DelegationList.height(row.delegations.count, folded: row.foldedDelegations != nil)
+    }
 
     var header: some View {
         IslandSectionHeader(title: L10n.text("layout.group.tasks", language: language), detail: model.taskPresentation.taskCountText) {
@@ -66,8 +68,8 @@ struct TaskPagerView: View {
                                     model.open(activity)
                                 }
                                 .frame(height: rowHeight)
-                            if !row.delegations.isEmpty {
-                                DelegationList(rows: row.delegations, enabled: model.canOpen(activity),
+                            if !row.delegations.isEmpty || row.foldedDelegations != nil {
+                                DelegationList(rows: row.delegations, folded: row.foldedDelegations, enabled: model.canOpen(activity),
                                                open: { model.open(activity) }, stop: { model.stopDelegation($0) })
                             }
                         }

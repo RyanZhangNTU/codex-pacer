@@ -1699,6 +1699,9 @@
 "monitoring.not_found" = "未找到";
 "monitoring.unreadable" = "无法读取";
 "delegation.badge" = "Codex %d";
+"delegation.folded" = "另外 %d 个已完成";
+"delegation.folded_ended" = "另外 %d 个已结束";
+"delegation.folded_failed" = "另外 %1$d 个已结束 · %2$d 个失败";
 "delegation.mode.task" = "任务";
 "delegation.mode.review" = "审查";
 "delegation.mode.resume" = "续问";

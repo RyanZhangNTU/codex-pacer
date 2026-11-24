@@ -2,7 +2,7 @@
   "language": "zh-Hans",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "85231dd4c0665ba4fd0e6746d9ba537ef6b45d5f3bd81041f5bda26d055c7d75",
+    "native/Sources/PacerCore/Resources/zh-Hans.lproj/Localizable.strings": "d4f514028ecd96b8e10c5e9619381aee52e510d5fbffb7cd470e3c03bcf489de",
     "windows/EngineSupport/Resources/Localization/zh-Hans.json": "3be42c2706a73f341c7e8c9070eaa88a32b6bccef9c648f36f6fca8c0b2f6111"
   },
   "strings": {
@@ -658,6 +658,9 @@
     "delegation.detail.tokens": "Tokens",
     "delegation.detail.took": "\u7528\u65f6",
     "delegation.detail.work": "\u5df2\u6267\u884c",
+    "delegation.folded": "\u53e6\u5916 %d \u4e2a\u5df2\u5b8c\u6210",
+    "delegation.folded_ended": "\u53e6\u5916 %d \u4e2a\u5df2\u7ed3\u675f",
+    "delegation.folded_failed": "\u53e6\u5916 %1$d \u4e2a\u5df2\u7ed3\u675f \u00b7 %2$d \u4e2a\u5931\u8d25",
     "delegation.mode.resume": "\u7eed\u95ee",
     "delegation.mode.review": "\u5ba1\u67e5",
     "delegation.mode.task": "\u4efb\u52a1",
