@@ -80,8 +80,11 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         let now = Date(), start = now.addingTimeInterval(-60)
         let folder = home.appendingPathComponent("sessions/2026/11/24", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        func entry(_ type: String, _ payload: [String: Any]) -> [String: Any] {
+            ["type": type, "timestamp": ISO8601DateFormatter().string(from: start), "payload": payload]
+        }
         func record(_ type: String, _ payload: [String: Any]) throws -> Data {
-            try JSONSerialization.data(withJSONObject: ["type": type, "timestamp": ISO8601DateFormatter().string(from: start), "payload": payload]) + Data([10])
+            try JSONSerialization.data(withJSONObject: entry(type, payload)) + Data([10])
         }
         func meta(_ id: Int, review: Bool) -> [String: Any] {
             var value: [String: Any] = ["id": thread(id), "originator": ClaudeCodexDelegation.originator, "cwd": "/fixture",
@@ -92,8 +95,16 @@ final class ClaudeCodexDelegationTests: XCTestCase {
             }
             return value
         }
+        /// Codex's record of an accepted `report_progress` call in a thread's turn.
+        func report(_ id: Int, _ percent: Int) -> [String: Any] {
+            ["type": "item_completed", "thread_id": thread(id), "turn_id": "t1", "item": [
+                "type": "McpToolCall", "id": "call-\(id)", "server": "pacer_progress", "tool": "report_progress",
+                "arguments": ["percent": percent], "status": "completed",
+                "result": ["isError": false, "content": [["type": "text", "text": "pacer-progress:accepted"]]]]]
+        }
         for (id, review) in [(1, false), (2, true)] {
-            try (record("session_meta", meta(id, review: review)) + record("event_msg", ["type": "task_started", "turn_id": "t1"]))
+            try (record("session_meta", meta(id, review: review)) + record("event_msg", ["type": "task_started", "turn_id": "t1"])
+                + record("event_msg", report(id, 40)))
                 .write(to: folder.appendingPathComponent("rollout-2026-11-24T09-33-00-\(thread(id)).jsonl"))
         }
         try CodexHookFixture.announce([folder.appendingPathComponent("rollout-2026-11-24T09-33-00-\(thread(2)).jsonl")], home: home,
@@ -102,6 +113,7 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         let review = try XCTUnwrap(read.activities.first { $0.threadID == thread(2) }, "The review sub-thread is followed")
         XCTAssertTrue(review.isCodexReviewRun)
         XCTAssertFalse(review.isInternalReview, "A delegated review's sub-thread is the run, not Codex's own review")
+        XCTAssertEqual(review.currentProgress?.percent, 40, "The reviewer's estimate is the run's")
 
         let claude = DemoScenario.claudeTask(stage: .thinking, at: now)
         var state = ActivityApplicationState()
@@ -109,11 +121,21 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         state.localActivities = read.activities
         state.codexDelegations = [AgentProvider.codex.activityID(sessionID: thread(1)): link(to: claude)]
         state.reconcile(at: now, retention: 300, visibility: visible)
-        var rows = state.presentation(at: now).rows
+        var rows = state.presentation(at: now, options: .init(progressRingProviders: [.codex])).rows
         XCTAssertEqual(rows.map(\.activity.id), [claude.id], "The review is no task of its own")
         XCTAssertEqual(rows[0].delegations.map(\.title), ["Review login changes"])
         XCTAssertEqual(rows[0].delegations.first?.phase, .running)
         XCTAssertEqual(rows[0].delegations.first?.canStopDelegation, true)
+        XCTAssertEqual(rows[0].delegations.first?.progressRing?.state, .reported, "The run's line draws the reviewer's estimate")
+        XCTAssertEqual(rows[0].delegations.first?.progressRing?.percent, 40)
+
+        // Any other sub-thread's estimate stays its own, in a run or not.
+        var spawned = SessionActivity(id: AgentProvider.codex.activityID(sessionID: thread(4)))
+        var spawnedMeta = meta(4, review: false); spawnedMeta["parent_thread_id"] = thread(1)
+        for value in [entry("session_meta", spawnedMeta), entry("event_msg", ["type": "task_started", "turn_id": "t1"]),
+                      entry("event_msg", report(4, 60))] { spawned.consume(value) }
+        XCTAssertEqual(spawned.phase, .running)
+        XCTAssertNil(spawned.currentProgress)
         // Stop names the row it shows, the review sub-thread, before the ledger lists that sub-thread.
         let shown = try XCTUnwrap(rows[0].delegations.first?.activity.id)
         XCTAssertNil(state.codexDelegations[shown])

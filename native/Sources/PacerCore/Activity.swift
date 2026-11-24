@@ -114,6 +114,9 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     private var reviewSubthread = false
     /// The sub-thread a Codex for Claude review run works in.
     public var isCodexReviewRun: Bool { reviewSubthread && codexOrigin?.delegated == true }
+    /// A task's own thread fills its ring, and so does a review run's sub-thread,
+    /// which is the run's line. Other sub-threads' estimates stay their own.
+    private var reportsOwnProgress: Bool { parentThreadID == nil || isCodexReviewRun }
     private var autoReviewedTurnID: String?
     /// Whether the current turn's context names Codex as its default reviewer.
     public var codexReviewsApprovals: Bool { turnID != nil && turnID == autoReviewedTurnID }
@@ -667,7 +670,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
 
     private mutating func acceptCodexProgress(_ raw: Any?, turn: String, at date: Date) {
-        guard acceptsLogAttention, parentThreadID == nil, turnID == turn, phase != .unknown,
+        guard acceptsLogAttention, reportsOwnProgress, turnID == turn, phase != .unknown,
               date >= (turnStartedAt ?? .distantPast),
               codexHeldEnding.map({ date <= $0 }) ?? true,
               ![.completed, .interrupted].contains(phase) || date <= (phaseChangedAt ?? date),
@@ -687,7 +690,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         let item = outer == "event_msg" && kind == "item_completed" ? payload["item"] as? [String: Any] : nil
         let reportItem = item.map(CodexProgressEvidence.isReportItem) == true
         guard call || output || reportItem || ["pacer_progress", "pacer_progress_call", "pacer_progress_result"].contains(kind ?? "") else { return false }
-        guard acceptsLogAttention, parentThreadID == nil, let turnID, phase != .unknown,
+        guard acceptsLogAttention, reportsOwnProgress, let turnID, phase != .unknown,
               let text = timestamp as? String, let stamp = Self.parseDate(text), stamp >= (turnStartedAt ?? .distantPast) else { return true }
         let explicitTurn = payload["turn_id"] ?? (payload["internal_chat_message_metadata_passthrough"] as? [String: Any])?["turn_id"]
         if let explicitTurn, CodexProgressEvidence.identifier(explicitTurn) != turnID { return true }
