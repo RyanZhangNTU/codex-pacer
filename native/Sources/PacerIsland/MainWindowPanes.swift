@@ -609,7 +609,7 @@ struct SettingsAboutPane: View {
             .onChange(of: tab) { _, value in UserDefaults.standard.set(value.rawValue, forKey: AboutTab.defaultsKey) }
         switch tab {
         case .whatsNew: SettingsWhatsNewPane(launchAtLogin: launchAtLogin, openPane: openPane)
-        case .help: SettingsHelpPane(onShowWelcome: onShowWelcome)
+        case .help: SettingsHelpPane(onShowWelcome: onShowWelcome, openPane: openPane)
         }
     }
 }

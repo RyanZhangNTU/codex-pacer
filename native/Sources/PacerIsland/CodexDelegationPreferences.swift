@@ -20,6 +20,10 @@ struct CodexDelegationPreferences: Equatable {
     static let memoryKey = pair + "memory"
     static let concurrencyKey = pair + "concurrency"
     static let quotaFloorKey = pair + "quotaFloor"
+    /// The first-run guide on Settings → Collaboration: closed for good, and
+    /// what it has seen, a run and one that ended. Cleanup deletes runs, so
+    /// each is kept once seen.
+    static let introDoneKey = pair + "introDone", introRanKey = pair + "introRan", introFinishedKey = pair + "introFinished"
     static let efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
 
     typealias Settings = ClaudeCodexDelegation.Settings
@@ -43,6 +47,9 @@ struct CodexDelegationPreferences: Equatable {
     var maxConcurrent = 3
     /// Percent of quota left below which runs don't start; 0 never holds them back.
     var quotaFloor = 0
+    var introDone = false
+    var introRan = false
+    var introFinished = false
 
     mutating func setFollowEffort(_ follow: Bool, fallback: String?) {
         if !follow && !pickedEffort { effort = fallback ?? effort }
@@ -76,6 +83,9 @@ struct CodexDelegationPreferences: Equatable {
         memory = defaults.bool(forKey: Self.memoryKey)
         maxConcurrent = (defaults.object(forKey: Self.concurrencyKey) as? Int).filter { Settings.concurrencyChoices.contains($0) } ?? 3
         quotaFloor = (defaults.object(forKey: Self.quotaFloorKey) as? Int).filter { Settings.quotaFloorChoices.contains($0) } ?? 0
+        introDone = defaults.bool(forKey: Self.introDoneKey)
+        introRan = defaults.bool(forKey: Self.introRanKey)
+        introFinished = defaults.bool(forKey: Self.introFinishedKey)
     }
 
     func save(to defaults: UserDefaults) {
@@ -89,11 +99,15 @@ struct CodexDelegationPreferences: Equatable {
         defaults.set(sandbox.rawValue, forKey: Self.sandboxKey); defaults.set(worktree, forKey: Self.worktreeKey)
         defaults.set(instructions, forKey: Self.instructionsKey); defaults.set(memory, forKey: Self.memoryKey)
         defaults.set(maxConcurrent, forKey: Self.concurrencyKey); defaults.set(quotaFloor, forKey: Self.quotaFloorKey)
+        defaults.set(introDone, forKey: Self.introDoneKey); defaults.set(introRan, forKey: Self.introRanKey)
+        defaults.set(introFinished, forKey: Self.introFinishedKey)
     }
 
-    /// Everything but the switch back to its default; the switch stays.
+    /// Everything but the switch back to its default; the switch and the guide's record stay.
     func restoringDefaults() -> Self {
-        var value = Self(); value.enabled = enabled; return value
+        var value = Self(); value.enabled = enabled
+        value.introDone = introDone; value.introRan = introRan; value.introFinished = introFinished
+        return value
     }
     /// Whether every choice besides the switch is at its default.
     var isDefault: Bool { restoringDefaults() == self }

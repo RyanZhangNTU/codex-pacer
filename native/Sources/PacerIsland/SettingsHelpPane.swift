@@ -11,11 +11,14 @@ import SwiftUI
 struct SettingsHelpPane: View {
     private static let repository = "https://github.com/RyanZhangNTU/codex-pacer"
     var onShowWelcome: (() -> Void)?
+    /// Turns the window to another page, such as Collaboration from its guide.
+    var openPane: ((SettingsPane) -> Void)?
     @State private var topic = HelpTopic.collapsed
     @State private var showsServiceColors: Bool
 
-    init(onShowWelcome: (() -> Void)? = nil, showsServiceColors: Bool = false) {
+    init(onShowWelcome: (() -> Void)? = nil, openPane: ((SettingsPane) -> Void)? = nil, showsServiceColors: Bool = false) {
         self.onShowWelcome = onShowWelcome
+        self.openPane = openPane
         _showsServiceColors = State(initialValue: showsServiceColors)
     }
 
@@ -39,7 +42,7 @@ struct SettingsHelpPane: View {
                 switch topic {
                 case .collapsed: collapsedRows
                 case .expanded: expandedRows
-                case .collaboration: CollaborationHelp()
+                case .collaboration: CollaborationIntro(mode: .help, openSettings: { openPane?(.collaboration) })
                 case .module(let provider): moduleRows(provider)
                 }
             }

@@ -2671,8 +2671,19 @@ final class IslandModel: ObservableObject {
         guard !demo, isModuleEnabled(.claude), isModuleEnabled(.codex) else { codexDelegationRuns = []; return [:] }
         if let cached = codexDelegationLedger, abs(date.timeIntervalSince(cached.at)) < 1 { return cached.links }
         codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome, runnerExited: ProcessOwnership.hasExited)
+        noteCodexDelegationSighting(.init(runs: codexDelegationRuns))
         let links = ClaudeCodexDelegation.links(codexDelegationRuns)
         codexDelegationLedger = (date, links); return links
+    }
+    /// What Settings → Collaboration's guide has seen: a run, and one that
+    /// ended. Cleanup deletes runs from the ledger, so every read keeps them,
+    /// whether Settings is open or not.
+    func noteCodexDelegationSighting(_ sighting: ClaudeCodexDelegation.Sighting) {
+        guard sighting.ran else { return }
+        if !defaults.bool(forKey: CodexDelegationPreferences.introRanKey) { defaults.set(true, forKey: CodexDelegationPreferences.introRanKey) }
+        if sighting.finished, !defaults.bool(forKey: CodexDelegationPreferences.introFinishedKey) {
+            defaults.set(true, forKey: CodexDelegationPreferences.introFinishedKey)
+        }
     }
     /// Asks a running Codex for Claude run's runner to stop it; the runner
     /// stops Codex and tells Claude the user stopped it in Pacer.
