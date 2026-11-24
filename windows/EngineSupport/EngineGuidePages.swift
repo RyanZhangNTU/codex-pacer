@@ -60,6 +60,7 @@ enum EngineGuidePages {
                     case .openCollapsedBar: control = "openCollapsedBar"
                     case .openAppearance: control = "openAppearance"
                     case .openModules: control = "openModules"
+                    case .openCollaboration: control = "openCollaboration"
                     case .codexHooksSetup: control = "codexHooksSetup"
                     case nil: control = nil
                     }

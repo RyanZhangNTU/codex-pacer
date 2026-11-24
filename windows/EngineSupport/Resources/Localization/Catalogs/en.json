@@ -2,7 +2,7 @@
   "language": "en",
   "schemaVersion": 1,
   "sources": {
-    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "9ce641dc960b069ef6ca667f1eb3cff346dab74b5bf2e89ae8f6c7a7a369eb21",
+    "native/Sources/PacerCore/Resources/en.lproj/Localizable.strings": "a01ad488548b88ff7457e70e8d57e5068f6dc780526005708f2abb9b953c88d5",
     "windows/EngineSupport/Resources/Localization/en.json": "9c5c3afa9978273c9160fabc0506c301ea0cb77b9090d382d0ec78e963927bff"
   },
   "strings": {
@@ -1713,6 +1713,8 @@
     "whats_new.cloud_coordination_detail": "Pacer reminds you when a thread needs a decision or a reply and when it is resolved, and a resolved thread you read in Claude clears here. A thread shows an estimated speed while it writes a reply, and the real speed when its turn ends.",
     "whats_new.cloud_projects": "Claude cloud Projects",
     "whats_new.cloud_projects_detail": "Threads and coordinators from your Projects now appear in the task list, with a cloud icon and the project\u2019s name. They use your claude.ai sign-in; turn them off in Settings \u2192 Claude.",
+    "whats_new.codex_for_claude": "Claude can ask Codex for help",
+    "whats_new.codex_for_claude_detail": "Turn on \u201cClaude calls Codex\u201d under Collaboration, then just ask Claude, for example \u201chave Codex review this change\u201d. Pacer starts Codex with your settings, shows each run under its Claude task with live progress, and clears it from Codex's history when the turn ends.",
     "whats_new.codex_hooks": "Keep Codex tasks showing",
     "whats_new.codex_hooks_detail": "Codex 26.1117 changed how apps read its tasks. Update Codex if it's older, then allow Pacer in Codex once, and Pacer keeps showing Codex tasks and approval requests.",
     "whats_new.codex_setup.allow": "Allow Pacer in Codex",

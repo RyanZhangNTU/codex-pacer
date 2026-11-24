@@ -1611,6 +1611,8 @@
 "whats_new.claude_app_access_detail" = "Claude Desktop 请求使用电脑上的应用时，Pacer 会提示这个任务在等你。";
 "whats_new.codex_hooks" = "让 Pacer 继续显示 Codex 任务";
 "whats_new.codex_hooks_detail" = "Codex 新版（26.1117）改了应用读取任务的方式。Codex 较旧时先更新，再在 Codex 里允许 Pacer 一次，Pacer 就能继续显示 Codex 任务和审批提醒。";
+"whats_new.codex_for_claude" = "让 Claude 请 Codex 帮忙";
+"whats_new.codex_for_claude_detail" = "在“协作”页打开「Claude 调用 Codex」，然后直接跟 Claude 说，比如“让 Codex 审查一下这次改动”。Pacer 按你的设置启动 Codex，在对应的 Claude 任务下实时显示进度，对话结束后把它从 Codex 的历史里清掉。";
 "whats_new.codex_setup.reason" = "Codex 新版（26.1117）改了应用读取任务的方式。完成下面两步，Pacer 就能继续显示 Codex 任务和审批提醒。";
 "whats_new.codex_setup.update" = "更新 Codex";
 "whats_new.codex_setup.update_ready" = "已是可用的版本";

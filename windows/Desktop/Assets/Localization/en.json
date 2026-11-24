@@ -1709,6 +1709,8 @@
     "whats_new.cloud_coordination_detail": "Pacer reminds you when a thread needs a decision or a reply and when it is resolved, and a resolved thread you read in Claude clears here. A thread shows an estimated speed while it writes a reply, and the real speed when its turn ends.",
     "whats_new.cloud_projects": "Claude cloud Projects",
     "whats_new.cloud_projects_detail": "Threads and coordinators from your Projects now appear in the task list, with a cloud icon and the project’s name. They use your claude.ai sign-in; turn them off in Settings → Claude.",
+    "whats_new.codex_for_claude": "Claude can ask Codex for help",
+    "whats_new.codex_for_claude_detail": "Turn on “Claude calls Codex” under Collaboration, then just ask Claude, for example “have Codex review this change”. Pacer starts Codex with your settings, shows each run under its Claude task with live progress, and clears it from Codex's history when the turn ends.",
     "whats_new.codex_hooks": "Keep Codex tasks showing",
     "whats_new.codex_hooks_detail": "Codex 26.1117 changed how apps read its tasks. Update Codex if it's older, then allow Pacer in Codex once, and Pacer keeps showing Codex tasks and approval requests.",
     "whats_new.codex_setup.allow": "Allow Pacer in Codex",

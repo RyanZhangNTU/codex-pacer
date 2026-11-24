@@ -10,7 +10,7 @@ public enum WhatsNew {
         /// A switch for the setting the item introduces, or a link to the page that holds it.
         public enum Control: Equatable, Sendable {
             case openAtLogin, showEmbeddedSessions, showAppButtons
-            case openExpandedPanel, openCollapsedBar, openAppearance, openModules
+            case openExpandedPanel, openCollapsedBar, openAppearance, openModules, openCollaboration
             /// The update note shows the item's detail and two steps that follow the
             /// hooks' live status: update Codex, then allow Pacer's hooks in Codex.
             /// Help & Updates lists it as an ordinary item.
@@ -36,6 +36,11 @@ public enum WhatsNew {
     /// Newest first. Add a version's highlights while preparing its release;
     /// both Localizable.strings catalogs need every key.
     public static let releases = [
+        // Codex for Claude needs the Claude module; Settings › opens Collaboration, where its guide waits.
+        Release(version: "4.7.0", items: [
+            Item(symbol: "arrow.triangle.branch", titleKey: "whats_new.codex_for_claude", detailKey: "whats_new.codex_for_claude_detail",
+                 control: .openCollaboration)
+        ], requiredModule: .claude),
         Release(version: "4.6.1", items: [
             Item(symbol: "terminal", titleKey: "whats_new.codex_hooks", detailKey: "whats_new.codex_hooks_detail", control: .codexHooksSetup)
         ], requiredModule: .codex),
