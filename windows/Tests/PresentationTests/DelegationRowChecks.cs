@@ -26,7 +26,8 @@ internal static class DelegationRowChecks
         var finished = new EngineTaskRow("codex-run-done", "codex", "Implement async loading", "Done", null, null, null, "completed", "checkmark.circle", null,
             "Sol 6.2", "medium", 74, false, null, "4:05", 0, false, false, true, null, false, RateText: "74.0", ParentID: "claude-row-fixture", CanStop: false);
         var parent = new EngineTaskRow("claude-row-fixture", "claude", "Fix login refresh", "Waiting for Codex", null, null, null, "running", "sparkle", null,
-            "Opus 5.5", "high", null, false, null, "1:20", 0, false, false, false, null, false, DelegatedText: "Codex 2", Delegations: [running, finished]);
+            "Opus 5.5", "high", null, false, null, "1:20", 0, false, false, false, null, false, DelegatedText: "Codex 1", Delegations: [running, finished],
+            DelegationsFolded: "2 more ended · 1 failed");
         var row = new TaskRow(parent, showsDelegations: true); row.SetAnimations(false);
         string? stopped = null; row.SetStopAction(id => stopped = id, "Stop this Codex run");
         // The island's dark surface, so the capture reads as it would on screen.
@@ -59,6 +60,18 @@ internal static class DelegationRowChecks
             Check(AutomationProperties.GetHelpText(lines[0]).Contains("Review · Read-only") && AutomationProperties.GetHelpText(lines[1]).Length == 0,
                 "Screen readers get the run's details without hovering");
             Check(stopped == null, "Nothing stops a run without a click");
+            // The older ended runs fold into one 22-point line above the run lines, counted in the row's height.
+            var folded = row.Delegations.Children.OfType<Grid>().FirstOrDefault();
+            Check(folded?.Tag as string == TaskRow.FoldedTag && Math.Abs(folded.ActualHeight - TaskRow.FoldedHeight) < 0.5
+                && folded.Children.OfType<TextBlock>().Single().Text == "2 more ended · 1 failed" && !folded.Children.OfType<Button>().Any()
+                && AutomationProperties.GetName(folded) == "2 more ended · 1 failed",
+                "The older ended runs fold into one short line above the others, with no Stop");
+            Check(Math.Abs(TaskRow.RowHeight(parent, null) - (TaskRow.TwoLineHeight + 2 * TaskRow.DelegationHeight + TaskRow.FoldedHeight + TaskRow.DelegationRailBottom)) < 0.5
+                && Math.Abs(row.ActualHeight - TaskRow.RowHeight(parent, null)) < 0.5, "The row's height counts the folded line");
+            var alone = parent with { Delegations = null };
+            Check(Math.Abs(TaskRow.RowHeight(alone, null) - (TaskRow.TwoLineHeight + TaskRow.FoldedHeight + TaskRow.DelegationRailBottom)) < 0.5
+                && TaskRow.RowHeight(parent with { Delegations = null, DelegationsFolded = null }, null) == TaskRow.TwoLineHeight,
+                "A folded line alone still opens the rail; no runs, no rail");
             // The task and its runs are separate targets: the task's highlight covers its own row only,
             // and each run line has its own, hidden until that line is hovered.
             row.SetOpenAction(() => { }, "Open", false);
@@ -67,7 +80,8 @@ internal static class DelegationRowChecks
             var taskHighlight = Descendants(row).OfType<Border>().First(border => border.Opacity == 1 && border.Background == row.Background);
             Check(row.HoverProgress == 1 && Math.Abs(taskHighlight.ActualHeight - TaskRow.RowHeight(null)) < 0.5
                 && row.ActualHeight > taskHighlight.ActualHeight + TaskRow.DelegationHeight, "The task's highlight covers its own row, not the runs under it");
-            Check(lines.All(line => !TaskRow.LineHighlighted(line)), "A run line lights up only while it is hovered, never with its task");
+            Check(lines.All(line => !TaskRow.LineHighlighted(line)) && !TaskRow.LineHighlighted(folded!),
+                "A run line and the folded line light up only while hovered, never with their task");
             row.Runs.RaiseEvent(Pointer(Mouse.MouseEnterEvent));
             Check(row.HoverProgress == 0, "Moving onto the task's Codex runs leaves the task itself unhighlighted");
             row.RaiseEvent(Pointer(Mouse.MouseLeaveEvent));
@@ -75,7 +89,7 @@ internal static class DelegationRowChecks
             bitmap.Render(surface);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var file = File.Create(Path.Combine(output, "island-delegation-rows.png"))) encoder.Save(file);
-            Console.WriteLine("PASS Codex for Claude rows: on-line readings, final speed and time, hover-only Stop, details for screen readers, no hover popups");
+            Console.WriteLine("PASS Codex for Claude rows: on-line readings, final speed and time, hover-only Stop, details for screen readers, folded older runs, no hover popups");
         }
         finally { window.Close(); }
     }

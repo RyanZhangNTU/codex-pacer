@@ -25,12 +25,16 @@ public partial class TaskRow : Button
     private AnimationLease? hover;
     /// Rows with one line are 38 points tall, two lines 54.
     internal const double TwoLineHeight = 54, OneLineHeight = 38;
-    /// Each Codex for Claude run under a Claude task takes one 30-point line.
-    internal const double DelegationHeight = 30, DelegationRailBottom = 4;
+    /// Each Codex for Claude run under a Claude task takes one 30-point line, the
+    /// older ended runs folded together a 22-point one; the rail ends 4 points below the last.
+    internal const double DelegationHeight = 30, FoldedHeight = 22, DelegationRailBottom = 4;
     internal static double RowHeight(PanelOptions? options) => options?.OneLine == true ? OneLineHeight : TwoLineHeight;
     /// The row with the runs listed under it.
-    internal static double RowHeight(EngineTaskRow value, PanelOptions? options) => RowHeight(options) +
-        (value.Delegations is { Count: > 0 } runs ? runs.Count * DelegationHeight + DelegationRailBottom : 0);
+    internal static double RowHeight(EngineTaskRow value, PanelOptions? options)
+    {
+        int runs = value.Delegations?.Count ?? 0; bool folded = value.DelegationsFolded != null;
+        return RowHeight(options) + (runs == 0 && !folded ? 0 : runs * DelegationHeight + (folded ? FoldedHeight : 0) + DelegationRailBottom);
+    }
     /// <param name="options">The panel's row style and fields; none draws every field on two lines.</param>
     /// <param name="settled">The first sight draws the icon's final state, as a row built while hidden does.</param>
     /// <param name="showsDelegations">The island lists a Claude task's Codex runs under it; Overview keeps one line per task.</param>
@@ -127,12 +131,16 @@ public partial class TaskRow : Button
     /// One line per run: its icon (state and progress ring), Claude's label,
     /// speed and time, model and effort, always on the line; no hover card.
     /// Screen readers get the run's details as help text. Clicking the line
-    /// opens the Claude task, like the row.
+    /// opens the Claude task, like the row. Every running run and the most
+    /// recent ended ones show; the older ended runs fold into one short line
+    /// above them that says how many, and how many failed.
     private void BuildDelegations(EngineTaskRow value, PanelOptions? options)
     {
         Delegations.Children.Clear();
         var runs = showsDelegations ? value.Delegations : null;
-        Runs.Visibility = runs is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        string? folded = showsDelegations ? value.DelegationsFolded : null;
+        Runs.Visibility = runs is { Count: > 0 } || folded != null ? Visibility.Visible : Visibility.Collapsed;
+        if (folded != null) Delegations.Children.Add(FoldedLine(folded));
         if (runs == null) return;
         foreach (var run in runs)
         {
@@ -175,6 +183,34 @@ public partial class TaskRow : Button
             icon.SetMotion(animations);
         }
         RefreshStopButtons();
+    }
+    /// Marks the folded line among the run lines; read by the presentation checks.
+    internal const string FoldedTag = "folded";
+    /// The older ended runs as one quiet line: an ellipsis in the icon column and
+    /// how many, and how many failed. Clicking it opens the Claude task, like a run line.
+    private Grid FoldedLine(string text)
+    {
+        var line = new Grid { Height = FoldedHeight, Tag = FoldedTag, Background = Brushes.Transparent };
+        foreach (var width in new[] { new GridLength(20), new GridLength(8), new GridLength(1, GridUnitType.Star) })
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+        var highlight = new Border { CornerRadius = new CornerRadius(7), Background = PacerPalette.Hover, Opacity = 0, IsHitTestVisible = false, Margin = new Thickness(-4, 0, 0, 0) };
+        Grid.SetColumnSpan(highlight, 3); line.Children.Add(highlight);
+        var dots = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        for (int index = 0; index < 3; index++)
+        {
+            var dot = new System.Windows.Shapes.Ellipse { Width = 2.4, Height = 2.4, Margin = new Thickness(index == 0 ? 0 : 1.4, 0, 0, 0) };
+            dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Island.Tertiary");
+            dots.Children.Add(dot);
+        }
+        line.Children.Add(dots);
+        var label = new TextBlock { Text = text, FontSize = 11, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis };
+        label.SetResourceReference(TextBlock.ForegroundProperty, "Island.Secondary");
+        Grid.SetColumn(label, 2); line.Children.Add(label);
+        line.MouseEnter += (_, _) => RefreshLineHighlight(line);
+        line.MouseLeave += (_, _) => RefreshLineHighlight(line);
+        AutomationProperties.SetName(line, text);
+        return line;
     }
     /// A run line lights up only while it is hovered and the task can be opened.
     private void RefreshLineHighlight(Grid line)
@@ -238,7 +274,7 @@ public partial class TaskRow : Button
             + (state.SubagentsVisible == Visibility.Visible ? 24 + Text(row.SubagentText ?? "—", 11, FontWeights.Medium) : 0)
             + (state.SourceVisible == Visibility.Visible ? 10 + Text(row.SourceLabel, 11, FontWeights.Medium) + (row.SourceKind == null ? 0 : 14) : 0)
             + (state.DelegatedVisible == Visibility.Visible ? 20 + Text(row.DelegatedText, 10, FontWeights.SemiBold) : 0);
-        double runs = 0;
+        double runs = showsDelegations && row.DelegationsFolded != null ? 22 + 12 + 20 + 8 + Text(row.DelegationsFolded, 11, FontWeights.Medium) + 6 : 0;
         foreach (var run in showsDelegations ? row.Delegations ?? [] : [])
             runs = Math.Max(runs, 22 + 12 + 20 + 8 + Math.Min(220, Text(run.Title, 12, FontWeights.SemiBold))
                 + 10 + Text((run.RateText == null ? "" : run.RateText + " t/s · ") + (run.TurnTime == null ? "" : run.TurnTime + "  ") + run.Model

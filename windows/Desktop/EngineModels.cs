@@ -162,7 +162,8 @@ internal sealed record EngineTaskRow(string Id, string Provider, string Title, s
     string? TurnTime, int Subagents, bool Unread, bool Failed, bool Dimmed, string? Cost, bool PeakCost, string? RateText = null, string? SubagentText = null,
     string? ProgressState = null, double? ProgressFraction = null, bool? ProgressStale = null, string? ProgressText = null,
     string? ProgressMode = null, string? DelegatedText = null, IReadOnlyList<EngineTaskRow>? Delegations = null,
-    string? ParentID = null, bool? CanStop = null, IReadOnlyList<IReadOnlyList<string>>? DetailLines = null);
+    string? ParentID = null, bool? CanStop = null, IReadOnlyList<IReadOnlyList<string>>? DetailLines = null,
+    string? DelegationsFolded = null);
 internal sealed record EngineHeader(int ActiveCount, string? CoreSymbol, IReadOnlyDictionary<string, int> Orbit,
     string? Attention, string? Ending, string? EndingProvider, bool EndingIsCore, string? ActiveCountText = null,
     double? ProgressFraction = null, bool? ProgressLongStep = null, bool? ProgressStale = null,

@@ -61,10 +61,13 @@ struct EngineTaskRow: Codable, Equatable {
     let progressFraction: Double?
     let progressStale: Bool?
     let progressText: String?
-    /// Codex for Claude, on a Claude task: how many runs it holds ("Codex 2"),
-    /// and their rows when the list shows them. Absent without runs.
+    /// Codex for Claude, on a Claude task: how many runs are still running ("Codex 2"),
+    /// and the run lines when the list shows them: every running run, then the most
+    /// recent ended ones. Absent without runs.
     var delegatedText: String? = nil
     var delegations: [EngineTaskRow]? = nil
+    /// The older ended runs, folded into one line above the others ("2 more finished").
+    var delegationsFolded: String? = nil
     /// On a run's row: the Claude task it opens, and whether Stop shows.
     var parentID: String? = nil
     var canStop: Bool? = nil
@@ -90,6 +93,7 @@ struct EngineTaskRow: Codable, Equatable {
         progressStale = value.progressRing?.stale; progressText = value.progressRing?.accessibilityText
         if value.delegatedCount > 0 { delegatedText = value.delegatedCountText }
         if !value.delegations.isEmpty { delegations = value.delegations.map(EngineTaskRow.init) }
+        delegationsFolded = value.foldedDelegations?.text
         if let link = value.delegation {
             parentID = link.parentID; canStop = value.canStopDelegation
             detailLines = value.delegationDetail.map { [$0.label, $0.value] }
