@@ -54,14 +54,15 @@ internal sealed class CollaborationIntro : Border
     internal event Action? TurnOn;
     internal event Action<string>? Fix;
     internal event Action? OpenSettings;
-    /// Two columns while both fit: the 300-point demo, a 20-point gap and 260 for the steps.
-    internal const double SideBySide = 300 + 20 + 260;
+    /// Two columns while both fit: the 300-point demo, a 16-point gap and 211 for the steps, so
+    /// the Settings window at its smallest (860 wide) still shows them side by side, as on the Mac.
+    internal const double Gap = 16, StepsWidth = 211, SideBySide = 300 + Gap + StepsWidth;
 
     internal CollaborationIntro(UiText ui, bool help)
     {
         this.ui = ui; this.help = help;
         TextElement.SetFontFamily(this, PacerFonts.Interface);
-        CornerRadius = new CornerRadius(14); BorderThickness = new Thickness(1); Padding = new Thickness(20, 16, 20, help ? 18 : 14);
+        CornerRadius = new CornerRadius(14); BorderThickness = new Thickness(1); Padding = new Thickness(16, 16, 16, help ? 18 : 14);
         SetResourceReference(BackgroundProperty, "SettingsCard"); SetResourceReference(BorderBrushProperty, "SettingsCardBorder");
         AutomationProperties.SetAutomationId(this, help ? "help.collaboration" : "settings.collaboration.intro");
         AutomationProperties.SetName(this, ui.Text("collab.intro.title"));
@@ -95,7 +96,7 @@ internal sealed class CollaborationIntro : Border
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); body.ColumnDefinitions.Add(new ColumnDefinition());
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         body.Children.Add(Demo);
-        steps.Margin = new Thickness(20, 4, 0, 0);
+        steps.Margin = new Thickness(Gap, 4, 0, 0);
         AutomationProperties.SetName(steps, ui.Text("collab.intro.title"));
         on = new Step(1, ui.Text(help ? "collab.intro.step.on_help" : "collab.intro.step.on"), ui);
         ask = new Step(2, ui.Text("collab.intro.step.ask"), ui);
@@ -124,6 +125,8 @@ internal sealed class CollaborationIntro : Border
     internal bool Wide => Grid.GetColumn(steps) == 1;
     /// The steps' done marks, in order; read by the presentation checks.
     internal bool[] Ticks => [on.Done, ask.Done, watch.Done];
+    /// Whether each step's line end sits under its title; read by the presentation checks.
+    internal bool[] EndsBelow => [on.Stacked, ask.Stacked, watch.Stacked];
     internal Button? Finish => finish;
     internal Button? TurnOnButton => on.Trailing.Children.OfType<Button>().FirstOrDefault();
     internal IEnumerable<Button> PhraseButtons => ask.Details.Children.OfType<WrapPanel>().SelectMany(panel => panel.Children.OfType<Button>());
@@ -133,7 +136,7 @@ internal sealed class CollaborationIntro : Border
         bool wide = width >= SideBySide;
         if (wide == Wide) return;
         Grid.SetColumn(steps, wide ? 1 : 0); Grid.SetRow(steps, wide ? 0 : 1);
-        steps.Margin = wide ? new Thickness(20, 4, 0, 0) : new Thickness(0, 16, 0, 0);
+        steps.Margin = wide ? new Thickness(Gap, 4, 0, 0) : new Thickness(0, 16, 0, 0);
     }
 
     internal void Update(CollaborationIntroState value) { state = value; Render(); }
@@ -342,11 +345,10 @@ internal sealed class CollaborationIntro : Border
             var face = new Grid(); face.Children.Add(number); face.Children.Add(check); badge.Child = face;
             Root.Children.Add(badge);
             var column = new StackPanel(); Grid.SetColumn(column, 1);
-            var line = new DockPanel { MinHeight = 24, LastChildFill = true };
-            DockPanel.SetDock(Trailing, Dock.Right); line.Children.Add(Trailing);
             var heading = new TextBlock { Text = title, FontSize = 13.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
             heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsPrimary");
-            line.Children.Add(heading);
+            Trailing.Margin = new Thickness(0);
+            var line = new TitleLine { MinHeight = 24 }; line.Children.Add(heading); line.Children.Add(Trailing);
             column.Children.Add(line); column.Children.Add(Details);
             Root.Children.Add(column);
             name = index.ToString(CultureInfo.InvariantCulture) + ". " + title;
@@ -354,6 +356,9 @@ internal sealed class CollaborationIntro : Border
             AutomationProperties.SetAutomationId(Root, "collaboration.intro.step." + index.ToString(CultureInfo.InvariantCulture));
             Mark(false, false);
         }
+
+        /// Whether what ends the step's line sits under its title; read by the presentation checks.
+        internal bool Stacked => Root.Children.OfType<StackPanel>().First().Children.OfType<TitleLine>().First().Stacked;
 
         /// A done step shows a check on green; the step to do next is ringed in the accent.
         internal void Mark(bool done, bool current)
@@ -369,6 +374,48 @@ internal sealed class CollaborationIntro : Border
             number.SetResourceReference(TextBlock.ForegroundProperty, current ? "SettingsPrimary" : "SettingsSecondary");
             AutomationProperties.SetName(Root, done ? doneName : name);
         }
+    }
+}
+
+/// A step's title with what ends its line (a button, or "On"): side by side, the
+/// end at the right, while both fit on one line; otherwise the end moves under the
+/// title, so the title is never squeezed onto two lines, as on the Mac.
+internal sealed class TitleLine : Panel
+{
+    private const double Space = 8, Below = 4;
+    internal bool Stacked { get; private set; }
+
+    protected override Size MeasureOverride(Size available)
+    {
+        if (Children.Count < 2) return default;
+        UIElement title = Children[0], end = Children[1];
+        title.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        end.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        bool hasEnd = end.DesiredSize.Width > 0;
+        Stacked = hasEnd && title.DesiredSize.Width + Space + end.DesiredSize.Width > available.Width;
+        if (!Stacked)
+            return new Size(title.DesiredSize.Width + (hasEnd ? Space + end.DesiredSize.Width : 0), Math.Max(title.DesiredSize.Height, end.DesiredSize.Height));
+        title.Measure(new Size(available.Width, double.PositiveInfinity));
+        end.Measure(new Size(available.Width, double.PositiveInfinity));
+        return new Size(Math.Max(title.DesiredSize.Width, end.DesiredSize.Width), title.DesiredSize.Height + Below + end.DesiredSize.Height);
+    }
+
+    protected override Size ArrangeOverride(Size final)
+    {
+        if (Children.Count < 2) return final;
+        UIElement title = Children[0], end = Children[1];
+        if (Stacked)
+        {
+            title.Arrange(new Rect(0, 0, final.Width, title.DesiredSize.Height));
+            end.Arrange(new Rect(0, title.DesiredSize.Height + Below, end.DesiredSize.Width, end.DesiredSize.Height));
+        }
+        else
+        {
+            double height = final.Height;
+            title.Arrange(new Rect(0, (height - title.DesiredSize.Height) / 2, Math.Max(0, final.Width - end.DesiredSize.Width - Space), title.DesiredSize.Height));
+            end.Arrange(new Rect(final.Width - end.DesiredSize.Width, (height - end.DesiredSize.Height) / 2, end.DesiredSize.Width, end.DesiredSize.Height));
+        }
+        return final;
     }
 }
 

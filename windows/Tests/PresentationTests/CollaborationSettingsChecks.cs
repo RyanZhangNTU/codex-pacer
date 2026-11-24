@@ -164,6 +164,14 @@ internal static class CollaborationSettingsChecks
         await Until(() => session.Current.CodexDelegation && toggle.IsChecked == true && intro.Ticks[0], "The guide's Turn On turns the pair on");
         await session.ChangeAsync(p => p with { CodexDelegationIntroRan = true });
         await Until(() => intro.Ticks.SequenceEqual([true, true, false]) && !intro.PhraseButtons.Any(), "Once Codex has been called, the second step ticks and its phrases fold away");
+        // The smallest Settings window keeps the demo and the steps side by side; a line end that
+        // doesn't fit beside its title moves under it instead of wrapping the title.
+        double width = window.Width;
+        window.Width = window.MinWidth; await Dispatcher.Yield(DispatcherPriority.ContextIdle); window.UpdateLayout();
+        var titles = Descendants(intro).OfType<TextBlock>().Where(text => text.FontSize == 13.5).ToArray();
+        Check(intro.Wide && titles.Length == 3 && titles.All(text => text.ActualHeight < 2 * text.FontSize), "At its smallest the Settings window keeps the guide in two columns, each title on one line");
+        window.CapturePreview(System.IO.Path.ChangeExtension(capture, null) + "-narrow.png");
+        window.Width = width; await Dispatcher.Yield(DispatcherPriority.ContextIdle);
         await session.ChangeAsync(p => p with { CodexDelegationIntroFinished = true });
         await Until(() => intro.Ticks.All(tick => tick) && Equals(intro.Finish?.Content, ui.Text("collab.done")), "A finished run ticks the last step and Got It becomes Done");
         window.CapturePreview(capture);
