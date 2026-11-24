@@ -296,7 +296,7 @@ public sealed class TaskProgressRing : Grid
         rotation.BeginAnimation(RotateTransform.AngleProperty, null);
         foreach (var element in new UIElement[] { this, pending, track, ghost, arc, flow, step }) element.BeginAnimation(OpacityProperty, null);
         BeginAnimation(DisplayFractionProperty, null); BeginAnimation(GhostFractionProperty, null);
-        flow.BeginAnimation(EstimatePaint.FrontProperty, null); flow.Flowing = false; pending.BeginAnimation(CometPaint.TailProperty, null);
+        flow.BeginAnimation(EstimatePaint.FlowHeadProperty, null); flow.Flowing = false; pending.BeginAnimation(CometPaint.TailProperty, null);
         scale.BeginAnimation(ScaleTransform.ScaleXProperty, null); scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         ink.BeginAnimation(SolidColorBrush.ColorProperty, null);
     }
@@ -378,20 +378,11 @@ public sealed class TaskProgressRing : Grid
         double? travel = live && !pendingShown && !dim && mode == "working" && targetFraction is > 0.04 and < 0.9995 ? targetFraction : null;
         if (travel != flowingTo)
         {
-            flowLease?.Dispose(); flowLease = null; flow.BeginAnimation(EstimatePaint.FrontProperty, null);
+            flowLease?.Dispose(); flowLease = null; flow.BeginAnimation(EstimatePaint.FlowHeadProperty, null);
             flowingTo = travel; flow.Flowing = travel != null;
+            // One run from the arc's start out through its head, then a rest; it never passes the head.
             if (travel is double fraction)
-            {
-                // One run from the arc's start out through its head, then a rest; it never passes the head.
-                double reach = fraction + EstimatePaint.FlowLengths[0];
-                var run = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.FlowPeriod), RepeatBehavior = RepeatBehavior.Forever,
-                    BeginTime = TimeSpan.FromSeconds(-(now % EstimatePaint.FlowPeriod)) };
-                run.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-                run.KeyFrames.Add(new LinearDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowTravel))));
-                run.KeyFrames.Add(new DiscreteDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowPeriod))));
-                Timeline.SetDesiredFrameRate(run, TravelFrameRate);
-                flowLease = new AnimationLease(run, clock => flow.ApplyAnimationClock(EstimatePaint.FrontProperty, clock));
-            }
+                flowLease = new AnimationLease(EstimatePaint.Travel(0, fraction, now, TravelFrameRate), clock => flow.ApplyAnimationClock(EstimatePaint.FlowHeadProperty, clock));
         }
         flow.Limit = targetFraction;
         // A long step: the light stops and the stretch past the head breathes.

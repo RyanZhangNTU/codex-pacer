@@ -141,7 +141,9 @@ struct EngineHeader: Codable, Equatable {
     let progressReported: Int?
     let progressSegments: Bool?
     /// Codex for Claude runs working for the active Claude tasks; absent without any.
+    /// The badge draws them in Codex's color and names them with `delegatedText`.
     var delegatedRunning: Int? = nil
+    var delegatedText: String? = nil
 
     init(groups: [ActivityTaskGroup], requests: [PendingAttentionRequest], inbox: CompletionInbox, at now: Date) {
         self.init(ActivityTaskPresentation(activities: groups.flatMap(\.members), requests: requests, inbox: inbox,
@@ -157,7 +159,9 @@ struct EngineHeader: Codable, Equatable {
         if case .completed(let provider)? = value.ending { endingProvider = provider.rawValue }
         else { endingProvider = suppliedProvider?.rawValue }
         endingIsCore = value.endingIsCore
-        if value.delegatedRunning > 0 { delegatedRunning = value.delegatedRunning }
+        if value.delegatedRunning > 0 {
+            delegatedRunning = value.delegatedRunning; delegatedText = L10n.text("delegation.badge", value.delegatedRunning)
+        }
         if case .symbol(let glyph) = value.core { coreSymbol = glyph } else { coreSymbol = nil }
         progressFraction = value.progress?.fraction
         // Waiting for background work holds the light like a long step: the request goes on, the agent does not.
@@ -177,5 +181,10 @@ struct EngineTaskShare: Codable, Equatable {
     let provider: String
     let fraction: Double?
     let stale: Bool
-    init(_ value: HeaderActivity.TaskShare) { provider = value.provider.rawValue; fraction = value.fraction; stale = value.stale }
+    /// Codex for Claude runs working for this task; absent without any.
+    var helpers: Int? = nil
+    init(_ value: HeaderActivity.TaskShare) {
+        provider = value.provider.rawValue; fraction = value.fraction; stale = value.stale
+        if value.helpers > 0 { helpers = value.helpers }
+    }
 }

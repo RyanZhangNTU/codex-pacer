@@ -86,14 +86,22 @@ public sealed class ActivityBadge : Grid
     internal (bool Composed, bool FallbackClock, long Uploads, IntPtr Window) RotationScheduling => (orbit != null && rotating, spin != null, orbit?.Uploads ?? 0, orbit?.WindowHandle ?? IntPtr.Zero);
     internal void InjectOrbitDeviceLoss() => orbit?.InjectDeviceLoss();
     internal bool HasEndingMarker => ending.Visibility == Visibility.Visible;
-    /// Codex for Claude runs working for the active Claude tasks: a small
-    /// number on Codex's color at the badge's lower right.
-    private readonly Border delegated = new() { Height = 10, MinWidth = 10, CornerRadius = new CornerRadius(5), Padding = new Thickness(2, 0, 2, 0),
-        BorderBrush = PacerPalette.Ink(0, 0, 0, 217), BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed,
-        HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, -4, -3) };
-    private readonly TextBlock delegatedText = new() { FontSize = 7, FontWeight = FontWeights.Bold, Foreground = PacerPalette.Ink(0, 0, 0, 230),
-        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, -1, 0, 0) };
-    internal string DelegatedText => delegated.Visibility == Visibility.Visible ? delegatedText.Text : "";
+    /// Codex for Claude runs working for the active Claude tasks have no number:
+    /// without an estimate they join the services' comets in Codex's colour; over
+    /// an estimate Codex's light travels the stretch it has not reached, and in
+    /// segments the stretch of the Claude task the runs work for.
+    private readonly HelperLight helper = new(9, 2);
+    private readonly Grid segmentHelpers = new() { Width = 20, Height = 20, IsHitTestVisible = false,
+        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    private readonly List<HelperLight> laneHelpers = [];
+    private int helperRuns;
+    /// Codex's light over an estimate and in each segment, and Codex's weight in the orbit; read by the presentation checks.
+    internal (double Start, double End)? HelperStretch => helper.Stretch;
+    internal bool HelperTravels => helper.Travels;
+    internal bool HelperTinted => helper.Tinted;
+    internal (double Start, double End)?[] LaneHelperStretches => laneHelpers.Select(light => light.Stretch).ToArray();
+    internal bool HelperLoops => helper.Travels || laneHelpers.Any(light => light.Travels);
+    internal int OrbitCodexWeight => previous?.Orbit.TryGetValue("codex", out int weight) == true ? weight : 0;
     /// The endless loops' rate: full while the panel is open, a recognisable but
     /// cheaper rate while only the collapsed bar shows them.
     internal const int OpenFrameRate = 30, CollapsedFrameRate = 12;
@@ -114,6 +122,7 @@ public sealed class ActivityBadge : Grid
             if (estimateFlowLoop != null && estimateFlowTo is double flow) { estimateFlowLoop.Dispose(); estimateFlowLoop = FlowLoop(flow); }
             if (estimateStepLoop != null) { estimateStepLoop.Dispose(); estimateStepLoop = BreathLoop(estimateStep); }
             if (segmentBreathLoop != null) { segmentBreathLoop.Dispose(); segmentBreathLoop = BreathLoop(segmentBreath); }
+            helper.Retime(value); foreach (var light in laneHelpers) light.Retime(value);
             if (spin != null) { spin.Dispose(); spin = SpinLoop(); }
         }
     }
@@ -132,11 +141,18 @@ public sealed class ActivityBadge : Grid
         paint.HorizontalAlignment = HorizontalAlignment.Center; paint.VerticalAlignment = VerticalAlignment.Center;
         paint.RenderTransform = rotation; paint.RenderTransformOrigin = new Point(0.5, 0.5); paint.CacheMode = new BitmapCache(2);
         clipped.Children.Add(paint);
-        estimate.Children.Add(estimateArc); estimate.Children.Add(estimateFlow); estimate.Children.Add(estimateStep);
-        Children.Add(halo); Children.Add(track); Children.Add(clipped); Children.Add(segments); Children.Add(segmentBreath); Children.Add(estimate); Children.Add(core); Children.Add(ending);
-        delegated.Child = delegatedText; Children.Add(delegated);
+        estimate.Children.Add(helper.Paint); estimate.Children.Add(estimateArc); estimate.Children.Add(estimateFlow); estimate.Children.Add(estimateStep);
+        Children.Add(halo); Children.Add(track); Children.Add(clipped); Children.Add(segments); Children.Add(segmentBreath); Children.Add(segmentHelpers);
+        Children.Add(estimate); Children.Add(core); Children.Add(ending);
         SizeChanged += (_, _) => UpdateClip();
-        IsVisibleChanged += (_, _) => { UpdateRotation(); if (!IsVisible) StopTransient(); UpdateSegmentBreath(); };
+        // The island updates both of its badges, then shows one: the header shown last
+        // is drawn again, so a hidden badge's loops stop and a shown badge's start.
+        IsVisibleChanged += (_, _) =>
+        {
+            if (!IsVisible) StopTransient();
+            if (lastValue != null) Update(lastValue, canAnimate, lastOptions);
+            else { UpdateRotation(); UpdateSegmentBreath(); }
+        };
         Loaded += (_, _) =>
         {
             orbitSource = PresentationSource.FromVisual(this) as HwndSource; orbitSource?.AddHook(OrbitMessage);
@@ -144,7 +160,8 @@ public sealed class ActivityBadge : Grid
         };
         Unloaded += (_, _) =>
         {
-            StopRotation(); StopTransient(); StopEstimate(); segmentBreathWanted = false; UpdateSegmentBreath(); orbit?.Dispose(); orbit = null;
+            StopRotation(); StopTransient(); StopEstimate(); segmentBreathWanted = false; UpdateSegmentBreath(); UpdateSegmentHelpers(null, false);
+            orbit?.Dispose(); orbit = null;
             if (orbitSource is { IsDisposed: false }) orbitSource.RemoveHook(OrbitMessage); orbitSource = null;
         };
     }
@@ -176,17 +193,22 @@ public sealed class ActivityBadge : Grid
         estimateProvider = average ? value.ProgressAverageProvider : null;
         estimateWhite = average && value.ProgressAverageProvider == null;
         var shown = average ? value with { ProgressFraction = value.ProgressAverage, ProgressStale = value.ProgressAverageStale, ProgressLongStep = false } : value;
+        // Without an estimate, Codex for Claude runs circle with the services as Codex comets.
+        helperRuns = Math.Max(0, value.DelegatedRunning ?? 0);
+        if (helperRuns > 0 && shown.ProgressFraction == null && !segmentsShown)
+            shown = shown with { Orbit = new Dictionary<string, int>(shown.Orbit) { ["codex"] = (shown.Orbit.TryGetValue("codex", out int codex) ? codex : 0) + helperRuns } };
         // Only the chosen average shows its percent; segments that give way to it keep the count.
         string? percent = average && choice.MultiRing == "average" && choice.MultiCore == "percent" ? Percent(value.ProgressAverage!.Value)
             : choice.SinglePercent && value.ActiveCount == 1 && value.Attention == null && value.ProgressFraction is double single ? Percent(single) : null;
         Width = percent == null && value.CoreSymbol == null && value.ActiveCount >= 10 ? 27 : 20;
-        paint.Update(value.Orbit, !reduce);
+        paint.Update(shown.Orbit, !reduce);
         track.BorderBrush = PacerPalette.Overlay(26);
         segments.Update(segmentsShown ? value.ProgressTasks : null); segmentBreath.Update(segmentsShown ? value.ProgressTasks : null);
-        segments.Visibility = segmentBreath.Visibility = segmentsShown ? Visibility.Visible : Visibility.Collapsed;
+        segments.Visibility = segmentBreath.Visibility = segmentHelpers.Visibility = segmentsShown ? Visibility.Visible : Visibility.Collapsed;
         segmentBreathWanted = segmentsShown && !reduce && value.ProgressTasks!.Any(task => task.Fraction == null);
         UpdateSegmentBreath();
-        bool hasOrbit = value.Orbit.Values.Any(count => count > 0) && shown.ProgressFraction == null && !segmentsShown;
+        UpdateSegmentHelpers(segmentsShown ? value.ProgressTasks : null, !reduce);
+        bool hasOrbit = shown.Orbit.Values.Any(count => count > 0) && shown.ProgressFraction == null && !segmentsShown;
         track.Visibility = clipped.Visibility = hasOrbit ? Visibility.Visible : Visibility.Collapsed;
         UpdateEstimate(shown, !reduce);
         RingMode = segmentsShown ? "segments" : average ? "average" : shown.ProgressFraction != null ? "estimate" : hasOrbit ? "orbit" : "none";
@@ -229,9 +251,6 @@ public sealed class ActivityBadge : Grid
         halo.Visibility = value.Attention != null ? Visibility.Visible : Visibility.Collapsed;
         ending.Background = EndingInk(value);
         ending.Visibility = choice.EndMark && value.Ending != null && !value.EndingIsCore ? Visibility.Visible : Visibility.Collapsed;
-        delegated.Background = PacerPalette.Provider("codex");
-        delegatedText.Text = value.DelegatedRunning is > 9 ? "9+" : value.DelegatedRunning?.ToString() ?? "";
-        delegated.Visibility = value.DelegatedRunning is > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (reduce) StopTransient();
         else if (IsVisible && previous != null)
         {
@@ -254,6 +273,7 @@ public sealed class ActivityBadge : Grid
         estimateArc.Ink = estimateStep.Ink = tint;
         if (!shows)
         {
+            helper.Stop();
             if (!showed) { estimate.Visibility = Visibility.Collapsed; return; }
             StopEstimate();
             if (!animate) { estimate.Visibility = Visibility.Collapsed; estimate.Opacity = 0; return; }
@@ -282,10 +302,13 @@ public sealed class ActivityBadge : Grid
         double? flow = live && !longStep && !stale && target is > 0.04 and < 0.9995 ? target : null;
         if (flow != estimateFlowTo)
         {
-            estimateFlowLoop?.Dispose(); estimateFlowLoop = null; estimateFlow.BeginAnimation(EstimatePaint.FrontProperty, null);
+            estimateFlowLoop?.Dispose(); estimateFlowLoop = null; estimateFlow.BeginAnimation(EstimatePaint.FlowHeadProperty, null);
             estimateFlowTo = flow; estimateFlow.Flowing = flow != null;
             if (flow is double fraction) estimateFlowLoop = FlowLoop(fraction);
         }
+        // Codex's light keeps clear of the head, and of a long step's breath past it.
+        double breath = longStep ? EstimatePaint.StepLengths[0] : 0;
+        helper.Set(helperRuns > 0 ? HelperLight.Free(target + breath, 1) : null, animate, live, frameRate);
         bool step = longStep && target < 0.9995;
         if (live && step != (estimateStepLoop != null) || !live && estimateStepLoop != null)
         {
@@ -295,17 +318,8 @@ public sealed class ActivityBadge : Grid
         if (estimateStepLoop == null) estimateStep.Opacity = step ? 0.55 : 0;
     }
     /// One run of light from the arc's start out through its head, then a rest, on the shared clock.
-    private AnimationLease FlowLoop(double fraction)
-    {
-        double reach = fraction + EstimatePaint.FlowLengths[0];
-        var run = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(EstimatePaint.FlowPeriod), RepeatBehavior = RepeatBehavior.Forever,
-            BeginTime = TimeSpan.FromSeconds(-(TaskProgressRing.Now % EstimatePaint.FlowPeriod)) };
-        run.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        run.KeyFrames.Add(new LinearDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowTravel))));
-        run.KeyFrames.Add(new DiscreteDoubleKeyFrame(reach, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(EstimatePaint.FlowPeriod))));
-        Timeline.SetDesiredFrameRate(run, frameRate);
-        return new AnimationLease(run, clock => estimateFlow.ApplyAnimationClock(EstimatePaint.FrontProperty, clock));
-    }
+    private AnimationLease FlowLoop(double fraction) => new(EstimatePaint.Travel(0, fraction, TaskProgressRing.Now, frameRate),
+        clock => estimateFlow.ApplyAnimationClock(EstimatePaint.FlowHeadProperty, clock));
     private AnimationLease BreathLoop(UIElement target) => new(StepBreath(TaskProgressRing.Now, frameRate), clock => target.ApplyAnimationClock(OpacityProperty, clock));
     /// The fallback rotation without the compositor, on the shared clock.
     private AnimationLease SpinLoop()
@@ -340,7 +354,22 @@ public sealed class ActivityBadge : Grid
     private void StopEstimate()
     {
         estimateSweep?.Dispose(); estimateSweep = null; estimateFlowLoop?.Dispose(); estimateFlowLoop = null; estimateStepLoop?.Dispose(); estimateStepLoop = null;
-        estimateFlowTo = null; estimateFlow.Flowing = false; estimateFlow.BeginAnimation(EstimatePaint.FrontProperty, null); estimateStep.BeginAnimation(OpacityProperty, null);
+        estimateFlowTo = null; estimateFlow.Flowing = false; estimateFlow.BeginAnimation(EstimatePaint.FlowHeadProperty, null); estimateStep.BeginAnimation(OpacityProperty, null);
+        helper.Stop();
+    }
+    /// In segments, Codex's light travels the free stretch of each task its runs
+    /// work for, measured in the whole circle so it keeps its size in a short arc.
+    private void UpdateSegmentHelpers(IReadOnlyList<EngineTaskShare>? tasks, bool animate)
+    {
+        int count = tasks?.Count ?? 0;
+        while (laneHelpers.Count < count) { var light = new HelperLight(SegmentPaint.Radius, SegmentPaint.Stroke); laneHelpers.Add(light); segmentHelpers.Children.Add(light.Paint); }
+        while (laneHelpers.Count > count) { var light = laneHelpers[^1]; light.Stop(); laneHelpers.RemoveAt(laneHelpers.Count - 1); segmentHelpers.Children.Remove(light.Paint); }
+        double span = (1 - SegmentPaint.Gap * count) / Math.Max(1, count);
+        for (int index = 0; index < count; index++)
+        {
+            double start = SegmentPaint.Gap / 2 + index * (span + SegmentPaint.Gap), fill = Math.Clamp(tasks![index].Fraction ?? 0, 0, 1);
+            laneHelpers[index].Set(tasks[index].Helpers is > 0 ? HelperLight.Free(start + fill * span, start + span) : null, animate, animate && IsVisible, frameRate);
+        }
     }
     private static Brush EndingInk(EngineHeader value) => value.Ending == "xmark.circle" ? PacerPalette.Danger
         : value.Ending == "pause.circle" ? PacerPalette.Paused : PacerPalette.Provider(value.EndingProvider);
@@ -446,6 +475,8 @@ public sealed class ActivityBadge : Grid
 internal sealed class SegmentPaint : FrameworkElement
 {
     private EngineTaskShare[] tasks = [];
+    /// The arcs' radius and width, and the gap between two arcs as a share of the circle.
+    internal const double Radius = 8.6, Stroke = 1.8, Gap = 18.0 / 360;
     internal int Count => tasks.Length;
     /// The breathing layer: only the whole segments of tasks without an estimate.
     internal bool Breathing { get; init; }
@@ -460,7 +491,7 @@ internal sealed class SegmentPaint : FrameworkElement
         int count = tasks.Length;
         if (count < 2) return;
         var center = new Point(ActualWidth / 2, ActualHeight / 2);
-        const double radius = 8.6, stroke = 1.8, gap = 18.0 / 360;
+        const double radius = Radius, stroke = Stroke, gap = Gap;
         double span = (1 - gap * count) / count;
         for (int index = 0; index < count; index++)
         {

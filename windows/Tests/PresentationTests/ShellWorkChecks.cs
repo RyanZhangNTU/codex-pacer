@@ -138,7 +138,7 @@ internal static class ShellWorkChecks
             // they come back when someone can see the desktop again.
             var quota = (AlternatingQuotaText)window.FindName("QuotaLabel");
             bool Moving() => quota.Scheduling.Scheduled || badge.RotationScheduling.Composed || badge.RotationScheduling.FallbackClock
-                || badge.EstimateLoops.Length > 0 || badge.SegmentBreathing;
+                || badge.EstimateLoops.Length > 0 || badge.SegmentBreathing || badge.HelperLoops;
             if (motion)
             {
                 await PresentationWait.UntilAsync(Moving, "The visible reference island must run its decorations");

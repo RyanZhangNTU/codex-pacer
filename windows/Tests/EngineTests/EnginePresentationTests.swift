@@ -106,4 +106,21 @@ final class EnginePresentationTests: XCTestCase {
         XCTAssertNotNil(fields["rateIsFresh"])
         XCTAssertNil(fields["activity"], "Core values do not leak into the version 1 row DTO")
     }
+
+    /// Codex for Claude runs reach the badge as a name and as the Claude task
+    /// they work for, never as a count drawn on it.
+    func testHeaderNamesCodexForClaudeRunsAndTheTaskTheyWorkFor() throws {
+        var value = HeaderActivity(core: .count(2), activeCount: 2, orbit: [.claude: 2],
+            tasks: [.init(provider: .claude, fraction: 0.4, helpers: 2), .init(provider: .claude, fraction: nil)])
+        value.delegatedRunning = 2
+        let header = EngineHeader(value)
+        XCTAssertEqual(header.delegatedRunning, 2)
+        XCTAssertEqual(header.delegatedText, L10n.text("delegation.badge", 2))
+        XCTAssertEqual(header.progressTasks?.map(\.helpers), [2, nil])
+        let tasks = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(header.progressTasks)) as? [[String: Any]])
+        XCTAssertEqual(tasks[0]["helpers"] as? Int, 2)
+        XCTAssertNil(tasks[1]["helpers"], "A task without runs leaves the field out")
+        value.delegatedRunning = 0
+        XCTAssertNil(EngineHeader(value).delegatedText)
+    }
 }
