@@ -13,10 +13,12 @@
     <Border x:Name="Focus" CornerRadius="12" BorderThickness="1" BorderBrush="Transparent" IsHitTestVisible="False" VerticalAlignment="Top" Height="{Binding MainHeight}"/>
    </Grid>
    <ControlTemplate.Triggers>
-    <MultiTrigger><MultiTrigger.Conditions><Condition Property="local:DesktopAppearance.HighContrast" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
+    <MultiTrigger><MultiTrigger.Conditions><Condition Property="local:DesktopAppearance.HighContrast" Value="True"/><Condition Property="IsMouseOver" Value="True"/><Condition Property="Focusable" Value="True"/></MultiTrigger.Conditions>
      <Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
     </MultiTrigger>
-    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/></Trigger>
+    <MultiTrigger><MultiTrigger.Conditions><Condition Property="Focusable" Value="True"/><Condition Property="IsKeyboardFocused" Value="True"/></MultiTrigger.Conditions>
+     <Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+    </MultiTrigger>
    </ControlTemplate.Triggers>
   </ControlTemplate>
  </Button.Template>

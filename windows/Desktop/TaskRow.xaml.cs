@@ -49,7 +49,7 @@ public partial class TaskRow : Button
         BuildDelegations(value, options);
         // The one-line row's icon draws the 28-point face at 22.
         if (state.OneLine) Icon.LayoutTransform = new ScaleTransform(22.0 / 28, 22.0 / 28);
-        Background = PacerPalette.Hover; IsEnabled = false;
+        Background = PacerPalette.Hover; IsEnabled = false; Focusable = false;
         Click += (_, _) => { if (IsEnabled) open?.Invoke(); };
         // The task highlights while the pointer is on its own row; over the Codex runs under it,
         // only the run under the pointer lights up.
@@ -92,14 +92,20 @@ public partial class TaskRow : Button
     /// The row's status icon; read by the presentation checks.
     internal TaskStatusIcon StatusIcon => Icon;
     internal void SetOpenAction(Action? action, string help, bool animate)
-    { open = action; IsEnabled = action != null; Focusable = IsEnabled; AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Icon.SetMotion(animate); }
+    {
+        open = action; Focusable = action != null; UpdateEnabled();
+        AutomationProperties.SetHelpText(this, help); animations = animate; UpdateHover(); Icon.SetMotion(animate);
+        foreach (var line in Delegations.Children.OfType<Grid>()) RefreshLineHighlight(line);
+    }
+    // Disabling the whole row also disables its Stop buttons.
+    private void UpdateEnabled() => IsEnabled = open != null || StopButtons().Any();
     internal void SetAnimations(bool value)
     {
         animations = value; Icon.SetMotion(value); if (!value) UpdateHover();
         foreach (var icon in Delegations.Children.OfType<Grid>().SelectMany(line => line.Children.OfType<TaskStatusIcon>())) icon.SetMotion(value);
     }
     /// Stop on a running Codex for Claude run's line; the island sends the run's ID.
-    internal void SetStopAction(Action<string>? action, string label) { stop = action; stopLabel = label; RefreshStopButtons(); }
+    internal void SetStopAction(Action<string>? action, string label) { stop = action; stopLabel = label; UpdateEnabled(); RefreshStopButtons(); }
     private void RefreshStopButtons()
     {
         foreach (var line in Delegations.Children.OfType<Grid>())
@@ -216,7 +222,7 @@ public partial class TaskRow : Button
     private void RefreshLineHighlight(Grid line)
     {
         if (line.Children.OfType<Border>().FirstOrDefault() is { } highlight)
-            highlight.Opacity = line.IsMouseOver && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0;
+            highlight.Opacity = line.IsMouseOver && open != null && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0;
     }
     /// Whether a run line shows its highlight; read by the presentation checks.
     internal static bool LineHighlighted(Grid line) => line.Children.OfType<Border>().FirstOrDefault()?.Opacity > 0;
@@ -235,9 +241,9 @@ public partial class TaskRow : Button
     internal void ApplyAppearance() => UpdateHover();
     private void UpdateHover()
     {
-        double target = hovered && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0, from = HoverProgress; int revision = ++hoverRevision;
+        double target = hovered && open != null && IsEnabled && !DesktopAppearance.GetHighContrast(this) ? 1 : 0, from = HoverProgress; int revision = ++hoverRevision;
         hover?.Dispose(); hover = null; HoverProgress = target;
-        if (!animations || from == target) return;
+        if (!animations || open == null || from == target) return;
         var timing = NativeTaskRowTiming.Shared;
         var animation = new DoubleAnimation(from, target, TimeSpan.FromSeconds(timing.Duration)) { EasingFunction = timing.Ease };
         hover = new(animation, clock => ApplyAnimationClock(HoverProgressProperty, clock), () => { if (revision == hoverRevision) hover = null; });
@@ -247,6 +253,8 @@ public partial class TaskRow : Button
     /// button, which screen readers reach without hovering.
     private sealed class RowPeer(TaskRow owner) : ButtonAutomationPeer(owner)
     {
+        public override object? GetPattern(PatternInterface pattern) =>
+            pattern == PatternInterface.Invoke && owner.open == null && owner.IsEnabled ? null : base.GetPattern(pattern);
         protected override List<AutomationPeer>? GetChildrenCore()
         {
             var stops = owner.StopButtons().Select(button => UIElementAutomationPeer.CreatePeerForElement(button)).OfType<AutomationPeer>().ToList();

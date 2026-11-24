@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -89,6 +91,15 @@ internal static class DelegationRowChecks
             bitmap.Render(surface);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var file = File.Create(Path.Combine(output, "island-delegation-rows.png"))) encoder.Save(file);
+            row.SetOpenAction(null, "No link", false);
+            row.RaiseEvent(Pointer(Mouse.MouseEnterEvent));
+            var peer = UIElementAutomationPeer.CreatePeerForElement(row)!;
+            Check(!row.Focusable && peer.GetPattern(PatternInterface.Invoke) == null && AutomationProperties.GetHelpText(row) == "No link"
+                && row.HoverProgress == 0 && !TaskRow.LineHighlighted(folded!), "A task without a link offers no open action or highlight");
+            var stopPeer = peer.GetChildren()!.Single();
+            Check(stops[0].IsEnabled && stopPeer.IsEnabled() && stopPeer.GetName() == "Stop this Codex run", "Stop stays available without a task link");
+            ((IInvokeProvider)stopPeer.GetPattern(PatternInterface.Invoke)!).Invoke();
+            await PresentationWait.UntilAsync(() => stopped == running.Id, "Stop must reach the running job without opening the task");
             Console.WriteLine("PASS Codex for Claude rows: on-line readings, final speed and time, hover-only Stop, details for screen readers, folded older runs, no hover popups");
         }
         finally { window.Close(); }

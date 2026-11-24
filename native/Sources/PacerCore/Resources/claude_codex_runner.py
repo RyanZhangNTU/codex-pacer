@@ -8,16 +8,18 @@ never the brief or Codex's output, which stay beside it. Pacer reads the
 ledger to show each run under its Claude task.
 
 How long a run's Codex threads stay is the user's choice in Pacer (config.json
-`records`): `turn` deletes every finished run when the Claude turn ends (Pacer's
-Claude hook starts `turn-end` once the turn ends with no background work left),
-`timed` deletes them `recordsHours` after they end, and `keep` leaves the
-threads in Codex's history. Deleting a run removes its Codex threads and the
-sub-threads they spawned (`codex delete --force`), its Codex worktree and its
-run folder. A worktree that still holds changes nobody applied or discarded
+`records`): `turn` deletes finished runs after a Stop with no background work
+and a confirming transcript summary. The detached `turn-end` waits for that
+summary. With `timed`, the next run start or confirmed turn end in the session
+deletes records past `recordsHours`. With `keep`, threads stay in Codex's
+history. Deleting a run removes its thread and sub-threads
+(`codex delete --force`), its Codex worktree and its run folder. A worktree
+that still holds changes nobody applied or discarded
 stays until its Claude session is gone; then its changes are saved as a patch
-under <root>/patches before the worktree is removed. Pacer itself runs `sweep`
-now and then, which retries deletions another Codex process blocked, deletes
-expired runs and cleans runs whose Claude process is gone.
+under <root>/patches before the worktree is removed. Run starts and explicit
+cleanup sweep other sessions. A Stop with no background work in any Claude
+session also starts a detached sweep when other sessions or queued deletions
+remain, at most once every ten minutes.
 
 Pacer rewrites this file with each release. Python 3.9 or later, standard
 library only.
@@ -136,6 +138,7 @@ class Options:
         self.write = None; self.worktree = False; self.worktree_setting = False; self.cd = None; self.images = []; self.timeout = None
         self.prompt_file = None; self.review = None; self.title = None; self.dry_run = False; self.text = []
         self.label = None; self.json = False; self.session = None
+        self.transcript = None; self.cursor = None
         self.level = 'read-only'; self.memory = False
 
 
@@ -179,7 +182,12 @@ def parse(argv):
         elif a == '--commit': o.review = ['--commit', value()]; i += 1
         elif a == '--title': o.title = value(); i += 1
         elif a == '--json': o.json = True
-        elif a == '--session': o.session = ident(value()); i += 1
+        elif a == '--session': o.session = ident(value()) or fail('invalid session'); i += 1
+        elif a == '--transcript': o.transcript = value(); i += 1
+        elif a == '--cursor':
+            try: o.cursor = json.loads(value())
+            except ValueError: fail('invalid transcript cursor')
+            i += 1
         elif a == '--dry-run': o.dry_run = True
         elif a in ('-h', '--help'): sys.stdout.write(USAGE); sys.exit(0)
         elif a == '--': o.text.extend(argv[i + 1:]); break
@@ -197,6 +205,8 @@ def parse(argv):
         fail('--worktree is only available for a new task')
     if o.mode == 'review' and o.write:
         fail('review is read-only; drop --write')
+    if o.worktree and o.write is False:
+        fail('--worktree cannot be used with --read-only')
     allowed = level(settings)
     if o.worktree:
         o.write = True
@@ -818,7 +828,17 @@ def save_patch(run):
         return None
 
 
-def clean_session(session, codex, why):
+def cleanup_in_progress(lock):
+    try:
+        owner = lock.read_text(encoding='ascii').strip()
+        if owner.isdecimal():
+            return alive(int(owner))
+        return time.time() - lock.stat().st_mtime < 300  # earlier runners left an empty marker
+    except FileNotFoundError:
+        return False
+
+
+def clean_session(session, codex, why, stopped_at=None):
     """Deletes the finished runs of one Claude session that its record setting
     lets go. `why`: `turn` (the turn ended), `now` (Claude asked for cleanup),
     `alive` or `gone` (a sweep, with the session's Claude process running or not).
@@ -827,16 +847,16 @@ def clean_session(session, codex, why):
     if not folder.is_dir():
         return 0, 0
     lock = folder / '.cleanup.lock'
-    try:
-        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
-    except OSError:
+    # A resume either registers first or sees this marker until deletion finishes.
+    with admission_lock():
+        if cleanup_in_progress(lock):
+            return 0, 0
         try:
-            if time.time() - lock.stat().st_mtime < 300:
-                return 0, 0  # another cleaner is at work
+            lock.unlink(missing_ok=True)
+            with lock.open('x', encoding='ascii') as owner:
+                owner.write(str(os.getpid()))
         except OSError:
-            pass
-        lock.touch()
+            return 0, 0
     keep, hours = records(config()) if CONFIG.exists() else ('keep', 0)
     deleted = kept = 0
     try:
@@ -847,12 +867,12 @@ def clean_session(session, codex, why):
         doomed, dropped = [], []
         for group in groups.values():
             latest = group[-1]
-            if any(is_running(run) for run in group):
+            later_turn = stopped_at is not None and (latest.get('created') or 0) > stopped_at
+            if later_turn or any(is_running(run) for run in group):
                 kept += len(group)
                 continue
             expired = (latest.get('ended') or latest.get('created') or 0) + hours * 3600 <= time.time()
-            delete = why == 'now' or (keep == 'turn' and why in ('turn', 'gone')) or (
-                keep == 'timed' and expired and why in ('alive', 'gone'))
+            delete = why == 'now' or (keep == 'turn' and why in ('turn', 'gone')) or (keep == 'timed' and expired)
             if why == 'gone' or delete:
                 if pending_worktree(latest) and (why != 'gone' or not save_patch(latest)):
                     kept += len(group)
@@ -895,10 +915,11 @@ def request_stop(run, by):
         return False
 
 
-def sweep(codex, current=None):
+def sweep(codex, current=None, from_stop=False):
     """Retries blocked deletions, deletes runs whose time is up, then cleans
     sessions whose Claude process is gone or that are older than two days.
-    Their running jobs are stopped first and cleaned by a later sweep."""
+    Stop-triggered sweeps leave running jobs alone. Run starts and explicit
+    cleanup also stop orphaned jobs and jobs in sessions older than two days."""
     retry_pending(codex)
     for session in sessions():
         if session == current:
@@ -912,13 +933,17 @@ def sweep(codex, current=None):
             continue
         newest = max(run.get('created') or 0 for run in runs)
         owners = [run.get('owner', {}).get('pid') for run in runs if isinstance(run.get('owner'), dict)]
-        if any(alive(pid) for pid in owners) and time.time() - newest < STALE:
-            if records(config())[0] == 'timed':
+        timed = records(config())[0] == 'timed'
+        # An unrelated Stop is no evidence that a session without a PID has exited.
+        recent = time.time() - newest < STALE
+        if (any(alive(pid) for pid in owners) and (recent or from_stop)) or (from_stop and not any(owners) and recent):
+            if timed:
                 clean_session(session, codex, 'alive')
             continue
-        for run in runs:
-            if is_running(run):
-                request_stop(run, 'sweep')
+        if not from_stop:
+            for run in runs:
+                if is_running(run):
+                    request_stop(run, 'sweep')
         clean_session(session, codex, 'gone')
     try:
         RUNS.rmdir()
@@ -1055,14 +1080,84 @@ def discard_run(thread):
     print('discarded: %s%s; deleted at the next cleanup' % (thread, ' (worktree %s)' % run['worktree'] if run.get('worktree') else ''))
 
 
-def cleanup_now(session, why='now', quiet=False):
+def stop_decision(value, errors, session):
+    # Match Stop error attachments by tool-use ID, as in claude_activity.py.
+    if not isinstance(value, dict):
+        return False
+    attachment = value.get('attachment')
+    if value.get('type') == 'attachment' and isinstance(attachment, dict) and attachment.get('hookEvent') == 'Stop':
+        kind = attachment.get('type')
+        if kind in ('hook_blocking_error', 'hook_non_blocking_error'):
+            stop = ident(attachment.get('toolUseID'))
+            if not stop:
+                return False
+            blocked, failures = errors.get(stop, (False, 0))
+            errors[stop] = (blocked or kind == 'hook_blocking_error', failures + 1)
+            if len(errors) > 16:
+                return False
+    if value.get('type') == 'system' and value.get('subtype') == 'stop_hook_summary':
+        blocked, failures = errors.get(ident(value.get('toolUseID')), (False, 0))
+        listed = value.get('hookErrors')
+        return (value.get('sessionId', session) == session and not blocked and value.get('preventedContinuation') is False
+                and value.get('hookAdditionalContext') == [] and isinstance(listed, list) and len(listed) <= failures)
+    return None
+
+
+def confirmed_stop(path, cursor, session, timeout=16 * 60):
+    """Read only new transcript lines, through the first Stop summary."""
+    import hashlib
+    if not path or not isinstance(cursor, dict) or not isinstance(cursor.get('at'), (int, float)):
+        return False
+    offset = cursor.get('offset')
+    if not isinstance(offset, int) or offset < 0:
+        return False
+    identity = (cursor.get('dev'), cursor.get('ino'))
+    tail = cursor.get('tail')
+    errors = {}
+    size = offset
+    deadline = time.monotonic() + timeout
+    delay = 1
+    try:
+        while time.monotonic() < deadline:
+            info = os.stat(path)
+            if (info.st_dev, info.st_ino) != identity or info.st_size < size:
+                return False
+            if info.st_size > size:
+                size = info.st_size
+                with open(path, 'rb') as handle:
+                    if not os.path.samestat(info, os.fstat(handle.fileno())):
+                        return False
+                    # A truncate and rewrite can grow past the old offset between polls.
+                    handle.seek(max(0, offset - 64))
+                    if hashlib.sha256(handle.read(min(offset, 64))).hexdigest() != tail:
+                        return False
+                    while offset < size:
+                        line = handle.readline(min(size - offset, 1024 * 1024 + 1))
+                        if len(line) > 1024 * 1024 or time.monotonic() >= deadline:
+                            return False
+                        if not line.endswith(b'\n'):
+                            break
+                        offset += len(line)
+                        decision = stop_decision(json.loads(line), errors, session)
+                        if decision is not None:
+                            current = os.stat(path)
+                            return decision and os.path.samestat(info, current) and current.st_size >= size
+                    handle.seek(max(0, offset - 64))
+                    tail = hashlib.sha256(handle.read(min(offset, 64))).hexdigest()
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
+            delay = min(2, delay + 0.5)
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def cleanup_now(session):
     codex = resolve_codex()
-    deleted, kept = clean_session(session, codex, why)
+    deleted, kept = clean_session(session, codex, 'now')
     sweep(codex, current=session)
-    if not quiet:
-        pending = pending_count()
-        print('deleted %d run(s)%s%s' % (deleted, '; kept %d still in progress' % kept if kept else '',
-              '; %d thread(s) still queued for deletion (held by another Codex process)' % pending if pending else ''))
+    pending = pending_count()
+    print('deleted %d run(s)%s%s' % (deleted, '; kept %d still in progress' % kept if kept else '',
+          '; %d thread(s) still queued for deletion (held by another Codex process)' % pending if pending else ''))
 
 
 class Events:
@@ -1129,6 +1224,9 @@ def run_job(o):
         if o.title:
             scope += '\nReview title: ' + o.title
         prompt = scope + '\n\n' + prompt
+    codex = resolve_codex() or fail('Codex not found. Install it (npm install -g @openai/codex) or set its path in Pacer.', 3)
+    if not o.dry_run and records(config())[0] == 'timed':
+        clean_session(SESSION, codex, 'alive')
     resume_id = None
     origin = None
     if o.mode == 'resume':
@@ -1138,7 +1236,6 @@ def run_job(o):
         if is_running(origin):
             fail('that thread is still running; wait for it to finish')
         resume_id = origin.get('thread')
-    codex = resolve_codex() or fail('Codex not found. Install it (npm install -g @openai/codex) or set its path in Pacer.', 3)
     cwd = os.path.abspath(o.cd or (origin or {}).get('worktree') or (origin or {}).get('cwd') or os.getcwd())
     # Outside a git repository a task runs in place; reviews and explicit worktrees need one.
     repo = toplevel(cwd)
@@ -1192,6 +1289,11 @@ def run_job(o):
         'worktreeBase': base, 'appliedTree': (origin or {}).get('appliedTree'),
     }
     with admission_lock():
+        if resume_id:
+            if cleanup_in_progress(session_dir() / '.cleanup.lock'):
+                fail('this session is being cleaned up. Try again shortly.', 4)
+            if not (Path(origin['dir']) / 'meta.json').is_file():
+                fail('that run was cleaned up before it could resume')
         running = all_running()
         if resume_id and any(run.get('thread') == resume_id for run in running):
             fail('that thread is still running; wait for it to finish')
@@ -1388,11 +1490,11 @@ def main():
     elif o.mode == 'cleanup':
         cleanup_now(SESSION)
     elif o.mode == 'turn-end':
-        # Started detached by Pacer's Claude hook once a turn ends with no background work.
-        if o.session:
-            cleanup_now(o.session, why='turn', quiet=True)
+        if o.session and CONFIG.is_file() and records(config())[0] != 'keep':
+            if confirmed_stop(o.transcript, o.cursor, o.session):
+                clean_session(o.session, resolve_codex(), 'turn', stopped_at=o.cursor['at'])
     elif o.mode == 'sweep':
-        sweep(resolve_codex())
+        sweep(resolve_codex(), current=o.session, from_stop=o.session is not None)
     elif o.mode == 'doctor':
         doctor()
     else:

@@ -44,6 +44,10 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertTrue(rows[0].delegations[0].status.hasPrefix(L10n.text("delegation.mode.review") + " · " + L10n.text("delegation.read_only")),
             "A review says so; a plain task leaves its mode out")
         XCTAssertEqual(rows[0].delegations[0].delegation?.parentID, claude.id)
+        let hidden = state.presentation(at: now, options: .init(hideProjects: true)).rows[0].delegations[0]
+        XCTAssertEqual(hidden.title, L10n.text("delegation.mode.review"))
+        XCTAssertTrue(hidden.status.hasPrefix(L10n.text("delegation.read_only")))
+        XCTAssertFalse(hidden.delegationDetail.contains { ($0.label + $0.value).contains("Review login changes") })
         XCTAssertEqual(state.presentation(at: now).header(symbol: \.rawValue).delegatedRunning, 1, "The badge counts the run working for Claude")
         XCTAssertEqual(state.presentation(at: now).header(symbol: \.rawValue).tasks.map(\.helpers), [1], "and the Claude task it works for")
         XCTAssertEqual(state.presentation(at: now).header(symbol: \.rawValue).activeCount, 1, "Claude and its run are one task")
@@ -437,6 +441,82 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertTrue(message.contains("Try again"), message)
     }
 
+    func testTurnEndWaitsForTheFirstNewStopSummary() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try XCTUnwrap(ClaudeCodexDelegation.runnerScript()).write(to: root.appendingPathComponent("runner.py"))
+        let checks = #"""
+        import hashlib, json, os, sys, time
+        from pathlib import Path
+        from unittest.mock import patch
+        sys.path.insert(0, os.getcwd())
+        import runner as r
+        path = Path('transcript.jsonl')
+        summary = dict(type='system', subtype='stop_hook_summary', toolUseID='stop', hookErrors=[],
+                       hookAdditionalContext=[], preventedContinuation=False)
+        def line(value):
+            return (json.dumps(value) + '\n').encode()
+        def cursor():
+            prior = line(summary)
+            path.write_bytes(prior)
+            info = path.stat()
+            return dict(offset=len(prior), ino=info.st_ino, dev=info.st_dev,
+                        tail=hashlib.sha256(prior[-64:]).hexdigest(), at=time.time())
+        def append(data):
+            with path.open('ab') as handle: handle.write(data)
+        def attachment(kind, stop='stop'):
+            return dict(type='attachment', attachment=dict(type=kind, hookEvent='Stop', toolUseID=stop))
+        blocking = attachment('hook_blocking_error')
+        failure = attachment('hook_non_blocking_error')
+        r.CONFIG.write_text(json.dumps(dict(records='turn')))
+        def run(name, created, **meta):
+            folder = r.session_dir('owner') / name
+            folder.mkdir(parents=True)
+            r.save(dict(dir=str(folder), created=created, **meta))
+            return folder
+        ended = run('finished', time.time()-120, status='ok')
+        live = run('live', time.time()-60, status='running', runner=dict(pid=os.getpid()))
+        later = run('next-turn', time.time()+60, status='ok')
+        def turn_end(c):
+            args = ['runner.py','turn-end','--session','owner','--transcript',str(path),'--cursor',json.dumps(c)]
+            with patch.object(sys,'argv',args): r.main()
+        for records in [[dict(summary,preventedContinuation=True)], [dict(summary,hookAdditionalContext=['more'])],
+                        [blocking,summary], [dict(summary,hookErrors=['unmatched'])],
+                        [failure,dict(summary,hookErrors=['one','two'])]]:
+            c = cursor()
+            for record in records + [summary]: append(line(record))
+            turn_end(c)
+            assert ended.exists(), 'a later clean summary cannot confirm this attempted Stop'
+        c = cursor()
+        assert not r.confirmed_stop(path,c,'owner',timeout=.01), 'do not replay the earlier summary'
+        path.write_bytes(b'')
+        assert not r.confirmed_stop(path,c,'owner')
+        path.write_bytes(b' ' * c['offset'] + line(summary))
+        assert not r.confirmed_stop(path,c,'owner'), 'truncated and regrown'
+        c = cursor()
+        path.rename(path.with_suffix('.old'))
+        path.write_bytes(line(summary) * 2)
+        assert not r.confirmed_stop(path,c,'owner'), 'replacement at the same path and offset'
+        path.unlink()
+        assert not r.confirmed_stop(path,c,'owner')
+        c = cursor()
+        append(line(attachment('hook_blocking_error','another-stop')) + line(failure))
+        verified = line(dict(summary,hookErrors=['nonblocking']))
+        append(verified[:-2])
+        with patch.object(r.time,'sleep',side_effect=lambda _: append(verified[-2:])) as wait:
+            turn_end(c)
+        wait.assert_called_once()
+        assert not ended.exists() and live.exists() and later.exists()
+        """#
+        let process = Process()
+        process.arguments = ["-S", "-c", checks]; process.currentDirectoryURL = root
+        let fixture = try PythonFixture.prepare(process)
+        defer { fixture.remove() }
+        try process.run(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+    }
+
     func testRunnerAdmissionReviewAndWorktreeLifecycle() throws {
         #if os(Windows)
         throw XCTSkip("This integration fixture uses a POSIX shell executable and sends SIGTERM to the runner.")
@@ -471,7 +551,7 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         thread = '12345678-1234-1234-1234-123456789abc'
         fake = root / 'fake-codex'
         fake.write_text('''#!/bin/sh
-        if [ "$1" = delete ]; then echo delete >> "$TRACE"; exit 0; fi
+        if [ "$1" = delete ]; then echo delete >> "$TRACE"; echo "$3" >> "$TRACE.deleted"; exit 0; fi
         pwd > "$TRACE.cwd"
         echo "$CODEX_HOME" > "$TRACE.home"
         cat > "$TRACE"
@@ -490,7 +570,7 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         def call(*args, code=0):
             result = subprocess.run(command + list(args), cwd=repo, env=env, capture_output=True, text=True, timeout=10)
             assert result.returncode == code, (args, result.stdout, result.stderr)
-            return result.stdout
+            return result.stderr if code else result.stdout
         settings = dict(command='python3 -S "(test)/runner.py"', codexHome=str(root / 'custom'), sandbox='workspace-write')
         def configure(**changes):
             r.CONFIG.write_text(json.dumps(dict(settings, **changes)))
@@ -513,9 +593,23 @@ final class ClaudeCodexDelegationTests: XCTestCase {
             configure()
         call('review','--uncommitted','--worktree',code=2)
         call('resume',thread,'--worktree',code=2)
+        configure(worktree=True, sandbox='workspace-write-network')
+        for flags in [('--read-only','--worktree'), ('--worktree','--read-only')]:
+            error = call(*flags,'brief',code=2)
+            assert '--read-only' in error and '--worktree' in error
+        readonly = json.loads(call('--read-only','--dry-run','brief'))['command']
+        assert 'sandbox_mode="read-only"' in readonly and '--worktree' not in readonly
+        configure()
         args = json.loads(call('-C','sub','--dry-run','brief'))['command']
         assert 'sandbox_workspace_write.network_access=false' in args
+        configure(records='timed',recordsHours=2)
+        expired = r.session_dir() / 'expired'
+        expired.mkdir()
+        expired_thread = '12345678-1234-1234-1234-123456789def'
+        r.save(dict(dir=str(expired),thread=expired_thread,status='ok',created=time.time()-9000,ended=time.time()-8000))
         call('-C','sub','brief')
+        assert not expired.exists() and Path(str(trace)+'.deleted').read_text().splitlines() == [expired_thread]
+        configure()
         assert Path(str(trace)+'.cwd').read_text().strip() == str(sub)
         assert Path(str(trace)+'.home').read_text().strip() == settings['codexHome']
         # Start two writers together. The admitted child waits for a signal.
@@ -556,6 +650,10 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         assert (repo / 'outside').read_text().strip() == 'committed outside'
         applied = r.find_run(thread)['appliedTree']
         assert applied == git('rev-parse','HEAD^{tree}',cwd=tree)
+        lock = r.session_dir() / '.cleanup.lock'
+        lock.write_text(str(os.getpid()))
+        assert 'cleaned up' in call('resume',thread,'more',code=4)
+        lock.write_text('0')  # a cleaner that exited before removing its marker
         active = subprocess.Popen(command + ['resume',thread,'more'], cwd=repo, env=dict(env,SLOW='yes'), stdout=subprocess.PIPE)
         try:
             for _ in range(200):

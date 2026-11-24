@@ -259,9 +259,9 @@ public struct ActivityTaskRowPresentation: Sendable {
                 stopped: folded.filter { $0.codexDelegation?.status == .stopped }.count)
         } else { delegations = []; foldedDelegations = nil }
         phase = group?.isRunning == true ? .running : group?.isWaiting == true ? .waitingForInput : activity.observedPhase(at: now)
-        title = activity.codexDelegation.map(Self.delegationTitle) ?? Self.title(activity, hideProjects: options.hideProjects)
+        title = Self.title(activity, hideProjects: options.hideProjects)
         var text = phase == .completed ? activity.endingLabel : activity.detail(at: now)
-        if let link = activity.codexDelegation { text = Self.delegationStatus(link, phase: phase, detail: text) }
+        if let link = activity.codexDelegation { text = Self.delegationStatus(link, title: title, phase: phase, detail: text) }
         if group?.isRunning == true, activity.phase != .running, !activity.turnFailed { text = L10n.text("activity.running_long") }
         if let attention {
             if phase != .running { text = attention.label }
@@ -333,14 +333,15 @@ public struct ActivityTaskRowPresentation: Sendable {
         return lines
     }
     public static func title(_ activity: SessionActivity, hideProjects: Bool) -> String {
-        activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project)
+        if let link = activity.codexDelegation { return hideProjects ? modeText(link.mode) : delegationTitle(link) }
+        return activity.observedSessionLabel ?? (hideProjects ? L10n.text("activity.hidden_name") : activity.title ?? activity.project)
     }
     /// Claude's label for the run, or its mode. Codex's own thread title would
     /// be the start of Claude's brief.
     public static func delegationTitle(_ link: CodexDelegationLink) -> String { link.label ?? modeText(link.mode) }
     static func modeText(_ mode: ClaudeCodexDelegation.Mode) -> String { L10n.text("delegation.mode." + mode.rawValue) }
     /// Mode, access and what the run is doing; a finished run says how it ended.
-    static func delegationStatus(_ link: CodexDelegationLink, phase: ActivityPhase, detail: String) -> String {
+    static func delegationStatus(_ link: CodexDelegationLink, title: String, phase: ActivityPhase, detail: String) -> String {
         let access = L10n.text(link.worktree ? "delegation.worktree" : link.write ? "delegation.write" : "delegation.read_only")
         let state: String
         switch phase == .running ? .running : link.status {
@@ -351,7 +352,8 @@ public struct ActivityTaskRowPresentation: Sendable {
         case .stopped: state = L10n.text("delegation.status.stopped")
         }
         // A plain task says nothing about its mode; a review or follow-up does, unless its title already is the mode.
-        let parts = link.label == nil || link.mode == .task ? [access, state] : [modeText(link.mode), access, state]
+        let mode = modeText(link.mode)
+        let parts = title == mode || link.mode == .task ? [access, state] : [mode, access, state]
         return parts.joined(separator: " · ")
     }
     private static func creditAmount(_ value: Double) -> String {
