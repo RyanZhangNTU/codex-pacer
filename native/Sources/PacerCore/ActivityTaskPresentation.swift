@@ -52,8 +52,10 @@ public struct HeaderActivity: Equatable, Sendable {
         public let fraction: Double?
         /// The estimate has not changed for `TaskProgressRing.staleInterval`.
         public let stale: Bool
-        public init(provider: AgentProvider, fraction: Double?, stale: Bool = false) {
-            self.provider = provider; self.fraction = fraction.map { min(1, max(0, $0)) }; self.stale = stale
+        /// Codex for Claude runs working for this task.
+        public var helpers = 0
+        public init(provider: AgentProvider, fraction: Double?, stale: Bool = false, helpers: Int = 0) {
+            self.provider = provider; self.fraction = fraction.map { min(1, max(0, $0)) }; self.stale = stale; self.helpers = max(0, helpers)
         }
     }
     /// Every running task: a task waiting for the user turns the badge amber
@@ -101,8 +103,9 @@ public struct HeaderActivity: Equatable, Sendable {
         guard choice != .service, !reported.isEmpty else { return .services }
         return choice == .segments && showsSegments ? .segments : .average
     }
-    /// Codex for Claude runs working for the active Claude tasks; the badge
-    /// shows the number on Codex's color.
+    /// Codex for Claude runs working for the active Claude tasks. Their comets
+    /// circle the badge's ring in Codex's color: beside the services' comets,
+    /// or in the stretch an estimate has not reached.
     public var delegatedRunning = 0
     public var endingIsCore: Bool { ending != nil && activeCount == 0 && attention == nil }
     public var showsEndingMark: Bool { ending != nil && !endingIsCore }
@@ -456,7 +459,8 @@ public struct ActivityTaskPresentation: Sendable {
         let running = Set(overview.running.map(\.id))
         let tasks = rows.filter { running.contains($0.activity.id) }.map { row in
             let ring = unfinished(row.progressRing)
-            return HeaderActivity.TaskShare(provider: row.activity.provider, fraction: ring?.fraction, stale: ring?.stale ?? false)
+            let helpers = groups.first { $0.primary.id == row.activity.id }?.delegations.filter { $0.phase == .running }.count ?? 0
+            return HeaderActivity.TaskShare(provider: row.activity.provider, fraction: ring?.fraction, stale: ring?.stale ?? false, helpers: helpers)
         }
         var value = HeaderActivity(core: core, activeCount: active, orbit: orbit, attention: attention, ending: ending, progress: progress,
             tasks: tasks)

@@ -425,4 +425,61 @@ final class TaskStatusIconViewTests: XCTestCase {
         XCTAssertFalse(orbit.showsEstimate)
         window.close()
     }
+
+    /// Codex for Claude runs show as Codex's light travelling the stretch of
+    /// the ring an estimate has not reached, in every ring that shows estimates.
+    func testCodexForClaudeRunsTravelTheFreeStretch() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: .borderless, backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        let orbit = ActivityOrbitView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
+        window.contentView?.addSubview(orbit)
+        orbit.layoutSubtreeIfNeeded()
+        let claude = [ActivityOrbit.Segment(color: .systemOrange, weight: 1)], gap = HelperFlow.gap
+        orbit.update(segments: claude, progress: .init(fraction: 0.62, longStep: false, stale: false), animates: true)
+        XCTAssertNil(orbit.helperStretch, "No run, no light")
+        orbit.update(segments: claude, progress: .init(fraction: 0.62, longStep: false, stale: false), helpers: 1, animates: true)
+        let free = try XCTUnwrap(orbit.helperStretch)
+        XCTAssertEqual(free.lowerBound, 0.62 + gap, accuracy: 0.0001, "The light keeps clear of the arc's head")
+        XCTAssertEqual(free.upperBound, 1 - gap, accuracy: 0.0001, "and of the top, where the arc starts")
+        XCTAssertTrue(orbit.helperTravels)
+        XCTAssertEqual(orbit.estimateAnimationKeys, ["flow.travel"], "Claude's light keeps running along its arc")
+        orbit.update(segments: claude, progress: .init(fraction: 0.62, longStep: true, stale: false), helpers: 1, animates: true)
+        XCTAssertEqual(try XCTUnwrap(orbit.helperStretch).lowerBound, 0.62 + TaskStatusIconNSView.stepLengths[0] + gap, accuracy: 0.0001,
+                       "and of a long step's breath")
+        XCTAssertTrue(orbit.helperTravels, "Codex keeps working while Claude's step is long")
+        orbit.update(segments: claude, progress: .init(fraction: 0.95, longStep: false, stale: false), helpers: 1, animates: true)
+        XCTAssertNil(orbit.helperStretch, "Too little ring left to show")
+        XCTAssertFalse(orbit.helperTravels)
+        orbit.update(segments: claude, progress: .init(fraction: 0.3, longStep: false, stale: false), helpers: 2, animates: false)
+        XCTAssertTrue(orbit.helperTinted, "Without motion the stretch keeps a still tint")
+        XCTAssertFalse(orbit.helperTravels)
+        orbit.update(segments: claude, progress: nil, helpers: 0, animates: true)
+        XCTAssertNil(orbit.helperStretch, "Without an estimate the runs join the comets instead")
+        window.close()
+
+        // The light enters at the stretch's start and leaves at its end.
+        let travel = HelperFlow.travel(.init(start: 0.5, end: 0.9), length: 0.2, on: CALayer(), now: 0)
+        let ends = try XCTUnwrap((travel.animations?[1] as? CAKeyframeAnimation)?.values as? [NSNumber]).map(\.doubleValue)
+        XCTAssertEqual(ends.first, 0.5); XCTAssertEqual(ends.last, 0.9)
+        XCTAssertTrue(ends.allSatisfy { (0.5...0.9).contains($0) }, "It never leaves the stretch")
+
+        // Segments: the light travels the free stretch of the task the runs work for.
+        let segmentsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: .borderless, backing: .buffered, defer: true)
+        segmentsWindow.isReleasedWhenClosed = false
+        let ring = TaskSegmentsView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
+        segmentsWindow.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
+        segmentsWindow.contentView?.addSubview(ring)
+        typealias Segment = TaskSegmentsView.Segment
+        ring.update(segments: [Segment(color: .systemOrange, fraction: 0.4, stale: false, helpers: 1),
+            Segment(color: .systemTeal, fraction: 0.5, stale: false)], scale: 1, animates: true)
+        XCTAssertNotNil(ring.helperStretches[0]); XCTAssertNil(ring.helperStretches[1])
+        XCTAssertGreaterThan(try XCTUnwrap(ring.helperStretches[0]).lowerBound, 0.4)
+        XCTAssertTrue(ring.helpersTravel)
+        ring.update(segments: [Segment(color: .systemOrange, fraction: 0.4, stale: false), Segment(color: .systemTeal, fraction: 0.5, stale: false)],
+            scale: 1, animates: true)
+        XCTAssertEqual(ring.helperStretches.compactMap { $0 }.count, 0)
+        XCTAssertFalse(ring.helpersTravel, "The runs ended")
+        segmentsWindow.close()
+    }
 }

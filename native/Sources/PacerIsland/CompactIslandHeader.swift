@@ -233,7 +233,8 @@ struct CompactIslandComponent: View {
         case .activity:
             ActivityBadge(activity: snapshot.activity, options: badgeOptions, size: metrics.badge)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(item.accessibility)
+                .accessibilityLabel(snapshot.activity.delegatedRunning > 0
+                    ? item.accessibility + " · " + L10n.text("delegation.badge", snapshot.activity.delegatedRunning) : item.accessibility)
         case .status:
             CompactStatusText(text: item.text ?? "", tone: item.tone,
                 maxWidth: item.maxWidth ?? (108 * scale).rounded(), size: metrics.status)

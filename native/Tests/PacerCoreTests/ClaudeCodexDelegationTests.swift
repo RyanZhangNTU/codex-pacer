@@ -45,6 +45,7 @@ final class ClaudeCodexDelegationTests: XCTestCase {
             "A review says so; a plain task leaves its mode out")
         XCTAssertEqual(rows[0].delegations[0].delegation?.parentID, claude.id)
         XCTAssertEqual(state.presentation(at: now).header(symbol: \.rawValue).delegatedRunning, 1, "The badge counts the run working for Claude")
+        XCTAssertEqual(state.presentation(at: now).header(symbol: \.rawValue).tasks.map(\.helpers), [1], "and the Claude task it works for")
         XCTAssertEqual(state.presentation(at: now).header(symbol: \.rawValue).activeCount, 1, "Claude and its run are one task")
 
         // Codex's embedded-app preference does not hide a run whose Claude task shows.
