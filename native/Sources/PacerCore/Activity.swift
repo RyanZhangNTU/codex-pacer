@@ -319,8 +319,15 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         }
         return sample.reportedAt > previous.reportedAt || (sample.reportedAt == previous.reportedAt && exact && !lastMeasuredExact)
     }
+    /// A turn holding for background work writes nothing until the work wakes
+    /// it: its own speed is 0, whatever its last reply measured.
+    private func backgroundWaitRate(at now: Date) -> OutputEstimate? {
+        guard let wait = currentBackgroundWait else { return nil }
+        return OutputEstimate(value: 0, reportedAt: min(wait.since, now), isFresh: true)
+    }
     /// Display continuity is independent of the new turn's accounting baseline.
     public func displayedOutputEstimate(at now: Date) -> OutputEstimate? {
+        if let idle = backgroundWaitRate(at: now) { return idle }
         // A cloud run reports no usage, only the reply it is writing, and an earlier turn's speed would read as live.
         let measured = claudeCloud != nil && phase == .running ? cloudReplyRate : lastMeasuredRate
         guard let sample = measured, now >= sample.reportedAt else { return nil }
@@ -328,7 +335,8 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
         return OutputEstimate(value: sample.value, reportedAt: sample.reportedAt, isFresh: fresh)
     }
     public func displayedRateIsEstimated(at now: Date) -> Bool {
-        (claudeCloud != nil && phase == .running) ||
+        if currentBackgroundWait != nil { return false }
+        return (claudeCloud != nil && phase == .running) ||
         !lastMeasuredExact || projectedRate || lastMeasuredTurnID != turnID || stage == .tool ||
             performanceMeter.hasPendingOutput || displayedOutputEstimate(at: now)?.isFresh != true
     }
@@ -579,6 +587,7 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     }
     public func outputEstimate(at now: Date) -> OutputEstimate? {
         guard phase == .running else { return nil }
+        if let idle = backgroundWaitRate(at: now) { return idle }
         if claudeCloud != nil { return displayedOutputEstimate(at: now) }
         let legacy = phaseAwareRate ? generationRate.estimate(at: now) : outputRate.estimate(at: now)
         if legacy?.value == 0 { return legacy }

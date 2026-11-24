@@ -35,17 +35,20 @@ public struct ActivityTaskGroup: Sendable {
     func canClearUnconfirmed(requests: [PendingAttentionRequest]) -> Bool {
         !isRunning && !isWaiting && !requests.contains { request in members.contains { $0.id == request.activity.id } }
     }
+    /// The threads whose speed the task's row adds up: its own and its subagents'.
+    /// A Codex for Claude run shows its speed on its own line.
+    private var ratedMembers: [SessionActivity] { members.filter { $0.id == primary.id || !$0.isCodexDelegation } }
     public func displayedRate(at now: Date) -> OutputEstimate? {
-        let active = members.filter { $0.phase == .running }
-        let measured = (active.isEmpty ? members : active).compactMap { $0.displayedOutputEstimate(at: now) }
+        let rated = ratedMembers, active = rated.filter { $0.phase == .running }
+        let measured = (active.isEmpty ? rated : active).compactMap { $0.displayedOutputEstimate(at: now) }
         guard !measured.isEmpty else { return nil }
         return OutputEstimate(value: measured.reduce(0) { $0 + $1.value },
             reportedAt: measured.map(\.reportedAt).max()!,
             isFresh: measured.contains(where: \.isFresh))
     }
     public func rateIsEstimated(at now: Date) -> Bool {
-        let active = members.filter { $0.phase == .running }
-        return displayedRate(at: now)?.isFresh != true || (active.isEmpty ? members : active).contains { $0.displayedRateIsEstimated(at: now) }
+        let rated = ratedMembers, active = rated.filter { $0.phase == .running }
+        return displayedRate(at: now)?.isFresh != true || (active.isEmpty ? rated : active).contains { $0.displayedRateIsEstimated(at: now) }
     }
     public static func make(_ activities: [SessionActivity]) -> [ActivityTaskGroup] {
         var nodes = Dictionary(activities.filter { !$0.isInternalReview }.map { ($0.canonicalized().id, $0.canonicalized()) },

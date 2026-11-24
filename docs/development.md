@@ -459,7 +459,7 @@ Request scope:
 
 ### Waiting for background work
 
-A turn that stops while its own background work runs keeps the request open: no completion is announced until the work ends. While it waits, the task row says "Waiting for background work", and the collapsed bar's status says "Background work" in every status choice (`CompactBarContext`), not the stage the turn last reached.
+A turn that stops while its own background work runs keeps the request open: no completion is announced until the work ends. While it waits, the task row says "Waiting for background work", and the collapsed bar's status says "Background work" in every status choice (`CompactBarContext`), not the stage the turn last reached. Its own speed is 0 in its row and in the total, not its last reply's (`displayedOutputEstimate`); background subagents that run still add theirs. A task row adds up its own threads and subagents only: a Codex for Claude run shows its speed on its own line (`ActivityTaskGroup.displayedRate`), and the total counts it once.
 
 | Provider | Evidence of background work | Ends when |
 | --- | --- | --- |
