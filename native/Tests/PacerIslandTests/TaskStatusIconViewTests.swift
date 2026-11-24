@@ -458,11 +458,21 @@ final class TaskStatusIconViewTests: XCTestCase {
         XCTAssertNil(orbit.helperStretch, "Without an estimate the runs join the comets instead")
         window.close()
 
-        // The light enters at the stretch's start and leaves at its end.
-        let travel = HelperFlow.travel(.init(start: 0.5, end: 0.9), length: 0.2, on: CALayer(), now: 0)
-        let ends = try XCTUnwrap((travel.animations?[1] as? CAKeyframeAnimation)?.values as? [NSNumber]).map(\.doubleValue)
-        XCTAssertEqual(ends.first, 0.5); XCTAssertEqual(ends.last, 0.9)
-        XCTAssertTrue(ends.allSatisfy { (0.5...0.9).contains($0) }, "It never leaves the stretch")
+        // A light shows only inside its stretch: it enters at the start, leaves past the end, then rests unseen.
+        for downward in [false, true] {
+            let light = ArcLight(color: .white, peak: 1)
+            light.place(frame: CGRect(x: 0, y: 0, width: 20, height: 20), path: CGPath(ellipseIn: CGRect(x: 1, y: 1, width: 18, height: 18), transform: nil),
+                        lineWidth: 2, downward: downward)
+            light.refresh((0.5, 0.9), live: true, now: 0)
+            XCTAssertTrue(light.travels)
+            let frames = try XCTUnwrap(light.windowKeyframes)
+            XCTAssertEqual(frames.starts.first, 0.5); XCTAssertEqual(frames.ends.first, 0.5)
+            XCTAssertEqual(frames.starts.last, 0.9); XCTAssertEqual(frames.ends.last, 0.9)
+            XCTAssertTrue((frames.starts + frames.ends).allSatisfy { (0.5...0.9).contains($0) }, "It never leaves the stretch")
+            XCTAssertTrue(zip(frames.starts, frames.ends).allSatisfy { $0 <= $1 })
+            light.refresh(nil, live: true)
+            XCTAssertFalse(light.travels)
+        }
 
         // Segments: the light travels the free stretch of the task the runs work for.
         let segmentsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: .borderless, backing: .buffered, defer: true)
