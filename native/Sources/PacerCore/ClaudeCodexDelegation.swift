@@ -144,6 +144,15 @@ public enum ClaudeCodexDelegation {
         public var finished: Bool { self != .running }
     }
 
+    /// What the Collaboration guide's steps need from the ledger: a run, and
+    /// one that ended. Cleanup removes runs, so the apps keep each once seen.
+    public struct Sighting: Equatable, Sendable {
+        public var ran: Bool
+        public var finished: Bool
+        public init(ran: Bool = false, finished: Bool = false) { self.ran = ran; self.finished = finished }
+        public init(runs: [Run]) { self.init(ran: !runs.isEmpty, finished: runs.contains { $0.status.finished }) }
+    }
+
     /// One ledger entry.
     public struct Run: Equatable, Sendable {
         public let session: String

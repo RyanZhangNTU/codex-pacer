@@ -25,7 +25,8 @@ internal sealed record EngineSnapshot(
 /// configuration picks for model, effort and fast mode.
 internal sealed record CodexDelegationStatus(bool Enabled, bool SkillInstalled, string? LegacySkill, bool CodexFound,
     string? Login = null, string? Version = null, bool? Checking = null, IReadOnlyList<CodexModelChoice>? Models = null, string? DefaultModel = null,
-    string? DefaultEffort = null, bool? DefaultFast = null, int Limit = 3, int Pending = 0, string? RunsFolder = null, string? QuotaText = null);
+    string? DefaultEffort = null, bool? DefaultFast = null, int Limit = 3, int Pending = 0, string? RunsFolder = null, string? QuotaText = null,
+    bool? SeenRun = null, bool? SeenEnded = null);
 /// A model from Codex's catalog, with the efforts it supports and its own default effort.
 internal sealed record CodexModelChoice(string Slug, string Name, IReadOnlyList<string>? Efforts = null, string? DefaultEffort = null);
 /// Codex task tracking through Pacer's hooks: `off`, `settingUp`, `notInstalled`,

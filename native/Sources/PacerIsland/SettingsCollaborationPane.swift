@@ -2,7 +2,9 @@ import AppKit
 import PacerCore
 import SwiftUI
 
-/// Settings → Collaboration. The pairs come first, one card each with its
+/// Settings → Collaboration. A first-run guide opens the page until it is
+/// closed or its three steps are done; How It Works beside Pairs reopens it.
+/// The pairs come first, one card each with its
 /// switch; the selected pair's settings follow: the basic ones, then the
 /// advanced ones folded away. Claude → Codex is the only pair so far. Every
 /// choice applies at once; explanations wait behind ⓘ. Codex's own state
@@ -23,10 +25,16 @@ struct SettingsCollaborationPane: View {
     @State private var modelText = ""
     @FocusState private var modelFocused: Bool
     @State private var legacyIssue: String?
+    @State private var introShown = !CodexDelegationPreferences(defaults: .standard).introDone
+    @Environment(\.pacerAccent) private var accent
 
     private typealias Settings = ClaudeCodexDelegation.Settings
 
     var body: some View {
+        if introShown {
+            CollaborationIntro(mode: .settings, state: introState, problem: problem, canTurnOn: modulesEnabled,
+                               turnOn: { update { $0.enabled = true } }, dismiss: closeIntro)
+        }
         pairs
             .task {
                 modelText = preferences.model
@@ -45,8 +53,20 @@ struct SettingsCollaborationPane: View {
 
     private var pairs: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L10n.text("collab.pairs")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                .padding(.leading, 4).accessibilityAddTraits(.isHeader)
+            HStack(spacing: 8) {
+                Text(L10n.text("collab.pairs")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                if !introShown {
+                    Button { introShown = true } label: {
+                        Label(L10n.text("collab.intro.reopen"), systemImage: "play.circle")
+                            .font(.system(size: 12, weight: .medium)).foregroundStyle(accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(minHeight: 20)
+            .padding(.leading, 4).padding(.trailing, 6)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], alignment: .leading, spacing: 10) {
                 pairCard
             }
@@ -278,6 +298,25 @@ struct SettingsCollaborationPane: View {
         .padding(14)
     }
 
+    // MARK: Guide
+
+    /// The pair on with nothing keeping it from working, a run seen, and one ended.
+    private var introState: CollaborationIntroState { .init(preferences: preferences, blocked: problem != nil) }
+
+    /// Closing the guide, or finishing it, keeps it closed from then on.
+    private func closeIntro() {
+        introShown = false
+        if !preferences.introDone { setIntroDone() }
+    }
+    /// All three steps done: the card says Done this time and no longer opens by itself.
+    private func recordFinishedIntro() {
+        if introShown, introState.allDone, !preferences.introDone { setIntroDone() }
+    }
+    private func setIntroDone() {
+        UserDefaults.standard.set(true, forKey: CodexDelegationPreferences.introDoneKey)
+        preferences.introDone = true
+    }
+
     // MARK: State
 
     private func menu<Value: Hashable>(_ key: String, _ selection: Binding<Value>, _ options: [(Value, String)]) -> some View {
@@ -293,6 +332,7 @@ struct SettingsCollaborationPane: View {
         }
         let value = model.codexDelegationWorkbench()
         if value != workbench { workbench = value }
+        recordFinishedIntro()
     }
 
     /// Changes one choice on what is saved now, so choices made elsewhere

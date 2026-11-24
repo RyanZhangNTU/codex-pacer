@@ -33,7 +33,9 @@ internal static class PreferencesCodec
         ["codexDelegationRecords"] = DelegationPair + "records", ["codexDelegationRecordsHours"] = DelegationPair + "recordsHours",
         ["codexDelegationSandbox"] = DelegationPair + "sandbox", ["codexDelegationWorktree"] = DelegationPair + "worktree",
         ["codexDelegationInstructions"] = DelegationPair + "instructions", ["codexDelegationMemory"] = DelegationPair + "memory",
-        ["codexDelegationConcurrency"] = DelegationPair + "concurrency", ["codexDelegationQuotaFloor"] = DelegationPair + "quotaFloor"
+        ["codexDelegationConcurrency"] = DelegationPair + "concurrency", ["codexDelegationQuotaFloor"] = DelegationPair + "quotaFloor",
+        ["codexDelegationIntroDone"] = DelegationPair + "introDone", ["codexDelegationIntroRan"] = DelegationPair + "introRan",
+        ["codexDelegationIntroFinished"] = DelegationPair + "introFinished"
     };
     private const string DelegationPair = "collaboration.claude>codex.";
     /// Codex for Claude keys from builds before the pairs; ignored, and dropped at the next save.

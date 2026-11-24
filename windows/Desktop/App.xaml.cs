@@ -268,6 +268,25 @@ public partial class App : Application
                 await settingsSession.ChangeAsync(value => engine.LatestSnapshot?.WslAvailability == "unavailable"
                     ? value with { MonitorWSL = false } : value);
             });
+            // The Collaboration guide's steps tick once the ledger shows a run, and one that
+            // ended. Cleanup removes runs, so each is kept once seen.
+            bool knownRan = settingsSession.Current.CodexDelegationIntroRan, knownEnded = settingsSession.Current.CodexDelegationIntroFinished;
+            engine.Snapshot += snapshot =>
+            {
+                if (snapshot.CodexDelegation is not { } runs) return;
+                bool ran = runs.SeenRun == true && !knownRan, ended = runs.SeenEnded == true && !knownEnded;
+                if (!ran && !ended) return;
+                knownRan |= ran; knownEnded |= ended;
+                _ = Dispatcher.InvokeAsync(async () =>
+                {
+                    if (quitting) return;
+                    await settingsSession.ChangeAsync(value => value with
+                    {
+                        CodexDelegationIntroRan = value.CodexDelegationIntroRan || ran || ended,
+                        CodexDelegationIntroFinished = value.CodexDelegationIntroFinished || ended
+                    });
+                });
+            };
         }
         island.SaveIslandPlacement = edit => settingsSession.ChangeAsync(edit);
         notificationActions = new NotificationActions(engineReady.Task, () => quitting || settingsSession.Current.SystemNotifications != true, island.Reveal,

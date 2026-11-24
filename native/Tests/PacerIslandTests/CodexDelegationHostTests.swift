@@ -182,6 +182,45 @@ final class CodexDelegationHostTests: XCTestCase {
         XCTAssertTrue(ProcessOwnership.hasExited(Int(process.processIdentifier)))
     }
 
+    /// The Collaboration guide keeps what it has seen: every ledger read notes
+    /// a run and one that ended, and cleanup deleting them takes nothing back.
+    /// Restore Defaults leaves the guide's record alone.
+    func testTheGuideRecordsRunsTheLedgerShowsAndKeepsThem() throws {
+        let fixture = try fixture(codex: .enabled), model = fixture.model, defaults = fixture.defaults
+        let claude = DemoScenario.claudeTask(stage: .thinking, at: Date())
+        let session = "00000000-0000-4000-8000-000000000003"
+        let run = ClaudeCodexDelegation.runsURL(home: fixture.home).appendingPathComponent(session).appendingPathComponent("run-1")
+        func ledger(_ status: String) throws {
+            try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: ["created": Date().addingTimeInterval(-5).timeIntervalSince1970,
+                "thread": "019a0000-0000-7000-8000-000000000081", "status": status]).write(to: run.appendingPathComponent("meta.json"))
+        }
+        // Nothing in the ledger yet, then the first read that shows a run.
+        XCTAssertFalse(CodexDelegationPreferences(defaults: defaults).introRan)
+        try ledger("running")
+        model.receiveClaudeUpdate([claude], statuses: [:], requests: [])
+        model.receiveLocalUpdate([], requests: [])
+        var stored = CodexDelegationPreferences(defaults: defaults)
+        XCTAssertTrue(stored.introRan, "A ledger read notes the run, Settings open or not")
+        XCTAssertFalse(stored.introFinished)
+        // Later reads, within a second's cache: any ending counts, and cleanup takes nothing back.
+        model.noteCodexDelegationSighting(.init(runs: ClaudeCodexDelegation.runs(home: fixture.home, runnerExited: { _ in false })))
+        XCTAssertFalse(CodexDelegationPreferences(defaults: defaults).introFinished)
+        try ledger("stopped")
+        model.noteCodexDelegationSighting(.init(runs: ClaudeCodexDelegation.runs(home: fixture.home, runnerExited: { _ in false })))
+        XCTAssertTrue(CodexDelegationPreferences(defaults: defaults).introFinished, "Any ending counts")
+        try FileManager.default.removeItem(at: run)
+        model.noteCodexDelegationSighting(.init(runs: ClaudeCodexDelegation.runs(home: fixture.home, runnerExited: { _ in false })))
+        stored = CodexDelegationPreferences(defaults: defaults)
+        XCTAssertTrue(stored.introRan && stored.introFinished, "Cleanup takes nothing back")
+
+        stored.introDone = true; stored.effort = "low"; stored.followEffort = false; stored.save(to: defaults)
+        let restored = CodexDelegationPreferences(defaults: defaults).restoringDefaults()
+        XCTAssertTrue(restored.introDone && restored.introRan && restored.introFinished)
+        XCTAssertTrue(restored.followEffort)
+        XCTAssertTrue(restored.isDefault, "The guide's record is no choice to restore")
+    }
+
     func testARunShowsUnderItsClaudeTaskAndStopsFromPacer() throws {
         let fixture = try fixture(codex: .enabled), model = fixture.model, now = Date()
         let claude = DemoScenario.claudeTask(stage: .thinking, at: now)

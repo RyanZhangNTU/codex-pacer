@@ -110,19 +110,24 @@ internal static class PreferencesChecks
             var delegation = original with { CodexDelegation = true, CodexDelegationTrigger = "command", CodexDelegationFollowModel = false, CodexDelegationModel = "gpt-6.2-sol",
                 CodexDelegationFollowEffort = false, CodexDelegationEffort = "xhigh", CodexDelegationFollowFast = false, CodexDelegationFast = true,
                 CodexDelegationRecords = "timed", CodexDelegationRecordsHours = 72, CodexDelegationSandbox = "read-only", CodexDelegationWorktree = true,
-                CodexDelegationInstructions = "Answer in English.\nDon't edit tests.", CodexDelegationMemory = true, CodexDelegationConcurrency = 2, CodexDelegationQuotaFloor = 20 };
+                CodexDelegationInstructions = "Answer in English.\nDon't edit tests.", CodexDelegationMemory = true, CodexDelegationConcurrency = 2, CodexDelegationQuotaFloor = 20,
+                CodexDelegationIntroDone = true, CodexDelegationIntroRan = true, CodexDelegationIntroFinished = true };
             Check(store.Save(delegation) && store.Load().Value is { CodexDelegation: true, CodexDelegationTrigger: "command", CodexDelegationFollowModel: false,
                     CodexDelegationModel: "gpt-6.2-sol", CodexDelegationFollowEffort: false, CodexDelegationEffort: "xhigh", CodexDelegationFollowFast: false,
                     CodexDelegationFast: true, CodexDelegationRecords: "timed", CodexDelegationRecordsHours: 72, CodexDelegationSandbox: "read-only",
                     CodexDelegationWorktree: true, CodexDelegationInstructions: "Answer in English.\nDon't edit tests.", CodexDelegationMemory: true,
-                    CodexDelegationConcurrency: 2, CodexDelegationQuotaFloor: 20 },
-                "Collaboration's choices survive a restart");
+                    CodexDelegationConcurrency: 2, CodexDelegationQuotaFloor: 20, CodexDelegationIntroDone: true, CodexDelegationIntroRan: true,
+                    CodexDelegationIntroFinished: true },
+                "Collaboration's choices and its guide's progress survive a restart");
             var pairKeys = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
             Check(pairKeys["collaboration.claude>codex.enabled"]?.GetValue<bool>() == true && pairKeys["collaboration.claude>codex.model"]?.GetValue<string>() == "gpt-6.2-sol"
                 && pairKeys["collaboration.claude>codex.followModel"]?.GetValue<bool>() == false && pairKeys["collaboration.claude>codex.recordsHours"]?.GetValue<int>() == 72
                 && pairKeys["collaboration.claude>codex.concurrency"]?.GetValue<int>() == 2 && pairKeys["collaboration.claude>codex.quotaFloor"]?.GetValue<int>() == 20
+                && pairKeys["collaboration.claude>codex.introDone"]?.GetValue<bool>() == true && pairKeys["collaboration.claude>codex.introFinished"]?.GetValue<bool>() == true
                 && !pairKeys.ContainsKey("codexDelegation") && !pairKeys.ContainsKey("codexDelegationModel"),
                 "Collaboration's choices are stored under the Mac's per-pair keys");
+            Check(delegation.RestoringDelegationDefaults() is { CodexDelegationIntroDone: true, CodexDelegationIntroRan: true, CodexDelegationIntroFinished: true },
+                "Restore Defaults leaves the guide's progress alone");
             using (var config = JsonDocument.Parse(JsonSerializer.Serialize(delegation.EngineConfiguration())))
             {
                 var value = config.RootElement.GetProperty("codexDelegation");

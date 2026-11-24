@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -50,9 +51,11 @@ internal static class CollaborationSettingsChecks
             Check(!Descendants(Find<ScrollViewer>(window, "settings.content")).OfType<FrameworkElement>().Any(value => value.ToolTip != null),
                 "Nothing on the page explains itself on hover");
             window.CapturePreview(Path.Combine(output, "settings-" + name + "-collaboration.png"));
+            var intro = await CheckIntroOpening(window, session, ui);
 
             Toggle(toggle);
             await Until(() => session.Current.CodexDelegation && toggle.IsEnabled, "The pair's switch saves and reaches the engine");
+            await Until(() => intro.Ticks[0] && intro.TurnOnButton == null, "Turning the pair on ticks the guide's first step");
             await session.ChangeAsync(p => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = "disabled" } });
             await Until(() => engine.LatestSnapshot?.Modules?.Any(module => module.Provider == "codex" && !module.Enabled) == true && !toggle.IsEnabled,
                 "Turning Codex off disables the pair");
@@ -62,6 +65,8 @@ internal static class CollaborationSettingsChecks
             Check(Find<TextBlock>(window, "settings.collaboration.pair.reason").Text == ui.Text("collab.reason.codex_off")
                 && codexPage.IsEnabled && Equals(codexPage.Content, ui.Text("collab.go_codex")),
                 "The card explains how to turn Codex on");
+            Check(!intro.Ticks[0] && intro.TurnOnButton == null && Equals(Find<Button>(window, "settings.collaboration.intro.fix").Content, ui.Text("collab.go_codex")),
+                "The guide's first step says what keeps the pair from working, with the same way to fix it");
             await session.ChangeAsync(p => p with { ProviderModes = new(p.ProviderModes) { ["codex"] = "enabled" } });
             await Until(() => toggle.IsEnabled && toggle.IsChecked == true && Find<ComboBox>(window, "settings.collaboration.trigger").IsEnabled,
                 "Turning Codex on restores the saved choice");
@@ -98,7 +103,8 @@ internal static class CollaborationSettingsChecks
                 "Restored choices follow Codex again");
             Toggle(toggle);
             await Until(() => !session.Current.CodexDelegation && toggle.IsEnabled, "The pair can be turned off again");
-            Console.WriteLine("PASS collaboration settings " + name + ": pair switch, follow and pick, records, info, advanced and restore");
+            await CheckIntroSteps(window, session, ui, intro, toggle, Path.Combine(output, "settings-" + name + "-collaboration-intro-done.png"));
+            Console.WriteLine("PASS collaboration settings " + name + ": pair switch, follow and pick, records, info, advanced, restore and the first-run guide");
         }
         catch
         {
@@ -106,6 +112,73 @@ internal static class CollaborationSettingsChecks
             throw;
         }
         finally { window.AllowClose = true; window.Close(); }
+    }
+    /// The first-run guide on a fresh page: open by itself beside its demo, three steps to do, phrases that copy,
+    /// and a demo that holds still without motion, moves between steps on its dots and keeps its pictures from screen readers.
+    private static async Task<CollaborationIntro> CheckIntroOpening(SettingsWindow window, PreferencesSession session, UiText ui)
+    {
+        var intro = Descendants(window).OfType<CollaborationIntro>().Single();
+        var reopen = Find<Button>(window, "settings.collaboration.intro.reopen");
+        Check(intro.IsVisible && !reopen.IsVisible && intro.Ticks.SequenceEqual([false, false, false]) && intro.TurnOnButton is { IsEnabled: true }
+            && intro.PhraseButtons.Count() == 2 && Equals(intro.Finish?.Content, ui.Text("collab.intro.got_it")) && intro.Wide,
+            "The guide opens by itself beside its demo: three steps to do, Turn On, two phrases to copy, and Got It");
+        // Settings' button style draws content as text; the guide's drawn buttons must not show a type name.
+        Check(!Descendants(intro).OfType<TextBlock>().Any(text => text.Text.StartsWith("System.", StringComparison.Ordinal)), "Every button in the guide draws its own content");
+        intro.Demo.SetMotion(false);
+        Check(!intro.Demo.Playing && intro.Demo.Beat == 2 && intro.Demo.Caption == ui.Text("collab.intro.demo.3"), "Without motion the demo holds its progress frame");
+        // A button's automation Invoke clicks it on the dispatcher's next turn.
+        Invoke(Find<Button>(window, "collaboration.intro.demo.step.1")); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+        Check(intro.Demo.Beat == 0 && intro.Demo.Typed == ui.Text("collab.intro.phrase.review"), "A dot shows its step: the request typed in Claude");
+        Invoke(Find<Button>(window, "collaboration.intro.demo.step.5")); await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+        Check(intro.Demo.Beat == 4 && intro.Demo.Caption == ui.Text("collab.intro.demo.5"), "The last dot shows the cleanup");
+        intro.Demo.SetMotion(true);
+        Check(intro.Demo.Playing, "With motion the demo loops while it is on screen");
+        static IEnumerable<AutomationPeer> Walk(AutomationPeer peer) => (peer.GetChildren() ?? []).SelectMany(child => Walk(child).Prepend(child));
+        var demo = UIElementAutomationPeer.CreatePeerForElement(intro.Demo);
+        var heard = Walk(demo).ToArray();
+        Check(demo.GetName() == ui.Text("collab.intro.demo") && heard.Count(peer => peer.GetAutomationControlType() == AutomationControlType.Button) == 5
+            && !heard.Any(peer => peer.GetName() == ui.Text("collab.intro.demo.task") || peer.GetName() == ui.Text("collab.intro.demo.run")),
+            "Screen readers hear the demo's name and its five steps, not its pictures");
+        string? copied = null; var write = CollaborationIntro.WriteClipboard;
+        CollaborationIntro.WriteClipboard = text => { copied = text; return true; };
+        try { Invoke(intro.PhraseButtons.First()); await Dispatcher.Yield(DispatcherPriority.ContextIdle); } finally { CollaborationIntro.WriteClipboard = write; }
+        Check(copied == ui.Text("collab.intro.phrase.review"), "A phrase copies with one click");
+        Check(intro.PhraseButtons.First().Content is StackPanel chip && chip.Children.OfType<StackPanel>().SelectMany(part => part.Children.OfType<TextBlock>())
+            .Any(text => text.Text == ui.Text("collab.intro.copied")), "A copied phrase says so");
+        await session.ChangeAsync(p => p with { CodexDelegationTrigger = "command" });
+        await Until(() => intro.PhraseButtons.Count() == 1 && AutomationProperties.GetName(intro.PhraseButtons.First()).Contains("/pacer:codex", StringComparison.Ordinal),
+            "With Command only, the phrase to copy is the command");
+        await session.ChangeAsync(p => p with { CodexDelegationTrigger = "ask" });
+        await Until(() => intro.PhraseButtons.Count() == 2, "Back to When asked, two phrases again");
+        return intro;
+    }
+    /// The guide's own Turn On, the steps that tick as Codex is called and a run ends, Done, and closing and reopening it.
+    private static async Task CheckIntroSteps(SettingsWindow window, PreferencesSession session, UiText ui, CollaborationIntro intro, CheckBox toggle, string capture)
+    {
+        var reopen = Find<Button>(window, "settings.collaboration.intro.reopen");
+        Invoke(Find<Button>(window, "settings.collaboration.intro.close"));
+        await Until(() => !intro.IsVisible && reopen.IsVisible && session.Current.CodexDelegationIntroDone, "Closing the guide keeps it closed, and How It Works waits beside Pairs");
+        Invoke(reopen);
+        await Until(() => intro.IsVisible && !reopen.IsVisible, "How It Works opens the guide again");
+        Invoke(intro.TurnOnButton!);
+        await Until(() => session.Current.CodexDelegation && toggle.IsChecked == true && intro.Ticks[0], "The guide's Turn On turns the pair on");
+        await session.ChangeAsync(p => p with { CodexDelegationIntroRan = true });
+        await Until(() => intro.Ticks.SequenceEqual([true, true, false]) && !intro.PhraseButtons.Any(), "Once Codex has been called, the second step ticks and its phrases fold away");
+        // The smallest Settings window keeps the demo and the steps side by side; a line end that
+        // doesn't fit beside its title moves under it instead of wrapping the title.
+        double width = window.Width;
+        window.Width = window.MinWidth; await Dispatcher.Yield(DispatcherPriority.ContextIdle); window.UpdateLayout();
+        var titles = Descendants(intro).OfType<TextBlock>().Where(text => text.FontSize == 13.5).ToArray();
+        Check(intro.Wide && titles.Length == 3 && titles.All(text => text.ActualHeight < 2 * text.FontSize), "At its smallest the Settings window keeps the guide in two columns, each title on one line");
+        window.CapturePreview(System.IO.Path.ChangeExtension(capture, null) + "-narrow.png");
+        window.Width = width; await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+        await session.ChangeAsync(p => p with { CodexDelegationIntroFinished = true });
+        await Until(() => intro.Ticks.All(tick => tick) && Equals(intro.Finish?.Content, ui.Text("collab.done")), "A finished run ticks the last step and Got It becomes Done");
+        window.CapturePreview(capture);
+        Invoke(intro.Finish!);
+        await Until(() => !intro.IsVisible && reopen.IsVisible, "Done closes the guide");
+        Toggle(toggle);
+        await Until(() => !session.Current.CodexDelegation && toggle.IsEnabled, "The pair goes back off");
     }
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement
         => Descendants(root).OfType<T>().Single(value => AutomationProperties.GetAutomationId(value) == id);

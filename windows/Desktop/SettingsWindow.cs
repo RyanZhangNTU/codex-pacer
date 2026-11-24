@@ -546,7 +546,13 @@ internal sealed partial class SettingsWindow : Window
     private void ShowIssue(string key) => ShowIssueText(ui.Text(key));
     private void ShowIssueText(string text) { issue.Text = text; AutomationProperties.SetName(issue, issue.Text); issue.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarning"); issue.Visibility = Visibility.Visible; AutomationProperties.SetLiveSetting(issue, AutomationLiveSetting.Assertive); }
     private void ClearIssue() { issue.Text = ""; issue.Visibility = Visibility.Collapsed; }
-    private void OnAppearanceChanged() => Dispatcher.InvokeAsync(() => { if (!sourceClosed) RefreshTheme(); });
+    private void OnAppearanceChanged() => Dispatcher.InvokeAsync(() =>
+    {
+        if (sourceClosed) return;
+        RefreshTheme();
+        // The Collaboration guide's demo loops only while Windows shows animations.
+        collaborationIntro?.Demo.SetMotion(appearance.Current.Animations);
+    });
     private void RefreshTheme()
     {
         // The window theme overrides Windows' light or dark choice; the island stays dark.
