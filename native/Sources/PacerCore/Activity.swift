@@ -50,7 +50,16 @@ public struct SessionActivity: Equatable, Sendable, Identifiable {
     public var isIgnoredCodexSession: Bool { codexOrigin?.ignored == true }
     /// Set by `ActivityApplicationState` on a Codex thread a Codex for Claude
     /// run started: it belongs to that Claude task.
-    public var codexDelegation: CodexDelegationLink?
+    public var codexDelegation: CodexDelegationLink? {
+        didSet {
+            guard let link = codexDelegation, link.status.finished, phase == .running else { return }
+            // A resume can start before the ledger cache receives its new running entry.
+            if let end = link.ended, let start = turnStartedAt, start > end { return }
+            phase = link.status == .ok ? .completed : .interrupted
+            turnFailed = link.status == .failed
+            phaseChangedAt = link.ended ?? link.started
+        }
+    }
     /// A Codex for Claude executor thread or one of its sub-threads, linked or not.
     public var isCodexDelegation: Bool { codexDelegation != nil || codexOrigin?.delegated == true }
     /// Set on tasks that run in a Claude cloud Project.

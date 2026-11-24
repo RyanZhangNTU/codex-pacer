@@ -2,6 +2,7 @@
 import Foundation
 import PacerCore
 import CWindowsSupport
+import WinSDK
 
 typealias WindowsProcessIdentity = ProcessInstance
 typealias WindowsProcessRecord = ProcessInstanceRecord
@@ -34,6 +35,15 @@ enum WindowsProcessOwnership {
         let path = String(decoding: image.prefix { $0 != 0 }, as: UTF16.self)
         guard identity.pid == pid, identity.started != 0, WindowsCodexExecutableDiscovery.absolute(path) else { return nil }
         return .init(identity: .init(pid: pid, started: identity.started), parent: identity.parent, executable: URL(fileURLWithPath: path))
+    }
+    static func hasExited(_ pid: Int) -> Bool {
+        guard pid > 0, let id = DWORD(exactly: pid) else { return false }
+        guard let process = OpenProcess(DWORD(PROCESS_QUERY_LIMITED_INFORMATION), false, id) else {
+            return GetLastError() == DWORD(ERROR_INVALID_PARAMETER)
+        }
+        defer { CloseHandle(process) }
+        var code: DWORD = 0
+        return GetExitCodeProcess(process, &code) && code != DWORD(STILL_ACTIVE)
     }
     static func alive(_ identity: WindowsProcessIdentity) -> Bool { pacer_process_alive(identity.pid, identity.started) != 0 }
     static func stamp(_ file: URL, within home: URL) -> WindowsSourceFileIdentity? {

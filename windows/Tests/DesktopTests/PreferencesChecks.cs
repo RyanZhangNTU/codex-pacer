@@ -100,6 +100,13 @@ internal static class PreferencesChecks
                     CodexDelegationInstructions: "", CodexDelegationMemory: false, CodexDelegationConcurrency: 3, CodexDelegationQuotaFloor: 0 }
                 && original.DelegationIsDefault && original.DelegationAdvancedIsDefault,
                 "Collaboration starts off, follows Codex, clears its threads at turn end and writes in the project with network");
+            var picked = original.SetDelegationFollowFast(false, true).SetDelegationFollowEffort(false, "low");
+            Check(picked.CodexDelegationFast && picked.CodexDelegationEffort == "low", "First manual choice starts at the Codex defaults");
+            var remembered = (picked with { CodexDelegationFast = false, CodexDelegationEffort = "high" })
+                .SetDelegationFollowFast(true, null).SetDelegationFollowEffort(true, null);
+            Check(store.Save(remembered) && store.Load().Value.SetDelegationFollowFast(false, true).SetDelegationFollowEffort(false, "low") is { CodexDelegationPickedFast: true, CodexDelegationFast: false,
+                CodexDelegationPickedEffort: true, CodexDelegationEffort: "high" } && remembered.RestoringDelegationDefaults().DelegationIsDefault,
+                "Default-valued manual choices are remembered while following Codex");
             var delegation = original with { CodexDelegation = true, CodexDelegationTrigger = "command", CodexDelegationFollowModel = false, CodexDelegationModel = "gpt-6.2-sol",
                 CodexDelegationFollowEffort = false, CodexDelegationEffort = "xhigh", CodexDelegationFollowFast = false, CodexDelegationFast = true,
                 CodexDelegationRecords = "timed", CodexDelegationRecordsHours = 72, CodexDelegationSandbox = "read-only", CodexDelegationWorktree = true,

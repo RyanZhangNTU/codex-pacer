@@ -157,16 +157,14 @@ struct SettingsCollaborationPane: View {
     private var followEffort: Binding<Bool> {
         Binding(get: { preferences.followEffort }, set: { follow in
             update { value in
-                value.followEffort = follow
-                if !follow, let fallback = check.defaultEffort, value.effort == CodexDelegationPreferences().effort { value.effort = fallback }
+                value.setFollowEffort(follow, fallback: check.defaultEffort)
             }
         })
     }
     private var followFast: Binding<Bool> {
         Binding(get: { preferences.followFast }, set: { follow in
             update { value in
-                value.followFast = follow
-                if !follow, let fallback = check.defaultFast, value.fast == CodexDelegationPreferences().fast { value.fast = fallback }
+                value.setFollowFast(follow, fallback: check.defaultFast)
             }
         })
     }

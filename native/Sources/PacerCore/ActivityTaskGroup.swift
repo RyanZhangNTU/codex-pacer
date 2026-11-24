@@ -50,7 +50,7 @@ public struct ActivityTaskGroup: Sendable {
         let rated = ratedMembers, active = rated.filter { $0.phase == .running }
         return displayedRate(at: now)?.isFresh != true || (active.isEmpty ? rated : active).contains { $0.displayedRateIsEstimated(at: now) }
     }
-    public static func make(_ activities: [SessionActivity]) -> [ActivityTaskGroup] {
+    static func nodes(in activities: [SessionActivity]) -> [String: SessionActivity] {
         var nodes = Dictionary(activities.filter { !$0.isInternalReview }.map { ($0.canonicalized().id, $0.canonicalized()) },
             uniquingKeysWith: { old, new in (new.lastObserved ?? .distantPast) >= (old.lastObserved ?? .distantPast) ? new : old })
         let reviews = Set(activities.filter(\.isInternalReview).map { $0.canonicalized().id })
@@ -60,15 +60,23 @@ public struct ActivityTaskGroup: Sendable {
                 guard !reviews.contains(id) else { continue }
                 var value = nodes[id] ?? SessionActivity(id: id, sourceHost: parent.sourceHost, sourceHostID: parent.sourceHostID, phaseAwareRate: true, provider: parent.provider, sessionID: child)
                 value.applySubagentEvidence(evidence)
+                if let link = value.codexDelegation ?? parent.codexDelegation { value.codexDelegation = link }
                 nodes[id] = value
             }
         }
+        return nodes
+    }
+    public static func make(_ activities: [SessionActivity]) -> [ActivityTaskGroup] {
+        let nodes = nodes(in: activities)
         func root(_ activity: SessionActivity) -> String {
             var current = activity, seen = Set<String>()
             for _ in 0..<64 {
                 guard seen.insert(current.id).inserted else { return seen.min()! }
                 // A Codex for Claude thread belongs to the Claude task that started it.
-                if let owner = current.codexDelegation?.parentID, let next = nodes[owner] { current = next; continue }
+                if let owner = current.codexDelegation?.parentID {
+                    guard let next = nodes[owner] else { return owner }
+                    current = next; continue
+                }
                 guard let parent = current.parentThreadID,
                       let next = nodes[current.provider.activityID(sessionID: parent, sourceHostID: current.sourceHostID)] else { return current.id }
                 current = next

@@ -167,24 +167,15 @@ internal sealed partial class SettingsWindow
         delegationEffort = DelegationMenu("effort", ui.Text("collab.effort"), [], (p, value) => p with { CodexDelegationEffort = value }, 110);
         delegationEffortDefault = Detail("");
         var effort = InfoRow(ui.Text("collab.effort"), Trailing(delegationEffort,
-            FollowSegments("effort", ui.Text("collab.effort"), pick => p => p with
-            {
-                CodexDelegationFollowEffort = !pick,
-                CodexDelegationEffort = pick && p.CodexDelegationEffort == new DesktopPreferences().CodexDelegationEffort
-                    && engine?.LatestSnapshot?.CodexDelegation?.DefaultEffort is { } codexEffort && DesktopPreferences.DelegationEfforts.Contains(codexEffort)
-                    ? codexEffort : p.CodexDelegationEffort
-            })), detail: delegationEffortDefault, id: "settings.collaboration.effort_row");
+            FollowSegments("effort", ui.Text("collab.effort"), pick => p =>
+                p.SetDelegationFollowEffort(!pick, engine?.LatestSnapshot?.CodexDelegation?.DefaultEffort))), detail: delegationEffortDefault, id: "settings.collaboration.effort_row");
 
         delegationFast = DelegationMenu("fast", ui.Text("collab.fast"), [("on", ui.Text("collab.on")), ("off", ui.Text("collab.off"))],
             (p, value) => p with { CodexDelegationFast = value == "on" }, 90);
         delegationFastDefault = Detail("");
         var fast = InfoRow(ui.Text("collab.fast"), Trailing(delegationFast,
-            FollowSegments("fast", ui.Text("collab.fast"), pick => p => p with
-            {
-                CodexDelegationFollowFast = !pick,
-                CodexDelegationFast = pick && p.CodexDelegationFast == new DesktopPreferences().CodexDelegationFast
-                    && engine?.LatestSnapshot?.CodexDelegation?.DefaultFast is bool codexFast ? codexFast : p.CodexDelegationFast
-            })), detail: delegationFastDefault, id: "settings.collaboration.fast_row");
+            FollowSegments("fast", ui.Text("collab.fast"), pick => p =>
+                p.SetDelegationFollowFast(!pick, engine?.LatestSnapshot?.CodexDelegation?.DefaultFast))), detail: delegationFastDefault, id: "settings.collaboration.fast_row");
 
         delegationHours = DelegationMenu("records_hours", ui.Text("collab.records"),
             DesktopPreferences.DelegationRecordsHours.Select(hours => (hours.ToString(), DelegationDuration(hours))),

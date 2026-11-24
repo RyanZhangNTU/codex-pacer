@@ -287,7 +287,7 @@ public struct ActivityApplicationState: Sendable {
             row.mergeDisplayMetadata(from: old)
             return row
         }
-        let observed = inbox.observe(ActivityTaskGroup.make(merged).flatMap(\.members), at: now, retention: retention)
+        let observed = inbox.observe(Array(ActivityTaskGroup.nodes(in: merged).values), at: now, retention: retention)
         codex.releaseVisibleEndings(inbox: inbox)
         for ending in inbox.activities where ending.claudeCloud?.readInClaude == true { inbox.dismiss(ending) }
         let hidden = hiddenActivityIDs(visibility, ignoring: ignored)

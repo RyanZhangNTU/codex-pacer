@@ -28,8 +28,10 @@ struct CodexDelegationPreferences: Equatable {
     var trigger = Settings.Trigger.ask
     var followModel = true
     var model = ""
+    var pickedEffort = false
     var followEffort = true
     var effort = "high"
+    var pickedFast = false
     var followFast = true
     var fast = false
     var records = Settings.Records.turn
@@ -42,14 +44,28 @@ struct CodexDelegationPreferences: Equatable {
     /// Percent of quota left below which runs don't start; 0 never holds them back.
     var quotaFloor = 0
 
+    mutating func setFollowEffort(_ follow: Bool, fallback: String?) {
+        if !follow && !pickedEffort { effort = fallback ?? effort }
+        pickedEffort = pickedEffort || !follow || !followEffort
+        followEffort = follow
+    }
+
+    mutating func setFollowFast(_ follow: Bool, fallback: Bool?) {
+        if !follow && !pickedFast { fast = fallback ?? fast }
+        pickedFast = pickedFast || !follow || !followFast
+        followFast = follow
+    }
+
     init() {}
     init(defaults: UserDefaults) {
         enabled = defaults.bool(forKey: Self.enabledKey)
         trigger = defaults.string(forKey: Self.triggerKey).flatMap(Settings.Trigger.init) ?? .ask
         followModel = defaults.object(forKey: Self.followModelKey) as? Bool ?? true
         model = defaults.string(forKey: Self.modelKey).filter(Self.validModel) ?? ""
+        pickedEffort = defaults.bool(forKey: Self.pair + "pickedEffort")
         followEffort = defaults.object(forKey: Self.followEffortKey) as? Bool ?? true
         effort = defaults.string(forKey: Self.effortKey).filter { Self.efforts.contains($0) } ?? "high"
+        pickedFast = defaults.bool(forKey: Self.pair + "pickedFast")
         followFast = defaults.object(forKey: Self.followFastKey) as? Bool ?? true
         fast = defaults.bool(forKey: Self.fastKey)
         records = defaults.string(forKey: Self.recordsKey).flatMap(Settings.Records.init) ?? .turn
@@ -65,7 +81,9 @@ struct CodexDelegationPreferences: Equatable {
     func save(to defaults: UserDefaults) {
         defaults.set(enabled, forKey: Self.enabledKey); defaults.set(trigger.rawValue, forKey: Self.triggerKey)
         defaults.set(followModel, forKey: Self.followModelKey); defaults.set(model, forKey: Self.modelKey)
+        defaults.set(pickedEffort, forKey: Self.pair + "pickedEffort")
         defaults.set(followEffort, forKey: Self.followEffortKey); defaults.set(effort, forKey: Self.effortKey)
+        defaults.set(pickedFast, forKey: Self.pair + "pickedFast")
         defaults.set(followFast, forKey: Self.followFastKey); defaults.set(fast, forKey: Self.fastKey)
         defaults.set(records.rawValue, forKey: Self.recordsKey); defaults.set(recordsHours, forKey: Self.recordsHoursKey)
         defaults.set(sandbox.rawValue, forKey: Self.sandboxKey); defaults.set(worktree, forKey: Self.worktreeKey)

@@ -39,6 +39,8 @@ public enum ClaudeCodexDelegation {
             case readOnly = "read-only", workspaceWrite = "workspace-write"
             case workspaceWriteNetwork = "workspace-write-network", fullAccess = "danger-full-access"
         }
+        public var command: String?
+        public var codexHome: String?
         public var codex: String?
         public var model: String?
         public var effort: String?
@@ -74,7 +76,7 @@ public enum ClaudeCodexDelegation {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case codex, model, effort, fast, trigger, records, recordsHours, sandbox, worktree, instructions, memory, maxConcurrent, quotaFloor
+            case command, codexHome, codex, model, effort, fast, trigger, records, recordsHours, sandbox, worktree, instructions, memory, maxConcurrent, quotaFloor
         }
         /// Missing or unknown values fall back to the defaults, so a file from
         /// an earlier build still reads.
@@ -88,6 +90,7 @@ public enum ClaudeCodexDelegation {
                       worktree: value(.worktree, Bool.self) ?? false, instructions: value(.instructions, String.self),
                       memory: value(.memory, Bool.self) ?? false, maxConcurrent: value(.maxConcurrent, Int.self) ?? 3,
                       quotaFloor: value(.quotaFloor, Int.self))
+            command = value(.command, String.self); codexHome = value(.codexHome, String.self)
         }
         public func data() -> Data {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
@@ -173,7 +176,7 @@ public enum ClaudeCodexDelegation {
 
     /// Every readable ledger entry under `home`. A run still starting (no
     /// thread yet) is listed without one.
-    public static func runs(home: URL, fileManager: FileManager = .default) -> [Run] {
+    public static func runs(home: URL, fileManager: FileManager = .default, runnerExited: (Int) -> Bool) -> [Run] {
         let root = runsURL(home: home)
         guard let sessions = try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return [] }
         var result: [Run] = []
@@ -183,14 +186,14 @@ public enum ClaudeCodexDelegation {
             for entry in entries.prefix(256) {
                 let file = entry.appendingPathComponent("meta.json")
                 guard let data = try? Data(contentsOf: file), data.count < 1 << 20,
-                      let run = run(data, session: id, directory: entry) else { continue }
+                      let run = run(data, session: id, directory: entry, runnerExited: runnerExited) else { continue }
                 result.append(run)
             }
         }
         return result.sorted { $0.created == $1.created ? $0.directory.path < $1.directory.path : $0.created < $1.created }
     }
 
-    static func run(_ data: Data, session: String, directory: URL) -> Run? {
+    static func run(_ data: Data, session: String, directory: URL, runnerExited: (Int) -> Bool) -> Run? {
         guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         func thread(_ raw: Any?) -> String? { (raw as? String).flatMap(AgentProvider.codex.validatedSessionID) }
         func date(_ raw: Any?) -> Date? {
@@ -200,13 +203,22 @@ public enum ClaudeCodexDelegation {
         guard let created = date(value["created"]) else { return nil }
         let label = (value["label"] as? String).map { String($0.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(60)) }
         func count(_ raw: Any?) -> Int? { (raw as? Int).flatMap { $0 >= 0 ? $0 : nil } }
+        var status = (value["status"] as? String).flatMap(Status.init) ?? .running
+        var ended = date(value["ended"])
+        if status == .running, let pid = (value["runner"] as? [String: Any])?["pid"] as? Int, runnerExited(pid) {
+            status = .stopped
+            func modified(_ file: String) -> Date? {
+                try? directory.appendingPathComponent(file).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            }
+            ended = ended ?? modified("events.jsonl") ?? modified("meta.json")
+        }
         var run = Run(session: session, thread: thread(value["thread"]),
             childThreads: ((value["childThreads"] as? [Any]) ?? []).prefix(32).compactMap(thread),
             mode: (value["mode"] as? String).flatMap(Mode.init) ?? .task,
             label: label?.isEmpty == false ? label : nil,
             write: value["write"] as? Bool == true, worktree: value["worktree"] is String,
-            status: (value["status"] as? String).flatMap(Status.init) ?? .running,
-            created: created, ended: date(value["ended"]), directory: directory)
+            status: status,
+            created: created, ended: ended, directory: directory)
         run.fast = value["fast"] as? Bool
         if let usage = value["usage"] as? [String: Any], let input = count(usage["input_tokens"]), let output = count(usage["output_tokens"]) {
             run.usage = Usage(input: input, cached: count(usage["cached_input_tokens"]) ?? 0, output: output)

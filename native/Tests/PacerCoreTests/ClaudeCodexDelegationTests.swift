@@ -156,6 +156,135 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertFalse(own.isCodexReviewRun)
     }
 
+    func testLedgerEndingFinishesTheStillRunningActivity() throws {
+        let owner = DemoScenario.claudeTask(stage: .completed, at: now)
+        var worker = run(1)
+        worker.reportProgress(40, at: now.addingTimeInterval(-3), turnID: "first")
+        let cases: [(ClaudeCodexDelegation.Status, ActivityPhase, TaskSymbol, TaskProgressRing.Mode)] = [
+            (.ok, .completed, .completed, .done), (.stopped, .interrupted, .interrupted, .interrupted),
+            (.timedOut, .interrupted, .interrupted, .interrupted), (.failed, .interrupted, .failed, .failed)
+        ]
+        for (status, phase, symbol, ring) in cases {
+            var state = ActivityApplicationState()
+            state.replaceHarness(.claude, with: .init(activities: [owner]))
+            state.localActivities = [worker]
+            state.codexDelegations[worker.id] = link(to: owner)
+            state.reconcile(at: now, retention: 300, visibility: visible)
+            XCTAssertEqual(state.taskGroups().first?.isRunning, true)
+
+            var ending = link(to: owner, status: status)
+            ending.ended = now.addingTimeInterval(-1)
+            state.codexDelegations[worker.id] = ending
+            state.reconcile(at: now, retention: 300, visibility: visible)
+            let later = now.addingTimeInterval(65)
+            let view = state.presentation(at: later, options: .init(progressRingProviders: [.codex]))
+            let row = try XCTUnwrap(view.rows.first?.delegations.first)
+            XCTAssertEqual(row.phase, phase); XCTAssertEqual(row.symbol, symbol)
+            XCTAssertEqual(row.activity.phaseChangedAt, ending.ended)
+            XCTAssertEqual(row.turnTime, CompactDuration.text(4))
+            XCTAssertEqual(row.progressRing?.mode, ring)
+            XCTAssertFalse(row.canStopDelegation)
+            XCTAssertEqual(view.groups.first?.isRunning, false)
+            XCTAssertEqual(view.header(symbol: \.rawValue).delegatedRunning, 0)
+            XCTAssertEqual(view.header(symbol: \.rawValue).activeCount, 0)
+
+            state.replaceHarness(.claude, with: .init(activities: [DemoScenario.claudeTask(stage: .thinking, at: later)]))
+            state.reconcile(at: later, retention: 300, visibility: visible)
+            XCTAssertEqual(state.presentation(at: later).header(symbol: \.rawValue).tasks.map(\.helpers), [0])
+        }
+    }
+
+    func testRunningLedgerEntryWhoseRunnerExitedShowsStopped() throws {
+        let owner = DemoScenario.claudeTask(stage: .thinking, at: now), worker = run(1)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let meta = directory.appendingPathComponent("meta.json"), events = directory.appendingPathComponent("events.jsonl")
+        let lastEvent = now.addingTimeInterval(-1), lastMeta = now.addingTimeInterval(-4)
+        func entry(pid: Int32?) throws -> ClaudeCodexDelegation.Run {
+            var json: [String: Any] = ["created": now.addingTimeInterval(-10).timeIntervalSince1970,
+                                       "thread": thread(1), "status": "running"]
+            if let pid { json["runner"] = ["pid": pid] }
+            let data = try JSONSerialization.data(withJSONObject: json)
+            try data.write(to: meta)
+            try FileManager.default.setAttributes([.modificationDate: lastMeta], ofItemAtPath: meta.path)
+            return try XCTUnwrap(ClaudeCodexDelegation.run(data, session: try XCTUnwrap(owner.threadID), directory: directory,
+                runnerExited: { $0 == 42 }))
+        }
+        XCTAssertEqual(try entry(pid: nil).status, .running)
+        XCTAssertEqual(try entry(pid: 41).status, .running)
+        XCTAssertEqual(try entry(pid: 42).ended, lastMeta)
+        try Data().write(to: events)
+        try FileManager.default.setAttributes([.modificationDate: lastEvent], ofItemAtPath: events.path)
+        let stopped = try entry(pid: 42)
+        XCTAssertEqual(stopped.ended, lastEvent)
+        XCTAssertEqual(stopped.status, .stopped)
+        var state = ActivityApplicationState()
+        state.replaceHarness(.claude, with: .init(activities: [owner]))
+        state.localActivities = [worker]; state.codexDelegations = ClaudeCodexDelegation.links([stopped])
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        let row = try XCTUnwrap(state.presentation(at: now).rows.first?.delegations.first)
+        XCTAssertEqual(row.phase, .interrupted)
+        XCTAssertEqual(row.activity.phaseChangedAt, lastEvent)
+        let later = state.presentation(at: now.addingTimeInterval(120)).rows.first?.delegations.first
+        XCTAssertEqual(later?.turnTime, row.turnTime)
+        XCTAssertEqual(later?.delegationDetail, row.delegationDetail, "VoiceOver also keeps the elapsed time at the ending")
+        XCTAssertFalse(row.canStopDelegation)
+
+        // The next turn arrives while the old stopped entry is still cached.
+        var resumed = worker
+        resumed.consumeLive(["method": "turn/started", "threadId": thread(1), "turnId": "second", "at": now.timeIntervalSince1970])
+        state.localActivities = [resumed]
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        let next = try XCTUnwrap(state.presentation(at: now).rows.first?.delegations.first)
+        XCTAssertEqual(next.phase, .running)
+        XCTAssertFalse(next.status.contains(L10n.text("delegation.status.stopped")))
+        state.codexDelegations[worker.id] = link(to: owner)
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        XCTAssertEqual(state.presentation(at: now).rows.first?.delegations.first?.canStopDelegation, true)
+    }
+
+    func testPruningTheOwnerDoesNotMakeItsRetainedRunAStandaloneTask() throws {
+        let owner = DemoScenario.claudeTask(stage: .completed, at: now.addingTimeInterval(-6))
+        let worker = run(1, ended: true)
+        var state = ActivityApplicationState()
+        state.replaceHarness(.claude, with: .init(activities: [owner]))
+        state.localActivities = [worker]; state.codexDelegations[worker.id] = link(to: owner, status: .ok)
+        state.reconcile(at: now, retention: 10, visibility: visible)
+        XCTAssertEqual(state.presentation(at: now).rows.first?.delegations.map(\.activity.id), [worker.id])
+        let later = now.addingTimeInterval(5)
+        state.prune(at: later, retention: 10)
+        XCTAssertFalse(state.inbox.activities.contains { $0.id == owner.id })
+        XCTAssertTrue(state.inbox.activities.contains { $0.id == worker.id })
+        state.replacePendingRequests(for: .codex, with: [.init(id: "input", threadID: thread(1), sourceHostID: nil,
+            sourceName: nil, kind: .input, detectedAt: now)])
+        let view = state.presentation(at: later)
+        XCTAssertTrue(view.groups.isEmpty); XCTAssertTrue(view.rows.isEmpty)
+        XCTAssertNil(view.header(symbol: \.rawValue).attention)
+    }
+
+    func testSynthesizedSubagentStaysWithItsDelegation() throws {
+        let owner = DemoScenario.claudeTask(stage: .completed, at: now)
+        var worker = run(2)
+        worker.consumeLive(["method": "subagents/updated", "turnId": "first", "threadId": thread(2),
+                            "at": now.timeIntervalSince1970, "states": [thread(1): "running"]])
+        var state = ActivityApplicationState()
+        state.replaceHarness(.claude, with: .init(activities: [owner]))
+        state.localActivities = [worker]; state.codexDelegations[worker.id] = link(to: owner)
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        let group = try XCTUnwrap(state.taskGroups().first)
+        XCTAssertEqual(group.members.first { $0.threadID == thread(1) }?.codexDelegation, link(to: owner))
+        XCTAssertEqual(group.runningSubagentCount, 0)
+        XCTAssertEqual(group.delegations.map(\.id), [worker.id])
+        XCTAssertEqual(state.presentation(at: now).header(symbol: \.rawValue).delegatedRunning, 1)
+
+        var ending = link(to: owner, status: .stopped); ending.ended = now
+        state.codexDelegations[worker.id] = ending
+        state.reconcile(at: now, retention: 300, visibility: visible)
+        XCTAssertEqual(state.taskGroups().first?.isRunning, false, "A parent's running hint cannot outlive its run")
+        XCTAssertEqual(state.taskGroups().first?.delegations.map(\.id), [worker.id])
+    }
+
     func testRunsLeaveWithTheirLedgerEntryOrTheirClaudeTask() {
         let claude = DemoScenario.claudeTask(stage: .thinking, at: now)
         var state = ActivityApplicationState()
@@ -207,7 +336,7 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         try write("3-starting", ["created": 1_800_000_200.0, "status": "running"])
         try write("4-broken", ["thread": thread(5)])
         try write("5-elsewhere", ["created": 1_800_000_000.0, "thread": thread(6)], session: "not a session!")
-        let runs = ClaudeCodexDelegation.runs(home: home)
+        let runs = ClaudeCodexDelegation.runs(home: home, runnerExited: { _ in XCTFail("No runner PID in these entries"); return false })
         XCTAssertEqual(runs.count, 3, "Entries without a creation time or under an invalid session are skipped")
         XCTAssertEqual(runs[0].label, "Review login changes")
         XCTAssertNil(runs[2].thread, "A run still starting has no thread yet")
@@ -217,6 +346,223 @@ final class ClaudeCodexDelegationTests: XCTestCase {
         XCTAssertEqual(main.parentID, AgentProvider.claude.activityID(sessionID: session))
         XCTAssertEqual(links[AgentProvider.codex.activityID(sessionID: thread(2))]?.mode, .review, "Sub-threads keep the run that spawned them")
         XCTAssertNil(links[AgentProvider.codex.activityID(sessionID: thread(6))])
+    }
+
+    func testWindowsAdmissionLockTimeoutAsksForRetry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try XCTUnwrap(ClaudeCodexDelegation.runnerScript()).write(to: root.appendingPathComponent("runner.py"))
+        let script = """
+        import os, sys
+        from types import SimpleNamespace
+        sys.path.insert(0, os.getcwd())
+        import runner
+        def timeout(fd, mode, size):
+            raise OSError("lock timeout")
+        sys.modules['msvcrt'] = SimpleNamespace(locking=timeout, LK_LOCK=1)
+        runner.WINDOWS = True
+        with runner.admission_lock():
+            raise AssertionError("admitted despite lock timeout")
+        """
+        let process = Process(), errors = Pipe()
+        process.arguments = ["-S", "-c", script]
+        process.currentDirectoryURL = root; process.standardError = errors
+        let fixture = try PythonFixture.prepare(process)
+        defer { fixture.remove() }
+        try process.run()
+        let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 4, message)
+        XCTAssertTrue(message.contains("Try again"), message)
+    }
+
+    func testRunnerAdmissionReviewAndWorktreeLifecycle() throws {
+        #if os(Windows)
+        throw XCTSkip("This integration fixture uses a POSIX shell executable and sends SIGTERM to the runner.")
+        #else
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try XCTUnwrap(ClaudeCodexDelegation.runnerScript()).write(to: root.appendingPathComponent("runner.py"))
+        let checks = #"""
+        import json, os, signal, subprocess, sys, time
+        from pathlib import Path
+        import ntpath
+        from unittest.mock import patch
+        from contextlib import redirect_stdout
+        from io import StringIO
+        os.environ.update(CLAUDE_PID='', CLAUDE_CODE_SESSION_ID='fixture')
+        sys.path.insert(0, os.getcwd())
+        import runner as r
+        with patch.object(os, 'path', ntpath):
+            assert r.change_path('D:/output.txt', 'C:/repo') == 'D:/output.txt'
+
+        root = Path.cwd()
+        repo = root / 'repo'
+        sub = repo / 'sub'
+        sub.mkdir(parents=True)
+        def git(*args, cwd=repo):
+            return subprocess.check_output(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', *args], cwd=cwd).decode().strip()
+        git('init', '-q')
+        (repo / 'base').write_text('base')
+        git('add', '.')
+        git('commit', '-qm', 'base')
+        thread = '12345678-1234-1234-1234-123456789abc'
+        fake = root / 'fake-codex'
+        fake.write_text('''#!/bin/sh
+        if [ "$1" = delete ]; then echo delete >> "$TRACE"; exit 0; fi
+        pwd > "$TRACE.cwd"
+        echo "$CODEX_HOME" > "$TRACE.home"
+        cat > "$TRACE"
+        echo '{"type":"thread.started","thread_id":"12345678-1234-1234-1234-123456789abc"}'
+        if [ -n "$ADD_FILE" ]; then
+            echo "committed $ADD_FILE" > "$TEST_TREE/$ADD_FILE"
+            git -C "$TEST_TREE" add -- "$ADD_FILE" || exit 1
+            git -C "$TEST_TREE" -c user.name=Test -c user.email=test@example.invalid commit -qm change || exit 1
+        fi
+        if [ "$SLOW" = yes ]; then sleep 30; fi
+        ''')
+        fake.chmod(0o755)
+        trace = root / 'trace'
+        env = dict(os.environ, CODEX_BIN=str(fake), TRACE=str(trace), CLAUDE_PID='', CLAUDE_CODE_SESSION_ID=r.SESSION)
+        command = [sys.executable, '-S', str(root / 'runner.py')]
+        def call(*args, code=0):
+            result = subprocess.run(command + list(args), cwd=repo, env=env, capture_output=True, text=True, timeout=10)
+            assert result.returncode == code, (args, result.stdout, result.stderr)
+            return result.stdout
+        settings = dict(command='python3 -S "(test)/runner.py"', codexHome=str(root / 'custom'), sandbox='workspace-write')
+        def configure(**changes):
+            r.CONFIG.write_text(json.dumps(dict(settings, **changes)))
+        configure()
+        for scope, text in [(['--base','main'], 'base branch main'), (['--commit','abc'], 'commit abc'), (['--uncommitted'], 'untracked')]:
+            args = ['review', *scope]
+            if scope[0] == '--commit':
+                args += ['--title','Storage changes']
+            native = json.loads(call(*args, '--dry-run'))['command']
+            assert scope[0] in native
+            if '--title' in args: assert native[native.index('--title')+1] == 'Storage changes'
+            configure(instructions='standing')
+            line = json.loads(call(*args, '--dry-run'))['command']
+            assert scope[0] not in line and line[-1] == '-' and 'sandbox_mode="read-only"' in line
+            assert '--title' not in line
+            output = call(*args)
+            if '--title' in args: assert 'Storage changes' in trace.read_text()
+            assert text in trace.read_text() and 'standing' in trace.read_text()
+            assert settings['command'] + ' resume' in output
+            configure()
+        call('review','--uncommitted','--worktree',code=2)
+        call('resume',thread,'--worktree',code=2)
+        args = json.loads(call('-C','sub','--dry-run','brief'))['command']
+        assert 'sandbox_workspace_write.network_access=false' in args
+        call('-C','sub','brief')
+        assert Path(str(trace)+'.cwd').read_text().strip() == str(sub)
+        assert Path(str(trace)+'.home').read_text().strip() == settings['codexHome']
+        # Start two writers together. The admitted child waits for a signal.
+        for limit, message in [(1,'most Pacer allows'), (3,'already changing')]:
+            configure(maxConcurrent=limit)
+            workers = [subprocess.Popen(command + ['brief'], cwd=repo, env=dict(env,SLOW='yes'), stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(2)]
+            try:
+                for _ in range(200):
+                    if any(p.poll() is not None for p in workers): break
+                    time.sleep(.025)
+                rejected, admitted = sorted(workers,key=lambda p:p.poll() is None)
+                assert rejected.returncode == 4 and message.encode() in rejected.stderr.read()
+                admitted.send_signal(signal.SIGTERM)
+                assert admitted.wait(timeout=10) == 130
+                last = r.load_runs()[-1]
+                assert last['status'] == 'stopped' and last['stoppedBy'] == 'claude' and last['ended']
+            finally:
+                for p in workers:
+                    if p.poll() is None: p.terminate()
+                    p.wait(timeout=10)
+        # A rollout inside one of two registered worktrees identifies the right one.
+        tree = root / 'chosen'
+        git('worktree','add','--detach','-q',str(root / 'other'))
+        git('worktree','add','--detach','-q',str(tree))
+        home = Path(settings['codexHome'])
+        rollouts = home / 'sessions' / time.strftime('%Y/%m/%d')
+        rollouts.mkdir(parents=True)
+        (rollouts / (thread+'.jsonl')).write_text(json.dumps(dict(type='turn_context',payload=dict(cwd=str(tree)))))
+        env.update(TEST_TREE=str(tree),ADD_FILE='outside')
+        output = call('--worktree','-C','sub','brief')
+        del env['ADD_FILE']
+        assert 'changed files (1): A outside' in output
+        latest = r.find_run(thread)
+        assert latest['worktree'] == str(tree) and latest['worktreeBase'] == git('rev-parse','HEAD')
+        assert latest['changedFiles'] == latest['worktreeChanges'] == 1
+        assert r.worktree_changes(latest) == ['A outside']
+        call('apply',thread)
+        assert (repo / 'outside').read_text().strip() == 'committed outside'
+        applied = r.find_run(thread)['appliedTree']
+        assert applied == git('rev-parse','HEAD^{tree}',cwd=tree)
+        active = subprocess.Popen(command + ['resume',thread,'more'], cwd=repo, env=dict(env,SLOW='yes'), stdout=subprocess.PIPE)
+        try:
+            for _ in range(200):
+                if r.is_running(r.find_run(thread)): break
+                time.sleep(.025)
+            call('apply',thread,code=2)
+            call('resume',thread,'more',code=2)
+            call('stop',thread)
+            assert active.wait(timeout=10) == 130
+        finally:
+            if active.poll() is None: active.terminate()
+            active.wait(timeout=10)
+        # Inspect the very first save of the resume, before Codex starts.
+        register = r.save
+        first = []
+        def capture(meta):
+            if not first: first.append((meta.get('worktreeBase'), meta.get('appliedTree')))
+            register(meta)
+        with patch.dict(os.environ,dict(env,ADD_FILE='second',CODEX_HOME=str(home))), patch.object(r,'save',capture), redirect_stdout(StringIO()) as output:
+            assert r.run_job(r.parse(['resume',thread,'more'])) == 0
+        assert first == [(latest['worktreeBase'],applied)]
+        assert 'changed files (1): A second' in output.getvalue()
+        latest = r.find_run(thread)
+        assert latest['changedFiles'] == latest['worktreeChanges'] == 1
+        assert 'applied 1 file(s)' in call('apply',thread)
+        assert (repo / 'second').read_text().strip() == 'committed second'
+        assert not r.pending_worktree(r.find_run(thread))
+        env['ADD_FILE'] = 'pending'
+        call('resume',thread,'save the next patch')
+        latest = r.find_run(thread)
+        assert r.worktree_changes(latest) == ['A pending']
+        assert latest['worktreeBase'] == git('rev-parse','HEAD')
+        configure(records='timed',recordsHours=2)
+        for entry in r.load_runs()[:-1]:
+            entry['ended'] = time.time()-9000
+            r.save(entry)
+        r.clean_session(r.SESSION,[str(fake)],'alive')
+        assert tree.exists() and len(r.load_runs()) > 1
+        # Disable delegation with an outstanding deletion and an unavailable patch directory.
+        r.CONFIG.unlink()
+        r.PENDING.write_text(thread)
+        r.PATCHES.touch()
+        call('turn-end','--session',r.SESSION)
+        call('sweep')
+        assert tree.exists() and r.find_run(thread) and 'delete' not in trace.read_text()
+        r.PATCHES.unlink()
+        first = r.save_patch(latest)
+        first.write_text('previous patch')
+        configure(records='timed',recordsHours=2)
+        call('sweep')
+        assert not tree.exists() and r.find_run(thread), 'gone session exports the worktree before timed records expire'
+        assert 'delete' not in trace.read_text()
+        assert first.read_text() == 'previous patch'
+        backups = [p.read_text() for p in r.PATCHES.glob('*.patch') if p != first]
+        assert len(backups) == 1 and 'committed pending' in backups[0] and 'committed second' not in backups[0]
+        r.CONFIG.unlink()
+        call('sweep')
+        assert not r.load_runs() and 'delete' not in trace.read_text()
+        """#
+        let process = Process()
+        process.arguments = ["-S", "-c", checks]
+        process.currentDirectoryURL = root
+        let fixture = try PythonFixture.prepare(process)
+        defer { fixture.remove() }
+        try process.run(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        #endif
     }
 
     func testSettingsSwitchQuotaAndRunnerCommand() throws {

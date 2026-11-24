@@ -340,6 +340,7 @@ actor EngineRuntime {
     private var lastInstallationDetection = Date.distantPast
     private let detectInstallation: @Sendable () async -> ProviderInstallationDetection
     private var codexHome: URL
+    private var usesCustomCodexHome = false
     private let defaultCodexHome: URL
     private var codexExecutable = ""
     private var claudeHome: URL
@@ -1197,7 +1198,9 @@ actor EngineRuntime {
         let wslProvidersChanged = selectedProviders.map { $0.intersection(WindowsWSLProfile.providers) != enabled.intersection(WindowsWSLProfile.providers) } ?? false
         projectionReady = false
         activityDisplayTask = nil; activityDisplayDeadline = nil
-        if let codex { codexHome = codex }
+        if let codex, let override = parameters.codexHome {
+            codexHome = codex; usesCustomCodexHome = !override.isEmpty
+        }
         if let claude { claudeHome = claude }
         if let organization = parameters.claudeOrganization {
             if organization.lowercased() != claudeOrganization {
@@ -1872,7 +1875,15 @@ actor EngineRuntime {
         if wanted {
             // The runner starts the same Codex program Pacer found, also the one inside Codex Desktop.
             let codex = CodexClient.findExecutable(customPath: codexExecutable)?.path ?? (codexExecutable.isEmpty ? nil : codexExecutable)
-            if ClaudeCodexDelegation.apply(codexDelegationSettings.settings(codex: codex), home: claudeHome) { codexDelegationHome = claudeHome }
+            var settings = codexDelegationSettings.settings(codex: codex)
+            if usesCustomCodexHome { settings.codexHome = EngineCodexSourceReport.path(codexHome) }
+            // The installer owns the pinned Python path. Copy its command once the skill is installed.
+            let skill = try? String(contentsOf: ClaudeCodexDelegation.skillURL(home: claudeHome), encoding: .utf8)
+            let prefix = "allowed-tools: Bash("
+            if let line = skill?.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix(prefix) && $0.hasSuffix(":*)") }) {
+                settings.command = String(line.dropFirst(prefix.count).dropLast(3))
+            }
+            if ClaudeCodexDelegation.apply(settings, home: claudeHome) { codexDelegationHome = claudeHome }
         } else if codexDelegationHome == claudeHome || setupConfirmed {
             ClaudeCodexDelegation.apply(nil, home: claudeHome); codexDelegationHome = nil
         }
@@ -1888,7 +1899,7 @@ actor EngineRuntime {
     private func codexDelegationLinks(at date: Date) -> [String: CodexDelegationLink] {
         guard !demo, enabled.contains(.claude), enabled.contains(.codex) else { codexDelegationRuns = []; return [:] }
         if let cached = codexDelegationLedger, abs(date.timeIntervalSince(cached.at)) < 1 { return cached.links }
-        codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome)
+        codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome, runnerExited: WindowsProcessOwnership.hasExited)
         let links = ClaudeCodexDelegation.links(codexDelegationRuns)
         codexDelegationLedger = (date, links); return links
     }
@@ -1946,12 +1957,13 @@ actor EngineRuntime {
         }
         codexDelegationCheck.checking = true
         let home = codexHome
+        let environment = ProcessInfo.processInfo.environment.merging(["CODEX_HOME": EngineCodexSourceReport.path(home)]) { _, home in home }
         Task { [weak self] in
-            let version = await WindowsSubprocess.capture(executable: executable, arguments: ["--version"], timeout: 20, limit: 4096)
+            let version = await WindowsSubprocess.capture(executable: executable, arguments: ["--version"], timeout: 20, limit: 4096, environment: environment)
                 .map { String(decoding: $0, as: UTF8.self).split(whereSeparator: \.isWhitespace).last.map(String.init) } ?? nil
             // `codex login status` exits non-zero when signed out.
-            let login = await WindowsSubprocess.capture(executable: executable, arguments: ["login", "status"], timeout: 20, limit: 4096)
-            let catalog = await WindowsSubprocess.capture(executable: executable, arguments: ["debug", "models"], timeout: 60, limit: 1024 * 1024)
+            let login = await WindowsSubprocess.capture(executable: executable, arguments: ["login", "status"], timeout: 20, limit: 4096, environment: environment)
+            let catalog = await WindowsSubprocess.capture(executable: executable, arguments: ["debug", "models"], timeout: 60, limit: 1024 * 1024, environment: environment)
             let models = catalog.flatMap(Self.codexModels)
             let check = Self.codexDelegationDefaults(home: home, models: models,
                 login: version == nil ? "unknown" : login == nil ? "missing" : "ok", version: version)

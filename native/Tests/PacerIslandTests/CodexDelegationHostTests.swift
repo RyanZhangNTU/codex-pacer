@@ -2,6 +2,7 @@ import XCTest
 @testable import PacerCore
 @testable import PacerIsland
 import PacerTestSupport
+import PacerMacSupport
 
 /// The Mac's side of Codex for Claude: Settings → Collaboration's choices, the
 /// switch file they keep in the selected Claude home, the skill the hook setup
@@ -79,6 +80,20 @@ final class CodexDelegationHostTests: XCTestCase {
         XCTAssertTrue(CodexDelegationPreferences.validModel("gpt-5.5-codex"))
     }
 
+    func testDefaultValuedPicksSurviveFollowingAndReloading() throws {
+        let defaults = try fixture().defaults
+        var choices = CodexDelegationPreferences()
+        choices.setFollowEffort(false, fallback: "low")
+        choices.setFollowFast(false, fallback: true)
+        XCTAssertEqual(choices.effort, "low"); XCTAssertTrue(choices.fast)
+        choices.effort = "high"; choices.fast = false
+        choices.setFollowEffort(true, fallback: nil); choices.setFollowFast(true, fallback: nil)
+        choices.save(to: defaults)
+        choices = CodexDelegationPreferences(defaults: defaults)
+        choices.setFollowEffort(false, fallback: "low"); choices.setFollowFast(false, fallback: true)
+        XCTAssertEqual(choices.effort, "high"); XCTAssertFalse(choices.fast)
+    }
+
     func testChangingTheTriggerBringsTheSkillCurrent() throws {
         let fixture = try fixture(), model = fixture.model, home = fixture.home
         try FileManager.default.createDirectory(at: home.appendingPathComponent("pacer"), withIntermediateDirectories: true)
@@ -105,12 +120,20 @@ final class CodexDelegationHostTests: XCTestCase {
         var chosen = CodexDelegationPreferences(); chosen.enabled = true; chosen.followEffort = false; chosen.effort = "high"; chosen.records = .keep
         chosen.save(to: defaults)
         XCTAssertTrue(model.applyCodexDelegationSwitch(home: home))
+        XCTAssertEqual(try stored(home).codexHome, fixture.root.standardizedFileURL.path)
         XCTAssertEqual(try stored(home).effort, "high")
         XCTAssertEqual(try stored(home).records, .keep)
         XCTAssertEqual(try stored(home).sandbox, .workspaceWriteNetwork)
         chosen.effort = "low"; chosen.save(to: defaults)
         XCTAssertFalse(model.applyCodexDelegationSwitch(home: home), "A changed choice is no switch change")
         XCTAssertEqual(try stored(home).effort, "low", "but the runner reads it at once")
+
+        for override in ["", nil] as [String?] {
+            defaults.set(override, forKey: "codexHome")
+            model.applyCodexDelegationSwitch(home: home)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
+            XCTAssertNil(json["codexHome"], "A shell-launched runner inherits its own CODEX_HOME")
+        }
 
         ProviderModules(codexMode: .disabled, claudeMode: .disabled).save(to: defaults)
         model.applySettings(sourceChanged: false)
@@ -125,7 +148,7 @@ final class CodexDelegationHostTests: XCTestCase {
         XCTAssertTrue(exists(ClaudeCodexDelegation.configURL(home: home)), "Setup creates Pacer's folder; the same pass writes the switch")
         XCTAssertTrue(exists(ClaudeCodexDelegation.runnerURL(home: home)))
         let skill = try String(contentsOf: ClaudeCodexDelegation.skillURL(home: home), encoding: .utf8)
-        let command = ClaudeCodexDelegation.command(python: "python3", home: model.claudeHome)
+        let command = try XCTUnwrap(stored(home).command)
         XCTAssertFalse(command.contains("\""), "A path without spaces needs no quotes")
         let allowed = skill.split(separator: "\n").first { $0.hasPrefix("allowed-tools:") }.map(String.init)
         XCTAssertEqual(allowed, "allowed-tools: Bash(" + command + ":*)", "Claude runs the Mac's runner command without asking")
@@ -135,6 +158,15 @@ final class CodexDelegationHostTests: XCTestCase {
         XCTAssertFalse(exists(ClaudeCodexDelegation.configURL(home: home)), "Turning it off removes the switch at once")
         try await TestWait.until { !self.exists(ClaudeCodexDelegation.skillURL(home: home)) }
         XCTAssertFalse(exists(ClaudeCodexDelegation.skillURL(home: home)), "and the skill with the next setup")
+    }
+
+    func testMacRecognizesAReapedRunnerPID() throws {
+        XCTAssertFalse(ProcessOwnership.hasExited(Int(ProcessInfo.processInfo.processIdentifier)))
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertTrue(ProcessOwnership.hasExited(Int(process.processIdentifier)))
     }
 
     func testARunShowsUnderItsClaudeTaskAndStopsFromPacer() throws {

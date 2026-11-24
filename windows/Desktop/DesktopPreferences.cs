@@ -100,8 +100,12 @@ internal sealed record DesktopPreferences
     public string CodexDelegationTrigger { get; init; } = "ask";
     public bool CodexDelegationFollowModel { get; init; } = true;
     public string CodexDelegationModel { get; init; } = "";
+    [JsonPropertyName("collaboration.claude>codex.pickedEffort")]
+    public bool CodexDelegationPickedEffort { get; init; }
     public bool CodexDelegationFollowEffort { get; init; } = true;
     public string CodexDelegationEffort { get; init; } = "high";
+    [JsonPropertyName("collaboration.claude>codex.pickedFast")]
+    public bool CodexDelegationPickedFast { get; init; }
     public bool CodexDelegationFollowFast { get; init; } = true;
     public bool CodexDelegationFast { get; init; }
     public string CodexDelegationRecords { get; init; } = "turn";
@@ -133,6 +137,19 @@ internal sealed record DesktopPreferences
         text = text.Trim();
         return text.Length <= DelegationInstructionsLimit ? text : text[..DelegationInstructionsLimit];
     }
+    internal DesktopPreferences SetDelegationFollowEffort(bool follow, string? fallback) => this with
+    {
+        CodexDelegationFollowEffort = follow,
+        CodexDelegationEffort = !follow && !CodexDelegationPickedEffort && fallback != null && DelegationEfforts.Contains(fallback)
+            ? fallback : CodexDelegationEffort,
+        CodexDelegationPickedEffort = !follow || !CodexDelegationFollowEffort || CodexDelegationPickedEffort
+    };
+    internal DesktopPreferences SetDelegationFollowFast(bool follow, bool? fallback) => this with
+    {
+        CodexDelegationFollowFast = follow,
+        CodexDelegationFast = !follow && !CodexDelegationPickedFast ? fallback ?? CodexDelegationFast : CodexDelegationFast,
+        CodexDelegationPickedFast = !follow || !CodexDelegationFollowFast || CodexDelegationPickedFast
+    };
     /// Every Collaboration choice but the pair's switch back to its default.
     internal DesktopPreferences RestoringDelegationDefaults()
     {
@@ -141,7 +158,9 @@ internal sealed record DesktopPreferences
         {
             CodexDelegationTrigger = initial.CodexDelegationTrigger, CodexDelegationFollowModel = initial.CodexDelegationFollowModel,
             CodexDelegationModel = initial.CodexDelegationModel, CodexDelegationFollowEffort = initial.CodexDelegationFollowEffort,
+            CodexDelegationPickedEffort = false,
             CodexDelegationEffort = initial.CodexDelegationEffort, CodexDelegationFollowFast = initial.CodexDelegationFollowFast,
+            CodexDelegationPickedFast = false,
             CodexDelegationFast = initial.CodexDelegationFast, CodexDelegationRecords = initial.CodexDelegationRecords,
             CodexDelegationRecordsHours = initial.CodexDelegationRecordsHours, CodexDelegationSandbox = initial.CodexDelegationSandbox,
             CodexDelegationWorktree = initial.CodexDelegationWorktree, CodexDelegationInstructions = initial.CodexDelegationInstructions,

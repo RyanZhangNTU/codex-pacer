@@ -22,6 +22,8 @@ expired runs and cleans runs whose Claude process is gone.
 Pacer rewrites this file with each release. Python 3.9 or later, standard
 library only.
 """
+from contextlib import contextmanager
+import signal
 import json, os, re, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
@@ -68,6 +70,7 @@ Options:
   -i, --image <file>        attach an image (task/resume; repeatable)
       --timeout <minutes>   stop the job after this long (default: 360)
       --dry-run             print the codex command line and exit
+With a review brief or standing instructions, the review scope and title go into the prompt.
 Defaults for model, effort, fast mode, file access and work location come from
 Pacer's settings; a run never gets more file access than they allow.
 """
@@ -116,6 +119,9 @@ def instructions(settings):
 
 
 def runner_command():
+    command = config().get('command')
+    if command:
+        return command
     def quoted(part):
         part = part.replace('\\', '/')
         return '"' + part + '"' if ' ' in part else part
@@ -187,6 +193,8 @@ def parse(argv):
         fail('--timeout must be a positive number of minutes')
     if o.mode == 'review' and not o.review:
         fail('review needs --uncommitted, --base <branch> or --commit <sha>')
+    if o.worktree and o.mode in ('review', 'resume'):
+        fail('--worktree is only available for a new task')
     if o.mode == 'review' and o.write:
         fail('review is read-only; drop --write')
     allowed = level(settings)
@@ -392,10 +400,11 @@ def codex_args(o, last_file, has_prompt, resume_id):
         args += ['-c', 'model_reasoning_effort="' + o.effort + '"']
     if o.fast is not None:
         args += ['-c', 'service_tier="' + (FAST_TIER if o.fast else STANDARD_TIER) + '"']
-    sandbox = 'danger-full-access' if o.level == 'danger-full-access' else 'workspace-write' if o.write else 'read-only'
+    sandbox = 'read-only' if o.mode == 'review' else 'danger-full-access' if o.level == 'danger-full-access' else 'workspace-write' if o.write else 'read-only'
     args += ['-c', 'sandbox_mode="' + sandbox + '"', '-c', 'approval_policy="never"']
-    if o.write and o.level == 'workspace-write-network':
-        args += ['-c', 'sandbox_workspace_write.network_access=true']
+    if sandbox != 'read-only':
+        network = o.level in ('workspace-write-network', 'danger-full-access')
+        args += ['-c', 'sandbox_workspace_write.network_access=' + str(network).lower()]
     if o.worktree:
         args.append('--worktree')
     # Pacer sets file access on every call, so a folder that isn't a git
@@ -404,11 +413,9 @@ def codex_args(o, last_file, has_prompt, resume_id):
     if o.mode != 'review':
         for image in o.images:
             args += ['-i', image]
-    if o.mode == 'task' and o.cd:
-        args += ['-C', o.cd]
     if o.mode == 'resume':
         args.append(resume_id)
-    if o.mode == 'review':
+    if o.mode == 'review' and not has_prompt:
         args += o.review
         if o.title:
             args += ['--title', o.title]
@@ -498,6 +505,8 @@ def child_threads(parent, index, found=None):
 
 
 def delete_thread(codex, thread):
+    if not CONFIG.exists():
+        return True  # pairing disabled: forget the request, keep the thread
     if not codex:
         return False
     result = run_quiet(codex + ['delete', '--force', thread])
@@ -586,6 +595,14 @@ def snapshot(folder):
     return {'root': root, 'entries': entries}
 
 
+def change_path(name, cwd):
+    try:
+        relative = os.path.relpath(name, cwd) if os.path.isabs(name) else name
+    except ValueError:  # Windows paths on different drives
+        return name
+    return relative.replace(os.sep, '/') if not relative.startswith('..') else name
+
+
 def changed_between(before, after):
     changed = []
     old = before['entries'] if before else {}
@@ -611,7 +628,7 @@ def worktree_paths(folder):
 
 def remove_worktree(run):
     tree = run.get('worktree')
-    if not tree:
+    if not tree or not os.path.isdir(tree):
         return
     cwd = run.get('cwd') or None
     git(cwd, ['worktree', 'remove', '--force', tree])
@@ -682,6 +699,23 @@ def is_running(run):
     return alive((run.get('runner') or {}).get('pid')) and time.time() - (run.get('created') or 0) < limit
 
 
+@contextmanager
+def admission_lock():
+    RUNS.mkdir(parents=True, exist_ok=True)
+    with open(RUNS / '.admission.lock', 'a+b') as lock:
+        if WINDOWS:
+            import msvcrt
+            lock.seek(0)
+            try:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            except OSError:
+                fail('another runner is registering a run. Try again shortly.', 4)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        yield  # closing releases the lock on both platforms
+
+
 def all_running():
     return [run for session in sessions() for run in load_runs(session) if run.get('status') == 'running' and is_running(run)]
 
@@ -691,9 +725,8 @@ def find_run(thread):
     if thread == 'last':
         runs = [run for run in runs if run.get('mode') != 'review']
         return runs[-1] if runs else None
-    owned = [run for run in runs if run.get('thread') == thread and run.get('owned')]
-    any_run = [run for run in runs if run.get('thread') == thread]
-    return (owned or any_run or [None])[0]
+    matches = [run for run in reversed(runs) if run.get('thread') == thread]
+    return next((run for run in matches if is_running(run)), matches[0] if matches else None)
 
 
 def failure_reason(errors, tail):
@@ -708,17 +741,17 @@ def failure_reason(errors, tail):
     return 'other'
 
 
-def project_name(folder):
-    root = toplevel(folder) or folder
-    return os.path.basename(os.path.normpath(root))[:80] if root else None
+def worktree_base(run):
+    return run.get('appliedTree') or run.get('worktreeBase') or 'HEAD'
 
 
 def worktree_changes(run):
-    tree = run.get('worktree')
-    if not tree or not os.path.isdir(tree):
-        return 0
-    status = git(tree, ['status', '--porcelain', '--untracked-files=all'])
-    return len([line for line in (status or '').splitlines() if line.strip()])
+    tree = run['worktree']
+    tracked = git(tree, ['diff', '--name-status', worktree_base(run), '--'])
+    untracked = git(tree, ['ls-files', '--others', '--exclude-standard'])
+    if tracked is None or untracked is None:
+        return None
+    return [line.replace('\t', ' ') for line in tracked.splitlines()] + ['A ' + name for name in untracked.splitlines()]
 
 
 def add_pending(threads):
@@ -747,24 +780,40 @@ def retry_pending(codex):
 
 def pending_worktree(run):
     """A worktree whose changes nobody applied or discarded yet."""
-    return bool(run.get('worktree')) and not run.get('applied') and not run.get('discarded') \
-        and os.path.isdir(run['worktree']) and worktree_changes(run) > 0
+    if run.get('discarded') or (run.get('applied') and not run.get('appliedTree')):
+        return False
+    return bool(run.get('worktree')) and os.path.isdir(run['worktree']) and worktree_changes(run) != []
+
+
+def worktree_patch(run):
+    tree = run['worktree']
+    if git(tree, ['add', '-A']) is None:
+        return None, None
+    staged = (git(tree, ['write-tree']) or '').strip()
+    if not staged:
+        return None, None
+    result = run_quiet(['git', 'diff', '--binary', worktree_base(run), staged, '--'], cwd=tree, timeout=120)
+    return staged, result.stdout if result is not None and result.returncode == 0 else None
 
 
 def save_patch(run):
     """Keeps a worktree's unapplied changes as <root>/patches/<project>-<time>-<thread>.patch."""
-    tree = run.get('worktree')
-    git(tree, ['add', '-A'])
-    result = run_quiet(['git', 'diff', '--cached', '--binary', 'HEAD'], cwd=tree, timeout=120)
-    if result is None or result.returncode != 0 or not result.stdout.strip():
+    _, patch = worktree_patch(run)
+    if not patch:
         return None
     name = '%s-%s-%s.patch' % (re.sub(r'[^A-Za-z0-9._-]+', '-', run.get('project') or 'project')[:40],
                                time.strftime('%Y%m%d-%H%M%S', time.localtime(run.get('created') or time.time())),
                                (run.get('thread') or 'run')[:8])
     try:
         PATCHES.mkdir(parents=True, exist_ok=True)
-        (PATCHES / name).write_bytes(result.stdout)
-        return PATCHES / name
+        path = PATCHES / name
+        while True:
+            try:
+                with path.open('xb') as handle:
+                    handle.write(patch)
+                return path
+            except FileExistsError:
+                path = PATCHES / (name[:-6] + '-' + os.urandom(4).hex() + '.patch')
     except OSError:
         return None
 
@@ -788,30 +837,31 @@ def clean_session(session, codex, why):
         except OSError:
             pass
         lock.touch()
-    keep, hours = records(config())
+    keep, hours = records(config()) if CONFIG.exists() else ('keep', 0)
     deleted = kept = 0
     try:
         runs = load_runs(session)
-        busy = set(run.get('thread') for run in runs if is_running(run) and run.get('thread'))
-        doomed, dropped = [], []
+        groups = {}
         for run in runs:
-            if is_running(run) or (run.get('thread') and run.get('thread') in busy):
-                kept += 1
+            groups.setdefault(run.get('thread') or run['dir'], []).append(run)
+        doomed, dropped = [], []
+        for group in groups.values():
+            latest = group[-1]
+            if any(is_running(run) for run in group):
+                kept += len(group)
                 continue
-            if pending_worktree(run):
-                if why != 'gone':
-                    kept += 1
+            expired = (latest.get('ended') or latest.get('created') or 0) + hours * 3600 <= time.time()
+            delete = why == 'now' or (keep == 'turn' and why in ('turn', 'gone')) or (
+                keep == 'timed' and expired and why in ('alive', 'gone'))
+            if why == 'gone' or delete:
+                if pending_worktree(latest) and (why != 'gone' or not save_patch(latest)):
+                    kept += len(group)
                     continue
-                save_patch(run)
-            expired = keep == 'turn' or (keep == 'timed' and (run.get('ended') or run.get('created') or 0) + hours * 3600 <= time.time())
-            if why == 'now' or (why in ('turn', 'gone') and keep == 'turn') or (why in ('alive', 'gone') and keep == 'timed' and expired):
-                doomed.append(run)
-            elif why == 'gone' and keep == 'keep':
-                dropped.append(run)  # its threads stay in Codex history
+                remove_worktree(latest)
+            if delete or (keep == 'keep' and why == 'gone'):
+                (doomed if delete and CONFIG.exists() else dropped).extend(group)
             else:
-                if why == 'gone':
-                    remove_worktree(run)
-                kept += 1
+                kept += len(group)
         threads = []
         for run in doomed:
             for thread in (run.get('childThreads') or []) + ([run['thread']] if run.get('thread') else []):
@@ -819,7 +869,6 @@ def clean_session(session, codex, why):
                     threads.append(thread)
         add_pending(delete_threads(codex, threads))
         for run in doomed + dropped:
-            remove_worktree(run)
             shutil.rmtree(run['dir'], ignore_errors=True)
             if os.path.exists(run['dir']):
                 kept += 1
@@ -977,23 +1026,25 @@ def apply_run(thread):
     tree = run['worktree']
     if not os.path.isdir(tree):
         fail('worktree is gone: ' + tree, 1)
-    git(tree, ['add', '-A'])
-    result = run_quiet(['git', 'diff', '--cached', '--binary', 'HEAD'], cwd=tree, timeout=120)
-    if result is None or result.returncode != 0:
+    staged, patch = worktree_patch(run)
+    if patch is None:
         fail("could not read the worktree's changes", 1)
-    if not result.stdout.strip():
-        run['applied'] = True; save(run)
+    if patch:
+        path = Path(run['dir']) / 'worktree.patch'
+        path.write_bytes(patch)
+        root = toplevel(run['cwd'])
+        if not root:
+            fail('could not locate the original repository', 1)
+        applied = run_quiet(['git', 'apply', '--whitespace=nowarn', str(path)], cwd=root, timeout=120)
+        if applied is None or applied.returncode != 0:
+            detail = applied.stdout.decode('utf-8', 'replace').strip() if applied is not None else ''
+            fail('git apply failed in %s:\n%s\npatch kept in the run folder: %s' % (root, detail, path), 1)
+        files = (git(tree, ['diff', '--name-status', worktree_base(run), staged, '--']) or '').replace('\t', ' ').splitlines()
+        print('applied %d file(s) to %s: %s' % (len(files), root, ', '.join(files)))
+    else:
         print('nothing to apply: the worktree has no changes')
-        return
-    files = [line.replace('\t', ' ') for line in (git(tree, ['diff', '--cached', '--name-status', 'HEAD']) or '').strip().splitlines()]
-    patch = Path(run['dir']) / 'worktree.patch'
-    patch.write_bytes(result.stdout)
-    applied = run_quiet(['git', 'apply', '--whitespace=nowarn', str(patch)], cwd=run.get('cwd'), timeout=120)
-    if applied is None or applied.returncode != 0:
-        detail = applied.stdout.decode('utf-8', 'replace').strip() if applied is not None else ''
-        fail('git apply failed in %s:\n%s\npatch kept in the run folder: %s' % (run.get('cwd'), detail, patch), 1)
-    run['applied'] = True; save(run)
-    print('applied %d file(s) to %s: %s' % (len(files), run.get('cwd'), ', '.join(files)))
+    run.update(applied=True, appliedTree=staged, worktreeChanges=0)
+    save(run)
 
 
 def discard_run(thread):
@@ -1069,6 +1120,15 @@ def run_job(o):
     standing = instructions(config())
     if standing:
         prompt = (prompt + '\n\n' if prompt else '') + 'Standing instructions from the user (set in Codex Pacer):\n' + standing
+    if o.mode == 'review' and prompt:
+        scope = 'Review staged, unstaged and untracked changes.'
+        if o.review[0] == '--base':
+            scope = 'Review the changes against base branch %s (merge-base diff).' % o.review[1]
+        elif o.review[0] == '--commit':
+            scope = 'Review the changes introduced by commit %s.' % o.review[1]
+        if o.title:
+            scope += '\nReview title: ' + o.title
+        prompt = scope + '\n\n' + prompt
     resume_id = None
     origin = None
     if o.mode == 'resume':
@@ -1101,7 +1161,6 @@ def run_job(o):
     settings = config()
     limit = settings.get('maxConcurrent')
     limit = limit if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else 3
-    running = all_running()
 
     def refuse(reason, message):
         fail(message, 4)
@@ -1110,30 +1169,46 @@ def run_job(o):
     if left is not None and left < floor:
         refuse('quota', 'Codex has %d%% of its quota left, below the %d%% the user set in Pacer (Settings → Collaboration). '
                'Tell the user; this run did not start.' % (left, floor))
-    if len(running) >= limit:
-        refuse('concurrency', '%d Codex run(s) are already running, the most Pacer allows at once (Settings → Collaboration). '
-               'Wait for one to finish, then run this again.' % len(running))
-    if o.write and not o.worktree and not (origin or {}).get('worktree'):
-        # One writer per repository, or per folder outside one.
-        root = repo or cwd
-        for run in running:
-            if run.get('write') and not run.get('worktree') and run.get('root') and os.path.normcase(run['root']) == os.path.normcase(root):
-                refuse('writer', 'another Codex run (thread %s) is already changing files in %s. Wait for it to finish%s.'
-                       % (run.get('thread') or '?', root, ', or run this one with --worktree so its changes stay apart' if repo else ''))
-
     sweep(codex, current=SESSION)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    stop_requested = False
+
+    def stop_from_claude(*_):
+        nonlocal stop_requested
+        stop_requested = True
+
+    for sig in (signal.SIGTERM, getattr(signal, 'SIGHUP', None), getattr(signal, 'SIGBREAK', None)):
+        if sig is not None:
+            signal.signal(sig, stop_from_claude)
+    base = (origin or {}).get('worktreeBase')
+    if o.worktree:
+        base = (git(cwd, ['rev-parse', 'HEAD']) or '').strip() or None
     meta = {
         'v': 1, 'dir': str(run_dir), 'session': SESSION, 'owner': {'pid': OWNER}, 'runner': {'pid': os.getpid()},
         'status': 'running', 'mode': o.mode, 'label': o.label, 'created': round(time.time(), 3), 'timeoutMinutes': o.timeout,
         'thread': resume_id, 'owned': o.mode != 'resume', 'childThreads': [], 'cwd': (origin or {}).get('cwd') or cwd,
-        'root': (repo or cwd) if o.write else None, 'write': bool(o.write), 'worktree': (origin or {}).get('worktree'),
+        'root': (repo or cwd) if o.write and not o.worktree else None, 'write': bool(o.write), 'worktree': (origin or {}).get('worktree'),
         'model': o.model, 'effort': o.effort, 'fast': o.fast, 'applied': False, 'discarded': False, 'warned': False,
-        'project': project_name(cwd),
+        'project': os.path.basename(os.path.normpath(repo or cwd))[:80],
+        'worktreeBase': base, 'appliedTree': (origin or {}).get('appliedTree'),
     }
-    save(meta)
+    with admission_lock():
+        running = all_running()
+        if resume_id and any(run.get('thread') == resume_id for run in running):
+            fail('that thread is still running; wait for it to finish')
+        if len(running) >= limit:
+            refuse('concurrency', '%d Codex run(s) are already running, the most Pacer allows at once (Settings → Collaboration). '
+                   'Wait for one to finish, then run this again.' % len(running))
+        if o.write and not o.worktree and not (origin or {}).get('worktree'):
+            # One writer per repository, or per folder outside one.
+            root = repo or cwd
+            for run in running:
+                if run.get('write') and not run.get('worktree') and run.get('root') and os.path.normcase(run['root']) == os.path.normcase(root):
+                    refuse('writer', 'another Codex run (thread %s) is already changing files in %s. Wait for it to finish%s.'
+                           % (run.get('thread') or '?', root, ', or run this one with --worktree so its changes stay apart' if repo else ''))
+
+        run_dir.mkdir(parents=True, exist_ok=True)
+        save(meta)
     before = snapshot(cwd) if o.write and not o.worktree and not (origin or {}).get('worktree') else None
-    trees_before = worktree_paths(cwd) if o.worktree else []
     events = Events()
     environment = dict(os.environ)
     environment['CODEX_INTERNAL_ORIGINATOR_OVERRIDE'] = ORIGINATOR
@@ -1186,7 +1261,7 @@ def run_job(o):
     stop_file = run_dir / 'stop'
     try:
         while child.poll() is None:
-            if stop_file.exists():
+            if stop_requested or stop_file.exists():
                 stopped = True
                 kill_tree(child)
                 break
@@ -1207,6 +1282,7 @@ def run_job(o):
     index = rollout_index()
     context = turn_context(index.get(meta.get('thread'))) or {}
     defaults = config_defaults()
+    stopped = stopped or stop_requested
     ok = exit_code == 0 and not timed_out and not stopped and not events.errors
     fast = ('config (%s)' % defaults.get('service_tier', 'standard')) if o.fast is None else ('on' if o.fast else 'off')
     model = context.get('model') or o.model or defaults.get('model') or '?'
@@ -1219,15 +1295,12 @@ def run_job(o):
         final = ''
     changed = None
     if o.worktree:
-        fresh_trees = [tree for tree in worktree_paths(cwd) if tree not in trees_before]
-        meta['worktree'] = fresh_trees[0] if fresh_trees else None
-        fresh = snapshot(meta['worktree']) if meta['worktree'] else None
-        if fresh:
-            changed = changed_between(None, fresh)
-    elif (origin or {}).get('worktree') and o.write:
-        fresh = snapshot(origin['worktree'])
-        if fresh:
-            changed = changed_between(None, fresh)
+        tree = toplevel(context['cwd']) if context.get('cwd') else None
+        if tree and os.path.normcase(tree) != os.path.normcase(repo) and os.path.normcase(tree) in worktree_paths(cwd):
+            meta['worktree'] = tree
+    if meta.get('worktree'):
+        changed = worktree_changes(meta)
+        meta['worktreeChanges'] = len(changed) if changed is not None else None
     elif before:
         after = snapshot(cwd)
         if after:
@@ -1235,8 +1308,7 @@ def run_job(o):
     if changed is None:
         changed = []
         for name, kind in events.changes.items():
-            relative = os.path.relpath(name, cwd) if os.path.isabs(name) else name
-            changed.append(kind + ' ' + (relative.replace(os.sep, '/') if not relative.startswith('..') else name))
+            changed.append(kind + ' ' + change_path(name, cwd))
     status = 'ok' if ok else 'stopped' if stopped else 'timedOut' if timed_out else 'failed'
     try:
         by = stop_file.read_text(encoding='utf-8').strip()
@@ -1248,8 +1320,6 @@ def run_job(o):
                 usage=events.usage, commands=events.commands, changedFiles=len(changed), reason=reason,
                 stoppedBy=(by if by in ('pacer', 'claude', 'sweep') else 'claude') if stopped else None,
                 childThreads=sorted(child_threads(meta['thread'], index)) if meta.get('thread') else [])
-    if meta.get('worktree'):
-        meta['worktreeChanges'] = worktree_changes(meta)
     save(meta)
 
     run = runner_command()
@@ -1265,7 +1335,7 @@ def run_job(o):
         print('worktree: %s' % (meta.get('worktree') or "(not found; check Codex's message)"))
     elif in_place:
         print('worktree: none (%s)' % in_place)
-    if o.write:
+    if o.write or meta.get('worktree'):
         print('changed files (%d): %s' % (len(changed), ', '.join(changed)) if changed else 'changed files: none')
     keep, hours = records(settings)
     print('output: %s (%s)' % (run_dir, {'turn': 'deleted with the thread when this Claude turn ends',
@@ -1301,6 +1371,9 @@ def main():
             stream.reconfigure(encoding='utf-8', errors='replace')
         except (AttributeError, ValueError):
             pass
+    home = config().get('codexHome')
+    if home:
+        os.environ['CODEX_HOME'] = home
     o = parse(sys.argv[1:])
     if o.mode == 'models':
         list_models(o)

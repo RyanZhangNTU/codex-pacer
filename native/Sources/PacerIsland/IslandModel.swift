@@ -1222,7 +1222,10 @@ final class IslandModel: ObservableObject {
         if wanted {
             // The runner starts the Codex program Pacer found, also the one inside Codex Desktop.
             let codex = CodexClient.findExecutable(customPath: defaults.string(forKey: "codexExecutable") ?? "")?.path
-            if ClaudeCodexDelegation.apply(preferences.settings(codex: codex), home: home) { codexDelegationHome = home }
+            var settings = preferences.settings(codex: codex)
+            if let custom = defaults.string(forKey: "codexHome"), !custom.isEmpty { settings.codexHome = self.home.path }
+            settings.command = ClaudeHookInstaller.codexRunnerCommand(home: home)
+            if ClaudeCodexDelegation.apply(settings, home: home) { codexDelegationHome = home }
         } else if codexDelegationHome == home || setupConfirmed {
             ClaudeCodexDelegation.apply(nil, home: home); codexDelegationHome = nil
         }
@@ -2667,7 +2670,7 @@ final class IslandModel: ObservableObject {
     private func codexDelegationLinks(at date: Date) -> [String: CodexDelegationLink] {
         guard !demo, isModuleEnabled(.claude), isModuleEnabled(.codex) else { codexDelegationRuns = []; return [:] }
         if let cached = codexDelegationLedger, abs(date.timeIntervalSince(cached.at)) < 1 { return cached.links }
-        codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome)
+        codexDelegationRuns = ClaudeCodexDelegation.runs(home: claudeHome, runnerExited: ProcessOwnership.hasExited)
         let links = ClaudeCodexDelegation.links(codexDelegationRuns)
         codexDelegationLedger = (date, links); return links
     }

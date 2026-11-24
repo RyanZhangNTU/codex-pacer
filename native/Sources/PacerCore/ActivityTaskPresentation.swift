@@ -282,8 +282,9 @@ public struct ActivityTaskRowPresentation: Sendable {
         let speed = link.fast.map { L10n.text($0 ? "delegation.detail.fast" : "delegation.detail.standard") }
         lines.append(line("model", ([model] + [effort, speed].compactMap { $0 }).joined(separator: " · ")))
         let clock = L10n.format(link.started, Date.FormatStyle().hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-        let finished = link.status.finished
-        let elapsed = max(0, (finished ? (link.ended ?? now) : now).timeIntervalSince(link.started))
+        let finished = phase != .running && link.status.finished
+        let end = finished ? (link.ended ?? activity.phaseChangedAt ?? link.started) : now
+        let elapsed = max(0, end.timeIntervalSince(link.started))
         lines.append(line("started", clock + " · " + L10n.text(finished ? "delegation.detail.took" : "delegation.detail.running_for")
             + " " + CompactDuration.text(elapsed)))
         if !finished, let report = activity.currentProgress { lines.append(line("progress", L10n.text("delegation.detail.progress_value", report.percent))) }
@@ -313,7 +314,7 @@ public struct ActivityTaskRowPresentation: Sendable {
     static func delegationStatus(_ link: CodexDelegationLink, phase: ActivityPhase, detail: String) -> String {
         let access = L10n.text(link.worktree ? "delegation.worktree" : link.write ? "delegation.write" : "delegation.read_only")
         let state: String
-        switch link.status {
+        switch phase == .running ? .running : link.status {
         case .running: state = detail
         case .ok: state = L10n.text("delegation.status.ok")
         case .failed: state = L10n.text("delegation.status.failed")
@@ -383,6 +384,9 @@ public struct ActivityTaskPresentation: Sendable {
                 groups: [ActivityTaskGroup]? = nil, overview: ActivityOverview? = nil,
                 options: TaskPresentationOptions = .init(), at now: Date) {
         let groups = groups ?? ActivityTaskGroup.make(activities)
+        let known = Set(groups.flatMap { $0.members.map(\.id) })
+        let orphans = Set(activities.filter { $0.isCodexDelegation && !known.contains($0.id) }.map(\.id))
+        let requests = orphans.isEmpty ? requests : requests.filter { !orphans.contains($0.activity.id) }
         self.groups = groups; self.requests = requests
         self.overview = overview ?? ActivityOverview(groups: groups, at: now)
         func attention(_ activity: SessionActivity) -> PendingAttentionRequest.Kind? { Self.attentionKind(activity, groups: groups, requests: requests) }
@@ -390,7 +394,7 @@ public struct ActivityTaskPresentation: Sendable {
             $0.isRunning || $0.isWaiting || $0.primary.codexGoalPause != nil || [.completed, .interrupted].contains($0.primary.phase) ||
                 now < ($0.primary.unconfirmedDisplayDeadline ?? .distantPast)
         }.map(\.primary)
-        let known = Set(groups.flatMap { $0.members.map(\.id) }), roots = Set(groups.filter { !$0.isRunning }.map { $0.primary.id })
+        let roots = Set(groups.filter { !$0.isRunning }.map { $0.primary.id })
         var ids = Set(displayed.map(\.id))
         for request in requests where !known.contains(request.activity.id) && ids.insert(request.activity.id).inserted { displayed.append(request.activity) }
         displayed.sort {

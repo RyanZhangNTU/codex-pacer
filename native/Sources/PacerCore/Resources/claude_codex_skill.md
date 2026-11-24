@@ -21,7 +21,7 @@ EOF
 ```
 
 - `-l`: two to eight words in the user's language saying what the run does; shown in Pacer, so no secrets.
-- The brief must stand alone, since Codex sees nothing of this conversation: goal and done criteria, relevant paths and known facts, constraints, and what to send back. A review needs none unless there is a specific focus.
+- The brief must stand alone, since Codex sees nothing of this conversation: goal and done criteria, relevant paths and known facts, constraints, and what to send back. A review needs no brief unless there is a specific focus. Pass the scope as shown above. With a brief or standing instructions, the runner includes that scope in the custom review prompt.
 - Add options only when the user asks: `-m <model>` (list with `{{RUN}} models`), `-e <effort>`, `--fast`/`--no-fast`, `--read-only`, `--worktree` (changes kept apart in a git worktree), `-C <dir>` (default: current folder, which need not be a git repository). Pacer's settings supply the rest and cap file access.
 - Runs may go in parallel. Don't edit files a writing run is changing.
 
