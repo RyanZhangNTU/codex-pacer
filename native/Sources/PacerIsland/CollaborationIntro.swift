@@ -46,8 +46,10 @@ struct CollaborationIntro: View {
     @State private var copyReset: Task<Void, Never>?
     @Environment(\.pacerAccent) private var accent
 
-    /// Two columns while both fit: the 300-point demo, a 20-point gap and 260 for the steps.
-    static let sideBySide: CGFloat = CollaborationDemo.size.width + 20 + 260
+    /// Two columns while both fit: the 300-point demo, a 16-point gap and 211 for the steps,
+    /// so the Settings window at its smallest (860 wide) still shows them side by side.
+    static let gap: CGFloat = 16, stepsWidth: CGFloat = 211
+    static let sideBySide: CGFloat = CollaborationDemo.size.width + gap + stepsWidth
     /// A done step's mark: a check on green.
     static let success = Color(red: 0x24 / 255, green: 0x8A / 255, blue: 0x3D / 255)
     /// "Copied", readable on the card in either appearance.
@@ -67,9 +69,9 @@ struct CollaborationIntro: View {
             header
             // The demo beside the steps, stacked when the page is narrow.
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 20) {
+                HStack(alignment: .top, spacing: Self.gap) {
                     CollaborationDemo()
-                    steps.frame(minWidth: 260, idealWidth: 260, maxWidth: .infinity, alignment: .leading)
+                    steps.frame(minWidth: Self.stepsWidth, idealWidth: Self.stepsWidth, maxWidth: .infinity, alignment: .leading)
                 }
                 VStack(alignment: .leading, spacing: 16) {
                     CollaborationDemo()
@@ -82,7 +84,7 @@ struct CollaborationIntro: View {
         .accessibilityLabel(L10n.text("collab.intro.title"))
         switch mode {
         case .settings:
-            content.padding(EdgeInsets(top: 16, leading: 20, bottom: 14, trailing: 20))
+            content.padding(EdgeInsets(top: 16, leading: 16, bottom: 14, trailing: 16))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .mainCardSurface(radius: 14)
         case .help:
@@ -188,12 +190,20 @@ struct CollaborationIntro: View {
         return HStack(alignment: .top, spacing: 12) {
             badge(index, mark).padding(.top, 1)
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(title).font(.system(size: 13.5, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    trailing()
+                // What ends the line moves under the title rather than squeezing it onto two lines.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        Text(title).font(.system(size: 13.5, weight: .semibold)).fixedSize()
+                        Spacer(minLength: 8)
+                        trailing()
+                    }
+                    .frame(minHeight: 24)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title).font(.system(size: 13.5, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                            .frame(minHeight: 24)
+                        trailing()
+                    }
                 }
-                .frame(minHeight: 24)
                 details()
             }
         }
